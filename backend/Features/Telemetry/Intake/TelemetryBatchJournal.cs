@@ -1,0 +1,87 @@
+using System.Text.Json;
+
+namespace AgentStudio.Telemetry;
+
+/// <summary>Durable, atomic intake handoff. A staged file survives a process exit until its store transaction commits.</summary>
+internal sealed class TelemetryBatchJournal
+{
+    private readonly string _root;
+    private readonly ITelemetryValueMasker? _masker;
+
+    public TelemetryBatchJournal(string root, ITelemetryValueMasker? masker)
+    {
+        _root = Path.Combine(root, "pending");
+        _masker = masker;
+        Directory.CreateDirectory(_root);
+    }
+
+    public IEnumerable<TelemetryIngestBatch> Recover()
+        => Directory.EnumerateFiles(_root, "*.json").OrderBy(path => path, StringComparer.Ordinal)
+            .Select(path => Read(path));
+
+    public TelemetryIngestBatch Stage(TelemetryIngestBatch batch)
+    {
+        var staged = _masker is null ? batch : batch with
+        {
+            Metrics = batch.Metrics.Select(item => item with
+                { Attributes = item.Attributes.MapValues(_masker.Mask) }).ToArray(),
+            Logs = batch.Logs.Select(item => item with
+                { Body = _masker.Mask(item.Body), Attributes = item.Attributes.MapValues(_masker.Mask) }).ToArray()
+        };
+        staged = staged with { StageId = Guid.NewGuid().ToString("N") };
+        var path = PathFor(staged.StageId);
+        var temporary = path + ".tmp";
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                JsonSerializer.Serialize(stream, ToWire(staged));
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporary, path);
+            return staged;
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
+    }
+
+    public void Complete(TelemetryIngestBatch batch)
+    {
+        if (batch.StageId is not null) File.Delete(PathFor(batch.StageId));
+    }
+
+    private TelemetryIngestBatch Read(string path)
+    {
+        using var stream = File.OpenRead(path);
+        var wire = JsonSerializer.Deserialize<BatchWire>(stream) ?? throw new InvalidDataException($"Empty telemetry batch: {path}");
+        var id = Path.GetFileNameWithoutExtension(path);
+        return new TelemetryIngestBatch(wire.Environment,
+            wire.Metrics.Select(item => new MetricSample(item.Name, item.Unit, item.Kind, item.Temporality,
+                TelemetryAttributes.ParseJson(item.Attributes), item.TimeUnixNano, item.StartTimeUnixNano,
+                item.Value, item.Count, item.Min, item.Max, item.IsMonotonic)).ToList(),
+            wire.Logs.Select(item => new TelemetryLogRecord(item.TimeUnixNano, item.SeverityNumber,
+                item.SeverityText, item.Body, TelemetryAttributes.ParseJson(item.Attributes), item.TraceId,
+                item.SpanId, item.EventName)).ToList(), wire.EstimatedBytes, wire.StoredBytes, id);
+    }
+
+    private static BatchWire ToWire(TelemetryIngestBatch batch)
+        => new(batch.Environment,
+            batch.Metrics.Select(item => new MetricWire(item.Name, item.Unit, item.Kind, item.Temporality,
+                item.Attributes.Json, item.TimeUnixNano, item.StartTimeUnixNano, item.Value, item.Count,
+                item.Min, item.Max, item.IsMonotonic)).ToArray(),
+            batch.Logs.Select(item => new LogWire(item.TimeUnixNano, item.SeverityNumber, item.SeverityText,
+                item.Body, item.Attributes.Json, item.TraceId, item.SpanId, item.EventName)).ToArray(),
+            batch.EstimatedBytes, batch.StoredBytes);
+
+    private string PathFor(string id) => Path.Combine(_root, id + ".json");
+
+    private sealed record BatchWire(TelemetryEnvironmentKey Environment, MetricWire[] Metrics, LogWire[] Logs,
+        long EstimatedBytes, long StoredBytes);
+    private sealed record MetricWire(string Name, string Unit, MetricKind Kind, MetricTemporality Temporality,
+        string Attributes, long TimeUnixNano, long StartTimeUnixNano, double Value, double Count,
+        double? Min, double? Max, bool IsMonotonic);
+    private sealed record LogWire(long TimeUnixNano, int SeverityNumber, string SeverityText, string Body,
+        string Attributes, string? TraceId, string? SpanId, string? EventName);
+}

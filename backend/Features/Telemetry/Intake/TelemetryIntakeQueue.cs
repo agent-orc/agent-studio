@@ -2,7 +2,7 @@ using System.Threading.Channels;
 
 namespace AgentStudio.Telemetry;
 
-public enum TelemetryEnqueueResult { Accepted, Busy, TooLarge }
+public enum TelemetryEnqueueResult { Accepted, Busy, TooLarge, Unavailable }
 
 /// <summary>
 /// Hand-off between OTLP requests and the background writer. Enqueueing never
@@ -12,13 +12,14 @@ public enum TelemetryEnqueueResult { Accepted, Busy, TooLarge }
 /// the sender retries later (OTLP/HTTP 429 with Retry-After). One project
 /// environment may fill only <see cref="TelemetryOptions.MaxQueueSharePercentPerEnvironment"/>
 /// of each budget, so it cannot keep the queue full for the others. The budget
-/// is released when the writer has handled a batch, stored or not.
+/// is released only after the writer commits the staged batch.
 /// </summary>
 public sealed class TelemetryIntakeQueue
 {
     private readonly Channel<TelemetryIngestBatch> _channel =
         Channel.CreateUnbounded<TelemetryIngestBatch>(new UnboundedChannelOptions { SingleReader = true });
     private readonly object _gate = new();
+    private readonly TelemetryBatchJournal? _journal;
     private readonly Dictionary<TelemetryEnvironmentKey, (long Records, long Bytes)> _environments = [];
     private readonly long _maxRecords;
     private readonly long _maxBytes;
@@ -28,12 +29,21 @@ public sealed class TelemetryIntakeQueue
     private long _pendingBytes;
     private long _refusedBatches;
 
-    public TelemetryIntakeQueue(TelemetryOptions options)
+    public TelemetryIntakeQueue(TelemetryOptions options, ITelemetryValueMasker? masker = null)
     {
         _maxRecords = options.MaxQueuedRecords;
         _maxBytes = options.MaxQueuedBytes;
         _maxRecordsPerEnvironment = options.MaxQueuedRecordsPerEnvironment;
         _maxBytesPerEnvironment = options.MaxQueuedBytesPerEnvironment;
+        if (options.StoreRoot is not null)
+        {
+            _journal = new TelemetryBatchJournal(options.StoreRoot, masker);
+            foreach (var recovered in _journal.Recover())
+            {
+                Add(recovered.Environment, recovered.RecordCount, recovered.EstimatedBytes);
+                _channel.Writer.TryWrite(recovered);
+            }
+        }
     }
 
     public long PendingRecords => Interlocked.Read(ref _pendingRecords);
@@ -65,13 +75,28 @@ public sealed class TelemetryIntakeQueue
         if (records > _maxRecordsPerEnvironment || bytes > _maxBytesPerEnvironment) return TelemetryEnqueueResult.TooLarge;
         lock (_gate)
         {
-            if (!Fits(batch.Environment, records, bytes) || !_channel.Writer.TryWrite(batch))
+            if (!Fits(batch.Environment, records, bytes))
             {
                 Interlocked.Increment(ref _refusedBatches);
                 return TelemetryEnqueueResult.Busy;
             }
+            try
+            {
+                batch = _journal?.Stage(batch) ?? batch;
+            }
+            catch (IOException)
+            {
+                Interlocked.Increment(ref _refusedBatches);
+                return TelemetryEnqueueResult.Unavailable;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                Interlocked.Increment(ref _refusedBatches);
+                return TelemetryEnqueueResult.Unavailable;
+            }
             // The writer releases under the same lock, so it cannot see the batch before it is counted.
             Add(batch.Environment, records, bytes);
+            _channel.Writer.TryWrite(batch);
             return TelemetryEnqueueResult.Accepted;
         }
     }
@@ -82,8 +107,11 @@ public sealed class TelemetryIntakeQueue
 
     internal void Release(TelemetryIngestBatch batch)
     {
+        _journal?.Complete(batch);
         lock (_gate) Add(batch.Environment, -batch.RecordCount, -batch.EstimatedBytes);
     }
+
+    internal void Retry(TelemetryIngestBatch batch) => _channel.Writer.TryWrite(batch);
 
     private bool Fits(TelemetryEnvironmentKey environment, long records, long bytes)
     {

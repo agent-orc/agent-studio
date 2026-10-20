@@ -113,7 +113,8 @@ internal static class OtlpJsonDecoder
                     _ => MetricTemporality.Unspecified
                 };
             foreach (var point in Array(data, "dataPoints"))
-                factory.AddPoint(name, unit, kind, temporality, scope, ReadPoint(point, kind, factory));
+                factory.AddPoint(name, unit, kind, temporality, scope, ReadPoint(point, kind, factory),
+                    kind == MetricKind.Sum && data.TryGetProperty("isMonotonic", out var monotonic) && monotonic.ValueKind == JsonValueKind.True);
             return;
         }
     }

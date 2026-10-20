@@ -41,7 +41,7 @@ public sealed record LogCursor(long TimeUnixNano, long Id)
 public sealed record MetricPointResponse(DateTimeOffset Time, double Value, double Count);
 
 public sealed record MetricSeriesResponse(IReadOnlyDictionary<string, string> Attributes, string Unit, string Kind,
-    IReadOnlyList<MetricPointResponse> Points);
+    IReadOnlyList<MetricPointResponse> Points, string Temporality);
 
 public sealed record MetricQueryResponse(string Name, DateTimeOffset From, DateTimeOffset To, long StepSeconds,
     string Resolution, string Aggregation, IReadOnlyList<MetricSeriesResponse> Series, bool Truncated);

@@ -1,4 +1,5 @@
 using AgentStudio.Telemetry;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -16,6 +17,108 @@ public sealed class TelemetryStoreTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+    }
+
+    [Fact]
+    public async Task Staged_batch_survives_restart_and_transient_store_failure()
+    {
+        var options = new TelemetryOptions { StoreRoot = _root };
+        var store = Store(options);
+        var queue = new TelemetryIntakeQueue(options);
+        var now = Nanos(_clock.GetUtcNow());
+        var batch = new TelemetryIngestBatch(_stage, [Gauge("recovered", 3, now)], [], 512);
+        Assert.Equal(TelemetryEnqueueResult.Accepted, queue.TryEnqueue(batch));
+        Assert.Single(Directory.EnumerateFiles(Path.Combine(_root, "pending"), "*.json"));
+
+        // A new queue instance reads the committed stage file left by the previous process.
+        var recovered = new TelemetryIntakeQueue(options);
+        var databasePath = store.DatabasePath(_stage);
+        Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
+        Directory.CreateDirectory(databasePath); // SQLite cannot open a directory as its database.
+        var writer = new TelemetryWriter(recovered, store, [], new CredentialTelemetryValueMasker(),
+            options, _clock, NullLogger<TelemetryWriter>.Instance);
+        Assert.Equal(0, await writer.DrainOnceAsync(CancellationToken.None));
+        Assert.Equal(1, recovered.PendingRecords);
+        Assert.Single(Directory.EnumerateFiles(Path.Combine(_root, "pending"), "*.json"));
+
+        Directory.Delete(databasePath);
+        Assert.Equal(1, await writer.DrainOnceAsync(CancellationToken.None));
+        Assert.Equal(0, recovered.PendingRecords);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "pending"), "*.json"));
+        Assert.Equal(3d, Assert.Single(Assert.Single(Query(store, "recovered", 60).Series).Points).Value);
+    }
+
+    [Fact]
+    public void Successive_cumulative_sum_exports_contribute_deltas_and_handle_resets()
+    {
+        var store = Store();
+        var start = Nanos(_clock.GetUtcNow().AddMinutes(-10));
+        var t0 = Nanos(_clock.GetUtcNow());
+        MetricSample Counter(double value, long time, long runStart) =>
+            new("requests", "1", MetricKind.Sum, MetricTemporality.Cumulative,
+                TelemetryAttributes.Empty, time, runStart, value, 1, null, null, true);
+        store.Write(_stage, [Counter(100, t0, start)], [], _clock.GetUtcNow());
+        store.Write(_stage, [Counter(105, t0 + 60 * Second, start)], [], _clock.GetUtcNow());
+        store = Store();
+        store.Write(_stage, [Counter(108, t0 + 120 * Second, start)], [], _clock.GetUtcNow());
+        store.Write(_stage, [Counter(2, t0 + 180 * Second, t0 + 150 * Second)], [], _clock.GetUtcNow());
+        _clock.Advance(TimeSpan.FromMinutes(5));
+
+        Assert.Equal([5d, 3d, 2d], Assert.Single(Query(store, "requests", 60, MetricAggregation.Sum).Series)
+            .Points.Select(point => point.Value));
+    }
+
+    [Fact]
+    public void Same_name_and_attributes_keep_unit_kind_and_temporality_separate()
+    {
+        var store = Store();
+        var now = Nanos(_clock.GetUtcNow());
+        MetricSample Sample(string unit, MetricKind kind, MetricTemporality temporality) =>
+            new("size", unit, kind, temporality, TelemetryAttributes.Empty, now,
+                now - 30 * Second, 4, 1, null, null);
+        store.Write(_stage, [Sample("ms", MetricKind.Gauge, MetricTemporality.Unspecified),
+            Sample("s", MetricKind.Gauge, MetricTemporality.Unspecified),
+            Sample("ms", MetricKind.Sum, MetricTemporality.Delta),
+            Sample("ms", MetricKind.Sum, MetricTemporality.Cumulative)], [], _clock.GetUtcNow());
+
+        Assert.Equal(4, Store().MetricNames(_stage).Single().SeriesCount);
+        var streams = Query(Store(), "size", 60).Series;
+        Assert.Equal(4, streams.Count);
+        Assert.Contains(streams, item => item.Kind == "Sum" && item.Temporality == "cumulative");
+        Assert.Contains(streams, item => item.Kind == "Sum" && item.Temporality == "delta");
+    }
+
+    [Fact]
+    public void Legacy_series_schema_migrates_without_losing_bucket_rows()
+    {
+        var store = Store();
+        var now = Nanos(_clock.GetUtcNow());
+        store.Write(_stage, [Gauge("size", 7, now)], [], _clock.GetUtcNow());
+        var path = store.DatabasePath(_stage);
+        using (var connection = new SqliteConnection($"Data Source={path};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE old_series (
+                  id INTEGER PRIMARY KEY, name TEXT NOT NULL, attributes TEXT NOT NULL,
+                  unit TEXT NOT NULL, kind TEXT NOT NULL, temporality INTEGER NOT NULL,
+                  last_seen INTEGER NOT NULL, cum_start INTEGER, cum_count REAL, cum_sum REAL, cum_time INTEGER,
+                  UNIQUE (name, attributes));
+                INSERT INTO old_series SELECT * FROM series;
+                DROP TABLE series;
+                ALTER TABLE old_series RENAME TO series;
+                PRAGMA user_version = 0;
+                """;
+            command.ExecuteNonQuery();
+        }
+        var reloaded = Store();
+        reloaded.Write(_stage, [new MetricSample("size", "s", MetricKind.Gauge,
+            MetricTemporality.Unspecified, TelemetryAttributes.Empty, now, 0, 2, 1, null, null)],
+            [], _clock.GetUtcNow());
+
+        Assert.Equal(2, reloaded.MetricNames(_stage).Single().SeriesCount);
+        Assert.Equal([7d, 2d], Query(reloaded, "size", 60).Series.SelectMany(item => item.Points).Select(item => item.Value));
     }
 
     [Fact]

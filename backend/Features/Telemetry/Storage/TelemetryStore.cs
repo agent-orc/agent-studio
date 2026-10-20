@@ -69,7 +69,7 @@ public sealed partial class TelemetryStore
     }
 
     public TelemetryWriteResult Write(TelemetryEnvironmentKey key, IReadOnlyList<MetricSample> metrics,
-        IReadOnlyList<TelemetryLogRecord> logs, DateTimeOffset now)
+        IReadOnlyList<TelemetryLogRecord> logs, DateTimeOffset now, string? batchId = null)
     {
         var path = DatabasePath(key);
         lock (_writeGate)
@@ -78,6 +78,12 @@ public sealed partial class TelemetryStore
             {
                 using var connection = Open(path, create: true)!;
                 using var transaction = connection.BeginTransaction();
+                if (batchId is not null && Execute(connection, transaction,
+                    "INSERT OR IGNORE INTO ingest_commits (id) VALUES ($id)", ("$id", batchId)) == 0)
+                {
+                    transaction.Commit();
+                    return new TelemetryWriteResult(0, 0, 0, 0);
+                }
                 var (stored, rejected) = WriteMetrics(connection, transaction, path, metrics, now);
                 var evicted = WriteLogs(connection, transaction, logs);
                 transaction.Commit();
@@ -89,6 +95,17 @@ public sealed partial class TelemetryStore
                 _series.Remove(path);
                 throw;
             }
+        }
+    }
+
+    /// <summary>Removes a replay marker once its stage file has been deleted.</summary>
+    public void ForgetCommittedBatch(TelemetryEnvironmentKey key, string batchId)
+    {
+        lock (_writeGate)
+        {
+            using var connection = Open(DatabasePath(key), create: false);
+            if (connection is not null)
+                Execute(connection, null, "DELETE FROM ingest_commits WHERE id = $id", ("$id", batchId));
         }
     }
 
@@ -208,7 +225,7 @@ public sealed partial class TelemetryStore
         {
             // Rendered once per point and not kept: only shared attribute sets cache their JSON.
             var json = sample.Attributes.Json;
-            var identity = (sample.Name, json);
+            var identity = (sample.Name, json, sample.Unit, sample.Kind.ToString(), sample.Temporality);
             if (!cache.Entries.TryGetValue(identity, out var entry))
             {
                 var seriesBytes = SeriesBytes(sample.Name, json);
@@ -304,15 +321,15 @@ public sealed partial class TelemetryStore
         if (_series.TryGetValue(path, out var cache)) return cache;
         cache = new SeriesCache();
         using var command = Command(connection, transaction,
-            "SELECT id, name, attributes, last_seen, cum_start, cum_count, cum_sum, cum_time FROM series");
+            "SELECT id, name, attributes, unit, kind, temporality, last_seen, cum_start, cum_count, cum_sum, cum_time FROM series");
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            var entry = new SeriesEntry(reader.GetInt64(0)) { LastSeen = reader.GetInt64(3) };
-            if (!reader.IsDBNull(4))
-                entry.Cumulative = new CumulativeState(reader.GetInt64(4), reader.GetDouble(5), reader.GetDouble(6), reader.GetInt64(7));
+            var entry = new SeriesEntry(reader.GetInt64(0)) { LastSeen = reader.GetInt64(6) };
+            if (!reader.IsDBNull(7))
+                entry.Cumulative = new CumulativeState(reader.GetInt64(7), reader.GetDouble(8), reader.GetDouble(9), reader.GetInt64(10));
             var (name, attributes) = (reader.GetString(1), reader.GetString(2));
-            cache.Entries[(name, attributes)] = entry;
+            cache.Entries[(name, attributes, reader.GetString(3), reader.GetString(4), (MetricTemporality)reader.GetInt32(5))] = entry;
             cache.Bytes += SeriesBytes(name, attributes);
         }
         _series[path] = cache;
@@ -381,7 +398,7 @@ public sealed partial class TelemetryStore
               temporality INTEGER NOT NULL,
               last_seen INTEGER NOT NULL,
               cum_start INTEGER, cum_count REAL, cum_sum REAL, cum_time INTEGER,
-              UNIQUE (name, attributes));
+              UNIQUE (name, attributes, unit, kind, temporality));
             CREATE TABLE IF NOT EXISTS metric_minute (
               series_id INTEGER NOT NULL, bucket INTEGER NOT NULL,
               count_value REAL NOT NULL, sum_value REAL NOT NULL, min_value REAL NOT NULL, max_value REAL NOT NULL,
@@ -405,7 +422,27 @@ public sealed partial class TelemetryStore
               bytes INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS logs_time ON logs (time, id);
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS ingest_commits (id TEXT PRIMARY KEY);
             """);
+        // Version zero has the original name/attributes uniqueness constraint. Rebuild only
+        // the series table, preserving ids so every existing bucket keeps its parent.
+        if (Scalar(connection, null, "PRAGMA user_version") == 0)
+        {
+            using var migration = connection.BeginTransaction();
+            Execute(connection, migration, """
+                CREATE TABLE series_new (
+                  id INTEGER PRIMARY KEY, name TEXT NOT NULL, attributes TEXT NOT NULL,
+                  unit TEXT NOT NULL, kind TEXT NOT NULL, temporality INTEGER NOT NULL,
+                  last_seen INTEGER NOT NULL, cum_start INTEGER, cum_count REAL, cum_sum REAL, cum_time INTEGER,
+                  UNIQUE (name, attributes, unit, kind, temporality));
+                INSERT INTO series_new SELECT id, name, attributes, unit, kind, temporality,
+                  last_seen, cum_start, cum_count, cum_sum, cum_time FROM series;
+                DROP TABLE series;
+                ALTER TABLE series_new RENAME TO series;
+                """);
+            migration.Commit();
+            Execute(connection, null, "PRAGMA user_version = 1");
+        }
         return connection;
     }
 
@@ -448,7 +485,7 @@ public sealed partial class TelemetryStore
 
     private sealed class SeriesCache
     {
-        public Dictionary<(string Name, string Attributes), SeriesEntry> Entries { get; } = new();
+        public Dictionary<(string Name, string Attributes, string Unit, string Kind, MetricTemporality Temporality), SeriesEntry> Entries { get; } = new();
         public long Bytes { get; set; }
     }
 

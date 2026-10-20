@@ -134,7 +134,7 @@ public sealed class TelemetryAttributes
 public sealed record MetricSample(
     string Name, string Unit, MetricKind Kind, MetricTemporality Temporality,
     TelemetryAttributes Attributes, long TimeUnixNano, long StartTimeUnixNano,
-    double Value, double Count, double? Min, double? Max);
+    double Value, double Count, double? Min, double? Max, bool IsMonotonic = false);
 
 public sealed record TelemetryLogRecord(
     long TimeUnixNano, int SeverityNumber, string SeverityText, string Body,
@@ -157,7 +157,7 @@ public sealed record OtlpDecodeResult<T>(IReadOnlyList<T> Items, long Rejected, 
 /// <summary>One accepted request, waiting for the background writer.</summary>
 public sealed record TelemetryIngestBatch(
     TelemetryEnvironmentKey Environment, IReadOnlyList<MetricSample> Metrics, IReadOnlyList<TelemetryLogRecord> Logs,
-    long EstimatedBytes, long StoredBytes = 0)
+    long EstimatedBytes, long StoredBytes = 0, string? StageId = null)
 {
     public int RecordCount => Metrics.Count + Logs.Count;
 }

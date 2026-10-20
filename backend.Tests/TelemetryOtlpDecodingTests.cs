@@ -43,6 +43,7 @@ public sealed class TelemetryOtlpDecodingTests
         var requests = result.Items[1];
         Assert.Equal((MetricKind.Sum, MetricTemporality.Cumulative, 42d, T0 - 10 * Minute),
             (requests.Kind, requests.Temporality, requests.Value, requests.StartTimeUnixNano));
+        Assert.True(requests.IsMonotonic);
         Assert.Equal("200", requests.Attributes.Values["http.status_code"]);
         Assert.Equal("/cart", requests.Attributes.Values["http.route"]);
 

@@ -103,10 +103,13 @@ internal static class OtlpProtobufDecoder
         TelemetryAttributes scope, OtlpRecordFactory factory)
     {
         var temporality = kind == MetricKind.Summary ? MetricTemporality.Cumulative : MetricTemporality.Unspecified;
+        var isMonotonic = false;
         var reader = new ProtoWireReader(data);
         while (reader.TryReadTag(out var field, out var type))
         {
-            if (field == 2 && type == ProtoWireType.Varint && kind != MetricKind.Summary)
+            if (field == 3 && type == ProtoWireType.Varint && kind == MetricKind.Sum)
+                isMonotonic = reader.ReadVarint() != 0;
+            else if (field == 2 && type == ProtoWireType.Varint && kind != MetricKind.Summary)
                 temporality = reader.ReadVarint() switch { 1 => MetricTemporality.Delta, 2 => MetricTemporality.Cumulative, _ => MetricTemporality.Unspecified };
             else reader.Skip(type);
         }
@@ -114,7 +117,7 @@ internal static class OtlpProtobufDecoder
         while (reader.TryReadTag(out var field, out var type))
         {
             if (field == 1 && type == ProtoWireType.LengthDelimited)
-                factory.AddPoint(name, unit, kind, temporality, scope, ReadPoint(reader.ReadBytes(), kind, layout, factory));
+                factory.AddPoint(name, unit, kind, temporality, scope, ReadPoint(reader.ReadBytes(), kind, layout, factory), isMonotonic);
             else reader.Skip(type);
         }
     }

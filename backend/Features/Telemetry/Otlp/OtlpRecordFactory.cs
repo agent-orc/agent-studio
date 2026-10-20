@@ -150,7 +150,7 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
     }
 
     public void AddPoint(string name, string unit, MetricKind kind, MetricTemporality temporality,
-        TelemetryAttributes scope, OtlpPointFields point)
+        TelemetryAttributes scope, OtlpPointFields point, bool isMonotonic = false)
     {
         CountRecord();
         if (string.IsNullOrWhiteSpace(name) || name.Length > 255)
@@ -192,7 +192,7 @@ internal sealed class OtlpRecordFactory(OtlpLimits limits, long receivedUnixNano
         Store(StoredPointBytes + Encoding.UTF8.GetByteCount(name) + Encoding.UTF8.GetByteCount(unit) + attributes.JsonBytes);
         _metrics.Add(new MetricSample(name, unit, kind, temporality, attributes,
             point.TimeUnixNano == 0 ? receivedUnixNano : point.TimeUnixNano, point.StartTimeUnixNano,
-            value, count, Finite(point.Min), Finite(point.Max)));
+            value, count, Finite(point.Min), Finite(point.Max), isMonotonic));
     }
 
     public void AddLog(TelemetryAttributes scope, OtlpLogFields log)

@@ -24,6 +24,7 @@ public sealed class TelemetryWriter : BackgroundService
     private readonly TimeProvider _clock;
     private readonly ILogger<TelemetryWriter> _logger;
     private DateTimeOffset _nextSweep = DateTimeOffset.MinValue;
+    private bool _retryAfterFailure;
 
     public TelemetryWriter(TelemetryIntakeQueue queue, TelemetryStore store, IEnumerable<ITelemetryExportSink> sinks,
         ITelemetryValueMasker masker, TelemetryOptions options, TimeProvider clock, ILogger<TelemetryWriter> logger)
@@ -50,6 +51,11 @@ public sealed class TelemetryWriter : BackgroundService
                     // Keep draining while a burst is still queued.
                 }
                 if (_clock.GetUtcNow() >= _nextSweep) SweepRetention();
+                if (_retryAfterFailure)
+                {
+                    _retryAfterFailure = false;
+                    await Task.Delay(TimeSpan.FromSeconds(1), _clock, stoppingToken);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -65,51 +71,49 @@ public sealed class TelemetryWriter : BackgroundService
         }
     }
 
-    /// <summary>Writes what is queued now, up to one flush; returns the number of records handled.</summary>
+    /// <summary>Commits staged batches individually; a failed batch stays staged and is retried.</summary>
     public async Task<int> DrainOnceAsync(CancellationToken cancellationToken)
     {
-        var batches = new List<TelemetryIngestBatch>();
-        var records = 0;
+        var handled = 0;
         long bytes = 0, stored = 0;
-        while (records < MaxRecordsPerFlush && bytes < MaxBytesPerFlush && stored < _options.MaxStoredBytesPerRequest
+        var mask = new FlushMask(_masker);
+        while (handled < MaxRecordsPerFlush && bytes < MaxBytesPerFlush && stored < _options.MaxStoredBytesPerRequest
                && _queue.TryDequeue(out var batch))
         {
-            batches.Add(batch);
-            records += batch.RecordCount;
-            bytes += batch.EstimatedBytes;
-            stored += batch.StoredBytes;
-        }
-        if (batches.Count == 0) return 0;
-        try
-        {
-            var mask = new FlushMask(_masker);
-            foreach (var group in batches.GroupBy(batch => batch.Environment))
+            cancellationToken.ThrowIfCancellationRequested();
+            try
             {
-                var metrics = group.SelectMany(batch => batch.Metrics)
-                    .Select(sample => sample with { Attributes = mask.Attributes(sample.Attributes) }).ToList();
-                var logs = group.SelectMany(batch => batch.Logs)
-                    .Select(log => log with { Body = _masker.Mask(log.Body), Attributes = mask.Attributes(log.Attributes) }).ToList();
-                try
+                var metrics = batch.Metrics.Select(sample => sample with
+                    { Attributes = mask.Attributes(sample.Attributes) }).ToList();
+                var logs = batch.Logs.Select(log => log with
+                    { Body = _masker.Mask(log.Body), Attributes = mask.Attributes(log.Attributes) }).ToList();
+                var result = _store.Write(batch.Environment, metrics, logs, _clock.GetUtcNow(), batch.StageId);
+                if (result.LogsEvictedForSize > 0)
+                    _logger.LogInformation("Telemetry log cap reached for {Environment}; removed {Count} oldest records",
+                        batch.Environment, result.LogsEvictedForSize);
+                _queue.Release(batch);
+                if (batch.StageId is { } committedId)
                 {
-                    var result = _store.Write(group.Key, metrics, logs, _clock.GetUtcNow());
-                    if (result.LogsEvictedForSize > 0)
-                        _logger.LogInformation("Telemetry log cap reached for {Environment}; removed {Count} oldest records",
-                            group.Key, result.LogsEvictedForSize);
+                    try { _store.ForgetCommittedBatch(batch.Environment, committedId); }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.LogWarning(ex, "Telemetry replay marker cleanup failed for {Environment}", batch.Environment);
+                    }
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogError(ex, "Telemetry write failed for {Environment}; dropped {Metrics} points and {Logs} log records",
-                        group.Key, metrics.Count, logs.Count);
-                    continue;
-                }
-                await ExportAsync(new TelemetryExportBatch(group.Key, metrics, logs), cancellationToken);
+                await ExportAsync(new TelemetryExportBatch(batch.Environment, metrics, logs), cancellationToken);
+                handled += batch.RecordCount;
+                bytes += batch.EstimatedBytes;
+                stored += batch.StoredBytes;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "Telemetry write failed for {Environment}; staged batch will be retried", batch.Environment);
+                _queue.Retry(batch);
+                _retryAfterFailure = true;
+                break;
             }
         }
-        finally
-        {
-            foreach (var batch in batches) _queue.Release(batch);
-        }
-        return records;
+        return handled;
     }
 
     /// <summary>Applies retention to every environment database, then the global minute- and hour-bucket caps.</summary>

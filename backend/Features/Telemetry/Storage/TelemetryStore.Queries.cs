@@ -26,7 +26,7 @@ public sealed partial class TelemetryStore
         using var connection = Open(DatabasePath(key), create: false);
         if (connection is null) return empty;
 
-        var series = new List<(long Id, string Attributes, string Unit, string Kind)>();
+        var series = new List<(long Id, string Attributes, string Unit, string Kind, MetricTemporality Temporality)>();
         using (var command = Command(connection, null, ""))
         {
             var filters = new List<string> { "name = $name" };
@@ -40,9 +40,9 @@ public sealed partial class TelemetryStore
                 index++;
             }
             command.Parameters.AddWithValue("$limit", query.MaxSeries + 1);
-            command.CommandText = $"SELECT id, attributes, unit, kind FROM series WHERE {string.Join(" AND ", filters)} ORDER BY id LIMIT $limit";
+            command.CommandText = $"SELECT id, attributes, unit, kind, temporality FROM series WHERE {string.Join(" AND ", filters)} ORDER BY id LIMIT $limit";
             using var reader = command.ExecuteReader();
-            while (reader.Read()) series.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3)));
+            while (reader.Read()) series.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), (MetricTemporality)reader.GetInt32(4)));
         }
         var truncated = series.Count > query.MaxSeries;
         if (truncated) series.RemoveAt(series.Count - 1);
@@ -79,7 +79,7 @@ public sealed partial class TelemetryStore
                 buckets.TryGetValue(item.Id, out var groups)
                     ? groups.Select(pair => new MetricPointResponse(DateTimeOffset.FromUnixTimeSeconds(pair.Key),
                         pair.Value.Value(query.Aggregation), pair.Value.Count)).ToList()
-                    : [])).ToList()
+                    : [], item.Temporality.ToString().ToLowerInvariant())).ToList()
         };
     }
 

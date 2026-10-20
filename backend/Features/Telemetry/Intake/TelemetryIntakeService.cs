@@ -141,6 +141,9 @@ public sealed class TelemetryIntakeService
                 return Busy(encoding);
             case TelemetryEnqueueResult.TooLarge:
                 return TooLarge(encoding);
+            case TelemetryEnqueueResult.Unavailable:
+                return Error(encoding, 503, 14, "Telemetry staging is unavailable; retry later.")
+                    with { RetryAfterSeconds = RetryAfterSeconds };
         }
         var rejectedField = signal == TelemetrySignals.Metrics ? "rejectedDataPoints" : "rejectedLogRecords";
         return new OtlpIntakeOutcome(200, OtlpResponses.Success(encoding, rejected, message, rejectedField),

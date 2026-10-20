@@ -15,7 +15,8 @@ public sealed record MetricQueryPlan(MetricResolution Resolution, long StepSecon
 }
 
 /// <summary>
-/// Pure bucket arithmetic. Gauges and sums add their value as one observation.
+/// Pure bucket arithmetic. Gauges and delta sums add their value as one observation.
+/// Cumulative sums preserve their monotonic flag and are converted to deltas.
 /// Delta histograms add count and sum. Cumulative histograms and summaries are
 /// turned into deltas against the previous point of the same series: a new
 /// start time or a falling count is a reset, and the first point of a series
@@ -38,7 +39,7 @@ public static class MetricBucketPolicy
 
     public static (BucketContribution? Contribution, CumulativeState? State) Contribute(MetricSample sample, CumulativeState? prior)
     {
-        if (sample.Kind is MetricKind.Gauge or MetricKind.Sum)
+        if (sample.Kind == MetricKind.Gauge || sample.Kind == MetricKind.Sum && sample.Temporality != MetricTemporality.Cumulative)
             return (new BucketContribution(1, sample.Value, sample.Value, sample.Value, sample.Value, sample.TimeUnixNano), prior);
 
         var cumulative = sample.Kind == MetricKind.Summary || sample.Temporality == MetricTemporality.Cumulative;
@@ -46,6 +47,18 @@ public static class MetricBucketPolicy
             return (Whole(sample), prior);
 
         var current = new CumulativeState(sample.StartTimeUnixNano, sample.Count, sample.Value, sample.TimeUnixNano);
+        if (sample.Kind == MetricKind.Sum)
+        {
+            if (prior is null)
+            {
+                var fresh = sample.StartTimeUnixNano > 0 && sample.TimeUnixNano - sample.StartTimeUnixNano <= FreshStartNanos;
+                return (fresh ? SumValue(sample.Value, sample.TimeUnixNano) : null, current);
+            }
+            if (sample.TimeUnixNano <= prior.TimeUnixNano) return (null, prior);
+            var sumReset = sample.StartTimeUnixNano != prior.StartTimeUnixNano
+                || sample.IsMonotonic && sample.Value < prior.Sum;
+            return (SumValue(sumReset ? sample.Value : sample.Value - prior.Sum, sample.TimeUnixNano), current);
+        }
         if (prior is null)
         {
             var fresh = sample.StartTimeUnixNano > 0 && sample.TimeUnixNano - sample.StartTimeUnixNano <= FreshStartNanos;
@@ -95,6 +108,9 @@ public static class MetricBucketPolicy
         }
         return new MetricQueryPlan(resolution, step, fromSeconds / native * native, toSeconds);
     }
+
+    private static BucketContribution SumValue(double value, long time)
+        => new(1, value, value, value, value, time);
 
     private static BucketContribution? Whole(MetricSample sample)
     {

@@ -52,12 +52,15 @@ is rejected, not revoked: if the declarations cannot be read, the intake answers
 | More than `Telemetry:MaxRecordsPerRequest` (20,000) points or records, more than `Telemetry:MaxScopesPerRequest` (4,096) resources and scopes together, more than `Telemetry:MaxDecodedBytesPerRequest` (32 MiB) of estimated memory, or more than `Telemetry:MaxStoredBytesPerRequest` (64 MiB) to store | 413 |
 | Malformed protobuf or JSON, including a JSON string with a lone surrogate escape (`"\uD800"`) or a number outside the double range (`1e400`) | 400 |
 | Body not received and decoded within `Telemetry:RequestDeadlineSeconds` (30) | 408 |
-| Environment declarations cannot be read | 503 with `Retry-After: 2`, for 30 seconds before they are read again |
+| Durable staging is unavailable | 503 with `Retry-After: 2` |
 | Queue full, this environment's share of the queue full, `Telemetry:MaxConcurrentRequests` (4) requests already in progress, or `Telemetry:MaxConcurrentRequestsPerEnvironment` (2) of them for this environment | 429 with `Retry-After: 2`; OTLP exporters retry |
 
 Error bodies are a `google.rpc.Status` in the request's encoding. The intake
-never waits for the disk. A request is parsed, checked, and queued. One
-background writer stores the queue in batches. When more than
+writes a bounded batch to a durable staging file before returning 200. One
+background writer commits each staged batch to SQLite and removes the file
+after the commit. Failed writes stay staged for retry, and staged batches are
+recovered after a restart. A transaction marker makes replay after a commit
+idempotent. When more than
 `Telemetry:MaxQueuedRecords` (200,000) records or `Telemetry:MaxQueuedBytes`
 (128 MiB) of estimated memory are waiting, new requests get 429 until the
 writer catches up. One environment may fill only
@@ -124,11 +127,12 @@ with `Telemetry:StoreRoot`.
 | Minute buckets of all environments together | about 2 GiB (96 bytes estimated per bucket) | `Telemetry:MaxMinuteBucketBytes` |
 | Hour buckets of all environments together | about 1 GiB (96 bytes estimated per bucket) | `Telemetry:MaxHourBucketBytes` |
 
-Every bucket keeps count, sum, min, max, and last value. Gauges and sums add
-their value as one observation. Delta histograms add count and sum. Cumulative
-histograms and summaries are stored as differences to the previous point of the
-same series. A new start time or a falling count is a reset. The first point of
-a series is only a baseline. When the log payload passes the cap, the oldest
+Every bucket keeps count, sum, min, max, and last value. Gauges and delta sums
+add their value as one observation. Cumulative sums, histograms, and summaries
+are stored as differences to the previous point of the same stream. A new
+start time is a reset; a falling monotonic sum or histogram count is also a
+reset. The first cumulative point is a baseline unless the stream just started.
+Streams with different units, kinds, or temporalities remain separate. When the log payload passes the cap, the oldest
 records are removed until it is at 90 percent of the cap. A sweep every
 10 minutes (`Telemetry:RetentionSweepMinutes`) removes expired data. The same
 sweep then checks the minute buckets of all environments against
@@ -153,7 +157,8 @@ and follow the Studio session and project-membership rules.
   bucket width; without it the API aims at about 240 points. `aggregation` is
   `avg` (default), `sum`, `min`, `max`, `count`, or `last`. Ranges that start
   before the minute retention, and steps of an hour or more, read the hourly
-  aggregates. One query returns at most 1,440 points per series and 500 series.
+  aggregates. Each series includes its unit, kind, and temporality. One query
+  returns at most 1,440 points per series and 500 series.
 - `GET /logs?from=&to=&minSeverity=&text=&attr.<key>=<value>&limit=&cursor=`:
   newest first. `minSeverity` is 1 to 24 or a level name. `text` is a
   case-insensitive substring of the body. Pass the returned `nextCursor` to
