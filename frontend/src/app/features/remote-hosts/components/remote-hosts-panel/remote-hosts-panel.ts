@@ -38,17 +38,15 @@ import { EnvironmentMapComponent } from '../environment-map/environment-map';
 import { EnvironmentHeaderComponent } from '../environment-header/environment-header';
 import { buildEnvironmentMap, type EnvironmentSnapshot } from '../../models/environment-map';
 import { CredentialInventoryService } from '../../../credentials/credential-inventory.service';
+import { OperationalStallsComponent } from '../operational-stalls/operational-stalls';
 
 /**
- * Execution Hosts settings page (AGT-1921).
- *
- * The single visible entry point into execution-host management: the local
+ * Execution Hosts settings page (AGT-1921). The local
  * machine and each remote runner in one sortable table so the whole fleet reads
  * as one picture. Each row carries current operator truth while secondary
  * identity, capability, connection, capacity, and deployment facts are disclosed
  * on demand ({@link RemoteHostCardComponent}).
  *
- * Host definitions and client heartbeat facts come from {@link RemoteHostsService}.
  */
 @Component({
   selector: 'app-remote-hosts-panel',
@@ -65,6 +63,7 @@ import { CredentialInventoryService } from '../../../credentials/credential-inve
     ExecutionInfrastructureComponent,
     EnvironmentMapComponent,
     EnvironmentHeaderComponent,
+    OperationalStallsComponent,
   ],
   templateUrl: './remote-hosts-panel.html',
   styleUrl: './remote-hosts-panel.scss',

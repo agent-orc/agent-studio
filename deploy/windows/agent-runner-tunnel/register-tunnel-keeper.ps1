@@ -35,6 +35,7 @@ $arguments = @(
     '-ExecutionPolicy', 'Bypass',
     '-File', $quotedKeeper,
     '-SshTarget', $SshTarget,
+    '-HostIdentity', $TaskName,
     '-RemotePort', $RemotePort,
     '-OrchestratorPort', $OrchestratorPort,
     '-StateDirectory', $quotedStateDirectory

@@ -81,6 +81,22 @@ describe('buildEnvironmentMap', () => {
     expect(connections.find(connection => connection.type === 'SSH gate transport')?.health).toBe('unknown');
   });
 
+  it('shows a registered pull gate on its host with an outbound claim link', () => {
+    const pull = buildEnvironmentMap(groups, {
+      ...snapshot,
+      gateWorkers: [{ id: 'gate-1', name: 'KORI', slots: 3, busy: 1, processorCount: 2,
+        lastHeartbeat: new Date().toISOString(), currentRun: 'run-1' }],
+    }, () => 0);
+    const kori = pull.machines.find(machine => machine.name === 'KORI')!;
+    expect(kori.nodes.find(node => node.id === 'gate-worker:gate-1'))
+      .toMatchObject({ health: 'reachable', capacity: '1/3 slots', lastContact: expect.any(String) });
+    expect(pull.connections).toContainEqual({
+      id: 'gate-pull:gate-1', from: kori.id, to: 'control',
+      type: 'outbound claim link', health: 'ok',
+    });
+    expect(pull.connections.some(connection => connection.type === 'SSH gate transport')).toBe(false);
+  });
+
   it('does not invent gate or route facts when no installation snapshot exists', () => {
     const map = buildEnvironmentMap(groups, null, () => 0);
     expect(map.machines.some(machine => machine.name === 'KORI')).toBe(false);

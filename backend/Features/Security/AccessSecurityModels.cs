@@ -51,6 +51,7 @@ public static class RunnerScopes
     public const string Completion = "runner.completion";
     public const string Deploy = "runner.deploy";
     public const string Release = "runner.release";
+    public const string Gate = "gate.execute";
 
     /// <summary>
     /// The public-demo replay scope. It admits nothing but pre-signed simulated
@@ -61,10 +62,10 @@ public static class RunnerScopes
     public const string DemoReplay = "demo.replay";
 
     public static readonly string[] Minimum = [Claim, Lease, Logs, Events, Artifacts, Completion];
-    public static readonly HashSet<string> All = new([.. Minimum, DemoReplay, Orchestration, Deploy, Release], StringComparer.Ordinal);
+    public static readonly HashSet<string> All = new([.. Minimum, DemoReplay, Orchestration, Deploy, Release, Gate], StringComparer.Ordinal);
 
-    /// <summary>A replay credential is never also an execution credential.</summary>
-    public static bool IsExclusive(string scope) => scope is DemoReplay or Orchestration or Deploy or Release;
+    /// <summary>Replay, engine, deploy, release, and pull gate credentials each have one role; none is also an execution credential.</summary>
+    public static bool IsExclusive(string scope) => scope is DemoReplay or Orchestration or Deploy or Release or Gate;
 }
 
 public sealed record StudioUser
@@ -141,6 +142,7 @@ public sealed record SecurityState
     public List<RunnerServiceIdentity> Runners { get; init; } = [];
     public List<RunnerEnrollment> Enrollments { get; init; } = [];
     public List<TelemetryIngestToken> TelemetryIngestTokens { get; init; } = [];
+    public List<StudioApiToken> ApiTokens { get; init; } = [];
 }
 
 public sealed record StudioInvitation
@@ -171,6 +173,20 @@ public sealed record TelemetryIngestToken
     public DateTime? RevokedAt { get; init; }
 }
 
+public sealed record StudioApiToken
+{
+    public required string Id { get; init; }
+    public required string Name { get; init; }
+    public required string Role { get; init; }
+    public required List<string> Projects { get; init; }
+    public required string SecretHash { get; init; }
+    public required string CreatedBy { get; init; }
+    public required DateTime CreatedAt { get; init; }
+    public required DateTime ExpiresAt { get; init; }
+    public DateTime? LastUsedAt { get; init; }
+    public DateTime? RevokedAt { get; init; }
+}
+
 public static class TelemetrySignals
 {
     public const string Metrics = "metrics";
@@ -179,6 +195,14 @@ public static class TelemetrySignals
 }
 
 public sealed record TelemetryIngestPrincipal(string TokenId, string Project, string Environment, IReadOnlySet<string> Signals);
+
+public sealed record ApiTokenPrincipal(StudioApiToken Token, StudioUser User);
+public sealed record CreateApiTokenRequest(string Name, string Role, IReadOnlyList<string>? Projects, DateTime ExpiresAt);
+public sealed record ApiTokenResponse(string Id, string Name, string Role, IReadOnlyList<string> Projects,
+    string CreatedBy, DateTime CreatedAt, DateTime ExpiresAt, DateTime? LastUsedAt, DateTime? RevokedAt);
+public sealed record CreatedApiTokenResponse(ApiTokenResponse Token, string Secret);
+public sealed record RunnerEnrollmentResponse(string Id, string Name, IReadOnlyList<string> Scopes,
+    DateTime CreatedAt, DateTime ExpiresAt, DateTime? UsedAt);
 
 public sealed record HumanPrincipal(StudioUser User, StudioSession Session);
 public sealed record RunnerPrincipal(string RunnerId, string RunnerName, string CredentialId, IReadOnlySet<string> Scopes);

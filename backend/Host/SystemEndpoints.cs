@@ -69,17 +69,24 @@ public static class SystemEndpoints
 
         app.MapGet("/api/system/execution-infrastructure", (IConfiguration config,
             AgentStudio.Pipeline.GateSlotUsageTracker gateSlots,
+            AgentStudio.Pipeline.PullGateStore pullGates,
             AgentStudio.Runner.OrchestrationEngineReadiness engine) =>
         {
-            var host = config["RemoteGate:SshHost"]?.Trim();
+            var pullHost = pullGates.HealthyHosts().FirstOrDefault();
+            var workers = pullGates.Hosts();
+            var host = pullHost?.Name ?? config["RemoteGate:SshHost"]?.Trim();
             var slots = gateSlots.Snapshot();
             var reached = gateSlots.LastReachedAt;
             var failed = gateSlots.LastFailureAt;
-            var reachability = string.IsNullOrWhiteSpace(host) ? "not-configured" : gateSlots.Reachability;
+            var reachability = pullHost is not null ? "reachable"
+                : string.IsNullOrWhiteSpace(host) ? "not-configured" : gateSlots.Reachability;
             return Results.Ok(new
             {
-                gate = new { host, slots.Busy, slots.Total, reachability,
-                    lastReachedAt = reached, lastFailureAt = failed },
+                gate = new { host, transport = pullHost is null ? "ssh" : "pull",
+                    busy = pullHost?.Busy ?? slots.Busy,
+                    total = pullHost?.Slots ?? slots.Total, reachability,
+                    lastReachedAt = pullHost?.LastHeartbeat ?? reached, lastFailureAt = failed,
+                    workers },
                 taskServer = string.IsNullOrWhiteSpace(config["TaskServer:BaseUrl"])
                     ? "local monolith" : "remote Task Server",
                 engine = new { engine.State, engine.Required, engine.LastContact, engine.LastEngineId },

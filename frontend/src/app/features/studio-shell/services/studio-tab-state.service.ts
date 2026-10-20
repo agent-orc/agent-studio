@@ -485,6 +485,8 @@ export class StudioTabStateService {
         return { kind: 'url-preview', projectName: tab.projectName, urlId: tab.urlId };
       case 'workspace-settings':
         return { kind: 'workspace-settings' };
+      case 'deployment-dashboard':
+        return { kind: 'deployment-dashboard' };
       case 'welcome':
         return { kind: 'welcome' };
     }

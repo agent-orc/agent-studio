@@ -7,6 +7,9 @@
     <h2 class="studio-welcome__title" id="studio-welcome-title">Agent Software Studio</h2>
     @if (projects().length > 0) {
       <div class="studio-welcome__primary" data-testid="studio-welcome-chat-hint">
+        <button type="button" class="studio-button studio-button--primary studio-welcome__chat-cta"
+                data-testid="studio-welcome-deployment-dashboard"
+                (click)="deploymentDashboardOpened.emit()">Deployment dashboard</button>
         <button type="button"
                 class="studio-button studio-button--primary studio-welcome__chat-cta"
                 data-testid="studio-welcome-open-chat"
