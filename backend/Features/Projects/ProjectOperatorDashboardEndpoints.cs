@@ -87,6 +87,11 @@ public static class ProjectOperatorDashboardEndpoints
             deploy.AppendHostStepLog(project, jobId, request) ? Results.Ok() : Results.Conflict())
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
+        app.MapPost("/api/deploy/jobs/{project}/{jobId}/renew", (string project, string jobId,
+            DeployLeaseRequest request, ProjectEnvironmentService environments) =>
+            environments.RenewClaim(project, jobId, request.LeaseToken) ? Results.Ok() : Results.Conflict())
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
         app.MapGet("/api/projects/{projectName}/throughput", (
             string projectName,
             ProjectThroughputService throughput) =>

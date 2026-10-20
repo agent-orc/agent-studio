@@ -2,14 +2,15 @@
 
 The deploy host polls Studio for work created from a release's committed
 `.agent-studio/project.yml` schema 2 definition. The release stores the effective
-environment declarations and the ordered SSH deploy steps. Legacy
-`docs/deployments/environments/*.json` files register hosts; release creation
-refuses a declaration that diverges from schema 2. See the
+environment declarations and the ordered SSH deploy steps. Existing
+`docs/deployments/environments/*.json` files are checked for divergence;
+schema 2 supplies effective environments and SSH targets when they are absent.
+Release creation refuses a declaration that diverges from schema 2. See the
 [project deployment definition](../domains/pipeline.md#project-deployment-definition-p1)
 for migration and validation.
 
 The API uses JSON with camel-case property names. On a networked installation,
-all three routes require HTTPS and a Runner service bearer with `runner.deploy`.
+all four routes require HTTPS and a Runner service bearer with `runner.deploy`.
 The claim request's `hostId` must equal the enrolled Runner principal's ID.
 The report and log routes additionally require the current claim's `leaseToken`;
 the token is a claim capability and must stay out of operator logs and UI
@@ -19,6 +20,7 @@ responses. The public demo denies these execution routes.
 |---|---|---|
 | `POST /api/deploy/jobs/claim` | `{ "hostId": "runner_deploy_1" }` | `200` with one `DeployJob`, or `200` with `null` when no job is claimable. A networked caller with a different enrolled host ID gets `403`. |
 | `POST /api/deploy/jobs/{project}/{jobId}/log` | `{ "leaseToken": "...", "step": "deploy[0]:static-site", "message": "..." }` | `200` after appending the line to the deploy run; `409` if validation or the claim fails. |
+| `POST /api/deploy/jobs/{project}/{jobId}/renew` | `{ "leaseToken": "..." }` | `200` after extending a live claim by five minutes; `409` for an expired or fenced token. |
 | `POST /api/deploy/jobs/{project}/{jobId}/report` | `{ "leaseToken": "...", "healthy": true, "evidence": "health-ok", "steps": [{ "name": "deploy[0]:static-site", "succeeded": true }] }` | `200` after closing the job and reconciling the run; `409` for a stale token, invalid step sequence, or a job that is no longer claimed. |
 
 The claim response supplies `id`, `project`, `environmentId`, `hostId`,
@@ -36,12 +38,13 @@ The SSH executor requires each snapshotted step's `target` to equal that host.
 If host registration changes after the release, an old release's step fails
 this check; create a new release with the new target before deploying there.
 
-One host receives one job at a time. A claim is live for five minutes; after
-that the same host can reclaim its job and receives a new lease token. A job
+One host receives one job at a time. A claim is live for five minutes; the host
+renews it every minute while executing. A renewal failure cancels execution
+and prevents a stale report. After expiry the same host can reclaim the job
+and receives a new lease token. A job
 without a report or reclaim for fifteen minutes fails as `host-lost`. A
-reclaimed, cancelled, or completed job rejects an old report. A report with
-the current token can still finish the job after five minutes if no reclaim or
-host-lost transition has replaced it. Step logs require a live, unexpired
+reclaimed, cancelled, or completed job rejects an old report. Reports, renewals,
+and step logs require a live, unexpired
 five-minute claim as well as its token. The host polls again
 after `200 null`; it must not treat that response as a failure.
 
@@ -71,7 +74,9 @@ remains for legacy template jobs; schema 2 variables use the secret provider.
 [secret-store]` makes one claim; `deploy-loop` repeats it every five seconds.
 The host needs its artifact store, OpenSSH with pinned host keys, and access to
 the secret provider route. The SSH target needs Python 3; container targets
-also need Docker Compose. The host reports the health result after executing
-the ordered steps. Operators read run state and logs through
+also need Docker Compose. The host checks each step's health URL before starting
+the next step, using its `healthTimeoutSeconds`, and reports a failed step when
+health does not pass. Failed static copies remove remote staging before a retry.
+Operators read run state and logs through
 `GET /api/projects/{project}/deploy/deployments/{deploymentId}` and
 `GET .../log[?step=]`, without exposing the claim token.

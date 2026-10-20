@@ -55,6 +55,7 @@ public sealed record ProjectEnvironmentsResponse(string Project, IReadOnlyList<P
 public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string? Evidence,
     IReadOnlyList<DeployStepResult>? Steps = null);
 public sealed record DeployStepLogRequest(string LeaseToken, string Step, string Message);
+public sealed record DeployLeaseRequest(string LeaseToken);
 public sealed record DeployClaimRequest(string HostId);
 public sealed record ReleaseArtifactRequest(string Artifact, string Commit);
 public sealed record PromotionDecisionRequest(string Artifact);
@@ -110,8 +111,8 @@ public sealed class ProjectEnvironmentService
         var root = _git.ResolveRepoRootForProject(project);
         if (root is null) return [];
         var directory = Path.Combine(root, "docs", "deployments", "environments");
-        if (!Directory.Exists(directory)) return [];
-        var parsed = ParseDeclarationFiles(Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
+        var parsed = ParseDeclarationFiles((Directory.Exists(directory)
+                ? Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly) : Enumerable.Empty<string>())
             .Select(file => (Path.GetFileName(file), File.ReadAllText(file))));
         var yamlPath = Path.Combine(root, ProjectPreparationPaths.Definition);
         if (!File.Exists(yamlPath)) return parsed;
@@ -165,6 +166,29 @@ public sealed class ProjectEnvironmentService
         if (definition.Deploy.Any(item => item.Step is not ("static-site" or "container")))
             throw new JsonException("Schema 2 release deployment only supports static-site and container SSH steps.");
         var output = new List<EnvironmentDeclarationFile>();
+        foreach (var environment in definition.Environments.Where(item =>
+                     !files.Any(file => PipelineMigrationPolicy.EnvironmentFor(file.Declaration?.Kind ?? "") == item.Name)))
+        {
+            var steps = definition.Deploy.Where(item => item.Environments.Count == 0
+                || item.Environments.Contains(environment.Name, StringComparer.Ordinal)).ToArray();
+            if (steps.Length == 0 || steps.Select(item => item.Target).Distinct(StringComparer.Ordinal).Count() != 1)
+                throw new JsonException($"Schema 2 {environment.Name} requires deploy steps on one host.");
+            var first = steps[0];
+            var phase = definition.StandardLifecycle.First(item => item.Phase == environment.Name);
+            var variables = definition.Variables.Where(item => item.Environments.Count == 0
+                || item.Environments.Contains(environment.Name, StringComparer.Ordinal)).ToArray();
+            var id = environment.Name == "staging" ? "stage" : environment.Name;
+            var declaration = new EnvironmentDeclaration(id, environment.Name, id, first.Target!,
+                first.HealthUrl ?? "", first.Step == "static-site" ? "static" : "container",
+                first.Directory ?? "1", first.HealthUrl,
+                environment.Protected ? "person" : "stage-healthy-10m",
+                variables.Where(item => item.Secret is not null).Select(item => item.Secret!).ToArray(), 8080)
+            {
+                SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
+                Protected = environment.Protected, Automatic = phase.Automatic, Requires = phase.Requires,
+            };
+            output.Add(new(id, declaration, null));
+        }
         foreach (var file in files)
         {
             if (file.Declaration is not { } legacy) { output.Add(file); continue; }
@@ -609,6 +633,23 @@ public sealed class ProjectEnvironmentService
         }
     }
 
+    /// <summary>Extends a live claim without changing its fencing token.</summary>
+    public bool RenewClaim(string project, string jobId, string leaseToken)
+    {
+        if (string.IsNullOrWhiteSpace(leaseToken)) return false;
+        lock (_gate)
+        {
+            var job = FindClaimedJob(project, jobId, leaseToken);
+            if (job is null) return false;
+            var state = Load(project);
+            var index = state.Jobs.FindIndex(item => item.Id == jobId && item.LeaseToken == leaseToken);
+            if (index < 0) return false;
+            state.Jobs[index] = state.Jobs[index] with { ClaimedAt = _clock.GetUtcNow().UtcDateTime };
+            Save(project, state);
+            return true;
+        }
+    }
+
     /// <summary>
     /// Accepts the host's result while its lease token is valid. The token
     /// changes on a reclaim and is cleared when the claim fails as
@@ -628,6 +669,7 @@ public sealed class ProjectEnvironmentService
                 return false;
             }
             var now = _clock.GetUtcNow().UtcDateTime;
+            if (job.ClaimedAt < now - LeaseDuration) return false;
             var expectedSteps = job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}").ToArray();
             var reportedSteps = report.Steps ?? [];
             if (reportedSteps.Count > expectedSteps.Length || reportedSteps.Where((step, index) =>

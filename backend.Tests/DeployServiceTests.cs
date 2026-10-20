@@ -758,6 +758,23 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void Schema_two_release_runs_without_legacy_json_declarations()
+    {
+        var (deploy, environments, _) = Build();
+        WriteSshProjectYml();
+        Directory.Delete(Path.Combine(_repo, "docs", "deployments", "environments"), true);
+        var commit = Commit("schema-two-only");
+
+        var release = CreateRelease(deploy, Artifact('a'), commit);
+        var job = environments.Claim("stage-host");
+
+        Assert.NotNull(release);
+        Assert.Equal("stage", job?.EnvironmentId);
+        Assert.Equal("container", Assert.Single(job!.SshSteps).Step);
+        Assert.Equal(["stage", "production"], environments.Declarations("demo")!.Select(item => item.Id));
+    }
+
+    [Fact]
     public async Task Routes_ServeTheSharedContract()
     {
         Build();

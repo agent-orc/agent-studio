@@ -17,8 +17,9 @@ lifecycleHistory:
 
 Projects define deployment environments, lifecycle, variables, and executable
 steps in `.agent-studio/project.yml` schema 2. The existing
-`docs/deployments/environments/<id>.json` declarations register deploy hosts
-and remain for legacy compatibility; release creation refuses divergence.
+`docs/deployments/environments/<id>.json` declarations remain for legacy
+compatibility; schema 2 supplies hosts when they are absent, and release
+creation refuses divergence where they exist.
 See the [schema 2 contract](../system/domains/pipeline.md#project-deployment-definition-p1)
 and [deploy host API contract](../system/contracts/deploy-host-api.md).
 For a container, `destination` is the local port behind the existing reverse

@@ -24,7 +24,8 @@ public static class DeployHostCommand
     }
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
-        HttpClient? transport = null)
+        HttpClient? transport = null, SshDeployExecutor? sshExecutor = null,
+        Func<string, CancellationToken, Task<bool>>? checkHealth = null, TimeProvider? clock = null)
     {
         if (args.Length < 4 || args.Length > 5)
         {
@@ -39,6 +40,13 @@ public static class DeployHostCommand
         claimed.EnsureSuccessStatusCode();
         var job = await claimed.Content.ReadFromJsonAsync<Job>(cancellationToken);
         if (job is null) return 0;
+        using var lease = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var leaseLost = false;
+        var renewal = RenewWhileRunning(client, job, clock ?? TimeProvider.System, () =>
+        {
+            leaseLost = true;
+            lease.Cancel();
+        }, lease.Token);
         var evidence = "deploy-step-failed";
         var healthy = false;
         var stepResults = new List<object>();
@@ -47,28 +55,42 @@ public static class DeployHostCommand
             var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
             if (job.SshSteps.Length > 0)
             {
-                var executor = new SshDeployExecutor();
+                var executor = sshExecutor ?? new SshDeployExecutor();
                 for (var index = 0; index < job.SshSteps.Length; index++)
                 {
                     var step = job.SshSteps[index];
                     var name = $"deploy[{index}]:{step.Step}";
                     try
                     {
-                        var variables = await ResolveVariables(job, client, cancellationToken);
+                        var variables = await ResolveVariables(job, client, lease.Token);
                         var bundlePath = step.Step == "static-site"
                             ? job.Artifacts.FirstOrDefault(item => item.Name == step.Artifact && item.Type == "static")?.Path
                                 ?? throw new InvalidDataException("Static artifact is missing from the release snapshot.")
                             : null;
                         await executor.ExecuteAsync(job.HostId, step, job.Artifact, args[3], variables,
-                            message => AppendLog(client, job, name, message, cancellationToken), cancellationToken,
+                            message => AppendLog(client, job, name, message, lease.Token), lease.Token,
                             bundlePath);
+                        if (step.HealthUrl is { } stepHealth)
+                        {
+                            using var limit = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
+                            using var timeout = (clock ?? TimeProvider.System).CreateTimer(_ => limit.Cancel(), null,
+                                TimeSpan.FromSeconds(step.HealthTimeoutSeconds ?? 60), Timeout.InfiniteTimeSpan);
+                            var passed = false;
+                            try { passed = await (checkHealth ?? CheckHealth)(stepHealth, limit.Token); }
+                            catch (OperationCanceledException) when (!lease.IsCancellationRequested) { passed = false; }
+                            if (!passed)
+                            {
+                                evidence = "health-http-failed";
+                                throw new InvalidOperationException("Step health check failed.");
+                            }
+                        }
                         stepResults.Add(new { name, succeeded = true });
                     }
                     catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException
                         or InvalidOperationException or HttpRequestException or System.ComponentModel.Win32Exception)
                     {
                         stepResults.Add(new { name, succeeded = false });
-                        await AppendLog(client, job, name, $"Step failed: {ex.GetType().Name}.", cancellationToken);
+                        await AppendLog(client, job, name, $"Step failed: {ex.GetType().Name}.", lease.Token);
                         throw;
                     }
                 }
@@ -79,24 +101,51 @@ public static class DeployHostCommand
                 await DeployStatic(job, args[3], cancellationToken);
             else throw new InvalidOperationException("Unknown template.");
             evidence = "health-http-failed";
-            var healthUrl = job.SshSteps.LastOrDefault()?.HealthUrl ?? job.HealthUrl;
-            var healthTimeout = job.SshSteps.LastOrDefault()?.HealthTimeoutSeconds;
-            using var healthLimit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            healthLimit.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(healthTimeout ?? 60, 1, 900)));
-            try { healthy = healthUrl is null || await CheckHealth(healthUrl, healthLimit.Token); }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { healthy = false; }
+            var healthUrl = job.SshSteps.Length > 0 ? null : job.HealthUrl;
+            using var healthLimit = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
+            using var legacyTimeout = (clock ?? TimeProvider.System).CreateTimer(_ => healthLimit.Cancel(), null,
+                TimeSpan.FromSeconds(60), Timeout.InfiniteTimeSpan);
+            try { healthy = healthUrl is null || await (checkHealth ?? CheckHealth)(healthUrl, healthLimit.Token); }
+            catch (OperationCanceledException) when (!lease.IsCancellationRequested) { healthy = false; }
             if (healthy) evidence = "health-ok";
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
-            or HttpRequestException or System.ComponentModel.Win32Exception)
+            or HttpRequestException or System.ComponentModel.Win32Exception or OperationCanceledException)
         {
             Console.Error.WriteLine($"Deploy job {job.Id} failed: {ex.GetType().Name}");
         }
+        lease.Cancel();
+        await renewal;
+        if (leaseLost) return 1;
         using var report = await client.PostAsJsonAsync(
             $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/report",
             new { job.LeaseToken, Healthy = healthy, Evidence = evidence, Steps = stepResults }, cancellationToken);
         report.EnsureSuccessStatusCode();
         return healthy ? 0 : 1;
+    }
+
+    private static async Task RenewWhileRunning(HttpClient client, Job job, TimeProvider clock,
+        Action onLost, CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), clock);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(15));
+                try
+                {
+                    using var response = await client.PostAsJsonAsync(
+                        $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/renew",
+                        new { job.LeaseToken }, timeout.Token);
+                    if (!response.IsSuccessStatusCode && !ct.IsCancellationRequested) { onLost(); return; }
+                }
+                catch (HttpRequestException) when (!ct.IsCancellationRequested) { onLost(); return; }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { onLost(); return; }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
     }
 
     private static async Task<Dictionary<string, string>> ResolveVariables(Job job, HttpClient client, CancellationToken ct)
@@ -237,8 +286,8 @@ public static class DeployHostCommand
 
     private static async Task<bool> CheckHealth(string url, CancellationToken ct)
     {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        for (var attempt = 0; attempt < 5; attempt++)
+        using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        while (!ct.IsCancellationRequested)
         {
             try
             {

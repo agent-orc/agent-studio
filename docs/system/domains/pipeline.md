@@ -2600,12 +2600,11 @@ in
   starts with `-`. `composeFile` also ends in `.yml` or `.yaml`. `target` and
   `service` are lower-case identifiers; credentials never appear in the file.
   When the pipeline-definition API reads, validates, or migrates a file, it
-  checks each `target` against the hosts that the project's AGT-3176
-  declarations under `docs/deployments/environments/` register for every
-  environment the step deploys to. The deploy queue addresses jobs to those
-  hosts. A target missing from them is reported as
-  `deploy-target-unregistered`. Preparation reads only the checkout and checks
-  just the target's shape. The AGT-3198 steps `publish-static`,
+  checks each `target` against the project's effective environment hosts for
+  every environment the step deploys to. Schema 2 steps supply those hosts
+  when no legacy JSON declaration exists. A target missing from an existing
+  registration is reported as `deploy-target-unregistered`. Preparation reads
+  only the checkout and checks just the target's shape. The AGT-3198 steps `publish-static`,
   `start-container` (configuration placeholder), `run`, `health`, and
   `approval` stay valid for the pipeline diagram, but a release with these
   step kinds is refused until they have an executor.
@@ -2640,8 +2639,9 @@ appended with the file's own line ending, Staging and Production deploy steps
 come from the AGT-3176 declarations under `docs/deployments/environments/`, and
 every default the proposal had to choose is listed as a note.
 The migration proposal is the one-time conversion of legacy declarations into
-schema 2. After migration, JSON declarations register deploy hosts and retain
-legacy compatibility; project.yml owns protection, lifecycle, variables and
+schema 2. After migration, existing JSON declarations are checked for
+divergence; a project may run from schema 2 without JSON. project.yml owns
+hosts, protection, lifecycle, variables and
 SSH steps. Release creation compares the committed JSON declaration's host,
 template, health URL, static directory and secret names with project.yml and
 refuses divergence. The effective schema 2 definition is stored in the release

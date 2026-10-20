@@ -43,9 +43,18 @@ public sealed class SshDeployExecutor
                         throw new InvalidDataException("Invalid static artifact path.");
                     var source = Path.Combine(bundle, relative);
                     if (!Directory.Exists(source)) throw new InvalidDataException("Static bundle is missing from release package.");
-                    await Remote(host, new { action = "prepare", path = staging }, limit.Token);
-                    await Command("scp", ["-r", .. SshOptions(), source + "/.", host + ":" + staging], null, limit.Token);
-                    await Remote(host, new { action = "switch", path = step.Directory, staging, version }, limit.Token);
+                    try
+                    {
+                        await Remote(host, new { action = "prepare", path = staging }, limit.Token);
+                        await Command("scp", ["-r", .. SshOptions(), source + "/.", host + ":" + staging], null, limit.Token);
+                        await Remote(host, new { action = "switch", path = step.Directory, staging, version }, limit.Token);
+                    }
+                    catch
+                    {
+                        using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                        await Remote(host, new { action = "cleanup", path = staging }, cleanup.Token);
+                        throw;
+                    }
                 }
                 finally
                 {
@@ -146,6 +155,8 @@ public sealed class SshDeployExecutor
         action = p['action']
         if action == 'prepare':
             os.makedirs(p['path'], exist_ok=True)
+        elif action == 'cleanup':
+            shutil.rmtree(p['path'], ignore_errors=True)
         elif action == 'switch':
             target = p['path']
             if os.path.exists(p['version']):

@@ -79,6 +79,29 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void Lease_renewal_keeps_claim_live_and_old_token_is_fenced_after_reclaim()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var first = service.Claim("stage-host")!;
+
+        _clock.Advance(TimeSpan.FromMinutes(4));
+        Assert.True(service.RenewClaim("demo", first.Id, first.LeaseToken!));
+        _clock.Advance(TimeSpan.FromMinutes(4));
+        Assert.NotNull(service.FindClaimedJob("demo", first.Id, first.LeaseToken!));
+        Assert.Null(service.Claim("stage-host"));
+
+        _clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.False(service.RenewClaim("demo", first.Id, first.LeaseToken!));
+        Assert.False(service.Report("demo", first.Id, new(first.LeaseToken!, true, "health-ok")));
+        var restarted = service.Claim("stage-host")!;
+        Assert.NotEqual(first.LeaseToken, restarted.LeaseToken);
+        Assert.False(service.RenewClaim("demo", first.Id, first.LeaseToken!));
+        Assert.True(service.RenewClaim("demo", restarted.Id, restarted.LeaseToken!));
+    }
+
+    [Fact]
     public void ReleaseRequiresExactGateBuiltArtifactForCommit()
     {
         var (service, repo, _) = Build();

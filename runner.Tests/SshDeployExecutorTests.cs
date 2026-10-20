@@ -84,19 +84,28 @@ public sealed class SshDeployExecutorTests
             var digest = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(archive))).ToLowerInvariant();
             File.Move(archive, Path.Combine(root, digest));
             var calls = new List<string>();
+            var copies = 0;
             var executor = new SshDeployExecutor((file, _, input, _) =>
             {
                 calls.Add(file + ":" + input);
-                return Task.FromResult(new ProcessResult(file == "scp" ? 1 : 0, "", ""));
+                return Task.FromResult(new ProcessResult(file == "scp" && ++copies == 1 ? 1 : 0, "", ""));
             });
             var step = Step("static-site") with { Directory = "/srv/www/site" };
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => executor.ExecuteAsync("web-vm", step,
                 "bundle@sha256:" + digest, root, new Dictionary<string, string>(),
                 _ => Task.CompletedTask, CancellationToken.None));
-            Assert.Equal(2, calls.Count);
+            Assert.Equal(3, calls.Count);
             Assert.StartsWith("ssh:", calls[0]);
             Assert.StartsWith("scp:", calls[1]);
+            Assert.StartsWith("ssh:", calls[2]);
+            Assert.Contains("cleanup", calls[2]);
+
+            await executor.ExecuteAsync("web-vm", step, "bundle@sha256:" + digest, root,
+                new Dictionary<string, string>(), _ => Task.CompletedTask, CancellationToken.None);
+            Assert.Equal(2, copies);
+            Assert.Equal(6, calls.Count);
+            Assert.Contains("switch", calls[^1]);
         }
         finally
         {
