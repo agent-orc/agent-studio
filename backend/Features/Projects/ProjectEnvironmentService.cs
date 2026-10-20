@@ -172,7 +172,7 @@ public sealed class ProjectEnvironmentService
         {
             var name = environment.Name;
             var kind = name == "staging" ? "stage" : name;
-            var file = files.FirstOrDefault(item => item.EnvironmentId == kind);
+            var file = files.FirstOrDefault(item => item.Declaration?.Kind == kind || item.EnvironmentId == kind);
             var phase = definition.StandardLifecycle.FirstOrDefault(item => item.Phase == name);
             var steps = definition.Deploy.Where(item => (item.Step is "static-site" or "container")
                 && (item.Environments.Count == 0 || item.Environments.Contains(name, StringComparer.Ordinal))).ToArray();
@@ -183,7 +183,8 @@ public sealed class ProjectEnvironmentService
             var first = steps[0];
             if (phase is null || first.Target is null || steps.Any(item => item.Target != first.Target))
                 throw new JsonException($"Schema 2 environment {name} needs one registered SSH target and lifecycle phase.");
-            var generated = new EnvironmentDeclaration(kind, name, kind, first.Target,
+            var generated = new EnvironmentDeclaration(file?.Declaration?.Id ?? kind,
+                file?.Declaration?.Name ?? name, kind, first.Target,
                 first.HealthUrl ?? first.Target, first.Step == "static-site" ? "static" : "container",
                 first.Step == "static-site" ? first.Directory! : "8080", first.HealthUrl,
                 "person", secrets, 8080)
