@@ -45,6 +45,7 @@ public class TaskStateMachine
             && task.References?.DependsOn.Count is > 0);
     private readonly TaskIntegrationStatusService? _integrationStatus;
     private readonly AgentStudio.Runner.AttemptAuthorityService? _attemptAuthority;
+    private readonly AgentStudio.Pipeline.TaskGateCancellationRegistry? _gateCancellation;
     private readonly bool _guardedDelivery;
 
     public TaskStateMachine(
@@ -57,7 +58,8 @@ public class TaskStateMachine
         AgentStudio.Pipeline.WorkspaceEvidenceQueue? evidenceQueue = null,
         TaskIntegrationStatusService? integrationStatus = null,
         IConfiguration? configuration = null,
-        AgentStudio.Runner.AttemptAuthorityService? attemptAuthority = null)
+        AgentStudio.Runner.AttemptAuthorityService? attemptAuthority = null,
+        AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null)
     {
         _scanner = scanner;
         _logger = logger;
@@ -71,6 +73,7 @@ public class TaskStateMachine
         _evidenceQueue = evidenceQueue;
         _integrationStatus = integrationStatus;
         _attemptAuthority = attemptAuthority;
+        _gateCancellation = gateCancellation;
         _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
 
@@ -286,6 +289,7 @@ public class TaskStateMachine
                     _scanner.PublishCoreFromFolder(recheck.FolderPath, recheck.WatchPath, recheck.ProjectName, targetState);
                     EnqueueEvidence(recheck.WatchPath, recheck.ProjectName, recheck.Id, recheck.State, targetState);
                     ClearReviewPriorityOnExit(recheck, targetState);
+                    ClearCompletionGateCancellation(recheck);
                 }
                 return new MoveJobOutcome(MoveJobStatus.Success, NewFolderPath: recheck.FolderPath);
             }
@@ -364,6 +368,7 @@ public class TaskStateMachine
             _scanner.PublishCoreFromFolder(targetDir, recheck.WatchPath, recheck.ProjectName, targetState);
             EnqueueEvidence(recheck.WatchPath, recheck.ProjectName, targetSlug, recheck.State, targetState);
             ClearReviewPriorityOnExit(recheck, targetState);
+            ClearCompletionGateCancellation(recheck);
             // Hand the post-move path back to the caller so chat-log writes
             // and follow-up files cannot land in the now-vanished source
             // folder via a stale FindJob result (see MoveJobOutcome docs).
@@ -374,6 +379,12 @@ public class TaskStateMachine
             _logger.LogError(ex, "Failed to move job {JobId} to {State}", jobId, targetState);
             return new MoveJobOutcome(MoveJobStatus.Failure, ex.Message);
         }
+    }
+
+    // A reopened card runs fresh gates; only the Completed stay cancels them.
+    private void ClearCompletionGateCancellation(TaskInfo card)
+    {
+        if (card.State == TaskStates.Completed) _gateCancellation?.Reopen(card.ProjectName, card.Id);
     }
 
     private void ClearReviewPriorityOnExit(TaskInfo card, string targetState)

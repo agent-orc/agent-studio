@@ -5,7 +5,7 @@ public sealed class TaskGateCancellationRegistry
 {
     private readonly object _sync = new();
     private readonly Dictionary<string, HashSet<CancellationTokenSource>> _active = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _cancelledBeforeRegistration = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _completed = new(StringComparer.OrdinalIgnoreCase);
 
     public IDisposable Register(string? project, string? jobId, CancellationTokenSource source)
     {
@@ -15,9 +15,9 @@ public sealed class TaskGateCancellationRegistry
         lock (_sync)
         {
             // Acceptance may finish before the remote gate reaches Register.
-            // Consume that cancellation for the next gate; a later review round
-            // for this card is allowed to register normally.
-            if (_cancelledBeforeRegistration.Remove(key)) source.Cancel();
+            // The completion tombstone cancels every gate that registers while
+            // the card stays Completed; a reopen clears it.
+            if (_completed.Contains(key)) source.Cancel();
             if (!_active.TryGetValue(key, out var sources))
                 _active[key] = sources = [];
             sources.Add(source);
@@ -33,13 +33,31 @@ public sealed class TaskGateCancellationRegistry
         });
     }
 
-    public void Cancel(string? project, string? jobId)
+    /// <summary>Cancels the gates registered now; later registrations run normally.</summary>
+    public void Cancel(string? project, string? jobId) => Cancel(project, jobId, completed: false);
+
+    /// <summary>Cancels registered gates and every gate that registers until <see cref="Reopen"/>.</summary>
+    public void CancelOnCompletion(string? project, string? jobId) => Cancel(project, jobId, completed: true);
+
+    /// <summary>Clears the completion tombstone once the card leaves Completed.</summary>
+    public void Reopen(string? project, string? jobId)
+    {
+        if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(jobId)) return;
+        lock (_sync) _completed.Remove(Key(project, jobId));
+    }
+
+    internal bool HasCompletionTombstone(string project, string jobId)
+    {
+        lock (_sync) return _completed.Contains(Key(project, jobId));
+    }
+
+    private void Cancel(string? project, string? jobId, bool completed)
     {
         if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(jobId)) return;
         lock (_sync)
         {
             var key = Key(project, jobId);
-            _cancelledBeforeRegistration.Add(key);
+            if (completed) _completed.Add(key);
             if (!_active.TryGetValue(key, out var sources)) return;
             foreach (var source in sources) source.Cancel();
         }

@@ -110,6 +110,48 @@ public sealed partial class MergeIntoDevelopRunnerTests
             item => item.Kind == "gate-result-superseded");
     }
 
+    [Fact]
+    public async Task Registry_cancelled_gate_is_a_stale_attempt_not_an_interruption()
+    {
+        const string jobId = "registry-cancelled-gate";
+        var fixture = SeedLateGateFixture("registry-cancelled-gate", jobId, publishDelivery: false);
+        var before = RunGit(fixture.Repo, "rev-parse develop").Out.Trim();
+        var registry = new TaskGateCancellationRegistry();
+        var transport = new RegistryCancellingTransport(registry, "Fixture", jobId);
+        var queue = new IntegrationPushQueue();
+        var runner = new MergeIntoDevelopRunner(fixture.Git, fixture.Log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            pushQueue: queue, projectSettings: fixture.Settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(new RemoteBuildTestGateRunner(
+                transport, NullLogger<RemoteBuildTestGateRunner>.Instance, registry)),
+            taskScanner: fixture.Scanner, timeline: fixture.Timeline, timeProvider: fixture.Clock);
+
+        var result = await runner.RunAsync("Fixture", jobId, fixture.Folder, fixture.WatchPath, "develop",
+            CancellationToken.None);
+
+        Assert.Equal(1, transport.Calls);
+        Assert.Equal(AcceptedIntegrationFailureCodes.StaleAttempt, result.FailureCode);
+        Assert.False(queue.Reader.TryRead(out _));
+        Assert.Equal(before, Lane(fixture.Repo, "develop"));
+        Assert.Equal("superseded", Assert.Single(fixture.Timeline.ReadAll(fixture.Folder),
+            item => item.Kind == "gate-cancelled").Details!["reason"]);
+    }
+
+    private sealed class RegistryCancellingTransport(
+        TaskGateCancellationRegistry registry, string project, string jobId) : IRemoteGateTransport
+    {
+        public int Calls { get; private set; }
+
+        public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
+            IReadOnlyList<string>? changedFiles, BuildProfile? profile,
+            PostStepMode mode, TimeSpan timeout, CancellationToken ct)
+        {
+            Calls++;
+            // The delivery chain reconciler found the delivery integrated.
+            registry.Cancel(project, jobId);
+            return Task.FromCanceled<BuildTestGateResult>(ct);
+        }
+    }
+
     private sealed record LateGateFixture(string Repo, string WatchPath, string Folder,
         TaskScannerService Scanner, GitService Git, PipelineExecutionLog Log, TimelineLog Timeline,
         ProjectSettingsService Settings, FakeTimeProvider Clock);

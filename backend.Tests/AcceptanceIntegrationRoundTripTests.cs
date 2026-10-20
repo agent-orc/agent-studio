@@ -2645,6 +2645,57 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal("Fail", receipt.Details!["verdict"]);
     }
 
+    [Fact]
+    public async Task Reconciler_pass_cancels_a_running_gate_of_an_integrated_card_without_a_tombstone()
+    {
+        var deliverySha = PublishDelivery("reconciler-gate.txt", "integrated delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var deps = Build(deliverySha, guarded: true);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(IntegrationStatuses.Integrated, deps.Integration.BuildLookup([card])[card.TaskKey].Status);
+        var registry = new TaskGateCancellationRegistry();
+        var reconciler = new DeliveryChainReconciler(deps.Scanner, deps.Integration, deps.Transitions,
+            deps.Configuration, NullLogger<DeliveryChainReconciler>.Instance, gateCancellation: registry);
+
+        using var runningGate = new CancellationTokenSource();
+        using (registry.Register(card.ProjectName, Slug, runningGate))
+        {
+            await reconciler.RunOnceAsync().WaitAsync(AsyncTestDeadline);
+            Assert.True(runningGate.IsCancellationRequested);
+        }
+
+        Assert.False(registry.HasCompletionTombstone(card.ProjectName, Slug));
+        using var fixRoundGate = new CancellationTokenSource();
+        using (registry.Register(card.ProjectName, Slug, fixRoundGate))
+            Assert.False(fixRoundGate.IsCancellationRequested);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Worker_keeps_a_completed_card_after_a_gate_failure_only_with_guarded_delivery(bool guarded)
+    {
+        var deliverySha = PublishDelivery("unguarded-gate.txt", "unpublished delivery\n");
+        var gate = new CountingBuildTestGateRunner(BuildTestGateVerdict.Fail, "2 tests failed");
+        var deps = Build(deliverySha, backgroundIntegration: true, gateRunner: gate, guarded: guarded);
+        Assert.Equal(MoveJobStatus.Success, deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath).Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var worker = new AcceptedIntegrationWorker(deps.AcceptedQueue!, VerifyingRunner(deps, gate),
+            deps.Scanner, deps.Mutations, deps.Provenance,
+            NullLogger<AcceptedIntegrationWorker>.Instance, deps.Transitions, deps.Timeline,
+            new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration),
+            timeProvider: new FakeTimeProvider(new DateTimeOffset(VerificationFixtureAtUtc)),
+            configuration: deps.Configuration);
+
+        var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project, Slug, completed.FolderPath, _watchPath, "develop", IntegrationStrategies.DirectMerge))
+            .WaitAsync(AsyncTestDeadline);
+
+        Assert.False(result.Outcome.IsSuccessfulIntegration(), result.Error);
+        Assert.Equal(guarded ? TaskStates.Completed : TaskStates.HumanReview,
+            deps.Scanner.FindJob(Slug, _watchPath)!.State);
+    }
+
     /// <summary>
     /// AGT-3002 - replay of the 2026-09-28 incident. An operator script pushed
     /// develop carrying a delivery whose only gate had failed, and the lane

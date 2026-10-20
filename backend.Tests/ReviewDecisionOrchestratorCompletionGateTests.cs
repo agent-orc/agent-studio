@@ -584,7 +584,8 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
         configure?.Invoke(config);
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
-        var stateMachine = new TaskStateMachine(scanner, stateLogger ?? NullLogger<TaskStateMachine>.Instance);
+        var stateMachine = new TaskStateMachine(scanner, stateLogger ?? NullLogger<TaskStateMachine>.Instance,
+            gateCancellation: gateCancellation);
         var chatLog = new OrchestratorChatLog(NullLogger<OrchestratorChatLog>.Instance);
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         var aspectRunner = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance);
