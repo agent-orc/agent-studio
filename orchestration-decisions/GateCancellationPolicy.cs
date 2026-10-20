@@ -26,6 +26,9 @@ public static class GateCancellationPolicy
             || !string.Equals(expectedLane, currentLane, StringComparison.OrdinalIgnoreCase)
             || continuePending)
             return GateCancellationReasons.Superseded;
+        // The card was completed or its delivery integrated while the gate ran.
+        if (reportedReason == GateCancellationReasons.Superseded)
+            return GateCancellationReasons.Superseded;
         if (reportedReason == GateCancellationReasons.Operator)
             return GateCancellationReasons.Operator;
         return shuttingDown || reportedReason == GateCancellationReasons.Shutdown

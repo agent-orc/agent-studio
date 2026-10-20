@@ -174,6 +174,35 @@ public sealed class RemoteBuildTestGateRunnerTests
     }
 
     [Theory]
+    [InlineData(false, GateCancellationReasons.Superseded)]
+    [InlineData(true, GateCancellationReasons.Shutdown)]
+    public async Task Registry_cancellation_is_superseded_unless_the_host_stops(
+        bool cancelHostToken, string expectedReason)
+    {
+        using var host = new CancellationTokenSource();
+        var registry = new TaskGateCancellationRegistry();
+        var request = Request() with { Project = "Fixture", JobId = "accepted" };
+        var transport = new RecordingTransport
+        {
+            Exception = new OperationCanceledException(),
+            OnRun = _ =>
+            {
+                if (cancelHostToken) host.Cancel();
+                registry.CancelForCompletion("Fixture", "accepted");
+            },
+        };
+
+        var result = await new RemoteBuildTestGateRunner(transport,
+            NullLogger<RemoteBuildTestGateRunner>.Instance, registry).RunAsync(request, [], null,
+            PostStepMode.Fail, TimeSpan.FromMinutes(1), host.Token);
+
+        Assert.Equal(BuildTestGateFailureKind.Cancellation, result.FailureKind);
+        Assert.Equal(expectedReason, result.CancellationReason);
+        Assert.Equal(expectedReason, GateCancellationPolicy.Decide(Sha, Sha,
+            TaskStates.AutoReview, TaskStates.AutoReview, false, cancelHostToken, result.CancellationReason));
+    }
+
+    [Theory]
     [InlineData(true, GateCancellationReasons.Shutdown)]
     [InlineData(false, GateCancellationReasons.Operator)]
     public async Task Returned_worker_cancellation_preserves_its_actual_source(

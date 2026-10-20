@@ -78,13 +78,18 @@ captured SHA, attempt chain and Auto Review lane with the live card, including
 any pending continuation. A superseded result keeps its gate log and a
 `gate-result-superseded` timeline receipt with the original verdict; it does
 not rewrite the newer attempt's pipeline step or move the card (AGT-3151).
-Acceptance cancels gates still running or waiting in the remote machine queue.
-The delivery-chain sweep also cancels them when it finds the delivery on the
-integration branch. A late merge-gate result for a card completed since that
-gate started, or a delivery published while it waited, records
-`gate-result-superseded` on the live card and cannot apply its failure step or
-move the card. The acceptance worker leaves a completed card in place when an
-older gate failure arrives.
+Acceptance cancels gates still running or waiting in the remote machine queue,
+and a gate that registers while the card stays Completed is cancelled at once.
+Any move out of Completed ends that fence, so a reopened card runs its gates.
+The delivery-chain sweep cancels only gates running when it finds the delivery
+on the integration branch; a later attempt registers normally. Such a
+cancellation is reported as `superseded`: it schedules no infrastructure retry
+and never counts as an interrupted merge gate. A late merge-gate result for a
+card completed since that gate started, or a delivery published while it
+waited, records `gate-result-superseded` on the live card and cannot apply its
+failure step or move the card. With guarded delivery, the acceptance worker
+leaves a completed card in place when an older gate failure arrives; without
+it, only a published delivery keeps the card Completed.
 Local aspect review also checks the captured subject after its asynchronous
 verdict and grade work. A superseded review records `review-result-superseded`
 with the original aspect statuses and leaves the newer round alone.

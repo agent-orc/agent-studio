@@ -31,10 +31,11 @@ public sealed partial class MergeIntoDevelopRunner
             {
                 if (entry is not null)
                     task = _taskScanner!.ScanJobFolder(task.FolderPath, entry, task.State) ?? task;
-                using var document = System.Text.Json.JsonDocument.Parse(
-                    File.ReadAllText(Path.Combine(task.FolderPath, "task.json")));
-                if (document.RootElement.TryGetProperty("state", out var state))
-                    physicalLane = state.GetString();
+                // A concurrent write can leave task.json unreadable for a
+                // moment; the scanned state then decides the lane.
+                if (AgentStudio.Tasks.TaskJsonFile.TryReadStringField(
+                        task.FolderPath, "state", _logger, out var flatState))
+                    physicalLane = flatState;
                 physicalFolder = task.FolderPath;
             }
         }

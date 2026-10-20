@@ -71,6 +71,36 @@ public sealed partial class MergeIntoDevelopRunnerTests
     }
 
     [Fact]
+    public async Task Superseded_gate_cancellation_is_a_stale_attempt_not_an_interruption()
+    {
+        // The registry cancels a gate when its card completes. That result
+        // is superseded and never counts as an interrupted gate.
+        const string jobId = "superseded-cancel";
+        var fixture = SeedLateGateFixture("superseded-cancel", jobId, publishDelivery: false);
+        var before = RunGit(fixture.Repo, "rev-parse develop").Out.Trim();
+        var gate = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Fail, null, 10, "Remote verification was cancelled.", "", false, false)
+        {
+            FailureKind = BuildTestGateFailureKind.Cancellation,
+            CancellationReason = GateCancellationReasons.Superseded,
+        });
+        var queue = new IntegrationPushQueue();
+        var runner = new MergeIntoDevelopRunner(fixture.Git, fixture.Log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            pushQueue: queue, projectSettings: fixture.Settings, preDevelopBuildGate: new PreDevelopBuildGate(gate),
+            taskScanner: fixture.Scanner, timeline: fixture.Timeline, timeProvider: fixture.Clock);
+
+        var result = await runner.RunAsync("Fixture", jobId, fixture.Folder, fixture.WatchPath, "develop",
+            CancellationToken.None);
+
+        Assert.Equal(1, gate.Invocations);
+        Assert.Equal(AcceptedIntegrationFailureCodes.StaleAttempt, result.FailureCode);
+        Assert.False(queue.Reader.TryRead(out _));
+        Assert.Equal(before, Lane(fixture.Repo, "develop"));
+        Assert.Equal(GateCancellationReasons.Superseded, Assert.Single(fixture.Timeline.ReadAll(fixture.Folder),
+            item => item.Kind == "gate-cancelled").Details!["reason"]);
+    }
+
+    [Fact]
     public async Task Delivery_contained_before_the_attempt_is_not_a_stale_gate_result()
     {
         // AGT-3194: containment that this attempt started from is its premise.

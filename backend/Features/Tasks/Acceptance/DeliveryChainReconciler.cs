@@ -66,6 +66,8 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
         foreach (var (card, status, unbounded) in candidates)
         {
             ct.ThrowIfCancellationRequested();
+            // Stops only gates running now. A later attempt of this card, such
+            // as a fix round or a reopen, registers its gate normally.
             if (status?.Status == IntegrationStatuses.Integrated)
                 _gateCancellation?.Cancel(card.ProjectName, card.Id);
             var facts = unbounded with { CompletedReopenLimitReached = completedAlarm };

@@ -2610,6 +2610,26 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(localDevelop, Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim());
     }
 
+    [Fact]
+    public async Task Reconciler_pass_cancels_running_gates_without_leaving_a_tombstone()
+    {
+        var deliverySha = PublishDelivery("reconciler-gate.txt", "integrated before the pass\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var deps = Build(deliverySha, guarded: true);
+        var registry = new TaskGateCancellationRegistry();
+        var reconciler = new DeliveryChainReconciler(deps.Scanner, deps.Integration, deps.Transitions,
+            deps.Configuration, NullLogger<DeliveryChainReconciler>.Instance, gateCancellation: registry);
+
+        using var runningGate = new CancellationTokenSource();
+        using (registry.Register(Project, Slug, runningGate))
+            await reconciler.RunOnceAsync().WaitAsync(AsyncTestDeadline);
+
+        Assert.True(runningGate.IsCancellationRequested);
+        using var laterAttempt = new CancellationTokenSource();
+        using (registry.Register(Project, Slug, laterAttempt))
+            Assert.False(laterAttempt.IsCancellationRequested);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

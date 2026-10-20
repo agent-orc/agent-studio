@@ -62,6 +62,10 @@ public sealed class RemoteBuildTestGateRunner(
                 "Remote verification requires a positive run budget of at most 12 hours.");
         using var gateCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
         using var registration = cancellationRegistry?.Register(request.Project, request.JobId, gateCancellation);
+        // The caller's token decides shutdown. The linked source adds the
+        // registry's cancellation, which means the card was completed or its
+        // delivery integrated: the gate result is superseded.
+        var shutdown = ct;
         ct = gateCancellation.Token;
         var started = Stopwatch.StartNew();
         for (var attempt = 1; attempt <= MaxTransportAttempts; attempt++)
@@ -93,8 +97,10 @@ public sealed class RemoteBuildTestGateRunner(
                     "Remote verification was cancelled.") with
                     {
                         DurationMs = started.ElapsedMilliseconds,
-                        CancellationReason = ct.IsCancellationRequested
-                            ? GateCancellationReasons.Shutdown : GateCancellationReasons.Operator,
+                        CancellationReason = shutdown.IsCancellationRequested
+                            ? GateCancellationReasons.Shutdown
+                            : ct.IsCancellationRequested
+                                ? GateCancellationReasons.Superseded : GateCancellationReasons.Operator,
                     };
             }
             catch (Exception exception) when (exception is IOException or TimeoutException or System.Net.Sockets.SocketException)

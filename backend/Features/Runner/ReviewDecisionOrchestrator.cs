@@ -4510,11 +4510,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (indexed is null || !File.Exists(Path.Combine(indexed.FolderPath, "task.json")))
             return indexed;
         var live = _scanner.ScanJobFolder(indexed.FolderPath, entry, indexed.State) ?? indexed;
-        using var document = System.Text.Json.JsonDocument.Parse(
-            File.ReadAllText(Path.Combine(indexed.FolderPath, "task.json")));
-        return document.RootElement.TryGetProperty("state", out var flatState)
-            && flatState.GetString() is { } stateValue
-            ? live with { State = stateValue }
+        // A concurrent write can leave task.json unreadable for a moment;
+        // the scanned state then decides the lane.
+        return TaskJsonFile.TryReadStringField(indexed.FolderPath, "state", _logger, out var flatState)
+            && flatState is not null
+            ? live with { State = flatState }
             : live;
     }
 
