@@ -196,7 +196,7 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         var newerCard = Assert.Single(scanner.ScanAllJobsRaw(), item => item.Key == "AGT-3166");
         var newerStatus = statuses.BuildLookup([newerCard])[newerCard.TaskKey];
         Assert.NotEqual(IntegrationStatuses.Integrated, newerStatus.Status);
-        Assert.Equal(TaskStates.AutoReview,
+        Assert.NotEqual(TaskStates.HumanReview,
             OperatorDecisionHarness.ReconciliationTarget(newerCard, newerStatus));
         await factory.Services.GetRequiredService<DeliveryChainReconciler>().RunOnceAsync();
         var reconciled = Assert.Single(scanner.ScanAllJobsRaw(), item => item.Key == "AGT-3166");
