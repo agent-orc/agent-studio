@@ -33,6 +33,8 @@ public sealed record DeploymentRecord
     public DateTime? StartedAtUtc { get; init; }
     public DateTime? FinishedAtUtc { get; init; }
     public List<DeploymentStepRecord> Steps { get; init; } = [];
+    public IReadOnlyList<string> SshStepNames { get; init; } = [];
+    public IReadOnlyList<DeployStepResult> StepResults { get; init; } = [];
 }
 
 public sealed record DeploymentStepRecord(string Name, string State, DateTime? StartedAtUtc, DateTime? FinishedAtUtc);
@@ -92,7 +94,16 @@ public static class DeploymentStepPlan
             _ => DeploymentStepStates.Pending,
         };
         var finished = DeploymentStates.IsFinished(run.State) && run.StartedAtUtc is not null;
-        steps.Add(new(run.DeployStep, deployState, run.StartedAtUtc, finished ? run.FinishedAtUtc : null));
+        if (run.SshStepNames.Count == 0)
+            steps.Add(new(run.DeployStep, deployState, run.StartedAtUtc, finished ? run.FinishedAtUtc : null));
+        else
+            foreach (var name in run.SshStepNames)
+            {
+                var result = run.StepResults.FirstOrDefault(item => item.Name == name);
+                var state = result is not null ? result.Succeeded ? DeploymentStates.Succeeded : DeploymentStates.Failed
+                    : finished ? DeploymentStepStates.Skipped : DeploymentStepStates.Pending;
+                steps.Add(new(name, state, run.StartedAtUtc, result is null ? null : run.FinishedAtUtc));
+            }
 
         var healthState = run.State switch
         {

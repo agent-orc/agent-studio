@@ -2587,14 +2587,14 @@ in
   and the standard lifecycle.
 - `lifecycles.standard`: Staging is automatic after integration; Production
   requires successful Staging and approval by Owner or Maintainer.
-- `deploy` steps in P1 (AGT-3221) are configuration only. Nothing executes
-  them yet; the SSH executor follows in a later card. `static-site` describes
+- `deploy` steps in P1 (AGT-3221) run from the release's committed schema 2
+  snapshot. `static-site` describes
   copying a static artifact to a `directory` on an SSH `target`. `container`
   describes pulling and restarting the compose `service` of a `composeFile` on
   an SSH `target`. Both need `healthUrl` (http or https, no credentials) and
   `healthTimeoutSeconds` (1 to 900), and may narrow `environments`. Because
   the executor will pass `directory` and `composeFile` through the remote shell
-  and use the directory as an `rsync --delete` target, both must lie strictly
+  and use the directory as an `scp` target, both must lie strictly
   below `/srv/`. They follow the artifact path segment rule: only letters,
   digits, `.`, `_`, and `-`, and no segment that is empty, `.`, or `..`, or
   starts with `-`. `composeFile` also ends in `.yml` or `.yaml`. `target` and
@@ -2607,7 +2607,8 @@ in
   `deploy-target-unregistered`. Preparation reads only the checkout and checks
   just the target's shape. The AGT-3198 steps `publish-static`,
   `start-container` (configuration placeholder), `run`, `health`, and
-  `approval` stay valid.
+  `approval` stay valid for the pipeline diagram, but a release with these
+  step kinds is refused until they have an executor.
 - `variables` hold either a plain `value` or a `secret` name for the secret
   provider, optionally scoped to `environments`. A plain value is refused as
   `secret-value-inline` in two cases. The first is a sensitive name: its last
@@ -2638,6 +2639,27 @@ text stays as it is apart from the `schemaVersion` line, the new sections are
 appended with the file's own line ending, Staging and Production deploy steps
 come from the AGT-3176 declarations under `docs/deployments/environments/`, and
 every default the proposal had to choose is listed as a note.
+The migration proposal is the one-time conversion of legacy declarations into
+schema 2. After migration, project.yml owns protection, lifecycle, variables,
+SSH steps, and effective environments. A schema 2 project can release without
+JSON declarations: its deploy targets become the environment host IDs. Existing
+JSON declarations retain display addresses, health checks, and legacy proxy
+ports. Release creation compares each committed JSON declaration's host,
+template, health URL, static directory and secret names with project.yml and
+refuses divergence. The effective schema 2 definition is stored in the release
+snapshot and copied to each host job. The host checks SSH host keys strictly,
+copies static bundles to a version directory before switching `current`, or
+pins one compose service to the release artifact digest before pulling and
+starting it. It resolves secret names under the claimed job lease, sends step
+log messages to the deployment log, renews its fenced claim while running, and
+checks each step's health URL before starting the next step. A failed or
+interrupted static copy removes remote staging. A failed deployment records
+the failing step and queues the previous healthy artifact for rollback.
+The deploy host needs OpenSSH and access to the artifact store; its SSH target
+needs Python 3, and container targets also need Docker Compose. The
+[deploy host API contract](../contracts/deploy-host-api.md) defines claim and
+renewal, lease-bound step log and report payloads, failure responses, and secret
+resolution request.
 `POST .../migration` writes only through `ManagedRepositoryMutationService` as
 one path-scoped commit. The current file digest and the regenerated proposal
 digest must both still equal the dry run. That comparison is the mutation's

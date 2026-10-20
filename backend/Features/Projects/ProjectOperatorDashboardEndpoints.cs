@@ -82,6 +82,16 @@ public static class ProjectOperatorDashboardEndpoints
             return Results.Ok();
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
+        app.MapPost("/api/deploy/jobs/{project}/{jobId}/renew", (string project, string jobId,
+            DeployLeaseRenewRequest request, ProjectEnvironmentService environments) =>
+            environments.Renew(project, jobId, request.LeaseToken) ? Results.Ok() : Results.Conflict())
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
+        app.MapPost("/api/deploy/jobs/{project}/{jobId}/log", (string project, string jobId,
+            DeployStepLogRequest request, DeployService deploy) =>
+            deploy.AppendHostStepLog(project, jobId, request) ? Results.Ok() : Results.Conflict())
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
         app.MapGet("/api/projects/{projectName}/throughput", (
             string projectName,
             ProjectThroughputService throughput) =>
