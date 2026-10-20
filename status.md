@@ -1,5 +1,11 @@
 # AGT-3238 networked first-run and repository authority status
 
+## Final integration, 20 October 2026
+
+- Result implementation SHA: `ec9108be70f1f047f6ccfecf142928848627f39a`. The earlier delivery `9020f7a50` and fix commits remain ancestors. Merge `e7d26a4249cda856cac7891b03adcca4ac3bb83a` brought in `origin/develop` at `0c0a1a8e47b639792a4752c13aca06911972a259`; the final fetch and merge were already up to date. Both `git merge-base --is-ancestor origin/develop HEAD` and the same check for `9020f7a50` passed.
+- The networked Playwright run exposed a transient two-second fixture health timeout while the real monolith was starting. Commit `ec9108be7` polls the prebuilt backend for up to 30 seconds. The retry passed and saved `first-run-networked-monolith.png` in the task results directory.
+- Verification on the merged tree: `dotnet build agent-taskboard.sln --no-restore -m:2 -nodeReuse:false -p:UseSharedCompilation=false` passed. The `FirstRunOwnerAccessTests|ProjectRepositoryAuditTests|ProjectRegistryTests|RemoteProjectRepositoryResolverTests` class filter passed 63 tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests and matched no tests in the other seven .NET test projects. The focused first-run checklist Angular spec passed 19 tests. `npm --prefix frontend run lint` passed after the fixture change. `PW_E2E_PROFILE=networked-monolith npm --prefix frontend run e2e -- e2e/settings/first-run-networked-monolith.spec.ts` passed one Chromium test after the health retry fix. No further product documentation change was needed for that fixture correction.
+
 ## Deep-review follow-up, 20 October 2026
 
 - Result implementation SHA: `f192aa312883a5cd72a6ad86b800b8ce8d0875a1`. This descends from the earlier delivery `9020f7a50` and the `ce7fab0ff` merge of `origin/develop` at `32b06e2f6d9890e659e5ef71e0e93c3eab074864`. A final fetch and `git merge origin/develop` reported already up to date; `git merge-base --is-ancestor origin/develop HEAD` passed.
