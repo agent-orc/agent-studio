@@ -118,22 +118,49 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
-    public void Corrupt_runbook_store_does_not_fail_host_claim_or_report_and_later_reconciles()
+    public async Task Corrupt_runbook_store_does_not_fail_host_claim_or_report_and_later_reconciles()
     {
         var (_, environments, store) = Build();
         WriteProjectYml("runbooks:\n  - name: backup\n    steps: [backup]\n");
         Commit("runbook-definition");
         var runbooks = Runbooks(environments, store);
         var requested = runbooks.Request("demo", "stage", "backup", Operator).Value!;
+        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.UseSetting("TaskRepository", Path.Combine(_root, "workspace"));
+            builder.UseSetting("WatchPaths:0:Name", "demo");
+            builder.UseSetting("WatchPaths:0:Path", _watch);
+            builder.UseSetting("WatchPaths:0:RootPath", _repo);
+            builder.UseSetting("WatchPaths:0:RepositoryPath", _repo);
+            builder.UseSetting("ReviewDecisionOrchestrator:Enabled", "false");
+            builder.UseSetting("Logging:BackendFile:LogDirectory", Path.Combine(_root, "logs"));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(_clock);
+            });
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var password = $"test-{Guid.NewGuid():N}!";
+        using var bootstrap = await client.PostAsJsonAsync("/api/auth/bootstrap", new
+        {
+            username = "local.owner", password, displayName = "Local Owner",
+        });
+        bootstrap.EnsureSuccessStatusCode();
+        var auth = await bootstrap.Content.ReadFromJsonAsync<AuthStatusResponse>();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", auth!.CsrfToken);
         var file = Path.Combine(_root, "workspace", "deployments", "projects", "demo", "runbooks.json");
         File.WriteAllText(file, "{invalid-json");
 
-        var claimed = environments.Claim("stage-host")!;
-        runbooks.SyncAfterHostCall("demo");
+        using var claim = await client.PostAsJsonAsync("/api/deploy/jobs/claim", new DeployClaimRequest("stage-host"));
+        Assert.Equal(HttpStatusCode.OK, claim.StatusCode);
+        var claimed = (await claim.Content.ReadFromJsonAsync<DeployJob>())!;
         Assert.Equal(requested.Id, claimed.RunbookRunId);
-        Assert.True(environments.Report("demo", claimed.Id, new(claimed.LeaseToken!, true, "health-ok",
-            [new(0, true)])));
-        runbooks.SyncAfterHostCall("demo");
+        using var report = await client.PostAsJsonAsync($"/api/deploy/jobs/demo/{claimed.Id}/report",
+            new DeployReportRequest(claimed.LeaseToken!, true, "health-ok", [new(0, true)]));
+        Assert.Equal(HttpStatusCode.OK, report.StatusCode);
         Assert.Equal("healthy", environments.Read("demo")!.Jobs.Single().Status);
 
         File.Delete(file);

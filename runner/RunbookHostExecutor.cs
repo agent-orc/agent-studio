@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace AgentRunner;
 
@@ -12,6 +13,7 @@ public sealed record RunbookHostResult(bool Success, IReadOnlyList<RunbookHostSt
 /// </summary>
 public static class RunbookHostExecutor
 {
+    private const int SigKill = 9;
     private static readonly TimeSpan StepTimeout = TimeSpan.FromMinutes(9);
     private static readonly TimeSpan RunTimeout = TimeSpan.FromMinutes(10);
 
@@ -71,13 +73,15 @@ public static class RunbookHostExecutor
             }
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
             timeout.CancelAfter(StepTimeout);
-            var start = new ProcessStartInfo("sh")
+            // A separate session lets cancellation signal descendants even if the shell exits first.
+            var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "sh" : "setsid")
             {
                 CreateNoWindow = true,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
+            if (!OperatingSystem.IsWindows()) start.ArgumentList.Add("sh");
             start.ArgumentList.Add(script);
             foreach (var (name, value) in values) start.Environment[name] = value;
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Runbook step could not start.");
@@ -91,7 +95,14 @@ public static class RunbookHostExecutor
             }
             catch (OperationCanceledException)
             {
-                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                if (OperatingSystem.IsWindows())
+                {
+                    if (!process.HasExited) process.Kill(entireProcessTree: true);
+                }
+                else if (SendSignal(-process.Id, SigKill) != 0 && !process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
                 await process.WaitForExitAsync(CancellationToken.None);
                 await Task.WhenAll(output, error);
                 cancellationToken.ThrowIfCancellationRequested();
@@ -114,4 +125,7 @@ public static class RunbookHostExecutor
     private static bool SecretIdentifier(string value)
         => value.Length is > 0 and <= 64 && char.IsAsciiLetter(value[0])
            && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-');
+
+    [DllImport("libc", EntryPoint = "kill")]
+    private static extern int SendSignal(int processId, int signal);
 }

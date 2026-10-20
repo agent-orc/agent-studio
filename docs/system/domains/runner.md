@@ -2162,8 +2162,10 @@ The target host keeps operator-owned scripts at
 environment variables. Scripts must exit zero to advance; failure stops the
 remaining steps. The host drains output locally and reports only step success
 or failure, so logs do not expose secret values. A step times out after nine
-minutes, and the whole run after ten. Install scripts on the assigned deploy
-host before invoking the runbook.
+minutes, and the whole run after ten. On Linux, `setsid` gives each script its
+own process group; timeout or host cancellation kills that group and waits for
+its output streams to close. Install scripts on the assigned deploy host before
+invoking the runbook.
 
 ## Verification
 
