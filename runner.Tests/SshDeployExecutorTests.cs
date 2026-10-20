@@ -51,6 +51,23 @@ public sealed class SshDeployExecutorTests
     }
 
     [Fact]
+    public async Task Changed_host_registration_cannot_execute_a_snapshotted_target()
+    {
+        var calls = 0;
+        var executor = new SshDeployExecutor((_, _, _, _) =>
+        {
+            calls++;
+            return Task.FromResult(new ProcessResult(0, "", ""));
+        });
+        var step = Step("container") with { ComposeFile = "/srv/apps/web/compose.yml", Service = "web" };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => executor.ExecuteAsync("new-host", step,
+            "image@sha256:" + new string('a', 64), "/unused", new Dictionary<string, string>(),
+            _ => Task.CompletedTask, CancellationToken.None));
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
     public async Task Static_bundle_uses_scp_then_switches_only_after_copy_succeeds()
     {
         var root = Path.Combine(Path.GetTempPath(), "ssh-deploy-test-" + Guid.NewGuid().ToString("N"));

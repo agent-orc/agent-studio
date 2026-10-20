@@ -719,10 +719,10 @@ public sealed class ProjectEnvironmentService
 
     /// <summary>
     /// BD-1: the release snapshot decides what is deployed (template,
-    /// destination, health check, secrets); the current declaration decides
-    /// where. After an environment moves to another host, a rollback or a late
-    /// approval of an older release goes to the new host instead of waiting
-    /// for a retired host that never claims.
+    /// destination, health check, secrets, SSH targets); the current declaration
+    /// decides which host claims the job. After a host move, an older schema 2
+    /// release retains its target so the executor refuses to run it on the new
+    /// host. Legacy jobs have no SSH target and can use the new host.
     /// </summary>
     private static EnvironmentDeclaration RouteToCurrentHost(EnvironmentDeclaration snapshot,
         IReadOnlyList<EnvironmentDeclaration> current)
@@ -730,7 +730,6 @@ public sealed class ProjectEnvironmentService
             ? snapshot with
             {
                 TargetHostId = declared.TargetHostId,
-                SshSteps = snapshot.SshSteps.Select(step => step with { Target = declared.TargetHostId }).ToArray(),
             }
             : snapshot;
 

@@ -8,6 +8,7 @@ using System.Text;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
 using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -53,6 +54,28 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal("stage", Assert.Single(service.Read("Operator Demo")!.Environments
             .Where(item => item.PendingArtifact is not null)).Declaration.Id);
         Assert.Equal("stage", service.Claim("stage-host")!.EnvironmentId);
+    }
+
+    [Fact]
+    public void HostMove_RoutesClaimToCurrentHostWithoutChangingReleaseSshTarget()
+    {
+        var (service, repo, _) = Build();
+        var snapshot = service.Declarations("demo")!.Single(item => item.Id == "stage") with
+        {
+            SshSteps = [new ProjectDeployStep("container", "app", "stage-host", null, null, null,
+                [], ["staging"]) { ComposeFile = "/srv/apps/web/compose.yml", Service = "web" }],
+        };
+        var declarationPath = Path.Combine(repo, "docs", "deployments", "environments", "stage.json");
+        File.WriteAllText(declarationPath, File.ReadAllText(declarationPath)
+            .Replace("stage-host", "new-host", StringComparison.Ordinal));
+
+        var queued = service.QueueDeployment("demo", snapshot, _artifact, "operator", rollback: false);
+        Assert.NotNull(queued);
+        Assert.Equal("new-host", queued.HostId);
+        Assert.Equal("stage-host", Assert.Single(queued.SshSteps).Target);
+        Assert.Null(service.Claim("stage-host"));
+        var claimed = service.Claim("new-host");
+        Assert.Equal("stage-host", Assert.Single(claimed!.SshSteps).Target);
     }
 
     [Fact]
