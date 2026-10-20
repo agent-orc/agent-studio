@@ -552,12 +552,29 @@ public sealed class ProjectEnvironmentService
                     (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration));
                 if (job is null) continue;
                 if (!TryAdmitClaim(project, job, out var reserved)) continue;
+                var jobIndex = state.Jobs.IndexOf(job);
+                // A later claim can reuse a slot reserved by an earlier job for
+                // the same environment. Move the reservation with the claim so
+                // settling the earlier job cannot release the later deployment.
+                if (!reserved && !job.ReservedSlot && jobIndex > 0)
+                {
+                    var priorIndex = state.Jobs.FindLastIndex(jobIndex - 1,
+                        item => item.EnvironmentId == job.EnvironmentId && item.ReservedSlot
+                            && item.Status != "healthy");
+                    if (priorIndex >= 0 && !state.Jobs.Skip(priorIndex + 1)
+                            .Take(jobIndex - priorIndex - 1)
+                            .Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "healthy"))
+                    {
+                        state.Jobs[priorIndex] = state.Jobs[priorIndex] with { ReservedSlot = false };
+                        reserved = true;
+                    }
+                }
                 var claimed = job with
                 {
                     Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N"),
                     Claims = job.Claims + 1, ReservedSlot = job.ReservedSlot || reserved,
                 };
-                state.Jobs[state.Jobs.IndexOf(job)] = claimed;
+                state.Jobs[jobIndex] = claimed;
                 Save(project, state);
                 _quota?.RecordDeployStart(project, claimed.Id, claimed.EnvironmentId);
                 return claimed;
@@ -590,8 +607,9 @@ public sealed class ProjectEnvironmentService
                 foreach (var job in settled)
                 {
                     // A healthy deploy now owns the slot as a running environment.
-                    // Only failed or stale claims give their reservation back.
-                    if (job.Status != "healthy")
+                    // A newer healthy deploy also owns it, including when an
+                    // older queue record still carries its reservation flag.
+                    if (job.Status != "healthy" && !HasNewerHealthyDeployment(state, job))
                         _quota.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
                     _quota.RecordDeployEnd(project, job.Id);
                     state.Jobs[state.Jobs.IndexOf(job)] = job with { ReservedSlot = false };
@@ -664,7 +682,8 @@ public sealed class ProjectEnvironmentService
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
             _quota?.RecordDeployEnd(project, job.Id);
             if (success) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), true);
-            else if (job.ReservedSlot) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
+            else if (job.ReservedSlot && !HasNewerHealthyDeployment(state, job))
+                _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
             ClosePromotionForResult(state, job, success, now);
             // A job already queued for the environment replaces the failed
             // one; a rollback queued behind it would replace a newer release.
@@ -752,6 +771,10 @@ public sealed class ProjectEnvironmentService
     private static bool HasOpenPromotion(State state, string artifact)
         => state.Promotions.Any(item => item.Artifact == artifact
             && item.Status is not ("rejected" or "failed" or "cancelled"));
+
+    private static bool HasNewerHealthyDeployment(State state, DeployJob job)
+        => state.Jobs.Skip(state.Jobs.FindIndex(item => item.Id == job.Id) + 1)
+            .Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "healthy");
 
     private static bool IsDeclared(IReadOnlyList<EnvironmentDeclaration>? declarations, string environmentId)
         => declarations?.Any(item => item.Id == environmentId) == true;

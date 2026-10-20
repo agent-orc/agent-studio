@@ -71,7 +71,10 @@ marks the environment running, a failed first deploy returns the slot, and
 operator-confirmed stop and frees the slot. The minute reconciliation frees the
 slot of a removed declaration and the slot a claimed deploy job reserved when
 its five-minute lease expired without a report; a later claim of that job
-reserves it again. Reading the environments changes no slot. A timed promotion
+reserves it again. When a newer job claims a slot held by an older failed or
+interrupted job, the reservation moves to the newer job. Reconciliation of the
+older job cannot release a newer healthy deployment's slot. Reading the
+environments changes no slot. A timed promotion
 that quota refuses stays pending.
 
 Status is derived from tokens and core-hours: `warning` at 80% and `blocked`

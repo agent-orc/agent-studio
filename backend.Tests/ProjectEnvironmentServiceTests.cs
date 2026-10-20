@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Security.Cryptography;
 using System.Text;
 using AgentStudio.Pipeline;
@@ -388,6 +389,45 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.True(service.Stop("demo", "stage", "operator"));
         service.ReconcileHostingSlots();
         Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    [Fact]
+    public void Reconciliation_does_not_release_a_newer_healthy_deploys_slot_after_an_older_claim_fails()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var older = service.Claim("stage-host")!;
+        Assert.True(older.ReservedSlot);
+        var newerArtifact = "registry.example/app@sha256:" + new string('b', 64);
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        Assert.NotNull(service.QueueDeployment("demo", stage, newerArtifact, "operator", rollback: false));
+
+        _clock.Advance(ProjectEnvironmentService.HostLostAfter + TimeSpan.FromSeconds(1));
+        var newer = service.Claim("stage-host")!;
+        Assert.Equal(newerArtifact, newer.Artifact);
+        Assert.True(newer.ReservedSlot);
+        Assert.False(service.Read("demo")!.Jobs.Single(job => job.Id == older.Id).ReservedSlot);
+        Assert.True(service.Report("demo", newer.Id, new(newer.LeaseToken!, true, "health-ok")));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+
+        // A durable queue written before reservation handoff can still name
+        // the older job as owner. Reconciliation must honor the newer result.
+        var queueFile = Path.Combine(_root, "workspace", "deployments", "demo.json");
+        var queue = JsonNode.Parse(File.ReadAllText(queueFile))!;
+        var jobs = queue["jobs"]!.AsArray();
+        jobs.Single(item => item!["id"]!.GetValue<string>() == older.Id)!["reservedSlot"] = true;
+        jobs.Single(item => item!["id"]!.GetValue<string>() == newer.Id)!["reservedSlot"] = false;
+        File.WriteAllText(queueFile, queue.ToJsonString());
+
+        service.ReconcileHostingSlots();
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.False(service.Read("demo")!.Jobs.Single(job => job.Id == older.Id).ReservedSlot);
     }
 
     [Fact]
