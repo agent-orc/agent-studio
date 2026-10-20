@@ -78,6 +78,12 @@ captured SHA, attempt chain and Auto Review lane with the live card, including
 any pending continuation. A superseded result keeps its gate log and a
 `gate-result-superseded` timeline receipt with the original verdict; it does
 not rewrite the newer attempt's pipeline step or move the card (AGT-3151).
+The merge gate also checks completion and publication before settling a verdict
+and again inside its publication fence. It captures whether the delivery was
+already published before verification began; that existing publication cannot
+make this attempt's gate result stale, including when the local merge reports a
+fresh outcome for a patch-equivalent delivery. A publication that appears during
+verification supersedes the result.
 Local aspect review also checks the captured subject after its asynchronous
 verdict and grade work. A superseded review records `review-result-superseded`
 with the original aspect statuses and leaves the newer round alone.
