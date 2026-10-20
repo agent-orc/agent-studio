@@ -25,6 +25,24 @@ test('environment view refreshes and fits light and dark desktop widths', async 
     receiptId: 'r1', taskId: 't1', chosenAction: 'observe', callStatus: 'succeeded',
     endedAt: '2026-10-16T12:00:00Z',
   }] }));
+  // AGT-3231: two work hosts report their zone policy, one verified, one failed.
+  const seenAt = new Date().toISOString();
+  const capability = (key: string, category: string, patch: Record<string, unknown> = {}) => ({
+    key, category, advertisedStatus: 'ready', healthState: 'healthy', advertisedAt: seenAt, freshUntil: seenAt,
+    isFresh: true, consecutiveFailures: 0, affectedClaims: [], recoveryHistory: [], ...patch,
+  });
+  const host = (runnerId: string, zone: Record<string, unknown>) => ({
+    runnerId, name: runnerId, hostId: runnerId, instanceId: `${runnerId}-1`, runnerVersion: '0.9.6', protocolVersion: 2,
+    status: 'online', registeredAt: seenAt, lastSeenAt: seenAt, hostAdmission: { hostId: runnerId, admissionState: 'open' },
+    capabilities: [capability('executor:review', 'executor'),
+      capability('zone-policy', 'zone', { version: '2026-10-20.1', identity: 'work', ...zone })],
+  });
+  await page.route('**/api/clients', route => route.fulfill({ json: [] }));
+  await page.route('**/api/v1/management/remote-hosts', route => route.fulfill({ json: [
+    host('kori-review-1', { detail: 'verifiedAt=2026-10-20T09:30:00Z; networks=agent-work; rules=sha256:0123456789ab' }),
+    host('kori-gate', { advertisedStatus: 'unavailable', detail: 'verification failed at 2026-10-20T10:30:00Z: 1 of 9 checks; '
+      + 'blocked 1.1.1.1:443 expected blocked, observed connected; networks=agent-work; rules=sha256:0123456789ab' }),
+  ] }));
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('data-studio-theme', 'light');
@@ -42,6 +60,14 @@ test('environment view refreshes and fits light and dark desktop widths', async 
   await expect(view.getByText('Ready to integration median: 2.5 h.')).toBeVisible();
   await expect(view.getByText('AI Operator: observe · succeeded')).toBeVisible();
   await expect(view.getByRole('cell', { name: '3', exact: true })).toBeVisible();
+  const verified = view.locator('[data-host-id="kori-review-1"]').getByTestId('environment-host-zone-policy');
+  await expect(verified).toHaveAttribute('data-zone-policy-state', 'verified');
+  await expect(verified).toContainText('work · 2026-10-20.1');
+  await expect(verified).toContainText('Verified 2026-10-20 09:30 UTC');
+  const failed = view.locator('[data-host-id="kori-gate"]').getByTestId('environment-host-zone-policy');
+  await expect(failed).toHaveAttribute('data-zone-policy-state', 'failed');
+  await expect(failed).toContainText('Verification failed · 2026-10-20.1');
+  await expect(failed).toContainText('observed connected');
   const output = process.env.JOB_RESULTS_DIR ?? join(process.cwd(), 'test-results');
   mkdirSync(output, { recursive: true });
   await page.screenshot({ path: join(output, 'environment-1280-light.png') });

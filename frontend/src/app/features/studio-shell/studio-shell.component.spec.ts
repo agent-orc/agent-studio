@@ -640,8 +640,6 @@ describe('StudioShellComponent hub tab label + icon', () => {
     const component = makeComponent();
     expect(component.tabLabel({ kind: 'board', projectName: 'Agent Software Studio' }))
       .toBe('ASS · Board');
-    expect(component.tabLabel({ kind: 'epics', projectName: 'Agent Software Studio' }))
-      .toBe('ASS · Epics');
   });
 
   it('returns the section rail icon for a hub tab and null for other kinds', () => {
@@ -653,6 +651,11 @@ describe('StudioShellComponent hub tab label + icon', () => {
     // Missing section → default overview rail icon.
     expect(component.tabIcon({ kind: 'hub', projectName: 'Agent Software Studio' }))
       .toBe('layout');
+    // Deploy and Operations carry the same distinct glyphs as their Explorer rows.
+    expect(component.tabIcon({ kind: 'hub', projectName: 'Agent Software Studio', section: 'deploy' }))
+      .toBe('send');
+    expect(component.tabIcon({ kind: 'hub', projectName: 'Agent Software Studio', section: 'operations' }))
+      .toBe('activity');
     expect(component.tabIcon({ kind: 'board', projectName: 'Agent Software Studio' }))
       .toBeNull();
   });
@@ -671,7 +674,7 @@ describe('StudioShellComponent hub tab label + icon', () => {
   it('renders no dot for tabs without a single owning project (AGT-2034)', () => {
     const component = makeComponent();
     expect(component.tabDotColor({ kind: 'board', projectName: '__all__' })).toBeNull();
-    expect(component.tabDotColor({ kind: 'epics', projectName: null })).toBeNull();
+    expect(component.tabDotColor({ kind: 'workbenches', projectName: null })).toBeNull();
     expect(component.tabDotColor({ kind: 'workspace-settings' })).toBeNull();
     expect(component.tabDotColor({ kind: 'welcome' })).toBeNull();
   });
