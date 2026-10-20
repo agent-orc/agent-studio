@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, inject, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, inject, input, output } from '@angular/core';
+import { Subscription } from 'rxjs';
 import { ProjectOperationsComponent } from '../project-operations/project-operations';
 import { OperationsCardLookupService } from '../../state/operations-card-lookup.service';
 
@@ -9,15 +10,21 @@ import { OperationsCardLookupService } from '../../state/operations-card-lookup.
 })
 export class ProjectOperationsRailComponent {
   private readonly cards = inject(OperationsCardLookupService);
+  private cardRead = new Subscription();
   readonly projectName = input.required<string>();
   readonly releaseSelected = output<string>();
   readonly openTask = output<{ jobId: string; watchPath: string }>();
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => this.cardRead.unsubscribe());
+  }
 
   openRelease(id: string): void {
     this.releaseSelected.emit(id);
   }
 
   openCard(key: string): void {
-    this.cards.resolve(this.projectName(), key).subscribe(card => this.openTask.emit(card));
+    this.cardRead.unsubscribe();
+    this.cardRead = this.cards.resolve(this.projectName(), key).subscribe(card => this.openTask.emit(card));
   }
 }

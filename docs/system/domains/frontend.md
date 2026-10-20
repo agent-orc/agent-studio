@@ -1,6 +1,6 @@
 # Frontend Domain Map
 
-Version: 2026-10-20
+Version: 2026-10-21
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
@@ -42,12 +42,16 @@ The same tab reads `GET /api/projects/{project}/deploy/operations` for 30-day
 monitoring, usage, load, deploy and rollback markers, and project DORA. Each
 marker opens its release and exposes the release's card keys. The project API
 also feeds the project's Operations rail, which the overview dashboard opens.
+A rail marker passes a project-scoped release target to that project's Deploy
+view, which opens the containing release page without reloading its other
+sources. Card keys resolve by exact key through `GET /api/tasks/{key}/core`,
+including archived cards, and a newer click or unmount cancels a pending lookup.
 The API derives DORA from production deploy runs and archive-inclusive card creation
 times: successful change runs per week, median card-to-production time, failed
 or rolled-back changes divided by terminal change runs, and median time from a
 failed production run to the next successful run. Missing samples remain
 unavailable. `GET /api/projects/{project}/deploy/operations/logs` accepts
-environment, bounded time range, level, release, and text filters and returns
+environment, bounded time range, level, any release ID, and text filters and returns
 at most 100 lines. `IOperationsTelemetryReader` is the integration boundary
 for the pending intake store; until it is connected, telemetry and logs show
 an explicit empty state while deploy markers and DORA remain live. The reader

@@ -1,7 +1,5 @@
-import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
-import { HttpErrorResponse } from '@angular/common/http';
-import { HttpTestingController } from '@angular/common/http/testing';
+import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { DeferBlockState, TestBed, type ComponentFixture } from '@angular/core/testing';
 import { BehaviorSubject, Subject, map, type Observable } from 'rxjs';
@@ -463,6 +461,34 @@ describe('ProjectDeployAreaComponent', () => {
       watchPath: '/tasks/website', state: 'ready' });
     expect(opened).toEqual([{ jobId: 'arch-51', watchPath: '/tasks/website' }]);
     http.expectNone(req => req.url === '/api/tasks/archive');
+  });
+
+  it('opens a new release target on a mounted Deploy view without reloading the project', async () => {
+    data.serveEverything();
+    await settle();
+    data.requests.length = 0;
+    fixture.componentRef.setInput('releaseTarget', { project: 'Website', id: 'release-35' });
+    await settle();
+    expect(data.requests).toEqual(['release-containing:release-35']);
+    expect(fixture.componentInstance.highlightedReleaseId()).toBe('release-35');
+    expect(fixture.componentInstance.view()).toBe('releases');
+  });
+
+  it('cancels a pending card lookup when another card opens or the view is destroyed', () => {
+    const opened: { jobId: string; watchPath: string }[] = [];
+    fixture.componentInstance.openTask.subscribe(card => opened.push(card));
+    const http = TestBed.inject(HttpTestingController);
+    fixture.componentInstance.openCard('CARD-1');
+    const first = http.expectOne(req => req.url === '/api/tasks/CARD-1/core');
+    fixture.componentInstance.openCard('CARD-2');
+    const second = http.expectOne(req => req.url === '/api/tasks/CARD-2/core');
+    expect(first.cancelled).toBe(true);
+    second.flush({ id: 'arch-2', key: 'CARD-2', taskKey: 'CARD-2', projectName: 'Website', watchPath: '/tasks/website', state: 'ready' });
+    fixture.componentInstance.openCard('CARD-3');
+    const pending = http.expectOne(req => req.url === '/api/tasks/CARD-3/core');
+    fixture.destroy();
+    expect(pending.cancelled).toBe(true);
+    expect(opened).toEqual([{ jobId: 'arch-2', watchPath: '/tasks/website' }]);
   });
 
   it('clears server history filters when leaving History so the reopened controls match the data', async () => {

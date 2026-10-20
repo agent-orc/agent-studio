@@ -56,6 +56,7 @@ export class ProjectDeployAreaComponent {
   private releaseReads = new Subscription();
   private logReads = new Subscription();
   private mutations = new Subscription();
+  private cardReads = new Subscription();
   private readGeneration = 0;
   private releaseGeneration = 0;
   private logGeneration = 0;
@@ -106,7 +107,8 @@ export class ProjectDeployAreaComponent {
   }
 
   openCard(key: string): void {
-    this.cardLookup.resolve(this.projectName(), key).subscribe(card => this.openTask.emit(card));
+    this.cardReads.unsubscribe();
+    this.cardReads = this.cardLookup.resolve(this.projectName(), key).subscribe(card => this.openTask.emit(card));
   }
 
   private readonly sources = computed(() => ({
@@ -142,20 +144,22 @@ export class ProjectDeployAreaComponent {
     effect(() => this.view.set(this.initialView()));
     effect(onCleanup => {
       const project = this.projectName();
-      const target = this.releaseTarget();
-      untracked(() => {
-        this.load(project, true);
-        if (target?.project === project) this.openRelease(target.id);
-      });
+      untracked(() => this.load(project, true));
       onCleanup(() => {
         this.subscriptions.unsubscribe();
         this.runReads.unsubscribe();
         this.releaseReads.unsubscribe();
         this.logReads.unsubscribe();
+        this.cardReads.unsubscribe();
         this.mutations.unsubscribe();
         this.mutations = new Subscription();
         this.mutationAction = null;
       });
+    });
+    // Declared after the project load so the target's containing page replaces the initial release page.
+    effect(() => {
+      const target = this.releaseTarget();
+      if (target?.project === this.projectName()) untracked(() => this.openRelease(target.id));
     });
   }
 

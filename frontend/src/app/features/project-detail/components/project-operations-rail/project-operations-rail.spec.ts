@@ -57,4 +57,21 @@ describe('ProjectOperationsRailComponent', () => {
     expect(opened).toEqual([{ jobId: 'arch-51', watchPath: '/tasks/demo' }]);
     http.expectNone(req => req.url === '/api/tasks/archive');
   });
+
+  it('cancels a pending card lookup when the rail is destroyed', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectOperationsRailComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    TestBed.inject(TaskService).jobs.set([]);
+    const fixture = TestBed.createComponent(ProjectOperationsRailComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/demo/deploy/operations').flush({ project: 'demo', environments: [], dora: {} });
+    fixture.componentInstance.openCard('CARD-1');
+    const request = http.expectOne(req => req.url === '/api/tasks/CARD-1/core');
+    fixture.destroy();
+    expect(request.cancelled).toBe(true);
+  });
 });
