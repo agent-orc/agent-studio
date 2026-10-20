@@ -93,6 +93,7 @@ test('workspace deployment matrix filters and opens project deployment in both t
     await dashboard.screenshot({ path: shot });
     await test.info().attach(`deployment-dashboard-${theme}`, { path: shot, contentType: 'image/png' });
   }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await dashboard.getByTestId('deployment-group-filter').selectOption('web');
   await dashboard.getByTestId('deployment-environment-filter').selectOption('production');
   await expect(dashboard.getByRole('row')).toHaveCount(2);
