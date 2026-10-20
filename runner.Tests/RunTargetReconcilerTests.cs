@@ -30,7 +30,7 @@ public sealed class RunTargetReconcilerTests : IDisposable
 
     public RunTargetReconcilerTests()
     {
-        _store = new RunTargetStateStore(_workspace.Directory("state"));
+        _store = new RunTargetStateStore(_workspace.Directory("state"), _log.Add);
         _runtime = _workspace.Directory("secrets-runtime");
         _reconciler = Reconciler(RunTargetOptions.DefaultEdgeImage);
     }
