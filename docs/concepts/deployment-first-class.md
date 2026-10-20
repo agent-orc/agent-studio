@@ -44,6 +44,8 @@ the same artifact after a person approves or stage has stayed healthy for ten
 minutes, depending on the declared rule. An approval expires after 24 hours.
 Failed production health queues the previously healthy artifact for rollback
 and leaves a failure card with the bounded health evidence in Studio.
+After the deploy, the control plane keeps probing each environment from outside
+its host; see [environment health checks](../operations/environment-health-checks.md).
 
 The deploy host uses a credential with only `runner.deploy`; its service
 identity must match `targetHostId`. In the managed host record, the deploy

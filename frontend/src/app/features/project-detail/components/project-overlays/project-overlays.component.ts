@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, effect, inject, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, output } from '@angular/core';
 import { ProjectOverlaysService } from '../../state/project-overlays.service';
 import { ModalStackService } from '../../../../services/modal-stack.service';
 import { OrchestratorFeedComponent, PromptAdminPanelComponent } from '../../../orchestrator';
@@ -13,12 +13,13 @@ import { SecurityPanelComponent } from '../security-panel/security-panel.compone
 import { UxuiPanelComponent } from '../uxui-panel/uxui-panel.component';
 import { ProjectTokenUsagePanelComponent } from '../../../project-token-usage';
 import { ProjectObservabilityPanelComponent } from '../project-observability/project-observability-panel.component';
-import { ProjectPipelinePanelComponent } from '../project-pipeline-panel/project-pipeline-panel.component';
+import { ProjectEnvironmentOverviewComponent } from '../project-environment-overview/project-environment-overview.component';
+import { ProjectProductRuntimePanelComponent } from '../project-product-runtime/project-product-runtime-panel.component';
 import { ProjectTestRunsPanelComponent } from '../project-test-runs-panel/project-test-runs-panel';
 import { ProjectSteeringDocsSectionComponent } from '../project-steering-docs-section/project-steering-docs-section';
 import { ProjectWikiSectionComponent } from '../project-wiki-section/project-wiki-section';
 import { AnalysisReportDrilldownComponent } from '../analysis-report-drilldown/analysis-report-drilldown';
-import { ProjectRailKey } from '../project-shell/project-shell.config';
+import { ProjectRailKey, resolveProjectSection } from '../project-shell/project-shell.config';
 import { WorkspaceScreenshotsComponent } from '../../../screenshots';
 import type { TaskScreenshot } from '../../../screenshots';
 import { RegressionRadarComponent } from '../../../regression-radar';
@@ -52,7 +53,8 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     UxuiPanelComponent,
     ProjectTokenUsagePanelComponent,
     ProjectObservabilityPanelComponent,
-    ProjectPipelinePanelComponent,
+    ProjectEnvironmentOverviewComponent,
+    ProjectProductRuntimePanelComponent,
     ProjectTestRunsPanelComponent,
     ProjectSteeringDocsSectionComponent,
     ProjectWikiSectionComponent,
@@ -81,9 +83,13 @@ export class ProjectOverlaysComponent {
   /** The shell needs to provide watchPaths for hash → name resolution on rail change. */
   readonly railChangeNeedsWatchPaths = output<ProjectRailKey>();
 
+  /** Retired Deck sections (`pipeline`, `observability`) open the Deploy and Operations areas. */
+  readonly section = computed(() => resolveProjectSection(this.overlays.projectShellRail()));
+
   hasCustomPanel(rail: ProjectRailKey): boolean {
+    const resolved = resolveProjectSection(rail).rail;
+    if (resolved === 'deploy' || resolved === 'operations') return true;
     return rail === 'overview'
-      || rail === 'deploy'
       || rail === 'project-urls'
       || rail === 'security'
       || rail === 'visual-evidence'
@@ -93,14 +99,13 @@ export class ProjectOverlaysComponent {
       || rail === 'uxui'
       || rail === 'test-quality'
       || rail === 'token-usage'
-      || rail === 'observability'
+      || rail === 'agent-activity'
       || rail === 'steering'
       || rail === 'wiki'
       || rail === 'settings'
-      // Nav-rebuild step 2 (T5b): pipeline / workflow / prompts now host the
-      // real content relocated out of Project Settings + the prompt-admin
-      // surface, so they render their own panel (not the shell placeholder).
-      || rail === 'pipeline'
+      // Nav-rebuild step 2 (T5b): workflow / prompts host the real content
+      // relocated out of Project Settings + the prompt-admin surface, so they
+      // render their own panel (not the shell placeholder).
       || rail === 'workflow'
       || rail === 'prompts'
       || rail === 'orchestrator';

@@ -299,9 +299,14 @@ public sealed partial class BatchGatePilotService
         return options.Enabled && options.EffectiveScope == "code";
     }
 
+    /// <summary>
+    /// Runs one pilot pass. A call that meets a running pass waits for it and
+    /// then runs its own pass, so an explicit tick never returns before the
+    /// state it was asked to observe has been processed (AGT-3195).
+    /// </summary>
     public async Task TickAsync(CancellationToken ct)
     {
-        if (!await _tick.WaitAsync(0, ct).ConfigureAwait(false)) return;
+        await _tick.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
@@ -512,28 +517,38 @@ public sealed partial class BatchGatePilotService
                         StringComparer.Ordinal), first.RepositoryPath, ct);
             }
             if (WaitForFlightsInTick)
-            {
-                // A batch can schedule its ejected members only after releasing
-                // the project reservation. Observe that second wave as well.
-                while (true)
-                {
-                    Task[] batches;
-                    Task[] fallbacks;
-                    lock (_runningBatches) batches = _runningBatches.Values.ToArray();
-                    lock (_fallbackFlights) fallbacks = _fallbackFlights.Values.ToArray();
-                    if (batches.Length == 0 && fallbacks.Length == 0) break;
-                    await Task.WhenAll(batches.Concat(fallbacks)).WaitAsync(ct).ConfigureAwait(false);
-                    lock (_runningBatches)
-                        if (_runningBatches.Values.Any(task => !task.IsCompleted)) continue;
-                    lock (_fallbackFlights)
-                        if (_fallbackFlights.Values.Any(task => !task.IsCompleted)) continue;
-                    break;
-                }
-            }
+                await WaitForFlightsAsync(includeFallbacks: true, ct).ConfigureAwait(false);
         }
         finally
         {
             _tick.Release();
+        }
+    }
+
+    /// <summary>
+    /// Waits until no batch flight, and with <paramref name="includeFallbacks"/>
+    /// no per-task fallback flight, is running. Tests use it instead of polling
+    /// the state a background flight writes.
+    /// </summary>
+    internal async Task WaitForFlightsAsync(bool includeFallbacks, CancellationToken ct)
+    {
+        // A batch can schedule its ejected members only after releasing
+        // the project reservation. Observe that second wave as well.
+        while (true)
+        {
+            Task[] batches;
+            Task[] fallbacks = [];
+            lock (_runningBatches) batches = _runningBatches.Values.ToArray();
+            if (includeFallbacks)
+                lock (_fallbackFlights) fallbacks = _fallbackFlights.Values.ToArray();
+            if (batches.Length == 0 && fallbacks.Length == 0) return;
+            await Task.WhenAll(batches.Concat(fallbacks)).WaitAsync(ct).ConfigureAwait(false);
+            lock (_runningBatches)
+                if (_runningBatches.Values.Any(task => !task.IsCompleted)) continue;
+            if (includeFallbacks)
+                lock (_fallbackFlights)
+                    if (_fallbackFlights.Values.Any(task => !task.IsCompleted)) continue;
+            return;
         }
     }
 
@@ -1867,7 +1882,10 @@ public sealed partial class BatchGatePilotService
     private Task ScheduleFallback(BatchGatePendingRecord pending,
         CancellationToken ct, bool clearEject = false, string? containedInSha = null)
     {
-        var flight = RunPerTaskFallbackAsync(pending, ct, containedInSha: containedInSha);
+        var flight = RunPerTaskFallbackAsync(pending, ct, containedInSha: containedInSha,
+            clearEject: clearEject);
+        // The continuation still clears the eject for a caller that joined a
+        // flight started without clearEject.
         return flight.ContinueWith(done =>
         {
             if (done.IsCompletedSuccessfully && clearEject)
@@ -1880,14 +1898,16 @@ public sealed partial class BatchGatePilotService
     }
 
     private Task RunPerTaskFallbackAsync(BatchGatePendingRecord pending,
-        CancellationToken ct, bool recordInStore = true, string? containedInSha = null)
+        CancellationToken ct, bool recordInStore = true, string? containedInSha = null,
+        bool clearEject = false)
     {
         Task flight;
         lock (_fallbackFlights)
         {
             if (!_fallbackFlights.TryGetValue(pending.ReviewAttemptId, out flight!))
             {
-                flight = RunFallbackFlightAsync(pending, recordInStore, containedInSha, ct);
+                flight = RunFallbackFlightAsync(pending, recordInStore, containedInSha,
+                    clearEject, ct);
                 _fallbackFlights[pending.ReviewAttemptId] = flight;
             }
         }
@@ -1900,13 +1920,17 @@ public sealed partial class BatchGatePilotService
     }
 
     private async Task RunFallbackFlightAsync(BatchGatePendingRecord pending,
-        bool recordInStore, string? containedInSha, CancellationToken ct)
+        bool recordInStore, string? containedInSha, bool clearEject, CancellationToken ct)
     {
         // Yield first so the flight is registered before it can complete.
         await Task.Yield();
         try
         {
             await RunPerTaskFallbackCoreAsync(pending, ct, recordInStore, containedInSha).ConfigureAwait(false);
+            // AGT-3195: clear the eject before the flight leaves the registry.
+            // Cleared only by the continuation, a tick between both steps saw
+            // the eject without a flight and started a second per-task gate.
+            if (clearEject) _store.ClearEject(pending.Subject.Project, pending.Subject.TaskKey);
         }
         finally
         {

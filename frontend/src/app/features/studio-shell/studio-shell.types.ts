@@ -9,7 +9,7 @@
  */
 
 /** Discrete tab kinds the editor area can host. */
-export type StudioTabKind = 'board' | 'feed' | 'epics' | 'epic' | 'task' | 'hub' | 'workbenches' | 'workbench' | 'diff' | 'activity' | 'url-preview' | 'workspace-settings' | 'deployment-dashboard' | 'welcome';
+export type StudioTabKind = 'board' | 'feed' | 'epic' | 'task' | 'hub' | 'workbenches' | 'workbench' | 'diff' | 'activity' | 'url-preview' | 'workspace-settings' | 'deployment-dashboard' | 'welcome';
 
 /** Sidebar panel kinds reachable from the ActivityBar. */
 export type StudioPanelKind = 'explorer' | 'filters' | 'cli' | 'activity' | 'runbook' | 'settings' | 'chats';
@@ -19,9 +19,6 @@ export interface BoardTab { kind: 'board'; projectName: string; }
 
 /** Workspace-wide orchestrator Feed; singleton key `feed`. */
 export interface FeedTab { kind: 'feed'; }
-
-/** Epic overview tab - project-scoped or workspace-wide; key `epics:<projectName|__all__>`. */
-export interface EpicsTab { kind: 'epics'; projectName: string | null; }
 
 /** Epic detail tab - one per opened epic; key `epic:<epicKey>`. */
 export interface EpicTab { kind: 'epic'; epicKey: string; viewTaskKey?: string; }
@@ -136,7 +133,7 @@ export interface DeploymentDashboardTab { kind: 'deployment-dashboard'; }
 /** Welcome screen — no real tab, no key. */
 export interface WelcomeTab { kind: 'welcome'; }
 
-export type StudioTab = BoardTab | FeedTab | EpicsTab | EpicTab | TaskTab | HubTab | WorkbenchesTab | WorkbenchTab | DiffTab | ActivityTab | UrlPreviewTab | WorkspaceSettingsTab | DeploymentDashboardTab | WelcomeTab;
+export type StudioTab = BoardTab | FeedTab | EpicTab | TaskTab | HubTab | WorkbenchesTab | WorkbenchTab | DiffTab | ActivityTab | UrlPreviewTab | WorkspaceSettingsTab | DeploymentDashboardTab | WelcomeTab;
 
 /**
  * Build the stable target identity for a tab. Replaceable substate is omitted:
@@ -147,7 +144,6 @@ export function studioTabKey(tab: StudioTab): string {
   switch (tab.kind) {
     case 'board':    return `board:${tab.projectName}`;
     case 'feed':     return 'feed';
-    case 'epics':    return `epics:${tab.projectName ?? '__all__'}`;
     case 'epic':     return `epic:${tab.epicKey}`;
     case 'task':     return `task:${tab.taskKey}`;
     case 'hub': {

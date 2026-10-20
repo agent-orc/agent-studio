@@ -1,3 +1,19 @@
+@if (activeRail() === 'deploy') {
+  <div class="project-area">
+    @defer (on immediate) {
+      <app-project-deploy-area [projectName]="projectName()" [initialView]="deployView()"
+        [focusStepId]="pipelineStepId()" (openPrompts)="setRail('prompts')"
+        (viewChange)="onDeployView($event)" />
+    }
+  </div>
+} @else if (activeRail() === 'operations') {
+  <div class="project-area" data-testid="project-operations-area">
+    @defer (on immediate) {
+      <app-project-environment-overview [projectName]="projectName()" (openDeploy)="setRail('deploy')" />
+      <app-project-product-runtime-panel [projectName]="projectName()" />
+    }
+  </div>
+} @else {
 <app-project-shell class="hub-shell"
   [projectName]="projectName()"
   [activeRail]="activeRail()"
@@ -19,11 +35,6 @@
       <app-project-urls-panel
         [projectName]="projectName()"
         (openEmbeddedPreview)="openUrlPreview($event)" />
-    }
-  }
-  @defer (when activeRail() === 'deploy') {
-    @if (activeRail() === 'deploy') {
-      <app-project-deploy-area [projectName]="projectName()" />
     }
   }
   @defer (when activeRail() === 'git') {
@@ -104,8 +115,8 @@
         (openTask)="openTask.emit($event)" />
     }
   }
-  @defer (when activeRail() === 'observability') {
-    @if (activeRail() === 'observability') {
+  @defer (when activeRail() === 'agent-activity') {
+    @if (activeRail() === 'agent-activity') {
       <app-project-observability-panel [projectName]="projectName()" />
       <app-project-detail
         [projectName]="projectName()"
@@ -127,14 +138,6 @@
         [openInternalTargetsInTabs]="true"
         (openWikiTarget)="openWikiTarget($event)"
         (openWorkbench)="openWorkbench($event)" />
-    }
-  }
-  @defer (when activeRail() === 'pipeline') {
-    @if (activeRail() === 'pipeline') {
-      <app-project-pipeline-panel
-        [projectName]="projectName()"
-        [focusStepId]="pipelineStepId()"
-        (openPrompts)="setRail('prompts')" />
     }
   }
   @defer (when activeRail() === 'workflow') {
@@ -171,3 +174,5 @@
     }
   }
 </app-project-shell>
+
+}

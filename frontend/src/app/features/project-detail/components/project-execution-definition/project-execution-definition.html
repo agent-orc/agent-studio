@@ -37,7 +37,7 @@
     @if (execution.issues.length > 0) {
       <ul class="execution__issues" data-testid="execution-definition-issues">
         @for (issue of execution.issues; track issue.path + ':' + issue.code) {
-          <li><code>{{ issue.path }}</code> {{ issue.message }}</li>
+          <li>@if (issue.line) {Line {{ issue.line }}, }<code>{{ issue.path }}</code> {{ issue.message }}</li>
         }
       </ul>
     }
@@ -116,3 +116,4 @@
   @if (message()) { <p class="execution__message" role="status">{{ message() }}</p> }
   @if (error()) { <p class="execution__error" role="alert">{{ error() }}</p> }
 </section>
+<app-project-pipeline-definition [projectName]="projectName()" />

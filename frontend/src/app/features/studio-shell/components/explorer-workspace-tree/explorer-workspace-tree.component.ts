@@ -52,7 +52,7 @@ export type {
   ExplorerWorkspaceGroup,
 } from './explorer-workspace-groups';
 
-export type ExplorerProjectSurface = 'board' | 'hub' | 'wiki' | 'workbenches' | 'workbench' | 'epics';
+export type ExplorerProjectSurface = 'board' | 'hub' | 'wiki' | 'deploy' | 'operations' | 'workbenches' | 'workbench';
 export interface ActiveExplorerWorkbench {
   projectName: string;
   workbenchId: string;
@@ -95,19 +95,19 @@ export class ExplorerWorkspaceTreeComponent {
   readonly collapseAllVersion = input(0);
   /** Experimental active-work visualization. Numbers remain the default. */
   readonly metricView = input<ExplorerTreeMetricView>('numbers');
-  /** Project name to always-visible auto-pickup configuration and gate state. */
   readonly projectAutoPickupByName = input<ReadonlyMap<string, ProjectAutoPickupIndicator>>(new Map());
 
   readonly showAll = output<void>();
   readonly toggleExpanded = output<string>();
   readonly openBoardRequest = output<string>();
   readonly openHubRequest = output<string>();
+  readonly openDeployRequest = output<string>();
+  readonly openOperationsRequest = output<string>();
   /** AGT-2067 — open a URL row's embedded preview tab (project + url id). */
   readonly openUrlPreviewRequest = output<{ projectName: string; urlId: string }>();
   readonly openWikiRequest = output<string>();
   readonly openWorkbenchRequest = output<{ projectName: string; workbench: WorkbenchListItem }>();
   readonly openWorkbenchesRequest = output<string>();
-  readonly openEpicsRequest = output<string>();
   readonly onboardProjectRequest = output<string>();
   /** Open the create-workspace dialog from the Workspaces section header. */
   readonly onboardWorkspaceRequest = output<void>();
