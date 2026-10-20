@@ -666,16 +666,17 @@ public sealed partial class AccessSecurityStore
         if (kind == IamPrincipalKind.ServiceAccount && !role.ServiceAccountBindable)
             throw new SecurityOperationException(400, "invalid-role", $"{role.DisplayName} cannot be bound to a service account.");
         var project = scope.Project?.Trim();
-        var environment = scope.Environment?.Trim().ToLowerInvariant();
+        var environment = IamEnvironments.Canonical(scope.Environment);
         var normalized = scope.Kind switch
         {
             IamScopeKind.Workspace => IamScope.Workspace,
             IamScopeKind.Project when IsScopeName(project) && project != ProjectAccessAuthorization.AllProjectsGrant
                 => IamScope.ForProject(project!),
             IamScopeKind.Environment when IsScopeName(project) && project != ProjectAccessAuthorization.AllProjectsGrant
-                && IsScopeName(environment) => IamScope.ForEnvironment(project!, environment!),
+                && environment is not null => IamScope.ForEnvironment(project!, environment),
             _ => throw new SecurityOperationException(400, "invalid-scope",
-                "A project scope names one project; an environment scope names a project and an environment."),
+                "A project scope names one project; an environment scope names a project and an environment kind: "
+                + string.Join(", ", IamEnvironments.All) + "."),
         };
         return new IamGrantRequest(role.Id, normalized);
     }

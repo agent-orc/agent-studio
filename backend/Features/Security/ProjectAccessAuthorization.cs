@@ -119,6 +119,35 @@ public static class ProjectAccessAuthorization
             ? access.IsProductRoleIn(project)
             : context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor };
 
+    /// <summary>
+    /// True when the caller holds operator authority for this request (an
+    /// operator override completion, the operator role on a decision card):
+    /// Admin or Owner through its role bindings. Developer acts as legacy
+    /// operator for other handler checks but holds no operator authority.
+    /// Without a captured <see cref="RequestAccess"/> the legacy role decides,
+    /// and the local profile without a principal is the local operator.
+    /// </summary>
+    public static bool HasOperatorAuthority(HttpContext context)
+        => context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access
+            ? access.HasOperatorAuthority
+            : context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human
+              || human.User.Role is StudioRoles.Owner or StudioRoles.Operator;
+
+    /// <summary>
+    /// The role a decision card's <c>role:</c> or <c>owner</c> decider is
+    /// matched against: owner for the Owner, operator only for Admin, and the
+    /// role's own id otherwise, so Developer never decides as operator.
+    /// </summary>
+    public static string? DecisionRole(HttpContext context)
+        => context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess { ProjectedRole: { } role }
+            ? role switch
+            {
+                IamRoles.Owner => StudioRoles.Owner,
+                IamRoles.Admin => StudioRoles.Operator,
+                _ => role,
+            }
+            : (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role;
+
     private static bool Matches(ProjectRecord project, string allowed)
         => string.Equals(project.Id, allowed, StringComparison.OrdinalIgnoreCase)
            || string.Equals(project.DisplayName, allowed, StringComparison.OrdinalIgnoreCase)

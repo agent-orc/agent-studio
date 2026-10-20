@@ -19,6 +19,8 @@ namespace AgentStudio.Tests;
 public sealed class IamHandlerAccessTests : IDisposable
 {
     private const string Password = "correct horse battery staple!";
+    private const string AlphaCommit = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
+    private const string BetaCommit = "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2";
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "iam-handlers-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
@@ -85,6 +87,115 @@ public sealed class IamHandlerAccessTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, developer.StatusCode);
     }
 
+    [Fact]
+    public async Task Literal_task_routes_serve_the_owner_workspace_bindings_api_tokens_and_scoped_developers()
+    {
+        using var factory = BuildFactory();
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var ownerId = store.ListUsers().Single(user => user.Username == "first.owner").Id;
+        var now = factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
+        var token = store.CreateApiToken(new CreateApiTokenRequest("board bot", StudioRoles.Viewer,
+            [ProjectAccessAuthorization.AllProjectsGrant], now.AddDays(1)), ownerId).Secret;
+        var callers = new (string Name, HttpClient Client, bool AlphaOnly)[]
+        {
+            ("owner", Client(factory, Login(factory, "first.owner")), false),
+            ("workspace admin", Client(factory, Invite(factory, "workspace.admin", new IamGrantRequest(IamRoles.Admin, IamScope.Workspace))), false),
+            ("alpha developer", Client(factory, Invite(factory, "alpha.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha")))), true),
+            ("all-projects api token", BearerClient(factory, token), false),
+        };
+
+        foreach (var (name, client, alphaOnly) in callers)
+        {
+            using (client)
+            {
+                // The Studio board (/api/v1/studio/board aliases /api/tasks/grouped).
+                using var board = await client.GetAsync("/api/v1/studio/board");
+                Assert.True(board.StatusCode == HttpStatusCode.OK, $"{name}: board answered {(int)board.StatusCode}");
+                var cards = await board.Content.ReadAsStringAsync();
+                Assert.Contains("alpha-card", cards, StringComparison.Ordinal);
+                Assert.Equal(!alphaOnly, cards.Contains("beta-card", StringComparison.Ordinal));
+                using var defaults = await client.GetAsync("/api/tasks/code-review/defaults");
+                Assert.True(defaults.StatusCode == HttpStatusCode.OK, $"{name}: code-review defaults answered {(int)defaults.StatusCode}");
+                using var alphaOwner = await client.GetAsync("/api/tasks/commit-owner/" + AlphaCommit);
+                Assert.True(alphaOwner.StatusCode == HttpStatusCode.OK, $"{name}: commit-owner answered {(int)alphaOwner.StatusCode}");
+                using var betaOwner = await client.GetAsync("/api/tasks/commit-owner/" + BetaCommit);
+                Assert.Equal(alphaOnly ? HttpStatusCode.NotFound : HttpStatusCode.OK, betaOwner.StatusCode);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Orphan_folder_cleanup_needs_workspace_operate()
+    {
+        using var factory = BuildFactory();
+        using var alphaDeveloper = Client(factory, Invite(factory, "orphan.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+        using var alphaAdmin = Client(factory, Invite(factory, "orphan.project.admin", new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))));
+        using var workspaceDeveloper = Client(factory, Invite(factory, "orphan.workspace.dev", new IamGrantRequest(IamRoles.Developer, IamScope.Workspace)));
+        using var workspaceAdmin = Client(factory, Invite(factory, "orphan.admin", new IamGrantRequest(IamRoles.Admin, IamScope.Workspace)));
+        using var owner = Client(factory, Login(factory, "first.owner"));
+
+        foreach (var denied in new[] { alphaDeveloper, alphaAdmin, workspaceDeveloper })
+        {
+            using var response = await denied.SendAsync(OrphanFolderDelete());
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+        foreach (var allowed in new[] { workspaceAdmin, owner })
+        {
+            // The handler answers (the folder does not exist); access is not refused.
+            using var response = await allowed.SendAsync(OrphanFolderDelete());
+            Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task An_environment_binding_does_not_lift_a_contributor_above_the_product_role_in_its_project()
+    {
+        using var factory = BuildFactory();
+        using var client = Client(factory, Invite(factory, "stage.contributor",
+            new IamGrantRequest(IamRoles.Contributor, IamScope.ForProject("beta")),
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForEnvironment("beta", IamEnvironments.Stage))));
+
+        using var progress = await client.PostAsJsonAsync("/api/tasks/beta-card/move",
+            new MoveJobRequest { TargetState = TaskStates.Progress });
+        Assert.Equal(HttpStatusCode.Forbidden, progress.StatusCode);
+        using var delete = await client.DeleteAsync("/api/tasks/beta-card");
+        Assert.Equal(HttpStatusCode.Forbidden, delete.StatusCode);
+        using var model = await client.PutAsJsonAsync("/api/tasks/beta-card/model", new { model = "gpt-5" });
+        Assert.Equal(HttpStatusCode.Forbidden, model.StatusCode);
+        Assert.True(Directory.Exists(Path.Combine(ProjectPath("beta"), TaskStates.Backlog, "beta-card")));
+
+        using var ready = await client.PostAsJsonAsync("/api/tasks/beta-card/move",
+            new MoveJobRequest { TargetState = TaskStates.Ready });
+        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+    }
+
+    [Fact]
+    public async Task Operator_override_completion_needs_admin_or_owner()
+    {
+        using var factory = BuildFactory();
+        using var developer = Client(factory, Invite(factory, "override.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+        using var admin = Client(factory, Invite(factory, "override.admin", new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))));
+        var request = new MoveJobRequest
+        {
+            TargetState = TaskStates.Completed, OperatorOverride = true, Reason = "Delivered outside Studio; verified by hand.",
+        };
+
+        using var refused = await developer.PostAsJsonAsync("/api/tasks/alpha-card/move", request);
+        Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Contains("operator-authority-required", await refused.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.True(Directory.Exists(Path.Combine(ProjectPath("alpha"), TaskStates.Backlog, "alpha-card")));
+
+        using var admitted = await admin.PostAsJsonAsync("/api/tasks/alpha-card/move", request);
+        Assert.DoesNotContain("operator-authority-required", await admitted.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.NotEqual(HttpStatusCode.Forbidden, admitted.StatusCode);
+    }
+
+    private HttpRequestMessage OrphanFolderDelete() => new(HttpMethod.Delete, "/api/tasks/orphan-folder")
+    {
+        Content = JsonContent.Create(new { watchPath = ProjectPath("alpha"), lane = TaskStates.Archive, folder = "no-such-folder" }),
+    };
+
     private WebApplicationFactory<Program> BuildFactory()
     {
         foreach (var project in new[] { "alpha", "beta" })
@@ -96,6 +207,7 @@ public sealed class IamHandlerAccessTests : IDisposable
             File.WriteAllText(Path.Combine(card, "task.json"), JsonSerializer.Serialize(new
             {
                 id = project + "-card", title = project + " card", state = TaskStates.Backlog, order = 1, agent = "codex", kind = "task",
+                commits = new[] { new { sha = project == "alpha" ? AlphaCommit : BetaCommit, message = project + " change" } },
             }));
             File.WriteAllText(Path.Combine(card, "prompt.md"), "Fixture card.");
         }
@@ -134,6 +246,20 @@ public sealed class IamHandlerAccessTests : IDisposable
         var invite = store.InviteUser(new InviteUserRequest(username, username, "", null, grants), owner);
         var accepted = store.AcceptInvitation(new AcceptInvitationRequest(invite.Token, "accepted pass phrase!"));
         return (accepted.SessionToken, accepted.CsrfToken);
+    }
+
+    private static (string Session, string Csrf) Login(WebApplicationFactory<Program> factory, string username)
+    {
+        var login = factory.Services.GetRequiredService<AccessSecurityStore>().Login(username, Password, $"{username}|127.0.0.1");
+        return (login.SessionToken, login.CsrfToken);
+    }
+
+    private static HttpClient BearerClient(WebApplicationFactory<Program> factory, string token)
+    {
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        return client;
     }
 
     private static HttpClient Client(WebApplicationFactory<Program> factory, (string Session, string Csrf) user)

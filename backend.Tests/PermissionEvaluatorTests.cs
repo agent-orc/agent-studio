@@ -209,11 +209,71 @@ public sealed class PermissionEvaluatorTests
             Binding(IamPrincipalKind.User, UserId, IamRoles.Developer, Project("beta")),
         ];
 
-        Assert.Equal(IamRoles.Contributor, PermissionEvaluator.StrongestRole(User(), bindings, Target("alpha")));
-        Assert.Equal(IamRoles.Developer, PermissionEvaluator.StrongestRole(User(), bindings, Target("beta")));
-        Assert.Equal(IamRoles.Contributor, PermissionEvaluator.StrongestRole(User(), bindings, Multi("alpha", "beta")));
-        Assert.Equal(IamRoles.Developer, PermissionEvaluator.StrongestRole(User(), bindings, PermissionTarget.Unaddressed));
-        Assert.Null(PermissionEvaluator.StrongestRole(User(), bindings, Target("gamma")));
+        const string write = IamPermissions.ProjectCardsWrite;
+        Assert.Equal(IamRoles.Contributor, PermissionEvaluator.StrongestRole(write, User(), bindings, Target("alpha")));
+        Assert.Equal(IamRoles.Developer, PermissionEvaluator.StrongestRole(write, User(), bindings, Target("beta")));
+        Assert.Equal(IamRoles.Contributor, PermissionEvaluator.StrongestRole(write, User(), bindings, Multi("alpha", "beta")));
+        Assert.Equal(IamRoles.Developer, PermissionEvaluator.StrongestRole(write, User(), bindings, PermissionTarget.Unaddressed));
+        Assert.Null(PermissionEvaluator.StrongestRole(write, User(), bindings, Target("gamma")));
+        // Only bindings that grant the permission rank: Contributor holds no document write.
+        Assert.Null(PermissionEvaluator.StrongestRole(IamPermissions.ProjectDocsWrite, User(), bindings, Target("alpha")));
+    }
+
+    [Fact]
+    public void An_environment_binding_ranks_as_its_role_only_in_its_own_environment()
+    {
+        RoleBinding[] bindings =
+        [
+            Binding(IamPrincipalKind.User, UserId, IamRoles.Contributor, Project("beta")),
+            Binding(IamPrincipalKind.User, UserId, IamRoles.Developer, Environment("beta", IamEnvironments.Stage)),
+        ];
+
+        // Developer@beta/stage grants no project-level write and does not
+        // lift the Product role in beta (AGT-3228 review, round 3).
+        Assert.Equal(IamRoles.Contributor,
+            PermissionEvaluator.StrongestRole(IamPermissions.ProjectCardsWrite, User(), bindings, Target("beta")));
+        var write = PermissionEvaluator.Project(IamPermissions.ProjectCardsWrite, User(), bindings, Target("beta"));
+        Assert.Equal((StudioRoles.Contributor, IamRoles.Contributor), (write.LegacyRole, write.Role));
+        var read = PermissionEvaluator.Project(IamPermissions.ProjectRead, User(), bindings, Target("beta"));
+        Assert.Equal(IamRoles.Contributor, read.Role);
+        var unaddressed = PermissionEvaluator.Project(IamPermissions.ProjectCardsWrite, User(), bindings, PermissionTarget.Unaddressed);
+        Assert.Equal(IamRoles.Contributor, unaddressed.Role);
+        // In its own environment the binding ranks as Developer.
+        Assert.Equal(IamRoles.Developer, PermissionEvaluator.StrongestRole(IamPermissions.EnvironmentDeploy, User(), bindings,
+            Target("beta", IamEnvironments.Stage)));
+
+        // An environment binding alone reads its project as a viewer.
+        RoleBinding[] stageOnly = [Binding(IamPrincipalKind.User, UserId, IamRoles.Developer, Environment("beta", IamEnvironments.Stage))];
+        var stageRead = PermissionEvaluator.Project(IamPermissions.ProjectRead, User(), stageOnly, Target("beta"));
+        Assert.Equal((StudioRoles.Viewer, IamRoles.Viewer), (stageRead.LegacyRole, stageRead.Role));
+        Assert.False(Evaluate(IamPermissions.ProjectCardsWrite, User(), stageOnly, Target("beta")).Allowed);
+    }
+
+    [Fact]
+    public void Environment_scopes_use_the_canonical_environment_kind()
+    {
+        var normalized = AccessSecurityStore.ValidateGrant(IamPrincipalKind.User,
+            new IamGrantRequest(IamRoles.Approver, IamScope.ForEnvironment("alpha", " Production ")));
+        Assert.Equal(IamScope.ForEnvironment("alpha", IamEnvironments.Production), normalized.Scope);
+        var invalid = Assert.Throws<SecurityOperationException>(() => AccessSecurityStore.ValidateGrant(IamPrincipalKind.User,
+            new IamGrantRequest(IamRoles.Approver, IamScope.ForEnvironment("alpha", "prod-eu"))));
+        Assert.Equal((400, "invalid-scope"), (invalid.Status, invalid.Code));
+
+        // A route that names an environment id resolves to its declaration's kind.
+        AgentStudio.Projects.EnvironmentDeclaration[] declarations =
+        [
+            new("stage-eu", "Stage", "stage", "host-a", "https://stage.example.test", "container", "8081", "https://stage.example.test/health", "person", [], 8080),
+            new("prod-eu", "Production", "production", "host-b", "https://prod.example.test", "container", "8082", "https://prod.example.test/health", "person", [], 8080),
+        ];
+        Assert.Equal(IamEnvironments.Production, IamEnvironments.ForDeclaration(declarations, "prod-eu"));
+        Assert.Equal(IamEnvironments.Stage, IamEnvironments.ForDeclaration(declarations, "stage-eu"));
+        Assert.Null(IamEnvironments.ForDeclaration(declarations, "production"));
+        Assert.Null(IamEnvironments.ForDeclaration(null, "prod-eu"));
+
+        RoleBinding[] approver = [Binding(IamPrincipalKind.User, UserId, IamRoles.Approver, Environment("alpha", IamEnvironments.Production))];
+        Assert.True(Evaluate(IamPermissions.EnvironmentProductionDeployApprove, User(), approver,
+            Target("alpha", IamEnvironments.ForDeclaration(declarations, "prod-eu"))).Allowed);
+        Assert.False(Evaluate(IamPermissions.EnvironmentProductionDeployApprove, User(), approver, Target("alpha", "prod-eu")).Allowed);
     }
 
     [Fact]

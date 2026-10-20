@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.Primitives;
 
 namespace AgentStudio.Security;
@@ -27,6 +28,7 @@ public sealed class AccessSecurityMiddleware
     private readonly TimelineLog? _timeline;
     private readonly TimeProvider _clock;
     private readonly AgentStudio.Registry.ProjectUrlPreviewAccess _previewAccess;
+    private readonly AgentStudio.Projects.ProjectEnvironmentService? _environments;
 
     public AccessSecurityMiddleware(
         RequestDelegate next,
@@ -37,7 +39,8 @@ public sealed class AccessSecurityMiddleware
         AgentStudio.Registry.ProjectRegistry? projects = null,
         TimelineLog? timeline = null,
         TimeProvider? clock = null,
-        AgentStudio.Registry.ProjectUrlPreviewAccess? previewAccess = null)
+        AgentStudio.Registry.ProjectUrlPreviewAccess? previewAccess = null,
+        AgentStudio.Projects.ProjectEnvironmentService? environments = null)
     {
         _next = next;
         _configuration = configuration;
@@ -48,6 +51,7 @@ public sealed class AccessSecurityMiddleware
         _timeline = timeline;
         _clock = clock ?? TimeProvider.System;
         _previewAccess = previewAccess ?? new AgentStudio.Registry.ProjectUrlPreviewAccess(TimeProvider.System);
+        _environments = environments;
     }
 
     /// <summary>
@@ -368,7 +372,7 @@ public sealed class AccessSecurityMiddleware
         }
 
         context.Items[HumanPrincipalItem] = new HumanPrincipal(ProjectedUser(human.User, projected, subject, bindings), human.Session);
-        context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject);
+        context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject, projected.Role);
         await _next(context);
         if (productRole
             && !safeMethod && context.Response.StatusCode is >= 200 and < 400
@@ -448,7 +452,7 @@ public sealed class AccessSecurityMiddleware
         }
         var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
         context.Items[HumanPrincipalItem] = new HumanPrincipal(ProjectedUser(human.User, projected, subject, bindings), human.Session);
-        context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject);
+        context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject, projected.Role);
         return true;
     }
 
@@ -522,7 +526,7 @@ public sealed class AccessSecurityMiddleware
             CreatedAt = now, LastSeenAt = now, ExpiresAt = now, AbsoluteExpiresAt = now,
         };
         context.Items[HumanPrincipalItem] = new HumanPrincipal(user, session);
-        context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject);
+        context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject, projected.Role);
         await _next(context);
     }
 
@@ -544,14 +548,77 @@ public sealed class AccessSecurityMiddleware
     /// </summary>
     private PermissionTarget Target(HttpContext context, string path, RequiredPermissionMetadata required, bool safeMethod)
     {
-        var address = ResolveRouteAddress(context.Request, path);
+        var endpoint = context.GetEndpoint();
+        var address = ResolveRouteAddress(context.Request, path, endpoint);
         var scope = address.Scope == ProjectRouteScope.Unaddressed && !safeMethod && !required.ProjectBindingsSuffice
             ? ProjectRouteScope.WorkspaceWide
             : address.Scope;
         var environment = required.Environment
-            ?? (required.EnvironmentRouteValue is { } key ? context.Request.RouteValues[key]?.ToString() : null);
+            ?? (required.EnvironmentRouteValue is { } key
+                ? ResolveEnvironmentKey(address, RouteValue(context, path, endpoint, key))
+                : null);
         return new PermissionTarget(scope, address.Projects, environment, context.Request.Query["project"].FirstOrDefault());
     }
+
+    /// <summary>
+    /// The canonical key (<see cref="IamEnvironments"/>) of the environment id
+    /// a route names, read from the addressed project's declarations. An id
+    /// the project does not declare resolves to no environment, so only
+    /// workspace and project bindings can grant the request.
+    /// </summary>
+    private string? ResolveEnvironmentKey(ProjectRouteAddress address, string? environmentId)
+    {
+        if (_environments is null || string.IsNullOrWhiteSpace(environmentId)
+            || address.Scope != ProjectRouteScope.Addressed || address.Projects is not [{ } project]
+            || string.IsNullOrWhiteSpace(project))
+            return null;
+        try
+        {
+            return IamEnvironments.ForDeclaration(_environments.Declarations(project), environmentId);
+        }
+        catch (Exception exception) when (exception is System.Text.Json.JsonException or IOException or UnauthorizedAccessException
+                                          or KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            // An unreadable declaration resolves to no environment: the
+            // request then needs a workspace or project binding (fail closed).
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// A route value of the matched endpoint, read from the routing result or,
+    /// when routing left none, from the path segment its pattern names.
+    /// </summary>
+    private static string? RouteValue(HttpContext context, string path, Endpoint? endpoint, string key)
+    {
+        if (context.Request.RouteValues[key]?.ToString() is { Length: > 0 } routed) return routed;
+        if (endpoint is not RouteEndpoint route) return null;
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var patternSegments = route.RoutePattern.PathSegments;
+        for (var index = 0; index < patternSegments.Count && index < segments.Length; index++)
+            if (patternSegments[index].Parts is [RoutePatternParameterPart parameter]
+                && string.Equals(parameter.Name, key, StringComparison.OrdinalIgnoreCase))
+                return Uri.UnescapeDataString(segments[index]);
+        return null;
+    }
+
+    /// <summary>
+    /// True when the matched route's pattern has a literal segment at
+    /// <paramref name="index"/>, so the path segment there is no resource id.
+    /// </summary>
+    private static bool IsLiteralSegment(Endpoint? endpoint, int index)
+        => endpoint is RouteEndpoint route
+           && route.RoutePattern.PathSegments.Count > index
+           && route.RoutePattern.PathSegments[index].Parts is [RoutePatternLiteralPart];
+
+    /// <summary>
+    /// True when the matched route's pattern has a parameter segment at
+    /// <paramref name="index"/>.
+    /// </summary>
+    private static bool IsParameterSegment(Endpoint? endpoint, int index)
+        => endpoint is RouteEndpoint route
+           && route.RoutePattern.PathSegments.Count > index
+           && route.RoutePattern.PathSegments[index].Parts is [RoutePatternParameterPart];
 
     private static bool IsSafe(string method, string path)
         => HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method)
@@ -775,9 +842,12 @@ public sealed class AccessSecurityMiddleware
     /// <summary>
     /// Derives the project(s) a request addresses from its route or addressed
     /// task. <c>?project=</c> is read here only where the query is itself the
-    /// task address (<c>/core</c>); everywhere else it can only narrow.
+    /// task address (<c>/core</c>); everywhere else it can only narrow. The
+    /// matched <paramref name="endpoint"/>'s pattern decides whether a path
+    /// segment is a resource id or a literal route name; without one (an
+    /// unrouted request) the path alone decides.
     /// </summary>
-    private ProjectRouteAddress ResolveRouteAddress(HttpRequest request, string path)
+    private ProjectRouteAddress ResolveRouteAddress(HttpRequest request, string path, Endpoint? endpoint = null)
     {
         if (path.Equals("/api/workspace/tokens/timeline", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/api/workspace/tokens/timeline/cached", StringComparison.OrdinalIgnoreCase)
@@ -830,6 +900,14 @@ public sealed class AccessSecurityMiddleware
         // project against the route's permission in the handler.
         if (path.Equals("/api/tasks", StringComparison.OrdinalIgnoreCase))
             return ProjectRouteAddress.DeferredToHandler;
+        // Report and supervisor routes name their project in the segment after
+        // the area (/api/drift/{project}/...); their literal routes, such as
+        // /api/drift/actions/code-pattern-drift, stay unaddressed.
+        if ((path.StartsWith("/api/analysis/", StringComparison.OrdinalIgnoreCase)
+             || path.StartsWith("/api/drift/", StringComparison.OrdinalIgnoreCase)
+             || path.StartsWith("/api/supervisor/", StringComparison.OrdinalIgnoreCase))
+            && IsParameterSegment(endpoint, 2))
+            return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(path.Split('/', StringSplitOptions.RemoveEmptyEntries)[2]));
         // An Epic is a card: its sub-task routes address the Epic's project.
         if (path.StartsWith("/api/epics/", StringComparison.OrdinalIgnoreCase))
         {
@@ -849,6 +927,14 @@ public sealed class AccessSecurityMiddleware
             // project from the literal path segment.
             if (taskId is "reorder" or "batch-move" or "reference-status" or "archive")
                 return ProjectRouteAddress.DeferredToHandler;
+            // A literal route under /api/tasks/ names no task: the board and
+            // other collection reads (grouped, code-review/defaults,
+            // commit-owner/{sha}) filter their payload per task, and the
+            // orphan-folder cleanup is an installation-wide operation.
+            if (IsLiteralSegment(endpoint, 2))
+                return taskId.Equals("orphan-folder", StringComparison.OrdinalIgnoreCase)
+                    ? ProjectRouteAddress.WorkspaceWide
+                    : ProjectRouteAddress.Unaddressed;
             // Every other /api/tasks/{id}/... route is single-task addressed. A
             // scoped account may act only on a task whose project it belongs to. If
             // that project cannot be resolved (unknown id or the scanner is

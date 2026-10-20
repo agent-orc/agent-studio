@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.Security;
+using AgentStudio.Shared;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
@@ -122,6 +123,10 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         var synthetic = Assert.IsType<HumanPrincipal>(write.Context.Items[AccessSecurityMiddleware.HumanPrincipalItem]);
         Assert.Equal(("sa:" + account.Id, StudioRoles.Operator), (synthetic.User.Id, synthetic.User.Role));
         Assert.Equal(["alpha"], synthetic.User.Projects);
+        // A service account is attributed as a non-human actor.
+        var actor = AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(write.Context);
+        Assert.Equal("service-account:" + account.Id, actor);
+        Assert.False(TimelineActors.IsHuman(actor));
 
         // The task collection filters per task for the projected principal;
         // another unaddressed read needs a workspace binding.
@@ -180,6 +185,88 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         Assert.True(access.AllowsProject(IamPermissions.ProjectCardsWrite, "alpha"));
         Assert.False(access.AllowsProject(IamPermissions.ProjectCardsWrite, "beta"));
         Assert.True((await Invoke("POST", "/api/tasks/batch-move", "/api/tasks/batch-move", scoped)).Called);
+    }
+
+    [Fact]
+    public async Task Report_and_supervisor_routes_address_the_project_they_name()
+    {
+        var scoped = Invite("reports.dev",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha")),
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("beta")));
+
+        Assert.True((await Invoke("POST", "/api/supervisor/{project}/intervene/pause-pickup",
+            "/api/supervisor/alpha/intervene/pause-pickup", scoped)).Called);
+        Assert.True((await Invoke("POST", "/api/drift/{project}/actions/adr-code-drift",
+            "/api/drift/alpha/actions/adr-code-drift", scoped)).Called);
+        Assert.True((await Invoke("PUT", "/api/analysis/{project}/schedule", "/api/analysis/alpha/schedule", scoped)).Called);
+        var foreign = await Invoke("POST", "/api/supervisor/{project}/intervene/pause-pickup",
+            "/api/supervisor/beta/intervene/pause-pickup", scoped);
+        Assert.Equal((403, false), (foreign.Status, foreign.Called));
+        // A literal route of the area names no project: its write needs the workspace.
+        var literal = await Invoke("POST", "/api/drift/actions/code-pattern-drift", "/api/drift/actions/code-pattern-drift", scoped);
+        Assert.Equal((403, "permission-denied", false), (literal.Status, literal.Error, literal.Called));
+    }
+
+    [Fact]
+    public async Task A_stage_developer_releases_through_the_canonical_stage_key()
+    {
+        var stage = Invite("stage.dev",
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha")),
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForEnvironment("alpha", "Stage")));
+
+        var release = await Invoke("POST", "/api/projects/{projectName}/environments/releases",
+            "/api/projects/alpha/environments/releases", stage);
+        Assert.True(release.Called);
+        var approve = await Invoke("POST", "/api/projects/{projectName}/environments/promotions/approve",
+            "/api/projects/alpha/environments/promotions/approve", stage);
+        Assert.Equal((403, false), (approve.Status, approve.Called));
+        // Outside its environment the binding reads only: a project write stays refused.
+        var wiki = await Invoke("POST", "/api/projects/{projectName}/wiki/pages", "/api/projects/alpha/wiki/pages", stage);
+        Assert.Equal((403, false), (wiki.Status, wiki.Called));
+    }
+
+    [Fact]
+    public async Task A_contributor_with_a_developer_environment_binding_keeps_the_product_role_in_that_project()
+    {
+        var mixed = Invite("stage.product",
+            new IamGrantRequest(IamRoles.Contributor, IamScope.ForProject("beta")),
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForEnvironment("beta", IamEnvironments.Stage)));
+
+        var create = await Invoke("POST", "/api/tasks", "/api/tasks", mixed);
+        Assert.True(create.Called);
+        var access = Assert.IsType<RequestAccess>(create.Context.Items[AccessSecurityMiddleware.RequestAccessItem]);
+        Assert.True(access.IsProductRoleIn("beta"));
+        Assert.Equal(StudioRoles.Contributor,
+            Assert.IsType<HumanPrincipal>(create.Context.Items[AccessSecurityMiddleware.HumanPrincipalItem]).User.Role);
+        var snapshot = await Invoke("GET", "/api/projects/{projectName}/snapshot", "/api/projects/beta/snapshot", mixed);
+        Assert.Equal(StudioRoles.Contributor,
+            Assert.IsType<HumanPrincipal>(snapshot.Context.Items[AccessSecurityMiddleware.HumanPrincipalItem]).User.Role);
+    }
+
+    [Fact]
+    public async Task Operator_authority_and_the_operator_decision_role_belong_to_admin_and_owner()
+    {
+        var developer = Invite("authority.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha")));
+        var admin = Invite("authority.admin", new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha")));
+        var owner = Login("first.owner", Password);
+
+        var expectations = new (SignedIn User, string LegacyRole, bool Authority, string DecisionRole)[]
+        {
+            (developer, StudioRoles.Operator, false, IamRoles.Developer),
+            (admin, StudioRoles.Operator, true, StudioRoles.Operator),
+            (owner, StudioRoles.Owner, true, StudioRoles.Owner),
+        };
+        foreach (var (user, legacyRole, authority, decisionRole) in expectations)
+        {
+            var result = await Invoke("POST", "/api/projects/{projectName}/wiki/pages", "/api/projects/alpha/wiki/pages", user);
+            Assert.True(result.Called);
+            Assert.Equal(legacyRole, Assert.IsType<HumanPrincipal>(result.Context.Items[AccessSecurityMiddleware.HumanPrincipalItem]).User.Role);
+            Assert.Equal(authority, ProjectAccessAuthorization.HasOperatorAuthority(result.Context));
+            Assert.Equal(decisionRole, ProjectAccessAuthorization.DecisionRole(result.Context));
+        }
+        var operatorDecision = new DecisionContent { Decider = "role:operator" };
+        Assert.False(DecisionCardPolicy.MayDecide(operatorDecision, developer.UserId, IamRoles.Developer));
+        Assert.True(DecisionCardPolicy.MayDecide(operatorDecision, admin.UserId, StudioRoles.Operator));
     }
 
     [Fact]

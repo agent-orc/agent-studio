@@ -29,7 +29,7 @@ public sealed record LegacyRoleSummary(string Role, List<string> Projects, List<
 /// </summary>
 public static class LegacyRoleMapping
 {
-    public const string ProductionEnvironment = "production";
+    public const string ProductionEnvironment = IamEnvironments.Production;
 
     public static IReadOnlyList<IamGrantRequest> Grants(
         string? role, IReadOnlyList<string>? projects, IReadOnlyList<string>? productionApprovalProjects)

@@ -29,6 +29,41 @@ public sealed record IamScope(IamScopeKind Kind, string? Project = null, string?
     public static IamScope ForEnvironment(string project, string environment) => new(IamScopeKind.Environment, project, environment);
 }
 
+/// <summary>
+/// The canonical environment key of an environment scope: the kind an
+/// environment declaration names in <c>docs/deployments/environments/*.json</c>
+/// (<c>stage</c>, <c>production</c>, or <c>other</c>), never its id. Releases
+/// address the stage environment, promotions the production environment, and a
+/// route that names an environment id resolves it to its declaration's kind,
+/// so every binding matches one key per environment kind.
+/// </summary>
+public static class IamEnvironments
+{
+    public const string Stage = "stage";
+    public const string Production = "production";
+    public const string Other = "other";
+
+    public static readonly IReadOnlyList<string> All = [Stage, Production, Other];
+
+    /// <summary>The canonical key for a scope value, or <c>null</c> when it names no environment kind.</summary>
+    public static string? Canonical(string? value)
+    {
+        var key = value?.Trim().ToLowerInvariant();
+        return key is Stage or Production or Other ? key : null;
+    }
+
+    /// <summary>
+    /// The canonical key of the declaration whose id a route names, or
+    /// <c>null</c> when the project declares no such environment.
+    /// </summary>
+    public static string? ForDeclaration(
+        IEnumerable<AgentStudio.Projects.EnvironmentDeclaration>? declarations, string? environmentId)
+        => string.IsNullOrWhiteSpace(environmentId)
+            ? null
+            : Canonical(declarations?.FirstOrDefault(declaration
+                => string.Equals(declaration.Id, environmentId, StringComparison.Ordinal))?.Kind);
+}
+
 public static class IamBindingSources
 {
     public const string Bootstrap = "bootstrap";

@@ -99,31 +99,25 @@ public static class PermissionEvaluator
     }
 
     /// <summary>
-    /// The strongest role whose bindings cover every project the target
-    /// addresses, or <c>null</c> without one. The Product role's lane and
-    /// route allowlist applies when this is <see cref="IamRoles.Contributor"/>.
+    /// The strongest role whose bindings grant <paramref name="permission"/>
+    /// on every project the target addresses, or <c>null</c> without one. Only
+    /// workspace and project bindings rank as their role; an environment
+    /// binding ranks as its role only for a target in its own environment and
+    /// as <see cref="IamRoles.Viewer"/> elsewhere, because it grants no
+    /// project-level write. The Product role's lane and route allowlist
+    /// applies when this is <see cref="IamRoles.Contributor"/>.
     /// </summary>
     public static string? StrongestRole(
+        string permission,
         IamSubject subject,
         IEnumerable<RoleBinding> bindings,
         PermissionTarget target,
         Func<string, string, bool>? sameProject = null)
     {
         var matches = sameProject ?? DefaultSameProject;
-        var own = bindings.Where(binding => AppliesTo(binding, subject) && IamRoles.Find(binding.Role) is not null).ToList();
-        var projects = target.Scope == ProjectRouteScope.Addressed
-            ? target.Projects.Where(project => !string.IsNullOrWhiteSpace(project)).Select(project => project!).ToList()
-            : [];
-        if (projects.Count == 0) return Strongest(own);
-        RoleDefinition? weakest = null;
-        foreach (var project in projects)
-        {
-            var best = Strongest(own.Where(binding => Covers(binding, project, matches)));
-            if (best is null) return null;
-            var role = IamRoles.Find(best)!;
-            if (weakest is null || role.Rank < weakest.Rank) weakest = role;
-        }
-        return weakest?.Id;
+        var granting = GrantingBindings(permission, subject, bindings, target.Environment)
+            .Where(binding => IamRoles.Find(binding.Role) is not null).ToList();
+        return StrongestCovering(granting, target, matches);
     }
 
     public static bool AppliesTo(RoleBinding binding, IamSubject subject) => binding.PrincipalKind switch
@@ -144,10 +138,10 @@ public static class PermissionEvaluator
 
     /// <summary>
     /// The per-request legacy view of an allowed request (review item 2): the
-    /// role is the strongest role covering the addressed project(s), or for an
-    /// unaddressed route the strongest role among the bindings that grant the
-    /// route's permission; the projects are those where the route's permission
-    /// holds. Handler checks that still read <see cref="StudioUser.Role"/> and
+    /// role is the strongest role among the bindings that grant the route's
+    /// permission on the addressed project(s) (see <see cref="StrongestRole"/>),
+    /// or for an unaddressed route among all bindings that grant it; the
+    /// projects are those where the route's permission holds. Handler checks that still read <see cref="StudioUser.Role"/> and
     /// <see cref="StudioUser.Projects"/> then never see more than the bindings
     /// grant for this route.
     /// </summary>
@@ -158,24 +152,50 @@ public static class PermissionEvaluator
         PermissionTarget target,
         Func<string, string, bool>? sameProject = null)
     {
+        var matches = sameProject ?? DefaultSameProject;
         var own = bindings.Where(binding => AppliesTo(binding, subject) && IamRoles.Find(binding.Role) is not null).ToList();
         if (own.Any(binding => binding.Role == IamRoles.Owner && IsWorkspace(binding)))
             return new ProjectedAccess(StudioRoles.Owner, [], IamRoles.Owner);
 
         var granting = GrantingBindings(permission, subject, own, target.Environment);
-        // A denied request still gets a role, so the read-only check sees
-        // the strongest role the principal holds rather than none.
         var role = target.Scope switch
         {
-            ProjectRouteScope.Addressed => StrongestRole(subject, own, target, sameProject),
-            ProjectRouteScope.WorkspaceWide => Strongest(granting.Where(IsWorkspace)) ?? Strongest(own),
-            _ => Strongest(granting) ?? Strongest(own),
+            ProjectRouteScope.WorkspaceWide => Strongest(granting.Where(IsWorkspace), target.Environment),
+            _ => StrongestCovering(granting, target, matches),
         };
+        // Only a denied request has no granting role. It still gets the
+        // strongest role it holds on the address, ranked the same way, so the
+        // refusal names the Product or read-only limit rather than none.
+        role ??= StrongestCovering(own, target, matches);
         List<string> projects = granting.Any(IsWorkspace)
             ? [ProjectAccessAuthorization.AllProjectsGrant]
             : granting.Select(binding => binding.Scope.Project).OfType<string>()
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         return new ProjectedAccess(IamRoles.LegacyRole(role), projects, role);
+    }
+
+    /// <summary>
+    /// The strongest role among <paramref name="bindings"/> that covers every
+    /// project an addressed target names (the weakest of the per-project
+    /// maxima), or among all of them for an unaddressed target.
+    /// </summary>
+    private static string? StrongestCovering(
+        IReadOnlyList<RoleBinding> bindings, PermissionTarget target, Func<string, string, bool> matches)
+    {
+        var projects = target.Scope == ProjectRouteScope.Addressed
+            ? target.Projects.Where(project => !string.IsNullOrWhiteSpace(project)).Select(project => project!).ToList()
+            : [];
+        if (projects.Count == 0)
+            return target.Scope == ProjectRouteScope.Addressed ? null : Strongest(bindings, target.Environment);
+        RoleDefinition? weakest = null;
+        foreach (var project in projects)
+        {
+            var best = Strongest(bindings.Where(binding => Covers(binding, project, matches)), target.Environment);
+            if (best is null) return null;
+            var role = IamRoles.Find(best)!;
+            if (weakest is null || role.Rank < weakest.Rank) weakest = role;
+        }
+        return weakest?.Id;
     }
 
     private static bool Grants(RoleBinding binding, string permission, IamSubject subject, string? environment)
@@ -207,9 +227,20 @@ public static class PermissionEvaluator
 
     private static bool IsWorkspace(RoleBinding binding) => binding.Scope.Kind == IamScopeKind.Workspace;
 
-    private static string? Strongest(IEnumerable<RoleBinding> bindings)
-        => bindings.Select(binding => IamRoles.Find(binding.Role)!)
+    private static string? Strongest(IEnumerable<RoleBinding> bindings, string? environment)
+        => bindings.Select(binding => IamRoles.Find(RankedRole(binding, environment))!)
             .OrderByDescending(role => role.Rank).FirstOrDefault()?.Id;
+
+    /// <summary>
+    /// The role a binding ranks as for a target: an environment binding
+    /// outside its own environment contributes reads only (see
+    /// <see cref="IamPermissions.IsEnvironmentBindingRead"/>).
+    /// </summary>
+    private static string RankedRole(RoleBinding binding, string? environment)
+        => binding.Scope.Kind == IamScopeKind.Environment
+           && !string.Equals(binding.Scope.Environment, environment, StringComparison.OrdinalIgnoreCase)
+            ? IamRoles.Viewer
+            : binding.Role;
 
     private static bool DefaultSameProject(string bound, string requested)
         => string.Equals(bound, requested, StringComparison.OrdinalIgnoreCase);

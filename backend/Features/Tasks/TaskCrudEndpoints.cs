@@ -765,6 +765,9 @@ public static class TaskCrudEndpoints
             // It needs a written reason, checked here at the boundary.
             if (req.OperatorOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
                 return Results.BadRequest(new { error = OverrideReasonRequired });
+            if (req.OperatorOverride && !ProjectAccessAuthorization.HasOperatorAuthority(ctx))
+                return Results.Json(new { error = "operator-authority-required", message = OperatorAuthorityRequired },
+                    statusCode: StatusCodes.Status403Forbidden);
             if (req.ArchiveOverride && req.TargetState != TaskStates.Archive)
                 return Results.BadRequest(new { error = "archiveOverride is valid only for a move to 7-archive." });
             if (req.ArchiveOverride && (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal owner
@@ -804,6 +807,9 @@ public static class TaskCrudEndpoints
             // It needs a written reason, checked here at the boundary.
             if (req.OperatorOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
                 return Results.BadRequest(new { error = OverrideReasonRequired });
+            if (req.OperatorOverride && !ProjectAccessAuthorization.HasOperatorAuthority(ctx))
+                return Results.Json(new { error = "operator-authority-required", message = OperatorAuthorityRequired },
+                    statusCode: StatusCodes.Status403Forbidden);
             if (req.ArchiveOverride && req.TargetState != TaskStates.Archive)
                 return Results.BadRequest(new { error = "archiveOverride is valid only for a move to 7-archive." });
             if (req.ArchiveOverride && (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal owner
@@ -1307,7 +1313,7 @@ public static class TaskCrudEndpoints
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             return DecisionResult(await decisions.DecideAsync(jobId, watchPath, req, DecisionActor(ctx), ct,
-                (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role));
+                ProjectAccessAuthorization.DecisionRole(ctx)));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         group.MapPost("/{jobId}/decision/reopen", async (HttpContext ctx, string jobId, string? project, string? watchPath,
@@ -1316,7 +1322,7 @@ public static class TaskCrudEndpoints
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             return DecisionResult(await decisions.ReopenAsync(jobId, watchPath, req, DecisionActor(ctx), ct,
-                (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role));
+                ProjectAccessAuthorization.DecisionRole(ctx)));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         // Operator-run one-off conversion. The prompt digest makes a reviewed
@@ -1543,6 +1549,9 @@ public static class TaskCrudEndpoints
         + $"{CompletionContractPolicy.MinimumOverrideReasonLength} characters. It is stored on the "
         + "card and shown wherever the card claims completion.";
 
+    internal static readonly string OperatorAuthorityRequired =
+        "operatorOverride needs the Admin or Owner role in this project.";
+
     private static async Task<IResult> MoveOperatorWithRunIntentAsync(
         string jobId, string? watchPath, MoveJobRequest request, HttpContext context,
         TaskTransitionService transitions, TaskScannerService scanner, RunLeaseService leases,
@@ -1598,7 +1607,7 @@ public static class TaskCrudEndpoints
     internal static string OperatorActor(HttpContext context)
     {
         if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account)
-            return TimelineActors.Human(account.ActorId);
+            return TimelineActors.ServiceAccount(account.AccountId);
         if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
             return TimelineActors.Human(human.User.DisplayName);
         var clientId = context.Items["ClientId"] as string

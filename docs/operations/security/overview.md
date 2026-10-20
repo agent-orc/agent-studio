@@ -144,7 +144,13 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   any mapped route without a declaration, in the local, networked, and
   standalone-Task-Server host profiles. The middleware refuses an undeclared
   route with `permission-undeclared`; a method mismatch keeps its 405.
-- The route decides the addressed project as before. A binding covers a
+- The route decides the addressed project as before, read from the matched
+  route pattern: a literal segment after `/api/tasks/` names no task, so the
+  board (`/api/tasks/grouped`, also `/api/v1/studio/board`),
+  `code-review/defaults`, and `commit-owner/{sha}` are unaddressed reads and
+  `DELETE /api/tasks/orphan-folder` is workspace-wide (`workspace.operate`).
+  `/api/analysis/{project}`, `/api/drift/{project}`, and
+  `/api/supervisor/{project}` address that project. A binding covers a
   project route when its scope is the workspace or that project; workspace-wide
   routes need a workspace binding. Unaddressed reads accept any binding because
   their handlers filter per project. Unaddressed writes need a workspace
@@ -153,13 +159,28 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   touch (`ProjectAccessAuthorization.AllowsTasks(context, projects,
   permission)`). An environment binding grants its environment-level
   permissions in that environment and read access to the project.
+- Environment scopes name the environment kind of the project's declarations
+  (`docs/deployments/environments/*.json`): `stage`, `production`, or
+  `other`, never an environment id. Releases address `stage`, promotions and
+  the card release flag address `production`, and a rollback resolves its
+  `environmentId` to the kind of that declaration (an undeclared id resolves
+  to no environment, so only workspace and project bindings grant it). The
+  store refuses any other environment key with `invalid-scope`.
 - Requests never authorize through the stored legacy fields. After the
   permission decision the middleware gives the handler a projected principal
-  for this request: `role` is the strongest role that covers the addressed
+  for this request: `role` is the strongest role among the workspace and
+  project bindings that grant the route's permission on the addressed
   project(s) (Admin and Developer appear as `operator`, Approver as `viewer`),
-  and `projects` are the projects where the route's permission holds. A user
-  who is Product in one project and Developer in another therefore meets the
-  Product lane rules in the first. The Task Server proxy forwards `owner` for
+  and `projects` are the projects where the route's permission holds. An
+  environment binding ranks as its role only for a request in its own
+  environment and as Viewer elsewhere. A user who is Product in one project
+  and Developer in another project, or Developer of one of its environments,
+  therefore meets the Product lane rules in the first.
+- Operator authority belongs to Admin and Owner. An `operatorOverride`
+  completion needs Admin or Owner on the card's project (else 403
+  `operator-authority-required`), and a decision card for `role:operator`
+  accepts Admin and Owner only. Developer acts as `operator` for the other
+  handler checks but decides a card only as `role:developer`. The Task Server proxy forwards `owner` for
   the Owner, `operator` only with `workspace.operate` on the workspace, and
   `viewer` otherwise.
 - **Tightening for legacy operators.** `workspace.settings.write` and
@@ -177,7 +198,8 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   workspace binding on unaddressed routes. They never call access
   administration or the versioned `/api/v1` plane. Handlers see them as
   `sa:<id>`, which is also the actor of approvals, rollbacks, and moves they
-  trigger. Runners and the engine keep their enrollment credentials and
+  trigger; card timelines record them as the non-human actor
+  `service-account:<id>`. Runners and the engine keep their enrollment credentials and
   Runner scopes.
 - API tokens (AGT-3186) are service accounts with one `api.` token, created
   under `/api/auth/api-tokens` with Admin (`operator`) or Viewer bindings for
@@ -206,7 +228,11 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   and a user without bindings as a viewer of no project. **Downgrade:** an
   older binary reads only this summary and drops role bindings, groups, and
   service accounts (API tokens included) the first time it saves the file;
-  restore the migration backup to return to the old state.
+  restore the migration backup to return to the old state. A later upgrade
+  migrates again from that summary, so bindings, groups, and service accounts
+  made under the rights model would be lost. Before a downgrade, copy the
+  current `.security/access-state.json` (version 2) aside; before upgrading
+  again, restore that copy.
 - The legacy user endpoint keeps working: `PUT /api/auth/users/{id}` renames
   or disables without touching bindings when `role`, `projects`, and
   production approvals equal the current summary. A real role change replaces

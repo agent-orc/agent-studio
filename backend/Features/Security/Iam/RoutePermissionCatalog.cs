@@ -7,8 +7,9 @@ namespace AgentStudio.Security;
 
 /// <summary>
 /// The named permission a route requires. <see cref="Environment"/> names a
-/// fixed environment; <see cref="EnvironmentRouteValue"/> names the route
-/// value that carries it.
+/// fixed canonical environment key (<see cref="IamEnvironments"/>);
+/// <see cref="EnvironmentRouteValue"/> names the route value that carries an
+/// environment id, which resolves to the key of its declaration.
 /// </summary>
 public sealed record RequiredPermissionMetadata(
     string Permission,
@@ -199,13 +200,17 @@ public static class RoutePermissionCatalog
         Add("*", IamPermissions.WorkspaceOperate, "/api/v1/management/**");
 
         // --- Environments and production approval --------------------------
-        Environment("POST", IamPermissions.EnvironmentDeploy, "/api/projects/{}/environments/releases", "stage");
+        // Environment keys are canonical kinds (IamEnvironments): a release
+        // goes to the stage environment, a promotion to production, and a
+        // rollback names an environment id the middleware resolves to the
+        // kind of its declaration.
+        Environment("POST", IamPermissions.EnvironmentDeploy, "/api/projects/{}/environments/releases", IamEnvironments.Stage);
         Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
-            "/api/projects/{}/environments/promotions/*", LegacyRoleMapping.ProductionEnvironment);
+            "/api/projects/{}/environments/promotions/*", IamEnvironments.Production);
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
             "/api/projects/{}/environments/{}/rollback", null, "environmentId");
         Environment("PUT", IamPermissions.EnvironmentProductionDeployApprove, "/api/tasks/{}/release",
-            LegacyRoleMapping.ProductionEnvironment);
+            IamEnvironments.Production);
 
         // --- Workspace administration, settings, and operation -------------
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/usage-calendar");
