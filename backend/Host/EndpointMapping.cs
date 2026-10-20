@@ -42,6 +42,7 @@ public static class EndpointMapping
         tasks.MapTaskMergeEndpoints();
         tasks.MapTaskIntegrationRecordEndpoints();
         app.MapExternalPublishedVerificationEndpoints();
+        app.MapOperatorCandidateVerificationEndpoints();
         tasks.MapTaskDeliveryClaimEndpoint();
         tasks.MapTaskIntegrationRecoveryEndpoints();
         tasks.MapTaskIntegrationRetryEndpoints();
