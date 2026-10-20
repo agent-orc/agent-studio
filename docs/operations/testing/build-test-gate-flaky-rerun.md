@@ -47,6 +47,13 @@ the original red standing, when any of these hold:
 | `unfilterable-test-name` | A name carries characters a `FullyQualifiedName=` term cannot express verbatim (a theory case printed with its arguments). A filter that silently matches nothing would read as green. |
 | `no-budget-left` | The gate-run budget is spent. |
 
+A sharded suite (AGT-3232) applies the same decision per shard. A red shard
+re-runs only its own failed tests, once, with the suite command as the base. The
+shard keeps the first outcome (counts and failed names) and the re-run outcome
+in `--- test-shards.json ---`. A green re-run marks the shard `flaky-passed`; a
+second red is that shard's verdict and fails the gate. See
+[sharded test suites](../../system/domains/pipeline.md#sharded-test-suites-in-the-gate-agt-3232).
+
 ## Budget
 
 The re-run is charged to the **same** gate-run budget

@@ -196,6 +196,47 @@ public static class IntegrationGateReceipts
     }
 
     /// <summary>
+    /// AGT-3232: the sharded suites of the gate run - shards, hosts, lanes,
+    /// durations, test counts, failed tests and each re-run - as one JSON block.
+    /// The per-class timings that feed the next plan stay out of the log.
+    /// </summary>
+    internal static string TestShardReport(BuildTestGateResult result)
+    {
+        if (result.TestShards.Count == 0) return string.Empty;
+        var suites = result.TestShards.Select(suite => new
+        {
+            suite.SuiteId,
+            suite.Command,
+            suite.ShardCount,
+            suite.CountSource,
+            suite.Strategy,
+            suite.PlanDigest,
+            suite.Lanes,
+            suite.Hosts,
+            suite.WallMs,
+            suite.SerialWallMs,
+            suite.Tests,
+            Shards = suite.Shards.Select(shard => new
+            {
+                Shard = shard.Index + 1,
+                shard.Host,
+                shard.Lane,
+                shard.Classes,
+                shard.EstimatedMs,
+                shard.DurationMs,
+                shard.ExitCode,
+                shard.Outcome,
+                shard.Tests,
+                shard.FailedTests,
+                shard.Rerun,
+            }),
+        });
+        return "--- test-shards.json ---\n"
+               + System.Text.Json.JsonSerializer.Serialize(suites,
+                   new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n";
+    }
+
+    /// <summary>
     /// The rung a receipt records (AGT-3070): exact on Remote Review reuse,
     /// none when no gate ran because its source was missing, otherwise full.
     /// </summary>
@@ -288,6 +329,7 @@ public static class IntegrationGateReceipts
                 process.BudgetExtension, process.ViolatedBudget, process.FailedTestsObserved,
             }), new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n" +
             SlowTestReport(result) +
+            TestShardReport(result) +
             "--- last-300-lines ---\n" +
             result.Output;
         File.WriteAllText(

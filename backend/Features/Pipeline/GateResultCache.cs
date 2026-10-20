@@ -158,6 +158,9 @@ public sealed class GateResultCache
             Mode = mode.ToString(),
             Commands = commands,
         }, Json);
+        // AGT-3232: a host part ran only some shards; its verdict must never
+        // answer a later whole-gate lookup. A whole gate keeps its digest.
+        if (request.Sharding?.Part is { } part) payload += $"|shard-part={part.Index}/{part.Count}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
     }
 

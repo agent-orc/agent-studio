@@ -86,6 +86,12 @@ public sealed record BuildTestGateRequest(
     public int GateSlots { get; init; } = 1;
 
     /// <summary>
+    /// AGT-3232: the host part and timing snapshot for sharded suites. Null
+    /// runs the whole gate on this host and plans by class-name hashing.
+    /// </summary>
+    public GateShardRequest? Sharding { get; init; }
+
+    /// <summary>
     /// Host requirements (capability keys) whose gate steps the reused Remote
     /// Review verdict already ran on a host that has them (AGT-2981). Only
     /// the pre-develop gate sets this, and only when the reuse policy granted
@@ -120,6 +126,9 @@ public sealed record BuildTestGateProcessEvidence
     public GateBudgetExtensionEvidence? BudgetExtension { get; init; }
     public bool FailedTestsObserved { get; init; }
     public IReadOnlyList<GateSlowTest> SlowTests { get; init; } = [];
+
+    /// <summary>Counts and failed names from the process's TRX report; null without a report.</summary>
+    public GateTestReport? TestReport { get; init; }
     public long OriginalBudgetMs { get; init; }
 
     /// <summary>
@@ -284,6 +293,9 @@ public sealed record BuildTestGateResult(
     /// <summary>Lifecycle classification supplied by the cancellation owner.</summary>
     public string? CancellationReason { get; init; }
 
+    /// <summary>AGT-3232: every suite this gate ran in shards, with shards, hosts, durations and test counts.</summary>
+    public IReadOnlyList<GateShardSuiteEvidence> TestShards { get; init; } = [];
+
     public bool IsInfrastructureFailure => FailureKind is not BuildTestGateFailureKind.None
         and not BuildTestGateFailureKind.Code;
 }
@@ -311,7 +323,7 @@ internal enum BuildTestMachineGateMode
 /// The Task Server checkout only supplies Git objects and is never a command
 /// workspace.
 /// </summary>
-public sealed class BuildTestGateRunner : IBuildTestGateRunner
+public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
 {
     public const int MaxOutputLines = 300;
 
@@ -399,10 +411,12 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         BuildTestMachineGateMode machineGateMode,
         string? preparationCacheRoot = null,
         Func<int, IGateProcessResources>? resourceFactory = null,
-        Func<CancellationToken, Task<bool>>? composeRenderHost = null)
+        Func<CancellationToken, Task<bool>>? composeRenderHost = null,
+        int shardLanes = 1)
         : this(logger)
     {
         _machineGateMode = machineGateMode;
+        _hermeticShardLanes = shardLanes;
         if (resourceFactory is not null) _resourceFactory = resourceFactory;
         if (composeRenderHost is not null) _composeRenderHost = composeRenderHost;
         if (!string.IsNullOrWhiteSpace(preparationCacheRoot))
@@ -758,7 +772,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         }
                         : await RunCommandsAsync(
                             workspace!, preparation, commands, plan.Source, mode, timeout,
-                            [], projectPreparation, ct)
+                            [], projectPreparation, ct, ShardContext(request))
                             .ConfigureAwait(false);
                     if (completed.VerdictSource != GateVerdictSource.CacheHit)
                     {
@@ -1184,7 +1198,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 ? [] : GatePreparationPlanner.Plan(workspacePath, profile, commands);
             return await RunCommandsAsync(
                 workspacePath, prepCommands, commands, $"diagnostic-{role}",
-                PostStepMode.Fail, timeout, [], preparation, ct).ConfigureAwait(false);
+                PostStepMode.Fail, timeout, [], preparation, ct, ShardContext(request)).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -1318,7 +1332,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         TimeSpan timeout,
         IReadOnlyList<string> cacheRestoreMessages,
         ProjectPreparationResult? projectPreparation,
-        CancellationToken ct)
+        CancellationToken ct,
+        GateShardContext? sharding = null)
     {
         var sw = Stopwatch.StartNew();
         var budget = new GateContentionBudget(timeout);
@@ -1337,6 +1352,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         var quarantined = new List<TestQuarantineHit>();
         foreach (var issue in quarantine.Issues) output.AppendLine($"# test quarantine issue: {issue}");
         commands = GuardFirstGatePlan.Apply(commands);
+        var shardSuites = sharding is null ? [] : ShardSuites(repositoryPath);
+        var testShards = new List<GateShardSuiteEvidence>();
 
         foreach (var command in preparation)
         {
@@ -1441,28 +1458,57 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 }, BuildTestGateFailureKind.MissingSource);
             }
 
+            // AGT-3232: a declared suite that plans to several shards runs them
+            // in parallel lanes. A secondary host part runs only builds and its
+            // own shards; the primary part runs every other command.
+            var shardPlan = sharding is null
+                ? null
+                : PlanShardedSuite(shardSuites, workingDirectory, command, sharding.Timings);
+            if (sharding is { IsSecondary: true } && shardPlan is null && command.Kind != VerifyCommandKind.Build)
+            {
+                output.AppendLine($"# host part {sharding.Part}: {Describe(command)} runs on the primary gate host");
+                continue;
+            }
+
             if (command.Ecosystem == VerifyEcosystem.Node) ranFrontend = true;
             else ranBackend = true;
             output.AppendLine($"# working directory: {workingDirectory}");
             var guardStep = GuardFirstGatePlan.IsGuardStep(command);
             if (guardStep) output.AppendLine("# guard-first step: architecture and guard tests before the full suite");
 
-            var elapsedBefore = sw.Elapsed;
-            var process = await RunShellAsync(
-                workingDirectory,
-                command.Command,
-                command.Shell,
-                budget,
-                elapsedBefore,
-                output,
-                ct,
-                phase: "verification",
-                projectPreparation)
-                .ConfigureAwait(false);
+            BuildTestGateProcessEvidence process;
+            BuildTestGateFailureKind? shardedKind = null;
+            if (shardPlan is not null)
+            {
+                var sharded = await RunShardedSuiteAsync(
+                    shardPlan, command, workingDirectory, sharding!, budget, sw, output,
+                    projectPreparation, quarantine, quarantineDay, ct).ConfigureAwait(false);
+                evidence.AddRange(sharded.Processes);
+                testShards.Add(sharded.Evidence);
+                flakyQuarantined.AddRange(sharded.FlakyTests);
+                quarantined.AddRange(sharded.QuarantineHits);
+                retryPerformed |= sharded.RetryPerformed;
+                process = sharded.Verification;
+                shardedKind = sharded.Kind;
+            }
+            else
+            {
+                process = await RunShellAsync(
+                    workingDirectory,
+                    command.Command,
+                    command.Shell,
+                    budget,
+                    sw.Elapsed,
+                    output,
+                    ct,
+                    phase: "verification",
+                    projectPreparation)
+                    .ConfigureAwait(false);
+            }
             evidence.Add(process);
             if (process.ExitCode != 0 || process.TimedOut || process.Cancelled || process.LaunchError is not null)
             {
-                var kind = ClassifyFailure(process);
+                var kind = shardedKind ?? ClassifyFailure(process);
                 if (process.TimedOut && findings.Count > 0) kind = BuildTestGateFailureKind.Code;
                 if (kind == BuildTestGateFailureKind.Code && !command.BlocksWorkPackage && !process.TimedOut)
                 {
@@ -1478,8 +1524,9 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 }
 
                 // AGT-W57 D4: failures of actively quarantined tests do not
-                // block; they are recorded for the run and fleet reports.
-                if (kind == BuildTestGateFailureKind.Code && command.Kind == VerifyCommandKind.Test)
+                // block; they are recorded for the run and fleet reports. A
+                // sharded step already settled quarantine and re-runs per shard.
+                if (kind == BuildTestGateFailureKind.Code && command.Kind == VerifyCommandKind.Test && shardedKind is null)
                 {
                     var partition = TestQuarantinePolicy.Partition(
                         GateFlakyRerunPolicy.ParseFailedTests($"{process.StandardOutput}\n{process.StandardError}"),
@@ -1498,15 +1545,18 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 // the same build, charged to the same gate-run budget. A green
                 // re-run keeps the gate green and records the names as flaky; a
                 // second red leaves the original verdict untouched.
-                var rerun = GateFlakyRerunPolicy.Decide(
-                    command.Kind,
-                    kind,
-                    command.Command,
-                    $"{process.StandardOutput}\n{process.StandardError}",
-                    Remaining(budget.Limit, sw.Elapsed, allowExhausted: true));
-                output.AppendLine(
-                    $"# flaky re-run decision: {rerun.Reason} " +
-                    $"failed={(rerun.FailedTests.Count == 0 ? "none" : string.Join(", ", rerun.FailedTests))}");
+                var rerun = shardedKind is not null
+                    ? GateFlakyRerunDecision.No("per-shard")
+                    : GateFlakyRerunPolicy.Decide(
+                        command.Kind,
+                        kind,
+                        command.Command,
+                        $"{process.StandardOutput}\n{process.StandardError}",
+                        Remaining(budget.Limit, sw.Elapsed, allowExhausted: true));
+                if (shardedKind is null)
+                    output.AppendLine(
+                        $"# flaky re-run decision: {rerun.Reason} " +
+                        $"failed={(rerun.FailedTests.Count == 0 ? "none" : string.Join(", ", rerun.FailedTests))}");
                 if (rerun.ShouldRerun)
                 {
                     retryPerformed = true;
@@ -1555,6 +1605,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     QuarantinedFailures = quarantined,
                     QuarantineIssues = quarantine.Issues,
                     GuardViolation = guardStep,
+                    TestShards = testShards,
                 }, kind);
             }
         }
@@ -1576,6 +1627,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             FlakyQuarantinedFailures = flakyQuarantined,
             QuarantinedFailures = quarantined,
             QuarantineIssues = quarantine.Issues,
+            TestShards = testShards,
         };
     }
 
@@ -2296,7 +2348,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 { SilentCatch.Note(ex, "BuildTestGateRunner: test report enumeration"); }
             }
-            budget.FailedTestsObserved |= timings.Failed;
+            if (timings.Failed) budget.FailedTestsObserved = true;
             output.AppendBlock("stdout", stdout);
             output.AppendBlock("stderr", stderr);
             var completedAt = DateTimeOffset.UtcNow;
@@ -2327,6 +2379,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 OriginalBudgetMs = (long)budget.OriginalLimit.TotalMilliseconds,
                 FailedTestsObserved = timings.Failed,
                 SlowTests = timings.Slowest,
+                TestReport = timings.Report,
             };
         }
     }

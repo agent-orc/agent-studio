@@ -858,7 +858,10 @@ builder.Services.AddHttpClient<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
         client.Timeout = TimeSpan.FromMinutes(5));
 builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
-builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.RemoteGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.GateShardTimingStore>();
+// AGT-3232: shards the gate's suites across RemoteGate:ShardHosts with a free slot.
+builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.ShardedRemoteGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
     AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();

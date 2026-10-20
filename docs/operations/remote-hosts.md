@@ -29,6 +29,30 @@ cache paths are separated by slot. Playwright uses its isolated workspace and
 dynamic ports, and the .NET test hosts use ephemeral loopback ports or in-memory
 servers. Avoid fixed listener ports in new gate tests.
 
+### Sharded suites and additional shard hosts (AGT-3232)
+
+The gate splits a declared `.NET` suite into shards. On one host, a gate takes
+additional free gate slots as parallel test lanes. Each lane stands for one
+slot's `ProcessorCount`, so the slot budget above also bounds sharded gates. To
+spread one gate run across hosts, configure additional shard hosts on the
+dispatching API host. Every value except `SshHost` defaults to the
+`RemoteGate` value:
+
+```bash
+RemoteGate__ShardHosts__0__SshHost=agent-runner-01
+RemoteGate__ShardHosts__0__GateSlots=1
+RemoteGate__ShardHosts__0__ProcessorCount=6
+```
+
+A shard host needs the same release-pinned worker at `WorkerPath`, a trusted
+host key and noninteractive SSH, like the primary gate host. A run uses it only
+while both the primary host and the shard host have a free slot. If a shard
+host fails, the run gets an infrastructure verdict and is not counted as a
+code failure. The gate log lists every shard with its host, lane, duration and
+test counts under `--- test-shards.json ---`. The
+[pipeline domain map](../system/domains/pipeline.md#sharded-test-suites-in-the-gate-agt-3232)
+describes the planning and verdict rules.
+
 ## Prelaunch infrastructure failures
 
 The Task Server counts consecutive infrastructure failures per card and failure

@@ -518,6 +518,65 @@ after gate and source-repository cleanup; otherwise the directory is retained
 with a cancellation marker for diagnosis. The remote machine lock continues
 to serialize gates, including a worker still completing bounded cleanup.
 
+## Sharded test suites in the gate (AGT-3232)
+
+The gate splits a declared `.NET` suite into class partitions and runs them in
+parallel. A `commands.test` step is sharded when its command equals the
+`command` of a `testSuites` entry in `.agent-studio/project.yml`. It must be a
+single `dotnet test <project>.csproj` without its own run settings and must
+plan to two or more shards. Guard-first steps, work-package selections and
+other commands run as before.
+
+- **Count.** The optional `shards` field of the suite (1 to 16; 1 keeps the
+  suite in one process) sets the count. Without it, the count is the measured
+  serial duration of the last complete sharded run, or else
+  `expectedDurationSeconds`, at 360 seconds per shard. A derived count is at
+  most 8 and never more than the number of test classes.
+- **Assignment.** `GateShardPlanner` sorts classes by recorded duration, longest
+  first, and assigns each to the least loaded shard. A class without a timing
+  is estimated at the median. A suite without any recorded timing uses a
+  stable SHA-256 hash of the class name. Classes come from a source scan of the
+  test project. The last shard runs the complement of all other shards, so a
+  class the scan misses still runs exactly once. The plan digest is the same on
+  every host for the same subject and timing snapshot.
+- **Filters.** Each shard runs the suite command without its `--filter` and
+  with `--settings` pointing to a run-settings file. Its
+  `RunConfiguration/TestCaseFilter` is `(<suite filter>)&(<class partition>)`.
+  `Category!=MachineBound` and every other category filter therefore apply
+  exactly as in the unsharded run. The complement filter names hundreds of
+  classes, which is why it is not passed on the command line.
+- **Parallel lanes on one host.** The gate's own machine slot is one lane. It
+  takes additional slots that are free at that moment for more lanes, so
+  `RemoteGate:GateSlots` times `RemoteGate:ProcessorCount` still bounds the
+  cores in use. Lanes are also capped at online cores divided by
+  `DOTNET_PROCESSOR_COUNT`. With one lane the shards run in sequence.
+- **Across hosts.** `ShardedRemoteGateTransport` adds the hosts configured under
+  `RemoteGate:ShardHosts`. A run spans hosts only when the primary host and an
+  additional host each have a free slot and the additional host was not
+  unreachable on its last SSH call. Host part *h* of *H* runs the shards whose
+  index modulo *H* is *h*. Part 0 also runs every unsharded command; other
+  parts run only builds and their own shards. Every host receives the same
+  timing snapshot. A part's verdict has its own cache identity. When one share
+  fails, the dispatcher stops the other shares.
+- **One verdict.** `GateShardVerdictPolicy` merges shards and host shares. Every
+  shard must pass. A red test anywhere is a code failure. Without a red test,
+  any infrastructure failure, or a shard that no host reports, gives an
+  infrastructure verdict. This holds even when every other shard passed. After a
+  definitive red, shards that have not started are recorded as `not-run`.
+- **Flaky re-run per shard.** A red shard first applies the quarantine list. It
+  then spends the AGT-2853 targeted re-run of exactly its own failed tests on
+  the suite command. The shard evidence keeps both outcomes. A green re-run
+  marks the shard `flaky-passed` and records the names as flaky.
+- **Evidence.** `BuildTestGateResult.TestShards` lists each sharded suite: plan
+  digest, count source, strategy, lanes, hosts, wall and serial time, test
+  counts, and per shard the host, lane, classes, duration, exit code, outcome,
+  failed tests and re-run. Integration gate logs carry it as
+  `--- test-shards.json ---`. Each shard process has phase `test-shard`. One
+  aggregate `verification` record per planned command keeps positional readers
+  unchanged. Per-class timings return to the dispatcher, which stores complete
+  runs in `agentstudio-gate-shard-timings` under its temp directory for the next
+  plan.
+
 ## Key Code
 
 The creation-time `auto-tag` step (AGT-2804) is separate from the card's coding

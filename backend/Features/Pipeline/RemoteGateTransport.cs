@@ -37,6 +37,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     private readonly Action<string> _deleteDirectory;
     private readonly GateSlotUsageTracker _slotUsage;
     private readonly Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task> _runProcess;
+    private readonly string _section;
     private long _lastSweepTicks = NeverSwept;
 
     public RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
@@ -47,11 +48,26 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     {
     }
 
+    /// <summary>
+    /// A transport to an additional shard host (AGT-3232): its options come
+    /// from <paramref name="section"/>, with unset values taken from
+    /// <c>RemoteGate</c>.
+    /// </summary>
+    internal RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
+        string section, GateSlotUsageTracker slotUsage, TimeProvider? timeProvider = null)
+        : this(configuration, logger, timeProvider ?? TimeProvider.System,
+            Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport"),
+            WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage)
+    {
+        _section = section;
+    }
+
     internal RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
         TimeProvider timeProvider, string localRoot, Action<string> deleteDirectory,
         GateSlotUsageTracker? slotUsage = null,
         Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task>? runProcess = null)
     {
+        _section = RemoteGateOptions.PrimarySection;
         _configuration = configuration;
         _logger = logger;
         _time = timeProvider;
@@ -65,7 +81,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         IReadOnlyList<string>? changedFiles, BuildProfile? profile,
         PostStepMode mode, TimeSpan timeout, CancellationToken ct)
     {
-        var options = RemoteGateOptions.Read(_configuration);
+        var options = RemoteGateOptions.Read(_configuration, _section);
         _slotUsage.Configure(options.GateSlots);
         var runId = Guid.NewGuid().ToString("N");
         var local = Path.Combine(_localRoot, runId);
@@ -405,13 +421,25 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
 
 internal sealed record RemoteGateOptions(string Host, string WorkerPath, string Root, int ProcessorCount, int GateSlots)
 {
-    internal static RemoteGateOptions Read(IConfiguration configuration)
+    internal const string PrimarySection = "RemoteGate";
+
+    /// <summary>
+    /// Reads the gate host of <paramref name="section"/>. A shard host section
+    /// (<c>RemoteGate:ShardHosts:N</c>) names its own <c>SshHost</c> and takes
+    /// every other unset value from <c>RemoteGate</c>.
+    /// </summary>
+    internal static RemoteGateOptions Read(IConfiguration configuration, string section = PrimarySection)
     {
-        var host = configuration["RemoteGate:SshHost"]?.Trim();
-        var worker = configuration["RemoteGate:WorkerPath"]?.Trim();
-        var root = (configuration["RemoteGate:Root"] ?? "/var/tmp/agentstudio-remote-gates").TrimEnd('/');
-        var processors = configuration.GetValue("RemoteGate:ProcessorCount", 2);
-        var slots = configuration.GetValue("RemoteGate:GateSlots", 1);
+        string? Value(string key) => configuration[$"{section}:{key}"] ?? configuration[$"{PrimarySection}:{key}"];
+        // An unparsable count is out of range, so it fails closed below.
+        int Count(string key, int fallback) => Value(key) is { } raw
+            ? int.TryParse(raw, out var value) ? value : -1
+            : fallback;
+        var host = configuration[$"{section}:SshHost"]?.Trim();
+        var worker = Value("WorkerPath")?.Trim();
+        var root = (Value("Root") ?? "/var/tmp/agentstudio-remote-gates").TrimEnd('/');
+        var processors = Count("ProcessorCount", 2);
+        var slots = Count("GateSlots", 1);
         if (host is null || !Regex.IsMatch(host, "^[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,254}$")
             || host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
             || host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)
