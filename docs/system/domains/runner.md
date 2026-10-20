@@ -858,6 +858,15 @@ unreported claim expires with its lease and is queued again.
   likewise allows `queue` and `park` only without an active lease. This stop
   receipt path serves the current monolith API; the standalone v1 lease wire
   reserves a stop directive but does not yet expose an active-stop command.
+  The stop route targets the card's canonical authority key for both remote and
+  local leases. A local lease can remain held while preparation or
+  post-processing runs without a CLI process. Its owner observes a fenced stop
+  before starting the next step, releases the lease with outcome `Stopped`, and
+  settles the stop receipt so the card shows the stopped attempt. The endpoint
+  shares a gate with CLI launch and review moves. A stop accepted while visual
+  QA is running is checked before the UI card can enter Human Review. The store
+  resolves `TaskRepository` on first use, so a host without it still starts:
+  it reads no receipts, and a stop that would need one returns 409.
 - `backend/Features/Clients/ClientDeletionPolicy.cs` (AGT-2748): the pure
   eligibility decision for permanently deleting a retired client identity,
   shared by `DELETE /api/clients/{id}/permanent` and the bulk
