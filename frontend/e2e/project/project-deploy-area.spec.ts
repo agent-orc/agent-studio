@@ -74,14 +74,15 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route('**/api/usage/cockpit**', route => route.fulfill(json({}, 503)));
   await page.route('**/api/cli/quota**', route => route.fulfill(json({ ttlSeconds: 600, snapshots: [] })));
   await page.route('**/api/cli/usage**', route => route.fulfill(json({ sessions: [] })));
-  await page.route('**/api/v1/workspaces**', route => route.fulfill(json([{
-    id: 'ws', displayName: 'Workspace', projects: [{
-      sourceType: 'local-folder', id: 'PROJ-WEB', displayName: PROJECT, shortCode: 'WEB', workspaceId: 'ws',
-      color: null, cliDefault: null, modelDefault: null, sortOrder: 0, storageLocation: STORAGE,
-      repositoryPath: '/srv/repo/website', rootPath: '/srv/repo/website', urls: [], ownershipMappings: [],
-      archived: false, createdAt: '2026-10-01T00:00:00Z',
-    }],
-  }])));
+  const project = {
+    sourceType: 'local-folder', id: 'PROJ-WEB', displayName: PROJECT, shortCode: 'WEB', workspaceId: 'ws',
+    color: null, cliDefault: null, modelDefault: null, sortOrder: 0, storageLocation: STORAGE,
+    repositoryPath: '/srv/repo/website', rootPath: '/srv/repo/website', urls: [], ownershipMappings: [],
+    archived: false, createdAt: '2026-10-01T00:00:00Z',
+  };
+  await page.route('**/api/v1/workspaces**', route => route.fulfill(json([{ id: 'ws', displayName: 'Workspace', projects: [project] }])));
+  // An empty project list opens the first-run settings over the restored Deploy tab.
+  await page.route('**/api/v1/projects', route => route.fulfill(json([project])));
   await page.route(`**/api/projects/${PROJECT}/environments`, route => route.fulfill(json(deploy.environments)));
   await page.route(`**${DEPLOY}/status`, route => answer(route, deploy.status));
   await page.route(`**${DEPLOY}/releases`, route => answer(route, deploy.releases));
