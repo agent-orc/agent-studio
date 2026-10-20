@@ -43,6 +43,84 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ScheduledVolumeBackup_UsesInjectedClock_AndRestoreIsAudited()
+    {
+        var (environments, repo, _) = Build();
+        File.WriteAllText(Path.Combine(repo, "docs", "deployments", "environments", "stage.json"),
+            JsonSerializer.Serialize(new
+            {
+                id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
+                address = "https://stage.example", template = "container", destination = "8081",
+                healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
+                data = new { volumes = new[] { new { name = "uploads", mountPath = "/app/uploads" } } },
+            }));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+        }).Build();
+        var engine = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"), Path.Combine(_root, "archives"));
+        var key = new HostedVolumeKey("demo", "stage", "uploads");
+        Directory.CreateDirectory(engine.VolumePath(key));
+        File.WriteAllText(Path.Combine(engine.VolumePath(key), "data.txt"), "before");
+        var backups = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        await backups.SetScheduleAsync("demo", "stage", "uploads", 13, "owner", CancellationToken.None);
+        await backups.RunDueAsync(CancellationToken.None);
+        Assert.Empty((await backups.ReadAsync("demo", CancellationToken.None))!.Schedules.Single().Backups);
+        _clock.Advance(TimeSpan.FromHours(1));
+        await backups.RunDueAsync(CancellationToken.None);
+        var state = (await backups.ReadAsync("demo", CancellationToken.None))!;
+        var backup = Assert.Single(Assert.Single(state.Schedules).Backups);
+        File.WriteAllText(Path.Combine(engine.VolumePath(key), "data.txt"), "after");
+        await backups.RestoreAsync("demo", "stage", "uploads", backup.Id, "owner", CancellationToken.None);
+        Assert.Equal("before", File.ReadAllText(Path.Combine(engine.VolumePath(key), "data.txt")));
+        state = (await backups.ReadAsync("demo", CancellationToken.None))!;
+        Assert.Contains(state.Audit, entry => entry.Action == "backup" && entry.Outcome == "succeeded");
+        Assert.Contains(state.Audit, entry => entry.Action == "restore" && entry.Actor == "owner"
+            && entry.BackupId == backup.Id && entry.Outcome == "succeeded");
+    }
+
+    [Fact]
+    public void ConsecutiveDeployJobsRetainVolumeIdentityAndDatabaseBinding()
+    {
+        var (service, repo, _) = Build();
+        File.WriteAllText(Path.Combine(repo, "docs", "deployments", "environments", "stage.json"),
+            JsonSerializer.Serialize(new
+            {
+                id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
+                address = "https://stage.example", template = "container", destination = "8081",
+                healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
+                data = new
+                {
+                    database = new { secretRef = "secret://demo/stage/DATABASE_URL", environmentVariable = "DATABASE_URL" },
+                    volumes = new[] { new { name = "uploads", mountPath = "/app/uploads" } },
+                },
+            }));
+        Git(repo, "add", ".");
+        Git(repo, "commit", "-m", "Declare hosted data");
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        var jobs = new List<DeployJob>();
+        foreach (var marker in new[] { 'b', 'c' })
+        {
+            var artifact = "registry.example/app@sha256:" + new string(marker, 64);
+            Assert.True(QueueGateRelease(service, artifact, commit));
+            var stage = service.Claim("stage-host")!;
+            jobs.Add(stage);
+            Assert.Equal(["DATABASE_URL"], stage.SecretRefs);
+            Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+            Assert.True(service.Decide("demo", artifact, true, "operator"));
+            var production = service.Claim("prod-host")!;
+            Assert.True(service.Report("demo", production.Id, new(production.LeaseToken!, true, "health-ok")));
+        }
+        Assert.Equal(jobs[0].Data.Database, jobs[1].Data.Database);
+        Assert.Equal(jobs[0].Data.Volumes.Select(item => (item.Name, item.MountPath)),
+            jobs[1].Data.Volumes.Select(item => (item.Name, item.MountPath)));
+        Assert.Equal("uploads", Assert.Single(jobs[1].Data.Volumes).Name);
+        Assert.Equal("/app/uploads", jobs[1].Data.Volumes[0].MountPath);
+        Assert.Equal("secret://demo/stage/DATABASE_URL", jobs[1].Data.Database!.SecretRef);
+    }
+
+    [Fact]
     public void ProjectNameWithSpaces_PersistsAndReadsEnvironmentState()
     {
         var (service, repo, _) = Build(project: "Operator Demo");

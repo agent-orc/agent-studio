@@ -6,6 +6,7 @@ import { ProjectDeployPipelineComponent } from '../project-deploy-pipeline/proje
 import { ProjectPipelinePanelComponent } from '../project-pipeline-panel/project-pipeline-panel.component';
 import { ProjectDeployDataService, type ProjectDeploySnapshot } from '../../services/project-deploy-data.service';
 import { EnvironmentHealthPanelComponent } from '../../../environment-health';
+import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
 
 export type DeployView = 'overview' | 'releases' | 'pipeline' | 'steps' | 'operations' | 'tools';
 
@@ -13,7 +14,7 @@ export type DeployView = 'overview' | 'releases' | 'pipeline' | 'steps' | 'opera
   selector: 'app-project-deploy-area',
   standalone: true,
   imports: [ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent, ProjectDeploymentPanelComponent,
-    ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent],
+    ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, HostedDataPanelComponent],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
