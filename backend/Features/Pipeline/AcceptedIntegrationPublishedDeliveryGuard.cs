@@ -62,7 +62,7 @@ internal static class AcceptedIntegrationPublishedDeliveryGuard
             && IntegrationVerificationProjection.SameBranch(item.IntegrationBranch, branch));
     }
 
-    private static string? CurrentDeliverySha(TaskInfo job)
+    internal static string? CurrentDeliverySha(TaskInfo job)
     {
         var resolved = DeliveryRefResolver.Resolve(job.Id, job.FolderPath).ExpectedResultSha;
         if (ReviewSubjectStore.IsValidResultSha(resolved)) return resolved;

@@ -33,7 +33,7 @@ public sealed partial class TaskServerStore
                     $"{binding.ServiceId}:{binding.Purpose}")).Distinct(StringComparer.Ordinal).ToArray(), repository,
                 category == "repository" ? record.RepositoryWriteGrant switch
                 { true => "write", false => "read", null => "unknown" } : null,
-                row.Due.Subject == "expiry" ? row.Due.DueAt : null, record.LastRealSuccessAt,
+                record.ExpiresAt, record.LastRealSuccessAt,
                 state, false, row.Due.ThresholdDays is { } threshold
                     ? $"{threshold}-day {row.Due.Subject} warning" : row.StatusDetail ?? row.Status, []));
         }

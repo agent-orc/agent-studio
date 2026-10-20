@@ -474,7 +474,28 @@ fences, or publish a new source ref. The existing backend merge, rollback and
 publication owner remains in place; only verification executes remotely. The
 Task Server gate protocol remains the target for admission of these subjects.
 
-Operator configuration uses `RemoteGate:SshHost` and an absolute
+The outbound pull worker uses an exclusively scoped `gate.execute` Runner
+credential and starts the release-pinned backend binary with
+`--pull-build-test-gate-worker <Studio API URL>`. Set `GATE_WORKER_TOKEN`
+on that host. The worker registers, claims from `/api/pull-gates`, downloads
+the exact source bundle, heartbeats its lease, streams progress through those
+heartbeats, and uploads the result and files from its `artifacts/` run folder.
+The server refuses uploads after lease expiry or replacement. Completed
+artifacts are listed at `/api/gate-artifacts/{runId}` and fetched from
+`/api/gate-artifacts/{runId}/{name}` on Studio; the gate result carries
+`serverArtifactRunId`. Verify commands can write files to the
+`AGENTSTUDIO_GATE_ARTIFACT_DIR` environment variable.
+Deploy and launcher automation can use `scripts/fetch-gate-artifact.sh`
+with a `runner.artifacts` credential to download a named artifact through
+Studio; it never addresses the gate host.
+The server's `RemoteGate:HostCapacity:{runnerId}:Slots` and
+`ProcessorCount` values control each host, falling back to
+`RemoteGate:GateSlots` and `RemoteGate:ProcessorCount`. A healthy registered
+worker is selected by convention; SSH remains as the transition fallback
+until the pull path passes a soak, then a follow-up removes SSH.
+No transport-selection setting is required.
+
+The temporary SSH fallback uses `RemoteGate:SshHost` and an absolute
 `RemoteGate:WorkerPath` pointing to a release-pinned `OrchestratorApi.dll` on
 the remote host. Environment variables use double underscores, for example
 `RemoteGate__SshHost` and `RemoteGate__WorkerPath`. Optional
@@ -924,9 +945,12 @@ comparison before Quality Studio's verdict contract can decide a review.
   worktrees cut and rebase from the published ref, without taking unapproved
   merges from the Studio lane. If an outside push makes the lane diverge,
   synchronization drops only lane merges whose delivery is already on origin
-  by ancestry or patch equality.
-  It restarts the lane at origin when every lane merge is published; otherwise
-  it refuses and names the unpublished merges. Before a legacy acceptance
+  by ancestry, tree, or patch equality, or that a newer published delivery of
+  the same card superseded (AGT-3215, `IntegrationLaneDivergencePolicy`).
+  It backs the old tip up under `refs/agent-studio/integration-backup/` and
+  restarts the lane at origin when nothing unpublished remains; otherwise it
+  refuses, names the unpublished merges, and raises the
+  `integration-lane-diverged` pipeline health alarm with the blocked cards. Before a legacy acceptance
   sweep moves a Completed card back to Human Review, it fetches origin and
   checks the card's delivery there. It resolves that delivery from the review
   subject, card attribution, or local task branch, including local deliveries

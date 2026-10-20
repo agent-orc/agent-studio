@@ -12,7 +12,8 @@ internal sealed record JoinPayload(
     DateTime IssuedAtUtc,
     string? InstallationId = null,
     string? RunnerId = null,
-    DateTime? ExpiresAtUtc = null);
+    DateTime? ExpiresAtUtc = null,
+    string? EnrolmentCode = null);
 
 internal static class JoinTokenCodec
 {
@@ -69,11 +70,15 @@ internal static class JoinTokenCodec
         if (payload.SchemaVersion == 1 && (string.IsNullOrWhiteSpace(payload.Credential) || payload.Credential.Length < 32))
             throw new ArgumentException("Join token credential is invalid.");
         if (payload.SchemaVersion == 2 &&
-            (!payload.Credential.StartsWith("enr_", StringComparison.Ordinal)
-             || string.IsNullOrWhiteSpace(payload.InstallationId)
+            (string.IsNullOrWhiteSpace(payload.InstallationId)
              || string.IsNullOrWhiteSpace(payload.RunnerId)
-             || payload.ExpiresAtUtc is null
-             || payload.ExpiresAtUtc <= payload.IssuedAtUtc))
+             || (payload.EnrolmentCode is null
+                 ? !payload.Credential.StartsWith("enr_", StringComparison.Ordinal)
+                   || payload.ExpiresAtUtc is null
+                   || payload.ExpiresAtUtc <= payload.IssuedAtUtc
+                 : !string.IsNullOrEmpty(payload.Credential)
+                   || payload.EnrolmentCode.Length <= 32
+                   || !payload.EnrolmentCode.StartsWith("enr_", StringComparison.Ordinal))))
             throw new ArgumentException("Join enrolment payload is invalid.");
         _ = SetupValidation.RequireServerUrl(payload.ServerUrl, allowLoopbackHttp: true);
         _ = SetupOptions.NormalizeVersion(payload.ReleaseVersion)

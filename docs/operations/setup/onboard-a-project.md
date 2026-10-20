@@ -45,6 +45,18 @@ The dialog closes after the server confirms creation. The project is
 immediately present on the board. No settings file edit or backend restart is
 needed.
 
+The first-run checklist can register the new project's credential-free clone
+URL and integration branch with the Task Server. The repository proof still
+comes from a runner that actually fetches and pushes the registered origin;
+registration alone does not prove GitHub access. Never include a username,
+token, query, or fragment in the clone URL. Studio's local project registry
+rejects these URL forms before saving them.
+On a local install, the checklist's GitHub verification clones a registered
+repository when the project has no checkout and stores the managed checkout
+path and CLI working directory on the project. A generated deploy key is
+configured in that checkout's Git settings, so later task fetches and pushes
+use the same key after restart.
+
 ## API workflow
 
 Send `POST /api/projects`. `X-Client-Id` must identify a registered operator or automation client and is included in mutation telemetry. The bootstrap identity is `local-default`.
