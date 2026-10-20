@@ -189,7 +189,7 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         Assert.Single(timeline, item => item.Details?.GetValueOrDefault("recordId") == record.GetProperty("id").GetString());
         File.Delete(Path.Combine(cardFolder, "logs", "timeline.jsonl"));
         var auditRepair = factory.Services.GetRequiredService<OperatorCandidateAuditRepair>();
-        auditRepair.RepairAll();
+        await auditRepair.StartAsync(CancellationToken.None);
         auditRepair.RepairAll();
         Assert.Single(factory.Services.GetRequiredService<TimelineLog>().ReadAll(cardFolder),
             item => item.Kind == TimelineEventKinds.IntegrationVerificationRecorded);

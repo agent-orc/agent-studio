@@ -2,6 +2,7 @@ using System.Text.Json;
 using AgentStudio.Persistence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -101,6 +102,7 @@ public class DecisionCardServiceTests : IDisposable
     [Fact]
     public void ProseMigration_RollbackPreservesIntegrationRecordAppendedAfterSnapshot()
     {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 12, 0, 0, TimeSpan.Zero));
         var writer = new AfterWriteJsonFileWriter();
         var h = Build(writer);
         const string id = "rollback-record";
@@ -127,7 +129,7 @@ public class DecisionCardServiceTests : IDisposable
                 {
                     Id = "batch-gate-concurrent", Classification = IntegrationRecordClasses.IntegratedVerified,
                     IntegrationBranch = "develop", IntegrationSha = new string('a', 40),
-                    RecordedAtUtc = new DateTime(2026, 10, 20, 12, 0, 0, DateTimeKind.Utc),
+                    RecordedAtUtc = clock.GetUtcNow().UtcDateTime,
                 }).Appended);
         };
 
