@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AgentStudio.Pipeline;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -8,9 +9,10 @@ namespace AgentStudio.Tests;
 
 /// <summary>
 /// AGT-3232: the dispatcher side of gate sharding. It hands every host the
-/// same recorded timings, spans hosts only when more than one gate slot is
-/// free, merges one verdict, and records complete timings for the next plan.
-/// The gate log lists shards, hosts, durations and test counts.
+/// same recorded timings, spans hosts only when the subject declares a
+/// sharded suite and more than one gate slot is free, merges one verdict, and
+/// records complete timings for the next plan. The gate log lists shards,
+/// hosts, durations and test counts.
 /// </summary>
 public sealed class GateShardDispatchTests : IDisposable
 {
@@ -49,6 +51,17 @@ public sealed class GateShardDispatchTests : IDisposable
 
     private static BuildTestGateRequest Request() => new("/srv/repo", Sha, "test") { Project = "agent-studio" };
 
+    private const string SuiteCommand =
+        "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound";
+
+    private static Func<BuildTestGateRequest, CancellationToken, Task<IReadOnlyList<ProjectTestSuite>>> Subject(int? shards)
+        => (_, _) => Task.FromResult<IReadOnlyList<ProjectTestSuite>>(
+            [new ProjectTestSuite("backend-routine", "routine", 1440, SuiteCommand) { Shards = shards }]);
+
+    private ShardedRemoteGateTransport Transport(GateShardHost primary, IReadOnlyList<GateShardHost> additional,
+        GateShardTimingStore store, int? shards = 2)
+        => new(primary, additional, store, NullLogger<ShardedRemoteGateTransport>.Instance, _clock, Subject(shards));
+
     private sealed class FakeHostTransport(Func<BuildTestGateRequest, CancellationToken, Task<BuildTestGateResult>> run)
         : IRemoteGateTransport
     {
@@ -64,9 +77,9 @@ public sealed class GateShardDispatchTests : IDisposable
 
     private GateShardTimingStore Store() => new(Path.Combine(_root, "timings"), _clock);
 
-    private static GateSlotUsageTracker Slots(int busy, int total)
+    private GateSlotUsageTracker Slots(int busy, int total)
     {
-        var tracker = new GateSlotUsageTracker();
+        var tracker = new GateSlotUsageTracker(clock: _clock);
         tracker.Configure(total);
         for (var i = 0; i < busy; i++) tracker.Acquired("run-" + i, total);
         return tracker;
@@ -77,10 +90,10 @@ public sealed class GateShardDispatchTests : IDisposable
     {
         var primary = new FakeHostTransport((_, _) => Task.FromResult(Green(Suite("kori-gate", 4, 0, 1, 2, 3))));
         var secondary = new FakeHostTransport((_, _) => throw new InvalidOperationException("must not be used"));
-        var transport = new ShardedRemoteGateTransport(
+        var transport = Transport(
             new GateShardHost("kori-gate", primary, Slots(0, 3)),
             [new GateShardHost("agent-runner-01", secondary, Slots(1, 1))],
-            Store(), NullLogger<ShardedRemoteGateTransport>.Instance);
+            Store());
 
         var result = await transport.RunAsync(Request(), null, null, PostStepMode.Fail, TimeSpan.FromMinutes(30), CancellationToken.None);
 
@@ -98,10 +111,10 @@ public sealed class GateShardDispatchTests : IDisposable
         store.Record("agent-studio", [Suite("kori-gate", 2, 0, 1)]);
         var primary = new FakeHostTransport((_, _) => Task.FromResult(Green(Suite("kori-gate", 2, 0))));
         var secondary = new FakeHostTransport((_, _) => Task.FromResult(Green(Suite("agent-runner-01", 2, 1))));
-        var transport = new ShardedRemoteGateTransport(
+        var transport = Transport(
             new GateShardHost("kori-gate", primary, Slots(1, 2)),
             [new GateShardHost("agent-runner-01", secondary, Slots(0, 1))],
-            store, NullLogger<ShardedRemoteGateTransport>.Instance);
+            store);
 
         var result = await transport.RunAsync(Request(), null, null, PostStepMode.Fail, TimeSpan.FromMinutes(30), CancellationToken.None);
 
@@ -117,16 +130,186 @@ public sealed class GateShardDispatchTests : IDisposable
     }
 
     [Fact]
-    public void Placement_needs_a_free_slot_on_the_primary_and_skips_busy_or_unreachable_hosts()
+    public void Placement_needs_a_sharded_suite_and_a_free_primary_slot_and_skips_busy_or_unreachable_hosts()
     {
-        Assert.Empty(GateShardPlacementPolicy.SelectAdditionalHosts(new GateSlotUsage(2, 2),
-            [(new GateSlotUsage(0, 1), "reachable")]));
+        var now = _clock.GetUtcNow();
+        static GateShardHostState Host(int busy, int total, string reachability = "reachable", DateTimeOffset? failedAt = null)
+            => new(new GateSlotUsage(busy, total), reachability, failedAt);
+
+        Assert.Empty(GateShardPlacementPolicy.SelectAdditionalHosts(new GateSlotUsage(2, 2), [Host(0, 1)], 2, now));
+        Assert.Empty(GateShardPlacementPolicy.SelectAdditionalHosts(new GateSlotUsage(0, 2), [Host(0, 1)], 1, now));
+        Assert.Empty(GateShardPlacementPolicy.SelectAdditionalHosts(new GateSlotUsage(0, 2), [Host(0, 1)], 0, now));
         Assert.Equal([1], GateShardPlacementPolicy.SelectAdditionalHosts(new GateSlotUsage(0, 2),
         [
-            (new GateSlotUsage(1, 1), "reachable"),
-            (new GateSlotUsage(0, 2), "unverified"),
-            (new GateSlotUsage(0, 2), "unreachable"),
-        ]));
+            Host(1, 1),
+            Host(0, 2, "unverified"),
+            Host(0, 2, "unreachable", now - TimeSpan.FromMinutes(1)),
+        ], 4, now));
+    }
+
+    [Fact]
+    public void A_run_never_uses_more_hosts_than_its_shard_count()
+    {
+        GateShardHostState[] free = [.. Enumerable.Range(0, 4).Select(_ => new GateShardHostState(new GateSlotUsage(0, 1), "reachable", null))];
+
+        Assert.Equal([0], GateShardPlacementPolicy.SelectAdditionalHosts(new GateSlotUsage(0, 2), free, 2, _clock.GetUtcNow()));
+        Assert.Equal([0, 1], GateShardPlacementPolicy.SelectAdditionalHosts(new GateSlotUsage(0, 2), free, 3, _clock.GetUtcNow()));
+    }
+
+    [Fact]
+    public void The_dispatcher_counts_only_declared_shardable_suites_that_plan_to_several_shards()
+    {
+        ProjectTestSuite Suite(string id, int? shards, string command = SuiteCommand, int seconds = 1440)
+            => new(id, "routine", seconds, command) { Shards = shards };
+        var empty = GateShardTimingSnapshot.Empty;
+
+        Assert.Equal(0, GateShardPlacementPolicy.PlannedShardCount([Suite("a", null), Suite("b", 1)], empty));
+        Assert.Equal(0, GateShardPlacementPolicy.PlannedShardCount(
+            [Suite("a", 3, "dotnet test A.Tests/A.Tests.csproj --filter Category!=MachineBound")], empty));
+        Assert.Equal(3, GateShardPlacementPolicy.PlannedShardCount([Suite("a", null), Suite("b", 3)], empty));
+        Assert.Equal(4, GateShardPlacementPolicy.PlannedShardCount([Suite("a", ProjectTestSuite.AutoShards)], empty));
+        Assert.Equal(1, GateShardPlacementPolicy.PlannedShardCount([Suite("a", ProjectTestSuite.AutoShards, seconds: 60)], empty));
+    }
+
+    [Fact]
+    public async Task A_free_shard_host_without_a_sharded_suite_leaves_the_run_whole_on_the_primary()
+    {
+        var primary = new FakeHostTransport((_, _) => Task.FromResult(Green()));
+        var secondary = new FakeHostTransport((_, _) => throw new InvalidOperationException("must not be used"));
+        var transport = Transport(
+            new GateShardHost("kori-gate", primary, Slots(0, 2)),
+            [new GateShardHost("agent-runner-01", secondary, Slots(0, 1))],
+            Store(), shards: null);
+
+        var result = await transport.RunAsync(Request(), null, null, PostStepMode.Fail, TimeSpan.FromMinutes(30), CancellationToken.None);
+
+        Assert.Equal(BuildTestGateVerdict.Ok, result.Verdict);
+        Assert.Null(Assert.Single(primary.Requests).Sharding!.Part);
+        Assert.Empty(secondary.Requests);
+    }
+
+    [Fact]
+    public async Task A_healthy_pull_host_is_the_primary_and_receives_an_unsplit_run()
+    {
+        var pullStore = new PullGateStore(Path.Combine(_root, "pull"), _clock);
+        pullStore.Register("gate-1", "kori-gate");
+        var pull = new FakeHostTransport((request, _) => Task.FromResult(
+            request.Sharding?.Part is null ? Green() : Green(Suite("kori-gate", 2, 0))));
+        var ssh = new FakeHostTransport((_, _) => throw new InvalidOperationException("a healthy pull host is preferred"));
+        var shardHost = new FakeHostTransport((_, _) => Task.FromResult(Green(Suite("agent-runner-01", 2, 1))));
+        ShardedRemoteGateTransport Over(int? shards) => Transport(
+            new GateShardHost("kori-gate", new ConventionalGateTransport(pullStore, pull, ssh), Slots(0, 2)),
+            [new GateShardHost("agent-runner-01", shardHost, Slots(0, 1))],
+            Store(), shards);
+
+        var whole = await Over(shards: null).RunAsync(Request(), null, null, PostStepMode.Fail, TimeSpan.FromMinutes(30), CancellationToken.None);
+
+        Assert.Equal(BuildTestGateVerdict.Ok, whole.Verdict);
+        Assert.Null(Assert.Single(pull.Requests).Sharding!.Part);
+        Assert.Empty(shardHost.Requests);
+
+        // With a sharded suite the pull host still runs part 0; the shard host (SSH) runs part 1.
+        var split = await Over(shards: 2).RunAsync(Request(), null, null, PostStepMode.Fail, TimeSpan.FromMinutes(30), CancellationToken.None);
+
+        Assert.Equal(BuildTestGateVerdict.Ok, split.Verdict);
+        Assert.Equal(new GateShardPart(0, 2), pull.Requests[1].Sharding!.Part);
+        Assert.Equal(new GateShardPart(1, 2), Assert.Single(shardHost.Requests).Sharding!.Part);
+        Assert.Empty(ssh.Requests);
+    }
+
+    [Fact]
+    public async Task An_unreachable_shard_host_is_tried_again_after_the_cooldown()
+    {
+        var primary = new FakeHostTransport((request, _) => Task.FromResult(
+            request.Sharding?.Part is null ? Green() : Green(Suite("kori-gate", 2, 0))));
+        var secondary = new FakeHostTransport((_, _) => Task.FromResult(Green(Suite("agent-runner-01", 2, 1))));
+        var secondarySlots = Slots(0, 1);
+        secondarySlots.Failed();
+        var transport = Transport(
+            new GateShardHost("kori-gate", primary, Slots(0, 2)),
+            [new GateShardHost("agent-runner-01", secondary, secondarySlots)],
+            Store());
+
+        await transport.RunAsync(Request(), null, null, PostStepMode.Fail, TimeSpan.FromMinutes(30), CancellationToken.None);
+        Assert.Empty(secondary.Requests);
+
+        _clock.Advance(GateShardPlacementPolicy.UnreachableCooldown);
+        var result = await transport.RunAsync(Request(), null, null, PostStepMode.Fail, TimeSpan.FromMinutes(30), CancellationToken.None);
+
+        Assert.Equal(BuildTestGateVerdict.Ok, result.Verdict);
+        Assert.Equal(new GateShardPart(1, 2), Assert.Single(secondary.Requests).Sharding!.Part);
+    }
+
+    [SkippableFact]
+    public async Task The_dispatcher_reads_the_suites_of_the_subject_commit_not_of_its_checkout()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "Uses a POSIX git fixture path.");
+        var repository = Path.Combine(_root, "subject");
+        Directory.CreateDirectory(Path.Combine(repository, ".agent-studio"));
+        Git(repository, "init", "--quiet");
+        string Commit(string shardsLine)
+        {
+            File.WriteAllText(Path.Combine(repository, ".agent-studio", "project.yml"), $"""
+                schemaVersion: 1
+                stack: [dotnet]
+                toolVersions:
+                commands:
+                  prepare: .agent-studio/prepare
+                  build:
+                  test:
+                    - {SuiteCommand}
+                  lint:
+                testSuites:
+                  - id: backend-routine
+                    category: routine
+                    expectedDurationSeconds: 1440
+                {shardsLine}
+                    command: {SuiteCommand}
+                cachePaths: [bin]
+                capabilities: [linux]
+                environment:
+                  CI: "true"
+                """);
+            Git(repository, "add", "-A");
+            Git(repository, "-c", "user.name=gate", "-c", "user.email=gate@example.invalid", "commit", "--quiet", "-m", "subject");
+            return Git(repository, "rev-parse", "HEAD").Trim();
+        }
+        var sharded = Commit("    shards: 2");
+        var whole = Commit("");
+
+        var primary = new FakeHostTransport((request, _) => Task.FromResult(
+            request.Sharding?.Part is null ? Green() : Green(Suite("kori-gate", 2, 0)) with { TestedSha = request.ExpectedSha }));
+        var secondary = new FakeHostTransport((request, _) => Task.FromResult(
+            Green(Suite("agent-runner-01", 2, 1)) with { TestedSha = request.ExpectedSha }));
+        var transport = new ShardedRemoteGateTransport(
+            new GateShardHost("kori-gate", primary, Slots(0, 2)),
+            [new GateShardHost("agent-runner-01", secondary, Slots(0, 1))],
+            Store(), NullLogger<ShardedRemoteGateTransport>.Instance, _clock);
+        BuildTestGateRequest At(string sha) => new(repository, sha, "test") { Project = "subject" };
+
+        await transport.RunAsync(At(whole), null, null, PostStepMode.Fail, TimeSpan.FromMinutes(30), CancellationToken.None);
+        Assert.Empty(secondary.Requests);
+        await transport.RunAsync(At(sharded), null, null, PostStepMode.Fail, TimeSpan.FromMinutes(30), CancellationToken.None);
+        Assert.Equal(new GateShardPart(1, 2), Assert.Single(secondary.Requests).Sharding!.Part);
+        // An unknown commit cannot be read and keeps the run whole.
+        await transport.RunAsync(At(new string('f', 40)), null, null, PostStepMode.Fail, TimeSpan.FromMinutes(30), CancellationToken.None);
+        Assert.Single(secondary.Requests);
+    }
+
+    private static string Git(string cwd, params string[] args)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = cwd, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', args)}: {error}");
+        return output;
     }
 
     [Fact]
@@ -140,10 +323,10 @@ public sealed class GateShardDispatchTests : IDisposable
             return Green();
         });
         var secondary = new FakeHostTransport((_, _) => throw new IOException("ssh: connect to host agent-runner-01 port 22: Connection refused"));
-        var transport = new ShardedRemoteGateTransport(
+        var transport = Transport(
             new GateShardHost("kori-gate", primary, Slots(0, 2)),
             [new GateShardHost("agent-runner-01", secondary, Slots(0, 1))],
-            Store(), NullLogger<ShardedRemoteGateTransport>.Instance);
+            Store());
 
         var result = await transport.RunAsync(Request(), null, null, PostStepMode.Fail, TimeSpan.FromMinutes(30), CancellationToken.None);
 
@@ -177,8 +360,8 @@ public sealed class GateShardDispatchTests : IDisposable
         {
             ClassDurationsMs = new Dictionary<string, double> { ["NewTests"] = 42 },
         })));
-        var transport = new ShardedRemoteGateTransport(
-            new GateShardHost("kori-gate", primary, Slots(0, 1)), [], store, NullLogger<ShardedRemoteGateTransport>.Instance);
+        var transport = Transport(
+            new GateShardHost("kori-gate", primary, Slots(0, 1)), [], store);
         await transport.RunAsync(Request(), null, null, PostStepMode.Fail, TimeSpan.FromMinutes(30), CancellationToken.None);
 
         Assert.Equal(complete.ClassDurationsMs, primary.Requests.Single().Sharding!.Timings!.For("backend-routine")!.ClassDurationsMs);
@@ -244,6 +427,26 @@ public sealed class GateShardDispatchTests : IDisposable
     }
 
     [Fact]
+    public void A_part_cached_under_one_timing_snapshot_is_not_reused_by_a_run_planned_from_another()
+    {
+        // Part 0 cached from plan A, merged with a fresh part 1 planned from B,
+        // reads as "different shard plans" on every retry: the cache would
+        // livelock the run. A new snapshot therefore misses the part cache.
+        IReadOnlyList<VerifyCommand> commands = [new(VerifyEcosystem.Custom, VerifyCommandKind.Test, "", "dotnet test A.csproj")];
+        GateShardTimingSnapshot Snapshot(double ms) => new(new Dictionary<string, GateShardSuiteTimings>
+        {
+            ["backend-routine"] = new(new Dictionary<string, double> { ["Ns.ATests"] = ms, ["Ns.BTests"] = 10 }, 1000),
+        });
+        string Digest(GateShardTimingSnapshot snapshot) => GateResultCache.ProfileDigest(
+            Request() with { Sharding = new GateShardRequest { Part = new GateShardPart(0, 2), Timings = snapshot } },
+            null, PostStepMode.Fail, commands, "toolchain");
+
+        Assert.Equal(Digest(Snapshot(100)), Digest(Snapshot(100)));
+        Assert.NotEqual(Digest(Snapshot(100)), Digest(Snapshot(900)));
+        Assert.NotEqual(Digest(Snapshot(100)), Digest(GateShardTimingSnapshot.Empty));
+    }
+
+    [Fact]
     public void The_remote_worker_rejects_an_invalid_host_part_or_invalid_timings()
     {
         var runId = new string('a', 32);
@@ -259,6 +462,33 @@ public sealed class GateShardDispatchTests : IDisposable
         });
         Assert.Throws<InvalidDataException>(() =>
             RemoteGateWorker.Validate(Invocation(new GateShardRequest { Timings = invalid }), runId));
+        var oversized = new GateShardTimingSnapshot(new Dictionary<string, GateShardSuiteTimings>
+        {
+            ["backend-routine"] = new(Enumerable.Range(0, 8000).ToDictionary(
+                index => $"AgentStudio.Tests.Features.Pipeline.Gates.VeryLongTestClassNameNumber{index:D5}Tests.{new string('x', 60)}",
+                index => (double)index), 0),
+        });
+        Assert.False(oversized.IsWithinBounds);
+        Assert.Throws<InvalidDataException>(() =>
+            RemoteGateWorker.Validate(Invocation(new GateShardRequest { Timings = oversized }), runId));
+    }
+
+    [Fact]
+    public async Task Recorded_timings_beyond_the_size_bound_are_neither_stored_nor_sent()
+    {
+        var store = Store();
+        var huge = Suite("kori-gate", 1, 0) with
+        {
+            ClassDurationsMs = Enumerable.Range(0, 8000).ToDictionary(
+                index => $"AgentStudio.Tests.Features.Pipeline.Gates.VeryLongTestClassNameNumber{index:D5}Tests.{new string('x', 60)}",
+                index => (double)index),
+        };
+
+        Assert.Equal(0, store.Record("agent-studio", [huge]));
+        var primary = new FakeHostTransport((_, _) => Task.FromResult(Green()));
+        await Transport(new GateShardHost("kori-gate", primary, Slots(0, 1)), [], store)
+            .RunAsync(Request(), null, null, PostStepMode.Fail, TimeSpan.FromMinutes(30), CancellationToken.None);
+        Assert.Empty(primary.Requests.Single().Sharding!.Timings!.Suites);
     }
 
     [Fact]

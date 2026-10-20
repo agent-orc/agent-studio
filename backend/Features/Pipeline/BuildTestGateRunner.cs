@@ -1507,7 +1507,10 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     .ConfigureAwait(false);
             }
             evidence.Add(process);
-            if (process.ExitCode != 0 || process.TimedOut || process.Cancelled || process.LaunchError is not null)
+            // A sharded step is settled by its shards; its synthetic exit code can be 0 for a crashed shard.
+            if (shardedKind is { } settled
+                    ? settled != BuildTestGateFailureKind.None
+                    : process.ExitCode != 0 || process.TimedOut || process.Cancelled || process.LaunchError is not null)
             {
                 var kind = shardedKind ?? ClassifyFailure(process);
                 if (process.TimedOut && findings.Count > 0) kind = BuildTestGateFailureKind.Code;

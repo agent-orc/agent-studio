@@ -30,8 +30,10 @@ public static class GateShardCommand
 {
     /// <summary>
     /// The shardable form of <paramref name="command"/>, or null when it is not
-    /// a single <c>dotnet test</c> of one project, or when it already brings
-    /// run settings or lists tests instead of running them.
+    /// a single <c>dotnet test</c> of one project, when it already brings run
+    /// settings or lists tests instead of running them, or when it builds:
+    /// parallel shards of a command without <c>--no-build</c> would each build
+    /// the same output directory at once.
     /// </summary>
     public static GateShardableCommand? TryParse(string command)
     {
@@ -43,6 +45,7 @@ public static class GateShardCommand
         if (tokens.Any(token => token is "--settings" or "-s" or "--list-tests" or "-t"
                 || token.StartsWith("--settings=", StringComparison.Ordinal)))
             return null;
+        if (!tokens.Contains("--no-build", StringComparer.Ordinal)) return null;
         var verb = Array.FindIndex(tokens, 1, token => string.Equals(token, "test", StringComparison.OrdinalIgnoreCase));
         if (verb < 0 || verb + 1 >= tokens.Length) return null;
         var project = tokens[verb + 1].Trim('"', '\'');
@@ -65,11 +68,13 @@ public static class GateShardCommand
     }
 
     /// <summary>
-    /// <c>.Name.</c> matches the class segment of a fully qualified test name
-    /// (<c>Namespace.Name.Method</c>) without depending on the namespace, and
-    /// never matches a class that only starts with the same name.
+    /// <c>Namespace.Name.</c> matches the tests of the namespace-qualified
+    /// class (<c>Namespace.Name.Method</c>), never a class that only starts
+    /// with the same name and never a nested class (<c>Namespace.Name+Inner</c>).
+    /// <see cref="GateShardPlanner"/> keeps a class whose term would also match
+    /// another class's tests in the complement shard, where no term names it.
     /// </summary>
-    internal static string ClassTerm(string className) => $".{className}.";
+    internal static string ClassTerm(string className) => $"{className}.";
 
     public static string RunSettings(string filter)
         => new XDocument(new XElement("RunSettings",
@@ -86,9 +91,9 @@ public static class GateShardCommand
 }
 
 /// <summary>
-/// The test classes a .NET test project declares, read from its sources. The
-/// list only balances the shards: a class it misses still runs, in the
-/// complement shard.
+/// The namespace-qualified test classes a .NET test project declares, read
+/// from its sources. The list only balances the shards: a class it misses
+/// still runs, in the complement shard.
 /// </summary>
 public static class GateShardTestCatalog
 {
@@ -97,6 +102,10 @@ public static class GateShardTestCatalog
 
     private static readonly Regex FileScopedNamespace = new(
         @"^namespace\s+[A-Za-z_][\w.]*\s*;",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.Multiline);
+
+    private static readonly Regex NamespaceDeclaration = new(
+        @"^[ \t]*namespace\s+(?<name>[A-Za-z_][\w.]*)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.Multiline);
 
     private static readonly Regex ClassDeclaration = new(
@@ -122,14 +131,18 @@ public static class GateShardTestCatalog
     }
 
     /// <summary>
-    /// Top-level, instantiable classes of a file that declares tests. A
-    /// file-scoped namespace keeps top-level types at column zero; a block
-    /// namespace indents them by one level.
+    /// Top-level, instantiable classes of a file that declares tests, each
+    /// qualified with the namespace declared before it. A file-scoped
+    /// namespace keeps top-level types at column zero; a block namespace
+    /// indents them by one level.
     /// </summary>
     internal static IEnumerable<string> DeclaredTestClasses(string source)
     {
         if (!TestAttributes.Any(attribute => source.Contains(attribute, StringComparison.Ordinal))) yield break;
         var maxIndent = FileScopedNamespace.IsMatch(source) ? 0 : 4;
+        var namespaces = NamespaceDeclaration.Matches(source)
+            .Select(match => (match.Index, Name: match.Groups["name"].Value))
+            .ToArray();
         foreach (Match match in ClassDeclaration.Matches(source))
         {
             var indent = match.Groups["indent"].Value.Replace("\t", "    ", StringComparison.Ordinal).Length;
@@ -137,7 +150,9 @@ public static class GateShardTestCatalog
             if (indent > maxIndent || modifiers.Contains("abstract", StringComparison.Ordinal)
                 || modifiers.Contains("static", StringComparison.Ordinal))
                 continue;
-            yield return match.Groups["name"].Value;
+            var name = match.Groups["name"].Value;
+            var declaredIn = namespaces.LastOrDefault(item => item.Index < match.Index).Name;
+            yield return string.IsNullOrEmpty(declaredIn) ? name : $"{declaredIn}.{name}";
         }
     }
 

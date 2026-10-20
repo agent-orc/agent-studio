@@ -300,28 +300,55 @@ public sealed partial class BuildTestGateRunner
             budget, gateClock.Elapsed, shardOutput, ct, TestShardPhase, projectPreparation).ConfigureAwait(false);
         var processes = new List<BuildTestGateProcessEvidence> { process };
         var report = process.TestReport;
-        var failedTests = report is { FailedTests.Count: > 0 }
-            ? report.FailedTests
-            : GateFlakyRerunPolicy.ParseFailedTests($"{process.StandardOutput}\n{process.StandardError}");
+        var processOutput = $"{process.StandardOutput}\n{process.StandardError}";
+        var parsedFailures = GateFlakyRerunPolicy.ParseFailedTests(processOutput);
+        var failedTests = report is { FailedTests.Count: > 0 } ? report.FailedTests : parsedFailures;
         var classDurations = report?.ClassDurationsMs ?? new Dictionary<string, double>(StringComparer.Ordinal);
-        GateShardEvidence Evidence(string outcome, BuildTestGateFailureKind failureKind, GateShardRerunEvidence? rerun = null)
+        GateShardEvidence Evidence(string outcome, BuildTestGateFailureKind failureKind,
+            GateShardRerunEvidence? rerun = null, string? detail = null)
             => new(shard.Index, host, lane, shard.Classes.Count, shard.EstimatedMs,
                 (long)(process.CompletedAtUtc - process.StartedAtUtc).TotalMilliseconds, process.ExitCode, outcome,
                 report?.Counts ?? GateTestCounts.None, failedTests)
             {
                 FailureKind = failureKind,
                 Rerun = rerun,
+                Detail = detail,
             };
+        ShardRun Infrastructure(BuildTestGateFailureKind failureKind, string detail, string message)
+        {
+            shardOutput.AppendLine($"# shard {shard.Index + 1}/{plan.Count}: {message}; infrastructure failure, no quarantine and no re-run");
+            return new ShardRun(Evidence(GateShardOutcomes.Infrastructure, failureKind, detail: detail),
+                processes, shardOutput, [], [], classDurations);
+        }
 
-        if (process.ExitCode == 0 && CompletedNormally(process))
+        var green = process.ExitCode == 0 && CompletedNormally(process);
+        var kind = green ? BuildTestGateFailureKind.None : ClassifyFailure(process);
+        if (kind is not (BuildTestGateFailureKind.None or BuildTestGateFailureKind.Code))
+            return new ShardRun(Evidence(GateShardOutcomes.Infrastructure, kind), processes, shardOutput, [], [], classDurations);
+        // A crashed test host or aborted run never passes, whatever its exit code says.
+        if (GateShardRunChecks.Abort(report, processOutput) is { } abort)
+            return Infrastructure(BuildTestGateFailureKind.Environment, GateShardDetails.TestRunAborted, $"test run aborted ({abort})");
+        if (report is null && green)
+            return Infrastructure(BuildTestGateFailureKind.Environment, GateShardDetails.NoTestReport, "no TRX report proves which tests ran");
+        if (report is not null && GateShardRunChecks.ForeignClasses(plan, shard.Index, report) is { Count: > 0 } foreign)
+            return Infrastructure(BuildTestGateFailureKind.Environment, GateShardDetails.ShardFilterNotApplied,
+                $"{GateShardDetails.ShardFilterNotApplied}, it ran {foreign.Count} class(es) outside its partition " +
+                $"({string.Join(", ", foreign.Take(5))})");
+        if (green)
             return new ShardRun(Evidence(GateShardOutcomes.Passed, BuildTestGateFailureKind.None),
                 processes, shardOutput, [], [], classDurations);
 
-        var kind = ClassifyFailure(process);
-        if (kind != BuildTestGateFailureKind.Code)
-            return new ShardRun(Evidence(GateShardOutcomes.Infrastructure, kind), processes, shardOutput, [], [], classDurations);
+        if (!GateShardRunChecks.FailuresConfirmed(parsedFailures, report))
+        {
+            shardOutput.AppendLine(
+                $"# shard {shard.Index + 1}/{plan.Count}: the console failures ({string.Join(", ", parsedFailures)}) " +
+                $"do not match the TRX report ({string.Join(", ", report?.FailedTests ?? [])}); no quarantine and no re-run");
+            return new ShardRun(
+                Evidence(GateShardOutcomes.Failed, kind,
+                    new GateShardRerunEvidence(GateShardDetails.FailuresUnconfirmed, parsedFailures, false, null, null, 0)),
+                processes, shardOutput, [], [], classDurations);
+        }
 
-        var parsedFailures = GateFlakyRerunPolicy.ParseFailedTests($"{process.StandardOutput}\n{process.StandardError}");
         var partition = TestQuarantinePolicy.Partition(parsedFailures, quarantine.Entries, quarantineDay);
         foreach (var hit in partition.Ignored)
             shardOutput.AppendLine(
@@ -334,7 +361,7 @@ public sealed partial class BuildTestGateRunner
         // failed tests, on the same build and the same gate-run budget. The
         // suite's own command is the base, so the re-run carries no shard filter.
         var decision = GateFlakyRerunPolicy.Decide(
-            command.Kind, kind, command.Command, $"{process.StandardOutput}\n{process.StandardError}",
+            command.Kind, kind, command.Command, processOutput,
             Remaining(budget.Limit, gateClock.Elapsed, allowExhausted: true));
         shardOutput.AppendLine(
             $"# flaky re-run decision: {decision.Reason} " +
@@ -349,9 +376,11 @@ public sealed partial class BuildTestGateRunner
             workingDirectory, decision.Command!, command.Shell, budget, gateClock.Elapsed, shardOutput, ct,
             FlakyRerunPhase, projectPreparation).ConfigureAwait(false);
         processes.Add(rerun);
-        var rerunPassed = CompletedNormally(rerun) && rerun.ExitCode == 0;
+        var rerunPassed = GateShardRunChecks.RerunConfirmed(
+            CompletedNormally(rerun) && rerun.ExitCode == 0, rerun.TestReport,
+            $"{rerun.StandardOutput}\n{rerun.StandardError}", decision.FailedTests.Count);
         var rerunEvidence = new GateShardRerunEvidence(
-            decision.Reason, decision.FailedTests, true,
+            rerunPassed ? decision.Reason : GateShardDetails.RerunUnconfirmed, decision.FailedTests, true,
             rerunPassed ? GateShardOutcomes.Passed : GateShardOutcomes.Failed,
             rerun.ExitCode, (long)(rerun.CompletedAtUtc - rerun.StartedAtUtc).TotalMilliseconds);
         if (rerunPassed)
@@ -362,7 +391,12 @@ public sealed partial class BuildTestGateRunner
             return new ShardRun(Evidence(GateShardOutcomes.FlakyPassed, BuildTestGateFailureKind.None, rerunEvidence),
                 processes, shardOutput, decision.FailedTests, partition.Ignored, classDurations);
         }
-        shardOutput.AppendLine("# the targeted re-run failed again; the shard's original red is the verdict");
+        var counts = rerun.TestReport?.Counts;
+        shardOutput.AppendLine(
+            $"# the targeted re-run did not confirm {decision.FailedTests.Count} passed test(s) " +
+            $"(exit {rerun.ExitCode?.ToString() ?? "n/a"}, report " +
+            $"{(counts is null ? "missing" : $"total={counts.Total} passed={counts.Passed} failed={counts.Failed}")}); " +
+            "the shard's original red is the verdict");
         return new ShardRun(Evidence(GateShardOutcomes.Failed, kind, rerunEvidence),
             processes, shardOutput, [], partition.Ignored, classDurations);
     }

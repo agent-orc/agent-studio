@@ -139,4 +139,26 @@ public sealed class GateShardPlannerTests
             plan.ClassesOutsideComplement);
         Assert.Equal(1, plan.Shards.Count(shard => shard.Classes.Count > 0));
     }
+
+    [Fact]
+    public void A_class_whose_filter_term_also_matches_another_class_stays_in_the_complement()
+    {
+        // "Ns.Pipeline." is a substring of "Ns.Pipeline.Gates.GateTests." and of
+        // "OtherNs.Pipeline.", so a term for Ns.Pipeline would select or exclude
+        // the other classes' tests as well.
+        string[] classes = ["Ns.Pipeline", "Ns.Pipeline.Gates.GateTests", "OtherNs.Pipeline", "Ns.StoreTests", "Ns.ClockTests"];
+        var timings = new GateShardSuiteTimings(classes.ToDictionary(name => name, _ => 1000d), 5000);
+
+        foreach (var plan in new[]
+                 {
+                     GateShardPlanner.Plan("backend", classes, 3, GateShardCountSources.Profile, null),
+                     GateShardPlanner.Plan("backend", classes, 3, GateShardCountSources.Profile, timings),
+                 })
+        {
+            Assert.Contains("Ns.Pipeline", plan.Shards[plan.ComplementIndex].Classes);
+            Assert.DoesNotContain("Ns.Pipeline", plan.ClassesOutsideComplement);
+            Assert.Equal(classes.Order(StringComparer.Ordinal), plan.Shards.SelectMany(shard => shard.Classes).Order(StringComparer.Ordinal));
+        }
+        Assert.Equal(["Ns.Pipeline"], GateShardPlanner.OvermatchingClasses(classes));
+    }
 }

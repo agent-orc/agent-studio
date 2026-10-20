@@ -40,6 +40,7 @@ public sealed class GateShardCommandTests
     [InlineData("dotnet test A.csproj --settings custom.runsettings")]
     [InlineData("dotnet test A.csproj --list-tests")]
     [InlineData("dotnet test A.csproj --no-build && echo done")]
+    [InlineData("dotnet test A.Tests/A.Tests.csproj --filter Category!=MachineBound")]
     [InlineData("npm --prefix frontend run test:ci")]
     [InlineData("dotnet build A.csproj")]
     public void Commands_the_gate_cannot_shard_safely_are_left_whole(string command)
@@ -51,17 +52,17 @@ public sealed class GateShardCommandTests
         var parsed = GateShardCommand.TryParse(Suite)!;
         var plan = new GateShardPlan("backend", 3, GateShardCountSources.Profile, GateShardStrategies.Hash,
         [
-            new(0, ["AlphaTests", "BetaTests"], 0),
-            new(1, ["GammaTests"], 0),
-            new(2, ["DeltaTests"], 0),
+            new(0, ["Ns.AlphaTests", "Ns.BetaTests"], 0),
+            new(1, ["Ns.GammaTests"], 0),
+            new(2, ["Ns.DeltaTests"], 0),
         ], "digest");
 
-        Assert.Equal("(Category!=MachineBound)&(FullyQualifiedName~.AlphaTests.|FullyQualifiedName~.BetaTests.)",
+        Assert.Equal("(Category!=MachineBound)&(FullyQualifiedName~Ns.AlphaTests.|FullyQualifiedName~Ns.BetaTests.)",
             GateShardCommand.Filter(parsed, plan, 0));
-        Assert.Equal("(Category!=MachineBound)&(FullyQualifiedName~.GammaTests.)",
+        Assert.Equal("(Category!=MachineBound)&(FullyQualifiedName~Ns.GammaTests.)",
             GateShardCommand.Filter(parsed, plan, 1));
         Assert.Equal(
-            "(Category!=MachineBound)&(FullyQualifiedName!~.AlphaTests.&FullyQualifiedName!~.BetaTests.&FullyQualifiedName!~.GammaTests.)",
+            "(Category!=MachineBound)&(FullyQualifiedName!~Ns.AlphaTests.&FullyQualifiedName!~Ns.BetaTests.&FullyQualifiedName!~Ns.GammaTests.)",
             GateShardCommand.Filter(parsed, plan, 2));
     }
 
@@ -70,17 +71,17 @@ public sealed class GateShardCommandTests
     {
         var parsed = GateShardCommand.TryParse("dotnet test A.Tests/A.Tests.csproj --no-build")!;
         var plan = new GateShardPlan("a", 2, GateShardCountSources.Profile, GateShardStrategies.Hash,
-            [new(0, ["AlphaTests"], 0), new(1, [], 0)], "digest");
+            [new(0, ["Ns.AlphaTests"], 0), new(1, [], 0)], "digest");
 
         Assert.Null(parsed.BaseFilter);
-        Assert.Equal("FullyQualifiedName~.AlphaTests.", GateShardCommand.Filter(parsed, plan, 0));
-        Assert.Equal("FullyQualifiedName!~.AlphaTests.", GateShardCommand.Filter(parsed, plan, 1));
+        Assert.Equal("FullyQualifiedName~Ns.AlphaTests.", GateShardCommand.Filter(parsed, plan, 0));
+        Assert.Equal("FullyQualifiedName!~Ns.AlphaTests.", GateShardCommand.Filter(parsed, plan, 1));
     }
 
     [Fact]
     public void Run_settings_carry_the_filter_escaped_and_the_invocation_points_at_them()
     {
-        var filter = "(Category!=MachineBound)&(FullyQualifiedName~.AlphaTests.)";
+        var filter = "(Category!=MachineBound)&(FullyQualifiedName~Ns.AlphaTests.)";
         var settings = XDocument.Parse(GateShardCommand.RunSettings(filter));
 
         Assert.Equal(filter, settings.Root!.Element("RunConfiguration")!.Element("TestCaseFilter")!.Value);
@@ -100,7 +101,7 @@ public sealed class GateShardCommandTests
     }
 
     [Fact]
-    public void The_catalog_reads_top_level_test_classes_of_file_scoped_and_block_namespaces()
+    public void The_catalog_reads_namespace_qualified_top_level_test_classes_of_file_scoped_and_block_namespaces()
     {
         const string fileScoped = """
             namespace AgentStudio.Tests;
@@ -130,8 +131,9 @@ public sealed class GateShardCommandTests
             public sealed class FakeClock { }
             """;
 
-        Assert.Equal(["StoreTests", "SecondTests"], GateShardTestCatalog.DeclaredTestClasses(fileScoped));
-        Assert.Equal(["LegacyTests"], GateShardTestCatalog.DeclaredTestClasses(block));
+        Assert.Equal(["AgentStudio.Tests.StoreTests", "AgentStudio.Tests.SecondTests"],
+            GateShardTestCatalog.DeclaredTestClasses(fileScoped));
+        Assert.Equal(["AgentStudio.Tests.LegacyTests"], GateShardTestCatalog.DeclaredTestClasses(block));
         Assert.Empty(GateShardTestCatalog.DeclaredTestClasses(helper));
     }
 }

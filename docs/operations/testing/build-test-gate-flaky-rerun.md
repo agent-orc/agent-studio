@@ -50,8 +50,12 @@ the original red standing, when any of these hold:
 A sharded suite (AGT-3232) applies the same decision per shard. A red shard
 re-runs only its own failed tests, once, with the suite command as the base. The
 shard keeps the first outcome (counts and failed names) and the re-run outcome
-in `--- test-shards.json ---`. A green re-run marks the shard `flaky-passed`; a
-second red is that shard's verdict and fails the gate. See
+in `--- test-shards.json ---`. The shard re-runs only when its console failures
+equal its TRX report's failed tests, and never after an aborted test run. A
+re-run counts as green only when its TRX report shows exactly the targeted
+tests, all passed, because VSTest exits 0 when the filter matches nothing. A
+green re-run marks the shard `flaky-passed`; a second red, or a re-run that
+proves nothing, is that shard's verdict and fails the gate. See
 [sharded test suites](../../system/domains/pipeline.md#sharded-test-suites-in-the-gate-agt-3232).
 
 ## Budget

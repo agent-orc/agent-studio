@@ -46,10 +46,13 @@ RemoteGate__ShardHosts__0__ProcessorCount=6
 ```
 
 A shard host needs the same release-pinned worker at `WorkerPath`, a trusted
-host key and noninteractive SSH, like the primary gate host. A run uses it only
-while both the primary host and the shard host have a free slot. If a shard
-host fails, the run gets an infrastructure verdict and is not counted as a
-code failure. The gate log lists every shard with its host, lane, duration and
+host key and noninteractive SSH, like the primary gate host. Shard hosts are
+always reached over SSH; the primary stays the conventional transport, so a
+healthy pull worker still takes every unsplit run. A run uses a shard host only
+when the subject declares a sharded suite and both the primary host and the
+shard host have a free slot. If a shard host fails, the run gets an
+infrastructure verdict and is not counted as a code failure, and the host is
+skipped for 10 minutes before it is tried again. The gate log lists every shard with its host, lane, duration and
 test counts under `--- test-shards.json ---`. The
 [pipeline domain map](../system/domains/pipeline.md#sharded-test-suites-in-the-gate-agt-3232)
 describes the planning and verdict rules.

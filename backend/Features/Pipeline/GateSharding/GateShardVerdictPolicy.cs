@@ -17,6 +17,9 @@ public sealed record GateShardHostResult(string Host, GateShardPart Part, BuildT
 ///   cancellation, launch, toolchain, transport, incomplete shard evidence)
 ///   makes the run an infrastructure verdict, never a code failure, even when
 ///   every other shard passed.</item>
+///   <item>A host share whose verdict is not Ok, Warn, NotApplicable or
+///   Skipped fails the run; without a failure kind it is an environment
+///   failure.</item>
 /// </list>
 /// </summary>
 public static class GateShardVerdictPolicy
@@ -49,7 +52,11 @@ public static class GateShardVerdictPolicy
         var infra = ordered.FirstOrDefault(host => host.Result.IsInfrastructureFailure
                         && host.Result.FailureKind != BuildTestGateFailureKind.Cancellation)
                     ?? ordered.FirstOrDefault(host => host.Result.IsInfrastructureFailure);
-        var incomplete = codeRed is null && infra is null ? CoverageGap(ordered) : null;
+        // A share that is neither green nor classified fails the run all the same.
+        var notGreen = codeRed is null && infra is null
+            ? ordered.FirstOrDefault(host => !IsGreenVerdict(host.Result.Verdict))
+            : null;
+        var incomplete = codeRed is null && infra is null && notGreen is null ? CoverageGap(ordered) : null;
 
         GateShardHostResult lead;
         string reason;
@@ -66,6 +73,19 @@ public static class GateShardVerdictPolicy
             reason = $"partial infrastructure failure on {infra.Host} (host part {infra.Part}): " +
                      $"{infra.Result.Reason}; {PassedHosts(ordered, infra)}";
             merged = infra.Result;
+        }
+        else if (notGreen is not null)
+        {
+            lead = notGreen;
+            reason = $"host share on {notGreen.Host} (host part {notGreen.Part}) did not pass: " +
+                     $"{notGreen.Result.Reason}; {PassedHosts(ordered, notGreen)}";
+            merged = notGreen.Result with
+            {
+                Verdict = BuildTestGateVerdict.Fail,
+                FailureKind = notGreen.Result.FailureKind == BuildTestGateFailureKind.None
+                    ? BuildTestGateFailureKind.Environment
+                    : notGreen.Result.FailureKind,
+            };
         }
         else if (incomplete is not null)
         {
@@ -115,6 +135,10 @@ public static class GateShardVerdictPolicy
             TestShards = suites,
         };
     }
+
+    private static bool IsGreenVerdict(BuildTestGateVerdict verdict)
+        => verdict is BuildTestGateVerdict.Ok or BuildTestGateVerdict.Warn
+            or BuildTestGateVerdict.NotApplicable or BuildTestGateVerdict.Skipped;
 
     private static bool IsCodeRed(BuildTestGateResult result)
         => result.FailureKind == BuildTestGateFailureKind.Code

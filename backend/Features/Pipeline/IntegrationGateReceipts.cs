@@ -226,6 +226,7 @@ public static class IntegrationGateReceipts
                 shard.DurationMs,
                 shard.ExitCode,
                 shard.Outcome,
+                shard.Detail,
                 shard.Tests,
                 shard.FailedTests,
                 shard.Rerun,

@@ -17,6 +17,7 @@ public sealed class GateShardRunnerTests : IDisposable
 {
     private const string FlakyTest = "Product.Tests.FlakyTests.Sometimes";
     private static readonly string[] Classes = ["AlphaTests", "BetaTests", "FlakyTests", "GammaTests"];
+    private static readonly string[] QualifiedClasses = Classes.Select(name => "Product.Tests." + name).ToArray();
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "gate-shard-runner-" + Guid.NewGuid().ToString("N"));
 
@@ -43,7 +44,7 @@ public sealed class GateShardRunnerTests : IDisposable
     }
 
     private static GateShardPlan ExpectedPlan()
-        => GateShardPlanner.Plan("product-routine", Classes, 3, GateShardCountSources.Profile, null);
+        => GateShardPlanner.Plan("product-routine", QualifiedClasses, 3, GateShardCountSources.Profile, null);
 
     [SkippableFact]
     public async Task A_declared_suite_runs_as_shards_with_its_category_filter_and_a_flaky_test_reruns_once()
@@ -63,7 +64,7 @@ public sealed class GateShardRunnerTests : IDisposable
         Assert.Equal(Math.Min(2, plan.Shards.Count(plan.Runs)), suite.Lanes);
         Assert.Equal([0, 1, 2], suite.Shards.Select(shard => shard.Index));
         Assert.Equal(new GateTestCounts(4, 3, 1, 0), suite.Tests);
-        Assert.Equal(Classes, suite.ClassDurationsMs.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(QualifiedClasses, suite.ClassDurationsMs.Keys.Order(StringComparer.Ordinal));
         Assert.All(suite.ClassDurationsMs.Values, ms => Assert.Equal(50, ms, 3));
 
         var flaky = Assert.Single(suite.Shards, shard => shard.FailedTests.Contains(FlakyTest));
@@ -155,6 +156,92 @@ public sealed class GateShardRunnerTests : IDisposable
         Assert.DoesNotContain(File.ReadAllLines(Invocations), line => line.Contains("Architecture"));
     }
 
+    [SkippableFact]
+    public async Task One_printed_failure_plus_a_test_host_crash_is_an_infrastructure_failure_without_a_rerun()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "The fake dotnet is a POSIX shell script.");
+        File.WriteAllText(Mode, "abort");
+
+        var result = await RunGateAsync(shardLanes: 2);
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.Environment, result.FailureKind);
+        Assert.False(result.RetryPerformed);
+        Assert.Empty(result.FlakyQuarantinedFailures);
+        var crashed = Assert.Single(Assert.Single(result.TestShards).Shards,
+            shard => shard.Outcome == GateShardOutcomes.Infrastructure);
+        Assert.Equal(GateShardDetails.TestRunAborted, crashed.Detail);
+        Assert.Null(crashed.Rerun);
+        Assert.DoesNotContain(File.ReadAllLines(Invocations), line => line.Contains($"FullyQualifiedName={FlakyTest}"));
+        Assert.Contains("test run aborted (TRX run outcome Aborted)", result.Output);
+    }
+
+    [SkippableFact]
+    public async Task A_crashed_shard_whose_exit_code_is_zero_fails_the_gate_as_environment()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "The fake dotnet is a POSIX shell script.");
+        File.WriteAllText(Mode, "abort0");
+
+        var result = await RunGateAsync(shardLanes: 2);
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.Environment, result.FailureKind);
+        var crashed = Assert.Single(Assert.Single(result.TestShards).Shards,
+            shard => shard.Outcome == GateShardOutcomes.Infrastructure);
+        Assert.Equal(0, crashed.ExitCode);
+        Assert.Equal(GateShardDetails.TestRunAborted, crashed.Detail);
+    }
+
+    [SkippableFact]
+    public async Task A_rerun_whose_filter_matches_no_test_is_not_green()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "The fake dotnet is a POSIX shell script.");
+        File.WriteAllText(Mode, "nomatch");
+
+        var result = await RunGateAsync(shardLanes: 2);
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.Code, result.FailureKind);
+        Assert.Empty(result.FlakyQuarantinedFailures);
+        var red = Assert.Single(Assert.Single(result.TestShards).Shards, shard => shard.Outcome == GateShardOutcomes.Failed);
+        Assert.True(red.Rerun!.Performed);
+        Assert.Equal(0, red.Rerun.ExitCode);
+        Assert.Equal(GateShardOutcomes.Failed, red.Rerun.Outcome);
+        Assert.Equal(GateShardDetails.RerunUnconfirmed, red.Rerun.Reason);
+        Assert.Contains("report total=0 passed=0 failed=0", result.Output);
+    }
+
+    [SkippableFact]
+    public async Task A_shard_that_ran_classes_outside_its_partition_reports_the_filter_was_not_applied()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "The fake dotnet is a POSIX shell script.");
+        File.WriteAllText(Mode, "leak");
+
+        var result = await RunGateAsync(shardLanes: 2);
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.Environment, result.FailureKind);
+        var suite = Assert.Single(result.TestShards);
+        Assert.Contains(suite.Shards, shard => shard.Detail == GateShardDetails.ShardFilterNotApplied);
+        Assert.Contains(GateShardDetails.ShardFilterNotApplied, result.Output);
+    }
+
+    [SkippableFact]
+    public async Task Console_failures_the_report_does_not_confirm_get_no_quarantine_and_no_rerun()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "The fake dotnet is a POSIX shell script.");
+        File.WriteAllText(Mode, "mismatch");
+
+        var result = await RunGateAsync(shardLanes: 2);
+
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+        Assert.Equal(BuildTestGateFailureKind.Code, result.FailureKind);
+        Assert.False(result.RetryPerformed);
+        var red = Assert.Single(Assert.Single(result.TestShards).Shards, shard => shard.Outcome == GateShardOutcomes.Failed);
+        Assert.False(red.Rerun!.Performed);
+        Assert.Equal(GateShardDetails.FailuresUnconfirmed, red.Rerun.Reason);
+    }
+
     [Theory]
     [InlineData(null, null, null)]
     [InlineData(1, null, null)]
@@ -233,6 +320,10 @@ public sealed class GateShardRunnerTests : IDisposable
     /// tests. <c>mode.txt</c>: <c>flaky</c> fails FlakyTests in its shard and
     /// passes the re-run, <c>broken</c> fails both, <c>oom</c> kills the shard
     /// holding GammaTests with exit 137, <c>pass</c> keeps everything green.
+    /// <c>abort</c> prints FlakyTests' failure and then a test host crash,
+    /// <c>abort0</c> prints the crash and still exits 0, <c>nomatch</c> fails
+    /// FlakyTests and its re-run selects no test, <c>leak</c> ignores the shard
+    /// filter, and <c>mismatch</c> prints a failure the TRX report records as passed.
     /// </summary>
     private void WriteFakeDotNet()
     {
@@ -254,10 +345,12 @@ public sealed class GateShardRunnerTests : IDisposable
             run=""
             for c in {{string.Join(' ', Classes)}}; do
               if [ -n "$settings" ]; then
-                if grep -q 'FullyQualifiedName~\.' "$settings"; then
-                  grep -q "FullyQualifiedName~\.$c\." "$settings" && run="$run $c"
+                if [ "$mode" = leak ]; then
+                  run="$run $c"
+                elif grep -q 'FullyQualifiedName~' "$settings"; then
+                  grep -q "FullyQualifiedName~Product\.Tests\.$c\." "$settings" && run="$run $c"
                 else
-                  grep -q "FullyQualifiedName!~\.$c\." "$settings" || run="$run $c"
+                  grep -q "FullyQualifiedName!~Product\.Tests\.$c\." "$settings" || run="$run $c"
                 fi
               else
                 case "$*" in *"Product.Tests.$c."*) run="$run $c";; esac
@@ -266,20 +359,33 @@ public sealed class GateShardRunnerTests : IDisposable
             # One append per lane: parallel lanes must not interleave a line and its newline.
             if [ -n "$settings" ]; then printf '%s\n' "$(tr -d '\n' < "$settings")" >> "{{ShellPath(SettingsLog)}}"; fi
             if [ "$mode" = oom ]; then case "$run" in *GammaTests*) exit 137;; esac; fi
-            failed=""
+            # nomatch: the targeted re-run's filter matches nothing, VSTest still exits 0.
+            if [ "$mode" = nomatch ] && [ -z "$settings" ]; then run=""; fi
+            failed=""; summary=Completed; aborted=""
             results=""; definitions=""
             for c in $run; do
               name=Works; outcome=Passed
               if [ "$c" = FlakyTests ]; then
                 name=Sometimes
-                if [ "$mode" = broken ] || { [ "$mode" = flaky ] && [ -n "$settings" ]; }; then outcome=Failed; failed=1; fi
+                case "$mode" in
+                  broken) outcome=Failed; failed=1;;
+                  flaky|nomatch|abort) if [ -n "$settings" ]; then outcome=Failed; failed=1; fi;;
+                  mismatch) if [ -n "$settings" ]; then failed=1; fi;;
+                  abort0) aborted=1;;
+                esac
+                if [ "$mode" = abort ] && [ -n "$settings" ]; then aborted=1; summary=Aborted; fi
               fi
-              if [ "$outcome" = Failed ]; then echo "  Failed Product.Tests.$c.$name [12 ms]"; else echo "  Passed Product.Tests.$c.$name [5 ms]"; fi
+              if [ "$outcome" = Failed ] || { [ "$mode" = mismatch ] && [ -n "$failed" ] && [ "$c" = FlakyTests ]; }; then
+                echo "  Failed Product.Tests.$c.$name [12 ms]"
+              else
+                echo "  Passed Product.Tests.$c.$name [5 ms]"
+              fi
               results="$results<UnitTestResult testId=\"id-$c\" testName=\"Product.Tests.$c.$name\" duration=\"00:00:00.0500000\" outcome=\"$outcome\" />"
               definitions="$definitions<UnitTest id=\"id-$c\" name=\"$name\"><TestMethod className=\"Product.Tests.$c\" name=\"$name\" /></UnitTest>"
             done
+            if [ -n "$aborted" ]; then echo "The active test run was aborted. Reason: Test host process crashed"; echo "Test Run Aborted."; fi
             if [ -n "$prefix" ] && [ -n "$dir" ]; then
-              echo "<?xml version=\"1.0\" encoding=\"utf-8\"?><TestRun><Results>$results</Results><TestDefinitions>$definitions</TestDefinitions></TestRun>" > "$dir/${prefix}_1.trx"
+              echo "<?xml version=\"1.0\" encoding=\"utf-8\"?><TestRun><Results>$results</Results><TestDefinitions>$definitions</TestDefinitions><ResultSummary outcome=\"$summary\" /></TestRun>" > "$dir/${prefix}_1.trx"
             fi
             if [ -n "$failed" ]; then exit 1; fi
             exit 0

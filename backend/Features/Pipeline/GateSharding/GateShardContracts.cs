@@ -1,3 +1,8 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+
 namespace AgentStudio.Pipeline;
 
 /// <summary>
@@ -23,7 +28,7 @@ public sealed record GateShardPart(int Index, int Count)
 }
 
 /// <summary>
-/// Recorded timings of one sharded suite, keyed by the simple test class name.
+/// Recorded timings of one sharded suite, keyed by the namespace-qualified test class name.
 /// <see cref="SerialWallMs"/> is the sum of the shard process wall times of the
 /// run that produced the snapshot, i.e. what the suite costs in one process.
 /// </summary>
@@ -42,17 +47,44 @@ public sealed record GateShardTimingSnapshot(
     public const int MaxSuites = 16;
     public const int MaxClassesPerSuite = 8192;
 
+    /// <summary>
+    /// Serialized size limit. The remote worker refuses a request file over
+    /// 2 MiB, and the snapshot shares that file with the rest of the request.
+    /// </summary>
+    public const int MaxSerializedBytes = 1024 * 1024;
+
     public static GateShardTimingSnapshot Empty { get; } =
         new(new Dictionary<string, GateShardSuiteTimings>(StringComparer.Ordinal));
 
     public GateShardSuiteTimings? For(string suiteId)
         => Suites.TryGetValue(suiteId, out var timings) ? timings : null;
 
+    /// <summary>Computed on demand; never part of the serialized snapshot it measures.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
     public bool IsWithinBounds => Suites.Count <= MaxSuites && Suites.All(suite =>
         suite.Value is not null
         && suite.Value.SerialWallMs >= 0
         && suite.Value.ClassDurationsMs.Count <= MaxClassesPerSuite
-        && suite.Value.ClassDurationsMs.Values.All(value => double.IsFinite(value) && value >= 0));
+        && suite.Value.ClassDurationsMs.Values.All(value => double.IsFinite(value) && value >= 0))
+        && JsonSerializer.SerializeToUtf8Bytes(this).Length <= MaxSerializedBytes;
+
+    /// <summary>
+    /// A stable digest of the snapshot. Hosts that plan from the same snapshot
+    /// compute the same shard plans, so a cached host part is only reused for
+    /// a run that hands out the same snapshot.
+    /// </summary>
+    public string Digest()
+    {
+        var payload = new StringBuilder();
+        foreach (var (suiteId, timings) in Suites.OrderBy(suite => suite.Key, StringComparer.Ordinal))
+        {
+            payload.Append(suiteId).Append('|').Append(timings.SerialWallMs.ToString(CultureInfo.InvariantCulture));
+            foreach (var (name, ms) in timings.ClassDurationsMs.OrderBy(item => item.Key, StringComparer.Ordinal))
+                payload.Append('|').Append(name).Append('=').Append(ms.ToString("R", CultureInfo.InvariantCulture));
+            payload.Append('\n');
+        }
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(payload.ToString())))[..16];
+    }
 }
 
 /// <summary>Test counts read from one test process's TRX report.</summary>
@@ -106,6 +138,9 @@ public sealed record GateShardEvidence(
 {
     public BuildTestGateFailureKind FailureKind { get; init; } = BuildTestGateFailureKind.None;
     public GateShardRerunEvidence? Rerun { get; init; }
+
+    /// <summary>A <see cref="GateShardDetails"/> value for an infrastructure shard; null otherwise.</summary>
+    public string? Detail { get; init; }
 }
 
 /// <summary>

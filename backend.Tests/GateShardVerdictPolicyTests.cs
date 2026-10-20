@@ -233,4 +233,28 @@ public sealed class GateShardVerdictPolicyTests
         Assert.True(merged.IsInfrastructureFailure);
         Assert.Contains("was not planned on agent-runner-01", merged.Reason);
     }
+
+    [Theory]
+    [InlineData(BuildTestGateFailureKind.None, BuildTestGateFailureKind.Environment)]
+    [InlineData(BuildTestGateFailureKind.Timeout, BuildTestGateFailureKind.Timeout)]
+    public void A_failed_share_without_a_code_red_fails_the_merge(
+        BuildTestGateFailureKind shareKind, BuildTestGateFailureKind mergedKind)
+    {
+        // Shard evidence alone would read green; the share's own verdict says it did not pass.
+        var merged = GateShardVerdictPolicy.MergeHosts(
+        [
+            new("kori-gate", new GateShardPart(0, 2), Green("kori-gate", Suite("kori-gate", 2, Shard(0, GateShardOutcomes.Passed)))),
+            new("agent-runner-01", new GateShardPart(1, 2), Green("agent-runner-01",
+                Suite("agent-runner-01", 2, Shard(1, GateShardOutcomes.Passed, host: "agent-runner-01"))) with
+            {
+                Verdict = BuildTestGateVerdict.Fail,
+                FailureKind = shareKind,
+                Reason = "share did not finish",
+            }),
+        ]);
+
+        Assert.Equal(BuildTestGateVerdict.Fail, merged.Verdict);
+        Assert.Equal(mergedKind, merged.FailureKind);
+        Assert.Contains("share did not finish", merged.Reason);
+    }
 }

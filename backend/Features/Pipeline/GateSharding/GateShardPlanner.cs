@@ -122,6 +122,8 @@ public static class GateShardPlanner
             .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal)
             ?? new Dictionary<string, double>(StringComparer.Ordinal);
         var timed = names.Where(known.ContainsKey).ToArray();
+        var complementOnly = OvermatchingClasses(names);
+        var complement = count - 1;
 
         var buckets = Enumerable.Range(0, count).Select(_ => new List<string>()).ToArray();
         var loads = new double[count];
@@ -129,7 +131,8 @@ public static class GateShardPlanner
         if (timed.Length == 0)
         {
             strategy = GateShardStrategies.Hash;
-            foreach (var name in names) buckets[HashIndex(name, count)].Add(name);
+            foreach (var name in names)
+                buckets[complementOnly.Contains(name) ? complement : HashIndex(name, count)].Add(name);
         }
         else
         {
@@ -143,8 +146,8 @@ public static class GateShardPlanner
                 .ThenBy(item => item.Name, StringComparer.Ordinal);
             foreach (var (name, estimate) in ordered)
             {
-                var target = 0;
-                for (var index = 1; index < count; index++)
+                var target = complementOnly.Contains(name) ? complement : 0;
+                for (var index = 1; index < count && !complementOnly.Contains(name); index++)
                     if (loads[index] < loads[target]) target = index;
                 buckets[target].Add(name);
                 loads[target] += estimate;
@@ -171,6 +174,32 @@ public static class GateShardPlanner
         if (processorsPerShard > 0 && hostCores > 0)
             lanes = Math.Min(lanes, hostCores / processorsPerShard);
         return Math.Max(1, lanes);
+    }
+
+    /// <summary>
+    /// Classes whose filter term (<c>Name.</c>, a substring match) also occurs
+    /// in another class's test names, for example a class <c>Ns.Pipeline</c>
+    /// next to a namespace <c>Ns.Pipeline.Gates</c>. Such a class stays in the
+    /// complement shard, so no shard term names it and none can select or
+    /// exclude the other class's tests by accident.
+    /// </summary>
+    internal static IReadOnlySet<string> OvermatchingClasses(IReadOnlyList<string> names)
+    {
+        var overmatching = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var name in names)
+        {
+            var term = GateShardCommand.ClassTerm(name);
+            foreach (var other in names)
+            {
+                if (other.Length > name.Length
+                    && GateShardCommand.ClassTerm(other).Contains(term, StringComparison.Ordinal))
+                {
+                    overmatching.Add(name);
+                    break;
+                }
+            }
+        }
+        return overmatching;
     }
 
     internal static int HashIndex(string name, int count)
