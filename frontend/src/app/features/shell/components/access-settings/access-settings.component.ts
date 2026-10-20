@@ -1,3 +1,4 @@
+import { HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Observable, forkJoin } from 'rxjs';
@@ -20,6 +21,7 @@ export class AccessSettingsComponent implements OnInit {
   readonly enrollments = signal<AccessEnrollment[]>([]);
   readonly runners = signal<AccessRunner[]>([]);
   readonly busy = signal(false);
+  readonly accessDenied = signal(false);
   readonly error = signal<string | null>(null);
   readonly oneTime = signal<{ label: string; value: string } | null>(null);
   readonly inviteName = signal('');
@@ -46,6 +48,7 @@ export class AccessSettingsComponent implements OnInit {
         next: result => {
           this.users.set(result.users); this.tokens.set(result.tokens);
           this.enrollments.set(result.enrollments); this.runners.set(result.runners);
+          this.accessDenied.set(false);
           this.busy.set(false); this.error.set(null);
         },
         error: err => this.failed(err),
@@ -104,6 +107,12 @@ export class AccessSettingsComponent implements OnInit {
     request.subscribe({ next: value => { after?.(value); this.refresh(); }, error: err => this.failed(err) });
   }
   private failed(err: unknown): void {
+    if (err instanceof HttpErrorResponse && (err.status === 401 || err.status === 403)) {
+      this.accessDenied.set(true);
+      this.users.set([]); this.tokens.set([]);
+      this.enrollments.set([]); this.runners.set([]);
+      this.oneTime.set(null); this.editId.set(null);
+    }
     this.busy.set(false);
     this.error.set((err as { error?: { message?: string }; message?: string })?.error?.message
       ?? (err as { message?: string })?.message ?? 'Access request failed.');

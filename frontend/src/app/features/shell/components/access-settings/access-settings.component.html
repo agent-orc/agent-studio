@@ -7,6 +7,8 @@
     <p class="access__notice">Sign in as the installation owner to manage access.</p>
   } @else {
     @if (error(); as message) { <p role="alert" class="access__error">{{ message }}</p> }
+    @if (accessDenied()) { <button class="access__retry" type="button" (click)="refresh()" [disabled]="busy()">Retry access</button> }
+    @if (!accessDenied()) {
     @if (oneTime(); as secret) {
       <div class="access__secret" data-testid="access-one-time-secret">
         <strong>{{ secret.label }}</strong>
@@ -85,5 +87,6 @@
         }
       </div>
     </section>
+    }
   }
 </section>

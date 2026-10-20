@@ -19,3 +19,4 @@
 .access__secret { display: grid; gap: var(--studio-spacing-2); padding: var(--studio-spacing-4); background: var(--studio-bg-hover); }
 .access__secret code { overflow-wrap: anywhere; user-select: all; }
 .access__error { color: var(--studio-error); }
+.access__retry { justify-self: start; padding: var(--studio-spacing-2) var(--studio-spacing-3); }

@@ -20,6 +20,60 @@ function flushLists(http: HttpTestingController) {
 }
 
 describe('AccessSettingsComponent', () => {
+  it.each([401, 403])('clears cached account inventories and secrets after a denied reload (%i)', async status => {
+    await TestBed.configureTestingModule({
+      imports: [AccessSettingsComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    TestBed.inject(AuthService).status.set(owner);
+    const http = TestBed.inject(HttpTestingController);
+    const fixture = TestBed.createComponent(AccessSettingsComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/auth/users').flush([{ ...owner.user, displayName: 'Cached owner' }]);
+    http.expectOne('/api/auth/api-tokens').flush([{
+      id: 'tok_1', name: 'Cached token', role: 'owner', projects: [], createdBy: 'usr_owner',
+      createdAt: '2026-01-01', expiresAt: '2027-01-01', lastUsedAt: null, revokedAt: null,
+    }]);
+    http.expectOne('/api/auth/runner-enrollments').flush([{
+      id: 'enr_1', name: 'Cached enrollment', scopes: [], createdAt: '2026-01-01',
+      expiresAt: '2027-01-01', usedAt: null,
+    }]);
+    http.expectOne('/api/auth/runners').flush([{
+      id: 'rnr_1', name: 'Cached runner', createdAt: '2026-01-01', revokedAt: null, credentials: [],
+    }]);
+    const component = fixture.componentInstance;
+    component.oneTime.set({ label: 'API token', value: 'temporary-secret' });
+    component.edit(component.users()[0]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Cached owner');
+
+    component.refresh();
+    const users = http.expectOne('/api/auth/users');
+    http.expectOne('/api/auth/api-tokens');
+    http.expectOne('/api/auth/runner-enrollments');
+    http.expectOne('/api/auth/runners');
+    users.flush({ message: 'Access denied.' }, { status, statusText: 'Denied' });
+    fixture.detectChanges();
+
+    expect(component.users()).toEqual([]);
+    expect(component.tokens()).toEqual([]);
+    expect(component.enrollments()).toEqual([]);
+    expect(component.runners()).toEqual([]);
+    expect(component.oneTime()).toBeNull();
+    expect(component.editId()).toBeNull();
+    expect(component.accessDenied()).toBe(true);
+    expect(fixture.nativeElement.textContent).toContain('Access denied.');
+    expect(fixture.nativeElement.textContent).not.toMatch(/Cached owner|Cached token|Cached enrollment|Cached runner|temporary-secret/);
+    expect(fixture.nativeElement.querySelector('form')).toBeNull();
+
+    fixture.nativeElement.querySelector('button').click();
+    flushLists(http);
+    fixture.detectChanges();
+    expect(component.accessDenied()).toBe(false);
+    expect(fixture.nativeElement.textContent).toContain('API tokens');
+    http.verify();
+  });
+
   it('loads all owner inventories and shows an API token only during creation', async () => {
     await TestBed.configureTestingModule({
       imports: [AccessSettingsComponent],
