@@ -3,6 +3,8 @@ import { TestBed } from '@angular/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { CredentialInventoryComponent } from './credential-inventory.component';
 import { CredentialInventoryService, type CredentialInventory } from '../credential-inventory.service';
+import { ProviderAuthStatusService } from '../../remote-hosts/services/provider-auth-status.service';
+import { CodexSignInDialogService } from '../../remote-hosts/services/codex-sign-in-dialog.service';
 
 const INVENTORY: CredentialInventory = {
   generatedAt: '2026-10-16T09:00:00Z',
@@ -19,9 +21,15 @@ const INVENTORY: CredentialInventory = {
 
 describe('CredentialInventoryComponent', () => {
   it('shows required gaps and filters by host and state', () => {
+    const open = vi.fn();
     TestBed.configureTestingModule({
       imports: [CredentialInventoryComponent],
-      providers: [provideZonelessChangeDetection(), {
+      providers: [provideZonelessChangeDetection(),
+        { provide: ProviderAuthStatusService, useValue: { start: vi.fn(), statuses: signal([{
+          provider: 'codex', hostId: 'coding-a', runnerId: 'coding-a', hostName: 'Coding host',
+          aliases: ['coding-a'], state: 'limited', advertisedAt: '2026-10-16T09:00:00Z',
+        }]) } },
+        { provide: CodexSignInDialogService, useValue: { open } }, {
         provide: CredentialInventoryService,
         useValue: { inventory: signal(INVENTORY), state: signal('ready'), load: vi.fn() },
       }],
@@ -31,6 +39,10 @@ describe('CredentialInventoryComponent', () => {
     const element: HTMLElement = fixture.nativeElement;
     expect(element.querySelectorAll('.credentials__row')).toHaveLength(2);
     expect(element.textContent).toContain('Affected cards: AGT-1');
+    expect(element.querySelector('[data-testid="access-codex-login-state"]')?.textContent)
+      .toContain('rate limited');
+    element.querySelector<HTMLButtonElement>('[data-testid="access-codex-sign-in"]')?.click();
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({ hostId: 'coding-a' }));
     fixture.componentInstance.host.set('review-a');
     fixture.detectChanges();
     expect(element.querySelectorAll('.credentials__row')).toHaveLength(1);

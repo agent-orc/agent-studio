@@ -33,6 +33,9 @@ public sealed record CodingCompletionObservation(
 public sealed class DecisionGroundsCollector(
     IConfiguration configuration,
     ITokenPricing pricing,
+    AgentStudio.Projects.ProjectSettingsService settings,
+    AgentStudio.Registry.OrchestratorDefaultsProvider defaults,
+    RunTimeoutContinuationService timeoutContinuations,
     AttemptAuthorityService authority,
     MonolithOrchestrationStore orchestration,
     OrchestratorDecisionStore decisions,
@@ -130,6 +133,37 @@ public sealed class DecisionGroundsCollector(
                 ledger.Progress.LastVerifiedTreeSha ?? "none", null, authorityRef, at),
         };
 
+        var projectSettings = settings.Get(task.ProjectName);
+        var emergency = defaults.ResolveCodingEmergencyLimit(task.ProjectName);
+        var operatorEmergency = decisions.AppliedRunLimitSeconds(task.Id, task.ProjectName);
+        var settledRun = projection.RunAttempts.FirstOrDefault(run => run.AttemptId == observed.AttemptId);
+        var elapsed = settledRun is null ? 0 : Math.Max(0,
+            ((settledRun.TerminalAt ?? at) - settledRun.CreatedAt).TotalSeconds);
+        var gateSeconds = AgentStudio.Pipeline.GateRunBudgetPolicy.ResolveSeconds(
+            projectSettings.BuildTestGateTimeoutSeconds);
+        var gateDerivation = projectSettings.BuildTestGateTimeoutSeconds is { } configured
+            ? $"project override={configured}s; no historical cohort in this occurrence"
+            : $"platform fallback={AgentStudio.Pipeline.GateRunBudgetDefaults.DefaultSeconds}s; p95 × 1.5 requires at least 20 samples; no historical cohort in this occurrence";
+        facts.Add(PolicySignalProducers.GateDuration(gateSeconds, gateDerivation, 0, at,
+            new("project-settings", $"project:{task.ProjectName}/build-test-gate-timeout")));
+        var aspectReference = AgentStudio.TaskServer.Contracts.ReviewAspectBudgetPolicy.Derive(
+            task.CliType, task.Model, task.ThinkingLevel, 0);
+        facts.Add(PolicySignalProducers.ReviewAspect(aspectReference, at,
+            new("task", $"task:{task.Id}/model-route")) with
+        {
+            Name = "Review aspect baseline derivation, before command material",
+            Coverage = "partial",
+            Reliability = GroundsReliability.Estimated,
+        });
+        facts.Add(PolicySignalProducers.CodingRun(elapsed, operatorEmergency ?? emergency.Seconds,
+            operatorEmergency is null ? emergency.Source : "operator",
+            IsExhaustion(observed.Outcome) || IsExhaustion(settledRun?.TerminalReason), at, attemptRef));
+        var salvageRounds = timeoutContinuations.CountAutomaticRounds(task);
+        facts.Add(PolicySignalProducers.Salvage(salvageRounds,
+            RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds,
+            !string.IsNullOrWhiteSpace(observed.ResultRef) && !string.IsNullOrWhiteSpace(observed.ResultSha),
+            at, authorityRef));
+
         if (decisions.LatestOperatorIntentForTask(task.Id) is { } intent
             && IsCurrentOperatorIntent(intent, at, decisions.ReceiptsForTask(task.Id)))
         {
@@ -189,6 +223,11 @@ public sealed class DecisionGroundsCollector(
                 new("host.load-band", "Host load and slot occupancy are not collected for the OD-S1 shadow profile."),
                 new("result.diff-summary", "The changed-path summary is not part of the settled completion request."),
                 new("test.evidence", "Test evidence arrives with the review; the latest review outcome stands in."),
+                new("signal.review-aspect.command", "The frozen coding completion has no review command or material size; the baseline derivation is not the actual aspect command ceiling."),
+                new("signal.watcher-contingent", "The Watcher workspace contingent ledger is not part of this card occurrence."),
+                new("signal.review-reissue", "The coding completion does not include the review decision journal's reissue count; linked review attempts also include infrastructure retries."),
+                new("signal.git-calls", "The Git subprocess counter is not present in the settled completion."),
+                new("signal.gate-environment-retry", "No gate environment failure fingerprint is present in the settled completion."),
             ]);
     }
 

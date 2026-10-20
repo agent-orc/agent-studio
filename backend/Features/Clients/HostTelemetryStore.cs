@@ -44,11 +44,11 @@ public sealed class HostTelemetryStore(IConfiguration config, ILogger<HostTeleme
         }
     }
 
-    public HostTelemetryResponse Query(string clientId, string window)
+    public HostTelemetryResponse Query(string clientId, string window, DateTime? nowUtc = null)
     {
         var duration = window switch { "1h" => TimeSpan.FromHours(1), "6h" => TimeSpan.FromHours(6), "14d" => TimeSpan.FromDays(14), _ => TimeSpan.FromHours(48) };
         List<HostTelemetrySample> points;
-        lock (_gate) points = Read(clientId).Where(point => point.Timestamp >= DateTime.UtcNow - duration).ToList();
+        lock (_gate) points = Read(clientId).Where(point => point.Timestamp >= (nowUtc ?? DateTime.UtcNow) - duration).ToList();
         return new HostTelemetryResponse(clientId, window, points, Findings(points));
     }
 

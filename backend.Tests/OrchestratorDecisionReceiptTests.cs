@@ -781,8 +781,11 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         Assert.Equal(new DecisionPriceV1(DecisionPriceStatuses.Priced, 0.052m), late.Price with { Basis = null });
         Assert.Equal(["codex:thread-late"], late.ProviderCallIds);
         Assert.Equal(timeout, store.GetReceipt(timeout.ReceiptId));
+        Assert.Throws<InvalidOperationException>(() => store.PutOperatorIntent(timeout.ReceiptId,
+            new DecisionOperatorIntentRequest("raise", "Same as the platform default", 24)));
         var intent = store.PutOperatorIntent(timeout.ReceiptId,
-            new DecisionOperatorIntentRequest("raise", "More time for the verified build", 24));
+            new DecisionOperatorIntentRequest("raise", "More time for the verified build", 24),
+            defaultRunLimitSeconds: 3600);
         Assert.Equal(("raise", 24), (intent.Action, intent.RequestedEmergencyHours));
         Assert.Equal(new DecisionChoiceV1(DecisionActionKinds.Adapt,
             "raise-emergency-limit:1440m", "recorded, not applied"), intent.TypedChoice);
@@ -815,13 +818,13 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     }
 
     [Theory]
-    [InlineData("raise", 120, 7200, "Monolith")]
+    [InlineData("raise", 1500, 90000, "Monolith")]
     [InlineData("cut", 30, 1800, "Monolith")]
-    [InlineData("raise", 120, 7200, "Shadow")]
-    [InlineData("raise", 120, 7200, "Engine")]
-    [InlineData("raise", 120, 7200, "Monolith", 5400)]
+    [InlineData("raise", 1500, 90000, "Shadow")]
+    [InlineData("raise", 1500, 90000, "Engine")]
+    [InlineData("raise", 1500, 90000, "Monolith", 5400)]
     [InlineData("cut", 70, 4200, "Monolith", 5400)]
-    [InlineData("raise", 120, 7200, "Monolith", 5400, true)]
+    [InlineData("raise", 1500, 90000, "Monolith", 5400, true)]
     [InlineData("cut", 70, 4200, "Monolith", 5400, true)]
     public async Task Operator_action_applies_on_the_card_through_monolith_authority(
         string action, int? minutes, int? expectedSeconds, string codingProfile,
@@ -900,8 +903,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
         {
             var rejected = await http.PostAsJsonAsync($"{receipt.EvidenceRef}/operator-intent",
                 new DecisionOperatorIntentRequest(action, "Wrong limit direction",
-                    RequestedEmergencyMinutes: action == "raise" && hostBaselineSeconds is not null
-                        ? 80 : action == "raise" ? 30 : 120), DecisionGroundsPolicy.Json);
+                    RequestedEmergencyMinutes: action == "raise" ? 30 : 1500), DecisionGroundsPolicy.Json);
             Assert.Equal(System.Net.HttpStatusCode.Conflict, rejected.StatusCode);
             Assert.Null(store.GetOperatorIntent(receipt.ReceiptId));
             Assert.DoesNotContain($"operator-response:{receipt.ReceiptId}", store.PendingReceipts(10));

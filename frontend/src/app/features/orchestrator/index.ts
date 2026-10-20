@@ -21,6 +21,7 @@ export type {
   OrchestratorTokenUsage,
   OrchestratorLogResponse,
   GlobalOrchestratorFeedResponse,
+  OperationalStallCase,
   OrchestratorSession,
   OrchestratorSessionResponse,
   OrchestratorContextSession,

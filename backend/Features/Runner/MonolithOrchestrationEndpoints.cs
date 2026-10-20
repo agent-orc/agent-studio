@@ -415,6 +415,11 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
     internal void RecoverOnce()
     {
         var tasks = scanner.ScanAllJobs();
+        // Of the card state this pass writes, the scanner projects only the wait
+        // marker. A pass that wrote or removed none must not invalidate the task
+        // index: a mutation invalidation makes the next freshness reader, task
+        // detail reads among them, wait for a full workspace walk every pass.
+        var markersChanged = false;
         foreach (var occurrence in store.AwaitingActivation())
         {
             var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
@@ -427,14 +432,14 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     {
                         store.Activate(occurrence.Run.RunId);
                         if (card is not null && card.State == occurrence.ExpectedSourceState)
-                            MarkWaiting(card.FolderPath, occurrence.Run.RunId);
+                            markersChanged |= MarkWaiting(card.FolderPath, occurrence.Run.RunId);
                     }
                     else if (time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt >= PreparationGrace)
                         store.CancelUnactivated(occurrence.Run.RunId, "review-input-grounds-not-frozen");
                     continue;
                 }
                 if (card is not null)
-                    EngineDecisionWaitMarker.Clear(card.FolderPath, occurrence.Run.RunId);
+                    markersChanged |= EngineDecisionWaitMarker.Clear(card.FolderPath, occurrence.Run.RunId);
                 var accepted = authority.GetReview(occurrence.AuthorityAttemptId)?.Reports.Any(report =>
                     report.AuthorityStatus == AttemptWriteStatus.Accepted
                     && occurrence.IdempotencyKey ==
@@ -451,7 +456,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     }
                     store.Activate(occurrence.Run.RunId);
                     if (!occurrence.Shadow && card is not null && card.State == occurrence.ExpectedSourceState)
-                        MarkWaiting(card.FolderPath, occurrence.Run.RunId);
+                        markersChanged |= MarkWaiting(card.FolderPath, occurrence.Run.RunId);
                 }
                 else
                 {
@@ -473,7 +478,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
                 && item.ProjectName == occurrence.Run.ProjectId);
             if (card is not null && card.State == occurrence.ExpectedSourceState)
-                MarkWaiting(card.FolderPath, occurrence.Run.RunId);
+                markersChanged |= MarkWaiting(card.FolderPath, occurrence.Run.RunId);
         }
         // A marker that names a cancelled occurrence, or a completed one that
         // did not hold its card, waits for nothing; the card would show an
@@ -488,7 +493,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     && store.GetOccurrence(runId) is { } named
                     && (named.Run.Status == "cancelled"
                         || named.Run.Status == "completed" && !MayHoldCard(named)))
-                    EngineDecisionWaitMarker.Clear(card.FolderPath, runId);
+                    markersChanged |= EngineDecisionWaitMarker.Clear(card.FolderPath, runId);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
                 or JsonException)
@@ -497,27 +502,31 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     card.Key ?? card.Id);
             }
         }
-        scanner.InvalidateCache();
+        if (markersChanged) scanner.InvalidateCache();
     }
 
     /// <summary>
     /// Marks the card as waiting on <paramref name="runId"/>. The occurrence can
     /// complete, and its applier clear the marker, between the status read and
     /// this write, so the status is read again and a finished occurrence leaves
-    /// no marker behind.
+    /// no marker behind. Returns whether the card's marker may have changed.
     /// </summary>
-    internal void MarkWaiting(string folder, string runId)
+    internal bool MarkWaiting(string folder, string runId)
     {
         try
         {
+            var previous = EngineDecisionWaitMarker.Read(folder);
             EngineDecisionWaitMarker.Write(folder, runId);
             if (store.Get(runId)?.Status is not ("pending" or "leased" or "applying"))
                 EngineDecisionWaitMarker.Clear(folder, runId);
+            return EngineDecisionWaitMarker.Read(folder) != previous;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            // The card moved after the scan; the next pass reads its new folder.
+            // The card moved after the scan; the next pass reads its new folder,
+            // which a rescan publishes.
             logger.LogWarning(exception, "engine-decision-wait-marker-skipped run={RunId}", runId);
+            return true;
         }
     }
 

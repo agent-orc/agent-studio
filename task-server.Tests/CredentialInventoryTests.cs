@@ -78,6 +78,44 @@ public sealed class CredentialInventoryTests
     }
 
     [Fact]
+    public async Task Expired_write_credential_stays_expired_when_rotation_is_the_earliest_reminder()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Now);
+        var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }), clock);
+        await store.InitializeAsync();
+        var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Inventory"), "owner", default);
+        await store.RegisterProjectRepositoryAsync(new RegisterProjectRepositoryRequest(
+            "prj-expired", workspace.WorkspaceId, "Expired", "EXP", "https://github.com/team/product.git",
+            "develop", "main"), "owner", default);
+        var expires = Now.UtcDateTime.AddMinutes(-1);
+        var rotation = Now.UtcDateTime.AddDays(-30);
+        var record = new CredentialRegistryRecordDto(
+            "installation", "control", "integrator-token", "github", "owner", "recovery-owner",
+            "generation-a", CredentialRegistryProtocol.RenewalMethods["github_https_token"], 1,
+            "github_https_token", null, ["https://github.com/team/product.git"], [],
+            new("credential-helper", "host-local-reference", "active"), "issuer",
+            new Dictionary<string, string>
+            {
+                ["createdAt"] = "not-observed", ["discoveredAt"] = "not-surveyed",
+                ["lastVerifiedAt"] = "not-verified", ["lastRenewedAt"] = "not-observed",
+                ["accessTokenExpiresAt"] = "not-observed", ["lastRealSuccessAt"] = "not-verified",
+                ["nextProbeAt"] = "not-scheduled",
+            }, null, null, null, null, null, "not_verified", [],
+            null, null, null, null, expires, rotation, null, null, null,
+            RepositoryWriteGrant: true);
+        await store.UpsertCredentialRegistryAsync(new(record, "instance-a", null, Now.UtcDateTime),
+            "test", default);
+
+        var view = await store.GetCredentialViewAsync(StudioUserRoles.Owner, default);
+        Assert.Equal("rotation", Assert.Single(view.Rows).Due.Subject);
+        var inventory = await store.GetCredentialInventoryAsync(StudioUserRoles.Owner, default);
+        var projected = Assert.Single(inventory.Items, item => item.Id == "registry:control:integrator-token");
+        Assert.Equal(expires, projected.ExpiresAt);
+        Assert.Contains(inventory.Items, item => item.Kind == "integrator_write" && item.State == "missing");
+    }
+
+    [Fact]
     public async Task Registered_private_repository_requires_review_read_before_an_attempt_exists()
     {
         using var temp = new TempDirectory();
@@ -87,12 +125,17 @@ public sealed class CredentialInventoryTests
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Inventory"), "owner", default);
         await store.RegisterProjectRepositoryAsync(new RegisterProjectRepositoryRequest(
             "prj-inventory", workspace.WorkspaceId, "Inventory", "INV", "https://github.com/team/private.git",
-            "develop", "main", RepositoryVisibility: "private"), "owner", default);
+            "develop", "main"), "owner", default);
         await store.RegisterRunnerAsync("review-a", new RegisterRunnerRequest("review-a", "host-review-a",
             "review-a:1", "1.0", TaskServerProtocol.Current,
             [ReviewCapabilities.ReviewExecutor, ReviewCapabilities.GitMaterialization,
                 ReviewCapabilities.SemanticReview]), "review-a", default);
 
+        Assert.DoesNotContain((await store.GetCredentialInventoryAsync(StudioUserRoles.Owner, default)).Items,
+            item => item.Kind == "review_read_file" && item.State == "missing");
+        Assert.True(await store.SetProjectRepositoryVisibilityAsync(
+            new("https://github.com/team/private.git", "private"), "owner", default));
+        Assert.Equal("private", (await store.GetProjectRepositoryAsync("prj-inventory", default))!.RepositoryVisibility);
         var inventory = await store.GetCredentialInventoryAsync(StudioUserRoles.Owner, default);
         var gap = Assert.Single(inventory.Items, item => item.Id ==
             "required:review:host-review-a:github.com/team/private");

@@ -1,0 +1,61 @@
+<section class="deployment-dashboard" data-testid="deployment-dashboard" aria-labelledby="deployment-dashboard-title">
+  <header class="deployment-dashboard__header">
+    <div>
+      <p class="deployment-dashboard__eyebrow">Workspace / Deployments</p>
+      <h1 id="deployment-dashboard-title">Deployment dashboard</h1>
+      <p>Releases across projects and environments. <span class="deployment-dashboard__sample">Sample data until deployment API is available</span></p>
+    </div>
+    <div class="deployment-dashboard__filters">
+      <label>Project group
+        <select data-testid="deployment-group-filter" [value]="groupFilter()" (change)="groupFilter.set($any($event.target).value)">
+          <option value="all">All groups</option>
+          @for (group of groups(); track group.id) { <option [value]="group.id">{{ group.name }}</option> }
+          <option value="unassigned">Unassigned</option>
+        </select>
+      </label>
+      <label>Environment
+        <select data-testid="deployment-environment-filter" [value]="environmentFilter()" (change)="environmentFilter.set($any($event.target).value)">
+          <option value="all">All environments</option>
+          @for (environment of environments; track environment.id) { <option [value]="environment.id">{{ environment.name }}</option> }
+        </select>
+      </label>
+    </div>
+  </header>
+  <div class="deployment-dashboard__table-wrap">
+    <table>
+      <thead><tr><th scope="col">Project</th>
+        @for (environment of visibleEnvironments(); track environment.id) { <th scope="col">{{ environment.name }}</th> }
+      </tr></thead>
+      <tbody>
+        @for (row of rows(); track row.id) {
+          <tr [attr.data-testid]="'deployment-project-' + row.id">
+            <th scope="row"><button type="button" class="deployment-dashboard__project" (click)="openDeployment.emit(row.name)">{{ row.name }}</button></th>
+            @for (environment of visibleEnvironments(); track environment.id) {
+              <td>
+                @if (statusFor(row, environment.id); as status) {
+                  <button type="button" class="deployment-dashboard__cell"
+                          [attr.data-state]="status.currentDeployment?.state ?? 'unknown'"
+                          [attr.aria-label]="row.name + ' ' + environment.name + ' deployment'"
+                          (click)="openDeployment.emit(row.name)">
+                    <span class="deployment-dashboard__cell-head">
+                      <strong>Release {{ status.currentRelease?.version ?? 'None' }}</strong>
+                      <span class="deployment-dashboard__state">{{ stateLabel(status.currentDeployment?.state) }}</span>
+                    </span>
+                    <span class="deployment-dashboard__cell-detail">
+                      <span>{{ age(status) }}</span>
+                      <span class="deployment-dashboard__health" [attr.data-health]="status.health">{{ status.health }}</span>
+                    </span>
+                    @if (status.currentDeployment?.state === 'awaiting-approval') { <span class="deployment-dashboard__marker">Approval pending</span> }
+                    @if (status.newerRelease; as newer) { <span class="deployment-dashboard__marker">Newer release {{ newer.version }}</span> }
+                  </button>
+                }
+              </td>
+            }
+          </tr>
+        } @empty {
+          <tr><td [attr.colspan]="visibleEnvironments().length + 1" class="deployment-dashboard__empty">No projects in this group.</td></tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</section>

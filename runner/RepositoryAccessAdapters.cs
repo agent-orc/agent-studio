@@ -347,50 +347,59 @@ public sealed class FileRepositoryRotationJournal(string protectedDirectory) : I
 /// <summary>Uses only the exact configured origin and the selected SSH identity.</summary>
 public sealed class PlatformRepositoryGitProof(
     Func<string, string?> keyPathForGeneration, string workDirectory,
-    Func<string, string?>? credentialStoreForGeneration = null)
+    Func<string, string?>? credentialStoreForGeneration = null,
+    Func<string, string?>? credentialHelperForGeneration = null)
     : IRepositoryGitProof
 {
     public async Task<RepositoryAccessProof> ProveAsync(
         RepositoryAccessBinding binding, string? generation, CancellationToken ct)
     {
-        var sshOrigin = binding.Origin.StartsWith("git@github.com:", StringComparison.Ordinal);
         var keyPath = generation is not null ? keyPathForGeneration(generation) : null;
-        var credentialStore = generation is not null && keyPath is null && !sshOrigin
+        var credentialStore = generation is not null && keyPath is null
             ? credentialStoreForGeneration?.Invoke(generation) : null;
-        if (generation is not null && (keyPath is not null || sshOrigin || credentialStoreForGeneration is null
-                ? keyPath is null || !File.Exists(keyPath)
-                : credentialStore is null || !File.Exists(credentialStore)))
+        var credentialHelper = generation is not null && keyPath is null && credentialStore is null
+            ? credentialHelperForGeneration?.Invoke(generation) : null;
+        if (generation is not null && !(keyPath is not null && File.Exists(keyPath)
+                || credentialStore is not null && File.Exists(credentialStore)
+                || credentialHelper is not null && File.Exists(credentialHelper)))
             return new(binding.Purpose, binding.Origin, false, false, binding.RequiresPush, "identity-missing");
-        if (keyPath is not null && keyPath.Contains('\'') || credentialStore is not null && credentialStore.Contains('\''))
+        if (keyPath is not null && keyPath.Contains('\'') || credentialStore is not null && credentialStore.Contains('\'')
+            || credentialHelper is not null && credentialHelper.Contains('\''))
             throw new ArgumentException("Credential path contains an unsupported quote.");
         var env = CandidateGitEnvironment(binding.Origin, keyPath);
-        if (credentialStore is not null)
+        if (credentialStore is not null || credentialHelper is not null)
         {
             env["GIT_CONFIG_NOSYSTEM"] = "1";
-            env["GIT_CONFIG_GLOBAL"] = "/dev/null";
+            env["GIT_CONFIG_GLOBAL"] = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
         }
+        var remote = GitRepositoryUrl(binding.Origin, keyPath);
         var directory = Path.Combine(workDirectory, "repository-proof-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         try
         {
             Task<ProcessResult> Git(params string[] args) => ProcessRunner.RunAsync(
-                "git", credentialStore is null ? args :
+                "git", credentialStore is not null ?
                     ["-c", "credential.helper=", "-c",
                         $"credential.helper=store --file='{credentialStore}'",
-                        "-c", "credential.https://github.com.useHttpPath=true", .. args],
+                        "-c", "credential.https://github.com.useHttpPath=true", .. args]
+                    : credentialHelper is not null ?
+                    ["-c", "credential.helper=", "-c",
+                        $"credential.helper=!sh '{credentialHelper.Replace('\\', '/')}'",
+                        "-c", "credential.https://github.com.useHttpPath=true", .. args]
+                    : args,
                 directory, environment: env, ct: ct);
             if (!(await Git("init", "-q")).Success)
                 return new(binding.Purpose, binding.Origin, false, false, binding.RequiresPush, "git-init-failed");
-            var fetch = await Git("fetch", "--no-tags", binding.Origin, "HEAD");
+            var fetch = await Git("fetch", "--no-tags", remote, "HEAD");
             if (!fetch.Success)
                 return new(binding.Purpose, binding.Origin, false, false, binding.RequiresPush, "fetch-failed");
             if (!binding.RequiresPush)
                 return new(binding.Purpose, binding.Origin, true, false, false, "verified");
             var probeRef = "refs/heads/agent-studio-access-probe/" + Guid.NewGuid().ToString("N");
-            var push = await Git("push", binding.Origin, "FETCH_HEAD:" + probeRef);
+            var push = await Git("push", remote, "FETCH_HEAD:" + probeRef);
             if (!push.Success)
                 return new(binding.Purpose, binding.Origin, true, false, true, "push-denied");
-            var delete = await Git("push", binding.Origin, ":" + probeRef);
+            var delete = await Git("push", remote, ":" + probeRef);
             return new(binding.Purpose, binding.Origin, true, delete.Success, true,
                 delete.Success ? "verified" : "probe-cleanup-required");
         }
@@ -405,17 +414,16 @@ public sealed class PlatformRepositoryGitProof(
         var env = new Dictionary<string, string?> { ["GIT_TERMINAL_PROMPT"] = "0" };
         if (keyPath is null) return env;
         env["GIT_CONFIG_NOSYSTEM"] = "1";
-        env["GIT_CONFIG_GLOBAL"] = "/dev/null";
+        env["GIT_CONFIG_GLOBAL"] = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
+        var keyFile = keyPath.Replace('\\', '/');
+        var knownHosts = Path.Combine(Path.GetDirectoryName(keyPath)!, "known_hosts").Replace('\\', '/');
         env["GIT_SSH_COMMAND"] =
-            $"ssh -i '{keyPath}' -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes";
-        if (origin.StartsWith("https://github.com/", StringComparison.Ordinal))
-        {
-            var uri = new Uri(origin);
-            env["GIT_CONFIG_COUNT"] = "1";
-            env["GIT_CONFIG_KEY_0"] =
-                $"url.git@github.com:{uri.AbsolutePath.TrimStart('/')}.insteadOf";
-            env["GIT_CONFIG_VALUE_0"] = origin;
-        }
+            $"ssh -i '{keyFile}' -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes "
+            + $"-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile='{knownHosts}'";
         return env;
     }
+
+    internal static string GitRepositoryUrl(string origin, string? keyPath)
+        => keyPath is not null && origin.StartsWith("https://github.com/", StringComparison.Ordinal)
+            ? "git@github.com:" + new Uri(origin).AbsolutePath.TrimStart('/') : origin;
 }

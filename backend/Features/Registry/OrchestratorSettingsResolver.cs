@@ -34,6 +34,11 @@ public static class OrchestratorSettingsResolver
         int? WorkspaceDefault,
         int PlatformDefault);
 
+    public static (int Seconds, string Source) ResolveCodingEmergencyLimit(
+        ProjectSettings? project, WorkspaceSettings? workspace)
+        => AgentStudio.TaskServer.Contracts.CodingEmergencyLimit.Resolve(
+            project?.CodingEmergencyLimitSeconds, workspace?.CodingEmergencyLimitSeconds);
+
     /// <summary>
     /// Resolves the effective orchestrator model. First non-blank of
     /// project override, then workspace default, then the caller-supplied
@@ -145,4 +150,8 @@ public sealed class OrchestratorDefaultsProvider
     public int ResolveAutonomyLevel(string projectName, int platformDefault = 2)
         => OrchestratorSettingsResolver.ResolveAutonomy(
             _projectSettings.Get(projectName), WorkspaceForProject(projectName), platformDefault).Level;
+
+    public (int Seconds, string Source) ResolveCodingEmergencyLimit(string projectName)
+        => OrchestratorSettingsResolver.ResolveCodingEmergencyLimit(
+            _projectSettings.Get(projectName), WorkspaceForProject(projectName));
 }
