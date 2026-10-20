@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AgentStudio.Deploy;
 using AgentStudio.Security;
 using AgentStudio.Secrets;
 using Microsoft.AspNetCore.Hosting;
