@@ -1,0 +1,14 @@
+# Rendered by agent-host zone-policy from policy 2026-10-20.2 (sha256:<policy-sha256>).
+# Load with ip6tables-restore --noflush; only the AGENT-ZONE-* chains are replaced.
+*filter
+:AGENT-ZONE-FWD - [0:0]
+:AGENT-ZONE-IN - [0:0]
+# zone work (work) network agent-work bridge br-agent-work subnet 172.30.0.0/24
+-A AGENT-ZONE-FWD -i br-agent-work -m comment --comment "work/agent-work: no IPv6" -j DROP
+-A AGENT-ZONE-FWD -o br-agent-work -m comment --comment "work/agent-work: no IPv6" -j DROP
+-A AGENT-ZONE-IN -i br-agent-work -m comment --comment "work/agent-work: no IPv6" -j DROP
+# zone run (run) network agent-run-default bridge br-run-default subnet 172.31.0.0/24 tenant default
+-A AGENT-ZONE-FWD -i br-run-default -m comment --comment "run/agent-run-default: no IPv6" -j DROP
+-A AGENT-ZONE-FWD -o br-run-default -m comment --comment "run/agent-run-default: no IPv6" -j DROP
+-A AGENT-ZONE-IN -i br-run-default -m comment --comment "run/agent-run-default: no IPv6" -j DROP
+COMMIT

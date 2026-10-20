@@ -1,0 +1,21 @@
+zone policy 2026-10-20.2 (policy sha256:<policy-sha256>, rules sha256:<rules-sha256>)
+1. ensure docker network agent-work (zone work, bridge br-agent-work, subnet 172.30.0.0/24, inter-container off)
+   when missing: docker network create --driver bridge --ipv6=false --subnet 172.30.0.0/24 --gateway 172.30.0.1 --opt com.docker.network.bridge.name=br-agent-work --opt com.docker.network.bridge.enable_icc=false --label org.agent-studio.zone=work agent-work
+2. ensure docker network agent-run-default (zone run, bridge br-run-default, subnet 172.31.0.0/24, inter-container on)
+   when missing: docker network create --driver bridge --ipv6=false --subnet 172.31.0.0/24 --gateway 172.31.0.1 --opt com.docker.network.bridge.name=br-run-default --opt com.docker.network.bridge.enable_icc=true --label org.agent-studio.zone=run --label org.agent-studio.tenant=default agent-run-default
+3. ensure ipset agent-zone-control-plane (allowed control-plane, entries expire 86400s after the last answer)
+   when missing: ipset create agent-zone-control-plane hash:ip family inet timeout 86400
+4. ensure ipset agent-zone-git-hosts (allowed git-hosts, entries expire 86400s after the last answer)
+   when missing: ipset create agent-zone-git-hosts hash:ip family inet timeout 86400
+5. ensure ipset agent-zone-package-registries (allowed package-registries, entries expire 86400s after the last answer)
+   when missing: ipset create agent-zone-package-registries hash:ip family inet timeout 86400
+6. ensure ipset agent-zone-model-providers (allowed model-providers, entries expire 86400s after the last answer)
+   when missing: ipset create agent-zone-model-providers hash:ip family inet timeout 86400
+7. write the zone resolver configuration and (re)start agent-zone-dns.service when it changed or is not running
+8. iptables-restore --noflush: replace AGENT-ZONE-FWD and AGENT-ZONE-IN with 27 rules
+9. ip6tables-restore --noflush: replace AGENT-ZONE-FWD and AGENT-ZONE-IN with 6 rules that drop zone-bridge traffic
+10. ensure DOCKER-USER jumps to AGENT-ZONE-FWD (iptables -I DOCKER-USER 1 -j AGENT-ZONE-FWD)
+11. ensure INPUT jumps to AGENT-ZONE-IN (iptables -I INPUT 1 -j AGENT-ZONE-IN)
+12. ensure DOCKER-USER jumps to AGENT-ZONE-FWD (ip6tables -I DOCKER-USER 1 -j AGENT-ZONE-FWD; FORWARD when DOCKER-USER does not exist)
+13. ensure INPUT jumps to AGENT-ZONE-IN (ip6tables -I INPUT 1 -j AGENT-ZONE-IN)
+14. verify with probe containers, then record the applied state
