@@ -45,7 +45,6 @@ is rejected, not revoked: if the declarations cannot be read, the intake answers
 |---|---|
 | Accepted | 200 with an OTLP `Export*ServiceResponse`; `partialSuccess` counts points or records that were not stored and gives the first reason |
 | Missing, unknown, revoked, or expired token, or an environment that is no longer declared | 401 |
-| Environment declarations cannot be read | 503 with `Retry-After: 2` |
 | Token without the signal | 403 |
 | Content type other than `application/x-protobuf` or `application/json` | 415 |
 | Body over `Telemetry:MaxRequestBytes` (8 MiB, also after gzip expansion) | 413 |
