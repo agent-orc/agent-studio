@@ -68,10 +68,12 @@ a refusal answers `409` with the reason. A deploy job claim reserves the slot
 atomically; a refused job stays queued for the next claim. A healthy report
 marks the environment running, a failed first deploy returns the slot, and
 `POST /api/projects/{project}/environments/{environmentId}/stop` records an
-operator-confirmed stop and frees the slot. The minute reconciliation frees the
-slot of a removed declaration and the slot a claimed deploy job reserved when
-its five-minute lease expired without a report; a later claim of that job
-reserves it again. When a newer job claims a slot held by an older failed or
+operator-confirmed stop and frees the slot. A stop during an active claimed
+deploy is refused so that a successful report cannot exceed hosting capacity.
+The minute reconciliation frees the slot of a removed declaration and the
+reservation of a claimed deploy job after its five-minute lease expires without
+a report. A later claim of that job reserves it again. When a newer job claims
+a slot held by an older failed or
 interrupted job, the reservation moves to the newer job. Reconciliation of the
 older job cannot release a newer healthy deployment's slot. Reading the
 environments changes no slot. A timed promotion

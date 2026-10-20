@@ -641,6 +641,11 @@ public sealed class ProjectEnvironmentService
             var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == environmentId);
             if (declaration is null) return false;
             var state = Load(project);
+            if (AdvanceQueue(state)) Save(project, state);
+            // A claimed deploy can still report healthy. Keep its slot until
+            // the claim settles so another environment cannot take it first.
+            if (state.Jobs.Any(job => job.EnvironmentId == environmentId && job.Status == "claimed"))
+                return false;
             var current = state.History.LastOrDefault(row => row.EnvironmentId == environmentId)?.Item;
             if (current is null || current.Status == "stopped") return false;
             var now = _clock.GetUtcNow().UtcDateTime;
