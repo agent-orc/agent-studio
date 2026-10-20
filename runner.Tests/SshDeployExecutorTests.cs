@@ -68,7 +68,7 @@ public sealed class SshDeployExecutorTests
     }
 
     [Fact]
-    public async Task Static_bundle_uses_scp_then_switches_only_after_copy_succeeds()
+    public async Task Partial_scp_failure_cleans_remote_staging_before_retry_and_switch()
     {
         var root = Path.Combine(Path.GetTempPath(), "ssh-deploy-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -84,19 +84,25 @@ public sealed class SshDeployExecutorTests
             var digest = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(archive))).ToLowerInvariant();
             File.Move(archive, Path.Combine(root, digest));
             var calls = new List<string>();
+            var copyAttempts = 0;
             var executor = new SshDeployExecutor((file, _, input, _) =>
             {
                 calls.Add(file + ":" + input);
-                return Task.FromResult(new ProcessResult(file == "scp" ? 1 : 0, "", ""));
+                return Task.FromResult(new ProcessResult(file == "scp" && copyAttempts++ == 0 ? 1 : 0, "", ""));
             });
             var step = Step("static-site") with { Directory = "/srv/www/site" };
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => executor.ExecuteAsync("web-vm", step,
                 "bundle@sha256:" + digest, root, new Dictionary<string, string>(),
                 _ => Task.CompletedTask, CancellationToken.None));
-            Assert.Equal(2, calls.Count);
+            Assert.Equal(3, calls.Count);
             Assert.StartsWith("ssh:", calls[0]);
             Assert.StartsWith("scp:", calls[1]);
+            Assert.Contains("\"action\":\"cleanup\"", calls[2]);
+            await executor.ExecuteAsync("web-vm", step, "bundle@sha256:" + digest, root,
+                new Dictionary<string, string>(), _ => Task.CompletedTask, CancellationToken.None);
+            Assert.Contains(calls, call => call.StartsWith("scp:", StringComparison.Ordinal) && call != calls[1]);
+            Assert.Contains("\"action\":\"switch\"", calls.Last());
         }
         finally
         {

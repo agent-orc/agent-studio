@@ -56,6 +56,7 @@ public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string
     IReadOnlyList<DeployStepResult>? Steps = null);
 public sealed record DeployStepLogRequest(string LeaseToken, string Step, string Message);
 public sealed record DeployClaimRequest(string HostId);
+public sealed record DeployLeaseRenewRequest(string LeaseToken);
 public sealed record ReleaseArtifactRequest(string Artifact, string Commit);
 public sealed record PromotionDecisionRequest(string Artifact);
 public sealed record GateArtifactRequest(string Project, string Artifact, string Commit);
@@ -110,15 +111,17 @@ public sealed class ProjectEnvironmentService
         var root = _git.ResolveRepoRootForProject(project);
         if (root is null) return [];
         var directory = Path.Combine(root, "docs", "deployments", "environments");
-        if (!Directory.Exists(directory)) return [];
-        var parsed = ParseDeclarationFiles(Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
-            .Select(file => (Path.GetFileName(file), File.ReadAllText(file))));
+        var parsed = Directory.Exists(directory)
+            ? ParseDeclarationFiles(Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
+                .Select(file => (Path.GetFileName(file), File.ReadAllText(file))))
+            : [];
         var yamlPath = Path.Combine(root, ProjectPreparationPaths.Definition);
         if (!File.Exists(yamlPath)) return parsed;
         try { return ApplyDefinition(parsed, File.ReadAllText(yamlPath)); }
         catch (JsonException ex)
         {
-            return parsed.Select(file => file with { Declaration = null, Error = ex.Message }).ToArray();
+            return parsed.Count == 0 ? [new("project.yml", null, ex.Message)]
+                : parsed.Select(file => file with { Declaration = null, Error = ex.Message }).ToArray();
         }
     }
 
@@ -165,36 +168,48 @@ public sealed class ProjectEnvironmentService
         if (definition.Deploy.Any(item => item.Step is not ("static-site" or "container")))
             throw new JsonException("Schema 2 release deployment only supports static-site and container SSH steps.");
         var output = new List<EnvironmentDeclarationFile>();
-        foreach (var file in files)
+        foreach (var environment in definition.Environments)
         {
-            if (file.Declaration is not { } legacy) { output.Add(file); continue; }
-            var name = PipelineMigrationPolicy.EnvironmentFor(legacy.Kind);
-            if (name is null) { output.Add(file); continue; }
-            var environment = definition.Environments.FirstOrDefault(item => item.Name == name);
+            var name = environment.Name;
+            var kind = name == "staging" ? "stage" : name;
+            var file = files.FirstOrDefault(item => item.EnvironmentId == kind);
             var phase = definition.StandardLifecycle.FirstOrDefault(item => item.Phase == name);
             var steps = definition.Deploy.Where(item => (item.Step is "static-site" or "container")
                 && (item.Environments.Count == 0 || item.Environments.Contains(name, StringComparer.Ordinal))).ToArray();
+            if (steps.Length == 0) continue;
             var variables = definition.Variables.Where(item => item.Environments.Count == 0
                 || item.Environments.Contains(name, StringComparer.Ordinal)).ToArray();
             var secrets = variables.Where(item => item.Secret is not null).Select(item => item.Secret!).Order(StringComparer.Ordinal).ToArray();
-            var first = steps.FirstOrDefault();
-            if (environment is null || phase is null || first is null || steps.Any(item => item.Target != legacy.TargetHostId)
-                || first.Target != legacy.TargetHostId || legacy.Template != (first.Step == "static-site" ? "static" : "container")
-                || first.HealthUrl != legacy.HealthUrl
-                || first.Step == "static-site" && first.Directory != legacy.Destination
+            var first = steps[0];
+            if (phase is null || first.Target is null || steps.Any(item => item.Target != first.Target))
+                throw new JsonException($"Schema 2 environment {name} needs one registered SSH target and lifecycle phase.");
+            var generated = new EnvironmentDeclaration(kind, name, kind, first.Target,
+                first.HealthUrl ?? first.Target, first.Step == "static-site" ? "static" : "container",
+                first.Step == "static-site" ? first.Directory! : "8080", first.HealthUrl,
+                "person", secrets, 8080)
+            {
+                SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
+                Protected = environment.Protected, Automatic = phase.Automatic, Requires = phase.Requires,
+            };
+            if (file is null) { output.Add(new(kind, generated, null)); continue; }
+            if (file.Declaration is not { } legacy) { output.Add(file); continue; }
+            if (legacy.TargetHostId != generated.TargetHostId || legacy.Template != generated.Template
+                || legacy.HealthUrl != generated.HealthUrl
+                || generated.Template == "static" && legacy.Destination != generated.Destination
                 || !secrets.SequenceEqual(legacy.SecretRefs.Order(StringComparer.Ordinal)))
             {
                 output.Add(file with { Declaration = null,
                     Error = $"{file.EnvironmentId}.json diverges from schema 2 project.yml; migrate the declaration before deploying." });
                 continue;
             }
-            output.Add(file with { Declaration = legacy with
-            {
-                SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
-                Protected = environment.Protected,
-                Automatic = phase.Automatic, Requires = phase.Requires,
-            } });
+            output.Add(file with { Declaration = generated with { Address = legacy.Address,
+                Destination = legacy.Template == "container" ? legacy.Destination : generated.Destination,
+                ContainerPort = legacy.ContainerPort, HealthChecks = legacy.HealthChecks,
+                HealthChecksAllowPrivateNetwork = legacy.HealthChecksAllowPrivateNetwork } });
         }
+        foreach (var file in files.Where(item => output.All(effective => effective.EnvironmentId != item.EnvironmentId)))
+            output.Add(file with { Declaration = null,
+                Error = $"{file.EnvironmentId}.json has no schema 2 deploy environment." });
         return output;
     }
 
@@ -605,7 +620,24 @@ public sealed class ProjectEnvironmentService
             var job = Load(project).Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
                 && item.LeaseToken is not null && CryptographicOperations.FixedTimeEquals(
                     System.Text.Encoding.UTF8.GetBytes(item.LeaseToken), System.Text.Encoding.UTF8.GetBytes(leaseToken)));
-            return job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration ? null : job;
+            return job is null || job.ClaimedAt <= _clock.GetUtcNow().UtcDateTime - LeaseDuration ? null : job;
+        }
+    }
+
+    /// <summary>Extends only the current, unexpired claim. The token fences a restarted host.</summary>
+    public bool Renew(string project, string jobId, string leaseToken)
+    {
+        lock (_gate)
+        {
+            var state = Load(project);
+            if (AdvanceQueue(state)) Save(project, state);
+            var job = state.Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
+                && item.LeaseToken == leaseToken);
+            var now = _clock.GetUtcNow().UtcDateTime;
+            if (job is null || job.ClaimedAt <= now - LeaseDuration) return false;
+            state.Jobs[state.Jobs.IndexOf(job)] = job with { ClaimedAt = now };
+            Save(project, state);
+            return true;
         }
     }
 
@@ -622,7 +654,7 @@ public sealed class ProjectEnvironmentService
             var advanced = AdvanceQueue(state);
             var job = state.Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
                 && item.LeaseToken == report.LeaseToken);
-            if (job is null)
+            if (job is null || job.ClaimedAt <= _clock.GetUtcNow().UtcDateTime - LeaseDuration)
             {
                 if (advanced) Save(project, state);
                 return false;

@@ -14,6 +14,7 @@ namespace AgentRunner;
 public static class DeployHostCommand
 {
     private sealed record Claim(string HostId);
+    private sealed record StepResult(string Name, bool Succeeded);
     private sealed record Job(string Id, string Project, string EnvironmentId, string HostId,
         string Artifact, string Template, string Destination, string? HealthUrl,
         string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken)
@@ -24,7 +25,8 @@ public static class DeployHostCommand
     }
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
-        HttpClient? transport = null)
+        HttpClient? transport = null, SshDeployExecutor? sshExecutor = null,
+        HttpClient? healthTransport = null, TimeProvider? timeProvider = null)
     {
         if (args.Length < 4 || args.Length > 5)
         {
@@ -41,62 +43,142 @@ public static class DeployHostCommand
         if (job is null) return 0;
         var evidence = "deploy-step-failed";
         var healthy = false;
-        var stepResults = new List<object>();
+        var stepResults = new List<StepResult>();
+        using var claim = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var clock = timeProvider ?? TimeProvider.System;
+        using var heartbeatStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var heartbeat = MaintainLease(client, job, clock, claim, heartbeatStop.Token);
         try
         {
-            var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
-            if (job.SshSteps.Length > 0)
+            try
             {
-                var executor = new SshDeployExecutor();
-                for (var index = 0; index < job.SshSteps.Length; index++)
+                var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
+                if (job.SshSteps.Length > 0)
                 {
-                    var step = job.SshSteps[index];
-                    var name = $"deploy[{index}]:{step.Step}";
-                    try
+                    var executor = sshExecutor ?? new SshDeployExecutor();
+                    for (var index = 0; index < job.SshSteps.Length; index++)
                     {
-                        var variables = await ResolveVariables(job, client, cancellationToken);
-                        var bundlePath = step.Step == "static-site"
-                            ? job.Artifacts.FirstOrDefault(item => item.Name == step.Artifact && item.Type == "static")?.Path
-                                ?? throw new InvalidDataException("Static artifact is missing from the release snapshot.")
-                            : null;
-                        await executor.ExecuteAsync(job.HostId, step, job.Artifact, args[3], variables,
-                            message => AppendLog(client, job, name, message, cancellationToken), cancellationToken,
-                            bundlePath);
-                        stepResults.Add(new { name, succeeded = true });
+                        var step = job.SshSteps[index];
+                        var name = $"deploy[{index}]:{step.Step}";
+                        try
+                        {
+                            claim.Token.ThrowIfCancellationRequested();
+                            var variables = await ResolveVariables(job, client, claim.Token);
+                            var bundlePath = step.Step == "static-site"
+                                ? job.Artifacts.FirstOrDefault(item => item.Name == step.Artifact && item.Type == "static")?.Path
+                                    ?? throw new InvalidDataException("Static artifact is missing from the release snapshot.")
+                                : null;
+                            await executor.ExecuteAsync(job.HostId, step, job.Artifact, args[3], variables,
+                                message => AppendLog(client, job, name, message, claim.Token), claim.Token,
+                                bundlePath);
+                            evidence = "health-http-failed";
+                            if (step.HealthUrl is not null && !await CheckStepHealth(step.HealthUrl,
+                                    step.HealthTimeoutSeconds, healthTransport, clock, claim.Token))
+                            {
+                                stepResults.Add(new(name, false));
+                                await AppendLog(client, job, name, "Step health check failed.", claim.Token);
+                                break;
+                            }
+                            stepResults.Add(new(name, true));
+                        }
+                        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException
+                            or InvalidOperationException or HttpRequestException or System.ComponentModel.Win32Exception)
+                        {
+                            stepResults.Add(new(name, false));
+                            await AppendLog(client, job, name, $"Step failed: {ex.GetType().Name}.", claim.Token);
+                            throw;
+                        }
                     }
-                    catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException
-                        or InvalidOperationException or HttpRequestException or System.ComponentModel.Win32Exception)
-                    {
-                        stepResults.Add(new { name, succeeded = false });
-                        await AppendLog(client, job, name, $"Step failed: {ex.GetType().Name}.", cancellationToken);
-                        throw;
-                    }
+                    healthy = stepResults.Count == job.SshSteps.Length && stepResults.All(item => item.Succeeded);
+                    if (healthy) evidence = "health-ok";
+                }
+                else if (job.Template == "container")
+                    await DeployContainer(job, secretRoot, claim.Token);
+                else if (job.Template == "static")
+                    await DeployStatic(job, args[3], claim.Token);
+                else throw new InvalidOperationException("Unknown template.");
+                if (job.SshSteps.Length == 0)
+                {
+                    evidence = "health-http-failed";
+                    healthy = job.HealthUrl is null || await CheckStepHealth(job.HealthUrl, 60,
+                        healthTransport, clock, claim.Token);
+                    if (healthy) evidence = "health-ok";
                 }
             }
-            else if (job.Template == "container")
-                await DeployContainer(job, secretRoot, cancellationToken);
-            else if (job.Template == "static")
-                await DeployStatic(job, args[3], cancellationToken);
-            else throw new InvalidOperationException("Unknown template.");
-            evidence = "health-http-failed";
-            var healthUrl = job.SshSteps.LastOrDefault()?.HealthUrl ?? job.HealthUrl;
-            var healthTimeout = job.SshSteps.LastOrDefault()?.HealthTimeoutSeconds;
-            using var healthLimit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            healthLimit.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(healthTimeout ?? 60, 1, 900)));
-            try { healthy = healthUrl is null || await CheckHealth(healthUrl, healthLimit.Token); }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { healthy = false; }
-            if (healthy) evidence = "health-ok";
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
+                or HttpRequestException or System.ComponentModel.Win32Exception)
+            {
+                Console.Error.WriteLine($"Deploy job {job.Id} failed: {ex.GetType().Name}");
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && claim.IsCancellationRequested)
+            {
+                Console.Error.WriteLine($"Deploy job {job.Id} stopped after losing its claim.");
+            }
+            try
+            {
+                await heartbeatStop.CancelAsync();
+                await heartbeat;
+                claim.Token.ThrowIfCancellationRequested();
+                using var reportLimit = CancellationTokenSource.CreateLinkedTokenSource(claim.Token);
+                reportLimit.CancelAfter(TimeSpan.FromSeconds(30));
+                using var report = await client.PostAsJsonAsync(
+                    $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/report",
+                    new { job.LeaseToken, Healthy = healthy, Evidence = evidence, Steps = stepResults }, reportLimit.Token);
+                report.EnsureSuccessStatusCode();
+                return healthy ? 0 : 1;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && claim.IsCancellationRequested)
+            {
+                Console.Error.WriteLine($"Deploy job {job.Id} lost its claim.");
+                return 1;
+            }
         }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
-            or HttpRequestException or System.ComponentModel.Win32Exception)
+        finally
         {
-            Console.Error.WriteLine($"Deploy job {job.Id} failed: {ex.GetType().Name}");
+            await heartbeatStop.CancelAsync();
+            await heartbeat;
         }
-        using var report = await client.PostAsJsonAsync(
-            $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/report",
-            new { job.LeaseToken, Healthy = healthy, Evidence = evidence, Steps = stepResults }, cancellationToken);
-        report.EnsureSuccessStatusCode();
-        return healthy ? 0 : 1;
+    }
+
+    private static async Task MaintainLease(HttpClient client, Job job, TimeProvider clock,
+        CancellationTokenSource claim, CancellationToken stop)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), clock);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stop))
+            {
+                using var renewLimit = CancellationTokenSource.CreateLinkedTokenSource(stop);
+                renewLimit.CancelAfter(TimeSpan.FromSeconds(15));
+                using var response = await client.PostAsJsonAsync(
+                    $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/renew",
+                    new { job.LeaseToken }, renewLimit.Token);
+                if (response.IsSuccessStatusCode) continue;
+                Console.Error.WriteLine($"Deploy job {job.Id} lease renewal was refused.");
+                await claim.CancelAsync();
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { return; }
+        catch (OperationCanceledException)
+        {
+            Console.Error.WriteLine($"Deploy job {job.Id} lease renewal timed out.");
+            await claim.CancelAsync();
+        }
+        catch (HttpRequestException ex)
+        {
+            Console.Error.WriteLine($"Deploy job {job.Id} lease renewal failed: {ex.GetType().Name}");
+            await claim.CancelAsync();
+        }
+    }
+
+    private static async Task<bool> CheckStepHealth(string url, int? seconds, HttpClient? transport,
+        TimeProvider clock, CancellationToken ct)
+    {
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(seconds ?? 60, 1, 900)));
+        try { return await CheckHealth(url, transport, clock, limit.Token); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return false; }
     }
 
     private static async Task<Dictionary<string, string>> ResolveVariables(Job job, HttpClient client, CancellationToken ct)
@@ -235,22 +317,23 @@ public static class DeployHostCommand
         if (process.ExitCode != 0 && !allowFailure) throw new InvalidOperationException("Deploy command failed.");
     }
 
-    private static async Task<bool> CheckHealth(string url, CancellationToken ct)
+    private static async Task<bool> CheckHealth(string url, HttpClient? transport, TimeProvider clock,
+        CancellationToken ct)
     {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        for (var attempt = 0; attempt < 5; attempt++)
+        using var owned = transport is null ? new HttpClient() : null;
+        var client = transport ?? owned!;
+        while (!ct.IsCancellationRequested)
         {
             try
             {
-                using var response = await client.GetAsync(url, ct);
+                using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                attempt.CancelAfter(TimeSpan.FromSeconds(10));
+                using var response = await client.GetAsync(url, attempt.Token);
                 if (response.IsSuccessStatusCode) return true;
             }
-            catch (HttpRequestException)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2), ct);
-                continue;
-            }
-            await Task.Delay(TimeSpan.FromSeconds(2), ct);
+            catch (HttpRequestException) { /* A failed probe can recover before the configured deadline. */ }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { /* Retry a timed-out probe. */ }
+            await Task.Delay(TimeSpan.FromSeconds(2), clock, ct);
         }
         return false;
     }

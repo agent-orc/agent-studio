@@ -2611,21 +2611,25 @@ appended with the file's own line ending, Staging and Production deploy steps
 come from the AGT-3176 declarations under `docs/deployments/environments/`, and
 every default the proposal had to choose is listed as a note.
 The migration proposal is the one-time conversion of legacy declarations into
-schema 2. After migration, JSON declarations register deploy hosts and retain
-legacy compatibility; project.yml owns protection, lifecycle, variables and
-SSH steps. Release creation compares the committed JSON declaration's host,
+schema 2. After migration, project.yml owns protection, lifecycle, variables,
+SSH steps, and effective environments. A schema 2 project can release without
+JSON declarations: its deploy targets become the environment host IDs. Existing
+JSON declarations retain display addresses, health checks, and legacy proxy
+ports. Release creation compares each committed JSON declaration's host,
 template, health URL, static directory and secret names with project.yml and
 refuses divergence. The effective schema 2 definition is stored in the release
 snapshot and copied to each host job. The host checks SSH host keys strictly,
 copies static bundles to a version directory before switching `current`, or
 pins one compose service to the release artifact digest before pulling and
 starting it. It resolves secret names under the claimed job lease, sends step
-log messages to the deployment log, and records each step
-result. A failed deployment queues the previous healthy artifact for rollback.
+log messages to the deployment log, renews its fenced claim while running, and
+checks each step's health URL before starting the next step. A failed or
+interrupted static copy removes remote staging. A failed deployment records
+the failing step and queues the previous healthy artifact for rollback.
 The deploy host needs OpenSSH and access to the artifact store; its SSH target
 needs Python 3, and container targets also need Docker Compose. The
-[deploy host API contract](../contracts/deploy-host-api.md) defines the claim,
-lease-bound step log and report payloads, failure responses, and secret
+[deploy host API contract](../contracts/deploy-host-api.md) defines claim and
+renewal, lease-bound step log and report payloads, failure responses, and secret
 resolution request.
 `POST .../migration` writes only through `ManagedRepositoryMutationService` as
 one path-scoped commit. The current file digest and the regenerated proposal

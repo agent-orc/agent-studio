@@ -44,6 +44,100 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void SchemaTwoWithoutJson_GeneratesDeployableEnvironmentsAtTheReleaseCommit()
+    {
+        var (service, repo, _) = Build();
+        Directory.Delete(Path.Combine(repo, "docs", "deployments", "environments"), true);
+        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"), """
+            schemaVersion: 2
+            stack: [node]
+            toolVersions:
+            commands:
+              prepare: .agent-studio/prepare
+              build: [npm run build]
+              test: [npm test]
+              lint: []
+            testSuites:
+            cachePaths: []
+            capabilities: [git]
+            environment:
+            project:
+              id: demo
+            artifacts:
+              - name: app
+                type: container
+                dockerfile: Dockerfile
+                image: registry.example/app
+            environments:
+              - name: staging
+                protected: false
+              - name: production
+                protected: true
+            lifecycles:
+              standard:
+                - phase: staging
+                  automatic: true
+                - phase: production
+                  approval: [Owner, Maintainer]
+                  requires: staging
+            deploy:
+              - step: container
+                artifact: app
+                target: stage-host
+                composeFile: /srv/apps/stage/compose.yml
+                service: app
+                healthUrl: https://stage.example/health
+                environments: [staging]
+              - step: container
+                artifact: app
+                target: prod-host
+                composeFile: /srv/apps/prod/compose.yml
+                service: app
+                healthUrl: https://example/health
+                environments: [production]
+            variables:
+              - name: LOG_LEVEL
+                value: info
+            """);
+        Git(repo, "add", "-A");
+        Git(repo, "commit", "-m", "schema two");
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+
+        var current = service.Declarations("demo")!;
+        Assert.Equal(["stage", "production"], current.Select(item => item.Id));
+        Assert.Equal("stage-host", current[0].TargetHostId);
+        Assert.Equal("prod-host", current[1].TargetHostId);
+        Assert.Equal([false, true], current.Select(item => item.Protected));
+        var committed = service.DeclarationsAtCommit("demo", commit)!;
+        Assert.Equal(current.Select(item => (item.Id, item.TargetHostId, item.Protected)),
+            committed.Select(item => (item.Id, item.TargetHostId, item.Protected)));
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        Assert.Equal("stage-host", service.Claim("stage-host")!.HostId);
+    }
+
+    [Fact]
+    public void RenewedClaimStaysLive_AndRestartFencesThePreviousToken()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var first = service.Claim("stage-host")!;
+        _clock.Advance(TimeSpan.FromMinutes(4));
+        Assert.True(service.Renew("demo", first.Id, first.LeaseToken!));
+        _clock.Advance(TimeSpan.FromMinutes(4));
+        Assert.NotNull(service.FindClaimedJob("demo", first.Id, first.LeaseToken!));
+        Assert.Null(service.Claim("stage-host"));
+        _clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.False(service.Renew("demo", first.Id, first.LeaseToken!));
+        Assert.False(service.Report("demo", first.Id, new(first.LeaseToken!, true, "health-ok")));
+        var restarted = service.Claim("stage-host")!;
+        Assert.NotEqual(first.LeaseToken, restarted.LeaseToken);
+        Assert.False(service.Renew("demo", first.Id, first.LeaseToken!));
+        Assert.True(service.Report("demo", restarted.Id, new(restarted.LeaseToken!, true, "health-ok")));
+    }
+
+    [Fact]
     public void ProjectNameWithSpaces_PersistsAndReadsEnvironmentState()
     {
         var (service, repo, _) = Build(project: "Operator Demo");
