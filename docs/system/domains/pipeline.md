@@ -37,6 +37,17 @@ branch still carries that tree and the card still names the same delivery.
 If the published branch loses the containing tree, verification is stale and
 normal acceptance recovery returns the card to Human Review.
 
+An operator candidate verification is an immutable, per-card
+`integrated-verified` record of a published candidate SHA, review attempt,
+verification host, suite totals, and log hash. The write route fetches origin
+and requires candidate ancestry in the refreshed branch. Patch-equivalent
+deliveries use the recorded review attempt and attributed commits as a current
+delivery mapping for board status and integration reconciliation. A later
+review attempt cannot inherit that mapping; a branch rewrite that removes
+the candidate invalidates it. Idempotency comparison and append share the
+task write lock, so concurrent posts with different evidence cannot both
+report success or replace the first record.
+
 Operators can attach an external suite result with
 `POST /api/projects/{project}/external-verifications`. The body supplies
 `candidateSha`, `verificationHost`, `suiteSummary`, and a SHA-256 `logHash`.
