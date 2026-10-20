@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, model, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
 import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import {
@@ -37,12 +37,14 @@ export class ProjectDeployHistoryComponent {
   readonly environments = input.required<readonly { id: string; name: string }[]>();
   readonly now = input.required<number>();
   readonly selectedRunId = input<string | null>(null);
+  readonly selectedFilter = input<DeployRunFilter>(ALL_DEPLOY_RUNS);
   readonly total = input<number>(0);
   readonly offset = input<number>(0);
   readonly openRun = output<string>();
+  readonly filterChange = output<DeployRunFilter>();
   readonly pageChange = output<number>();
 
-  readonly filter = model<DeployRunFilter>(ALL_DEPLOY_RUNS);
+  readonly filter = signal<DeployRunFilter>(ALL_DEPLOY_RUNS);
   readonly visible = computed(() => filterDeployRuns(this.runs(), this.filter(), this.now()));
   readonly filtered = computed(() => {
     const value = this.filter();
@@ -60,11 +62,13 @@ export class ProjectDeployHistoryComponent {
   protected readonly triggerLabel = triggerLabel;
   protected readonly duration = formatDuration;
 
+  constructor() { effect(() => this.filter.set(this.selectedFilter())); }
+
   setEnvironment(environmentId: string): void { this.setFilter({ ...this.filter(), environmentId }); }
   setState(state: string): void {
     this.setFilter({ ...this.filter(), state: state as DeployRunFilter['state'] });
   }
   setPeriod(period: string): void { this.setFilter({ ...this.filter(), period: period as DeployPeriod }); }
   reset(): void { this.setFilter(ALL_DEPLOY_RUNS); }
-  private setFilter(filter: DeployRunFilter): void { this.filter.set(filter); }
+  private setFilter(filter: DeployRunFilter): void { this.filter.set(filter); this.filterChange.emit(filter); }
 }

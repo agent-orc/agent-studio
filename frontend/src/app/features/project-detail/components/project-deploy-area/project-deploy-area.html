@@ -25,7 +25,7 @@
           <app-project-deploy-overview [panel]="overviewPanel()" [cards]="cards()" [now]="now()"
             (openRun)="openRun($event)" (openTools)="show('tools')" />
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
-            [now]="now()" [filter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
+            [now]="now()" [selectedFilter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
             (filterChange)="changeHistoryFilter($event)" (pageChange)="changeHistoryPage($event)" (openRun)="openRun($event)" /> }
           @placeholder { <p>Loading deploy history…</p> }
           <p class="deploy-area__tools-link">Deploy commands and the AGT-3176 promotion and rollback controls live in the
@@ -38,7 +38,7 @@
         @case ('operations') { <app-environment-health-panel [projectName]="projectName()" /> }
         @case ('history') {
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
-            [now]="now()" [filter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
+            [now]="now()" [selectedFilter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
             (filterChange)="changeHistoryFilter($event)" (pageChange)="changeHistoryPage($event)" (openRun)="openRun($event)" /> }
           @placeholder { <p>Loading deploy history…</p> }
         }

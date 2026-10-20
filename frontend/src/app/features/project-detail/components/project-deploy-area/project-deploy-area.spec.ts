@@ -375,6 +375,7 @@ describe('ProjectDeployAreaComponent', () => {
     select.value = 'production';
     select.dispatchEvent(new Event('change'));
     await settle();
+    expect(fixture.componentInstance.historyFilter().environmentId).toBe('production');
     await click('deploy-tab-releases');
     await click('deploy-tab-history');
     expect((byTestId('deploy-history-filter-environment') as HTMLSelectElement).value).toBe('production');
