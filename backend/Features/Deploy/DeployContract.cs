@@ -91,6 +91,9 @@ public sealed record DeploymentLogLine(string Step, DateTime AtUtc, string Messa
 
 public sealed record DeploymentLogResponse(string DeploymentId, IReadOnlyList<DeploymentLogLine> Lines);
 
+/// <summary>A bounded, newest-first slice. Offset and total refer to the filtered set.</summary>
+public sealed record DeployPage<T>(IReadOnlyList<T> Items, int Offset, int Limit, int Total);
+
 public sealed record DeployAuditEntry(DateTime AtUtc, string Actor, string Action, string? ReleaseId,
     string? DeploymentId, string? EnvironmentId, string Detail);
 

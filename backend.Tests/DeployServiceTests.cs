@@ -93,6 +93,28 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void PagedReads_ClampTheSliceAndFilterBeforeCounting()
+    {
+        var (deploy, environments, _) = Build();
+        var commit = Head();
+        var release = CreateRelease(deploy, Artifact('a'), commit);
+        Report(deploy, environments, "stage-host", healthy: false);
+        CreateRelease(deploy, Artifact('a'), commit);
+
+        var releases = deploy.ReleasePage("demo", 0, 100)!;
+        Assert.Equal((0, 50, 1), (releases.Offset, releases.Limit, releases.Total));
+        Assert.Equal(release.Id, Assert.Single(releases.Items).Id);
+        Assert.Empty(deploy.ReleasePage("demo", 1, 25)!.Items);
+
+        var failed = deploy.DeploymentPage("demo", "stage", DeploymentStates.Failed, null, 0, 1)!;
+        Assert.Equal(1, failed.Total);
+        Assert.Equal(DeploymentStates.Failed, Assert.Single(failed.Items).State);
+        Assert.Equal(2, deploy.DeploymentPage("demo", "stage", null, null, 0, 1)!.Total);
+        Assert.Single(deploy.DeploymentPage("demo", "stage", null, null, 1, 1)!.Items);
+        Assert.Empty(deploy.DeploymentPage("demo", "stage", null, _clock.GetUtcNow().UtcDateTime.AddMinutes(1), 0, 25)!.Items);
+    }
+
+    [Fact]
     public void Release_IncludesOnlyCardsIntegratedSincePreviousRelease()
     {
         var (deploy, _, _) = Build();
@@ -794,6 +816,13 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal("staging", staging.GetProperty("environment").GetProperty("kind").GetString());
         Assert.Equal(0, staging.GetProperty("environment").GetProperty("order").GetInt32());
         Assert.Equal(JsonValueKind.Null, staging.GetProperty("currentRelease").ValueKind);
+        using var releasePage = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/releases/page?offset=0&limit=1"));
+        Assert.Equal(1, releasePage.RootElement.GetProperty("total").GetInt32());
+        Assert.Single(releasePage.RootElement.GetProperty("items").EnumerateArray());
+        using var runPage = JsonDocument.Parse(await client.GetStringAsync(
+            "/api/projects/demo/deploy/deployments/page?environmentId=stage&state=queued&offset=0&limit=1"));
+        Assert.Equal(1, runPage.RootElement.GetProperty("total").GetInt32());
+        Assert.Equal("queued", runPage.RootElement.GetProperty("items")[0].GetProperty("state").GetString());
         Assert.Equal(releaseId, staging.GetProperty("newerRelease").GetProperty("id").GetString());
         Assert.Equal("unknown", staging.GetProperty("health").GetString());
         var run = staging.GetProperty("currentDeployment");
@@ -838,6 +867,67 @@ public sealed class DeployServiceTests : IDisposable
         using var approved = await client.PostAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve", null);
         Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
         Assert.Equal(auth.User!.Id, service.DeploymentById("demo", production.Id)!.ApprovedBy);
+    }
+
+    [Theory]
+    [InlineData("approve")]
+    [InlineData("reject")]
+    public async Task PromotionRoute_DecidesOnlyThePendingRegistryDigest(string action)
+    {
+        Build();
+        var artifact = Artifact('a');
+        var commit = Head();
+        WriteReleaseEvidence(artifact, commit);
+        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.UseSetting("TaskRepository", Path.Combine(_root, "workspace"));
+            builder.UseSetting("Deploy:ReleaseEvidenceRoot", Path.Combine(_root, "release-evidence"));
+            builder.UseSetting("WatchPaths:0:Name", "demo");
+            builder.UseSetting("WatchPaths:0:Path", _watch);
+            builder.UseSetting("WatchPaths:0:RootPath", _repo);
+            builder.UseSetting("WatchPaths:0:RepositoryPath", _repo);
+            builder.UseSetting("ReviewDecisionOrchestrator:Enabled", "false");
+            builder.UseSetting("Logging:BackendFile:LogDirectory", Path.Combine(_root, "logs"));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(_clock);
+            });
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        using var bootstrap = await client.PostAsJsonAsync("/api/auth/bootstrap", new
+        {
+            username = "local.owner", password = $"test-{Guid.NewGuid():N}!", displayName = "Local Owner",
+        });
+        bootstrap.EnsureSuccessStatusCode();
+        var auth = await bootstrap.Content.ReadFromJsonAsync<AuthStatusResponse>();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", auth!.CsrfToken);
+
+        var hosts = factory.Services.GetRequiredService<ProjectEnvironmentService>();
+        var deploy = factory.Services.GetRequiredService<DeployService>();
+        Assert.True(hosts.RegisterGateArtifact("demo", artifact, commit));
+        using var release = await client.PostAsJsonAsync("/api/projects/demo/environments/releases",
+            new ReleaseArtifactRequest(artifact, commit));
+        Assert.Equal(HttpStatusCode.Accepted, release.StatusCode);
+        var stage = hosts.Claim("stage-host")!;
+        Assert.True(hosts.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+        deploy.SyncAfterHostCall("demo");
+        Assert.Equal("pending", Assert.Single(hosts.Read("demo")!.Promotions).Status);
+
+        var route = $"/api/projects/demo/environments/promotions/{action}";
+        using var wrong = await client.PostAsJsonAsync(route, new PromotionDecisionRequest(Artifact('b')));
+        Assert.Equal(HttpStatusCode.Conflict, wrong.StatusCode);
+        Assert.Equal("pending", Assert.Single(hosts.Read("demo")!.Promotions).Status);
+
+        using var decision = await client.PostAsJsonAsync(route, new PromotionDecisionRequest(artifact));
+        Assert.Equal(HttpStatusCode.OK, decision.StatusCode);
+        Assert.Equal(action == "approve" ? "production-queued" : "rejected",
+            Assert.Single(hosts.Read("demo")!.Promotions).Status);
+        var production = hosts.Claim("prod-host");
+        if (action == "approve") Assert.Equal(artifact, production!.Artifact);
+        else Assert.Null(production);
     }
 
     private void DeployThroughProduction(DeployService deploy, ProjectEnvironmentService environments,
