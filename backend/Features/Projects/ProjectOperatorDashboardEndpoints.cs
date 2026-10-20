@@ -1,5 +1,6 @@
 using AgentStudio.Deploy;
 using AgentStudio.Security;
+using AgentStudio.Secrets;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Projects;
@@ -62,8 +63,9 @@ public static class ProjectOperatorDashboardEndpoints
             };
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
-        app.MapPost("/api/deploy/jobs/claim", (HttpContext context, DeployClaimRequest request,
-            ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration) =>
+        app.MapPost("/api/deploy/jobs/claim", async (HttpContext context, DeployClaimRequest request,
+            ProjectEnvironmentService environments, DeployService deploy, ProjectSecretBindings bindings,
+            IConfiguration configuration, CancellationToken ct) =>
         {
             if (SecurityProfiles.IsNetworked(configuration) &&
                 (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
@@ -71,7 +73,25 @@ public static class ProjectOperatorDashboardEndpoints
                 return Results.Forbid();
             var job = environments.Claim(request.HostId);
             if (job is not null) deploy.SyncAfterHostCall(job.Project);
-            return Results.Ok(job);
+            if (job is null || job.SecretRefs.Count == 0) return Results.Ok(job);
+            try
+            {
+                var check = await bindings.CheckAsync(job.Project, job.EnvironmentId, ct);
+                return Results.Ok(job with
+                {
+                    SecretBindings = check.Bindings.ToDictionary(item => item.Name, item => item.Reference, StringComparer.Ordinal),
+                    MissingSecretRefs = check.Missing,
+                });
+            }
+            catch (Exception ex) when (ex is SecretValidationException or System.Text.Json.JsonException)
+            {
+                return Results.Ok(job with
+                {
+                    MissingSecretRefs = job.SecretRefs.Select(name => new MissingSecretReference(name,
+                        new SecretReference(SecretScope.ForEnvironment(job.Project, job.EnvironmentId), name).ToString(),
+                        job.Project + "/" + job.EnvironmentId, "environment-missing")).ToArray(),
+                });
+            }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         app.MapPost("/api/deploy/jobs/{project}/{jobId}/report", (string project, string jobId,

@@ -24,8 +24,10 @@ deploy declarations, audit entries and logs carry references, never values.
 | Project | `secret://<project>/<name>` | `secret://memowikis/STRIPE_KEY` |
 | Project environment | `secret://<project>/<environment>/<name>` | `secret://memowikis/prod/DATABASE_URL@3` |
 
-`workspace` is reserved and cannot be a project name. Names start with a
-letter and use letters, digits, `.`, `_` or `-`, up to 64 characters.
+`workspace` is reserved and cannot be a project name. Secret names start with a
+letter and use letters, digits, `.`, `_` or `-`, up to 64 characters. Project
+names also allow internal spaces so existing watched projects can use their
+display names as scope keys.
 Deeper scopes inherit and may override. A reference to
 `secret://memowikis/stage/MAIL_KEY` resolves the environment secret, then the
 project secret, then the workspace secret. The first secret that exists
@@ -81,6 +83,37 @@ A `task-run` workload names `taskKey` and `leaseId`. The server derives the
 project and environment from the live lease, not from the request. A browser
 session never receives a value, in any profile. The response carries
 `Cache-Control: no-store`.
+
+## Project environment bindings and delivery (AGT-3246)
+
+The project Deploy area's Secrets view offers Preview plus every declared
+environment. It reuses the provider's write-only add and rotate controls and
+stores only name-to-reference bindings as control metadata. An environment
+declaration's `secretRefs` names must each be bound before its job starts.
+The binding may address the environment, its project, or the workspace;
+provider inheritance still chooses the closest existing secret. Preview
+bindings may be prepared before a deploy declaration exists.
+
+`GET /api/projects/{project}/secret-bindings/{environment}` returns bindings
+and a metadata-only preflight. Each missing entry names the reference, scope,
+and reason (`not-bound`, `not-found`, `revoked`, `unreadable`, or
+`approval-required`).
+`PUT /api/projects/{project}/secret-bindings/{environment}/{name}` accepts
+`{ "reference": "secret://...", "approve": true|false }`. Only the current
+Owner or Operator secret-management check may write. A Production binding
+also needs an interactive Owner or project production approver with
+`approve: true`; the binding records that approval. This is the single
+permission seam for AGT-3228 to replace with scope roles.
+
+The claim response gives the host only references and preflight problems.
+The host fails a job with missing references before touching its artifact.
+For a container job it resolves each bound reference over the authenticated
+workload route using the claimed job's lease on the run host. It writes the
+container environment file under Linux `/dev/shm` in a private directory,
+passes that file to Docker, and removes it in `finally`. Values never enter
+the job record, release, image, control-plane deploy log or host error text.
+The existing production deployment approval remains required before the
+Production job is queued. Rotation takes effect on the next deploy.
 
 ## Built-in store
 

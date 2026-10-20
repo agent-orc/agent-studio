@@ -103,6 +103,17 @@ public sealed class SecretPolicyTests
             SecretAccessPolicy.ForWorkload(SecretReference.Parse("secret://memowikis/stage/STRIPE_KEY"), workload, "deploy").Code);
     }
 
+    [Fact]
+    public void Deploy_job_reads_only_the_bound_reference_even_when_the_name_matches()
+    {
+        var workload = new SecretWorkload("deploy-job", "host_1", "memowikis", "stage", ["DATABASE_URL"],
+            new Dictionary<string, string> { ["DATABASE_URL"] = "secret://memowikis/stage/DATABASE_URL" });
+        Assert.True(SecretAccessPolicy.ForWorkload(
+            SecretReference.Parse("secret://memowikis/stage/DATABASE_URL"), workload, "deploy:stage").Allowed);
+        Assert.Equal("reference-not-bound", SecretAccessPolicy.ForWorkload(
+            SecretReference.Parse("secret://workspace/DATABASE_URL"), workload, "deploy:stage").Code);
+    }
+
     [Theory]
     [InlineData("owner", true, "workspace", true, true)]
     [InlineData("operator", true, "workspace", true, true)]

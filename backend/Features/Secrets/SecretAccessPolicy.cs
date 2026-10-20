@@ -29,6 +29,9 @@ public static partial class SecretAccessPolicy
             return SecretAccessDecision.Deny("workload-unbound", "The workload is not bound to a project.");
         if (workload.DeclaredNames is { } declared && !declared.Contains(reference.Name, StringComparer.Ordinal))
             return SecretAccessDecision.Deny("reference-not-declared", $"The workload does not declare '{reference.Name}'.");
+        if (workload.DeclaredReferences is { } bindings
+            && (!bindings.TryGetValue(reference.Name, out var bound) || bound != reference.ToString()))
+            return SecretAccessDecision.Deny("reference-not-bound", "The deploy job has no binding for this reference.");
 
         var scope = reference.Scope;
         if (scope.Kind == SecretScopeKind.Workspace) return SecretAccessDecision.Allow;
