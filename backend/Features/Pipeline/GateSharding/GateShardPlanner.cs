@@ -73,7 +73,7 @@ public static class GateShardStrategies
 ///
 /// <para>
 /// The count comes from the suite's <c>shards</c> field in
-/// <c>.agent-studio/project.yml</c>; without it, from the measured serial
+/// <c>.agent-studio/project.yml</c>; with <c>shards: auto</c>, from the measured serial
 /// duration of the last sharded run (or the suite's
 /// <c>expectedDurationSeconds</c>) at <see cref="TargetShardSeconds"/> per
 /// shard. Classes are balanced by their recorded durations (longest first onto

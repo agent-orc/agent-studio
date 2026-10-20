@@ -289,6 +289,9 @@ public sealed class GateShardDispatchTests : IDisposable
         var valid = Read("4");
         Assert.Empty(valid.Issues);
         Assert.Equal(4, valid.Definition!.TestSuites.Single().Shards);
+        var auto = Read("auto");
+        Assert.Empty(auto.Issues);
+        Assert.Equal(ProjectTestSuite.AutoShards, auto.Definition!.TestSuites.Single().Shards);
         Assert.Contains(Read("0").Issues, issue => issue.Code == "suite-shards-invalid");
         Assert.Contains(Read("lots").Issues, issue => issue.Code == "suite-shards-invalid");
         Assert.DoesNotContain(Read("16").Issues, issue => issue.Path.EndsWith(".shards", StringComparison.Ordinal));

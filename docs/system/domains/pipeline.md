@@ -522,16 +522,25 @@ to serialize gates, including a worker still completing bounded cleanup.
 
 The gate splits a declared `.NET` suite into class partitions and runs them in
 parallel. A `commands.test` step is sharded when its command equals the
-`command` of a `testSuites` entry in `.agent-studio/project.yml`. It must be a
-single `dotnet test <project>.csproj` without its own run settings and must
-plan to two or more shards. Guard-first steps, work-package selections and
-other commands run as before.
+`command` of a `testSuites` entry in `.agent-studio/project.yml` and that entry
+opts in with a `shards` field. It must be a single `dotnet test <project>.csproj`
+without its own run settings and must plan to two or more shards. Guard-first
+steps, work-package selections, suites without `shards` and other commands run
+as before.
 
-- **Count.** The optional `shards` field of the suite (1 to 16; 1 keeps the
-  suite in one process) sets the count. Without it, the count is the measured
-  serial duration of the last complete sharded run, or else
-  `expectedDurationSeconds`, at 360 seconds per shard. A derived count is at
-  most 8 and never more than the number of test classes.
+- **Opt-in.** Sharding is off unless the suite declares `shards`. On
+  agent-runner-01 a class-sharded slice of the backend suite (1,955 tests) ran
+  in 469 seconds in two or four parallel processes, against 236 seconds in one
+  process. xUnit already runs test classes in parallel inside one process, and
+  a class partition ends with its slowest class. Declare `shards` only after a
+  gate measurement on the gate hosts shows a gain. A gate worker older than
+  AGT-3232 rejects the field as `unknown-field`, so add it only after every
+  gate host runs the new worker.
+- **Count.** `shards: N` (1 to 16; 1 keeps the suite in one process) sets the
+  count. `shards: auto` derives it from the measured serial duration of the
+  last complete sharded run, or else `expectedDurationSeconds`, at 360 seconds
+  per shard. A derived count is at most 8 and never more than the number of
+  test classes.
 - **Assignment.** `GateShardPlanner` sorts classes by recorded duration, longest
   first, and assigns each to the least loaded shard. A class without a timing
   is estimated at the median. A suite without any recorded timing uses a

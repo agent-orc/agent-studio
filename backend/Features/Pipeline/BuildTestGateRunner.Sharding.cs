@@ -132,7 +132,8 @@ public sealed partial class BuildTestGateRunner
         if (command.Kind != VerifyCommandKind.Test || GuardFirstGatePlan.IsGuardStep(command)) return null;
         var suite = suites.FirstOrDefault(item =>
             string.Equals(item.Command.Trim(), command.Command.Trim(), StringComparison.Ordinal));
-        if (suite is null || suite.Shards == 1) return null;
+        // Opt-in per suite: without a shards field the suite runs in one process as before.
+        if (suite is null || suite.Shards is null or 1) return null;
         var parsed = GateShardCommand.TryParse(command.Command);
         if (parsed is null) return null;
         var projectDirectory = Path.GetDirectoryName(Path.GetFullPath(Path.Combine(
@@ -141,7 +142,8 @@ public sealed partial class BuildTestGateRunner
         var classes = GateShardTestCatalog.Classes(projectDirectory);
         var suiteTimings = timings?.For(suite.Id);
         var (count, source) = GateShardPlanner.ResolveCount(
-            suite.Shards, suiteTimings, suite.ExpectedDurationSeconds, classes.Count);
+            suite.Shards == ProjectTestSuite.AutoShards ? null : suite.Shards,
+            suiteTimings, suite.ExpectedDurationSeconds, classes.Count);
         if (count < 2) return null;
         return new PlannedShardSuite(suite, parsed,
             GateShardPlanner.Plan(suite.Id, classes, count, source, suiteTimings));

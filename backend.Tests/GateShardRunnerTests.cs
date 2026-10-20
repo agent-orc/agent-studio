@@ -1,5 +1,6 @@
 using AgentStudio.Pipeline;
 using AgentStudio.Tasks;
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -154,6 +155,28 @@ public sealed class GateShardRunnerTests : IDisposable
         Assert.DoesNotContain(File.ReadAllLines(Invocations), line => line.Contains("Architecture"));
     }
 
+    [Theory]
+    [InlineData(null, null, null)]
+    [InlineData(1, null, null)]
+    [InlineData(3, 3, GateShardCountSources.Profile)]
+    [InlineData(ProjectTestSuite.AutoShards, 2, GateShardCountSources.ExpectedDuration)]
+    public void Only_a_suite_that_opts_in_with_a_shard_count_is_planned_in_shards(
+        int? shards, int? expectedCount, string? expectedSource)
+    {
+        // A one-process suite keeps xUnit's in-process class parallelism; a
+        // class-sharded backend slice ran 2x slower on agent-runner-01.
+        var suites = new[]
+        {
+            new ProjectTestSuite("product-routine", "routine", 720, SuiteCommand) { Shards = shards },
+        };
+        var command = new VerifyCommand(VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", SuiteCommand);
+
+        var planned = BuildTestGateRunner.PlanShardedSuite(suites, Repository, command, timings: null);
+
+        Assert.Equal(expectedCount, planned?.Plan.Count);
+        Assert.Equal(expectedSource, planned?.Plan.CountSource);
+    }
+
     private Task<BuildTestGateResult> RunGateAsync(int shardLanes, GateShardPart? part = null)
     {
         var runner = new BuildTestGateRunner(
@@ -240,7 +263,8 @@ public sealed class GateShardRunnerTests : IDisposable
                 case "$*" in *"Product.Tests.$c."*) run="$run $c";; esac
               fi
             done
-            if [ -n "$settings" ]; then tr -d '\n' < "$settings" >> "{{ShellPath(SettingsLog)}}"; echo >> "{{ShellPath(SettingsLog)}}"; fi
+            # One append per lane: parallel lanes must not interleave a line and its newline.
+            if [ -n "$settings" ]; then printf '%s\n' "$(tr -d '\n' < "$settings")" >> "{{ShellPath(SettingsLog)}}"; fi
             if [ "$mode" = oom ]; then case "$run" in *GammaTests*) exit 137;; esac; fi
             failed=""
             results=""; definitions=""

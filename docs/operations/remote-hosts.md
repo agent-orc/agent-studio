@@ -31,7 +31,8 @@ servers. Avoid fixed listener ports in new gate tests.
 
 ### Sharded suites and additional shard hosts (AGT-3232)
 
-The gate splits a declared `.NET` suite into shards. On one host, a gate takes
+The gate splits a declared `.NET` suite that opts in with a `shards` field
+into shards. On one host, a gate takes
 additional free gate slots as parallel test lanes. Each lane stands for one
 slot's `ProcessorCount`, so the slot budget above also bounds sharded gates. To
 spread one gate run across hosts, configure additional shard hosts on the
