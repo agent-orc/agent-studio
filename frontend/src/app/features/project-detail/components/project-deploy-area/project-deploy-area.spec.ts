@@ -255,6 +255,19 @@ describe('ProjectDeployAreaComponent', () => {
     expect(data.requests).toEqual(['status', 'deployments']);
   });
 
+  it('refreshes status and runs after an already-claimed cancellation conflict', async () => {
+    data.serveEverything();
+    await settle();
+    await click('deploy-environment-review-approval');
+    await click('deploy-run-cancel');
+    data.requests.length = 0;
+    data.actionResult.error(new HttpErrorResponse({ status: 409, error: { error: 'The run is already claimed.' } }));
+    await settle();
+
+    expect(text('deploy-run-action-error')).toBe('The run is already claimed.');
+    expect(data.requests).toEqual(['status', 'deployments']);
+  });
+
   it('reloads every source on Refresh and keeps the deployment tools reachable', async () => {
     data.requests.length = 0;
     await click('deploy-refresh');
