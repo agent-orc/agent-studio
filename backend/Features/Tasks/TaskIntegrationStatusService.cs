@@ -543,7 +543,11 @@ public sealed class TaskIntegrationStatusService
                 if (mapped.Count > 0)
                 {
                     var entries = CurrentResultRepositories(job, card, reaches, subject);
-                    if (entries.Count == groups.Count && entries.All(entry => entry.OnIntegrationBranch))
+                    var curatedMapping = CuratedMappingIntegrationShas(job, subject.ResultSha,
+                        subject.RunAttemptId, subjectReach.IntegrationBranch,
+                        subjectReach.PublishedAncestors, includeOperatorCandidates: false).Any();
+                    if (curatedMapping || entries.Count == groups.Count
+                        && entries.All(entry => entry.OnIntegrationBranch))
                         return Integrated(Short(subject.ResultSha), subjectReach.IntegrationBranch,
                             DeliveryRefFor(job), "current-result-curated-mapping")
                             with
@@ -771,14 +775,16 @@ public sealed class TaskIntegrationStatusService
     /// names for <paramref name="sourceSha"/>. Empty when no mapping proves it.
     /// </summary>
     private IEnumerable<string> CuratedMappingIntegrationShas(TaskInfo job, string sourceSha,
-        string? deliveryEpoch, string branch, HashSet<string>? publishedAncestors, string? root = null)
+        string? deliveryEpoch, string branch, HashSet<string>? publishedAncestors, string? root = null,
+        bool includeOperatorCandidates = true)
     {
         if (publishedAncestors is null || string.IsNullOrWhiteSpace(deliveryEpoch)) return [];
         var subject = CurrentReviewSubject(job);
         return job.IntegrationRecords.Where(record =>
                 (record.Classification == IntegrationRecordClasses.CuratedMapping
                     && string.Equals(record.SourceSha, sourceSha, StringComparison.OrdinalIgnoreCase)
-                    || record.Classification == IntegrationRecordClasses.IntegratedVerified
+                    || includeOperatorCandidates
+                    && record.Classification == IntegrationRecordClasses.IntegratedVerified
                     && record.Id.StartsWith("operator-candidate-", StringComparison.Ordinal)
                     && subject is not null
                     && string.Equals(record.SourceSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase)
