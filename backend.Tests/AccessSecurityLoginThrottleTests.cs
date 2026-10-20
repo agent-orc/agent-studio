@@ -103,9 +103,92 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
             store.Login("invented", "wrong", "192.0.2.1")).Status);
 
         Assert.Equal("owner", store.Login("owner", Password, "192.0.2.2").User.Username);
-        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
             store.Login("owner", "wrong", "192.0.2.2")).Status);
         Assert.Equal((1, 1, 1, 0), store.LoginStateCounts);
+    }
+
+    [Fact]
+    public void Full_failure_tables_count_wrong_passwords_and_bound_hash_work()
+    {
+        var hashes = 0;
+        var store = NewStore(new()
+        {
+            ["Security:LoginThrottle:MaxTrackedClients"] = "1",
+            ["Security:LoginThrottle:MaxTrackedUsernames"] = "1",
+            ["Security:LoginThrottle:ClientMaxFailures"] = "2",
+            ["Security:LoginThrottle:UsernameMaxFailures"] = "2",
+            ["Security:LoginThrottle:UsernameDelaySeconds"] = "3"
+        }, (password, _) =>
+        {
+            hashes++;
+            return password == Password;
+        });
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented", "wrong", "192.0.2.1")).Status);
+
+        for (var i = 0; i < 2; i++)
+            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("owner", "wrong", "192.0.2.2")).Status);
+        var afterBudget = hashes;
+        for (var i = 0; i < 20; i++)
+            Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("owner", "wrong", "192.0.2.2")).Status);
+        Assert.Equal(afterBudget, hashes);
+        Assert.Equal((1, 1, 0, 0), store.LoginStateCounts);
+
+        _clock.Advance(TimeSpan.FromSeconds(3));
+        Assert.Equal("owner", store.Login("owner", Password, "192.0.2.2").User.Username);
+        Assert.Equal(afterBudget + 1, hashes);
+    }
+
+    [Fact]
+    public void Full_delay_table_still_allows_correct_password_after_short_wait()
+    {
+        var store = NewStore(new()
+        {
+            ["Security:LoginThrottle:UsernameMaxFailures"] = "1",
+            ["Security:LoginThrottle:ClientMaxFailures"] = "100",
+            ["Security:LoginThrottle:UsernameDelaySeconds"] = "3",
+            ["Security:LoginThrottle:MaxDelayEntries"] = "1"
+        }, (password, _) => password == Password);
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", "wrong", "192.0.2.1")).Status);
+        Assert.Equal(1, store.LoginStateCounts.Delays);
+
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", Password, "192.0.2.2")).Status);
+        Assert.Equal(1, store.LoginStateCounts.Delays);
+        _clock.Advance(TimeSpan.FromSeconds(3));
+        Assert.Equal("owner", store.Login("owner", Password, "192.0.2.2").User.Username);
+        Assert.Equal(1, store.LoginStateCounts.Delays);
+    }
+
+    [Fact]
+    public void Full_username_budget_gives_each_client_its_own_retry_wait()
+    {
+        var store = NewStore(new()
+        {
+            ["Security:LoginThrottle:MaxTrackedClients"] = "1",
+            ["Security:LoginThrottle:MaxTrackedUsernames"] = "1",
+            ["Security:LoginThrottle:ClientMaxFailures"] = "100",
+            ["Security:LoginThrottle:UsernameMaxFailures"] = "1",
+            ["Security:LoginThrottle:UsernameDelaySeconds"] = "3"
+        }, (password, _) => password == Password);
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented", "wrong", "192.0.2.1")).Status);
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", "wrong", "192.0.2.2")).Status);
+
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", Password, "192.0.2.3")).Status);
+        _clock.Advance(TimeSpan.FromSeconds(3));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", "wrong", "192.0.2.2")).Status);
+        Assert.Equal("owner", store.Login("owner", Password, "192.0.2.3").User.Username);
     }
 
     [Fact]
