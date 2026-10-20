@@ -60,9 +60,10 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
         for (var i = 0; i < 4; i++)
             Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
                 store.Login("invented." + i, "wrong", "192.0.2." + i)).Status);
-        for (var i = 4; i < 104; i++)
-            Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
-                store.Login("invented." + i, "wrong", "198.51.100." + i)).Status);
+        var overflowClients = OverflowClients(100);
+        for (var i = 0; i < overflowClients.Length; i++)
+            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("invented." + (i + 4), "wrong", overflowClients[i])).Status);
 
         Assert.Equal((4, 4, 0, 0), store.LoginStateCounts);
         Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
@@ -85,7 +86,7 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
             Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
                 store.Login("invented." + i, "wrong", "192.0.2.1")).Status);
         for (var i = 3; i < 103; i++)
-            Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            Assert.Equal(i < 5 ? 401 : 429, Assert.Throws<SecurityOperationException>(() =>
                 store.Login("invented." + i, "wrong", "192.0.2.1")).Status);
         Assert.Equal((1, 3, 0, 0), store.LoginStateCounts);
     }
@@ -106,6 +107,60 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
         Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
             store.Login("owner", "wrong", "192.0.2.2")).Status);
         Assert.Equal((1, 1, 1, 0), store.LoginStateCounts);
+    }
+
+    [Fact]
+    public void Unknown_and_known_usernames_fail_alike_at_failure_table_capacity()
+    {
+        var clients = OverflowClients(3);
+        var hashes = 0;
+        string? workFactor = null;
+        var store = NewStore(new()
+        {
+            ["Security:LoginThrottle:MaxTrackedClients"] = "1",
+            ["Security:LoginThrottle:MaxTrackedUsernames"] = "1",
+            ["Security:LoginThrottle:ClientMaxFailures"] = "2",
+            ["Security:LoginThrottle:ClientLockoutMinutes"] = "5",
+            ["Security:LoginThrottle:UsernameMaxFailures"] = "100"
+        }, (password, hash) =>
+        {
+            hashes++;
+            workFactor = string.Join('$', hash.Split('$').Take(2));
+            return password == Password;
+        });
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented", "wrong", "192.0.2.1")).Status);
+
+        (int Status, string Code, string Message, int Hashes, string? WorkFactor) Fail(string username, string client)
+        {
+            var before = hashes;
+            workFactor = null;
+            var error = Assert.Throws<SecurityOperationException>(() => store.Login(username, "wrong", client));
+            return (error.Status, error.Code, error.Message, hashes - before, workFactor);
+        }
+
+        // Both exact tables are full. Each path checks one password at the same cost.
+        var invalid = (401, "invalid-credentials", "Username or password is incorrect.", 1,
+            "pbkdf2-sha512$600000");
+        for (var i = 0; i < 2; i++)
+        {
+            Assert.Equal(invalid, Fail("not.an.account", clients[0]));
+            Assert.Equal(invalid, Fail("owner", clients[1]));
+        }
+
+        // Both overflow client budgets are spent, so neither path hashes again.
+        var throttled = (429, "login-throttled", "Too many failed attempts. Try again shortly.", 0, (string?)null);
+        Assert.Equal(throttled, Fail("not.an.account", clients[0]));
+        Assert.Equal(throttled, Fail("owner", clients[1]));
+        Assert.Equal((1, 1, 0, 0), store.LoginStateCounts);
+
+        Assert.Equal("owner", store.Login("owner", Password, clients[2]).User.Username);
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        Assert.Equal(invalid, Fail("not.an.account", clients[0]));
+        Assert.Equal(invalid, Fail("owner", clients[1]));
+        Assert.Equal(throttled, Fail("not.an.account", clients[0]));
+        Assert.Equal(throttled, Fail("owner", clients[1]));
     }
 
     [Fact]
@@ -313,11 +368,18 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
                 store.Login("invented." + i, "wrong", "192.0.2." + i)).Status);
 
         _clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented.3", "wrong", "192.0.2.3")).Status);
         Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
             store.Login("invented.3", "wrong", "192.0.2.3")).Status);
-        Assert.Equal((2, 0, 0, 0), store.LoginStateCounts);
+        Assert.Equal((2, 1, 0, 0), store.LoginStateCounts);
 
         _clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented.3", "wrong", "192.0.2.3")).Status);
+        Assert.Equal((0, 0, 0, 0), store.LoginStateCounts);
+
+        _clock.Advance(TimeSpan.FromMinutes(1));
         Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
             store.Login("invented.3", "wrong", "192.0.2.3")).Status);
         Assert.Equal((1, 1, 0, 0), store.LoginStateCounts);
@@ -464,6 +526,14 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
     [InlineData("2001:db8:1:2::34", "2001:db8:1:2::/64")]
     public void Client_key_uses_ipv4_address_or_ipv6_64(string address, string expected)
         => Assert.Equal(expected, AccessSecurityEndpoints.ClientThrottleKey(IPAddress.Parse(address)));
+
+    private static string[] OverflowClients(int count)
+    {
+        var buckets = new HashSet<int>();
+        return Enumerable.Range(0, 65536).Select(i => $"198.51.{i / 256}.{i % 256}")
+            .Where(client => buckets.Add(LoginOverflowBudget.BucketIndex(client)))
+            .Take(count).ToArray();
+    }
 
     private AccessSecurityStore NewStore(Dictionary<string, string?>? overrides = null,
         Func<string, string, bool>? verifyPassword = null)

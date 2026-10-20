@@ -131,16 +131,9 @@ public sealed class AccessSecurityStore
                     : new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
             }
             candidate = StateLocked().Users.FirstOrDefault(x => x.Username == normalized);
-            // At capacity, unknown identities cannot spend an untracked hash. A known
-            // account can still sign in from a new client while attack keys are full.
-            if (candidate is null && ((!_clientLoginAttempts.ContainsKey(clientKey) && _clientLoginAttempts.Count >= MaxTrackedClients)
-                || (!_usernameLoginAttempts.ContainsKey(normalized) && _usernameLoginAttempts.Count >= MaxTrackedUsernames)))
-            {
-                RegisterLoginFailureLocked(_clientLoginAttempts, clientKey, now,
-                    _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10),
-                    TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15)), MaxTrackedClients);
-                throw new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
-            }
+            // Unknown and known usernames share every check below, so a failed login
+            // cannot reveal whether the account exists. At capacity both spend hashes
+            // only within the fixed-size overflow budgets.
             if (!_clientLoginAttempts.ContainsKey(clientKey)
                 && (_clientLoginAttempts.Count >= MaxTrackedClients
                     || _overflowClientAttempts.HasActiveFailures(clientKey, now, LoginWindow))

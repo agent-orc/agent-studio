@@ -435,8 +435,10 @@ public sealed class AccessSecurityTests : IDisposable
         Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
             store.Login("unknown.user", "wrong password", "client|one")).Status);
 
-        for (var index = 0; index < 10; index++)
-            Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+        // Guessed usernames fail like an existing account and use only the fixed
+        // overflow counters once both tables are full.
+        for (var index = 0; index < 3; index++)
+            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
                 store.Login($"guessed.user.{index}", "wrong password", $"client|{index + 2}")).Status);
 
         Assert.Equal((1, 1, 0, 0), store.LoginStateCounts);
