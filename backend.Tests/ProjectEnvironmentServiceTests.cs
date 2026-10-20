@@ -172,6 +172,25 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void ClaimedJob_IsFoundForSecretIssuanceOnlyWithItsLeaseUntilReportedOrStale()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var stage = service.Claim("stage-host")!;
+
+        Assert.Equal(stage.Id, service.FindClaimedJob("demo", stage.Id, stage.LeaseToken!)!.Id);
+        Assert.Null(service.FindClaimedJob("demo", stage.Id, "other-token"));
+        Assert.Null(service.FindClaimedJob("../demo", stage.Id, stage.LeaseToken!));
+        _clock.Advance(TimeSpan.FromMinutes(6));
+        Assert.Null(service.FindClaimedJob("demo", stage.Id, stage.LeaseToken!));
+
+        var reclaimed = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", reclaimed.Id, new(reclaimed.LeaseToken!, true, "health-ok")));
+        Assert.Null(service.FindClaimedJob("demo", reclaimed.Id, reclaimed.LeaseToken!));
+    }
+
+    [Fact]
     public void Release_Stages_ThenApprovesExactArtifact_AndCanRollBack()
     {
         var (service, repo, watch) = Build();
