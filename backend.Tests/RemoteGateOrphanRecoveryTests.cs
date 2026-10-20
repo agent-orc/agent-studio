@@ -202,6 +202,33 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
     }
 
     [Fact]
+    public async Task Startup_sweeps_an_additional_configured_gate_host()
+    {
+        var previous = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('b', 32));
+        var record = previous.Record(new string('c', 32), "gate-b", "/srv/gates");
+        var current = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('d', 32));
+        var commands = new List<string>();
+        Task Run(string fileName, IReadOnlyList<string> args, string cwd, TimeSpan timeout,
+            CancellationToken ct, Action<string>? output)
+        {
+            commands.Add(args.Last());
+            return Task.CompletedTask;
+        }
+        var shard = Transport(current, Run, section: "RemoteGate:ShardHosts:0");
+        var slots = new GateSlotUsageTracker(clock: _clock);
+        var dispatcher = new ShardedRemoteGateTransport(
+            new GateShardHost("gate-a", shard, slots),
+            [new GateShardHost("gate-b", shard, slots)],
+            new GateShardTimingStore(Path.Combine(_root, "timings"), _clock),
+            NullLogger<ShardedRemoteGateTransport>.Instance, _clock);
+
+        await dispatcher.CancelOrphanedRunsAsync(CancellationToken.None);
+
+        Assert.Contains(commands, command => command.Contains(record.RunId + "/cancel", StringComparison.Ordinal));
+        Assert.Empty(current.ReadAll());
+    }
+
+    [Fact]
     public void Worker_stops_when_injected_clock_passes_heartbeat_bound()
     {
         var now = _clock.GetUtcNow();
@@ -231,17 +258,19 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
 
     private RemoteGateTransport Transport(RemoteGateRunRegistry registry,
         Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task> run,
-        Func<RemoteGateRunRecord, bool>? ownerIsAlive = null, OrchestratorLog? activity = null)
+        Func<RemoteGateRunRecord, bool>? ownerIsAlive = null, OrchestratorLog? activity = null,
+        string section = RemoteGateOptions.PrimarySection)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["RemoteGate:SshHost"] = "gate-a",
             ["RemoteGate:WorkerPath"] = "/opt/gate/worker.dll",
             ["RemoteGate:Root"] = "/srv/gates",
+            ["RemoteGate:ShardHosts:0:SshHost"] = "gate-b",
         }).Build();
         return new RemoteGateTransport(configuration, NullLogger<RemoteGateTransport>.Instance,
             _clock, Path.Combine(_root, "local"), _ => { }, runProcess: run, runRegistry: registry,
-            ownerIsAlive: ownerIsAlive ?? (_ => false), activity: activity);
+            ownerIsAlive: ownerIsAlive ?? (_ => false), activity: activity, section: section);
     }
 
     public void Dispose()

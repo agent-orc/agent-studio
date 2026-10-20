@@ -98,8 +98,9 @@ the configured connectivity manifest, or a generated id in a directory scoped
 to the Studio installation path under local application data. Startup and the
 one-minute recovery sweep touch the worker's `cancel` marker only after the
 owning process is gone. Recovery is scoped to
-the installation id and recorded host/root; a different Studio installation
-sharing a gate host is left alone. The record is removed after the remote run
+the installation id and recorded host/root; the primary and every configured
+SSH shard host are swept. A different Studio installation sharing a gate host
+is left alone. The record is removed after the remote run
 directory is removed under the worker lock and confirmed gone. A run that never
 started is removed by the same recovery path.
 

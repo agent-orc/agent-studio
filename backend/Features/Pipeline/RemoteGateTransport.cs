@@ -40,7 +40,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     private readonly RemoteGateRunRegistry _runs;
     private readonly Action<string> _deleteDirectory;
     private readonly GateSlotUsageTracker _slotUsage;
-    private readonly ConcurrentDictionary<string, byte> _liveRuns = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, byte> LiveRuns = new(StringComparer.Ordinal);
     private readonly Func<RemoteGateRunRecord, bool> _ownerIsAlive;
     private readonly OrchestratorLog? _activity;
     private readonly AgentStudio.Tasks.TaskScannerService? _scanner;
@@ -65,10 +65,13 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     /// <c>RemoteGate</c>.
     /// </summary>
     internal RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
-        string section, GateSlotUsageTracker slotUsage, TimeProvider? timeProvider = null)
+        string section, GateSlotUsageTracker slotUsage, TimeProvider? timeProvider = null,
+        OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null)
         : this(configuration, logger, timeProvider ?? TimeProvider.System,
             Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport"),
-            WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage)
+            WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage,
+            runRegistry: CreateDefaultRegistry(timeProvider ?? TimeProvider.System, configuration),
+            activity: activity, scanner: scanner)
     {
         _section = section;
     }
@@ -79,9 +82,10 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task>? runProcess = null,
         RemoteGateRunRegistry? runRegistry = null,
         Func<RemoteGateRunRecord, bool>? ownerIsAlive = null,
-        OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null)
+        OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null,
+        string section = RemoteGateOptions.PrimarySection)
     {
-        _section = RemoteGateOptions.PrimarySection;
+        _section = section;
         _configuration = configuration;
         _logger = logger;
         _time = timeProvider;
@@ -239,7 +243,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         }
         finally
         {
-            _liveRuns.TryRemove(runId, out _);
+            LiveRuns.TryRemove(_runs.ProcessInstance + ":" + runId, out _);
             _slotUsage.Released(runId);
             if (remoteCreated)
             {
@@ -264,7 +268,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         }
     }
 
-    internal void TrackLiveRun(string runId) => _liveRuns.TryAdd(runId, 0);
+    internal void TrackLiveRun(string runId) => LiveRuns.TryAdd(_runs.ProcessInstance + ":" + runId, 0);
 
     private async Task RefreshHeartbeatAsync(RemoteGateOptions options, string cwd, string remote,
         TimeSpan timeout, CancellationToken ct)
@@ -283,15 +287,16 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
 
     internal async Task CancelOrphanedRunsAsync(CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(_configuration["RemoteGate:SshHost"])) return;
+        if (string.IsNullOrWhiteSpace(_configuration[$"{_section}:SshHost"])) return;
         var records = _runs.ReadAll().Where(record => record.InstallationId == _runs.InstallationId
             && (record.OwnerProcessInstance == _runs.ProcessInstance
-                ? !_liveRuns.ContainsKey(record.RunId) : !_ownerIsAlive(record))).ToList();
+                ? !LiveRuns.ContainsKey(record.OwnerProcessInstance + ":" + record.RunId)
+                : !_ownerIsAlive(record))).ToList();
         foreach (var record in records)
         {
             ct.ThrowIfCancellationRequested();
             var age = _time.GetUtcNow() - record.StartedAtUtc;
-            var options = RemoteGateOptions.Read(_configuration);
+            var options = RemoteGateOptions.Read(_configuration, _section);
             if (!string.Equals(options.Host, record.Host, StringComparison.Ordinal)
                 || !string.Equals(options.Root, record.Root, StringComparison.Ordinal)) continue;
             var remote = record.Root + "/" + record.RunId;

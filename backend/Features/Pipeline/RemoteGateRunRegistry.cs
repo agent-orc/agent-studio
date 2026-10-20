@@ -106,15 +106,22 @@ internal sealed class RemoteGateRunRegistry
 }
 
 internal sealed class RemoteGateOrphanSweepService(RemoteGateTransport transport,
+    ShardedRemoteGateTransport sharded,
     ILogger<RemoteGateOrphanSweepService> logger, TimeProvider time) : BackgroundService
 {
+    private async Task SweepAsync(CancellationToken ct)
+    {
+        await transport.CancelOrphanedRunsAsync(ct);
+        await sharded.CancelOrphanedRunsAsync(ct);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await transport.CancelOrphanedRunsAsync(stoppingToken);
+        await SweepAsync(stoppingToken);
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), time);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            try { await transport.CancelOrphanedRunsAsync(stoppingToken); }
+            try { await SweepAsync(stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
             catch (Exception exception) { logger.LogWarning(exception, "remote_gate_orphan_sweep_failed"); }
         }
