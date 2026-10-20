@@ -26,8 +26,9 @@ The coding host also probes the small set of primary and fallback model ids
 with a real request in an isolated scratch context. Each verdict is bound to
 the local credential generation and advertised as `model-acceptance:<provider>:<model>`.
 The quota view lists accepted models by host. A launch-time model refusal with
-no salvage marks that host model unavailable and puts the card back in Ready;
-claim admission holds it until a later accepted probe or the primary quota reset.
+no salvage marks that host model unavailable and puts the card back in Ready.
+Claim admission holds a refused primary until a later accepted probe. A refused
+fallback does not hold the card once quota admission can use its primary route.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable

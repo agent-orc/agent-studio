@@ -2367,6 +2367,10 @@ public sealed partial class TaskServerStoreTests
         var store = Store(temp.Path, clock);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
         var key = CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol");
         await Advertise("ready", 1);
@@ -2403,6 +2407,41 @@ public sealed partial class TaskServerStoreTests
                 [new AdvertisedCapabilityDto(key, "model-acceptance", status,
                     CredentialGeneration: $"login-{generation}",
                     CredentialObservedAt: clock.GetUtcNow().UtcDateTime)]), "runner-a", default);
+    }
+
+    [Fact]
+    public async Task Rejected_fallback_does_not_hold_a_runnable_primary_route()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("claude", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("claude-opus-5", 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        const string frame = """
+            {"type":"turn.failed","error":{"type":"invalid_request_error","message":"The gpt-6-sol model is not supported when using Codex with a ChatGPT account","status":400}}
+            """;
+        var decision = ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
+            claim.Run!.RunId, ExecutionAttemptKind.Coding, ProviderTerminalEvent: frame,
+            ExitCode: 1, DurableOutputState: DurableOutputState.Missing,
+            EffectiveCliType: "codex", EffectiveModel: "gpt-6-sol", EffectiveThinkingLevel: "medium"));
+        await store.CompleteRunAsync(claim.Run.RunId,
+            new CompleteRunRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                claim.Lease.Fence, decision.Outcome.ToString(),
+                IdempotencyKey: $"completion:{claim.Run.RunId}:fallback-refusal",
+                Sequence: 1, OutcomeDecision: decision), "runner-a", default);
+
+        Assert.Equal("2-ready", (await store.GetTaskAsync(project.ProjectId, task.TaskKey, default))!.State);
+        Assert.Contains(await store.ListEventsAsync(claim.Run.RunId, 0, default),
+            item => item.Kind == "execution.model-capability-held");
+        Assert.Equal("claimed", (await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
     }
 
     private static ExecutionOutcomeDecision ProviderRefusalDecision(string runId, string model)
