@@ -37,9 +37,15 @@ public enum IntegrationBranchSyncOutcome
     Error,
 }
 
+/// <summary>
+/// Outcome of an integration branch sync. <paramref name="LaneCommits"/> lists
+/// the classified unpublished lane commits when the lane diverged from origin:
+/// the dropped ones after a restart, the blocking ones on a stall (AGT-3215).
+/// </summary>
 public record IntegrationBranchSyncResult(
     IntegrationBranchSyncOutcome Outcome,
-    string? Error = null)
+    string? Error = null,
+    IReadOnlyList<LaneCommitClassification>? LaneCommits = null)
 {
     public bool Success => Outcome is not (
         IntegrationBranchSyncOutcome.Diverged
@@ -670,7 +676,7 @@ public record TaskHygieneContext(
 /// Thin wrapper around git CLI for the per-task Git view. Operates on the
 /// project's configured repository path, not on the job folder.
 /// </summary>
-public class GitService
+public partial class GitService
 {
     private readonly ILogger<GitService> _logger;
     private readonly TaskScannerService _scanner;
@@ -5069,10 +5075,11 @@ public class GitService
     public IntegrationBranchSyncResult SynchronizeIntegrationBranch(
         string repoRoot,
         string integrationBranch,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IIntegrationLaneDeliveryLineage? lineage = null)
     {
         if (IsLinkedWorktree(repoRoot))
-            return SynchronizeIntegrationLane(repoRoot, integrationBranch, cancellationToken);
+            return SynchronizeIntegrationLane(repoRoot, integrationBranch, cancellationToken, lineage);
 
         var refreshed = RefreshIntegrationBranch(repoRoot, integrationBranch, cancellationToken);
         if (!refreshed.Success
@@ -5138,12 +5145,14 @@ public class GitService
     /// an origin publishes nothing but its local branch. Gated merges the push
     /// worker has not published yet stay on the lane, so the next delivery builds
     /// on them. Commits someone made on the developer checkout's local branch are
-    /// deliberately not part of the lane: only published history is.
+    /// deliberately not part of the lane: only published history is. A diverged
+    /// lane is resolved by <see cref="ResolveLaneDivergence"/>.
     /// </summary>
     private IntegrationBranchSyncResult SynchronizeIntegrationLane(
         string repoRoot,
         string integrationBranch,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IIntegrationLaneDeliveryLineage? lineage)
     {
         var fetched = FetchIntegrationBranch(repoRoot, integrationBranch, cancellationToken);
         if (!fetched.Success) return fetched;
@@ -5178,57 +5187,13 @@ public class GitService
             case IntegrationLaneSyncAction.KeepPending:
                 return new(IntegrationBranchSyncOutcome.LocalAhead);
             case IntegrationLaneSyncAction.Diverged:
-                var unpublished = UnpublishedLaneCommits(repoRoot, laneTip!, publishedTip!);
-                if (unpublished.Count == 0)
-                {
-                    if (UpdateLaneRef(repoRoot, integrationBranch, publishedTip!, laneTip) is { } resetError)
-                        return new(IntegrationBranchSyncOutcome.Error, resetError);
-                    _logger.LogInformation(
-                        "Integration lane {Lane} restarted at published {PublishedSha}; all former lane deliveries are published",
-                        lane, AbbreviateSha(publishedTip!));
-                    return new(IntegrationBranchSyncOutcome.FastForwarded);
-                }
-                _logger.LogWarning(
-                    "Integration lane {Lane} ({LaneSha}) at {Path} diverged from {Published} ({PublishedSha}); unpublished commits: {Unpublished}",
-                    lane,
-                    AbbreviateSha(laneTip!),
-                    repoRoot,
-                    publishedRef,
-                    AbbreviateSha(publishedTip!),
-                    string.Join(", ", unpublished));
-                return new(
-                    IntegrationBranchSyncOutcome.Diverged,
-                    $"Integration branch '{integrationBranch}' diverged from origin. " +
-                    $"The integration lane {lane} still carries unpublished commits: {string.Join(", ", unpublished)}.");
+                return ResolveLaneDivergence(
+                    repoRoot, integrationBranch, publishedRef, laneTip!, publishedTip!, lineage);
             default:
                 return new(fetched.Outcome == IntegrationBranchSyncOutcome.NoRemote
                     ? IntegrationBranchSyncOutcome.NoRemote
                     : IntegrationBranchSyncOutcome.UpToDate);
         }
-    }
-
-    private IReadOnlyList<string> UnpublishedLaneCommits(string repoRoot, string laneTip, string publishedTip)
-    {
-        var (baseSha, _, baseCode) = RunGitArgs(repoRoot, "merge-base", laneTip, publishedTip);
-        if (baseCode != 0) return [laneTip];
-        var (commits, _, listCode) = RunGitArgs(
-            repoRoot, "rev-list", "--first-parent", "--reverse", $"{baseSha.Trim()}..{laneTip}");
-        if (listCode != 0) return [laneTip];
-        var missing = new List<string>();
-        foreach (var commit in commits.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var (parents, _, parentCode) = RunGitArgs(repoRoot, "show", "-s", "--format=%P", commit);
-            var pair = parents.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parentCode != 0 || pair.Length != 2)
-            {
-                missing.Add(commit);
-                continue;
-            }
-            var delivery = pair[1];
-            if (IsDeliveryPublished(repoRoot, delivery, publishedTip)) continue;
-            missing.Add($"{commit} (delivery {delivery})");
-        }
-        return missing;
     }
 
     /// <summary>Checks ancestry or full-tree containment at a known published tip.</summary>

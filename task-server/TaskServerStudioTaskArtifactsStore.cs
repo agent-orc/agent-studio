@@ -214,6 +214,26 @@ public sealed partial class TaskServerStore
         return (meta, content);
     }
 
+    /// <summary>Runner read keyed by the globally unique task key from its claim.</summary>
+    public async Task<(TaskAttachmentDto Meta, byte[] Content)?> GetRunnerTaskAttachmentAsync(
+        string taskKey, string fileName, CancellationToken ct)
+    {
+        await using var connection = await OpenReadyAsync(ct);
+        await using var command = Command(connection, """
+            SELECT a.task_id, a.file_name, a.media_type, a.content_base64,
+                   a.sha256, a.size_bytes, a.created_at
+              FROM task_attachments a
+              JOIN tasks t ON t.id = a.task_id
+             WHERE t.task_key = upper($taskKey) AND a.file_name = $name;
+            """, ("$taskKey", taskKey), ("$name", fileName));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return null;
+        var meta = new TaskAttachmentDto(
+            reader.GetString(0), reader.GetString(1), reader.GetString(2),
+            reader.GetString(4), reader.GetInt64(5), Parse(reader.GetString(6)));
+        return (meta, Convert.FromBase64String(reader.GetString(3)));
+    }
+
     // ---- files (task-owned default scope only; scope=code is rejected at the endpoint) ----
 
     public async Task<TaskFileDto> PutTaskFileAsync(

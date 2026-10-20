@@ -13,7 +13,7 @@
 //
 // Output is one line per match: <lane>  <project>  <slug>  -  <title>
 
-import http from 'node:http';
+import { taskApiRequest } from './access.js';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.TASKBOARD_PORT ?? 5031);
@@ -26,7 +26,7 @@ const wantLane = arg('--lane');
 const wantGrep = arg('--grep');
 const wantProject = arg('--project');
 
-const req = http.request({
+const req = taskApiRequest({
   hostname: HOST, port: PORT, path: '/api/tasks/grouped', method: 'GET',
   headers: { 'X-Client-Id': 'local-default' },
 }, res => {

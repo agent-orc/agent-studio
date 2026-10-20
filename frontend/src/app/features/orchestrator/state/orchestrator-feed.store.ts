@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { TaskService } from '../../../services/task.service';
-import type { OrchestratorLogEntry } from '../models/orchestrator.model';
+import type { OperationalStallCase, OrchestratorLogEntry } from '../models/orchestrator.model';
 
 const ALERTS_SEEN_AT_KEY = 'atp.orchestrator-feed.alerts-seen-at';
 const POLL_INTERVAL_MS = 10_000;
@@ -16,6 +16,7 @@ export class OrchestratorFeedStore {
   private readonly _entries = signal<OrchestratorLogEntry[]>([]);
   private readonly _loading = signal(false);
   private readonly _error = signal<string | null>(null);
+  private readonly _openStalls = signal<OperationalStallCase[]>([]);
   private readonly _alertsSeenAt = signal(this.readAlertsSeenAt());
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private loaded = false;
@@ -23,6 +24,8 @@ export class OrchestratorFeedStore {
   readonly entries = this._entries.asReadonly();
   readonly loading = this._loading.asReadonly();
   readonly error = this._error.asReadonly();
+  readonly openStalls = this._openStalls.asReadonly();
+  readonly openStallCount = computed(() => this._openStalls().length);
   readonly freshAlertCount = computed(() => {
     const seenAt = this._alertsSeenAt();
     return this._entries().filter(entry => entry.kind === 'alert' && entry.ts > seenAt).length;
@@ -43,6 +46,10 @@ export class OrchestratorFeedStore {
 
   refresh(silent = false): void {
     if (this._loading()) return;
+    this.tasks.getOperationalStalls().subscribe({
+      next: response => this._openStalls.set(Array.isArray(response?.cases) ? response.cases : []),
+      error: () => this._openStalls.set([]),
+    });
     if (!silent) this._loading.set(true);
     this.tasks.getGlobalOrchestratorFeed().subscribe({
       next: response => {
