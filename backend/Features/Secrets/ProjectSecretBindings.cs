@@ -30,15 +30,23 @@ public sealed class ProjectSecretBindings(IConfiguration configuration, ISecretP
 
     public IReadOnlyDictionary<string, string> ApprovedReferences(string project, string environment)
     {
-        string kind;
-        try { kind = Declared(project, environment).Kind; }
+        (string Kind, IReadOnlyList<string> Names) declared;
+        try { declared = Declared(project, environment); }
         catch (Exception ex) when (ex is SecretValidationException or JsonException)
         {
             return new Dictionary<string, string>();
         }
-        var production = kind == "production";
+        var names = environment == "preview" ? List(project, environment).Select(item => item.Name).ToArray() : declared.Names;
+        return ApprovedReferences(project, environment, names, declared.Kind);
+    }
+
+    public IReadOnlyDictionary<string, string> ApprovedReferences(string project, string environment,
+        IReadOnlyList<string> secretNames, string environmentKind)
+    {
+        var production = environmentKind == "production";
         return List(project, environment)
-            .Where(item => !production || item.ApprovedBy is not null)
+            .Where(item => secretNames.Contains(item.Name, StringComparer.Ordinal)
+                && (!production || item.ApprovedBy is not null))
             .ToDictionary(item => item.Name, item => item.Reference, StringComparer.Ordinal);
     }
 
@@ -77,14 +85,21 @@ public sealed class ProjectSecretBindings(IConfiguration configuration, ISecretP
 
     public async Task<ProjectSecretPreflight> CheckAsync(string project, string environment, CancellationToken ct = default)
     {
-        var bindings = List(project, environment);
         var declared = Declared(project, environment);
+        var names = environment == "preview" ? List(project, environment).Select(item => item.Name).ToArray() : declared.Names;
+        return await CheckAsync(project, environment, names, declared.Kind, ct);
+    }
+
+    public async Task<ProjectSecretPreflight> CheckAsync(string project, string environment,
+        IReadOnlyList<string> secretNames, string environmentKind, CancellationToken ct = default)
+    {
+        var bindings = List(project, environment)
+            .Where(item => secretNames.Contains(item.Name, StringComparer.Ordinal)).ToArray();
         var listing = await provider.ListAsync(null, ct);
         var records = listing.Records;
         var unreadable = listing.Unreadable;
         var missing = new List<MissingSecretReference>();
-        foreach (var name in (environment == "preview" ? bindings.Select(item => item.Name) : declared.Names)
-                     .Distinct(StringComparer.Ordinal))
+        foreach (var name in secretNames.Distinct(StringComparer.Ordinal))
         {
             var binding = bindings.FirstOrDefault(item => item.Name == name);
             var requested = binding?.Reference ?? new SecretReference(SecretScope.ForEnvironment(project, environment), name).ToString();
@@ -93,7 +108,7 @@ public sealed class ProjectSecretBindings(IConfiguration configuration, ISecretP
                 missing.Add(new(name, requested, project + "/" + environment, "not-bound"));
                 continue;
             }
-            if (declared.Kind == "production" && binding.ApprovedBy is null)
+            if (environmentKind == "production" && binding.ApprovedBy is null)
             {
                 missing.Add(new(name, requested, project + "/" + environment, "approval-required"));
                 continue;

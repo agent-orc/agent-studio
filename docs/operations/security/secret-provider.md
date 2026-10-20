@@ -121,6 +121,13 @@ lease token, or resolved version is stored in a binding.
 
 The claim response gives the host only references and preflight problems.
 The host fails a job with missing references before touching its artifact.
+The queue stores the declaration's secret names and environment kind with each
+job. Claim preflight and workload issuance use that snapshot even if the live
+declaration later changes. For older queue records without a kind, promotion
+history supplies stage or production when available; otherwise the job uses
+the production approval rule. A storage or provider error after a claim returns
+the claimed job with `preflight-unavailable` missing references, so the host
+can report a failed deployment without receiving any secret value.
 For a container job it resolves each bound reference over the authenticated
 workload route using the claimed job's lease on the run host. It writes the
 container environment file under Linux `/dev/shm` in a private directory,

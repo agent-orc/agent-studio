@@ -24,7 +24,8 @@ public sealed class SecretWorkloadLeases(ProjectEnvironmentService environments,
     public DeployJobLease? FindClaimedDeployJob(string project, string jobId, string leaseToken)
         => environments.FindClaimedJob(project, jobId, leaseToken) is { } job
             ? new DeployJobLease(job.Id, job.Project, job.EnvironmentId, job.HostId, job.SecretRefs,
-                bindings.ApprovedReferences(job.Project, job.EnvironmentId))
+                bindings.ApprovedReferences(job.Project, job.EnvironmentId, job.SecretRefs,
+                    job.EnvironmentKind ?? "production"))
             : null;
 
     public TaskRunLease? FindLiveTaskRun(string taskKey)

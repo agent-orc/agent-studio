@@ -71,27 +71,7 @@ public static class ProjectOperatorDashboardEndpoints
                 (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
                  || principal.RunnerId != request.HostId))
                 return Results.Forbid();
-            var job = environments.Claim(request.HostId);
-            if (job is not null) deploy.SyncAfterHostCall(job.Project);
-            if (job is null || job.SecretRefs.Count == 0) return Results.Ok(job);
-            try
-            {
-                var check = await bindings.CheckAsync(job.Project, job.EnvironmentId, ct);
-                return Results.Ok(job with
-                {
-                    SecretBindings = check.Bindings.ToDictionary(item => item.Name, item => item.Reference, StringComparer.Ordinal),
-                    MissingSecretRefs = check.Missing,
-                });
-            }
-            catch (Exception ex) when (ex is SecretValidationException or System.Text.Json.JsonException)
-            {
-                return Results.Ok(job with
-                {
-                    MissingSecretRefs = job.SecretRefs.Select(name => new MissingSecretReference(name,
-                        new SecretReference(SecretScope.ForEnvironment(job.Project, job.EnvironmentId), name).ToString(),
-                        job.Project + "/" + job.EnvironmentId, "environment-missing")).ToArray(),
-                });
-            }
+            return await CompleteClaimAsync(environments.Claim(request.HostId), deploy.SyncAfterHostCall, bindings, ct);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         app.MapPost("/api/deploy/jobs/{project}/{jobId}/report", (string project, string jobId,
@@ -152,6 +132,37 @@ public static class ProjectOperatorDashboardEndpoints
             var item = evidence.Acknowledge(projectName, itemId);
             return item is null ? Results.NotFound() : Results.Ok(item);
         });
+    }
+
+    internal static async Task<IResult> CompleteClaimAsync(DeployJob? job, Action<string> sync,
+        ProjectSecretBindings bindings, CancellationToken ct)
+    {
+        if (job is null) return Results.Ok(job);
+        try
+        {
+            sync(job.Project);
+            if (job.SecretRefs.Count == 0) return Results.Ok(job);
+            var check = await bindings.CheckAsync(job.Project, job.EnvironmentId, job.SecretRefs,
+                job.EnvironmentKind ?? "production", ct);
+            return Results.Ok(job with
+            {
+                SecretBindings = check.Bindings.ToDictionary(item => item.Name, item => item.Reference, StringComparer.Ordinal),
+                MissingSecretRefs = check.Missing,
+            });
+        }
+        catch (Exception)
+        {
+            // The lease is already claimed. Return a reportable, unusable job
+            // without exposing provider or storage exception text to the host.
+            var names = job.SecretRefs.Count == 0 ? ["deploy-preflight"] : job.SecretRefs;
+            return Results.Ok(job with
+            {
+                SecretBindings = null,
+                MissingSecretRefs = names.Select(name => new MissingSecretReference(name,
+                    "secret://" + job.Project + "/" + job.EnvironmentId + "/" + name,
+                    job.Project + "/" + job.EnvironmentId, "preflight-unavailable")).ToArray(),
+            });
+        }
     }
 
     /// <summary>
