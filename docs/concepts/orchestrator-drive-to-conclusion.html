@@ -2663,6 +2663,21 @@
              Run history names the refusal and continuation, and Execution Hosts counts refusals per model per UTC day.
            </td>
          </tr>
+        <tr id="case-agt-3244-host-model-refusal">
+          <td>2026-10-20</td>
+          <td><code>AGT-3244</code><br><span class="small">quota fallback chose a model refused by the host login</span></td>
+          <td>At 05:33 UTC, quota admission switched a Claude card to Codex Sol before launch. The
+            ChatGPT login on agent-runner-01 refused Sol with HTTP 400. The declared sibling was
+            below the card's correctness floor, and the card escalated.</td>
+          <td>CLI model discovery was treated as account acceptance. The fallback router had no
+            claiming-host acceptance fact, and the provider-refusal continuation treated a
+            launch-time model refusal as a card failure.</td>
+          <td>The runner now probes candidate models against the current credential generation and
+            advertises acceptance per host. Remote quota admission waits when no accepted fallback
+            exists. A model refusal without salvage marks the host capability and returns the card
+            to Ready with an Activity reason. Observed terminal: escalated. Corrected terminal:
+            Ready on a host capability hold until accepted model evidence or quota reset.</td>
+        </tr>
         <tr id="case-agt-2884-oversized-result-artifact">
           <td>2026-09-18</td>
           <td><code>AGT-2884</code><br><span class="small">oversized Playwright trace blocked code delivery</span></td>

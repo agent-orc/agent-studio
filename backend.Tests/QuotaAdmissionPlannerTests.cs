@@ -327,6 +327,41 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
+    [Fact]
+    public void Capped_primary_uses_only_host_accepted_fallback()
+    {
+        var fallback = Routing(new CliModelRouteProfile
+        {
+            CliType = "claude", PrimaryModel = "claude-opus-5-5",
+            FallbackCliType = "codex", FallbackModel = "gpt-6-sol",
+        });
+        Snapshot("claude", ("Weekly", 100, Now.AddDays(3)));
+        Snapshot("codex", ("Weekly", 10, Now.AddDays(3)));
+
+        QuotaAdmissionPlan PlanFor(bool accepted) => QuotaAdmissionPlanner.Plan(
+            "claude", "claude-opus-5-5", "medium", fallback, _caps,
+            c => c != null && _snapshots.TryGetValue(c, out var s) ? s : null,
+            Now, 0, modelAccepted: (provider, model) =>
+                provider == "claude" || accepted && provider == "codex" && model == "gpt-6-sol");
+
+        var launch = PlanFor(true);
+        Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, launch.Outcome);
+        Assert.Equal("gpt-6-sol", launch.Model);
+
+        var hold = PlanFor(false);
+        Assert.Equal(QuotaAdmissionOutcome.Wait, hold.Outcome);
+        Assert.Equal(Now.AddDays(3), hold.NextResetAt);
+        Assert.Contains("claiming host", hold.Reason);
+
+        // The incident crossed the projected cap before the strict cap. One
+        // free slot must not turn an unaccepted fallback into a launch.
+        Snapshot("claude", ("5-hour", 60, Now.AddHours(2.5)));
+        var projectedHold = PlanFor(false);
+        Assert.Equal(QuotaAdmissionOutcome.Wait, projectedHold.Outcome);
+        Assert.Equal(Now.AddHours(2.5), projectedHold.NextResetAt);
+        Assert.Contains("no accepted fallback", projectedHold.Reason);
+    }
+
     private QuotaAdmissionPlan Plan(
         string cli,
         CliQuotaFallbackService? fallback,

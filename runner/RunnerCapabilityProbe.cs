@@ -37,6 +37,27 @@ internal static class RunnerCapabilityProbe
             log($"provider auth probe completed provider={provider} outcome={status.Outcome}");
         }
     }
+
+    internal static IReadOnlyList<(string Provider, string Model)> ModelCandidates(RunnerOptions options)
+        => CodingCliBinaries(options).SelectMany(item =>
+        {
+            if (item.CliType == CliSelection.CodexCli)
+            {
+                var installation = InspectCli(item.Binary);
+                string[] routes = ["gpt-6-sol", "gpt-6.1-sol", "gpt-5.6-sol",
+                    "gpt-5.5", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna",
+                    "gpt-6-astra"];
+                var offered = installation is null ? null : CodexModels(installation);
+                return routes.Where(model => offered is null
+                        || offered.Contains(model, StringComparer.OrdinalIgnoreCase))
+                    .Select(model => (item.CliType, model));
+            }
+            return new[] { "claude-opus-5", "claude-sonnet-5", "claude-opus-5-5",
+                    "claude-sonnet-5-5", "claude-fable-5-1", "claude-sonnet-4-6",
+                    "claude-sonnet-4-5", "claude-opus-4-8", "claude-opus-4-7",
+                    "claude-opus-4-6", "claude-opus-4-5", "claude-haiku-4-5" }
+                .Select(model => (item.CliType, model));
+        }).Distinct().ToArray();
     public static IReadOnlyList<AdvertisedCapabilityDto> Advertise(
         RunnerOptions options,
         bool gitPushReady,
@@ -509,6 +530,11 @@ internal static class RunnerCapabilityProbe
                     ProviderProbeOutcome.CredentialInvalid => "invalid",
                     _ => "unknown",
                 }));
+            foreach (var modelCapability in RunnerModelAcceptanceProbe.Shared.Snapshot(
+                         cliType, ModelCandidates(options)
+                             .Where(candidate => candidate.Provider == cliType)
+                             .Select(candidate => candidate.Model).ToArray()))
+                capabilities.Add(modelCapability);
         }
     }
 
