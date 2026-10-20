@@ -89,6 +89,13 @@ that is already allowed to edit that project's checkout.
   Preview comments are appended to the card timeline through
   `POST /api/tasks/{jobId}/preview-comments`, with the authenticated user as
   actor and the preview ID as the reference.
+- A mapped route can declare a minimum role (`StudioRoleRequirement`), which
+  the networked profile enforces for sessions and API tokens. Every local
+  first-run route (`/api/first-run/...`: Git setup and repository probe, read
+  and write) requires the owner, matching the Task Server runner Git setup
+  routes; others get `403 owner-required`. `AccessSecurityRouteInventory`
+  lists the owner-only route families, and its test fails for any route there
+  without the declaration. The local loopback profile is unchanged.
 - Owners mint short-lived one-time Runner enrollment codes. Enrollment reveals
   one service credential once. The server stores only credential hashes.
   Credentials carry explicit scopes, optional expiry, last-use time, and

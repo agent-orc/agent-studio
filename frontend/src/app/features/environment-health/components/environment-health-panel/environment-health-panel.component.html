@@ -1,0 +1,60 @@
+<section class="environment-health" aria-labelledby="environment-health-title" data-testid="environment-health-panel">
+  <header class="environment-health__header">
+    <div>
+      <p class="environment-health__eyebrow">Operations</p>
+      <h2 id="environment-health-title">Health</h2>
+      <p>Checks run from the control plane, not from the host that serves the app.</p>
+    </div>
+    <button type="button" (click)="refresh()">Refresh health</button>
+  </header>
+  @if (error(); as message) { <p role="alert">{{ message }}</p> }
+  @if (snapshot(); as state) {
+    @if (state.environments.length === 0) { <p>No environments are declared in this project's repository.</p> }
+    @for (environment of state.environments; track environment.environmentId) {
+      <article class="environment-health__environment" [attr.data-status]="environment.status"
+        [attr.data-testid]="'environment-health-' + environment.environmentId">
+        <header class="environment-health__environment-head">
+          <div><strong>{{ environment.name }}</strong><small>{{ environment.kind }} · {{ environment.address }}</small></div>
+          <span class="environment-health__badge" [attr.data-status]="environment.status">
+            <span class="environment-health__dot" aria-hidden="true"></span>{{ statusLabel[environment.status] }}
+          </span>
+        </header>
+        @if (environment.error; as message) {
+          <p class="environment-health__incident" role="alert" data-testid="environment-health-error">{{ message }}</p>
+        }
+        @if (environment.currentIncident; as incident) {
+          <p class="environment-health__incident" role="status" data-testid="environment-health-incident">
+            Incident since {{ incident.startedAt | date:'medium':'UTC' }} UTC · {{ incident.checkId }} · {{ incident.firstError }}
+            · {{ incident.failedProbes }} failed probes
+            @if (incident.cardId) { · card <code>{{ incident.cardId }}</code> }
+          </p>
+        } @else if (environment.lastIncident; as last) {
+          <p class="environment-health__quiet">Last incident {{ last.startedAt | date:'medium':'UTC' }} to {{ last.endedAt | date:'shortTime':'UTC' }} UTC · {{ last.checkId }}</p>
+        }
+        <dl class="environment-health__metrics">
+          <div><dt>Uptime 24 h</dt><dd>{{ uptime(environment.uptime24h) }}</dd></div>
+          <div><dt>Uptime 7 d</dt><dd>{{ uptime(environment.uptime7d) }}</dd></div>
+          <div><dt>Uptime 30 d</dt><dd>{{ uptime(environment.uptime30d) }}</dd></div>
+          <div><dt>Latency p50</dt><dd>{{ latency(environment.latency24h.p50Ms) }}</dd></div>
+          <div><dt>Latency p95</dt><dd>{{ latency(environment.latency24h.p95Ms) }}</dd></div>
+        </dl>
+        <ul class="environment-health__checks">
+          @for (check of environment.checks; track check.id) {
+            <li [attr.data-testid]="'environment-health-check-' + check.id">
+              <span class="environment-health__dot" [attr.data-status]="check.status" aria-hidden="true"></span>
+              <div>
+                <strong>{{ check.id }}</strong> <span>{{ target(check) }}</span>
+                <small>{{ rule(check) }}</small>
+                @if (certificate(check); as expiry) {
+                  <small [class.environment-health__warn]="certificateWarning(check)">{{ expiry }}</small>
+                }
+              </div>
+              <span class="environment-health__result">{{ lastResult(check) }}</span>
+              <span class="environment-health__result">{{ uptime(check.uptime24h) }} · p95 {{ latency(check.latency24h.p95Ms) }}</span>
+            </li>
+          } @empty { <li>No health checks. Declare a health URL or an address to derive them.</li> }
+        </ul>
+      </article>
+    }
+  } @else if (!error()) { <p role="status">Loading environment health…</p> }
+</section>

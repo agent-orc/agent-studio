@@ -31,9 +31,18 @@
             <app-project-urls-panel [projectName]="projShell" />
           }
         }
-        @defer (when overlays.projectShellRail() === 'deploy') {
-          @if (overlays.projectShellRail() === 'deploy') {
-            <app-project-deploy-area [projectName]="projShell" />
+        @defer (when section().rail === 'deploy') {
+          @if (section().rail === 'deploy') {
+            <app-project-deploy-area
+              [projectName]="projShell"
+              [initialView]="section().deployView"
+              (openPrompts)="setProjectShellRail('prompts')" />
+          }
+        }
+        @defer (when section().rail === 'operations') {
+          @if (section().rail === 'operations') {
+            <app-project-environment-overview [projectName]="projShell" (openDeploy)="setProjectShellRail('deploy')" />
+            <app-project-product-runtime-panel [projectName]="projShell" />
           }
         }
         @defer (when overlays.projectShellRail() === 'security') {
@@ -92,8 +101,8 @@
             <app-project-token-usage-panel [projectName]="projShell" />
           }
         }
-        @defer (when overlays.projectShellRail() === 'observability') {
-          @if (overlays.projectShellRail() === 'observability') {
+        @defer (when overlays.projectShellRail() === 'agent-activity') {
+          @if (overlays.projectShellRail() === 'agent-activity') {
             <app-project-observability-panel [projectName]="projShell" />
             <app-project-detail
               [projectName]="projShell"
@@ -109,13 +118,6 @@
         @defer (when overlays.projectShellRail() === 'wiki') {
           @if (overlays.projectShellRail() === 'wiki') {
             <app-project-wiki-section [projectName]="projShell" />
-          }
-        }
-        @defer (when overlays.projectShellRail() === 'pipeline') {
-          @if (overlays.projectShellRail() === 'pipeline') {
-            <app-project-pipeline-panel
-              [projectName]="projShell"
-              (openPrompts)="setProjectShellRail('prompts')" />
           }
         }
         @defer (when overlays.projectShellRail() === 'workflow') {

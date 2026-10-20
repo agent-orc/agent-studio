@@ -234,6 +234,15 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
+        // Secret values go only to a service credential; the endpoint binds it
+        // to a live deploy-job or run lease and checks the matching scope.
+        if (path.Equals(AgentStudio.Secrets.SecretEndpoints.ResolvePath, StringComparison.OrdinalIgnoreCase))
+        {
+            if (runner is null) { await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required."); return; }
+            await _next(context);
+            return;
+        }
+
         // Core-attach aliases are applied before this middleware. Check the
         // original versioned route as a fallback so only those client reads
         // gain a Runner scope, not other legacy /api/tasks/{id} reads.
@@ -991,6 +1000,18 @@ public sealed class AccessSecurityMiddleware
         return [.. projects];
     }
 
+    /// <summary>Applies the route's declared <see cref="StudioRoleRequirement"/>, if any.</summary>
+    private static async Task<bool> RejectedByRoleRequirement(HttpContext context, string role)
+    {
+        var requirement = context.GetEndpoint()?.Metadata.GetMetadata<StudioRoleRequirement>();
+        if (requirement is null || requirement.IsSatisfiedBy(role)) return false;
+        if (requirement.MinimumRole == StudioRoles.Owner)
+            await Reject(context, 403, "owner-required", "Owner role is required.");
+        else
+            await Reject(context, 403, "role-denied", $"The {requirement.MinimumRole} role or higher is required.");
+        return true;
+    }
+
     private static async Task Reject(
         HttpContext context,
         int status,
@@ -998,6 +1019,9 @@ public sealed class AccessSecurityMiddleware
         string message,
         string? loginUrl = null)
     {
+        // A refused write on a secret route never reaches the secret provider; audit it with the person behind it.
+        if (status == StatusCodes.Status403Forbidden && context.Items[HumanPrincipalItem] is HumanPrincipal human)
+            AgentStudio.Secrets.SecretEndpoints.AuditRefusedWrite(context, AgentStudio.Secrets.SecretActor.Human(human.User.Username), code);
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/json";
         context.Response.Headers.CacheControl = "no-store";

@@ -7,7 +7,11 @@ namespace AgentStudio.Projects;
 public sealed record EnvironmentDeclaration(
     string Id, string Name, string Kind, string TargetHostId, string Address,
     string Template, string Destination, string? HealthUrl, string Approval,
-    IReadOnlyList<string> SecretRefs, int ContainerPort);
+    IReadOnlyList<string> SecretRefs, int ContainerPort,
+    IReadOnlyList<HealthCheckDefinition>? HealthChecks = null, bool HealthChecksAllowPrivateNetwork = false);
+
+/// <summary>One declaration file: the parsed environment, or the error that makes it unusable.</summary>
+public sealed record EnvironmentDeclarationFile(string EnvironmentId, EnvironmentDeclaration? Declaration, string? Error);
 
 public sealed record DeploymentHistoryItem(DateTime At, string Status, string Artifact, string? PreviousArtifact,
     string? Evidence);
@@ -64,52 +68,89 @@ public sealed class ProjectEnvironmentService
 
     public IReadOnlyList<EnvironmentDeclaration>? Declarations(string project)
     {
+        var files = DeclarationFiles(project);
+        if (files is null) return null;
+        if (files.FirstOrDefault(item => item.Error is not null) is { Error: { } error }) throw new JsonException(error);
+        return files.Select(item => item.Declaration!).ToArray();
+    }
+
+    /// <summary>
+    /// Every declaration file of a project, each parsed on its own: a broken file carries its error
+    /// instead of failing the others, so health monitoring (IP-14) keeps watching the valid ones.
+    /// </summary>
+    public IReadOnlyList<EnvironmentDeclarationFile>? DeclarationFiles(string project)
+    {
         if (!_scanner.GetWatchPaths().Any(item => string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase)))
             return null;
         var root = _git.ResolveRepoRootForProject(project);
         if (root is null) return [];
         var directory = Path.Combine(root, "docs", "deployments", "environments");
         if (!Directory.Exists(directory)) return [];
-        var result = new List<EnvironmentDeclaration>();
+        var result = new List<EnvironmentDeclarationFile>();
         foreach (var file in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
         {
-            using var document = JsonDocument.Parse(File.ReadAllText(file));
-            var value = document.RootElement;
-            string Required(string name) => value.GetProperty(name).GetString()
-                ?? throw new JsonException($"Environment {Path.GetFileName(file)} requires {name}.");
-            string? Optional(string name) => value.TryGetProperty(name, out var property) ? property.GetString() : null;
-            var id = Required("id");
-            var kind = Required("kind");
-            var host = Required("targetHostId");
-            var template = Required("template");
-            var secrets = value.TryGetProperty("secretRefs", out var refs)
-                ? refs.EnumerateArray().Select(item => item.GetString() ?? "").ToArray() : [];
-            if (!Identifier.IsMatch(id) || !Identifier.IsMatch(host) || kind is not ("stage" or "production" or "other")
-                || template is not ("container" or "static") || secrets.Any(item => !SecretIdentifier.IsMatch(item)))
-                throw new JsonException($"Environment {Path.GetFileName(file)} has invalid identifiers, kind, template or secret refs.");
-            var destination = Required("destination");
-            if (template == "static" && (!Path.IsPathFullyQualified(destination) || destination.Contains("..", StringComparison.Ordinal)))
-                throw new JsonException("Static destination must be an absolute path without traversal.");
-            if (template == "container" && (!int.TryParse(destination, out var port) || port is < 1 or > 65535))
-                throw new JsonException("Container destination must be a local proxy port.");
-            var healthUrl = Optional("healthUrl");
-            if (kind is "stage" or "production" && healthUrl is null)
-                throw new JsonException("Stage and production require a health URL.");
-            if (healthUrl is not null && (!Uri.TryCreate(healthUrl, UriKind.Absolute, out var uri)
-                || uri.Scheme is not ("http" or "https")))
-                throw new JsonException("Health URL must use HTTP or HTTPS.");
-            var approval = Optional("approval") ?? "person";
-            if (approval is not ("person" or "stage-healthy-10m")) throw new JsonException("Unknown approval rule.");
-            var containerPort = value.TryGetProperty("containerPort", out var containerPortValue)
-                ? containerPortValue.GetInt32() : 8080;
-            if (containerPort is < 1 or > 65535) throw new JsonException("Invalid container port.");
-            result.Add(new(id, Required("name"), kind, host, Required("address"), template,
-                destination, healthUrl, approval, secrets, containerPort));
+            try
+            {
+                var declaration = ReadDeclaration(file);
+                result.Add(new(declaration.Id, declaration, null));
+            }
+            catch (JsonException ex)
+            {
+                result.Add(new(Path.GetFileNameWithoutExtension(file), null, $"{Path.GetFileName(file)}: {ex.Message}"));
+            }
         }
-        if (result.GroupBy(item => item.Id, StringComparer.Ordinal).Any(group => group.Count() > 1))
-            throw new JsonException("Environment ids must be unique within a project.");
-        return result.OrderBy(item => item.Kind == "stage" ? 0 : item.Kind == "production" ? 1 : 2)
-            .ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
+        var duplicates = result.Where(item => item.Declaration is not null).GroupBy(item => item.EnvironmentId, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1).Select(group => group.Key).ToHashSet(StringComparer.Ordinal);
+        return result.Select(item => item.Declaration is not null && duplicates.Contains(item.EnvironmentId)
+                ? item with { Declaration = null, Error = "Environment ids must be unique within a project." } : item)
+            .OrderBy(item => item.Declaration?.Kind switch { null => 3, "stage" => 0, "production" => 1, _ => 2 })
+            .ThenBy(item => item.EnvironmentId, StringComparer.Ordinal).ToArray();
+    }
+
+    private static EnvironmentDeclaration ReadDeclaration(string file)
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(file));
+        var value = document.RootElement;
+        if (value.ValueKind != JsonValueKind.Object)
+            throw new JsonException($"Environment {Path.GetFileName(file)} must be a JSON object.");
+        // A missing or mistyped property is a broken declaration (JsonException), never a server error.
+        string Required(string name) => Optional(name)
+            ?? throw new JsonException($"Environment {Path.GetFileName(file)} requires {name}.");
+        string? Optional(string name) => !value.TryGetProperty(name, out var property) || property.ValueKind == JsonValueKind.Null
+            ? null : property.ValueKind == JsonValueKind.String ? property.GetString()
+            : throw new JsonException($"Environment {Path.GetFileName(file)} {name} must be a string.");
+        var id = Required("id");
+        var kind = Required("kind");
+        var host = Required("targetHostId");
+        var template = Required("template");
+        var secrets = !value.TryGetProperty("secretRefs", out var refs) ? []
+            : refs.ValueKind == JsonValueKind.Array && refs.EnumerateArray().All(item => item.ValueKind == JsonValueKind.String)
+                ? refs.EnumerateArray().Select(item => item.GetString()!).ToArray()
+                : throw new JsonException($"Environment {Path.GetFileName(file)} secretRefs must be an array of strings.");
+        if (!Identifier.IsMatch(id) || !Identifier.IsMatch(host) || kind is not ("stage" or "production" or "other")
+            || template is not ("container" or "static") || secrets.Any(item => !SecretIdentifier.IsMatch(item)))
+            throw new JsonException($"Environment {Path.GetFileName(file)} has invalid identifiers, kind, template or secret refs.");
+        var destination = Required("destination");
+        if (template == "static" && (!Path.IsPathFullyQualified(destination) || destination.Contains("..", StringComparison.Ordinal)))
+            throw new JsonException("Static destination must be an absolute path without traversal.");
+        if (template == "container" && (!int.TryParse(destination, out var port) || port is < 1 or > 65535))
+            throw new JsonException("Container destination must be a local proxy port.");
+        var healthUrl = Optional("healthUrl");
+        if (kind is "stage" or "production" && healthUrl is null)
+            throw new JsonException("Stage and production require a health URL.");
+        if (healthUrl is not null && (!Uri.TryCreate(healthUrl, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https")))
+            throw new JsonException("Health URL must use HTTP or HTTPS.");
+        var approval = Optional("approval") ?? "person";
+        if (approval is not ("person" or "stage-healthy-10m")) throw new JsonException("Unknown approval rule.");
+        var containerPort = !value.TryGetProperty("containerPort", out var containerPortValue) ? 8080
+            : containerPortValue.ValueKind == JsonValueKind.Number && containerPortValue.TryGetInt32(out var parsedPort)
+                ? parsedPort : throw new JsonException("Invalid container port.");
+        if (containerPort is < 1 or > 65535) throw new JsonException("Invalid container port.");
+        return new(id, Required("name"), kind, host, Required("address"), template,
+            destination, healthUrl, approval, secrets, containerPort,
+            HealthCheckDeclarations.Parse(value, Path.GetFileName(file)),
+            HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)));
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -301,6 +342,20 @@ public sealed class ProjectEnvironmentService
                 return claimed;
             }
             return null;
+        }
+    }
+
+    /// <summary>A claimed job whose lease token matches and has not gone stale, for secret issuance.</summary>
+    public DeployJob? FindClaimedJob(string project, string jobId, string leaseToken)
+    {
+        if (string.IsNullOrWhiteSpace(project) || project is "." or ".." || project.IndexOfAny(['/', '\\', '\0']) >= 0)
+            return null;
+        lock (_gate)
+        {
+            var job = Load(project).Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
+                && item.LeaseToken is not null && CryptographicOperations.FixedTimeEquals(
+                    System.Text.Encoding.UTF8.GetBytes(item.LeaseToken), System.Text.Encoding.UTF8.GetBytes(leaseToken)));
+            return job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime.AddMinutes(-5) ? null : job;
         }
     }
 

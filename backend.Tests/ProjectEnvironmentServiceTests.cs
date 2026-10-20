@@ -172,6 +172,49 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void ClaimedJob_IsFoundForSecretIssuanceOnlyWithItsLeaseUntilReportedOrStale()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var stage = service.Claim("stage-host")!;
+
+        Assert.Equal(stage.Id, service.FindClaimedJob("demo", stage.Id, stage.LeaseToken!)!.Id);
+        Assert.Null(service.FindClaimedJob("demo", stage.Id, "other-token"));
+        Assert.Null(service.FindClaimedJob("../demo", stage.Id, stage.LeaseToken!));
+        _clock.Advance(TimeSpan.FromMinutes(6));
+        Assert.Null(service.FindClaimedJob("demo", stage.Id, stage.LeaseToken!));
+
+        var reclaimed = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", reclaimed.Id, new(reclaimed.LeaseToken!, true, "health-ok")));
+        Assert.Null(service.FindClaimedJob("demo", reclaimed.Id, reclaimed.LeaseToken!));
+    }
+
+    [Fact]
+    public void BrokenDeclaration_IsAJsonError_AndDeclarationFilesKeepTheValidOnes()
+    {
+        var (service, repo, _) = Build();
+        var stage = Path.Combine(repo, "docs", "deployments", "environments", "stage.json");
+        foreach (var (broken, message) in new[]
+        {
+            (JsonSerializer.Serialize(new { id = "stage", kind = "stage" }), "requires targetHostId"),
+            (JsonSerializer.Serialize(new { id = "stage", kind = "stage", targetHostId = "h", template = "container", destination = "8081", healthUrl = "https://stage.example/health", name = 5 }), "name must be a string"),
+            (JsonSerializer.Serialize(new { id = "stage", kind = "stage", targetHostId = "h", template = "container", secretRefs = "X" }),
+                "secretRefs must be an array"),
+            ("[]", "must be a JSON object"),
+        })
+        {
+            File.WriteAllText(stage, broken);
+            Assert.Contains(message, Assert.Throws<JsonException>(() => service.Declarations("demo")).Message);
+            var files = service.DeclarationFiles("demo")!;
+            Assert.Equal(["production", "stage"], files.Select(item => item.EnvironmentId));
+            Assert.NotNull(files[0].Declaration);
+            Assert.Null(files[1].Declaration);
+            Assert.Contains(message, files[1].Error);
+        }
+    }
+
+    [Fact]
     public void Release_Stages_ThenApprovesExactArtifact_AndCanRollBack()
     {
         var (service, repo, watch) = Build();

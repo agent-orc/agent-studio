@@ -299,7 +299,6 @@ export class StudioShellComponent {
     const tab = this.activeTab();
     if (!tab) return null;
     if (tab.kind === 'board') return tab.projectName === '__all__' ? null : tab.projectName;
-    if (tab.kind === 'epics') return tab.projectName;
     if (tab.kind === 'workbenches') return tab.projectName;
     return this.currentProjectName();
   });
@@ -582,10 +581,14 @@ export class StudioShellComponent {
     const tab = this.activeTab();
     if (!tab) return null;
     if (tab.kind === 'board') return tab.projectName === '__all__' ? null : 'board';
-    if (tab.kind === 'hub') return tab.section === 'wiki' ? 'wiki' : 'hub';
+    if (tab.kind === 'hub') {
+      if (tab.section === 'wiki') return 'wiki';
+      if (tab.section === 'deploy' || tab.section === 'deployment' || tab.section === 'pipeline') return 'deploy';
+      if (tab.section === 'operations' || tab.section === 'observability') return 'operations';
+      return 'hub';
+    }
     if (tab.kind === 'workbenches') return tab.projectName === null ? null : 'workbenches';
     if (tab.kind === 'workbench') return 'workbench';
-    if (tab.kind === 'epics') return tab.projectName === null ? null : 'epics';
     return null;
   });
 
@@ -601,7 +604,6 @@ export class StudioShellComponent {
     const tab = this.activeTab();
     if (!tab) return null;
     if (tab.kind === 'board') return tab.projectName === ALL_PROJECTS_BOARD_NAME ? null : tab.projectName;
-    if (tab.kind === 'epics') return tab.projectName;
     if (tab.kind === 'workbenches') return tab.projectName;
     if (tab.kind === 'hub') return tab.projectName;
     if (tab.kind === 'workbench') return tab.projectName;
@@ -664,23 +666,6 @@ export class StudioShellComponent {
   }
 
 
-  /**
-   * Activity-bar Epics button click. Opens or focuses the workspace-wide
-   * epic overview as a normal editor tab.
-   */
-  onActivityBarOpenEpics(): void {
-    this.tabState.open({ kind: 'epics', projectName: null });
-  }
-
-  /**
-   * Whether any epic cards exist across all projects. Drives the
-   * activity-bar Epics button visibility (hide-when-empty), so projects
-   * that don't use epics never see the entry point.
-   */
-  readonly hasEpics = computed(() =>
-    flattenGrouped(this.grouped()).some(t => t.kind === 'epic'),
-  );
-
   openTask(job: TaskInfo): void {
     this.tabState.open({ kind: 'task', taskKey: job.taskKey });
     // Keep the legacy TaskSelectionService in sync so the embedded
@@ -694,6 +679,10 @@ export class StudioShellComponent {
     // pass section=overview rather than leaving it undefined so the intent is
     // unambiguous and re-opening moves the rail back to Overview.
     this.tabState.open({ kind: 'hub', projectName, section: 'overview' });
+  }
+
+  openProjectArea(projectName: string, area: 'deploy' | 'operations'): void {
+    this.tabState.open({ kind: 'hub', projectName, section: area });
   }
 
   /** Open or focus a Project URL preview as a shell tab. */
@@ -722,14 +711,6 @@ export class StudioShellComponent {
 
   openWorkbenches(projectName: string | null): void {
     this.tabState.open({ kind: 'workbenches', projectName });
-  }
-
-  /**
-   * Explorer "Epics" link for a single project (ASS-658). Opens the scoped
-   * epic overview as a normal editor tab.
-   */
-  openProjectEpics(projectName: string): void {
-    this.tabState.open({ kind: 'epics', projectName });
   }
 
   selectTab(key: string): void {
@@ -1128,6 +1109,12 @@ export class StudioShellComponent {
     );
   }
 
+  private projectAreaLabel(section: string | undefined): string | null {
+    if (section === 'deploy' || section === 'deployment' || section === 'pipeline') return 'Deploy';
+    if (section === 'operations' || section === 'observability') return 'Operations';
+    return null;
+  }
+
   /** Map a tab to its displayable label so the template stays terse. */
   tabLabel(tab: StudioTab): string {
     switch (tab.kind) {
@@ -1135,8 +1122,6 @@ export class StudioShellComponent {
         return tab.projectName === '__all__' ? 'All projects · Board' : `${this.projectShortLabel(tab.projectName)} · Board`;
       case 'feed':
         return 'Activity across projects';
-      case 'epics':
-        return tab.projectName === null ? 'All projects · Epics' : `${this.projectShortLabel(tab.projectName)} · Epics`;
       case 'workbenches':
         return 'Dossiers';
       case 'epic': {
@@ -1149,6 +1134,8 @@ export class StudioShellComponent {
         return job?.title || job?.key || job?.id || this.taskIdFromKey(tab.taskKey);
       }
       case 'hub': {
+        const area = this.projectAreaLabel(tab.section);
+        if (area) return `${this.projectShortLabel(tab.projectName)} · ${area}`;
         if (tab.section === 'wiki' && tab.wikiTarget && tab.wikiTarget.kind !== 'overview') {
           const targetLabel = tab.wikiTarget.title || titleFromDocumentPath(tab.wikiTarget.relPath);
           return `${this.projectShortLabel(tab.projectName)} · ${targetLabel}`;
@@ -1185,8 +1172,6 @@ export class StudioShellComponent {
         return this.findJob(tab.taskKey)?.key || this.taskIdFromKey(tab.taskKey);
       case 'board':
         return tab.projectName === '__all__' ? 'All' : this.projectShortLabel(tab.projectName);
-      case 'epics':
-        return tab.projectName === null ? 'All' : this.projectShortLabel(tab.projectName);
       case 'hub':
         return this.projectShortLabel(tab.projectName);
       default:
@@ -1202,8 +1187,9 @@ export class StudioShellComponent {
         return job?.title || job?.key || job?.id || this.taskIdFromKey(tab.taskKey);
       }
       case 'board': return 'Board';
-      case 'epics': return 'Epics';
       case 'hub': {
+        const area = this.projectAreaLabel(tab.section);
+        if (area) return area;
         if (tab.section === 'wiki' && tab.wikiTarget && tab.wikiTarget.kind !== 'overview') {
           return tab.wikiTarget.title || titleFromDocumentPath(tab.wikiTarget.relPath);
         }
@@ -1230,6 +1216,8 @@ export class StudioShellComponent {
    *  epic tab keeps its own dedicated glyph in the template). */
   tabIcon(tab: StudioTab): StudioIconName | null {
     if (tab.kind === 'hub') {
+      const area = this.projectAreaLabel(tab.section);
+      if (area) return area === 'Deploy' ? 'send' : 'activity';
       return this.railItemForSection(tab.section).railIcon ?? null;
     }
     if (tab.kind === 'url-preview') return 'link';
@@ -1242,14 +1230,13 @@ export class StudioShellComponent {
    * AGT-2034 — resolve the owning project name for a tab so the tab strip
    * can paint the project's colour dot and keep the full name in the
    * tooltip. Returns `null` for tabs that do not belong to a single project
-   * (All-projects board/epics, workspace settings, welcome, diff),
+   * (All-projects board/Dossiers, workspace settings, welcome, diff),
    * so no dot renders there.
    */
   private tabProjectName(tab: StudioTab): string | null {
     switch (tab.kind) {
       case 'board':
         return tab.projectName === '__all__' ? null : tab.projectName;
-      case 'epics':
       case 'workbenches':
       case 'hub':
       case 'workbench':

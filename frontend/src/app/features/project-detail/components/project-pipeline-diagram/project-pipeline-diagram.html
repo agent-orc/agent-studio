@@ -1,0 +1,100 @@
+<ol class="pipeline-diagram"
+    aria-label="Pipeline from gate to the last environment"
+    data-testid="pipeline-diagram">
+  <li class="pipeline-diagram__node" data-testid="pipeline-node-gate">
+    <span class="pipeline-diagram__kind">Gate</span>
+    <strong class="pipeline-diagram__name">Build and test</strong>
+    <span class="pipeline-diagram__meta">from {{ diagram().gate.source === 'pipeline' ? 'pipeline' : 'commands' }}</span>
+    <ul class="pipeline-diagram__list">
+      @for (command of gateCommands(); track $index) {
+        <li><code>{{ command }}</code></li>
+      } @empty {
+        <li class="pipeline-diagram__muted">No build or test command</li>
+      }
+    </ul>
+    @if (diagram().gate.testSuites.length > 0) {
+      <span class="pipeline-diagram__meta">Suites: {{ diagram().gate.testSuites.join(', ') }}</span>
+    }
+  </li>
+
+  <li class="pipeline-diagram__node"
+      data-testid="pipeline-node-artifacts"
+      [attr.data-issues]="artifactIssues() > 0">
+    <span class="pipeline-diagram__kind">Artifact</span>
+    @for (artifact of diagram().artifacts; track artifact.name) {
+      <div class="pipeline-diagram__entry" [attr.data-testid]="'pipeline-artifact-' + artifact.name">
+        <strong class="pipeline-diagram__name">{{ artifact.name }}</strong>
+        <span class="pipeline-diagram__badge">{{ artifact.type === 'static' ? 'Static bundle' : 'Container image' }}</span>
+        @if (artifact.source) { <code>{{ artifact.source }}</code> }
+        @if (artifact.image) { <code>{{ artifact.image }}</code> }
+      </div>
+    } @empty {
+      <span class="pipeline-diagram__muted">No artifact declared</span>
+    }
+    @if (artifactIssues() > 0) {
+      <span class="pipeline-diagram__issues">{{ artifactIssues() }} {{ artifactIssues() === 1 ? 'issue' : 'issues' }}</span>
+    }
+  </li>
+
+  @for (environment of diagram().environments; track environment.name) {
+    @let count = environmentIssueCount(environment.path, environment.steps, environment.variables);
+    <li class="pipeline-diagram__node"
+        [attr.data-testid]="'pipeline-node-' + environment.name"
+        [attr.data-issues]="count > 0">
+      <span class="pipeline-diagram__kind">Environment {{ environment.order + 1 }}</span>
+      <strong class="pipeline-diagram__name">{{ environmentLabel(environment.name) }}</strong>
+      <div class="pipeline-diagram__badges">
+        @if (environment.automatic) { <span class="pipeline-diagram__badge">Automatic</span> }
+        @if (environment.protected) {
+          <span class="pipeline-diagram__badge pipeline-diagram__badge--protected"
+                [attr.data-testid]="'pipeline-protected-' + environment.name">Protected</span>
+        }
+        @if (environment.approval.length > 0) {
+          <span class="pipeline-diagram__badge">Approval: {{ environment.approval.join(' or ') }}</span>
+        }
+        @if (environment.requires) {
+          <span class="pipeline-diagram__badge">After {{ environmentLabel(environment.requires) }}</span>
+        }
+      </div>
+      <ul class="pipeline-diagram__list">
+        @for (step of environment.steps; track step.path) {
+          <li class="pipeline-diagram__step" [attr.data-testid]="'pipeline-step-' + environment.name + '-' + step.kind">
+            <span>{{ stepLabel(step) }}</span>
+            @if (step.artifact) { <span class="pipeline-diagram__meta">{{ step.artifact }} to {{ step.target }}</span> }
+            @if (step.destination) { <code>{{ step.destination }}</code> }
+            @if (step.healthUrl) {
+              <span class="pipeline-diagram__meta">
+                Health <code>{{ step.healthUrl }}</code>
+                @if (step.healthTimeoutSeconds) {&ngsp;<span class="pipeline-diagram__number">within {{ step.healthTimeoutSeconds }} s</span> }
+              </span>
+            }
+          </li>
+        } @empty {
+          <li class="pipeline-diagram__muted">No deploy step yet</li>
+        }
+      </ul>
+      @if (environment.variables.length > 0) {
+        <ul class="pipeline-diagram__variables" aria-label="Variables">
+          @for (variable of environment.variables; track variable.path) {
+            <li>
+              <code>{{ variable.name }}</code>
+              @if (variable.isSecret) { <span class="pipeline-diagram__badge">secret {{ variable.secret }}</span> }
+            </li>
+          }
+        </ul>
+      }
+      @if (count > 0) {
+        <span class="pipeline-diagram__issues">{{ count }} {{ count === 1 ? 'issue' : 'issues' }}</span>
+      }
+    </li>
+  } @empty {
+    <li class="pipeline-diagram__node pipeline-diagram__node--empty" data-testid="pipeline-node-no-environments">
+      <span class="pipeline-diagram__kind">Environments</span>
+      <span class="pipeline-diagram__muted">
+        {{ diagram().schemaVersion === 1
+          ? 'Schema 1 has no environments. Migrate to schema 2 to deploy to Staging and Production.'
+          : 'No environment is declared yet.' }}
+      </span>
+    </li>
+  }
+</ol>
