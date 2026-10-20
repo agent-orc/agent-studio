@@ -67,6 +67,27 @@ describe('ProjectOperationsComponent', () => {
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="operations-logs-empty"]')).not.toBeNull();
   });
 
+  it('searches logs for a long-running release whose arrival predates the trend window', async () => {
+    const fixture = TestBed.createComponent(ProjectOperationsComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    const requests = TestBed.inject(HttpTestingController);
+    requests.expectOne('/api/projects/demo/deploy/operations').flush(snapshot);
+    await fixture.whenStable();
+    const release = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>('[data-testid="operations-log-release"]')!;
+    release.value = 'rel-from-last-year';
+    release.dispatchEvent(new Event('input'));
+    fixture.componentInstance.since.set('2026-10-19T00:00');
+    fixture.componentInstance.search();
+    const request = requests.expectOne(req => req.url.endsWith('/deploy/operations/logs'));
+    expect(request.request.params.get('releaseId')).toBe('rel-from-last-year');
+    expect(request.request.params.get('since')).toBe(new Date('2026-10-19T00:00').toISOString());
+    request.flush({ telemetryAvailable: true, lines: [{ at: '2026-10-20T00:00:00Z', level: 'info',
+      message: 'Still serving', releaseId: 'rel-from-last-year' }] });
+    await fixture.whenStable();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Still serving');
+  });
+
   it('clears shown logs on environment and filter changes and ignores an in-flight older search', async () => {
     const fixture = TestBed.createComponent(ProjectOperationsComponent);
     fixture.componentRef.setInput('projectName', 'demo');

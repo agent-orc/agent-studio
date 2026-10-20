@@ -28,5 +28,5 @@
     </section>
   }
 </section>
-@defer { <app-project-operations-rail [projectName]="projectName()" (releaseSelected)="openRelease.emit()" (openTask)="openTask.emit($event)" /> }
+@defer { <app-project-operations-rail [projectName]="projectName()" (releaseSelected)="openRelease.emit($event)" (openTask)="openTask.emit($event)" /> }
 @placeholder { <p>Loading operations…</p> }

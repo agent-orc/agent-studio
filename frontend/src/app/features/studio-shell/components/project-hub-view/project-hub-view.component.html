@@ -2,7 +2,8 @@
   <div class="project-area">
     @defer (on immediate) {
       <app-project-deploy-area [projectName]="projectName()" [initialView]="deployView()"
-        [focusStepId]="pipelineStepId()" (openPrompts)="setRail('prompts')"
+        [releaseTarget]="selectedRelease()"
+        [focusStepId]="pipelineStepId()" (openPrompts)="setRail('prompts')" (openTask)="openTask.emit($event)"
         (viewChange)="onDeployView($event)" />
     }
   </div>
@@ -10,7 +11,7 @@
   <div class="project-area" data-testid="project-operations-area">
     @defer (on immediate) {
       <app-project-environment-overview [projectName]="projectName()" (openDeploy)="setRail('deploy')"
-        (openRelease)="setRail('deploy')"
+        (openRelease)="openOperationsRelease($event)"
         (openTask)="openTask.emit($event)" />
       <app-project-product-runtime-panel [projectName]="projectName()" />
     }

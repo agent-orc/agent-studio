@@ -94,6 +94,24 @@ describe('ProjectHubViewComponent (smoke)', () => {
     expect(host.querySelector('[data-testid="project-observability-panel"]')).toBeNull();
   });
 
+  it('targets an Operations marker release only in its own project Deploy view', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectHubViewComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectHubViewComponent);
+    fixture.componentRef.setInput('projectName', 'Alpha');
+    fixture.componentRef.setInput('initialSection', 'operations');
+    fixture.detectChanges();
+    fixture.componentInstance.openOperationsRelease('older-release');
+    expect(fixture.componentInstance.activeRail()).toBe('deploy');
+    expect(fixture.componentInstance.selectedRelease()).toEqual({ project: 'Alpha', id: 'older-release' });
+    fixture.componentInstance.setRail('operations');
+    fixture.componentInstance.setRail('deploy');
+    expect(fixture.componentInstance.selectedRelease()).toBeNull();
+  });
+
   it('keeps agent-work observability in the Deck Agent activity rail', async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectHubViewComponent],

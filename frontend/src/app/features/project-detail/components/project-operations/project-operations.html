@@ -83,10 +83,8 @@
         <label>Level <select [value]="level()" (change)="changeFilter(level, $any($event.target).value)">
           <option value="">All levels</option><option value="error">Error</option><option value="warn">Warning</option><option value="info">Info</option><option value="debug">Debug</option>
         </select></label>
-        <label>Release <select [value]="release()" (change)="changeFilter(release, $any($event.target).value)">
-          <option value="">All releases</option>
-          @for (option of releaseOptions(); track option[0]) { <option [value]="option[0]">{{ option[1] }}</option> }
-        </select></label>
+        <label>Release ID <input type="text" data-testid="operations-log-release" [value]="release()"
+          (input)="changeFilter(release, $any($event.target).value)" placeholder="Any release ID"></label>
         <label>Text <input type="search" [value]="searchText()" (input)="changeFilter(searchText, $any($event.target).value)" placeholder="Search text"></label>
         <button type="button" data-testid="operations-search-logs" (click)="search()">Search logs</button>
       </div>

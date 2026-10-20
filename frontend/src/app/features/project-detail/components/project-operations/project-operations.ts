@@ -29,8 +29,6 @@ export class ProjectOperationsComponent {
   readonly logs = signal<OperationsLogResult | null>(null);
   readonly logError = signal<string | null>(null);
   readonly telemetryAvailable = computed(() => this.snapshot()?.environments.some(row => row.telemetryAvailable) ?? false);
-  readonly releaseOptions = computed(() => [...new Map((this.snapshot()?.environments ?? [])
-    .flatMap(row => row.markers.map(marker => [marker.releaseId, marker.version] as const))).entries()]);
   readonly metric = metric;
   readonly ratio = ratio;
 

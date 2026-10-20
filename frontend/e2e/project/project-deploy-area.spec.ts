@@ -151,6 +151,42 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('Operations rail opens an older release on a fresh Deploy mount while the first page is pending', async ({ page }) => {
+    const base = deployReleasesFixture()[0];
+    const releases = Array.from({ length: 40 }, (_, index) => ({ ...base,
+      id: `release-${index}`, version: `version-${index}`,
+      createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    }));
+    await openDeploy(page, fullMocks({ releases }));
+    await page.route(`**${DEPLOY}/operations`, route => answer(route, {
+      project: PROJECT, since: '2026-09-20T00:00:00Z', until: '2026-10-20T00:00:00Z',
+      environments: [{ environment: { id: 'production', name: 'Production', kind: 'production' },
+        telemetryAvailable: false, metrics: null,
+        markers: [{ deploymentId: 'run-old', releaseId: 'release-35', version: 'version-35',
+          atUtc: '2026-10-19T10:00:00Z', trigger: 'deploy', state: 'succeeded', cardKeys: [] }] }],
+      dora: { successfulProductionDeploys: 1, deploysPerWeek: 0.25, medianCardToProductionHours: null,
+        cardsMeasured: 0, changeFailureRate: 0, medianRecoveryHours: null, recoveriesMeasured: 0 },
+    }));
+    await page.getByTestId(`studio-explorer-project-operations-${PROJECT}`).click();
+    await expect(page.getByTestId('operations-release-release-35')).toBeVisible();
+    let pendingFirstPage: Route | undefined;
+    await page.route(`**${DEPLOY}/releases/page?*`, route => { pendingFirstPage = route; });
+    const containing: string[] = [];
+    await page.route(`**${DEPLOY}/releases/*/page?*`, async route => {
+      containing.push(route.request().url());
+      const offset = 25;
+      await answer(route, { items: releases.slice(offset), offset, limit: 25, total: releases.length });
+    });
+    await page.getByTestId('operations-release-release-35').click();
+    await expect(page.getByTestId('deploy-release-detail')).toContainText('version-35');
+    expect(containing).toHaveLength(1);
+    expect(pendingFirstPage).toBeDefined();
+    await pendingFirstPage!.fulfill(json({ items: releases.slice(0, 25), offset: 0, limit: 25, total: releases.length }))
+      .catch(() => undefined);
+    await expect(page.getByTestId('deploy-release-detail')).toContainText('version-35');
+    await capture(page, 'operations-older-release');
+  });
+
   test('Operations shows deploy markers, DORA and telemetry empty state in both themes', async ({ page }) => {
     await openDeploy(page, fullMocks());
     const release = deployReleasesFixture()[0];

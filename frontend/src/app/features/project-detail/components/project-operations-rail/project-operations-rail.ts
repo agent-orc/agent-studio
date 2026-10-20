@@ -1,8 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, input, output } from '@angular/core';
-import { take } from 'rxjs';
-import { TaskService } from '../../../../services/task.service';
 import { ProjectOperationsComponent } from '../project-operations/project-operations';
-import { OperationsReleaseSelectionService } from '../../state/operations-release-selection.service';
+import { OperationsCardLookupService } from '../../state/operations-card-lookup.service';
 
 @Component({
   selector: 'app-project-operations-rail', standalone: true,
@@ -10,25 +8,16 @@ import { OperationsReleaseSelectionService } from '../../state/operations-releas
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ProjectOperationsRailComponent {
-  private readonly tasks = inject(TaskService);
-  private readonly selection = inject(OperationsReleaseSelectionService);
+  private readonly cards = inject(OperationsCardLookupService);
   readonly projectName = input.required<string>();
-  readonly releaseSelected = output<void>();
+  readonly releaseSelected = output<string>();
   readonly openTask = output<{ jobId: string; watchPath: string }>();
 
   openRelease(id: string): void {
-    this.selection.select(id);
-    this.releaseSelected.emit();
+    this.releaseSelected.emit(id);
   }
 
   openCard(key: string): void {
-    const card = this.tasks.jobs().find(item => item.projectName === this.projectName()
-      && (item.key === key || item.id === key));
-    if (card) { this.openTask.emit({ jobId: card.id, watchPath: card.watchPath }); return; }
-    this.tasks.getArchivedTasks({ project: this.projectName(), search: key, limit: 50 }).pipe(take(1))
-      .subscribe(result => {
-        const archived = result.items.find(item => item.key === key || item.taskKey === key || item.id === key);
-        if (archived) this.openTask.emit({ jobId: archived.id, watchPath: archived.watchPath });
-      });
+    this.cards.resolve(this.projectName(), key).subscribe(card => this.openTask.emit(card));
   }
 }

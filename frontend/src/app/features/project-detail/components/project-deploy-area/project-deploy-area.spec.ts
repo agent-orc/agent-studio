@@ -1,6 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { HttpErrorResponse } from '@angular/common/http';
+import { HttpTestingController } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { DeferBlockState, TestBed, type ComponentFixture } from '@angular/core/testing';
 import { BehaviorSubject, Subject, map, type Observable } from 'rxjs';
@@ -29,6 +30,9 @@ class FakeDeployData {
   readonly actions: string[] = [];
   actionResult = new Subject<unknown>();
   controlledReads = false;
+  controlledReleases = false;
+  readonly releasePageReads: Subject<DeployPanel<unknown>>[] = [];
+  readonly containingReads: Subject<DeployPanel<unknown>>[] = [];
   readonly statusReads: Subject<DeployPanel<unknown>>[] = [];
   readonly deploymentReads: Subject<DeployPanel<unknown>>[] = [];
 
@@ -44,12 +48,22 @@ class FakeDeployData {
   deployments(): Observable<DeployPanel<unknown>> { this.requests.push('deployments'); return this.deploymentsPanel; }
   releasePage(_project: string, offset: number): Observable<DeployPanel<unknown>> {
     this.requests.push(`releases:${offset}`);
+    if (this.controlledReleases) {
+      const read = new Subject<DeployPanel<unknown>>();
+      this.releasePageReads.push(read);
+      return read;
+    }
     return this.releasesPanel.pipe(map(panel => panel.status === 'ready'
       ? { status: 'ready', value: { items: (panel.value as unknown[]).slice(offset, offset + 25), total: (panel.value as unknown[]).length, offset, limit: 25 } }
       : panel));
   }
   releasePageContaining(_project: string, id: string): Observable<DeployPanel<unknown>> {
     this.requests.push(`release-containing:${id}`);
+    if (this.controlledReleases) {
+      const read = new Subject<DeployPanel<unknown>>();
+      this.containingReads.push(read);
+      return read;
+    }
     return this.releasesPanel.pipe(map(panel => {
       if (panel.status !== 'ready') return panel;
       const releases = panel.value as { id: string }[];
@@ -395,6 +409,60 @@ describe('ProjectDeployAreaComponent', () => {
     expect(fixture.componentInstance.releaseOffset()).toBe(25);
     expect(host().querySelectorAll('.releases__row')).toHaveLength(15);
     expect(text('deploy-release-detail')).toContain('version-35');
+  });
+
+  it('keeps an older marker release request when the Deploy view mounts with an initial page still pending', async () => {
+    data.controlledReleases = true;
+    const fresh = TestBed.createComponent(ProjectDeployAreaComponent);
+    fresh.componentRef.setInput('projectName', 'Website');
+    fresh.componentRef.setInput('releaseTarget', { project: 'Website', id: 'release-35' });
+    fresh.detectChanges();
+    await fresh.whenStable();
+
+    expect(data.requests.slice(-2)).toEqual(['deployments:0:all', 'release-containing:release-35']);
+    expect(data.containingReads).toHaveLength(1);
+    expect(data.containingReads[0].observers).toHaveLength(1);
+    const release = deployReleasesFixture()[0];
+    const page = { items: [{ ...release, id: 'release-35', version: 'older release' }], offset: 25, limit: 25, total: 40 };
+    data.containingReads[0].next({ status: 'ready', value: page });
+    data.releasePageReads.at(-1)!.next({ status: 'ready', value: { items: [release], offset: 0, limit: 25, total: 40 } });
+    fresh.detectChanges();
+    await fresh.whenStable();
+    expect(fresh.componentInstance.releaseOffset()).toBe(25);
+    expect((fresh.nativeElement as HTMLElement).querySelector('[data-testid="deploy-release-detail"]')?.textContent)
+      .toContain('older release');
+    fresh.destroy();
+  });
+
+  it('does not send a project release target to a second mounted Deploy view', async () => {
+    data.controlledReleases = true;
+    const targeted = TestBed.createComponent(ProjectDeployAreaComponent);
+    targeted.componentRef.setInput('projectName', 'Website');
+    targeted.componentRef.setInput('releaseTarget', { project: 'Website', id: 'release-35' });
+    targeted.detectChanges();
+    await targeted.whenStable();
+    const other = TestBed.createComponent(ProjectDeployAreaComponent);
+    other.componentRef.setInput('projectName', 'Website');
+    other.detectChanges();
+    await other.whenStable();
+    expect(data.requests.filter(request => request === 'release-containing:release-35')).toHaveLength(1);
+    expect(targeted.componentInstance.highlightedReleaseId()).toBe('release-35');
+    expect(other.componentInstance.highlightedReleaseId()).toBeNull();
+    targeted.destroy();
+    other.destroy();
+  });
+
+  it('opens an archived marker card by exact key from the Deploy Operations tab', () => {
+    const opened: { jobId: string; watchPath: string }[] = [];
+    fixture.componentInstance.openTask.subscribe(card => opened.push(card));
+    fixture.componentInstance.openCard('CARD-1');
+    const http = TestBed.inject(HttpTestingController);
+    const request = http.expectOne(req => req.url === '/api/tasks/CARD-1/core');
+    expect(request.request.params.get('project')).toBe('Website');
+    request.flush({ id: 'arch-51', key: 'CARD-1', taskKey: 'CARD-1', projectName: 'Website',
+      watchPath: '/tasks/website', state: 'ready' });
+    expect(opened).toEqual([{ jobId: 'arch-51', watchPath: '/tasks/website' }]);
+    http.expectNone(req => req.url === '/api/tasks/archive');
   });
 
   it('clears server history filters when leaving History so the reopened controls match the data', async () => {

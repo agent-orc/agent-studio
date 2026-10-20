@@ -18,7 +18,7 @@ export class ProjectEnvironmentOverviewComponent {
   private readonly tasks = inject(TaskService);
   readonly projectName = input.required<string>();
   readonly openDeploy = output<void>();
-  readonly openRelease = output<void>();
+  readonly openRelease = output<string>();
   readonly openTask = output<{ jobId: string; watchPath: string }>();
   readonly environments = signal<readonly EnvironmentStatus[]>([]);
   readonly loading = signal(true);
