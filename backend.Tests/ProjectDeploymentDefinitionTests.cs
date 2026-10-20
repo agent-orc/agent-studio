@@ -95,6 +95,23 @@ public sealed class ProjectDeploymentDefinitionTests
     }
 
     [Fact]
+    public void Parses_named_runbooks_and_rejects_invalid_operations()
+    {
+        var yaml = Base + "\nrunbooks:\n  - name: restart\n    steps: [restart-container, health]\n    environments: [staging, production]\n";
+        var parsed = ProjectDefinitionReader.Parse(yaml);
+        Assert.True(parsed.IsValid, string.Join("; ", parsed.Issues.Select(issue => issue.Message)));
+        var runbook = Assert.Single(parsed.Definition!.Deployment!.Runbooks);
+        Assert.Equal("restart", runbook.Name);
+        Assert.Equal(["restart-container", "health"], runbook.Steps);
+        Assert.Contains(ProjectDefinitionReader.Parse(yaml.Replace("restart-container", "../escape", StringComparison.Ordinal)).Issues,
+            issue => issue.Code == "runbook-steps-invalid");
+        Assert.Contains(ProjectDefinitionReader.Parse(yaml.Replace("[staging, production]", "[unknown]", StringComparison.Ordinal)).Issues,
+            issue => issue.Code == "runbook-environment-unknown");
+        Assert.Contains(ProjectDefinitionReader.Parse(yaml.Replace("restart-container", "approval", StringComparison.Ordinal)).Issues,
+            issue => issue.Code == "runbook-step-reserved");
+    }
+
+    [Fact]
     public void Schema_one_keeps_legacy_contract_and_rejects_deployment_fields()
     {
         var legacy = Base.Replace("schemaVersion: 2", "schemaVersion: 1", StringComparison.Ordinal)

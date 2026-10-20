@@ -19,9 +19,9 @@ function mount() {
   return { fixture, request };
 }
 
-function declaration(id: string, name: string): ProjectEnvironmentDeclaration {
+function declaration(id: string, name: string, kind: ProjectEnvironmentDeclaration['kind'] = 'stage'): ProjectEnvironmentDeclaration {
   return {
-    id, name, kind: 'stage', targetHostId: 'host', address: 'stage.example.test', template: 'container',
+    id, name, kind, targetHostId: 'host', address: 'stage.example.test', template: 'container',
     destination: '/srv/app', containerPort: 8080, healthUrl: 'https://stage.example.test/health',
     approval: 'person', secretRefs: [],
   };
@@ -43,7 +43,7 @@ describe('ProjectEnvironmentOverviewComponent', () => {
       project: 'Alpha',
       environments: [
         { declaration: declaration('stage', 'Stage'), deployedArtifact: 'sha-abc', health: 'healthy', pendingArtifact: null, history: [] },
-        { declaration: declaration('preview', 'Preview'), deployedArtifact: null, health: 'unknown', pendingArtifact: null, history: [] },
+        { declaration: declaration('preview', 'Preview', 'other'), deployedArtifact: null, health: 'unknown', pendingArtifact: null, history: [] },
       ],
       promotions: [],
       failureCards: [],
@@ -53,5 +53,7 @@ describe('ProjectEnvironmentOverviewComponent', () => {
     expect(host.querySelector('[data-testid="project-environment-stage"]')?.textContent).toContain('Healthy');
     expect(host.querySelector('[data-testid="project-environment-stage"]')?.textContent).toContain('Running sha-abc');
     expect(host.querySelector('[data-testid="project-environment-preview"]')?.textContent).toContain('Health unknown');
+    expect(host.querySelector('[data-testid="project-environment-stage"] [data-testid="environment-runbooks"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="project-environment-preview"] [data-testid="environment-runbooks"]')).toBeNull();
   });
 });

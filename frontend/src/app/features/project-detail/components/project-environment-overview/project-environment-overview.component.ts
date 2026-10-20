@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
 import type { ProjectEnvironments } from '../../../../models/project-overview.model';
 import { TaskService } from '../../../../services/task.service';
+import { ProjectRunbooksComponent } from '../project-runbooks/project-runbooks';
 
 type EnvironmentStatus = ProjectEnvironments['environments'][number];
 
@@ -8,6 +9,7 @@ type EnvironmentStatus = ProjectEnvironments['environments'][number];
 @Component({
   selector: 'app-project-environment-overview',
   standalone: true,
+  imports: [ProjectRunbooksComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-environment-overview.component.html',
   styleUrl: './project-environment-overview.component.scss',

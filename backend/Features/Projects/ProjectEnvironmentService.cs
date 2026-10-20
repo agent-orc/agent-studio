@@ -23,7 +23,18 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     string Artifact, string Template, string Destination, string? HealthUrl,
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
-    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0);
+    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0)
+{
+    public string? RunbookName { get; init; }
+    public string? RunbookRunId { get; init; }
+    public string? RunbookDefinitionCommit { get; init; }
+    public IReadOnlyList<string> RunbookSteps { get; init; } = [];
+    public IReadOnlyDictionary<string, string> RunbookVariables { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyDictionary<string, string> RunbookSecretVariables { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyList<RunbookStepResult> RunbookResults { get; init; } = [];
+}
+
+public sealed record RunbookStepResult(int Index, bool Success);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -35,7 +46,8 @@ public sealed record ProjectEnvironmentsResponse(string Project, IReadOnlyList<P
     IReadOnlyList<EnvironmentPromotion> Promotions, IReadOnlyList<DeployJob> Jobs,
     IReadOnlyList<DeploymentFailureCard> FailureCards);
 
-public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string? Evidence);
+public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string? Evidence,
+    IReadOnlyList<RunbookStepResult>? RunbookResults = null);
 public sealed record DeployClaimRequest(string HostId);
 public sealed record ReleaseArtifactRequest(string Artifact, string Commit);
 public sealed record PromotionDecisionRequest(string Artifact);
@@ -47,6 +59,8 @@ public sealed class ProjectEnvironmentService
     public const string DeclarationDirectory = "docs/deployments/environments";
     /// <summary>After this, the claiming host may claim its job again (it restarted).</summary>
     public static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(5);
+    /// <summary>Runbook scripts may take longer than an artifact deploy; the host caps the entire run at ten minutes.</summary>
+    public static readonly TimeSpan RunbookLeaseDuration = TimeSpan.FromMinutes(12);
     /// <summary>A claim without report or reclaim for this long fails as <c>host-lost</c>.</summary>
     public static readonly TimeSpan HostLostAfter = TimeSpan.FromMinutes(15);
     private static readonly Regex Identifier = new("^[a-z0-9][a-z0-9._-]{0,63}$", RegexOptions.Compiled);
@@ -224,7 +238,7 @@ public sealed class ProjectEnvironmentService
                 var history = state.History.Where(row => row.EnvironmentId == item.Id)
                     .Reverse().Take(30).Select(row => row.Item).ToArray();
                 var latest = history.FirstOrDefault();
-                var pending = state.Jobs.LastOrDefault(job => job.EnvironmentId == item.Id
+                var pending = state.Jobs.LastOrDefault(job => job.RunbookName is null && job.EnvironmentId == item.Id
                     && (job.Status is "queued" or "claimed"));
                 return new ProjectEnvironmentView(item, latest?.Artifact,
                     latest is null ? "unknown" : latest.Status == "failed" ? "failed" : "healthy",
@@ -313,6 +327,35 @@ public sealed class ProjectEnvironmentService
         }
     }
 
+    public DeployJob? QueueRunbook(string project, EnvironmentDeclaration target, string runId,
+        string definitionCommit, string name,
+        IReadOnlyList<string> steps, IReadOnlyDictionary<string, string> variables,
+        IReadOnlyDictionary<string, string> secretVariables, string actor)
+    {
+        lock (_gate)
+        {
+            var current = Declarations(project);
+            var declaration = current?.FirstOrDefault(item => item.Id == target.Id);
+            if (declaration is null) return null;
+            var state = Load(project);
+            if (state.Jobs.Any(job => job.EnvironmentId == target.Id && job.Status is "queued" or "claimed"))
+                return null;
+            var now = _clock.GetUtcNow().UtcDateTime;
+            var job = new DeployJob(Guid.NewGuid().ToString("N"), project, target.Id, declaration.TargetHostId,
+                "", declaration.Template, declaration.Destination, declaration.HealthUrl,
+                declaration.SecretRefs.Concat(secretVariables.Values).Distinct(StringComparer.Ordinal).ToArray(),
+                declaration.ContainerPort, null, "queued", now, RequestedBy: actor)
+            {
+                RunbookName = name, RunbookRunId = runId, RunbookDefinitionCommit = definitionCommit,
+                RunbookSteps = steps.ToArray(), RunbookVariables = variables,
+                RunbookSecretVariables = secretVariables,
+            };
+            state.Jobs.Add(job);
+            Save(project, state);
+            return job;
+        }
+    }
+
     /// <summary>
     /// Stops a job before its host reports and closes its promotion. A queued
     /// job never starts. With <paramref name="abortClaimed"/> a claimed job is
@@ -334,7 +377,7 @@ public sealed class ProjectEnvironmentService
                 Status = "cancelled", LeaseToken = null, FinishedAt = now,
                 Evidence = aborted ? AbortedEvidence : null,
             };
-            if (aborted)
+            if (aborted && job.RunbookName is null)
                 state.History.Add(new(job.EnvironmentId, now,
                     new(now, "failed", job.Artifact, job.PreviousArtifact, AbortedEvidence)));
             var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact
@@ -500,12 +543,12 @@ public sealed class ProjectEnvironmentService
                 states.Add((project, state));
             }
             if (states.Any(item => item.State.Jobs.Any(job =>
-                    job.HostId == hostId && job.Status == "claimed" && job.ClaimedAt > now - LeaseDuration)))
+                    job.HostId == hostId && job.Status == "claimed" && job.ClaimedAt > now - LeaseFor(job))))
                 return null;
             foreach (var (project, state) in states)
             {
                 var job = state.Jobs.FirstOrDefault(item => item.HostId == hostId &&
-                    (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration));
+                    (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseFor(item)));
                 if (job is null) continue;
                 var claimed = job with
                 {
@@ -529,7 +572,7 @@ public sealed class ProjectEnvironmentService
             var job = Load(project).Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
                 && item.LeaseToken is not null && CryptographicOperations.FixedTimeEquals(
                     System.Text.Encoding.UTF8.GetBytes(item.LeaseToken), System.Text.Encoding.UTF8.GetBytes(leaseToken)));
-            return job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration ? null : job;
+            return job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseFor(job) ? null : job;
         }
     }
 
@@ -552,12 +595,24 @@ public sealed class ProjectEnvironmentService
                 return false;
             }
             var now = _clock.GetUtcNow().UtcDateTime;
-            var success = report.Healthy;
+            var results = job.RunbookName is null ? Array.Empty<RunbookStepResult>() : report.RunbookResults?
+                .Take(job.RunbookSteps.Count).Where(item => item.Index >= 0 && item.Index < job.RunbookSteps.Count)
+                .ToArray() ?? [];
+            var validResults = job.RunbookName is null || results.Select((item, index) => item.Index == index).All(value => value);
+            var success = report.Healthy && validResults && (job.RunbookName is null
+                || results.Length == job.RunbookSteps.Count && results.All(item => item.Success));
             // Host output is deliberately not accepted as an audit string. Keep a bounded status code only.
-            var evidence = report.Evidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
+            var evidence = !success && report.Healthy ? "deploy-step-failed"
+                : report.Evidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
                 ? report.Evidence : success ? "health-ok" : "deploy-step-failed";
             state.Jobs[state.Jobs.IndexOf(job)] = job with
-            { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence };
+            { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence,
+                RunbookResults = results };
+            if (job.RunbookName is not null)
+            {
+                Save(project, state);
+                return true;
+            }
             var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
@@ -608,13 +663,19 @@ public sealed class ProjectEnvironmentService
         {
             var lost = job with { Status = "failed", LeaseToken = null, FinishedAt = now, Evidence = HostLostEvidence };
             state.Jobs[state.Jobs.IndexOf(job)] = lost;
-            state.History.Add(new(job.EnvironmentId, now,
-                new(now, "failed", job.Artifact, job.PreviousArtifact, HostLostEvidence)));
-            ClosePromotionForResult(state, lost, success: false, now);
+            if (job.RunbookName is null)
+            {
+                state.History.Add(new(job.EnvironmentId, now,
+                    new(now, "failed", job.Artifact, job.PreviousArtifact, HostLostEvidence)));
+                ClosePromotionForResult(state, lost, success: false, now);
+            }
             changed = true;
         }
         return changed;
     }
+
+    private static TimeSpan LeaseFor(DeployJob job)
+        => job.RunbookName is null ? LeaseDuration : RunbookLeaseDuration;
 
     /// <summary>
     /// The declaration the artifact last deployed healthy with, so a rollback

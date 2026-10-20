@@ -201,7 +201,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3068 adds three rule mutations (Continue) and one host occurrence (Start),
         // and maps the engine decision-job (Start) and receipt (Continue) routes in
         // every profile.
-        Assert.Equal(125, routes.Count);
+        Assert.Equal(128, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -221,6 +221,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/approve", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/reject", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/cancel", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/deploy/environments/{environmentId}/runbooks/{name}/runs", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/deploy/runbooks/runs/{runId}/approve", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/deploy/runbooks/runs/{runId}/reject", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/pipeline-definition/migration", ExecutionAdmissionPath.PostStep),
             ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue),
             ("/api/orchestration/decision-receipts/{receiptId}/operator-intent", ExecutionAdmissionPath.Continue),
@@ -259,8 +262,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 9,
-                [ExecutionAdmissionPath.Start] = 24,
-                [ExecutionAdmissionPath.Continue] = 29,
+                [ExecutionAdmissionPath.Start] = 25,
+                [ExecutionAdmissionPath.Continue] = 31,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 28,

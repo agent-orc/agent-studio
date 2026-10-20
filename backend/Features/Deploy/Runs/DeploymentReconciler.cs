@@ -69,7 +69,7 @@ public static class DeploymentReconciler
         List<DeploymentLogEntry> log, List<DeployAuditEntry> audit)
     {
         var linked = runs.Where(item => item.JobId is not null).Select(item => item.JobId!).ToHashSet(StringComparer.Ordinal);
-        foreach (var job in input.Jobs.Where(item => !linked.Contains(item.Id)).OrderBy(item => item.CreatedAt))
+        foreach (var job in input.Jobs.Where(item => item.RunbookName is null && !linked.Contains(item.Id)).OrderBy(item => item.CreatedAt))
         {
             if (!environments.TryGetValue(job.EnvironmentId, out var environment)) continue;
             // Jobs from before the release existed (pre-BD-1 history) stay unattributed.
