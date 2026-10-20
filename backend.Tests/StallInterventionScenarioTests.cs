@@ -207,6 +207,7 @@ public sealed class StallInterventionScenarioTests : IDisposable
         var reroute = Assert.Single(_h.Store.All());
 
         _h.Routes.IgnoreRestore = true;
+        _h.Clock.Advance(TimeSpan.FromMinutes(30));
         _h.Clear();
         await _h.Service.RunOnceAsync();
 
