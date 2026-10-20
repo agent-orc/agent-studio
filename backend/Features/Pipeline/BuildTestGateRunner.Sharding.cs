@@ -328,8 +328,14 @@ public sealed partial class BuildTestGateRunner
         // A crashed test host or aborted run never passes, whatever its exit code says.
         if (GateShardRunChecks.Abort(report, processOutput) is { } abort)
             return Infrastructure(BuildTestGateFailureKind.Environment, GateShardDetails.TestRunAborted, $"test run aborted ({abort})");
-        if (report is null && green)
-            return Infrastructure(BuildTestGateFailureKind.Environment, GateShardDetails.NoTestReport, "no TRX report proves which tests ran");
+        if (report is null && (green || parsedFailures.Count == 0))
+            return Infrastructure(BuildTestGateFailureKind.Environment, GateShardDetails.NoTestReport,
+                "no TRX report proves which tests ran or failed");
+        if (report is { Counts.Total: 0 }
+            || (green && report is not null && (report.Counts.Failed > 0 || report.FailedTests.Count > 0))
+            || (report is not null && report.Classes.Count == 0))
+            return Infrastructure(BuildTestGateFailureKind.Environment, GateShardDetails.UnverifiedTestReport,
+                "TRX report has no tests, failed tests with exit zero, or no usable class evidence");
         if (report is not null && GateShardRunChecks.ForeignClasses(plan, shard.Index, report) is { Count: > 0 } foreign)
             return Infrastructure(BuildTestGateFailureKind.Environment, GateShardDetails.ShardFilterNotApplied,
                 $"{GateShardDetails.ShardFilterNotApplied}, it ran {foreign.Count} class(es) outside its partition " +
