@@ -562,6 +562,104 @@ after gate and source-repository cleanup; otherwise the directory is retained
 with a cancellation marker for diagnosis. The remote machine lock continues
 to serialize gates, including a worker still completing bounded cleanup.
 
+## Sharded test suites in the gate (AGT-3232)
+
+The gate splits a declared `.NET` suite into class partitions and runs them in
+parallel. A `commands.test` step is sharded when its command equals the
+`command` of a `testSuites` entry in `.agent-studio/project.yml` and that entry
+opts in with a `shards` field. It must be a single `dotnet test <project>.csproj`
+with `--no-build` and without its own run settings, and must plan to two or
+more shards. Without `--no-build` every parallel shard would build the same
+output directory, so such a suite runs whole. Guard-first
+steps, work-package selections, suites without `shards` and other commands run
+as before.
+
+- **Opt-in.** Sharding is off unless the suite declares `shards`. On
+  agent-runner-01 a class-sharded slice of the backend suite (1,955 tests) ran
+  in 469 seconds in two or four parallel processes, against 236 seconds in one
+  process. xUnit already runs test classes in parallel inside one process, and
+  a class partition ends with its slowest class. Declare `shards` only after a
+  gate measurement on the gate hosts shows a gain. A gate worker older than
+  AGT-3232 rejects the field as `unknown-field`, so add it only after every
+  gate host runs the new worker.
+- **Count.** `shards: N` (1 to 16; 1 keeps the suite in one process) sets the
+  count. `shards: auto` derives it from the measured serial duration of the
+  last complete sharded run, or else `expectedDurationSeconds`, at 360 seconds
+  per shard. A derived count is at most 8 and never more than the number of
+  test classes.
+- **Assignment.** `GateShardPlanner` sorts classes by recorded duration, longest
+  first, and assigns each to the least loaded shard. A class without a timing
+  is estimated at the median. A suite without any recorded timing uses a
+  stable SHA-256 hash of the class name. Classes come from a source scan of the
+  test project and are namespace-qualified (`Ns.StoreTests`), as are the
+  recorded timings. The last shard runs the complement of all other shards, so a
+  class the scan misses still runs exactly once. A class whose filter term
+  (`Ns.Name.`, a substring match) also occurs in another class's name, such as
+  `Ns.Pipeline` next to `Ns.Pipeline.Gates.GateTests`, stays in the complement
+  shard so that no term names it. The plan digest is the same on
+  every host for the same subject and timing snapshot.
+- **Filters.** Each shard runs the suite command without its `--filter` and
+  with `--settings` pointing to a run-settings file. Its
+  `RunConfiguration/TestCaseFilter` is `(<suite filter>)&(<class partition>)`.
+  `Category!=MachineBound` and every other category filter therefore apply
+  exactly as in the unsharded run. The complement filter names hundreds of
+  classes, which is why it is not passed on the command line.
+- **Parallel lanes on one host.** The gate's own machine slot is one lane. It
+  takes additional slots that are free at that moment for more lanes, so
+  `RemoteGate:GateSlots` times `RemoteGate:ProcessorCount` still bounds the
+  cores in use. Lanes are also capped at online cores divided by
+  `DOTNET_PROCESSOR_COUNT`. With one lane the shards run in sequence.
+- **Across hosts.** `ShardedRemoteGateTransport` wraps the conventional
+  transport (`ConventionalGateTransport`: the pull worker when one is healthy,
+  SSH otherwise) as the primary host and adds the hosts configured under
+  `RemoteGate:ShardHosts`, which are always reached over SSH. A run spans hosts
+  only when the subject's `.agent-studio/project.yml` at `ExpectedSha` declares
+  a shardable suite with `shards` other than 1 that plans to two or more
+  shards, and the primary host and an additional host each have a free slot.
+  A run uses at most as many hosts as that shard count. Otherwise the run goes
+  to the primary whole. A shard host whose last SSH call failed is skipped for
+  a 10-minute cooldown and then tried again. Host part *h* of *H* runs the
+  shards whose index modulo *H* is *h*. Part 0 also runs every unsharded
+  command; other parts run only builds and their own shards. Every host
+  receives the same timing snapshot (at most 1 MiB serialized, below the
+  worker's 2 MiB request limit; a larger snapshot is neither stored nor sent).
+  A part's verdict cache key includes its host part and the snapshot digest,
+  so a part cached under another plan is never merged with fresh siblings.
+  When one share fails, the dispatcher stops the other shares.
+- **One verdict.** `GateShardVerdictPolicy` merges shards and host shares. Every
+  shard must pass. A red test anywhere is a code failure. Without a red test,
+  any infrastructure failure, a host share whose verdict is not Ok, Warn,
+  NotApplicable or Skipped, or a shard that no host reports, gives an
+  infrastructure verdict. This holds even when every other shard passed.
+  A sharded step is red or green by its merged shard outcome, never by the
+  exit code of its aggregate record.
+- **No green without proof.** A shard whose test run aborted or whose test
+  host crashed (TRX `ResultSummary` outcome `Aborted`, `Error` or `Timeout`,
+  or the VSTest console abort lines) is an infrastructure failure, whatever
+  its exit code, with no quarantine and no re-run. So is a green shard without
+  a TRX report, and a shard whose TRX report holds a class outside its
+  partition (for the complement shard: a class another shard owns), reported
+  as `shard filter not applied`. After a
+  definitive red, shards that have not started are recorded as `not-run`.
+- **Flaky re-run per shard.** A red shard first applies the quarantine list. It
+  then spends the AGT-2853 targeted re-run of exactly its own failed tests on
+  the suite command. Both act only when the failures printed on the console
+  equal the TRX report's failed tests (`failures-unconfirmed` otherwise). The
+  shard evidence keeps both outcomes. A re-run is green only when it exits 0
+  and its TRX report shows exactly the targeted number of tests, all passed:
+  VSTest exits 0 when the `FullyQualifiedName` filter matches nothing
+  (`rerun-unconfirmed` otherwise). A green re-run marks the shard
+  `flaky-passed` and records the names as flaky.
+- **Evidence.** `BuildTestGateResult.TestShards` lists each sharded suite: plan
+  digest, count source, strategy, lanes, hosts, wall and serial time, test
+  counts, and per shard the host, lane, classes, duration, exit code, outcome,
+  failed tests and re-run. Integration gate logs carry it as
+  `--- test-shards.json ---`. Each shard process has phase `test-shard`. One
+  aggregate `verification` record per planned command keeps positional readers
+  unchanged. Per-class timings return to the dispatcher, which stores complete
+  runs in `agentstudio-gate-shard-timings` under its temp directory for the next
+  plan.
+
 ## Key Code
 
 The creation-time `auto-tag` step (AGT-2804) is separate from the card's coding
