@@ -674,7 +674,7 @@ public sealed class ProjectEnvironmentService
             if (job.GuidedResolved) return true;
             ClosePromotionForResult(state, job, success: false, now: _clock.GetUtcNow().UtcDateTime);
             var newerJob = state.Jobs.Skip(state.Jobs.IndexOf(job) + 1)
-                .Any(item => item.EnvironmentId == job.EnvironmentId && !item.IsRollback);
+                .Any(item => item.EnvironmentId == job.EnvironmentId);
             if (rollback && !newerJob && job.Evidence != HostLostEvidence && job.PreviousArtifact is not null && !job.IsRollback
                 && !state.Jobs.Any(item => item.EnvironmentId == job.EnvironmentId && item.Status is "queued" or "claimed"))
             {

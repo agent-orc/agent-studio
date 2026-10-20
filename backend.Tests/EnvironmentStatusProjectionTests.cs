@@ -104,6 +104,29 @@ public sealed class EnvironmentStatusProjectionTests
     }
 
     [Fact]
+    public void SkippedHealth_KeepsNewReleaseCurrentAndPreviousReleaseAvailableForRollback()
+    {
+        var releases = new[] { R1, R2 }.ToDictionary(item => item.Id);
+        var previous = Run("d1", R1, Staging, DeploymentStates.Succeeded, 1);
+        var skippedHealth = Run("d2", R2, Staging, DeploymentStates.Succeeded, 2) with
+        { InterventionDecision = "skip", FailedStep = DeployStepNames.Health };
+        var runs = new[] { previous, skippedHealth };
+
+        var card = EnvironmentStatusProjection.Project([Staging], [R1, R2], runs,
+            new Dictionary<string, string> { [Staging.Id] = "failed" })[0];
+        Assert.Equal(R2.Id, card.CurrentRelease?.Id);
+        Assert.Equal(EnvironmentHealth.Unhealthy, card.Health);
+        Assert.Equal(skippedHealth.Id, card.Intervention?.DeploymentId);
+        Assert.Equal(R1.Id, EnvironmentStatusProjection.PreviousRelease(runs, releases)?.Id);
+        Assert.True(EnvironmentStatusProjection.SucceededIn(runs, R2.Id, Staging.Id));
+
+        var skippedDeploy = Run("d3", R2, Staging, DeploymentStates.Succeeded, 3) with
+        { InterventionDecision = "skip", FailedStep = DeployStepNames.StartContainer };
+        Assert.False(EnvironmentStatusProjection.SucceededIn([skippedDeploy], R2.Id, Staging.Id));
+        Assert.Null(EnvironmentStatusProjection.CurrentRelease([skippedDeploy], releases));
+    }
+
+    [Fact]
     public void ReleaseNumbering_CountsPerUtcDay_AndIdentityIsContentAddressed()
     {
         Assert.Equal("2026.10.16.4", ReleaseSnapshot.NextVersion([R1, R2, R3], T0));

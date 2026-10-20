@@ -205,6 +205,23 @@ describe('deploy area model', () => {
       expect(card.intervention?.failedStep).toBe('health');
     });
 
+    it('shows the deployed release with failed health after a health-step skip', () => {
+      const sources = deploySourcesFixture();
+      sources.environments!.environments[0].deployedArtifact = ARTIFACT_B;
+      sources.statuses![0].currentRelease = RELEASE_3;
+      sources.statuses![0].health = 'unhealthy';
+      sources.statuses![0].intervention = {
+        deploymentId: 'skipped-health', failedStep: 'health', expiresAtUtc: null,
+        decision: 'skip', decidedBy: 'local.owner',
+      };
+
+      expect(buildEnvironmentCards(sources)[0]).toMatchObject({
+        artifact: ARTIFACT_C, releaseVersion: RELEASE_3.version,
+        health: { status: 'reported', state: 'unhealthy' },
+        intervention: { deploymentId: 'skipped-health', decision: 'skip', decidedBy: 'local.owner' },
+      });
+    });
+
     it('uses currentDeployment when host history is absent, and host history when release runs are empty', () => {
       const sources = deploySourcesFixture();
       sources.environments!.environments[0].history = [];
