@@ -2127,6 +2127,44 @@ not labelled as drift. The policy accepts a deployment start error when one is
 provided by a release source; the current collector does not yet receive
 compose errors or image digests for arbitrary containers.
 
+## Environment runbooks
+
+`project.yml` schema 2 accepts `runbooks` as named ordered lists:
+
+```yaml
+runbooks:
+  - name: restart
+    steps: [restart-container]
+  - name: backup
+    steps: [backup]
+  - name: enter-maintenance
+    steps: [maintenance-on]
+  - name: leave-maintenance
+    steps: [maintenance-off]
+  - name: rotation
+    steps: [rotate-secrets, restart-container]
+```
+
+Optional `environments`
+restricts a runbook to staging or production. The integration branch version
+is read when the run is requested; its steps and environment-scoped variables
+are frozen in the run. Plain variables and secret-provider names follow the
+deployment variable contract. A production run waits for a signed-in Owner or
+Maintainer; approval queues the frozen steps through the existing deploy host
+claim and report lease. No artifact is required and the release and deployment
+history remain unchanged. Runs share the deployment log and audit store.
+
+The target host keeps operator-owned scripts at
+`/etc/agent-host/runbooks/<project>/<step>.sh`. The host runs each script with
+`sh` and no shell text from the repository. It supplies
+`AGENT_STUDIO_PROJECT`, `AGENT_STUDIO_ENVIRONMENT`,
+`AGENT_STUDIO_DESTINATION`, scoped plain variables and named secrets as
+environment variables. Scripts must exit zero to advance; failure stops the
+remaining steps. The host drains output locally and reports only step success
+or failure, so logs do not expose secret values. A step times out after nine
+minutes, and the whole run after ten. Install scripts on the assigned deploy
+host before invoking the runbook.
+
 ## Verification
 
 - Outcome and grammar changes need focused unit tests for analyzer, policy,

@@ -37,6 +37,10 @@ public sealed record ProjectDeployStep(
 public sealed record ProjectVariableDefinition(
     string Name, string? Value, string? Secret, IReadOnlyList<string> Environments);
 
+/// <summary>Named host operations. The host resolves each name to an operator-installed script.</summary>
+public sealed record ProjectRunbookDefinition(string Name, IReadOnlyList<string> Steps,
+    IReadOnlyList<string> Environments);
+
 /// <summary>
 /// Deploy hosts registered for one project, per P1 environment. The backend
 /// builds it from the AGT-3176 declarations under docs/deployments/environments,
@@ -59,13 +63,14 @@ public sealed record ProjectDeploymentDefinition(
     IReadOnlyList<ProjectDeployStep> Deploy)
 {
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
+    public IReadOnlyList<ProjectRunbookDefinition> Runbooks { get; init; } = [];
     /// <summary>True when the file omits environments and the P1 default applies.</summary>
     public bool EnvironmentsDefaulted { get; init; }
     /// <summary>True when the file omits lifecycles and the P1 standard lifecycle applies.</summary>
     public bool LifecycleDefaulted { get; init; }
 
     public bool IsConfigured => Artifacts.Count > 0 || Environments.Count > 0
-        || StandardLifecycle.Count > 0 || Deploy.Count > 0 || Variables.Count > 0;
+        || StandardLifecycle.Count > 0 || Deploy.Count > 0 || Variables.Count > 0 || Runbooks.Count > 0;
 }
 
 /// <summary>
@@ -75,7 +80,7 @@ public sealed record ProjectDeploymentDefinition(
 public static class ProjectDeploymentVocabulary
 {
     public static readonly IReadOnlyList<string> Sections =
-        ["pipeline", "artifacts", "environments", "lifecycles", "deploy", "variables"];
+        ["pipeline", "artifacts", "environments", "lifecycles", "deploy", "variables", "runbooks"];
     public static readonly IReadOnlyList<string> ArtifactTypes = ["static", "container"];
     public static readonly IReadOnlyList<string> ArtifactKeys = ["name", "type", "path", "dockerfile", "image"];
     public static readonly IReadOnlyList<string> EnvironmentNames = ["staging", "production"];
@@ -83,6 +88,7 @@ public static class ProjectDeploymentVocabulary
     public static readonly IReadOnlyList<string> LifecyclePhaseKeys = ["phase", "automatic", "approval", "requires"];
     public static readonly IReadOnlyList<string> ApprovalRoles = ["Owner", "Maintainer"];
     public static readonly IReadOnlyList<string> VariableKeys = ["name", "value", "secret", "environments"];
+    public static readonly IReadOnlyList<string> RunbookKeys = ["name", "steps", "environments"];
     public static readonly IReadOnlyList<string> StepKinds =
         ["static-site", "container", "publish-static", "start-container", "run", "health", "approval"];
     public const int MaxHealthTimeoutSeconds = 900;
@@ -209,10 +215,18 @@ public static partial class ProjectDefinitionReader
                     item.TryGetValue("value", out var value) ? value : null,
                     Get(item, "secret"), List(item, "environments"));
             }).ToArray();
+        var runbooks = SequenceMaps(lines, "runbooks", 2, 4, issues)
+            .Select((item, index) =>
+            {
+                CheckMapKeys(item, ProjectDeploymentVocabulary.RunbookKeys, $"runbooks[{index}]", issues);
+                return new ProjectRunbookDefinition(Get(item, "name") ?? "", List(item, "steps"),
+                    List(item, "environments"));
+            }).ToArray();
 
         // Staging and Production with the standard lifecycle are the P1 default
         // once the file starts describing a deployment.
         var deploying = artifacts.Length > 0 || steps.Length > 0 || phases.Length > 0 || variables.Length > 0
+            || runbooks.Length > 0
             || Declared("environments");
         var defaultEnvironments = deploying && !Declared("environments");
         var defaultLifecycle = deploying && !Declared("lifecycles");
@@ -223,6 +237,7 @@ public static partial class ProjectDefinitionReader
             steps)
         {
             Variables = variables,
+            Runbooks = runbooks,
             EnvironmentsDefaulted = defaultEnvironments,
             LifecycleDefaulted = defaultLifecycle,
         };
@@ -341,6 +356,20 @@ public static partial class ProjectDefinitionValidator
         for (var i = 0; i < value.Deploy.Count; i++)
             ValidateStep(value, value.Deploy[i], $"deploy[{i}]", environments, names, hosts, issues);
         ValidateVariables(value.Variables, environments, issues);
+        var runbookNames = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < value.Runbooks.Count; i++)
+        {
+            var runbook = value.Runbooks[i];
+            var path = $"runbooks[{i}]";
+            if (!Identifier().IsMatch(runbook.Name) || !runbookNames.Add(runbook.Name))
+                issues.Add(new($"{path}.name", "runbook-name-invalid", "Runbook names must be unique lower-case identifiers."));
+            if (runbook.Steps.Count == 0 || runbook.Steps.Any(step => !Identifier().IsMatch(step)))
+                issues.Add(new($"{path}.steps", "runbook-steps-invalid", "Runbook steps must be a non-empty list of operation identifiers."));
+            if (runbook.Steps.Contains("approval", StringComparer.Ordinal))
+                issues.Add(new($"{path}.steps", "runbook-step-reserved", "approval is reserved for the environment approval step."));
+            if (runbook.Environments.Any(environment => !environments.Contains(environment)))
+                issues.Add(new($"{path}.environments", "runbook-environment-unknown", "Runbook environments must be declared."));
+        }
         return issues;
     }
 
@@ -350,7 +379,8 @@ public static partial class ProjectDefinitionValidator
         if (value.Environments.Count == 0)
         {
             // Only an explicitly empty environments section gets here with deploy content.
-            if (value.Artifacts.Count > 0 || value.Deploy.Count > 0 || value.Variables.Count > 0)
+            if (value.Artifacts.Count > 0 || value.Deploy.Count > 0 || value.Variables.Count > 0
+                || value.Runbooks.Count > 0)
                 issues.Add(new("environments", "deployment-environments-invalid",
                     "P1 environments must be [staging, production] in deployment order."));
             return environments;

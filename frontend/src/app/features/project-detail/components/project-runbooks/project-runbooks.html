@@ -1,0 +1,32 @@
+<section class="runbooks" data-testid="environment-runbooks">
+  <header><h3>Runbooks</h3><button type="button" (click)="refresh()">Refresh</button></header>
+  @if (error(); as message) { <p role="alert">{{ message }}</p> }
+  @if (definitions().length === 0) { <p>No runbooks configured for this environment.</p> }
+  @for (definition of definitions(); track definition.name) {
+    <div class="runbooks__definition">
+      <div><strong>{{ definition.name }}</strong><p>{{ definition.steps.join(' → ') }}</p></div>
+      <button type="button" [disabled]="busy()" (click)="start(definition.name)" [attr.data-testid]="'runbook-start-' + definition.name">Run</button>
+    </div>
+  }
+  @if (runs().length) {
+    <h4>History</h4>
+    <ol>
+      @for (run of runs(); track run.id) {
+        <li>
+          <div class="runbooks__run"><span><strong>{{ run.name }}</strong> · {{ run.state }} · requested by {{ run.requestedBy }} @if (run.approvedBy) { · approved by {{ run.approvedBy }} }</span>
+            <button type="button" (click)="toggleLog(run.id)" [attr.aria-expanded]="openLogId() === run.id"><app-disclosure-marker [open]="openLogId() === run.id" />Log</button>
+          </div>
+          @if (run.state === 'awaiting-approval') {
+            <div class="runbooks__approval"><span>Owner or Maintainer approval required</span>
+              <button type="button" [disabled]="busy()" (click)="decide(run.id, 'approve')">Approve</button>
+              <button type="button" [disabled]="busy()" (click)="decide(run.id, 'reject')">Reject</button>
+            </div>
+          }
+          @if (openLogId() === run.id) {
+            <ol class="runbooks__log">@for (line of logLines(); track $index) { <li>{{ line.step }} · {{ line.message }}</li> }</ol>
+          }
+        </li>
+      }
+    </ol>
+  }
+</section>
