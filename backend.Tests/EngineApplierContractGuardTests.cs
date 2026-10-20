@@ -154,6 +154,25 @@ public sealed class EngineApplierContractGuardTests
     }
 
     /// <summary>
+    /// An applier that has not completed gets at least one effect window after
+    /// its integration ended, even when that is past the apply deadline.
+    /// </summary>
+    [Theory]
+    [InlineData(1, "Waiting")]
+    [InlineData(2, "Missing")]
+    public void Canary_policy_gives_one_effect_window_after_the_integration_ended(int minutesSinceEnd,
+        string expected)
+    {
+        var observedAt = new DateTime(2026, 10, 19, 10, 0, 0, DateTimeKind.Utc);
+        var endedAt = observedAt.AddHours(3).AddMinutes(-1);
+        var now = endedAt.AddMinutes(minutesSinceEnd);
+        var check = new EngineEffectCheck("orch_run", "AcceptAndIntegrate", false, ["DecisionReceipt"], "ended",
+            now, IntegrationEndedAt: endedAt);
+        Assert.Equal(Enum.Parse<ApplierCanaryVerdict>(expected), ApplierCanaryPolicy.Judge(check, observedAt, now,
+            TimeSpan.FromMinutes(2), TimeSpan.FromHours(3)));
+    }
+
+    /// <summary>
     /// Downtime is left out: the apply deadline and the effect window start no
     /// earlier than the process start, so a host that was down for longer than
     /// the remaining deadline does not roll back at its first check.

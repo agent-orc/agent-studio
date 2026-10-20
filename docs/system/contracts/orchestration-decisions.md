@@ -372,25 +372,43 @@ that occurrence was raised for the card while the decision applied). When the
 integration ended in `Conflict` or `AgentRoundRequired` and started the
 automatic agent round, `IntegrationAgentRoundService` has already moved the
 card to Ready inside `EnqueueAsync`. The applier reads the card again after the
-integration, finds the round's `integration_recovery_queued` row for the
-reviewed result SHA (the settlement journal must name the review), settles the
-journal to `LaneSettled`, clears the wait marker and completes; a retry finds
-the same handoff before the source-state check. The decision then owes its
-follow-up, journal and the `AgentRoundHandoff`, and the next delivery is
-reviewed again.
+integration, settles the journal to `LaneSettled`, clears the wait marker and
+completes; a retry finds the same handoff before the source-state check. The
+decision then owes its follow-up, journal and the `AgentRoundHandoff`, and the
+next delivery is reviewed again. One predicate,
+`IntegrationAgentRoundHandoff.Find`, ties the handoff to this review's own
+integration for the applier and the probe alike:
+
+- the settlement journal names the review;
+- the card is no longer in the source lane (a card back in Auto Review
+  integrates again, whatever rows an earlier review left);
+- on the applier's first pass the result is `Conflict` or
+  `AgentRoundRequired` without `AutomaticRecoveryBudgetUsed` (an exhausted
+  budget leaves the card in Auto Review, and the applier moves it to Human
+  Review with its park verdict);
+- the row is the `IntegrationAgentRoundService` row of the reviewed SHA
+  (reason `delivery-attribution-ambiguous`, automatic, no `source`;
+  acceptance-rail and recovery-service rows carry the SHA too), written at or
+  after the card's newest `enqueued` or `agent-round-re-entry` lane row, so the
+  round of an earlier review of the same delivery does not count.
 `EngineApplierEffectProbe` reads these effects without writing and without a
 scanner rescan. A lane move counts when the card is in the lane or its
 timeline holds the keyed `LaneChanged` row of the decision, so a card that a
 runner picked up again still verifies. The engine batch plan intent and the
 gate dispatch receipt are files, so a restart inside the canary window keeps
-both.
+both. The batch tick claims an intent by an atomic rename; an intent it cannot
+read stays as an `.unreadable` file for an operator instead of being deleted
+without a receipt.
 
 The contract tests (`BatchGateEngineApplierContractTests`, partial
 `BatchGatePilotServiceTests`) run the real applier on an engine-completed
 occurrence for every profile action, assert each owed effect directly, and
 check that the probe agrees; the review-input handoff and the agent round
 after a conflict (`AcceptAndIntegrate`, real `IntegrationAgentRoundService`)
-have their own cases, and a retried accept proves the handoff completes. The
+have their own cases. A retried accept seeded with the state the applier
+before the fix left proves the handoff completes; a second review of the same
+delivery whose integration conflicts with the round budget spent is parked in
+Human Review; a retry with a stale round row integrates. The
 gate case records the handler's dispatch receipt after the applier ran,
 because the test host does not run the review orchestrator;
 `ReviewDecisionOrchestratorCompletionGateTests` drives the real gate
@@ -418,10 +436,13 @@ The canary rule:
   are `not-counted`, and the next engine decision takes their place:
   - an ask, a checkpoint, a review-input handoff and an agent round handoff;
   - a refusal by design: the card left the source lane by a move this
-    decision's write key did not write (a person, a runner, an integration
-    round; the evidence names the actor and the lane-change cause), so the
-    applier refuses it with `orchestration-source-state-mismatch`. A
-    DeferToBatch admission refuses no lane and is exempt;
+    decision's write key did not write (a person, a runner, another
+    integration round; the evidence names the actor and the lane-change
+    cause), so the applier refuses it with
+    `orchestration-source-state-mismatch`. A DeferToBatch admission refuses
+    no lane and is exempt. The agent round of this review's own integration
+    is no refusal but the decision's effect: unapplied at the deadline, it is
+    missing;
   - a passed gate decision whose card left Auto Review, got a pending intent
     or a new run attempt before the gate handler's next pass, which therefore
     never records `engine_gate_dispatched`;
@@ -439,18 +460,24 @@ The canary rule:
   DeferToBatch admission can run a per-task gate. Once completed, its effects
   must show within `Orchestration:ApplierCanary:WindowSeconds` (default 120)
   after `CompletedAt`; an effect that a later pass writes (the gate dispatch)
-  gets the apply deadline after `CompletedAt` instead.
+  gets the apply deadline after `CompletedAt` instead. After the integration of
+  an unapplied accept ended (its terminal lane row, or the agent round of this
+  review), the applier gets at least one effect window, even past the apply
+  deadline.
 - Some checks wait on something that is no applier defect (`waitingOn`): an
   integration in flight (the card's integration lane shows the delivery
   `enqueued`, `agent-round-re-entry` or `dequeued` since the observation, and
-  no `ready-to-publish` or `ejected` row; the per-project queue is serial and
+  no `ready-to-publish`, `ejected`, `published` or `handed-off` row; the
+  per-project queue is serial and
   every delivery runs its gate) and a card missing from the scanner snapshot.
   They wait, and at the apply deadline they are `not-counted`, never missing.
 - Restart safety: after a start the canary judges nothing until the recovery
   service finished one pass over the applying occurrences
   (`MonolithOrchestrationStore.ApplyingRecoveryPasses`), and every deadline
   counts from the later of the observation (or `CompletedAt`) and the process
-  start, so downtime is left out.
+  start, so downtime is left out. Until that pass the canary status reports
+  `awaitingRecoveryPass`, and each step of the recovery loop fails alone, so a
+  failing activation or AI Operator recovery no longer stops the passes.
 - When a decision misses its deadline, the canary fails, this instance loses
   any earlier pass (a direct switch back to engine needs a new canary), the
   profile rolls back (`rolled-back`, so the monolith decides pending

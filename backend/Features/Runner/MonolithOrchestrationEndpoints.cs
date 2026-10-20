@@ -143,8 +143,19 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                aiOperator.RecoverPending();
-                RecoverOnce();
+                // AGT-3218: each step fails alone. Until 20.10.2026 a throw here
+                // ended the loop, so no recovery pass over the applying
+                // occurrences followed and the applier canary never judged again.
+                try { aiOperator.RecoverPending(); }
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "orchestration-operator-recovery-pending");
+                }
+                try { RecoverOnce(); }
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "orchestration-activation-recovery-pending");
+                }
                 try { await store.RecoverApplyingAsync(stoppingToken); }
                 catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
                 {

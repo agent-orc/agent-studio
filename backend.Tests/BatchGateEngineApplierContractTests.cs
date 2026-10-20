@@ -68,6 +68,9 @@ public sealed partial class BatchGatePilotServiceTests
     /// <summary>The integration ends in Conflict, and the real agent round service moves the card to Ready.</summary>
     private const string AgentRoundVariant = "agent-round";
 
+    /// <summary>As <see cref="AgentRoundVariant"/>, but an earlier review of the delivery spent its round.</summary>
+    private const string BudgetSpentVariant = "agent-round-budget-spent";
+
     public static TheoryData<string, string, string> ApplierContractData()
     {
         var data = new TheoryData<string, string, string>();
@@ -122,10 +125,14 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     /// <summary>
-    /// The review of 20.10.2026: an applier that ran before the fix moved the
-    /// card after the agent round had moved it to Ready, failed, and every
-    /// retry threw orchestration-source-state-mismatch. The retry now finds the
-    /// handoff, settles the journal, clears the wait marker and completes.
+    /// The review of 20.10.2026: an applier that ran before the fix let the
+    /// integration start the agent round, settled the journal, then tried to
+    /// move the card it read before the integration and failed; every retry
+    /// threw orchestration-source-state-mismatch. The state it left is seeded
+    /// here: the journal at IntegrationSettled, the wait marker, the card in
+    /// Ready. Unapplied, the probe counts the round as this decision's own
+    /// effect, not as a refusal. The retry finds the handoff, settles the
+    /// journal, clears the wait marker and completes.
     /// </summary>
     [Fact]
     public async Task Applier_completes_a_retried_accept_whose_integration_started_an_agent_round()
@@ -134,9 +141,18 @@ public sealed partial class BatchGatePilotServiceTests
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 4);
         var arranged = Arrange(factory, "ReviewReport", nameof(TransitionAction.AcceptAndIntegrate), AgentRoundVariant);
-        var interrupted = new InterruptedOnce(factory.Services.GetRequiredService<IMonolithOrchestrationApplier>());
+        var request = IntegrationRequest(factory, arranged);
+        SeedSettlementJournal(factory, arranged, request);
+        var result = await factory.Services.GetRequiredService<RemoteDeliveryIntegrationCoordinator>()
+            .EnqueueAsync(request).WaitAsync(TimeSpan.FromMinutes(2));
+        Assert.Equal(AgentStudio.Git.MergeIntoIntegrationOutcome.Conflict, result.Outcome);
+        AssertLane(arranged.TaskId, TaskStates.Ready);
+        RemoteDeliverySettlementStore.Advance(CardFolder(arranged.TaskId),
+            RemoteDeliverySettlementStage.IntegrationSettled, result.Outcome.ToString(),
+            RemoteDeliveryParkReason.For(result));
+        var refused = new RefusedOnce(factory.Services.GetRequiredService<IMonolithOrchestrationApplier>());
         var journal = new MonolithOrchestrationStore(Path.Combine(_workspace, "retried-occurrences"),
-            factory.Services.GetRequiredService<TimeProvider>(), interrupted);
+            factory.Services.GetRequiredService<TimeProvider>(), refused);
         var run = journal.Create(ProjectName, arranged.TaskId, arranged.Stage, arranged.Payload,
             arranged.IdempotencyKey, arranged.SourceState, arranged.AuthorityAttemptId, arranged.Fence,
             arranged.Epoch, profile: "ReviewReport");
@@ -144,12 +160,20 @@ public sealed partial class BatchGatePilotServiceTests
         var claim = journal.Claim(new Contract.OrchestrationClaimRequest("engine", "instance", [arranged.Stage]));
         var completion = new Contract.CompleteOrchestrationStageRequest("engine", "instance", claim.Lease!.LeaseId,
             claim.Lease.Fence, arranged.Stage, arranged.StageAction, arranged.Output, "complete:" + run.RunId);
-
-        var refused = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            journal.CompleteAsync(run.RunId, completion, CancellationToken.None));
-        Assert.Equal("orchestration-source-state-mismatch", refused.Message);
-        AssertLane(arranged.TaskId, TaskStates.Ready);
+        Assert.Equal("orchestration-source-state-mismatch", (await Assert.ThrowsAsync<InvalidOperationException>(
+            () => journal.CompleteAsync(run.RunId, completion, CancellationToken.None))).Message);
         Assert.Equal("applying", journal.Get(run.RunId)!.Status);
+
+        var probe = factory.Services.GetRequiredService<EngineApplierEffectProbe>();
+        var unapplied = probe.Check(journal.GetOccurrence(run.RunId)!);
+        Assert.Equal((EngineEffectBasis.Row, (string?)null), (unapplied.Basis, unapplied.WaitingOn));
+        Assert.Equal([nameof(EngineApplierEffectKind.DecisionReceipt)], unapplied.Missing);
+        var roundAt = Assert.IsType<DateTime>(unapplied.IntegrationEndedAt);
+        var observedAt = roundAt.AddHours(-3);
+        Assert.Equal(ApplierCanaryVerdict.Waiting, ApplierCanaryPolicy.Judge(unapplied, observedAt,
+            roundAt.AddMinutes(1), TimeSpan.FromMinutes(2), TimeSpan.FromHours(3)));
+        Assert.Equal(ApplierCanaryVerdict.Missing, ApplierCanaryPolicy.Judge(unapplied, observedAt,
+            roundAt.AddMinutes(2), TimeSpan.FromMinutes(2), TimeSpan.FromHours(3)));
 
         await journal.RecoverApplyingAsync(CancellationToken.None).WaitAsync(TimeSpan.FromMinutes(2));
 
@@ -158,9 +182,70 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal(RemoteDeliverySettlementStage.LaneSettled,
             RemoteDeliverySettlementStore.Read(CardFolder(arranged.TaskId))!.Stage);
         AssertLane(arranged.TaskId, TaskStates.Ready);
-        var check = factory.Services.GetRequiredService<EngineApplierEffectProbe>().Check(journal.GetOccurrence(run.RunId)!);
+        var check = probe.Check(journal.GetOccurrence(run.RunId)!);
         Assert.True(check.Verified, check.Evidence);
         Assert.Equal(EngineEffectBasis.AgentRoundHandoff, check.Basis);
+    }
+
+    /// <summary>
+    /// The review of 20.10.2026: two reviews of one delivery share its
+    /// automatic agent rounds (MaxAutomaticAgentRounds = 1). The second
+    /// review's integration conflicts again with the budget spent, so the
+    /// round service leaves the card in Auto Review for Human Review. The
+    /// first review's round row names the same SHA, but it is older than this
+    /// review's enqueue, and the result spent the budget: the applier moves
+    /// the card to Human Review with its park verdict.
+    /// </summary>
+    [Fact]
+    public async Task Applier_parks_a_second_review_whose_integration_conflicts_with_the_round_budget_spent()
+    {
+        // The guarded delivery chain would refuse the park of the fixture's
+        // unintegrated result, as for the other Human Review contract cases.
+        using var factory = BuildFactory(authorityOnTestClock: true, configuration: UnguardedDeliveryChain,
+            testServices: ConflictingIntegration);
+        var (occurrence, arranged, _, lane, owed) = await ApplyContractCaseAsync(factory, "ReviewReport",
+            nameof(TransitionAction.AcceptAndIntegrate), BudgetSpentVariant, SeedEarlierRound);
+
+        Assert.Equal("completed", occurrence.Run.Status);
+        Assert.Equal(TaskStates.HumanReview, lane);
+        Assert.Contains(EngineApplierEffectKind.ParkVerdict, owed);
+        Assert.DoesNotContain(EngineApplierEffectKind.AgentRoundHandoff, owed);
+        foreach (var effect in owed)
+            AssertApplied(factory, effect, occurrence, arranged, lane, nameof(TransitionAction.AcceptAndIntegrate), null);
+        var journal = RemoteDeliverySettlementStore.Read(CardFolder(arranged.TaskId))!;
+        Assert.Equal(nameof(AgentStudio.Git.MergeIntoIntegrationOutcome.Conflict), journal.IntegrationOutcome);
+        var check = factory.Services.GetRequiredService<EngineApplierEffectProbe>().Check(occurrence);
+        Assert.True(check.Verified, check.Evidence);
+        Assert.Equal(EngineEffectBasis.Row, check.Basis);
+    }
+
+    /// <summary>
+    /// A retry after a restart: the first pass wrote this review's journal and
+    /// stopped before the integration; an earlier review of the same delivery
+    /// left its round row. The card is still in Auto Review, so the retry
+    /// integrates instead of reading the stale row as its handoff.
+    /// </summary>
+    [Fact]
+    public async Task Applier_retry_with_a_stale_round_row_integrates()
+    {
+        using var factory = ContractFactory(nameof(TransitionAction.AcceptAndIntegrate), "");
+        var (occurrence, arranged, _, lane, owed) = await ApplyContractCaseAsync(factory, "ReviewReport",
+            nameof(TransitionAction.AcceptAndIntegrate), "", (seeded, decision) =>
+            {
+                SeedEarlierRound(seeded, decision);
+                SeedSettlementJournal(seeded, decision, IntegrationRequest(seeded, decision));
+            });
+
+        Assert.Equal("completed", occurrence.Run.Status);
+        foreach (var effect in owed)
+            AssertApplied(factory, effect, occurrence, arranged, lane, nameof(TransitionAction.AcceptAndIntegrate), null);
+        AssertLane(arranged.TaskId, TaskStates.HumanReview);
+        var journal = RemoteDeliverySettlementStore.Read(CardFolder(arranged.TaskId))!;
+        Assert.NotEqual(nameof(AgentStudio.Git.MergeIntoIntegrationOutcome.Conflict), journal.IntegrationOutcome);
+        Assert.Contains(IntegrationLaneEvents.Read(CardFolder(arranged.TaskId)), entry => entry.Kind == "dequeued");
+        var check = factory.Services.GetRequiredService<EngineApplierEffectProbe>().Check(occurrence);
+        Assert.True(check.Verified, check.Evidence);
+        Assert.Equal(EngineEffectBasis.Row, check.Basis);
     }
 
     /// <summary>
@@ -223,13 +308,18 @@ public sealed partial class BatchGatePilotServiceTests
     private sealed record AppliedCase(MonolithOrchestrationOccurrence Occurrence, ArrangedDecision Arranged,
         string? Handoff, string? Lane, IReadOnlyList<EngineApplierEffectKind> Owed);
 
-    /// <summary>Arranges one contract case and completes its occurrence through the real applier.</summary>
+    /// <summary>
+    /// Arranges one contract case, lets <paramref name="seed"/> add the state
+    /// an earlier pass or review left, and completes the occurrence through the
+    /// real applier.
+    /// </summary>
     private async Task<AppliedCase> ApplyContractCaseAsync(WebApplicationFactory<Program> factory, string profile,
-        string action, string variant)
+        string action, string variant, Action<WebApplicationFactory<Program>, ArrangedDecision>? seed = null)
     {
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 4);
         var arranged = Arrange(factory, profile, action, variant);
+        seed?.Invoke(factory, arranged);
         var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
 
         var run = orchestration.Create(ProjectName, arranged.TaskId, arranged.Stage, arranged.Payload,
@@ -518,6 +608,54 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     /// <summary>
+    /// The review of 20.10.2026: an integration that ends near the apply
+    /// deadline (here with the batch gate's publication) leaves the applier one
+    /// effect window to complete, counted from the terminal lane row; only
+    /// then is the unapplied decision missing.
+    /// </summary>
+    [Fact]
+    public async Task Applier_canary_gives_an_integration_that_ended_near_the_deadline_one_effect_window()
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true, configuration: OneMatchThreshold);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 8);
+        var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
+        StartReviewReportCanary(factory);
+        var held = new HeldApplier(factory.Services.GetRequiredService<IMonolithOrchestrationApplier>());
+        var journal = new MonolithOrchestrationStore(Path.Combine(_workspace, "ended-occurrences"),
+            factory.Services.GetRequiredService<TimeProvider>(), held, rollout);
+        var canary = ActivatorUtilities.CreateInstance<EngineApplierCanaryService>(factory.Services, journal);
+        await journal.RecoverApplyingAsync(CancellationToken.None);
+        var accepted = SettleDeferredReview(factory, "DOC-ENDED", "docs/ended.md");
+        var (run, claim) = PrepareReviewDecision(journal, accepted);
+        using var stop = new CancellationTokenSource();
+        var deciding = journal.CompleteAsync(run.RunId,
+            ReviewCompletion(claim, accepted, TransitionAction.AcceptAndIntegrate), stop.Token);
+        var folder = CardFolder(accepted.Member.Key);
+        IntegrationLaneEvents.Append(folder, ProjectName, accepted.Member.Key, "enqueued", sequence: 9,
+            atUtc: _clock);
+        IntegrationLaneEvents.Append(folder, ProjectName, accepted.Member.Key, "dequeued", sequence: 9,
+            atUtc: _clock);
+        Assert.Equal(0, canary.CheckOnce());
+
+        _clock = _clock.Add(rollout.ApplyDeadline - TimeSpan.FromMinutes(1));
+        var endedAt = _clock;
+        IntegrationLaneEvents.Append(folder, ProjectName, accepted.Member.Key, "published", sequence: 9,
+            atUtc: endedAt);
+        _clock = _clock.AddMinutes(1);
+        Assert.Equal(0, canary.CheckOnce());
+        var waiting = Assert.Single(ReviewReport(rollout).Canary!.Observations);
+        Assert.Equal(("pending", (string?)null), (waiting.Status, waiting.LastCheck!.WaitingOn));
+        Assert.Equal(endedAt.UtcDateTime, waiting.LastCheck.IntegrationEndedAt);
+
+        _clock = endedAt.Add(rollout.CanaryWindow);
+        Assert.Equal(1, canary.CheckOnce());
+        Assert.Equal("rolled-back", ReviewReport(rollout).State);
+        await stop.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => deciding);
+    }
+
+    /// <summary>
     /// Restart safety: after a start the canary judges nothing before the
     /// recovery service ran one pass over the applying occurrences, and the
     /// apply deadline counts from the start, so downtime is left out.
@@ -542,10 +680,13 @@ public sealed partial class BatchGatePilotServiceTests
         var canary = ActivatorUtilities.CreateInstance<EngineApplierCanaryService>(factory.Services, journal);
         Assert.Equal(0, canary.CheckOnce());
         Assert.Null(Assert.Single(ReviewReport(rollout).Canary!.Observations).LastCheck);
+        // The status shows the wait, so a recovery loop that never finishes a pass is visible.
+        Assert.True(ReviewReport(rollout).Canary!.AwaitingRecoveryPass);
 
         await Assert.ThrowsAsync<AggregateException>(() => journal.RecoverApplyingAsync(CancellationToken.None));
         Assert.Equal(0, canary.CheckOnce());
         Assert.Equal("pending", Assert.Single(ReviewReport(rollout).Canary!.Observations).Status);
+        Assert.False(ReviewReport(rollout).Canary!.AwaitingRecoveryPass);
 
         _clock = _clock.Add(rollout.ApplyDeadline);
         Assert.Equal(1, canary.CheckOnce());
@@ -611,18 +752,83 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.True(check.Verified, check.Evidence);
     }
 
-    /// <summary>The real applier, then the failure the applier before the fix left, once.</summary>
-    private sealed class InterruptedOnce(IMonolithOrchestrationApplier inner) : IMonolithOrchestrationApplier
+    /// <summary>The refusal the applier before the fix threw on a seeded state, once; then the real applier.</summary>
+    private sealed class RefusedOnce(IMonolithOrchestrationApplier inner) : IMonolithOrchestrationApplier
     {
         private int _calls;
 
-        public async Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
+        public Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
             Contract.CompleteOrchestrationStageRequest completion, CancellationToken ct)
+            => Interlocked.Increment(ref _calls) == 1
+                ? throw new InvalidOperationException("orchestration-source-state-mismatch")
+                : inner.ApplyAsync(occurrence, completion, ct);
+    }
+
+    /// <summary>The integration request the applier builds for the arranged review.</summary>
+    private RemoteDeliveryIntegrationRequest IntegrationRequest(WebApplicationFactory<Program> factory,
+        ArrangedDecision arranged)
+    {
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.InvalidateCache();
+        var task = scanner.FindJob(arranged.TaskId, _watchPath)!;
+        var project = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .Get(task.ProjectName);
+        var review = factory.Services.GetRequiredService<AttemptAuthorityService>()
+            .GetReview(arranged.AuthorityAttemptId)!;
+        return new RemoteDeliveryIntegrationRequest(task.ProjectName, task.Id, task.FolderPath, task.WatchPath,
+            TaskIntegrationBranch.Resolve(task, project.IntegrationBranch), project.IntegrationStrategy,
+            PipelineTypes.Resolve(task), _clock, review.AttemptId, review.Subject.ExpectedResultSha);
+    }
+
+    /// <summary>The settlement journal the applier's first pass writes for this review.</summary>
+    private void SeedSettlementJournal(WebApplicationFactory<Program> factory, ArrangedDecision arranged,
+        RemoteDeliveryIntegrationRequest request)
+        => RemoteDeliverySettlementStore.Write(CardFolder(arranged.TaskId), new RemoteDeliverySettlementRecord
         {
-            await inner.ApplyAsync(occurrence, completion, ct);
-            if (Interlocked.Increment(ref _calls) == 1)
-                throw new InvalidOperationException("orchestration-source-state-mismatch");
-        }
+            TaskKey = arranged.TaskId,
+            ReviewAttemptId = arranged.AuthorityAttemptId,
+            JournalRequired = true,
+            Outcome = "Pass",
+            ShouldIntegrate = true,
+            BuildTestGate = "Passed",
+            GateReason = "Engine decided AcceptAndIntegrate.",
+            IntegrationBranch = request.IntegrationBranch,
+            IntegrationStrategy = request.IntegrationStrategy,
+            PipelineType = request.PipelineType,
+            DeliveredAtUtc = request.DeliveredAtUtc,
+            Stage = RemoteDeliverySettlementStage.IntegrationPending,
+            RecordedAtUtc = _clock,
+        });
+
+    /// <summary>
+    /// An earlier review of the same delivery: its integration was enqueued,
+    /// conflicted, and the round service spent the delivery's one automatic
+    /// round. Both rows are a minute older than anything this review writes.
+    /// </summary>
+    private void SeedEarlierRound(WebApplicationFactory<Program> factory, ArrangedDecision arranged)
+    {
+        var folder = CardFolder(arranged.TaskId);
+        var subject = ReviewSubjectStore.Read(folder)!;
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-1);
+        IntegrationLaneEvents.Append(folder, ProjectName, arranged.TaskId, "enqueued", sequence: 1,
+            atUtc: earlier.AddSeconds(-1));
+        Assert.True(factory.Services.GetRequiredService<TimelineLog>().Append(folder, new TimelineEvent
+        {
+            Ts = earlier.UtcDateTime,
+            Kind = TimelineEventKinds.IntegrationRecoveryQueued,
+            Actor = TimelineActors.System,
+            Summary = "Automatically started a new agent round to preserve unambiguous delivery SHA attribution.",
+            Details = new Dictionary<string, string>
+            {
+                ["automatic"] = "true",
+                [IntegrationRecoveryBudget.DeliveryChainIdKey] = IntegrationRecoveryBudget.DeliveryChainId(subject),
+                ["resultSha"] = subject.ResultSha,
+                ["reason"] = IntegrationAgentRoundService.AttributionAmbiguousReason,
+                ["mode"] = ContinueModes.Steer,
+                ["budgetUsed"] = "1",
+                ["budgetLimit"] = "1",
+            },
+        }));
     }
 
     /// <summary>An applier that cannot apply, as one that is down or broken.</summary>
@@ -803,7 +1009,7 @@ public sealed partial class BatchGatePilotServiceTests
 
     /// <summary>
     /// A settled review of a card in Auto Review, as the review report leaves
-    /// it. The agent round variant carries the remote result ref, which the
+    /// it. The agent round variants carry the remote result ref, which the
     /// round service needs to queue its steer round.
     /// </summary>
     private ArrangedDecision ArrangeReview(WebApplicationFactory<Program> factory, string profile,
@@ -812,7 +1018,7 @@ public sealed partial class BatchGatePilotServiceTests
         var infrastructure = action == TransitionAction.ReviewInfrastructureRetry;
         var member = SeedMember(factory, ContractKey, "docs/applier.md", settleReview: false,
             deferredPlan: action == TransitionAction.DeferToBatch);
-        if (variant == AgentRoundVariant)
+        if (variant is AgentRoundVariant or BudgetSpentVariant)
         {
             var folder = CardFolder(ContractKey);
             ReviewSubjectStore.Write(folder, ReviewSubjectStore.Read(folder)! with

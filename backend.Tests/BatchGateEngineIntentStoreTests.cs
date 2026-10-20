@@ -71,5 +71,27 @@ public sealed class BatchGateEngineIntentStoreTests : IDisposable
         Assert.NotNull(store.ReadEngineIntentReceipt("orch_new"));
     }
 
+    /// <summary>
+    /// An intent that cannot be read names no plan a receipt could record, so
+    /// the tick does not delete it: it stays for an operator, and the tick
+    /// plans anew.
+    /// </summary>
+    [Fact]
+    public void An_unreadable_claimed_intent_is_kept_not_deleted()
+    {
+        var store = new BatchGateStore(_root);
+        store.WriteEngineIntent(new BatchGateEngineIntent("orch_torn", Scope, Plan(), At));
+        var folder = Path.Combine(_root, "engine-intents");
+        File.WriteAllText(Assert.Single(Directory.GetFiles(folder)), "{\"runId\": \"orch_torn\", \"deci");
+
+        Assert.Null(store.TakeEngineIntent(Scope));
+
+        Assert.Null(store.ReadEngineIntent(Scope));
+        var kept = Assert.Single(Directory.GetFiles(folder));
+        Assert.EndsWith(".unreadable", kept, StringComparison.Ordinal);
+        Assert.StartsWith("{\"runId\": \"orch_torn\"", File.ReadAllText(kept), StringComparison.Ordinal);
+        Assert.Null(store.ReadEngineIntentReceipt("orch_torn"));
+    }
+
     private static BatchPlanDecision Plan() => new("wait", "Members are still arriving.", null, [], 4, []);
 }

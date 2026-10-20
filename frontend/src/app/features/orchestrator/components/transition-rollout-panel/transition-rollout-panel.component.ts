@@ -70,6 +70,7 @@ interface CanaryStatus {
   instanceId: string;
   passedOnThisInstance: boolean;
   override?: boolean;
+  awaitingRecoveryPass?: boolean;
   observations?: { status: 'pending' | 'verified' | 'not-counted' | 'missing' }[];
 }
 
@@ -151,7 +152,8 @@ export class TransitionRolloutPanelComponent implements OnInit {
     const skipped = canary.observations?.filter(item => item.status === 'not-counted').length ?? 0;
     const here = canary.passedOnThisInstance ? ' · passed on this instance' : '';
     return `${canary.status} · ${canary.verified} / ${canary.required} decisions applied`
-      + `${skipped ? ` · ${skipped} not counted` : ''}${here}${canary.override ? ' · operator override' : ''}`;
+      + `${skipped ? ` · ${skipped} not counted` : ''}${here}${canary.override ? ' · operator override' : ''}`
+      + `${canary.awaitingRecoveryPass ? ' · awaiting recovery pass' : ''}`;
   }
 
   effectText(check: EffectCheck): string {

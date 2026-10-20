@@ -16,7 +16,7 @@ test('transition profiles show comparison state and require an operator reason',
           applierContract: { status: 'covered', actions: ['CreateReview', 'ReturnToReady', 'SalvageContinuation',
             'Escalate', 'HumanReview', 'Continue'], uncovered: [] },
           canary: { status: 'watching', required: 3, verified: 1, instanceId: 'studio/abc123',
-            passedOnThisInstance: false,
+            passedOnThisInstance: false, awaitingRecoveryPass: true,
             observations: [{ status: 'verified' }, { status: 'not-counted' }, { status: 'pending' }] },
           lastEffectCheck: { occurrence: 'orch_coding', action: 'CreateReview', verified: false,
             missing: ['DecisionReceipt'], evidence: 'The occurrence is applying.', checkedAt: '2026-10-19T08:00:00Z',
@@ -76,6 +76,7 @@ test('transition profiles show comparison state and require an operator reason',
   await expect(panel.getByTestId('applier-contract-CodingCompletion')).toContainText('covered · 6 actions');
   await expect(panel.getByTestId('applier-canary-CodingCompletion')).toContainText('watching · 1 / 3');
   await expect(panel.getByTestId('applier-canary-CodingCompletion')).toContainText('1 not counted');
+  await expect(panel.getByTestId('applier-canary-CodingCompletion')).toContainText('awaiting recovery pass');
   // A long integration is not a missing effect while the applier still runs.
   await expect(panel.getByTestId('effect-check-CodingCompletion')).toContainText('CreateReview · applier still running');
   await expect(panel.getByTestId('applier-canary-GateResult')).toContainText('passed on this instance');

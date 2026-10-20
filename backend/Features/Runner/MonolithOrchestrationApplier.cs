@@ -115,10 +115,11 @@ public sealed class MonolithOrchestrationApplier(
 
         var target = MonolithTransitionAdapter.TransitionDecisionPolicyTargetLane(decision?.Action,
             TargetFromPayload(occurrence.Run.PayloadJson), completion.Action);
-        // AGT-3218: a retry after the integration started an agent round finds
-        // the card in Ready; the handoff is the decision's effect, not a mismatch.
+        // AGT-3218: a retry after this review's integration started an agent
+        // round finds the card in Ready; the handoff is the decision's effect,
+        // not a mismatch. A card still in Auto Review integrates again.
         if (decision?.Action is TransitionAction.AcceptAndIntegrate or TransitionAction.DegradeWithFollowUp
-            && HandedToAgentRound(task, occurrence))
+            && HandedToAgentRound(task, occurrence, firstPass: null))
         {
             SettleAgentRoundHandoff(task, occurrence);
             return;
@@ -251,7 +252,7 @@ public sealed class MonolithOrchestrationApplier(
                 RemoteDeliverySettlementStore.Advance(task.FolderPath,
                     RemoteDeliverySettlementStage.IntegrationSettled,
                     result.Outcome.ToString(), RemoteDeliveryParkReason.For(result));
-                if (HandedToAgentRound(task, occurrence))
+                if (HandedToAgentRound(task, occurrence, result))
                 {
                     SettleAgentRoundHandoff(task, occurrence);
                     return;
@@ -382,10 +383,11 @@ public sealed class MonolithOrchestrationApplier(
         scanner.InvalidateCache();
     }
 
-    private bool HandedToAgentRound(AgentStudio.Shared.TaskInfo task, MonolithOrchestrationOccurrence occurrence)
+    private bool HandedToAgentRound(AgentStudio.Shared.TaskInfo task, MonolithOrchestrationOccurrence occurrence,
+        AgentStudio.Git.MergeIntoIntegrationResult? firstPass)
         => authority.GetReview(occurrence.AuthorityAttemptId) is { } review
-            && IntegrationAgentRoundHandoff.Find(timeline, task.FolderPath, review.AttemptId,
-                review.Subject.ExpectedResultSha) is not null;
+            && IntegrationAgentRoundHandoff.Find(timeline, task, occurrence.ExpectedSourceState, review.AttemptId,
+                review.Subject.ExpectedResultSha, firstPass) is not null;
 
     /// <summary>
     /// The agent round owns the card now: the delivery left Auto Review, so the

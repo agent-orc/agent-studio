@@ -43,9 +43,13 @@ public sealed record OrchestrationCanaryObservation(string Occurrence, string Ac
 /// wait that reached the apply deadline), or <c>missing</c>.
 /// </summary>
 /// <param name="Override">An operator forced the engine; a failed canary alerts but does not roll back.</param>
+/// <param name="AwaitingRecoveryPass">
+/// The canary watches but judges nothing until the recovery service finished
+/// one pass over the applying occurrences after this process started.
+/// </param>
 public sealed record OrchestrationCanaryStatus(string Status, int Required, int Verified, string InstanceId,
     DateTime StartedAt, DateTime? EndedAt, IReadOnlyList<OrchestrationCanaryObservation> Observations,
-    bool PassedOnThisInstance, bool Override = false);
+    bool PassedOnThisInstance, bool Override = false, bool AwaitingRecoveryPass = false);
 
 public sealed class OrchestrationRolloutStore
 {
@@ -80,6 +84,18 @@ public sealed class OrchestrationRolloutStore
     /// ran it, so a passed canary counts only on the same instance.
     /// </summary>
     public string InstanceId { get; }
+
+    /// <summary>
+    /// Set by the applier canary while it waits for the first recovery pass
+    /// after this process started; the canary status shows it.
+    /// </summary>
+    public bool AwaitingRecoveryPass
+    {
+        get => Volatile.Read(ref _awaitingRecoveryPass);
+        set => Volatile.Write(ref _awaitingRecoveryPass, value);
+    }
+
+    private bool _awaitingRecoveryPass;
 
     /// <summary>Engine decisions the canary watches after a switch (default 3).</summary>
     public int CanaryDecisions => Math.Clamp(_configuration.GetValue(CanaryDecisionsKey, 3), 1, 50);
@@ -345,7 +361,7 @@ public sealed class OrchestrationRolloutStore
                 ? new OrchestrationCanaryStatus(canary.Status, canary.Required,
                     canary.Observations.Count(value => value.Status == "verified"), canary.InstanceId,
                     canary.StartedAt, canary.EndedAt, canary.Observations.ToArray(), PassedHere(item),
-                    canary.Override)
+                    canary.Override, canary.Status == "watching" && AwaitingRecoveryPass)
                 : null,
             item.LastEffectCheck);
 

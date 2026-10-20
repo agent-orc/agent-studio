@@ -16,7 +16,8 @@ public static class ApplierCanaryPolicy
     /// not count. A check that waits on something other than the applier (an
     /// integration in flight, a card missing from the snapshot) waits until the
     /// apply deadline and then does not count. An occurrence the applier has
-    /// not completed waits until the apply deadline after the observation; a
+    /// not completed waits until the apply deadline after the observation, and
+    /// at least one effect window after its integration ended; a
     /// completed one waits for its effects for the effect window after
     /// CompletedAt, or for the apply deadline when only an effect of a later
     /// pass is missing. Every span starts no earlier than
@@ -36,7 +37,12 @@ public static class ApplierCanaryPolicy
             return now - from >= applyDeadline ? ApplierCanaryVerdict.NotCounted : ApplierCanaryVerdict.Waiting;
         }
         if (check.CompletedAt is not { } completedAt)
-            return now - observed >= applyDeadline ? ApplierCanaryVerdict.Missing : ApplierCanaryVerdict.Waiting;
+        {
+            var ended = check.IntegrationEndedAt is { } at && at > started ? at : started;
+            return now - observed >= applyDeadline
+                && (check.IntegrationEndedAt is null || now - ended >= effectWindow)
+                ? ApplierCanaryVerdict.Missing : ApplierCanaryVerdict.Waiting;
+        }
         var allowed = check.AwaitingDownstream ? applyDeadline : effectWindow;
         var effectsFrom = completedAt > started ? completedAt : started;
         return now - effectsFrom >= allowed ? ApplierCanaryVerdict.Missing : ApplierCanaryVerdict.Waiting;
@@ -90,7 +96,10 @@ public sealed class EngineApplierCanaryService(
     /// </summary>
     internal int CheckOnce()
     {
-        if (store.ApplyingRecoveryPasses <= _recoveryPassesAtStart) return 0;
+        // The canary status shows the wait, so a recovery loop that never
+        // finishes a pass is visible instead of a canary that never judges.
+        rollout.AwaitingRecoveryPass = store.ApplyingRecoveryPasses <= _recoveryPassesAtStart;
+        if (rollout.AwaitingRecoveryPass) return 0;
         var failed = 0;
         foreach (var (profile, observation) in rollout.PendingCanaryObservations())
         {

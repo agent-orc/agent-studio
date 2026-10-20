@@ -55,7 +55,9 @@ public sealed partial class BatchGateStore
 
     /// <summary>
     /// Removes and returns the scope's intent; the caller records what it did
-    /// with it. The rename claims exactly the file it reads.
+    /// with it. The rename claims exactly the file it reads. An intent that
+    /// cannot be read names no plan a receipt could record, so it stays as an
+    /// <c>.unreadable</c> file for an operator and the tick plans anew.
     /// </summary>
     public BatchGateEngineIntent? TakeEngineIntent(string taskId)
     {
@@ -65,8 +67,16 @@ public sealed partial class BatchGateStore
             if (!File.Exists(path)) return null;
             var claimed = path + "." + Guid.NewGuid().ToString("N") + ".claimed";
             File.Move(path, claimed);
-            try { return Read<BatchGateEngineIntent>(claimed); }
-            finally { File.Delete(claimed); }
+            BatchGateEngineIntent intent;
+            try { intent = Read<BatchGateEngineIntent>(claimed); }
+            catch (Exception exception) when (exception is JsonException or InvalidDataException)
+            {
+                File.Move(claimed, Path.ChangeExtension(claimed, ".unreadable"));
+                SilentCatch.Note(exception, "BatchGateStore: unreadable engine intent kept for an operator");
+                return null;
+            }
+            File.Delete(claimed);
+            return intent;
         }
     }
 
