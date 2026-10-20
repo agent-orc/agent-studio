@@ -40,8 +40,7 @@ public static class DoraMetrics
         }
         var leads = new List<double>();
         var arrivedCards = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var run in history.Where(item => item.Trigger is DeploymentTriggers.Deploy or DeploymentTriggers.Redeploy
-                     && item.State == DeploymentStates.Succeeded))
+        foreach (var run in history.Where(item => item.State == DeploymentStates.Succeeded))
         {
             if (!releaseById.TryGetValue(run.ReleaseId, out var release)) continue;
             foreach (var key in release.CardKeys)

@@ -44,8 +44,8 @@ public sealed class ProjectOperationsService(DeployService deploy, TaskScannerSe
         IReadOnlyList<Deployment> deployments, IReadOnlyDictionary<string, Release> releases,
         DateTimeOffset since, DateTimeOffset until) => deployments
         .Where(run => run.EnvironmentId == environmentId && run.State == DeploymentStates.Succeeded
-            && run.Trigger is DeploymentTriggers.Deploy or DeploymentTriggers.Redeploy
-                or DeploymentTriggers.Rollback or DeploymentTriggers.AutomaticRollback
+            && run.Trigger is (DeploymentTriggers.Deploy or DeploymentTriggers.Redeploy
+                or DeploymentTriggers.Rollback or DeploymentTriggers.AutomaticRollback)
             && run.FinishedAtUtc >= since.UtcDateTime && run.FinishedAtUtc <= until.UtcDateTime)
         .OrderByDescending(run => run.FinishedAtUtc).ThenByDescending(run => run.Id, StringComparer.Ordinal)
         .Select(run => new OperationsMarker(run.Id, run.ReleaseId,

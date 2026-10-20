@@ -80,6 +80,19 @@ public sealed class ProjectOperationsMetricsTests
     }
 
     [Fact]
+    public void A_successful_rollback_can_be_the_first_recorded_production_arrival_of_a_card()
+    {
+        var rollback = Run("prod", "old", DeploymentStates.Succeeded, -12) with
+        { Trigger = DeploymentTriggers.Rollback };
+        var result = DoraMetrics.Calculate([Production], [Release("old", "CARD-OLD")], [rollback],
+            new Dictionary<string, DateTime> { ["CARD-OLD"] = End.AddDays(-2).UtcDateTime }, End.AddDays(-30), End);
+
+        Assert.Equal(0, result.SuccessfulProductionDeploys);
+        Assert.Equal(1, result.CardsMeasured);
+        Assert.Equal(36, result.MedianCardToProductionHours);
+    }
+
+    [Fact]
     public void Markers_include_only_completed_successful_changes_at_completion_time()
     {
         var completed = Run("prod", "new", DeploymentStates.Succeeded, -2) with
