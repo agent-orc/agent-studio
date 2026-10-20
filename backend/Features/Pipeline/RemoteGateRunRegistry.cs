@@ -92,16 +92,34 @@ internal sealed class RemoteGateRunRegistry
         lock (Locks.GetOrAdd(path, _ => new object()))
         {
             if (File.Exists(path))
-            {
-                var existing = File.ReadAllText(path).Trim();
-                if (existing.Length is >= 16 and <= 64 && existing.All(Uri.IsHexDigit)) return existing;
-            }
+                return ReadInstallationId(path);
             var id = Guid.NewGuid().ToString("N");
-            var temporary = path + ".tmp";
-            File.WriteAllText(temporary, id);
-            File.Move(temporary, path, overwrite: true);
-            return id;
+            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write(id);
+                    writer.Flush();
+                    stream.Flush(flushToDisk: true);
+                }
+                try { File.Move(temporary, path, overwrite: false); }
+                catch (IOException) when (File.Exists(path)) { return ReadInstallationId(path); }
+                return ReadInstallationId(path);
+            }
+            finally
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
         }
+    }
+
+    private static string ReadInstallationId(string path)
+    {
+        var id = File.ReadAllText(path).Trim();
+        if (id.Length is >= 16 and <= 64 && id.All(Uri.IsHexDigit)) return id;
+        throw new InvalidDataException("Remote gate installation ID is invalid.");
     }
 }
 

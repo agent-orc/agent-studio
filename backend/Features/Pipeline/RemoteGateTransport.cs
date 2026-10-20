@@ -334,8 +334,14 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         string? installationDirectory = null, string? dataDirectory = null)
     {
         var data = dataDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var root = string.IsNullOrWhiteSpace(data) ? AppContext.BaseDirectory : data;
-        var installation = Path.GetFullPath(installationDirectory ?? AppContext.BaseDirectory);
+        var root = string.IsNullOrWhiteSpace(data) ? Environment.CurrentDirectory : data;
+        var location = configuration["TaskRepository"];
+        if (string.IsNullOrWhiteSpace(location))
+            location = configuration["Connectivity:ManifestPath"];
+        // Service working directories and workspace paths survive a release switch;
+        // the assembly directory commonly sits below a versioned release folder.
+        var installation = Path.GetFullPath(string.IsNullOrWhiteSpace(location)
+            ? installationDirectory ?? Environment.CurrentDirectory : location);
         var scope = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(installation))).ToLowerInvariant();
         var installationId = configuration["RemoteGate:InstallationId"]?.Trim();
         if (string.IsNullOrEmpty(installationId)

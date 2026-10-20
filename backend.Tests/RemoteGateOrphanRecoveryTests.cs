@@ -1,5 +1,6 @@
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
+using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -85,31 +86,105 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
     }
 
     [Fact]
-    public async Task Default_identity_path_is_unique_per_installation_under_one_account()
+    public async Task New_release_recovers_prior_records_and_separate_installation_stays_isolated()
     {
-        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
         var data = Path.Combine(_root, "shared-account");
-        var firstPath = Path.Combine(_root, "installation-a");
-        var secondPath = Path.Combine(_root, "installation-b");
-        var first = RemoteGateTransport.CreateDefaultRegistry(_clock, config, firstPath, data);
-        var reopened = RemoteGateTransport.CreateDefaultRegistry(_clock, config, firstPath, data);
-        var second = RemoteGateTransport.CreateDefaultRegistry(_clock, config, secondPath, data);
-        first.Record(new string('c', 32), "gate-a", "/srv/gates");
+        var firstConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "installation-a", "workspace")
+        }).Build();
+        var secondConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "installation-b", "workspace")
+        }).Build();
+        var oldRelease = Path.Combine(_root, "installation-a", "releases", "v1", "api");
+        var newRelease = Path.Combine(_root, "installation-a", "releases", "v2", "api");
+        var first = RemoteGateTransport.CreateDefaultRegistry(_clock, firstConfig, oldRelease, data);
+        var reopened = RemoteGateTransport.CreateDefaultRegistry(_clock, firstConfig, newRelease, data);
+        var second = RemoteGateTransport.CreateDefaultRegistry(_clock, secondConfig, newRelease, data);
+        var record = first.Record(new string('c', 32), "gate-a", "/srv/gates");
 
         Assert.Equal(first.InstallationId, reopened.InstallationId);
         Assert.NotEqual(first.InstallationId, second.InstallationId);
         Assert.Single(reopened.ReadAll());
         Assert.Empty(second.ReadAll());
-        var calls = 0;
+        var commands = new List<string>();
         Task Run(string fileName, IReadOnlyList<string> args, string cwd, TimeSpan timeout,
             CancellationToken ct, Action<string>? output)
         {
-            calls++;
+            commands.Add(args.Last());
             return Task.CompletedTask;
         }
         await Transport(second, Run).CancelOrphanedRunsAsync();
-        Assert.Equal(0, calls);
+        Assert.Empty(commands);
         Assert.Single(reopened.ReadAll());
+        await Transport(reopened, Run).CancelOrphanedRunsAsync();
+        Assert.Contains(commands, command => command.Contains(record.RunId + "/cancel", StringComparison.Ordinal));
+        Assert.Empty(reopened.ReadAll());
+    }
+
+    [Fact]
+    public async Task Concurrent_processes_publish_and_read_one_installation_id()
+    {
+        var root = Path.Combine(_root, "race");
+        Directory.CreateDirectory(root);
+        var project = FindTestProject();
+        using var first = StartContender(project, root, "first");
+        using var second = StartContender(project, root, "second");
+        try
+        {
+            Assert.True(SpinWait.SpinUntil(() => File.Exists(Path.Combine(root, "first.ready"))
+                && File.Exists(Path.Combine(root, "second.ready")), TimeSpan.FromSeconds(30)));
+            File.WriteAllText(Path.Combine(root, "start"), string.Empty);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            await Task.WhenAll(first.WaitForExitAsync(deadline.Token), second.WaitForExitAsync(deadline.Token));
+            Assert.Equal(0, first.ExitCode);
+            Assert.Equal(0, second.ExitCode);
+            var persisted = File.ReadAllText(Path.Combine(root, "installation-id"));
+            Assert.Equal(persisted, File.ReadAllText(Path.Combine(root, "first.id")));
+            Assert.Equal(persisted, File.ReadAllText(Path.Combine(root, "second.id")));
+            Assert.Empty(Directory.EnumerateFiles(root, "*.tmp"));
+        }
+        finally
+        {
+            if (!first.HasExited) first.Kill(entireProcessTree: true);
+            if (!second.HasExited) second.Kill(entireProcessTree: true);
+        }
+    }
+
+    [Fact]
+    public void Installation_id_process_contender()
+    {
+        var root = Environment.GetEnvironmentVariable("AGT3237_REGISTRY_RACE_ROOT");
+        var participant = Environment.GetEnvironmentVariable("AGT3237_REGISTRY_RACE_PARTICIPANT");
+        if (root is null || participant is null) return;
+        File.WriteAllText(Path.Combine(root, participant + ".ready"), string.Empty);
+        Assert.True(SpinWait.SpinUntil(() => File.Exists(Path.Combine(root, "start")), TimeSpan.FromSeconds(30)));
+        var registry = new RemoteGateRunRegistry(root, _clock);
+        File.WriteAllText(Path.Combine(root, participant + ".id"), registry.InstallationId);
+    }
+
+    private static string FindTestProject()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(directory.FullName, "OrchestratorApi.Tests.csproj");
+            if (File.Exists(candidate)) return candidate;
+            directory = directory.Parent;
+        }
+        throw new FileNotFoundException("Backend test project was not found.");
+    }
+
+    private static Process StartContender(string project, string root, string participant)
+    {
+        var start = new ProcessStartInfo("dotnet") { CreateNoWindow = true, UseShellExecute = false };
+        foreach (var argument in new[] { "test", project, "--no-build", "--no-restore", "--filter",
+                     "FullyQualifiedName~RemoteGateOrphanRecoveryTests.Installation_id_process_contender" })
+            start.ArgumentList.Add(argument);
+        start.Environment["AGT3237_REGISTRY_RACE_ROOT"] = root;
+        start.Environment["AGT3237_REGISTRY_RACE_PARTICIPANT"] = participant;
+        return Process.Start(start) ?? throw new InvalidOperationException("Unable to start registry contender.");
     }
 
     [Fact]
