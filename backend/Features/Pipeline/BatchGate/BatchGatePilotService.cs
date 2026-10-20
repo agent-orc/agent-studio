@@ -1970,7 +1970,12 @@ public sealed partial class BatchGatePilotService
         var evidence = Path.Combine(TaskPaths.LogsDir(task.FolderPath),
             $"batch-fallback-{pending.ReviewAttemptId}.json");
         var ownership = BatchGateOwnershipStore.Read(task.FolderPath);
-        if (containedInSha is null && ownership?.FallbackIntegrated == true)
+        // The first containment is this gate outcome's durable fact. A later
+        // publication fetch may see a newer tip, but changing the SHA here
+        // would change the occurrence key and strand an engine wait or count
+        // another shadow observation for the same release.
+        if (ownership?.ReviewAttemptId == pending.ReviewAttemptId
+            && ownership.ContainedInSha is not null)
             containedInSha = ownership.ContainedInSha;
         // An engine-owned decision on this generation's gate outcome, a
         // release or a red gate, holds the card until the engine applies it.
@@ -2131,14 +2136,6 @@ public sealed partial class BatchGatePilotService
                 FallbackTestedSha: gate.TestedSha,
                 FallbackEvidencePath: Path.GetFileName(evidence));
             BatchGateOwnershipStore.Write(task.FolderPath, ownership);
-            RecordFallbackGateShadowOutcome(task, pending, containedInSha);
-        }
-        else if (alreadyPassed)
-        {
-            // Recovery can find the durable gate evidence after a restart.
-            // The gate result is still a real observation even if its
-            // integration handoff has not settled yet.
-            RecordFallbackGateShadowOutcome(task, pending, containedInSha);
         }
         if (!patchEquivalent)
         {
@@ -2254,19 +2251,28 @@ public sealed partial class BatchGatePilotService
         if (mode == OrchestrationExecutionMode.Monolith) return false;
         var orchestration = _services?.GetService<MonolithOrchestrationStore>()
             ?? throw new InvalidOperationException("The orchestration authority is unavailable.");
+        // A retry after promotion must not inherit the shadow occurrence. The
+        // engine applier never claims shadow runs, so that would hold the card.
+        var prior = orchestration.GetByIdempotencyKey(outcome.OccurrenceKey);
+        var occurrenceKey = mode == OrchestrationExecutionMode.Engine && prior is not null
+            && orchestration.GetOccurrence(prior.RunId)?.Shadow == true
+                ? outcome.OccurrenceKey + ":engine" : outcome.OccurrenceKey;
+        if (occurrenceKey != outcome.OccurrenceKey && EngineDecisionPending(occurrenceKey)) return true;
         var source = _authority.GetTaskProjection(task.Key ?? task.Id).CurrentRunAttempt
             ?? throw new InvalidOperationException("The batch source attempt is unavailable.");
         // A repeated outcome of the same generation, such as a red gate that
         // ran again after its escalation failed, reuses the first occurrence:
         // its facts may differ in wording, and the generation decides once.
-        var occurrence = orchestration.GetByIdempotencyKey(outcome.OccurrenceKey)
+        var occurrence = orchestration.GetByIdempotencyKey(occurrenceKey)
             ?? orchestration.Create(task.ProjectName, task.Id,
                 AgentStudio.TaskServer.Contracts.OrchestrationStage.GateDispatch,
-                outcome.Payload(reviewAttemptId), outcome.OccurrenceKey,
+                outcome.Payload(reviewAttemptId), occurrenceKey,
                 TaskStates.AutoReview, source.AttemptId, source.LastFence,
                 source.AuthorityEpoch, profile: "GateResult",
                 shadow: mode == OrchestrationExecutionMode.Shadow);
         if (mode == OrchestrationExecutionMode.Shadow) return false;
+        if (orchestration.GetOccurrence(occurrence.RunId)?.Shadow == true)
+            throw new InvalidOperationException("The engine gate occurrence is shadow-only.");
         if (occurrence.Status is "pending" or "leased" or "applying")
             EngineDecisionWaitMarker.Write(task.FolderPath, occurrence.RunId);
         _scanner.InvalidateCache();
@@ -2302,21 +2308,6 @@ public sealed partial class BatchGatePilotService
         if (HasBatchShadowReceipt(shadow)) return;
         var decision = BatchShadowDecision(task, reviewAttemptId, outcome);
         shadow.Store.RecordMonolithDecision(shadow.RunId, decision.Action.ToString(), decision.Reason);
-    }
-
-    private void RecordFallbackGateShadowOutcome(TaskInfo task, BatchGatePendingRecord pending,
-        string? containedInSha)
-    {
-        if (_configuration is null
-            || MonolithTransitionSwitch.For(_configuration, "GateResult")
-                != OrchestrationExecutionMode.Shadow) return;
-        var outcome = new BatchGateOutcome(FallbackReleaseKey(pending, containedInSha),
-            containedInSha is null
-                ? "Per-task fallback gate passed on the immutable result SHA."
-                : "The integration branch already contained the result SHA.");
-        if (HoldForEngineBatchDecision(task, pending.ReviewAttemptId, outcome)) return;
-        RecordBatchShadowIntent(task, pending.ReviewAttemptId, outcome);
-        RecordBatchShadowOutcome(task, pending.ReviewAttemptId, outcome);
     }
 
     private static bool HasBatchShadowReceipt((MonolithOrchestrationStore Store, string RunId) shadow)
