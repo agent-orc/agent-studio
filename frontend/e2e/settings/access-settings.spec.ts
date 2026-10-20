@@ -22,6 +22,11 @@ test('owner manages access from Settings and sees each created token once', asyn
     availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
   })));
   await page.route('**/api/watch-paths', route => route.fulfill(json([])));
+  await page.route('**/api/v1/studio/board**', route => route.fulfill(json({
+    backlog: [], preparation: [], orchestratorPrep: [], failedPickup: [], codeNotComplete: [],
+    autoReview: [], ready: [], progress: [], review: [], humanReview: [], escalated: [],
+    completed: [], archive: [],
+  })));
   await page.routeWebSocket('**/hubs/v1/studio*', socket => {
     socket.onMessage(message => {
       if (typeof message === 'string' && message.includes('"protocol":"json"')) socket.send(`{}\u001e`);
