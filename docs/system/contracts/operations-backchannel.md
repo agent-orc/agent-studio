@@ -16,9 +16,10 @@ contract and outbound channel as its first delivery stage.
 
 `operations-server` and `operations-agent` are independently executable .NET
 services. Shared wire records live in `contracts/Operations.Contracts`.
-`host.inspect` version 1 is the only executable definition. It returns OS,
-architecture and processor count without starting a child process or reading a
-project filesystem. Several frontend service principals can submit commands,
+`host.inspect` version 1 returns OS, architecture and processor count without
+starting a child process or reading a project filesystem. `service.restart`
+version 1 (AGT-3207, the AI Operator's bounded restart) is the only mutating
+definition; see below. Several frontend service principals can submit commands,
 but can only read or cancel their own attempts. An agent authenticates outbound;
 it has no inbound listener and cannot use service routes or another agent's ID.
 
@@ -151,8 +152,26 @@ Each `host.inspect` lease lasts at most 30 seconds and cannot exceed its permit
 or deadline. Agent health expires after 45 seconds. Queued expiry becomes
 `timed-out`; an active expired lease becomes `unreachable`. There is no automatic
 reassignment. A changed boot cannot adopt live work. This release supports only
-read-only operations; mutating capabilities require additional containment and
-positive no-overlap evidence before they may be registered.
+read-only operations apart from `service.restart`; further mutating
+capabilities require additional containment and positive no-overlap evidence
+before they may be registered.
+
+`service.restart` takes exactly `{"service": "<name>"}`, where the name is
+lower-case letters, digits and dashes. The agent offers the operation only
+when `OPERATIONS_SERVICES_FILE` names a local allowlist
+(`{"services": {"review-daemon": {"composeFile": "/abs/compose.yaml",
+"composeService": "review"}}}`), and maps the name to that fixed compose
+target; a caller can never pass a path, command or argument. The agent first
+runs `docker compose -f <file> config --quiet` (30 seconds); an invalid
+configuration fails the attempt as `configuration-invalid` and leaves the
+container untouched. Otherwise it runs `docker compose -f <file> up -d
+--force-recreate --no-deps <service>` (120 seconds, process tree killed on
+timeout). Every child process hides its console window. The output is exactly
+`service`, `restarted` and `configurationValid`; success requires both flags.
+The agent's capacity of 1 serializes restarts, so two never overlap. The
+caller needs the `service.restart` and `maintenance.execute` scopes, the agent
+principal the `service.restart` scope. A late report after an expired lease is
+kept as evidence, like a late inspection, and the attempt stays `unreachable`.
 
 Events have monotonically ordered attempt-local cursors and digest-only payloads.
 The command carries the actor and correlation ID joining the attempt to Task

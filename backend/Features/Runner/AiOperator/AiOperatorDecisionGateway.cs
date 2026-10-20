@@ -39,6 +39,12 @@ public interface IAiOperatorEffect
     Task ApplyAsync(AiOperatorApplication application, CancellationToken ct);
 }
 
+/// <summary>
+/// An effect that also records the decider's A2 proposals itself (AGT-3207).
+/// Without it, an engine Propose receipt is only written to the card's feed.
+/// </summary>
+public interface IAiOperatorProposalEffect : IAiOperatorEffect;
+
 public sealed record AiOperatorApplication(
     string RunId,
     string ProjectId,

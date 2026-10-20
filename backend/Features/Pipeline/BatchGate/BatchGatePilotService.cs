@@ -276,6 +276,21 @@ public sealed partial class BatchGatePilotService
 
     public void RequestCloseNow(string project) => _store.RequestCloseNow(project);
 
+    /// <summary>
+    /// AGT-3207: drops a pending member whose card is already completed or
+    /// left Auto Review. A member that a formed batch owns stays with that
+    /// batch. Returns false when nothing was dropped.
+    /// </summary>
+    public bool DropPendingMember(string reviewAttemptId, string reason)
+    {
+        var pending = _store.ListPending().FirstOrDefault(item => item.ReviewAttemptId == reviewAttemptId);
+        if (pending is null) return false;
+        var folder = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath)?.FolderPath ?? pending.JobFolderPath;
+        if (BatchGateOwnershipStore.Read(folder)?.BatchId is not null) return false;
+        ResolveSuperseded(pending, reason);
+        return true;
+    }
+
     public object State(string project, int history = 10)
     {
         var options = _settings.Get(project).BatchGate;

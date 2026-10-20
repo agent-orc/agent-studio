@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Operations.Agent.Features.Execution;
@@ -5,8 +6,11 @@ using AgentStudio.Operations.Contracts;
 
 namespace AgentStudio.Operations.Agent;
 
-public sealed class OperationsAgentClient(HttpClient client, string agentId, string bootId, string spoolDirectory, TimeProvider clock)
+public sealed class OperationsAgentClient(HttpClient client, string agentId, string bootId, string spoolDirectory, TimeProvider clock,
+    RestartableServices? services = null, Func<ProcessStartInfo, TimeSpan, CancellationToken, Task<ToolRun>>? run = null)
 {
+    private readonly RestartableServices _services = services ?? RestartableServices.Empty;
+
     private const string Api = "api/operations/v1/";
 
     public async Task RegisterAsync(CancellationToken ct)
@@ -16,8 +20,11 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
         // Results from an earlier process generation must be reported before
         // the new boot asks to replace that generation's registration.
         await ReplaySpoolAsync(ct);
-        var capability = new AgentCapability(agentId, bootId, "diagnostics", [], [],
-            new Dictionary<string, int> { ["host.inspect"] = 1 }, 1, 1, 1);
+        var operations = new Dictionary<string, int> { [OperationCatalogue.HostInspect.Id] = OperationCatalogue.HostInspect.Version };
+        // AGT-3207: only an agent with a local allowlist offers restarts.
+        if (_services.Services.Count > 0)
+            operations[OperationCatalogue.ServiceRestart.Id] = OperationCatalogue.ServiceRestart.Version;
+        var capability = new AgentCapability(agentId, bootId, "diagnostics", [], [], operations, 1, 1, 1);
         using var response = await client.PostAsJsonAsync(Api + "agents/register", capability, ct);
         response.EnsureSuccessStatusCode();
     }
@@ -36,7 +43,9 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
         renewal.EnsureSuccessStatusCode();
         attempt = await renewal.Content.ReadFromJsonAsync<OperationAttempt>(ct)
                   ?? throw new InvalidDataException("Agent lease response is empty.");
-        var result = HostInspection.Execute(attempt, agentId, bootId, clock.GetUtcNow());
+        var result = attempt.Command.OperationId == OperationCatalogue.ServiceRestart.Id
+            ? await ServiceRestart.ExecuteAsync(attempt, agentId, bootId, _services, run ?? ServiceRestart.RunAsync, clock, ct)
+            : HostInspection.Execute(attempt, agentId, bootId, clock.GetUtcNow());
         var reportRequest = new AttemptReportRequest(bootId, attempt.Fence, result);
         if (!Guid.TryParseExact(attempt.Id, "N", out _)) throw new InvalidDataException("Agent attempt identity is invalid.");
         var target = Path.Combine(spoolDirectory, attempt.Id + ".json");

@@ -1103,6 +1103,24 @@ builder.Services.AddSingleton<AgentStudio.Watcher.IWatcherSignalProbe, AgentStud
 builder.Services.AddSingleton<AgentStudio.Watcher.WatcherHostedService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Watcher.WatcherHostedService>());
+// AGT-3207: the AI Operator acts on the stall events (A0/A1), proposes A2
+// actions and never takes A3 ones; receipts, follow-up checks, rate limits.
+builder.Services.AddSingleton<AgentStudio.Watcher.StallInterventionStore>();
+builder.Services.AddSingleton<AgentStudio.Watcher.ProviderRouteExclusions>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IHostAdmissionControl, AgentStudio.Watcher.ClientIdentityAdmissionControl>();
+builder.Services.AddHttpClient(AgentStudio.Watcher.OperationsServerRestartControl.HttpClientName,
+    client => client.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddSingleton<AgentStudio.Watcher.IServiceRestartControl, AgentStudio.Watcher.OperationsServerRestartControl>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IProviderRouteControl, AgentStudio.Watcher.ReviewProviderRouteControl>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IBatchGateControl, AgentStudio.Watcher.BatchGateInterventionControl>();
+builder.Services.AddSingleton<AgentStudio.Watcher.IContinuationControl, AgentStudio.Watcher.DeliveryContinuationControl>();
+builder.Services.AddSingleton<AgentStudio.Watcher.StallInterventionFactsBuilder>();
+builder.Services.AddSingleton<AgentStudio.Watcher.StallInterventionReceipts>();
+builder.Services.AddSingleton<AgentStudio.Watcher.StallInterventionEffect>();
+builder.Services.AddSingleton<IAiOperatorEffect>(sp => sp.GetRequiredService<AgentStudio.Watcher.StallInterventionEffect>());
+builder.Services.AddSingleton<AgentStudio.Watcher.StallInterventionService>();
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService<AgentStudio.Watcher.StallInterventionHostedService>();
 // Periodic reap of orphaned CLI process trees (codex/node) that a finished or
 // crashed run left behind. Closes the days-long accumulation gap the startup
 // reaper alone cannot: those survivors hold job-folder handles and wedge the

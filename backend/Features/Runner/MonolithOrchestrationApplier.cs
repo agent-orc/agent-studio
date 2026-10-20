@@ -492,20 +492,25 @@ public sealed class MonolithOrchestrationApplier(
         if (decision.Decider != payload.Decider || decision.SubjectKey != payload.SubjectKey)
             throw new InvalidDataException("The AI Operator receipt does not match its occurrence.");
         if (decision.Disposition == AiOperatorDisposition.Hold) return;
-        if (decision.Disposition == AiOperatorDisposition.Propose)
+        var effect = services.GetServices<IAiOperatorEffect>()
+            .SingleOrDefault(candidate => candidate.Decider == decision.Decider);
+        if (decision.Disposition == AiOperatorDisposition.Propose && effect is not IAiOperatorProposalEffect)
         {
             RecordOperatorDecision(occurrence, decision, "AI Operator proposal waits for a person");
             return;
         }
-        var effect = services.GetServices<IAiOperatorEffect>()
-            .SingleOrDefault(candidate => candidate.Decider == decision.Decider)
-            ?? throw new InvalidOperationException($"No authority effect is registered for {decision.Decider}.");
+        if (effect is null)
+            throw new InvalidOperationException($"No authority effect is registered for {decision.Decider}.");
         await effect.ApplyAsync(new AiOperatorApplication(occurrence.Run.RunId, occurrence.Run.ProjectId,
             occurrence.Run.TaskId, occurrence.ExpectedSourceState,
             $"engine-operator:{occurrence.Run.RunId}:{completion.IdempotencyKey}", payload, decision,
             occurrence.AuthorityAttemptId, occurrence.AuthorityFence, occurrence.AuthorityEpoch), ct);
-        RecordOperatorDecision(occurrence, decision, decision.Disposition == AiOperatorDisposition.Ask
-            ? "AI Operator asked a person" : "AI Operator applied");
+        RecordOperatorDecision(occurrence, decision, decision.Disposition switch
+        {
+            AiOperatorDisposition.Ask => "AI Operator asked a person",
+            AiOperatorDisposition.Propose => "AI Operator proposal waits for a person",
+            _ => "AI Operator applied",
+        });
     }
 
     private async Task ApplyReviewInputDecisionAsync(MonolithOrchestrationOccurrence occurrence,

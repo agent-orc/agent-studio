@@ -52,7 +52,8 @@ public static class OperationalStallDetector
                 heartbeat.LastSeenUtc, $"{heartbeat.Role} on {heartbeat.Host} "
                     + (heartbeat.Stopped ? "is stopped." : "stopped reporting."),
                 heartbeat.WaitingCards.Count, "Check the host or container and restore its heartbeat.",
-                $"lastSeenUtc={heartbeat.LastSeenUtc:O}", cards: heartbeat.WaitingCards);
+                $"lastSeenUtc={heartbeat.LastSeenUtc:O}", [("stopped", heartbeat.Stopped ? "true" : "false")],
+                cards: heartbeat.WaitingCards);
         }
         foreach (var host in facts.Hosts)
         {
@@ -130,6 +131,8 @@ public static class OperationalStallDetector
             var details = (numbers ?? []).Where(x => x.Value is not null)
                 .ToDictionary(x => x.Key, x => Convert.ToString(x.Value, System.Globalization.CultureInfo.InvariantCulture)!, StringComparer.Ordinal);
             if (excerpt is not null) details["logExcerpt"] = excerpt.Length <= 500 ? excerpt : excerpt[..500];
+            // AGT-3207: the AI Operator reads the stall kind from the case.
+            details["stallKind"] = kind;
             result.Add(new WatcherSignalObservation
             {
                 DetectorClass = kind is "host-offline" or "host-overload" or "memory-pressure" or "idle-capacity" or "lane-stall"

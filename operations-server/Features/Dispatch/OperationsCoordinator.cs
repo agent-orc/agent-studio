@@ -99,9 +99,9 @@ public sealed class OperationsCoordinator(OperationsStore store, IOperationPermi
                 if (attempt.LateResultDigest != digest) throw new OperationRejected("result-replay-conflict");
                 return attempt;
             }
-            if (attempt.State == "unreachable" && attempt.Command.OperationId == OperationCatalogue.HostInspect.Id)
+            if (attempt.State == "unreachable" && OperationCatalogue.Find(attempt.Command.OperationId, attempt.Command.Version) is not null)
             {
-                // A prior boot may have finished a read-only inspection before
+                // A prior boot may have finished an inspection or a restart before
                 // crashing or losing its lease. Keep the outcome unreachable;
                 // this receipt only preserves evidence and unblocks its spool.
                 Reject(OperationPolicy.ResultDenial(attempt, request.Result, clock.GetUtcNow()));

@@ -27,6 +27,8 @@ public sealed class TransitionDecisionBoundaryTests
         "AiOperatorDecisionPolicy", "RunLivenessPolicy", "SteerTimeoutPolicy", "StaleProgressPolicy",
         "GateEnvironmentRetryPolicy", "GateEnvironmentContinuationPolicy",
         "DeliveryChainPolicy", "CauseBreakerClosePolicy", "IntakeRoutingPolicy", "AcceptanceRailDecisionPolicy",
+        // AGT-3207: interventions on operational stall events.
+        "StallInterventionPolicy",
     ];
 
     [Fact]
