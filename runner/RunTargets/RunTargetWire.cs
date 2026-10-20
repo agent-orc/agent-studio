@@ -2,14 +2,21 @@ namespace AgentRunner.RunTargets;
 
 // Mirror of backend/Features/Projects/RunTargets/RunTargetContracts.cs. The
 // run-target host only reads these from Studio and writes observations back;
-// it has no listener of its own.
+// it has no listener of its own. Skipped and Removals are optional so a host
+// that talks to an older Studio never removes anything.
 
 public sealed record RunTargetResources(double Cpus, int MemoryMb, int PidsLimit);
 
 public sealed record RunTargetDesiredState(
     string HostId,
     DateTime GeneratedAt,
-    IReadOnlyList<RunTargetEnvironmentSpec> Environments);
+    IReadOnlyList<RunTargetEnvironmentSpec> Environments,
+    IReadOnlyList<RunTargetSkip>? Skipped = null,
+    IReadOnlyList<RunTargetRemoval>? Removals = null);
+
+public sealed record RunTargetSkip(string Project, string Reason);
+
+public sealed record RunTargetRemoval(string Project, string EnvironmentId);
 
 public sealed record RunTargetEnvironmentSpec(
     string Project,
@@ -25,7 +32,8 @@ public sealed record RunTargetEnvironmentSpec(
     RunTargetResources Resources,
     string? JobId,
     string? LeaseToken,
-    bool IsRollback);
+    bool IsRollback,
+    IReadOnlyList<string>? RefusedDomains = null);
 
 public sealed record RunTargetObservedReport(IReadOnlyList<RunTargetObservation> Environments);
 

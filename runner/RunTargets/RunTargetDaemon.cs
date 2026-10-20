@@ -8,9 +8,14 @@ public sealed partial record RunTargetOptions(
     string HostId,
     string StateDirectory,
     string SecretDirectory,
+    string SecretRuntimeDirectory,
     TimeSpan PollInterval,
     RunTargetReconcilerSettings Reconciler)
 {
+    /// <summary>Caddy 2.11 on Alpine (the caddy:2-alpine index on 2026-10-20), pinned like an app image.</summary>
+    public const string DefaultEdgeImage =
+        "caddy:2.11-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f";
+
     [GeneratedRegex(@"\A[^\s@{}""]+@[^\s@{}""]+\z")]
     private static partial Regex Email();
 
@@ -36,13 +41,20 @@ public sealed partial record RunTargetOptions(
                 ? seconds : throw new ArgumentException("RUN_TARGET_POLL_SECONDS must be between 2 and 3600.")
             : 15;
         var stateDirectory = Path.GetFullPath(Value("RUN_TARGET_STATE_DIR") ?? Path.Combine(runner.StateDir, "run-target"));
+        var runtimeDirectory = Value("RUN_TARGET_SECRET_RUNTIME_DIR") ?? "/run/agent-host/run-target-secrets";
+        if (!Path.IsPathFullyQualified(runtimeDirectory))
+            throw new ArgumentException("RUN_TARGET_SECRET_RUNTIME_DIR must be an absolute path.");
+        var edgeImage = Value("RUN_TARGET_EDGE_IMAGE") ?? DefaultEdgeImage;
+        if (!RunTargetNames.IsDigest(edgeImage))
+            throw new ArgumentException("RUN_TARGET_EDGE_IMAGE must be pinned by sha256 digest.");
         return new(
             runner.RunnerId,
             stateDirectory,
             Value("RUN_TARGET_SECRET_DIR") ?? "/etc/agent-host/secrets",
+            runtimeDirectory,
             TimeSpan.FromSeconds(poll),
             new RunTargetReconcilerSettings(
-                Value("RUN_TARGET_EDGE_IMAGE") ?? "caddy:2-alpine",
+                edgeImage,
                 new RunTargetEdgeSettings(email, certificates is not null, proxies),
                 certificates,
                 Port("RUN_TARGET_HTTP_PORT", 80),
@@ -107,6 +119,7 @@ public sealed class RunTargetDaemon(
         var reconciler = new RunTargetReconciler(
             new DockerCliRunTarget(),
             new FileRunTargetSecretSource(options.SecretDirectory),
+            new RunTargetSecretFiles(options.SecretRuntimeDirectory, RunTargetSecretFiles.ProcMountsIsMemoryBacked),
             new RunTargetStateStore(options.StateDirectory),
             options.Reconciler,
             TimeProvider.System,

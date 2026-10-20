@@ -2,9 +2,13 @@ using System.Text.Json;
 
 namespace AgentRunner.RunTargets;
 
-/// <summary>One started revision of an app: a compose project with one container.</summary>
+/// <summary>
+/// One started revision of an app: a compose project with one container. It
+/// keeps the secret reference names (never values) so the host can restart or
+/// restore it without a spec from Studio.
+/// </summary>
 public sealed record RunTargetSlot(string Revision, string Artifact, string ComposeProject, string ComposeFile,
-    int ContainerPort, string HealthPath)
+    int ContainerPort, string HealthPath, IReadOnlyList<string>? SecretRefs = null)
 {
     public string Upstream => $"{ComposeProject}:{ContainerPort}";
 }
@@ -16,18 +20,34 @@ public sealed class RunTargetAppState
     public string EnvironmentId { get; set; } = "";
     public RunTargetSlot? Current { get; set; }
     public RunTargetSlot? Previous { get; set; }
+
+    /// <summary>Routing of the last valid spec; it stays when Studio sends none.</summary>
+    public List<string> Domains { get; set; } = [];
+    public string Edge { get; set; } = "acme";
     public string Status { get; set; } = "stopped";
     public int CrashAttempts { get; set; }
     public int HostRestarts { get; set; }
     public DateTime? LastRestartAt { get; set; }
     public DateTime? NextRestartAt { get; set; }
     public int DockerRestarts { get; set; }
+
+    /// <summary>Restarts of the current revision inside the crash-rollback window.</summary>
+    public List<DateTime> RecentRestarts { get; set; } = [];
+
+    /// <summary>Revision the host rolled back from after a crash loop; only a deploy job brings it back.</summary>
+    public string? CrashRollbackRevision { get; set; }
+
+    /// <summary>True while Studio sends no spec for the app and the host keeps it as it is.</summary>
+    public bool Held { get; set; }
     public List<RunTargetEvent> Events { get; set; } = [];
 }
 
 public sealed class RunTargetHostState
 {
     public Dictionary<string, RunTargetAppState> Apps { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>Domain to app key. The first app that routed a domain keeps it (<see cref="RunTargetCaddyfile.ClaimDomains"/>).</summary>
+    public Dictionary<string, string> DomainOwners { get; set; } = new(StringComparer.Ordinal);
 }
 
 /// <summary>Durable host state so a restarted agent knows current and previous revisions.</summary>
@@ -48,7 +68,7 @@ public sealed class RunTargetStateStore(string stateDirectory)
             ? JsonSerializer.Deserialize<RunTargetHostState>(File.ReadAllText(StatePath), Json) ?? new()
             : new();
 
-    public void Save(RunTargetHostState state) => WriteAtomically(StatePath, JsonSerializer.Serialize(state, Json));
+    public void Save(RunTargetHostState state) => WriteIfChanged(StatePath, JsonSerializer.Serialize(state, Json));
 
     /// <summary>Writes when the content differs; returns whether it changed.</summary>
     public bool WriteIfChanged(string path, string content)

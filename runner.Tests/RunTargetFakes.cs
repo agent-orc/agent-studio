@@ -5,13 +5,14 @@ namespace AgentRunner.Tests;
 /// <summary>In-memory container runtime for the run-target reconciler tests.</summary>
 internal sealed class FakeRunTargetDocker : IRunTargetDocker
 {
-    public sealed record ComposeUp(string Project, string ComposeText, IReadOnlyDictionary<string, string> Environment);
+    public sealed record ComposeUp(string Project, string ComposeText);
 
     public List<string> Calls { get; } = [];
     public List<ComposeUp> Ups { get; } = [];
     public Dictionary<string, RunTargetContainerStatus> Containers { get; } = new(StringComparer.Ordinal);
     public HashSet<string> UnhealthyProjects { get; } = new(StringComparer.Ordinal);
     public bool EdgeFails { get; set; }
+    public bool DownFails { get; set; }
     public string? FailUpWith { get; set; }
     public int Reloads { get; private set; }
 
@@ -33,11 +34,10 @@ internal sealed class FakeRunTargetDocker : IRunTargetDocker
         return Task.FromResult(RunTargetDockerResult.Success);
     }
 
-    public Task<RunTargetDockerResult> ComposeUpAsync(string project, string composeFile,
-        IReadOnlyDictionary<string, string> environment, CancellationToken ct)
+    public Task<RunTargetDockerResult> ComposeUpAsync(string project, string composeFile, CancellationToken ct)
     {
         Calls.Add("up " + project);
-        Ups.Add(new(project, File.ReadAllText(composeFile), new Dictionary<string, string>(environment)));
+        Ups.Add(new(project, File.ReadAllText(composeFile)));
         if (project == RunTargetNames.EdgeContainer && EdgeFails)
             return Task.FromResult(new RunTargetDockerResult(false, "bind: address already in use"));
         if (FailUpWith is not null && project != RunTargetNames.EdgeContainer)
@@ -57,6 +57,7 @@ internal sealed class FakeRunTargetDocker : IRunTargetDocker
     public Task<RunTargetDockerResult> ComposeDownAsync(string project, string composeFile, CancellationToken ct)
     {
         Calls.Add("down " + project);
+        if (DownFails) return Task.FromResult(new RunTargetDockerResult(false, "daemon not responding"));
         Containers.Remove(project);
         return Task.FromResult(RunTargetDockerResult.Success);
     }
@@ -80,11 +81,15 @@ internal sealed class FakeRunTargetDocker : IRunTargetDocker
         return Task.FromResult(RunTargetDockerResult.Success);
     }
 
-    public void Crash(string project) => Containers[project] = new(RunTargetContainerState.Exited, 3);
+    /// <summary>The container exits after Docker's own <c>on-failure:3</c> restarts.</summary>
+    public void Crash(string project)
+        => Containers[project] = new(RunTargetContainerState.Exited,
+            (Containers.TryGetValue(project, out var status) ? status.RestartCount : 0) + 3);
 }
 
+/// <summary>Secret values keyed by <c>project/secretRef</c>, like the per-project host secret roots.</summary>
 internal sealed class FakeRunTargetSecrets(Dictionary<string, string> values) : IRunTargetSecretSource
 {
-    public Task<string?> ReadAsync(string secretRef, CancellationToken ct)
-        => Task.FromResult(values.TryGetValue(secretRef, out var value) ? value : null);
+    public Task<string?> ReadAsync(string project, string secretRef, CancellationToken ct)
+        => Task.FromResult(values.TryGetValue(project + "/" + secretRef, out var value) ? value : null);
 }

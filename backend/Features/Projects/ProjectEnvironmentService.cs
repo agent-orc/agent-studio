@@ -20,7 +20,7 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     string Artifact, string Template, string Destination, string? HealthUrl,
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
-    string? RequestedBy = null);
+    string? RequestedBy = null, DateTime? FirstClaimedAt = null);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -39,7 +39,7 @@ public sealed record PromotionDecisionRequest(string Artifact);
 public sealed record GateArtifactRequest(string Project, string Artifact, string Commit);
 
 /// <summary>Repository declarations and a separate, durable host-deploy queue.</summary>
-public sealed class ProjectEnvironmentService
+public sealed partial class ProjectEnvironmentService
 {
     private static readonly Regex Identifier = new("^[a-z0-9][a-z0-9._-]{0,63}$", RegexOptions.Compiled);
     private static readonly Regex SecretIdentifier = new("^[A-Za-z][A-Za-z0-9._-]{0,63}$", RegexOptions.Compiled);
@@ -65,12 +65,21 @@ public sealed class ProjectEnvironmentService
 
     public IReadOnlyList<EnvironmentDeclaration>? Declarations(string project)
     {
+        var (source, declarations) = ReadDeclarations(project);
+        return source == DeclarationSource.UnknownProject ? null : declarations;
+    }
+
+    private enum DeclarationSource { UnknownProject, CheckoutMissing, FolderMissing, Read }
+
+    /// <summary>Tells a complete read apart from a missing checkout or folder; an invalid file throws.</summary>
+    private (DeclarationSource Source, IReadOnlyList<EnvironmentDeclaration> Declarations) ReadDeclarations(string project)
+    {
         if (!_scanner.GetWatchPaths().Any(item => string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase)))
-            return null;
+            return (DeclarationSource.UnknownProject, []);
         var root = _git.ResolveRepoRootForProject(project);
-        if (root is null) return [];
+        if (root is null) return (DeclarationSource.CheckoutMissing, []);
         var directory = Path.Combine(root, "docs", "deployments", "environments");
-        if (!Directory.Exists(directory)) return [];
+        if (!Directory.Exists(directory)) return (DeclarationSource.FolderMissing, []);
         var result = new List<EnvironmentDeclaration>();
         foreach (var file in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
         {
@@ -111,8 +120,8 @@ public sealed class ProjectEnvironmentService
         }
         if (result.GroupBy(item => item.Id, StringComparer.Ordinal).Any(group => group.Count() > 1))
             throw new JsonException("Environment ids must be unique within a project.");
-        return result.OrderBy(item => item.Kind == "stage" ? 0 : item.Kind == "production" ? 1 : 2)
-            .ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
+        return (DeclarationSource.Read, result.OrderBy(item => item.Kind == "stage" ? 0 : item.Kind == "production" ? 1 : 2)
+            .ThenBy(item => item.Id, StringComparer.Ordinal).ToArray());
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -268,15 +277,21 @@ public sealed class ProjectEnvironmentService
             var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == environmentId);
             if (declaration is null) return false;
             var state = Load(project);
-            var currentArtifact = state.History.LastOrDefault(row => row.EnvironmentId == environmentId)?.Item.Artifact;
-            var previous = state.History.LastOrDefault(row => row.EnvironmentId == environmentId
-                && (row.Item.Status is "healthy" or "rolled-back")
-                && row.Item.Artifact != currentArtifact);
-            if (previous is null) return false;
-            Queue(project, declaration, previous.Item.Artifact, state, rollback: true, actor: actor);
+            if (!QueueRollback(project, declaration, state, actor)) return false;
             Save(project, state);
             return true;
         }
+    }
+
+    private bool QueueRollback(string project, EnvironmentDeclaration declaration, State state, string actor)
+    {
+        var currentArtifact = state.History.LastOrDefault(row => row.EnvironmentId == declaration.Id)?.Item.Artifact;
+        var previous = state.History.LastOrDefault(row => row.EnvironmentId == declaration.Id
+            && (row.Item.Status is "healthy" or "rolled-back")
+            && row.Item.Artifact != currentArtifact);
+        if (previous is null) return false;
+        Queue(project, declaration, previous.Item.Artifact, state, rollback: true, actor: actor);
+        return true;
     }
 
     public DeployJob? Claim(string hostId)
@@ -318,114 +333,39 @@ public sealed class ProjectEnvironmentService
             var job = state.Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
                 && item.LeaseToken == report.LeaseToken);
             if (job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime.AddMinutes(-5)) return false;
-            var now = _clock.GetUtcNow().UtcDateTime;
-            var success = report.Healthy;
-            state.Jobs[state.Jobs.IndexOf(job)] = job with { Status = success ? "healthy" : "failed", LeaseToken = null };
-            // Host output is deliberately not accepted as an audit string. Keep a bounded status code only.
-            var evidence = report.Evidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
-                ? report.Evidence : success ? "health-ok" : "deploy-step-failed";
-            var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
-            state.History.Add(new(job.EnvironmentId, now,
-                new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
-            var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact);
-            if (promotion is not null)
-            {
-                var index = state.Promotions.IndexOf(promotion);
-                if (promotion.StageId == job.EnvironmentId && promotion.Status == "stage-queued")
-                    state.Promotions[index] = promotion with
-                    { Status = success ? "pending" : "failed", StageHealthyAt = now,
-                        ExpiresAt = success ? now.AddHours(24) : null };
-                if (promotion.ProductionId == job.EnvironmentId && promotion.Status == "production-queued")
-                    state.Promotions[index] = promotion with { Status = success ? "deployed" : "failed" };
-            }
-            if (!success && !job.IsRollback && job.PreviousArtifact is not null)
-            {
-                var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == job.EnvironmentId);
-                if (declaration is not null) Queue(project, declaration, job.PreviousArtifact, state,
-                    rollback: true, actor: "automatic-rollback");
-            }
+            Complete(project, state, job, report.Healthy, report.Evidence, () => Declarations(project));
             Save(project, state);
             return true;
         }
     }
 
-    /// <summary>
-    /// Desired state of every edge-hosted environment placed on this host. An
-    /// open deploy job is claimed, or its lease renewed, by the same read, so a
-    /// polling host keeps the job while it converges.
-    /// </summary>
-    public RunTargetDesiredState DesiredState(string hostId)
+    private void Complete(string project, State state, DeployJob job, bool success, string? reportedEvidence,
+        Func<IReadOnlyList<EnvironmentDeclaration>?> declarations)
     {
-        lock (_gate)
+        var now = _clock.GetUtcNow().UtcDateTime;
+        state.Jobs[state.Jobs.IndexOf(job)] = job with { Status = success ? "healthy" : "failed", LeaseToken = null };
+        // Host output is deliberately not accepted as an audit string. Keep a bounded status code only.
+        var evidence = reportedEvidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
+            ? reportedEvidence : success ? "health-ok" : "deploy-step-failed";
+        var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
+        state.History.Add(new(job.EnvironmentId, now,
+            new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
+        var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact);
+        if (promotion is not null)
         {
-            var now = _clock.GetUtcNow().UtcDateTime;
-            var environments = new List<RunTargetEnvironmentSpec>();
-            foreach (var project in _scanner.GetWatchPaths().Select(item => item.Name).Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                IReadOnlyList<EnvironmentDeclaration>? declarations;
-                try { declarations = Declarations(project); }
-                catch (JsonException)
-                {
-                    // The project's environment page reports the parse error;
-                    // one broken declaration must not stop the host's other apps.
-                    continue;
-                }
-                var hosted = declarations?.Where(item => item.TargetHostId == hostId && item.Hosting is not null).ToArray() ?? [];
-                if (hosted.Length == 0) continue;
-                var state = Load(project);
-                AdvanceTimedPromotions(project, declarations!, state);
-                foreach (var declaration in hosted)
-                {
-                    var job = state.Jobs.FirstOrDefault(item => item.EnvironmentId == declaration.Id
-                        && item.HostId == hostId && item.Status is "queued" or "claimed");
-                    if (job is not null)
-                    {
-                        var held = job.Status == "claimed" && job.ClaimedAt >= now.AddMinutes(-5) && job.LeaseToken is not null;
-                        var claimed = job with { Status = "claimed", ClaimedAt = now,
-                            LeaseToken = held ? job.LeaseToken : Guid.NewGuid().ToString("N") };
-                        state.Jobs[state.Jobs.IndexOf(job)] = claimed;
-                        job = claimed;
-                    }
-                    var history = state.History.Where(row => row.EnvironmentId == declaration.Id).Select(row => row.Item).ToArray();
-                    environments.Add(RunTargetDesiredStatePolicy.Project(project, declaration, job, history));
-                }
-                Save(project, state);
-            }
-            return new(hostId, now, environments);
+            var index = state.Promotions.IndexOf(promotion);
+            if (promotion.StageId == job.EnvironmentId && promotion.Status == "stage-queued")
+                state.Promotions[index] = promotion with
+                { Status = success ? "pending" : "failed", StageHealthyAt = now,
+                    ExpiresAt = success ? now.AddHours(24) : null };
+            if (promotion.ProductionId == job.EnvironmentId && promotion.Status == "production-queued")
+                state.Promotions[index] = promotion with { Status = success ? "deployed" : "failed" };
         }
-    }
-
-    /// <summary>Keeps the latest sanitized observation per environment placed on this host.</summary>
-    public int RecordObserved(string hostId, RunTargetObservedReport report)
-    {
-        lock (_gate)
+        if (!success && !job.IsRollback && job.PreviousArtifact is not null)
         {
-            var now = _clock.GetUtcNow().UtcDateTime;
-            var accepted = 0;
-            foreach (var group in (report.Environments ?? []).GroupBy(item => item.Project, StringComparer.Ordinal))
-            {
-                IReadOnlyList<EnvironmentDeclaration>? declarations;
-                try { declarations = Declarations(group.Key); }
-                catch (JsonException)
-                {
-                    // Not accepted: without a valid declaration the host cannot be checked.
-                    continue;
-                }
-                if (declarations is null) continue;
-                var state = Load(group.Key);
-                foreach (var observation in group)
-                {
-                    var declaration = declarations.FirstOrDefault(item => item.Id == observation.EnvironmentId);
-                    if (declaration?.Hosting is null || declaration.TargetHostId != hostId) continue;
-                    var sanitized = RunTargetDesiredStatePolicy.Sanitize(observation, now);
-                    if (sanitized is null) continue;
-                    state.Observed.RemoveAll(row => row.EnvironmentId == declaration.Id);
-                    state.Observed.Add(new(declaration.Id, sanitized));
-                    accepted++;
-                }
-                Save(group.Key, state);
-            }
-            return accepted;
+            var declaration = declarations()?.FirstOrDefault(item => item.Id == job.EnvironmentId);
+            if (declaration is not null) Queue(project, declaration, job.PreviousArtifact, state,
+                rollback: true, actor: "automatic-rollback");
         }
     }
 
@@ -492,6 +432,7 @@ public sealed class ProjectEnvironmentService
         public List<EnvironmentPromotion> Promotions { get; set; } = [];
         public List<EnvironmentHistoryRow> History { get; set; } = [];
         public List<RunTargetObservedRow> Observed { get; set; } = [];
+        public List<RunTargetPlacement> Placements { get; set; } = [];
     }
     public sealed record EnvironmentHistoryRow(string EnvironmentId, DateTime At, DeploymentHistoryItem Item);
     public sealed record RunTargetObservedRow(string EnvironmentId, RunTargetObservation Observation);

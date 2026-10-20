@@ -33,22 +33,26 @@ public static partial class RunTargetNames
     [GeneratedRegex("[^a-z0-9]+")]
     private static partial Regex NotSlug();
 
-    /// <summary>
-    /// Names the docker compose process or the container runtime reads from its
-    /// own environment. A secret that maps to one of them would change how the
-    /// host runs docker, so such a reference is refused.
-    /// </summary>
-    private static readonly HashSet<string> ReservedEnvironmentNames = new(StringComparer.Ordinal)
-    {
-        "PATH", "HOME", "USER", "SHELL", "TMPDIR", "LANG", "LD_PRELOAD", "LD_LIBRARY_PATH",
-    };
-
     public static bool IsDigest(string? value) => value is not null && Digest().IsMatch(value);
     public static bool IsDomain(string value) => Domain().IsMatch(value);
     public static bool IsSecretRef(string value) => SecretRef().IsMatch(value);
 
     public static string SecretEnvironmentName(string secretRef)
         => secretRef.Replace('-', '_').Replace('.', '_').ToUpper(CultureInfo.InvariantCulture);
+
+    /// <summary>Variable that tells the app where its secret file is mounted, for example <c>DATABASE_URL_FILE</c>.</summary>
+    public static string SecretFileVariable(string secretRef) => SecretEnvironmentName(secretRef) + "_FILE";
+
+    /// <summary>
+    /// Directory name of a project's own secret root, the same escaping Studio
+    /// uses for its per-project files. Null for a name that has no safe directory.
+    /// </summary>
+    public static string? SecretScope(string project)
+    {
+        if (string.IsNullOrWhiteSpace(project) || project.IndexOf('\0') >= 0) return null;
+        var scope = Uri.EscapeDataString(project.ToLowerInvariant());
+        return scope is "." or ".." ? null : scope;
+    }
 
     /// <summary>Stable key of one project environment on this host.</summary>
     public static string AppKey(string project, string environmentId)
@@ -86,11 +90,12 @@ public static partial class RunTargetNames
         if (spec.Variables.Any(item => !VariableName().IsMatch(item.Key)
             || item.Value.IndexOfAny(['\r', '\n', '\0']) >= 0)) return "invalid variable";
         if (spec.SecretRefs.Any(item => !IsSecretRef(item))) return "invalid secret reference";
-        var secretNames = spec.SecretRefs.Select(SecretEnvironmentName).ToArray();
-        if (secretNames.Any(name => !VariableName().IsMatch(name) || ReservedEnvironmentNames.Contains(name)
-            || name.StartsWith("DOCKER_", StringComparison.Ordinal) || name.StartsWith("COMPOSE_", StringComparison.Ordinal)
-            || spec.Variables.ContainsKey(name)) || secretNames.Distinct(StringComparer.Ordinal).Count() != secretNames.Length)
-            return "secret reference maps to a reserved or repeated name";
+        if (SecretScope(spec.Project) is null) return "project has no secret root";
+        var secretNames = spec.SecretRefs.Select(SecretFileVariable).ToArray();
+        if (secretNames.Any(name => !VariableName().IsMatch(name) || spec.Variables.ContainsKey(name)
+            || spec.Variables.ContainsKey(name[..^"_FILE".Length]))
+            || secretNames.Distinct(StringComparer.Ordinal).Count() != secretNames.Length)
+            return "secret reference maps to a variable name that is invalid, shadowed or repeated";
         return null;
     }
 

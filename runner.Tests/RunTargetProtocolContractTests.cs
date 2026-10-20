@@ -10,8 +10,8 @@ namespace AgentRunner.Tests;
 
 /// <summary>
 /// IP-1 outbound-only contract: the run-target host only ever calls Studio,
-/// on three declared routes, and holds no listener. Studio being unreachable
-/// leaves the host's apps alone.
+/// on three declared routes, and holds no listener. Studio being unreachable,
+/// or an older Studio that sends no removal signals, leaves the host's apps alone.
 /// </summary>
 public sealed class RunTargetProtocolContractTests : IDisposable
 {
@@ -71,6 +71,26 @@ public sealed class RunTargetProtocolContractTests : IDisposable
     }
 
     [Fact]
+    public async Task DesiredStateWithoutRemovalFields_FromAnOlderStudio_RemovesNothing()
+    {
+        var docker = new FakeRunTargetDocker();
+        var reconciler = Reconciler(docker, []);
+        var spec = new RunTargetEnvironmentSpec("demo", "prod", "production", Artifact, 8080, "/", ["demo.example.com"],
+            "acme", new Dictionary<string, string>(), [], new RunTargetResources(1, 512, 256), null, null, false);
+        await reconciler.ReconcileAsync(new RunTargetDesiredState("run-host-1", _clock.GetUtcNow().UtcDateTime, [spec]),
+            CancellationToken.None);
+
+        var legacy = JsonSerializer.Deserialize<RunTargetDesiredState>(
+            """{"hostId":"run-host-1","generatedAt":"2026-10-19T09:00:00Z","environments":[]}""", JsonSerializerOptions.Web)!;
+        var result = await reconciler.ReconcileAsync(legacy, CancellationToken.None);
+
+        Assert.Null(legacy.Removals);
+        Assert.Null(legacy.Skipped);
+        Assert.DoesNotContain(docker.Calls, call => call.StartsWith("down ") || call.StartsWith("stop "));
+        Assert.Empty(result.Observations);
+    }
+
+    [Fact]
     public void RunTargetSource_OpensNoListener_AndCallsNoHostBack()
     {
         var root = RepositoryRoot.Find();
@@ -90,8 +110,9 @@ public sealed class RunTargetProtocolContractTests : IDisposable
         => new(controlPlane, Reconciler(docker, log), TimeSpan.FromSeconds(15), (_, _) => Task.CompletedTask, log.Add);
 
     private RunTargetReconciler Reconciler(FakeRunTargetDocker docker, List<string> log) => new(
-        docker, new FakeRunTargetSecrets([]), new RunTargetStateStore(_workspace.Directory("state")),
-        new RunTargetReconcilerSettings("caddy:2-alpine", new RunTargetEdgeSettings(null, false, []), null),
+        docker, new FakeRunTargetSecrets([]), new RunTargetSecretFiles(_workspace.Directory("secrets-runtime"), _ => true),
+        new RunTargetStateStore(_workspace.Directory("state")),
+        new RunTargetReconcilerSettings(RunTargetOptions.DefaultEdgeImage, new RunTargetEdgeSettings(null, false, []), null),
         _clock, (_, _) => Task.CompletedTask, log.Add);
 
     private sealed class UnreachableStudio : IRunTargetControlPlane

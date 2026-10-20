@@ -19,10 +19,7 @@ public interface IRunTargetDocker
     Task<RunTargetDockerResult> PullAsync(string image, CancellationToken ct);
     Task<RunTargetDockerResult> EnsureNetworkAsync(string network, CancellationToken ct);
     Task<RunTargetDockerResult> ConnectAsync(string network, string container, CancellationToken ct);
-
-    /// <param name="environment">Secret values for the compose process only; never written to disk.</param>
-    Task<RunTargetDockerResult> ComposeUpAsync(string project, string composeFile,
-        IReadOnlyDictionary<string, string> environment, CancellationToken ct);
+    Task<RunTargetDockerResult> ComposeUpAsync(string project, string composeFile, CancellationToken ct);
     Task<RunTargetDockerResult> ComposeStopAsync(string project, string composeFile, CancellationToken ct);
     Task<RunTargetDockerResult> ComposeDownAsync(string project, string composeFile, CancellationToken ct);
     Task<RunTargetContainerStatus> InspectAsync(string container, CancellationToken ct);
@@ -57,10 +54,8 @@ public sealed class DockerCliRunTarget(string docker = "docker") : IRunTargetDoc
         return await Run(["network", "connect", network, container], ct);
     }
 
-    public Task<RunTargetDockerResult> ComposeUpAsync(string project, string composeFile,
-        IReadOnlyDictionary<string, string> environment, CancellationToken ct)
-        => Run(["compose", "--project-name", project, "--file", composeFile, "up", "--detach", "--remove-orphans"], ct,
-            environment.ToDictionary(item => item.Key, item => (string?)item.Value, StringComparer.Ordinal));
+    public Task<RunTargetDockerResult> ComposeUpAsync(string project, string composeFile, CancellationToken ct)
+        => Run(["compose", "--project-name", project, "--file", composeFile, "up", "--detach", "--remove-orphans"], ct);
 
     public Task<RunTargetDockerResult> ComposeStopAsync(string project, string composeFile, CancellationToken ct)
         => Run(["compose", "--project-name", project, "--file", composeFile, "stop"], ct);
@@ -90,19 +85,17 @@ public sealed class DockerCliRunTarget(string docker = "docker") : IRunTargetDoc
         => Run(["exec", "-w", "/etc/caddy", RunTargetNames.EdgeContainer,
             "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"], ct);
 
-    private async Task<RunTargetDockerResult> Run(IReadOnlyList<string> arguments, CancellationToken ct,
-        IReadOnlyDictionary<string, string?>? environment = null)
+    private async Task<RunTargetDockerResult> Run(IReadOnlyList<string> arguments, CancellationToken ct)
     {
-        var result = await RunWithOutput(arguments, ct, environment);
+        var result = await RunWithOutput(arguments, ct);
         return result.Ok ? RunTargetDockerResult.Success : result;
     }
 
-    private async Task<RunTargetDockerResult> RunWithOutput(IReadOnlyList<string> arguments, CancellationToken ct,
-        IReadOnlyDictionary<string, string?>? environment = null)
+    private async Task<RunTargetDockerResult> RunWithOutput(IReadOnlyList<string> arguments, CancellationToken ct)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(CommandTimeout);
-        var result = await ProcessRunner.RunAsync(docker, arguments, environment: environment, ct: deadline.Token);
+        var result = await ProcessRunner.RunAsync(docker, arguments, ct: deadline.Token);
         return result.Success
             ? new(true, result.StdOut)
             : new(false, $"docker {arguments[0]} exited {result.ExitCode}: {Tail(result.StdErr)}");

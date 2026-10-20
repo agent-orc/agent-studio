@@ -36,7 +36,10 @@ public static partial class RunTargetHostingDeclaration
             : healthUrl is not null && Uri.TryCreate(healthUrl, UriKind.Absolute, out var uri) ? uri.AbsolutePath : "/";
         if (!HealthPath().IsMatch(healthPath) || healthPath.Contains("..", StringComparison.Ordinal))
             throw new JsonException($"Environment {file} health path must be an absolute path without traversal.");
-        var secretNames = secretRefs.Select(SecretEnvironmentName).ToHashSet(StringComparer.Ordinal);
+        // The host mounts each secret as a file and names it in NAME_FILE; a
+        // plain variable must not shadow either name.
+        var secretNames = secretRefs.Select(SecretEnvironmentName)
+            .SelectMany(name => new[] { name, name + "_FILE" }).ToHashSet(StringComparer.Ordinal);
         var variables = new SortedDictionary<string, string>(StringComparer.Ordinal);
         if (value.TryGetProperty("variables", out var variableValues))
         {

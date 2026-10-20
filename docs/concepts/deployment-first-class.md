@@ -59,9 +59,11 @@ run-target role instead (IP-1, `RUNNER_ROLE=run-target`). It declares
 `domains`, `edge` (`acme` or `cloudflare`), `healthPath`, plain `variables`, and
 `resources`. The run host polls its desired state, starts each new revision
 next to the running one behind an edge Caddy, and switches traffic only after
-the health check passes. It keeps the previous revision for rollback and
-restarts crashed apps with backoff. The same deploy jobs, promotions, and
-automatic rollback apply. See the
+the health check passes. It keeps the previous revision for rollback,
+restarts crashed apps with backoff, and rolls a crash-looping revision back.
+It removes an app only on Studio's explicit removal signal. Secrets reach the
+app as files on tmpfs, named by `<NAME>_FILE`. The same deploy jobs,
+promotions, and automatic rollback apply. See the
 [runner domain map](../system/domains/runner.md#run-target-host-app-hosting-ip-1).
 
 Status: concept and initial workflow implemented, 2026-07-11. The shared

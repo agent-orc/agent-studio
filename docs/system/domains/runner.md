@@ -126,8 +126,26 @@ It then reports each answered AGT-3176 deploy job on
 events on `POST /api/deploy/run-targets/{hostId}/observed-state`. All routes
 require `runner.deploy`, and in the networked profile the caller's Runner ID
 must equal `hostId`. The desired-state read claims the open deploy job, or
-renews its lease. Without an open job, an environment keeps its last healthy
-or rolled-back artifact. The legacy `deploy-loop` never claims an edge job.
+renews its lease. A run target holds one job for at most 30 minutes from its
+first claim; after that Studio records it as `deploy-step-failed` and queues
+the usual automatic rollback. Without an open job, an environment keeps its
+last healthy or rolled-back artifact. The legacy `deploy-loop` never claims an
+edge job. Studio writes a project's deploy state and the host's domain claims
+only when they changed.
+
+Only an explicit removal takes an app off the host. A project whose checkout,
+environments folder, declaration files, or deploy state Studio cannot read is
+listed in `skipped` (`checkout-missing`, `declarations-missing`,
+`declaration-invalid`, `declaration-unreadable`, `state-unreadable`) and adds
+neither specs nor removals. Studio records each placement (environment and
+host). When a complete read no longer places the environment on the host for
+10 minutes, Studio sends it in `removals`. A file that is missing only briefly
+during a checkout therefore removes nothing. The host takes both revisions
+down, then confirms with an observation in state `removed`, and Studio drops
+the placement. An app the desired state does not mention is kept as it is,
+with its route, its previous revision, and crash supervision. So is an app
+whose environment has no healthy artifact in Studio. A host talking to an
+older Studio without these fields never removes anything.
 
 `RunTargetReconciler` converges each environment through Docker Compose. A
 revision (artifact, port, health path, variables, secret names, resources) is
@@ -140,30 +158,61 @@ leaves the running revision serving. Studio then queues the previous artifact,
 which the host already runs. Docker's `on-failure:3` covers short crashes.
 After that the host restarts with `RunTargetCrashPolicy` backoff: 10 s
 doubling to 5 min. From the fifth attempt it reports `crash-loop`, and it
-forgets the attempts after two minutes of stable running. Apps get `cpus`,
+forgets the attempts after two minutes of stable running. When the current
+revision restarts five times (Docker's and the host's restarts together)
+within 10 minutes and a previous revision is kept, the host restores the
+previous revision behind the same health check. It reports `crash-rollback`
+with the crashing artifact, then Studio queues a rollback job to the last
+healthy artifact. Until then the host does not return to the crashing
+revision; only a new deploy job brings it back. Apps get `cpus`,
 `mem_limit`, `memswap_limit`, `pids_limit`, and `no-new-privileges`. They
-publish no port, use no host network, and mount nothing from the host.
+publish no port, use no host network, and mount nothing from the host other
+than their secret files.
 
-The edge is the `rt-edge` Caddy container (`RUN_TARGET_EDGE_IMAGE`, default
-`caddy:2-alpine`; it needs `wget` for the health check). It publishes
+The edge is the `rt-edge` Caddy container. `RUN_TARGET_EDGE_IMAGE` must be
+pinned by digest, like app images. The default is `caddy:2.11-alpine` at
+the digest of `caddy:2-alpine` on 2026-10-20, and the image needs `wget` for
+the health check. It publishes
 `RUN_TARGET_HTTP_PORT`/`RUN_TARGET_HTTPS_PORT` (80/443) and joins each app
 network with `docker network connect`. `RunTargetCaddyfile` gives `acme` sites
 automatic HTTPS (`RUN_TARGET_ACME_EMAIL`). `cloudflare` sites use the origin
 certificate in `RUN_TARGET_CLOUDFLARE_CERT_DIR` (`origin.pem`, `origin.key`;
 SSL mode Full strict) or else Caddy's internal CA (SSL mode Full). With
 `RUN_TARGET_CLOUDFLARE_TRUSTED_PROXIES` set, the client IP comes from
-`CF-Connecting-IP`. A domain declared by two environments is routed only to
-the first and reported as `domain-conflict` on the other.
+`CF-Connecting-IP`. A domain belongs to the first environment that claims
+it on a host. Studio persists the claims per host
+(`deployments/run-targets/<host>.json`). It sends a later claimant the domain
+in `refusedDomains`, not in `domains`. A claim ends when its owner no longer
+declares the domain. It stays while the owner's project is skipped or its
+removal is unconfirmed. The host also persists first-claim ownership
+(`domainOwners` in its state) and routes a domain only to its owner, whatever
+key sorts first. Either refusal shows as `domain-conflict` on the other
+environment.
 
-Secret references are resolved on the host just in time from
-`RUN_TARGET_SECRET_DIR` (default `/etc/agent-host/secrets`, one file per
-reference, as for `deploy-loop`). The compose file names each variable without
-a value. `docker compose up` receives the values in its process environment
-only, and every diagnostic is masked before it is logged. Values never enter
-the compose files, host state (`RUN_TARGET_STATE_DIR`, default
-`$RUNNER_STATE_DIR/run-target`), Studio, or logs. Docker itself keeps them in
-the container configuration, as it does for any container environment.
-Egress allowlists and host firewall rules for the run zone belong to IP-2.
+Secret references are resolved on the host just in time, each project from
+its own root: `RUN_TARGET_SECRET_DIR/<project>/<secretRef>`. The default root
+is `/etc/agent-host/secrets`, and the project directory is the lowercased,
+URL-escaped project name, as in Studio's deploy store. A project cannot read
+another project's secret, and a host-wide file directly under the root is
+never used. The host writes each value to a file under
+`RUN_TARGET_SECRET_RUNTIME_DIR` (default `/run/agent-host/run-target-secrets`,
+directory `0700`, files `0444` so any container user can read them). It
+refuses unless `/proc/self/mounts` shows that path on `tmpfs` or `ramfs`. Run
+the service with `RuntimeDirectory=agent-host`, or point the variable at
+another tmpfs. Compose mounts each file read-only at `/run/secrets/<secretRef>`.
+The container gets only the path, in `<NAME>_FILE` (for example
+`DATABASE_URL_FILE`), so the app reads the value from that file. Docker's
+container configuration (`config.v2.json`) therefore holds paths, not values.
+A revision's files exist only while it may run: they go when it is stopped,
+discarded, or removed, and are written again before a restart, restore, or
+rollback. After a reboot the files are gone until the host restarts the app.
+Values never enter compose files, host state (`RUN_TARGET_STATE_DIR`, default
+`$RUNNER_STATE_DIR/run-target`), Docker's container configuration, Studio, or
+logs; every diagnostic is masked before it is logged. Values exist on the host
+only in that tmpfs, in the agent's memory, and inside the running container.
+Every free-text value in a generated compose file has `$` doubled, so Compose
+interpolates no variable from the agent's environment. Egress allowlists and
+host firewall rules for the run zone belong to IP-2.
 
 ### Integration host (standalone review loop)
 

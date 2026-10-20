@@ -27,7 +27,7 @@
     "healthPath": { "type": "string", "pattern": "^/[A-Za-z0-9._~/-]{0,255}$",
       "description": "Health path checked through the edge before traffic switches. Defaults to the path of healthUrl." },
     "variables": { "type": "object",
-      "description": "Plain, non-secret environment variables. Secrets stay in secretRefs.",
+      "description": "Plain, non-secret environment variables. Secrets stay in secretRefs; on an edge host each one is mounted at /run/secrets/<ref> and named by <NAME>_FILE, which a variable must not shadow.",
       "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]{0,63}$" },
       "additionalProperties": { "type": "string", "maxLength": 4096 } },
     "resources": { "type": "object", "additionalProperties": false,
