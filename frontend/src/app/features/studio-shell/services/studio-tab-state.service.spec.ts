@@ -414,20 +414,25 @@ describe('StudioTabStateService', () => {
     expect(svc.activeKey()).toBeNull();
   });
 
-  describe('epics tab is a normal, closable tab', () => {
-    it('opens the workspace-wide Epics view as an active tab', () => {
-      svc.open({ kind: 'epics', projectName: null });
-      const key = 'epics:__all__';
-      expect(svc.activeKey()).toBe(key);
-      expect(svc.tabs().map(t => studioTabKey(t))).toEqual([ALL_BOARD_KEY, key]);
-    });
+  it('restores retired Epics overview tabs as the one Dossiers tab of the same scope', () => {
+    TestBed.resetTestingModule();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      v: 1,
+      tabs: [
+        { kind: 'workbenches', projectName: 'demo' },
+        { kind: 'epics', projectName: 'demo' },
+        { kind: 'epics', projectName: null },
+      ],
+      activeKey: 'epics:__all__',
+    }));
+    TestBed.configureTestingModule({ providers: [StudioTabStateService] });
+    const restored = TestBed.inject(StudioTabStateService);
 
-    it('close() removes the Epics tab and falls back to the board', () => {
-      svc.open({ kind: 'epics', projectName: null });
-      svc.close('epics:__all__');
-      expect(svc.tabs().map(t => studioTabKey(t))).toEqual([ALL_BOARD_KEY]);
-      expect(svc.activeKey()).toBe(ALL_BOARD_KEY);
-    });
+    expect(restored.tabs()).toEqual([
+      { kind: 'workbenches', projectName: 'demo' },
+      { kind: 'workbenches', projectName: null },
+    ]);
+    expect(restored.activeKey()).toBe('workbenches:__all__');
   });
 
   describe('epic detail tabs', () => {

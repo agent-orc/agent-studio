@@ -3,6 +3,8 @@
 // state
 export { ProjectOverlaysService } from './state/project-overlays.service';
 export {
+  DEPLOY_STEPS_QUERY,
+  isDeployStepsQuery,
   isProjectHubRoute,
   parseProjectHubRoute,
   projectHubRoute,
@@ -17,6 +19,7 @@ export { ProjectDetailComponent } from './components/project-detail/project-deta
 export { ProjectOverviewDashboardComponent } from './components/project-overview-dashboard/project-overview-dashboard';
 export { ProjectDeploymentPanelComponent } from './components/project-deployment-panel/project-deployment-panel.component';
 export { ProjectDeployAreaComponent } from './components/project-deploy-area/project-deploy-area';
+export { ProjectEnvironmentOverviewComponent } from './components/project-environment-overview/project-environment-overview.component';
 export { ProjectShellComponent } from './components/project-shell/project-shell.component';
 export { ProjectSettingsPanelComponent } from './components/project-settings-panel/project-settings-panel.component';
 export { ProjectExecutionDefinitionComponent } from './components/project-execution-definition/project-execution-definition';
@@ -53,6 +56,7 @@ export {
   DEFAULT_PROJECT_RAIL_KEY,
   isProjectRailKey,
   projectRailLabel,
+  resolveProjectSection,
   toProjectSlug,
   type ProjectRailKey,
 } from './components/project-shell/project-shell.config';

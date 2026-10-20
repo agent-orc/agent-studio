@@ -3,10 +3,10 @@ import type { StudioPanelKind, StudioTabKind } from '../../studio-shell.types';
 /**
  * Every item the ActivityBar can mark as active. This is the union of the
  * sidebar-panel kinds (`explorer` … `settings`) and the editor destinations
- * that own their own rail button (`epics`). `settings` is shared:
+ * that own their own rail button (`workbenches`). `settings` is shared:
  * it is both a sidebar panel and the target of the workspace-settings tab.
  */
-export type StudioActivityItemKey = StudioPanelKind | 'epics' | 'workbenches';
+export type StudioActivityItemKey = StudioPanelKind | 'workbenches';
 
 /**
  * The bug (AGT-2042): the ActivityBar drew its active marker from two
@@ -22,7 +22,7 @@ export type StudioActivityItemKey = StudioPanelKind | 'epics' | 'workbenches';
  *
  * Priority — the surface the user is actually looking at wins:
  *  1. The active editor tab, when it is one of the ActivityBar destinations
- *     (Epics / Workspace settings). The main pane is the shown
+ *     (Dossiers / Workspace settings). The main pane is the shown
  *     surface, so its marker takes precedence over a merely-open sidebar.
  *  2. Otherwise the open sidebar panel (only while the sidebar is visible).
  *  3. Otherwise nothing is active.
@@ -35,8 +35,6 @@ export function resolveActiveActivityKey(state: {
   switch (state.activeTabKind) {
     case 'feed':
       return 'activity';
-    case 'epics':
-      return 'epics';
     case 'workbenches':
       return 'workbenches';
     case 'workspace-settings':

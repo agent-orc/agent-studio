@@ -35,6 +35,7 @@ public static class RunnerEventIngestionEndpoints
             RunLeaseService leases,
             ITaskScanner scanner,
             RunnerEventJournal journal,
+            AgentStudio.Secrets.SecretValueScrubber secretValues,
             CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(request.TaskKey) || string.IsNullOrWhiteSpace(request.Kind))
@@ -74,7 +75,7 @@ public static class RunnerEventIngestionEndpoints
                 ReasoningTokens = request.ReasoningTokens,
                 Severity = request.Severity,
                 Code = request.Code,
-                Message = request.Message,
+                Message = request.Message is null ? null : secretValues.Scrub(request.Message),
                 ImplementationStatus = request.ImplementationStatus,
                 PipelineStatus = request.PipelineStatus,
             };
@@ -87,7 +88,7 @@ public static class RunnerEventIngestionEndpoints
                     "event:" + CredentialRedactor.Redact(kind).Trim(), request.TaskKey, task.ProjectName,
                     string.IsNullOrWhiteSpace(task.OwnerClientId) ? "automation:unknown" : task.OwnerClientId,
                     runner.RunnerId, runner.CredentialId,
-                    Outcome: CredentialRedactor.Redact(request.Message)));
+                    Outcome: secretValues.Scrub(CredentialRedactor.Redact(request.Message))));
             }
             return Results.Accepted();
         });
