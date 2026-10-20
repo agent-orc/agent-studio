@@ -17,8 +17,8 @@ import {
  *
  * Routes follow the real contracts: the AGT-3176 environments API, the AGT-3201
  * deploy routes under /api/projects/{p}/deploy (status, releases, deployments,
- * the step log, approve, reject, cancel), the AGT-3221 pipeline definition, and
- * the execution definition's lifecycle. A missing route answers 404 without a
+ * the step log, approve, reject, cancel), AGT-3223 environment health, and the
+ * AGT-3221 pipeline definition. A missing route answers 404 without a
  * body, as ASP.NET does for an unmapped path. The browser clock is pinned so
  * ages and the period filter are deterministic.
  */

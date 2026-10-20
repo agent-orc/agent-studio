@@ -53,6 +53,22 @@ describe('ProjectDeployDataService', () => {
     expect(log.at(-1)).toEqual({ status: 'ready', value: deploymentLogFixture('run-b-stage') });
   });
 
+  it('reads AGT-3223 environment health and distinguishes unavailable from server error', () => {
+    const health = collect(service.health('Web Site'));
+    const response = { capturedAt: '2026-10-19T12:00:00Z', probeOrigin: 'mock', environments: [] };
+    http.expectOne('/api/projects/Web%20Site/environments/health').flush(response);
+    expect(health.at(-1)).toEqual({ status: 'ready', value: response });
+
+    const unavailable = collect(service.health('Web Site'));
+    http.expectOne('/api/projects/Web%20Site/environments/health').flush(null, MISSING_ROUTE);
+    expect(unavailable.at(-1)).toEqual({ status: 'unavailable' });
+
+    const error = collect(service.health('Web Site'));
+    http.expectOne('/api/projects/Web%20Site/environments/health').flush({ error: 'Probe store failed.' },
+      { status: 500, statusText: 'Server Error' });
+    expect(error.at(-1)).toEqual({ status: 'error', message: 'Probe store failed.' });
+  });
+
   it('reports AGT-3201 routes as unavailable only when the route itself is missing', () => {
     const releases = collect(service.releases('Web Site'));
     const deployments = collect(service.deployments('Web Site'));
