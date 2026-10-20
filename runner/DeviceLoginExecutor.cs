@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.ComponentModel;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -18,7 +19,9 @@ namespace AgentRunner;
 public sealed partial class DeviceLoginExecutor(
     string binary = "codex", string? credentialFile = null,
     Func<CancellationToken, Task<bool>>? probe = null, TimeProvider? clock = null,
-    string provider = "codex")
+    string provider = "codex", ProviderAuthProbe? authProbe = null,
+    Func<CancellationToken, Task<bool>>? sessionRunning = null,
+    Action<string>? log = null)
 {
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
 
@@ -128,7 +131,7 @@ public sealed partial class DeviceLoginExecutor(
             if (sent) await published.Task.WaitAsync(deadline.Token);
             if (process.ExitCode != 0 || !sent)
                 return new("failed", $"{label} device sign-in failed before verification.");
-            if (claude) return await AcceptClaudeTokenAsync(store, previousDigest, token, startedAt, deadline.Token);
+            if (claude) return await AcceptClaudeTokenAsync(store, previousDigest, token, deadline.Token);
             if (!File.Exists(store))
                 return new("failed", "Codex did not create a credential in this runner's CLI home.");
             var newDigest = SHA256.HashData(await File.ReadAllBytesAsync(store, deadline.Token));
@@ -173,7 +176,7 @@ public sealed partial class DeviceLoginExecutor(
     /// concurrent run ever starts with an unverified token. A cancelled sign-in accepts nothing.
     /// </summary>
     private async Task<DeviceLoginCompletionRequest> AcceptClaudeTokenAsync(string store,
-        byte[]? previousDigest, string? token, DateTimeOffset startedAt, CancellationToken ct)
+        byte[]? previousDigest, string? token, CancellationToken ct)
     {
         if (token is null) return new("failed", "Claude did not return a setup token to this runner.");
         var content = Encoding.UTF8.GetBytes(token + "\n");
@@ -183,8 +186,11 @@ public sealed partial class DeviceLoginExecutor(
         using (ProviderAuthEnvironment.UseCandidateClaudeToken(token))
             verified = probe is not null
                 ? await probe(ct)
-                : await ProbeAsync(binary, startedAt, ct);
+                : await (authProbe ?? ProviderAuthProbe.Shared).VerifyCandidateAsync(binary, ct);
         if (!verified) return new("failed", "Claude login completed, but the provider probe did not succeed.");
+        ct.ThrowIfCancellationRequested();
+        if (sessionRunning is not null && !await sessionRunning(ct))
+            return new("failed", "The device sign-in session ended before credential acceptance.");
         ct.ThrowIfCancellationRequested();
         await WriteCredentialAsync(store, content, ct);
         Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, token);
@@ -231,7 +237,7 @@ public sealed partial class DeviceLoginExecutor(
         => ClaudeTokenPattern().Match(AnsiPattern().Replace(line, string.Empty)).Value is { Length: > 0 } token
             ? token : null;
 
-    private static void Stop(Process process)
+    private void Stop(Process process)
     {
         try
         {
@@ -240,6 +246,10 @@ public sealed partial class DeviceLoginExecutor(
             process.WaitForExit(TimeSpan.FromSeconds(5));
         }
         catch (InvalidOperationException) { return; } // Exit raced the stop request.
+        catch (Exception ex) when (ex is Win32Exception or AggregateException or NotSupportedException)
+        {
+            log?.Invoke($"device-login process stop failed: {ex.GetType().Name}");
+        }
     }
 
     private static async Task<bool> ProbeAsync(string binary, DateTimeOffset startedAt, CancellationToken ct)
@@ -252,7 +262,8 @@ public sealed partial class DeviceLoginExecutor(
 
 /// <summary>The runner's only device sign-in poller; it serves both providers for this host.</summary>
 public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> log,
-    string stateDir, string codexBinary = "codex", string claudeBinary = "claude", TimeProvider? clock = null)
+    string stateDir, string codexBinary = "codex", string claudeBinary = "claude", TimeProvider? clock = null,
+    ProviderAuthProbe? authProbe = null)
 {
     /// <summary>Claim poll and running-session state poll interval.</summary>
     internal static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
@@ -295,6 +306,11 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
         }
         using (hostLock)
         {
+            var claudeFile = DeviceLoginExecutor.ClaudeTokenPath(stateDir);
+            var previousClaudeFile = claim.Provider == "claude" && File.Exists(claudeFile)
+                ? await File.ReadAllBytesAsync(claudeFile, ct) : null;
+            var previousClaudeToken = claim.Provider == "claude"
+                ? Environment.GetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken) : null;
             var remaining = claim.ExpiresAt - _clock.GetUtcNow().UtcDateTime;
             using var expiry = new CancellationTokenSource(
                 remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, _clock);
@@ -302,9 +318,12 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
             var watch = WatchAsync(claim.Handle, session);
             var executor = claim.Provider switch
             {
-                "codex" => new DeviceLoginExecutor(codexBinary, clock: _clock),
+                "codex" => new DeviceLoginExecutor(codexBinary, clock: _clock, log: log),
                 "claude" => new DeviceLoginExecutor(claudeBinary,
-                    DeviceLoginExecutor.ClaudeTokenPath(stateDir), clock: _clock, provider: "claude"),
+                    claudeFile, clock: _clock, provider: "claude",
+                    authProbe: authProbe,
+                    sessionRunning: async token => await client.DeviceLoginStateAsync(claim.Handle, token) == "running",
+                    log: log),
                 _ => null,
             };
             DeviceLoginCompletionRequest result;
@@ -316,12 +335,28 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
                             claim.Handle, instructions, token), session.Token)
                     : new DeviceLoginCompletionRequest("failed", "Unsupported device-login provider.");
             }
+            catch (Exception ex)
+            {
+                log($"device-login executor failed: {ex.GetType().Name}");
+                result = new("failed", "The device sign-in could not finish.");
+            }
             finally
             {
                 await session.CancelAsync();
                 await watch;
             }
-            await CompleteAsync(claim.Handle, result);
+            var accepted = false;
+            try { accepted = await CompleteAsync(claim.Handle, result); }
+            finally
+            {
+                if (claim.Provider == "claude" && result.Result == "completed" && !accepted)
+                {
+                    if (previousClaudeFile is null) File.Delete(claudeFile);
+                    else await File.WriteAllBytesAsync(claudeFile, previousClaudeFile);
+                    Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, previousClaudeToken);
+                    log("device-login Claude credential restored after completion rejection");
+                }
+            }
             log($"device-login provider={claim.Provider} result={result.Result}");
         }
     }
@@ -332,6 +367,7 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
     /// </summary>
     private async Task WatchAsync(string handle, CancellationTokenSource session)
     {
+        var readFailed = false;
         try
         {
             while (true)
@@ -341,9 +377,11 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
                 try { state = await client.DeviceLoginStateAsync(handle, session.Token); }
                 catch (Exception ex) when (ex is not OperationCanceledException || !session.IsCancellationRequested)
                 {
-                    log($"device-login state read failed: {ex.GetType().Name}");
+                    if (!readFailed) log($"device-login state read failed: {ex.GetType().Name}");
+                    readFailed = true;
                     continue;
                 }
+                readFailed = false;
                 if (state == "running") continue;
                 log($"device-login session is {state ?? "gone"} on the Task Server; stopping the CLI");
                 await session.CancelAsync();
@@ -356,13 +394,18 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
         }
     }
 
-    private async Task CompleteAsync(string handle, DeviceLoginCompletionRequest result)
+    private async Task<bool> CompleteAsync(string handle, DeviceLoginCompletionRequest result)
     {
         using var timeout = new CancellationTokenSource(CompletionTimeout, _clock);
-        try { await client.CompleteDeviceLoginAsync(handle, result, timeout.Token); }
+        try
+        {
+            await client.CompleteDeviceLoginAsync(handle, result, timeout.Token);
+            return true;
+        }
         catch (TaskServerException ex) when (ex.StatusCode == 409)
         {
             log("device-login completion ignored: the session already ended on the Task Server");
+            return false;
         }
     }
 

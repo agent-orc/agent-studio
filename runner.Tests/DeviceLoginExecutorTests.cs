@@ -217,6 +217,142 @@ public sealed class DeviceLoginExecutorTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Claude_candidate_gets_a_fresh_real_request_without_prior_credential_or_with_recent_old_success(bool oldSuccess)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 8, 0, 0, TimeSpan.Zero));
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var previous = Environment.GetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken);
+        try
+        {
+            var candidate = "sk-ant-" + new string('c', 32);
+            var oldToken = "sk-ant-" + new string('o', 32);
+            Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken,
+                oldSuccess ? oldToken : null);
+            var realCalls = 0;
+            var probe = new ProviderAuthProbe(
+                launcher: (_, _, _) => Task.FromResult(new ProcessResult(0, "Logged in", "")),
+                executableExists: _ => true,
+                clock: clock.GetUtcNow,
+                credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "fixture",
+                    EffectiveSource: oldSuccess ? "runner-env" : "absent",
+                    CredentialGeneration: oldSuccess ? "old-generation" : null));
+            probe.UseRealRequest((_, _, _) =>
+            {
+                realCalls++;
+                var seen = ProviderAuthEnvironment.ClaudeTokenForChild();
+                return Task.FromResult(new ProcessResult(seen is not null ? 0 : 1, "OK", ""));
+            }, null!);
+            if (oldSuccess)
+            {
+                var old = await probe.RefreshAsync("claude", CancellationToken.None);
+                Assert.Equal(clock.GetUtcNow(), old.LastRealSuccessAt);
+                clock.Advance(TimeSpan.FromMinutes(5));
+            }
+            var beforeCandidate = realCalls;
+            var cli = Path.Combine(directory, "fake-claude");
+            await File.WriteAllTextAsync(cli,
+                $"#!/bin/sh\nprintf '%s\\n' 'https://claude.ai/oauth/authorize' '{candidate}'\n");
+            File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var file = DeviceLoginExecutor.ClaudeTokenPath(directory);
+            var result = await new DeviceLoginExecutor(cli, file, clock: clock, provider: "claude", authProbe: probe)
+                .RunAsync((_, _) => Task.CompletedTask, CancellationToken.None);
+            Assert.Equal("completed", result.Result);
+            Assert.Equal(beforeCandidate + 1, realCalls);
+            Assert.Equal(candidate, (await File.ReadAllTextAsync(file)).Trim());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, previous);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Claude_probe_success_after_session_failure_accepts_no_credential()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 8, 0, 0, TimeSpan.Zero));
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var previous = Environment.GetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken);
+        try
+        {
+            var server = new FakeDeviceLoginServer(clock, "claude");
+            using var http = server.Client();
+            using var client = new TaskServerClient(http, "runner-a", usesDurableTaskServer: true);
+            var candidate = "sk-ant-" + new string('q', 32);
+            var cli = Path.Combine(directory, "fake-claude");
+            await File.WriteAllTextAsync(cli,
+                $"#!/bin/sh\nprintf '%s\\n' 'https://claude.ai/oauth/authorize' '{candidate}'\n");
+            File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var file = DeviceLoginExecutor.ClaudeTokenPath(directory);
+            Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, "previous-token");
+            var result = await new DeviceLoginExecutor(cli, file, _ =>
+                {
+                    server.State = "failed";
+                    return Task.FromResult(true);
+                }, clock, "claude", sessionRunning: async ct =>
+                    await client.DeviceLoginStateAsync("dlogin_fixture", ct) == "running")
+                .RunAsync((message, ct) => client.ReportDeviceLoginInstructionsAsync(
+                    "dlogin_fixture", message, ct), CancellationToken.None);
+            Assert.Equal("failed", result.Result);
+            Assert.False(File.Exists(file));
+            Assert.Equal("previous-token", Environment.GetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, previous);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Rejected_Claude_completion_restores_the_previous_credential()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 8, 0, 0, TimeSpan.Zero));
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var previous = Environment.GetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken);
+        try
+        {
+            var oldToken = "sk-ant-" + new string('o', 32);
+            var candidate = "sk-ant-" + new string('n', 32);
+            var file = DeviceLoginExecutor.ClaudeTokenPath(directory);
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            await File.WriteAllTextAsync(file, oldToken + "\n");
+            Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, oldToken);
+            var cli = Path.Combine(directory, "fake-claude");
+            await File.WriteAllTextAsync(cli,
+                $"#!/bin/sh\nprintf '%s\\n' 'https://claude.ai/oauth/authorize' '{candidate}'\n");
+            File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var probe = new ProviderAuthProbe(clock: clock.GetUtcNow);
+            probe.UseRealRequest((_, _, _) => Task.FromResult(new ProcessResult(
+                ProviderAuthEnvironment.ClaudeTokenForChild() == candidate ? 0 : 1, "OK", "")), null!);
+            var server = new FakeDeviceLoginServer(clock, "claude") { RejectCompletion = true };
+            using var http = server.Client();
+            using var client = new TaskServerClient(http, "runner-a", usesDurableTaskServer: true);
+            using var stop = new CancellationTokenSource();
+            var run = new DeviceLoginPoller(client, _ => { }, directory,
+                claudeBinary: cli, clock: clock, authProbe: probe).RunAsync(stop.Token);
+            Assert.Equal("completed", (await server.Completion.Task.WaitAsync(TimeSpan.FromSeconds(10))).Result);
+            await WaitUntilAsync(() => File.ReadAllText(file).Trim() == oldToken
+                && Environment.GetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken) == oldToken);
+            stop.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, previous);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task Studio_cancel_stops_a_parked_claude_login_and_accepts_no_token()
     {
@@ -431,6 +567,7 @@ public sealed class DeviceLoginExecutorTests
     {
         private int _claims;
         public volatile string State = "running";
+        public bool RejectCompletion { get; init; }
         public List<string> Paths { get; } = [];
         public TaskCompletionSource<bool> Instructions { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<DeviceLoginCompletionRequest> Completion { get; } =
@@ -452,7 +589,10 @@ public sealed class DeviceLoginExecutorTests
                     { Content = JsonContent.Create(new DeviceLoginRunnerStateDto(State)) };
             if (path.EndsWith("/instructions", StringComparison.Ordinal)) Instructions.TrySetResult(true);
             if (path.EndsWith("/completion", StringComparison.Ordinal))
+            {
                 Completion.TrySetResult((await request.Content!.ReadFromJsonAsync<DeviceLoginCompletionRequest>())!);
+                if (RejectCompletion) return new HttpResponseMessage(HttpStatusCode.Conflict);
+            }
             return new HttpResponseMessage(HttpStatusCode.OK);
         }
     }

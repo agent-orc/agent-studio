@@ -872,6 +872,30 @@ public sealed class ProviderAuthProbe
         lock (_sync) { _realLauncher = launcher; _incidentAdapter = incidentAdapter; }
     }
 
+    /// <summary>
+    /// Verifies a newly issued credential with one real request. This deliberately bypasses
+    /// advertisement state, the daily budget and the healthy-result ceiling: none of those
+    /// describe the candidate credential. The caller scopes it to the probe child environment.
+    /// No result from this request is written to the shared advertisement cache.
+    /// </summary>
+    public async Task<bool> VerifyCandidateAsync(string cliBinary, CancellationToken ct)
+    {
+        ProviderAuthLauncher? launcher;
+        lock (_sync) launcher = _realLauncher;
+        if (launcher is null) return false;
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        bounded.CancelAfter(_timeout);
+        try
+        {
+            var result = await launcher(cliBinary, [], bounded.Token);
+            return result.ExitCode == 0;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
     public void UseRealRequest(
         ProviderAuthLauncher launcher, ProviderStatusIncidentAdapter incidentAdapter,
         Func<ProviderComparisonQuery, CancellationToken, Task<ProviderComparisonSnapshot>> comparisonAdapter,

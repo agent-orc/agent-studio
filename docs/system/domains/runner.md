@@ -35,8 +35,11 @@ stops the process tree, accepts no credential and reports `failed`; on runner
 shutdown the completion is sent with its own short timeout. Completion requires
 a changed credential file and a successful real provider probe: Codex must
 rewrite its `auth.json`; for Claude only the probe child sees the new setup
-token, and the runner replaces its `provider-auth/claude-token` file and its
-process-wide `CLAUDE_CODE_OAUTH_TOKEN` only after the probe succeeds. At start
+token. The Claude candidate probe makes a fresh real request without the shared
+advertisement cache or daily request budget. The runner checks the session state
+again before writing the token, and restores the previous file and process token
+if completion is rejected. The runner replaces its `provider-auth/claude-token`
+file and its process-wide `CLAUDE_CODE_OAUTH_TOKEN` only after the probe succeeds. At start
 that file wins over a `CLAUDE_CODE_OAUTH_TOKEN` from `runner.env`, because it is
 written only after a verified sign-in; delete it to return to the `runner.env`
 token. The runner logs which source is active, never the value. Terminal

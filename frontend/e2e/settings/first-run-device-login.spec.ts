@@ -56,7 +56,7 @@ test('networked first-run provider sign-in uses the shared device-login API', as
   await page.route('**/api/v1/management/device-logins/*', route => {
     sessionKeys.push(route.request().headers()['x-device-login-session']);
     return json({
-      handle: 'dlogin_first_run', state: 'running', detail: null,
+      handle: 'dlogin_first_run', state: 'running', detail: null, sessionKey: null,
       verificationUrl: 'https://claude.ai/oauth/authorize', userCode: null,
       expiresAt: new Date(Date.now() + 900_000).toISOString(),
     })(route);
@@ -80,6 +80,8 @@ test('networked first-run provider sign-in uses the shared device-login API', as
   await expect(page.getByTestId('first-run-device-login')).toContainText('Claude on Coding host A: running');
   expect(started).toEqual([{ hostId: 'host-a', provider: 'claude', targetRunnerId: 'coding-a' }]);
   expect(sessionKeys[0]).toBe('browser-session');
+  await expect.poll(() => sessionKeys.length).toBeGreaterThanOrEqual(2);
+  expect(sessionKeys[1]).toBe('browser-session');
   expect(legacyCalls).toBe(0);
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);

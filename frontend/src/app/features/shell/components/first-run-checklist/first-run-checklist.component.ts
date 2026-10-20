@@ -346,7 +346,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
     this.providers.deviceLoginStatus(login.handle, login.sessionKey)
       .subscribe({
         next: update => {
-          this.deviceLogin.set({ ...login, ...update });
+          this.deviceLogin.set({ ...login, ...update, sessionKey: login.sessionKey });
           if (update.state === 'completed') { this.providers.refresh(); this.reload(); }
           if (['completed', 'failed'].includes(update.state) && this.loginPoll) {
             clearInterval(this.loginPoll);

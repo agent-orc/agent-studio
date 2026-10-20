@@ -347,13 +347,15 @@ describe('FirstRunChecklistComponent probes', () => {
     const session = { handle: 'dlogin_a', state: 'queued' as const, verificationUrl: null, userCode: null,
       sessionKey: 'key-a', expiresAt: new Date(Date.now() + 900_000).toISOString() };
     deviceLogins.startDeviceLogin.mockReturnValue(of(session));
-    deviceLogins.deviceLoginStatus.mockReturnValue(of({ ...session, state: 'running',
+    deviceLogins.deviceLoginStatus.mockReturnValue(of({ ...session, sessionKey: null, state: 'running',
       detail: null, verificationUrl: 'https://claude.ai/oauth/authorize' }));
     const component = fixture.componentInstance;
     component.signIn({ ...readyBadge(), provider: 'claude', providerLabel: 'Claude', hostId: 'host-a' });
     expect(deviceLogins.startDeviceLogin).toHaveBeenCalledWith('host-a', 'claude', 'runner-a');
     component.refreshDeviceLogin();
     expect(deviceLogins.deviceLoginStatus).toHaveBeenCalledWith('dlogin_a', 'key-a');
+    component.refreshDeviceLogin();
+    expect(deviceLogins.deviceLoginStatus).toHaveBeenNthCalledWith(2, 'dlogin_a', 'key-a');
     fixture.detectChanges();
     const host: HTMLElement = fixture.nativeElement;
     expect(host.querySelector('[data-testid="first-run-device-login"]')?.textContent).toContain('Claude on Runner A: running');
@@ -378,6 +380,8 @@ describe('FirstRunChecklistComponent probes', () => {
     deviceLogins.cancelActiveDeviceLogin.mockClear();
     deviceLogins.startDeviceLogin.mockReturnValue(of(session));
     fixture.componentInstance.signIn({ ...readyBadge(), hostId: 'host-a' });
+    deviceLogins.deviceLoginStatus.mockReturnValue(of({ ...session, sessionKey: null }));
+    fixture.componentInstance.refreshDeviceLogin();
     fixture.destroy();
     expect(deviceLogins.cancelActiveDeviceLogin).toHaveBeenCalledWith(
       expect.objectContaining({ handle: 'dlogin_b', sessionKey: 'key-b', state: 'running' }));
