@@ -2,3 +2,5 @@
 # A carriage return that belongs to CRLF is not trailing whitespace.
 *.cs whitespace=cr-at-eol
 *.sln whitespace=cr-at-eol
+# Serialized protobuf fixtures (OTLP) must never be line-ending converted.
+*.pb binary
