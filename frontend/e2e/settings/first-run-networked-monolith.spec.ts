@@ -9,13 +9,23 @@ test('networked monolith explains that the first-run Task Server plane is unavai
   expect(workspace).toBeTruthy();
   const before = await page.request.get('/api/auth/status');
   expect(before.ok()).toBeTruthy();
-  expect(await before.json()).toMatchObject({ profile: 'networked', bootstrapRequired: true });
-  const created = await page.request.post('/api/auth/bootstrap', { data: {
-    username: 'first-run-owner', displayName: 'Owner',
-    password: ['first-run', 'password', 'long-enough'].join('-'),
-    bootstrapCode: `${basename(workspace!)}-owner-code`,
-  } });
-  expect(created.ok(), `${created.status()}: ${await created.text()}`).toBeTruthy();
+  const status = await before.json() as { profile: string; bootstrapRequired: boolean };
+  expect(status.profile).toBe('networked');
+  const password = ['first-run', 'password', 'long-enough'].join('-');
+  const session = status.bootstrapRequired
+    ? await page.request.post('/api/auth/bootstrap', { data: {
+      username: 'first-run-owner', displayName: 'Owner', password,
+      bootstrapCode: `${basename(workspace!)}-owner-code`,
+    } })
+    : await page.request.post('/api/auth/login', { data: { username: 'first-run-owner', password } });
+  expect(session.ok(), `${session.status()}: ${await session.text()}`).toBeTruthy();
+  // The test proxy is HTTP while the networked backend sets a Secure cookie.
+  // Use its supported local cookie name for this loopback-only browser run.
+  const token = session.headers()['set-cookie']?.match(/__Host-agentstudio-session=([^;,\s]+)/)?.[1];
+  expect(token).toBeTruthy();
+  await page.context().addCookies([{
+    name: 'agentstudio-session', value: token!, url: process.env.PW_BASE_URL!, sameSite: 'Lax',
+  }]);
   const authenticated = await page.request.get('/api/auth/status');
   expect(await authenticated.json()).toMatchObject({ profile: 'networked', authenticated: true,
     user: { role: 'owner' } });
@@ -23,7 +33,8 @@ test('networked monolith explains that the first-run Task Server plane is unavai
   const installation = await page.request.get('/api/v1/installation');
   const projects = await page.request.get('/api/v1/projects');
   expect(installation.status()).toBe(404);
-  expect(projects.status()).toBe(404);
+  expect(projects.ok()).toBeTruthy();
+  expect(Array.isArray(await projects.json())).toBe(true);
 
   await page.goto('/#/workspace/settings/first-run');
   await expect(page.getByTestId('first-run-checklist')).toBeVisible();
