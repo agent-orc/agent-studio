@@ -56,6 +56,11 @@
               @for (provider of auth(host); track provider.name) { <span>{{ provider.name }}: {{ provider.status }}</span> }
               @if (!auth(host).length) { <span>Unavailable</span> }
             </div>
+            @let zone = zonePolicy(host);
+            <div class="environment-flow__host-detail" data-testid="environment-host-zone-policy" [attr.data-zone-policy-state]="zone.state"><strong>Zone policy</strong>
+              <span>{{ zone.label }}</span>
+              @if (zone.detail) { <span>{{ zone.detail }}</span> }
+            </div>
             <div class="environment-flow__host-detail"><strong>Running attempts</strong>
               @for (task of running(host); track task.id) { <span>{{ task.taskKey || task.id }} · {{ age(task) }}</span> }
               @if (!running(host).length) { <span>{{ runningEmptyLabel(host) }}</span> }

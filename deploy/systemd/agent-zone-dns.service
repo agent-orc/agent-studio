@@ -1,0 +1,19 @@
+# AGT-3231: the zone resolver. Work containers resolve through it (--dns
+# <bridge gateway>); dnsmasq answers on the work bridges only and adds every
+# answer for a name the work zone allows to that destination's ipset, so the
+# egress allowlist follows the addresses the containers actually get.
+# agent-zone-policy.service renders the configuration and starts or restarts
+# this unit, so it has no [Install] section and no ordering on that unit.
+# Install steps: docs/operations/setup/zone-network-policy.md.
+[Unit]
+Description=Agent Studio zone resolver (dnsmasq filling the zone egress ipsets)
+After=network.target docker.service
+ConditionPathExists=/var/lib/agent-studio/zone-policy/dnsmasq.conf
+
+[Service]
+Type=simple
+ExecStartPre=/usr/sbin/dnsmasq --test --conf-file=/var/lib/agent-studio/zone-policy/dnsmasq.conf
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/var/lib/agent-studio/zone-policy/dnsmasq.conf
+Restart=on-failure
+RestartSec=5s
+SyslogIdentifier=agent-zone-dns
