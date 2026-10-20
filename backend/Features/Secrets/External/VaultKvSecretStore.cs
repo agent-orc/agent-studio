@@ -71,16 +71,22 @@ public sealed class VaultKvSecretStore(SecretBackendBinding binding, HttpClient 
         using var response = await RequestAsync(HttpMethod.Get, PathOf("metadata", scope, name), null, ct, missingIsNull: true);
         if (response is null) return null;
         var data = Required(response.RootElement, "data");
-        using var sidecar = await RequestAsync(HttpMethod.Get, MetadataSidecar(scope, name), null, ct, missingIsNull: true)
-            ?? throw new SecretBackendException("backend-record-missing", "The selected backend item has no Studio metadata.");
-        var stored = Required(Required(sidecar.RootElement, "data"), "data");
-        SecretRecord? record;
-        try { record = JsonSerializer.Deserialize<SecretRecord>(RequiredString(stored, "record"), Json); }
-        catch (JsonException) { throw new SecretBackendException("backend-record-invalid", "The selected backend item has invalid Studio metadata."); }
-        if (record is null)
-            throw new SecretBackendException("backend-record-invalid", "The selected backend item has invalid Studio metadata.");
-        if (record.Scope != scope.Key || record.Name != name)
-            throw new SecretBackendException("backend-record-invalid", "The selected backend item does not match its scope.");
+        var latest = Required(data, "current_version").GetInt32();
+        using var sidecar = await RequestAsync(HttpMethod.Get, MetadataSidecar(scope, name), null, ct, missingIsNull: true);
+        SecretRecord? record = sidecar is null ? null : ParseRecord(
+            RequiredString(Required(Required(sidecar.RootElement, "data"), "data"), "record"), scope, name);
+        // A KV value write and its Studio record are atomic. If the later sidecar
+        // save failed, the newer record remains recoverable from that value version.
+        if (record is null || record.Versions.Max(version => version.Version) < latest)
+        {
+            using var value = await RequestAsync(HttpMethod.Get, PathOf("data", scope, name) + "?version=" + latest,
+                null, ct, missingIsNull: true);
+            if (value is null)
+                throw new SecretBackendException("backend-record-missing", "The selected backend item has no readable Studio metadata.");
+            record = ParseRecord(RequiredString(Required(Required(value.RootElement, "data"), "data"), "record"), scope, name);
+            if (record.Versions.Max(version => version.Version) != latest)
+                throw new SecretBackendException("backend-version-conflict", "The selected backend record does not match its value version.");
+        }
         // Remote deletion and destruction always win over stored metadata.
         var versions = Required(data, "versions");
         return record with { Versions = record.Versions.Select(version =>
@@ -91,6 +97,18 @@ public sealed class VaultKvSecretStore(SecretBackendBinding binding, HttpClient 
                 return version with { RevokedAt = version.RevokedAt ?? Clock.GetUtcNow().UtcDateTime, RevokedBy = version.RevokedBy ?? "backend" };
             return version;
         }).ToList() };
+    }
+
+    private static SecretRecord ParseRecord(string serialized, SecretScope scope, string name)
+    {
+        SecretRecord? record;
+        try { record = JsonSerializer.Deserialize<SecretRecord>(serialized, Json); }
+        catch (JsonException) { throw new SecretBackendException("backend-record-invalid", "The selected backend item has invalid Studio metadata."); }
+        if (record is null)
+            throw new SecretBackendException("backend-record-invalid", "The selected backend item has invalid Studio metadata.");
+        if (record.Scope != scope.Key || record.Name != name || record.Versions.Count == 0)
+            throw new SecretBackendException("backend-record-invalid", "The selected backend item does not match its scope.");
+        return record;
     }
 
     private async Task SaveMetadata(SecretScope scope, string name, SecretRecord record, CancellationToken ct)
@@ -110,7 +128,7 @@ public sealed class VaultKvSecretStore(SecretBackendBinding binding, HttpClient 
             var expected = next.Versions.Max(item => item.Version);
             using var response = await RequestAsync(HttpMethod.Post, PathOf("data", scope, name),
                 new { options = new { cas = current?.Versions.Max(item => item.Version) ?? 0 },
-                    data = new { value = Encoding.UTF8.GetString(value.Span) } }, ct);
+                    data = new { value = Encoding.UTF8.GetString(value.Span), record = JsonSerializer.Serialize(next, Json) } }, ct);
             if (response is null || Required(Required(response.RootElement, "data"), "version").GetInt32() != expected)
                 throw new SecretBackendException("backend-version-conflict", "The backend version changed during the write.");
             await SaveMetadata(scope, name, next, ct);

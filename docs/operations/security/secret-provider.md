@@ -35,9 +35,13 @@ health and reachability, with no credential value in the response.
 
 Vault and OpenBao use the KV v2 HTTP API. Secrets live under the selected
 mount at `<scope>/<name>`. The backend's KV version is the `@version` suffix.
-The adapter uses compare-and-set writes, KV metadata for native version state,
-and a separate `__studio_metadata__` KV path for Studio's version record (KV
-custom metadata is limited to 512 bytes). KV delete revokes versions. A put revokes earlier versions; rotate preserves
+The adapter uses compare-and-set writes and KV metadata for native version state.
+Each value write also stores its Studio version record in the same KV v2 data
+version. A separate `__studio_metadata__` KV path holds later metadata changes
+such as last use (KV custom metadata is limited to 512 bytes). If that sidecar
+save fails after a value write, the adapter can still read and manage the
+written version using the record stored with it. KV delete revokes versions.
+A put revokes earlier versions; rotate preserves
 them. The adapter requires read, create, update, list and delete rights under
 the selected path, including its KV metadata path, plus read access to
 `<mount>/config` to verify the KV v2 mount. An absent or incompatible mount

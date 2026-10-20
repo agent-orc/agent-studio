@@ -69,6 +69,33 @@ public sealed class ExternalSecretStoreTests
         Assert.DoesNotContain(remote.Requests, path => path.Contains("/metadata/", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Vault_failed_sidecar_save_leaves_the_written_version_manageable(bool existing)
+    {
+        using var remote = new FakeRemote("vault");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero));
+        var store = new VaultKvSecretStore(Bind("vault", remote.Url), remote.Client,
+            (_, _) => Task.FromResult(remote.Token), clock);
+        var provider = Provider(store, clock);
+        if (existing) await provider.PutAsync(Scope, "API_KEY", Value(), Owner);
+        var written = Value();
+        remote.FailMetadataWrites = true;
+
+        var failure = await Assert.ThrowsAsync<SecretBackendException>(() =>
+            provider.PutAsync(Scope, "API_KEY", written, Owner));
+        Assert.Equal("backend-unavailable", failure.Code);
+        Assert.Equal(existing ? 2 : 1, remote.ValueVersions);
+        var recovered = await store.FindAsync(Scope, "API_KEY", default);
+        Assert.Equal(remote.ValueVersions, recovered!.Versions.Max(version => version.Version));
+
+        remote.FailMetadataWrites = false;
+        Assert.Equal(written, (await Resolve(provider, "secret://workspace/API_KEY")).Value);
+        await provider.DeleteAsync(Scope, "API_KEY", Owner);
+        Assert.Null(await store.FindAsync(Scope, "API_KEY", default));
+    }
+
     [Fact]
     public async Task OnePassword_connect_auth_current_read_replace_and_clear_unsupported_errors()
     {
@@ -304,6 +331,7 @@ public sealed class ExternalSecretStoreTests
     {
         private readonly TestServer _server;
         private readonly Dictionary<int, string> _values = [];
+        private readonly Dictionary<int, string> _embeddedRecords = [];
         private readonly HashSet<int> _deleted = [];
         private string? _record;
         private JsonElement? _item;
@@ -316,6 +344,8 @@ public sealed class ExternalSecretStoreTests
         public int ItemVersion => _itemVersion;
         public string LastPatchBody { get; private set; } = string.Empty;
         public bool FailPatches { get; set; }
+        public bool FailMetadataWrites { get; set; }
+        public int ValueVersions => _values.Count;
         public List<string> Requests { get; } = [];
 
         public FakeRemote(string kind)
@@ -346,7 +376,7 @@ public sealed class ExternalSecretStoreTests
             }
             if (context.Request.Method == "LIST")
             {
-                if (_record is null) { context.Response.StatusCode = 404; return; }
+                if (_values.Count == 0) { context.Response.StatusCode = 404; return; }
                 await context.Response.WriteAsJsonAsync(new { data = new { keys = new[] { "API_KEY", "__studio_metadata__/" } } });
                 return;
             }
@@ -354,13 +384,13 @@ public sealed class ExternalSecretStoreTests
             {
                 if (context.Request.Method == "GET")
                 {
-                    if (_record is null) { context.Response.StatusCode = 404; return; }
+                    if (_values.Count == 0) { context.Response.StatusCode = 404; return; }
                     var versions = _values.Keys.ToDictionary(version => version.ToString(),
                         version => new { destroyed = false, deletion_time = _deleted.Contains(version) ? "2026-10-20T09:00:00Z" : "" });
-                    await context.Response.WriteAsJsonAsync(new { data = new { versions } });
+                    await context.Response.WriteAsJsonAsync(new { data = new { current_version = _values.Count, versions } });
                     return;
                 }
-                if (context.Request.Method == "DELETE") { _record = null; _values.Clear(); context.Response.StatusCode = 204; return; }
+                if (context.Request.Method == "DELETE") { _record = null; _values.Clear(); _embeddedRecords.Clear(); context.Response.StatusCode = 204; return; }
             }
             if (path.Contains("/data/", StringComparison.Ordinal))
             {
@@ -374,6 +404,7 @@ public sealed class ExternalSecretStoreTests
                     }
                     if (context.Request.Method == "POST")
                     {
+                        if (FailMetadataWrites) { context.Response.StatusCode = 500; return; }
                         using var document = await JsonDocument.ParseAsync(context.Request.Body);
                         _record = document.RootElement.GetProperty("data").GetProperty("record").GetString();
                         await context.Response.WriteAsJsonAsync(new { data = new { version = 1 } });
@@ -387,6 +418,7 @@ public sealed class ExternalSecretStoreTests
                     if (cas != _values.Count) { context.Response.StatusCode = 400; return; }
                     var version = _values.Count + 1;
                     _values[version] = document.RootElement.GetProperty("data").GetProperty("value").GetString()!;
+                    _embeddedRecords[version] = document.RootElement.GetProperty("data").GetProperty("record").GetString()!;
                     await context.Response.WriteAsJsonAsync(new { data = new { version } });
                     return;
                 }
@@ -396,7 +428,7 @@ public sealed class ExternalSecretStoreTests
                     if (!_values.TryGetValue(version, out var value) || _deleted.Contains(version))
                     { context.Response.StatusCode = 404; return; }
                     ValueReads++;
-                    await context.Response.WriteAsJsonAsync(new { data = new { data = new { value } } });
+                    await context.Response.WriteAsJsonAsync(new { data = new { data = new { value, record = _embeddedRecords[version] } } });
                     return;
                 }
             }
