@@ -1044,11 +1044,11 @@ public sealed class ProjectRegistry
     private void ReplaceProjectAndAuditLocked(ProjectRecord previous, ProjectRecord updated,
         List<ProjectRecord> projects, StudioUser? actor, Action? beforePersist = null)
     {
-        var selected = updated.Urls.FirstOrDefault(url =>
+        foreach (var candidate in updated.Urls.Where(url =>
             string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase)
             || string.Equals(url.Label, "repo", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(url.Label, "repository", StringComparison.OrdinalIgnoreCase));
-        if (selected is not null) ValidateRepositoryUrl(selected.Url);
+            || string.Equals(url.Label, "repository", StringComparison.OrdinalIgnoreCase)))
+            ValidateRepositoryUrl(candidate.Url);
         var before = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(previous);
         var after = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(updated);
         if (string.Equals(before, after, StringComparison.Ordinal))

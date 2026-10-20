@@ -225,6 +225,13 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
         var registry = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
         var ids = registry.FindById(project)!.Urls.Select(url => url.Id).ToArray();
         Assert.Equal(2, ids.Length);
+        var auditBeforeInvalid = registry.RepositoryAudit().ToArray();
+        Assert.Equal(HttpStatusCode.BadRequest, (await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = "https://user@example.test/hidden.git" }, owner)).Status);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Send(HttpMethod.Put, path + "/" + ids[1],
+            new { label = "Repository", url = "https://example.test/hidden.git?token=secret" }, owner)).Status);
+        Assert.Equal(ids, registry.FindById(project)!.Urls.Select(url => url.Id).ToArray());
+        Assert.Equal(auditBeforeInvalid, registry.RepositoryAudit());
         var reordered = new { orderedUrlIds = ids.Reverse().ToArray() };
         Assert.Equal(HttpStatusCode.Forbidden, (await Send(HttpMethod.Post, path + "/reorder", reordered, oper)).Status);
         Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Post, path + "/reorder", reordered, owner)).Status);
@@ -238,6 +245,15 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
         Assert.Equal([(null, first), (first, second), (second, "https://example.test/owner-update.git"),
             ("https://example.test/owner-update.git", first)],
             registry.RepositoryAudit().Select(row => (row.PreviousRepositoryUrl, row.RepositoryUrl)).ToArray());
+
+        Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Post, path,
+            new { label = "Preview", url = "https://example.test/preview?token=secret" }, owner)).Status);
+        var preview = registry.FindById(project)!.Urls.Single(url => url.Label == "Preview");
+        var auditBeforeRename = registry.RepositoryAudit().ToArray();
+        Assert.Equal(HttpStatusCode.BadRequest, (await Send(HttpMethod.Put, path + "/" + preview.Id,
+            new { label = "Repository", url = preview.Url }, owner)).Status);
+        Assert.Equal("Preview", registry.FindById(project)!.Urls.Single(url => url.Id == preview.Id).Label);
+        Assert.Equal(auditBeforeRename, registry.RepositoryAudit());
     }
 
     [Fact]
