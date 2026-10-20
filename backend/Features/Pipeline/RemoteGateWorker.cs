@@ -11,7 +11,8 @@ namespace AgentStudio.Pipeline;
 /// </summary>
 public static class RemoteGateWorker
 {
-    public static async Task<int> RunAsync(string requestPath)
+    public static async Task<int> RunAsync(string requestPath,
+        Action<string>? progress = null, CancellationToken shutdown = default)
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -31,6 +32,8 @@ public static class RemoteGateWorker
         WarnIfOversubscribed(invocation.GateSlots, invocation.ProcessorCount);
         var repository = Path.Combine(directory, "source.git");
         var bundle = Path.Combine(directory, "source.bundle");
+        var artifactDirectory = Path.Combine(directory, "artifacts");
+        Directory.CreateDirectory(artifactDirectory);
         var request = invocation.Request with
         {
             RepositoryPath = repository,
@@ -40,13 +43,19 @@ public static class RemoteGateWorker
             ToolchainIdentity = null,
             OnMachineGateWaiting = null,
             OnMachineGateSlotWaiting = (busy, total) =>
-                Console.WriteLine($"REMOTE_GATE_WAITING {invocation.RunId} {busy}/{total}"),
+                Report($"REMOTE_GATE_WAITING {invocation.RunId} {busy}/{total}"),
             OnMachineGateSlotAcquired = (slot, total) =>
-                Console.WriteLine($"REMOTE_GATE_SLOT {invocation.RunId} {slot}/{total}"),
-            OnMachineGateAcquired = () => Console.WriteLine("REMOTE_GATE_ACQUIRED " + invocation.RunId),
+                Report($"REMOTE_GATE_SLOT {invocation.RunId} {slot}/{total}"),
+            OnMachineGateAcquired = () => Report("REMOTE_GATE_ACQUIRED " + invocation.RunId),
             GateSlots = invocation.GateSlots,
         };
-        using var lifetime = new CancellationTokenSource(TimeSpan.FromSeconds(invocation.OverallTimeoutSeconds));
+        void Report(string line)
+        {
+            Console.WriteLine(line);
+            progress?.Invoke(line);
+        }
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
+        lifetime.CancelAfter(TimeSpan.FromSeconds(invocation.OverallTimeoutSeconds));
         using var cancelWatcher = new CancellationTokenSource();
         var shutdownRequested = 0;
         using var terminate = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
@@ -103,8 +112,14 @@ public static class RemoteGateWorker
                     directory, request.InfrastructureTimeout, lifetime.Token);
             }
             var runner = new BuildTestGateRunner(logging.CreateLogger<BuildTestGateRunner>());
-            result = await runner.RunAsync(request, invocation.ChangedFiles, invocation.Profile,
-                invocation.Mode, TimeSpan.FromSeconds(invocation.TimeoutSeconds), lifetime.Token);
+            var previousArtifactDirectory = GateArtifactOutput.Current;
+            GateArtifactOutput.Current = artifactDirectory;
+            try
+            {
+                result = await runner.RunAsync(request, invocation.ChangedFiles, invocation.Profile,
+                    invocation.Mode, TimeSpan.FromSeconds(invocation.TimeoutSeconds), lifetime.Token);
+            }
+            finally { GateArtifactOutput.Current = previousArtifactDirectory; }
         }
         catch (OperationCanceledException)
         {
@@ -209,4 +224,14 @@ public static class RemoteGateWorker
     }
 
     private sealed class RemoteGateWorkerLog { }
+}
+
+internal static class GateArtifactOutput
+{
+    private static readonly AsyncLocal<string?> Directory = new();
+    internal static string? Current
+    {
+        get => Directory.Value;
+        set => Directory.Value = value;
+    }
 }

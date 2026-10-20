@@ -7,6 +7,36 @@ namespace AgentStudio.Tests;
 
 public sealed class SteeringFeedbackProjectionTests
 {
+    [Fact]
+    public void Stopped_local_attempt_is_visible_on_card_with_distinct_authority_key()
+    {
+        var now = new DateTime(2026, 10, 16, 12, 0, 0, DateTimeKind.Utc);
+        var authority = new AttemptAuthorityService(
+            NullLogger<AttemptAuthorityService>.Instance, () => now);
+        var leases = new RunLeaseService(NullLogger<RunLeaseService>.Instance, authority, () => now);
+        var stops = new RemoteRunStopRequestStore(() => now);
+        var local = new LocalRunClaimAdapter(leases,
+            new RunnerIdentity("local", "local", "host", "backend", "token", "1"),
+            NullLogger.Instance, stops);
+        var lease = local.TryAcquire("AGT-3190", () => { }).Lease!;
+        stops.Record("AGT-3190", RemoteRunStopReasons.User,
+            lease.AttemptId, "operator", lease.FencingToken, "stop-card");
+        Assert.True(local.StopRequested("AGT-3190"));
+        local.Release("AGT-3190");
+
+        var task = new TaskInfo
+        {
+            Key = "AGT-3190",
+            TaskKey = "project::AGT-3190",
+            State = "3-in-progress",
+        };
+        var feedback = new SteeringFeedbackProjection(authority, stops).Build(task);
+        Assert.Contains(feedback.History,
+            fact => fact.Kind == "run" && fact.State == "stopped");
+        Assert.Contains(feedback.History,
+            fact => fact.CommandId == "stop-card" && fact.State == "consumed");
+    }
+
     [Theory]
     [InlineData(true, "consumed")]
     [InlineData(false, "rejected")]

@@ -6,7 +6,7 @@
 // Example:
 //   node move-state.js fix-card-delete-bug 6-completed
 
-import http from 'node:http';
+import { taskApiRequest } from './access.js';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.TASKBOARD_PORT ?? 5031);
@@ -25,7 +25,7 @@ if (!taskId || !targetState) {
 function request(method, path, bodyObj = null) {
   return new Promise(resolve => {
     const body = bodyObj ? JSON.stringify(bodyObj) : '';
-    const req = http.request({
+    const req = taskApiRequest({
       hostname: HOST,
       port: PORT,
       path,

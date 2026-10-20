@@ -20,6 +20,14 @@ branch=""
 project=""
 actor="${USER:-operator}"
 
+api_curl() {
+  if [ -n "${AGENT_STUDIO_API_TOKEN:-}" ]; then
+    curl -H "Authorization: Bearer $AGENT_STUDIO_API_TOKEN" "$@"
+  else
+    curl "$@"
+  fi
+}
+
 usage() {
   printf '%s\n' \
     "Usage: record-operator-merge.sh --task <AGT-nnnn> --merge <sha> [options]" \
@@ -97,7 +105,7 @@ query=""
 [ -n "$project" ] && query="?project=$(printf '%s' "$project" | sed 's/ /%20/g')"
 
 printf 'record-operator-merge: %s <- %s\n' "$task" "$merge_sha"
-curl -fsS -X POST \
+api_curl -fsS -X POST \
   -H 'Content-Type: application/json' \
   -H "X-Client-Id: ${actor}" \
   --data "$payload" \
@@ -109,7 +117,7 @@ printf '\n'
 # should no longer carry, and reports anything that still contradicts Git.
 if [ -n "$project" ]; then
   printf 'record-operator-merge: reconciling %s\n' "$project"
-  curl -fsS -X POST \
+  api_curl -fsS -X POST \
     -H "X-Client-Id: ${actor}" \
     "${api}/api/projects/${project}/delivery-claims/reconcile" \
     | python3 -c 'import json,sys; r=json.load(sys.stdin); print("scanned", r["scanned"], "classes", r["classes"], "findings", r["findings"])'

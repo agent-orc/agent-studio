@@ -92,11 +92,9 @@ public sealed class ManagedRepositoryMutationService
             }
             if (before.IsRepo)
             {
-                var alreadyDirty = before.Files
-                    .Select(file => NormalizePath(file.Path))
-                    .Where(path => paths.Contains(path, PathComparer))
-                    .ToArray();
-                if (alreadyDirty.Length > 0)
+                var alreadyDirty = RepositoryStatusPathPolicy.CoveredPaths(
+                    before.Files.Select(file => file.Path), paths, PathComparer);
+                if (alreadyDirty.Count > 0)
                 {
                     return ManagedRepositoryMutationResult.Failed(
                         $"Refusing to overwrite pre-existing changes: {string.Join(", ", alreadyDirty)}.");
@@ -126,8 +124,8 @@ public sealed class ManagedRepositoryMutationService
                 return ManagedRepositoryMutationResult.Failed(
                     $"Project repository status became unavailable after the write: {afterWrite.Error ?? "not a git repository"}.{suffix}".Trim());
             }
-            var changed = afterWrite.Files.Any(file =>
-                paths.Contains(NormalizePath(file.Path), PathComparer));
+            var changed = RepositoryStatusPathPolicy.CoveredPaths(
+                afterWrite.Files.Select(file => file.Path), paths, PathComparer).Count > 0;
             if (!changed)
                 return new ManagedRepositoryMutationResult(true, false, false, null, false, null);
 

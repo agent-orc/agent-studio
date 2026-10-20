@@ -53,6 +53,7 @@
         <span class="column__count" [attr.data-testid]="'lane-count-' + state()">
           <span>{{ headerCount() }}</span>
           @if (stalledCount() > 0) { <span class="column__stalled-count" data-testid="lane-stalled-count">· {{ stalledCount() }} stalled</span> }
+          @if (operationalStallCount() > 0) { <span class="column__stalled-count" data-testid="lane-operational-stalls">· {{ operationalStallCount() }} alerts</span> }
         </span>
         @if (state() === '4-auto-review') {
           <app-post-processing-summary [jobs]="jobs()" [nowMs]="nowMs()" />

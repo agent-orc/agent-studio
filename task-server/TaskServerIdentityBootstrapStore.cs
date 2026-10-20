@@ -612,6 +612,33 @@ public sealed partial class TaskServerStore
         return await ReadProjectRepositoryAsync(connection, null, projectId, ct);
     }
 
+    public async Task<bool> SetProjectRepositoryVisibilityAsync(
+        SetProjectRepositoryVisibilityRequest request, string actorId, CancellationToken ct)
+    {
+        RequireWritable();
+        var url = ProjectRepositoryPolicy.Canonicalize(request.RepositoryUrl);
+        var visibility = ReviewRepositoryAccessPolicy.NormalizeVisibility(request.Visibility);
+        if (request.Visibility is not null && visibility is null)
+            throw new ArgumentException("Repository visibility must be public or private.");
+        var found = false;
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            var projectId = Convert.ToString(await ScalarAsync(connection,
+                "SELECT project_id FROM project_repositories WHERE repository_url = $url;",
+                ct, transaction, ("$url", url)));
+            if (string.IsNullOrEmpty(projectId)) return;
+            found = true;
+            var changed = await ExecuteAsync(connection, """
+                UPDATE project_repositories SET repository_visibility = $visibility
+                 WHERE project_id = $project AND repository_visibility IS NOT $visibility;
+                """, ct, transaction, ("$visibility", visibility), ("$project", projectId));
+            if (changed > 0)
+                await AuditAsync(connection, transaction, actorId, "project.repository-visibility-set", "project",
+                    projectId, JsonSerializer.Serialize(new { visibility }), ct);
+        }, ct);
+        return found;
+    }
+
     private static async Task<ProjectRepositoryDto?> ReadProjectRepositoryAsync(
         SqliteConnection connection, SqliteTransaction? transaction, string projectId, CancellationToken ct)
     {

@@ -333,7 +333,7 @@ public sealed class OrchestratorDecisionStore
     }
 
     public DecisionOperatorIntentV1 PutOperatorIntent(string receiptId, DecisionOperatorIntentRequest request,
-        string actor = "Human Operator", int defaultRunLimitSeconds = 3600)
+        string actor = "Human Operator", int defaultRunLimitSeconds = CodingEmergencyLimit.DefaultSeconds)
     {
         lock (_gate)
         {
@@ -352,10 +352,14 @@ public sealed class OrchestratorDecisionStore
                 throw new ArgumentException("Operator action must be raise, cut or stop.");
             if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length > 500)
                 throw new ArgumentException("An operator reason of at most 500 characters is required.");
+            if (request.RequestedEmergencyHours is < 1 or > 168)
+                throw new ArgumentException("A chosen limit in hours must be between 1 and 168.");
             var minutes = request.RequestedEmergencyMinutes
                 ?? (request.RequestedEmergencyHours is { } hours ? hours * 60 : null);
-            if (request.Action == "stop" ? minutes is not null : minutes is not (>= 1 and <= 1440))
-                throw new ArgumentException("Raise and cut need a chosen limit of 1 to 1440 minutes; stop has no limit.");
+            if (request.Action == "stop" ? minutes is not null
+                : minutes is null || minutes < 1
+                    || minutes > CodingEmergencyLimit.MaximumSeconds / 60)
+                throw new ArgumentException("Raise and cut need a chosen limit of 1 to 10080 minutes; stop has no limit.");
             if (request.RequestedEmergencyHours is not null && request.RequestedEmergencyMinutes is not null)
                 throw new ArgumentException("Provide the limit in hours or minutes, not both.");
             if (_operatorIntents.TryGetValue(receiptId, out var existing)) return existing;
