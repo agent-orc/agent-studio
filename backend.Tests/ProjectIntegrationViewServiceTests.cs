@@ -355,9 +355,19 @@ public sealed class ProjectIntegrationViewServiceTests : IDisposable
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return (output, error, process.ExitCode);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try
+        {
+            var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
+            var error = process.StandardError.ReadToEndAsync(timeout.Token);
+            Task.WhenAll(output, error, process.WaitForExitAsync(timeout.Token))
+                .GetAwaiter().GetResult();
+            return (output.Result, error.Result, process.ExitCode);
+        }
+        catch (OperationCanceledException ex) when (timeout.IsCancellationRequested)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            throw new TimeoutException($"git {string.Join(' ', args)} exceeded 30 seconds.", ex);
+        }
     }
 }

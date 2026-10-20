@@ -1207,7 +1207,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
     private static async Task<OrchestratorDecisionJobWork> ClaimAsync(
         RClient client, string runnerId, HttpDecisionPlane plane, Task deciding)
     {
-        if (await Task.WhenAny(plane.JobCreated, deciding) == deciding)
+        if (await Task.WhenAny(plane.JobCreated, deciding).WaitAsync(TimeSpan.FromMinutes(2)) == deciding)
         {
             await deciding;
             throw new InvalidOperationException("Decision completed without creating a claimable job.");
