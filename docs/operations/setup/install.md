@@ -230,9 +230,10 @@ when no URL is known. A fresh one-box or `--mode control-plane` install does
 not probe the URL it is about to serve. Reachability is probed for `https`
 and loopback `http` URLs. An unreachable authority reports a connectivity
 failure; certificate trust is checked only for `https`, after a TLS handshake.
-On Windows, execution runs in Linux
-containers under Docker Desktop with WSL 2. The host advertises `linux-x64`.
-There is no native Windows execution exemption from AGT-W51.
+With `--target docker` on Windows, execution runs in Linux containers under
+Docker Desktop with WSL 2, and the host advertises `linux-x64`. With the
+default native Windows target, the packaged local Runner is a Windows host;
+its execution still follows the per-run isolation rules of AGT-W51.
 
 The installer writes an owner-only `installation.json` manifest. It records
 the installation id, release pin, principal names, project origin, first
