@@ -142,8 +142,9 @@ public static class ZonePolicyCommand
         }
         var resolved = policy!;
         var rules = ZonePolicyRules.Render(resolved);
-        // A denied name that does not resolve leaves its denial out; every
-        // other rule still loads, and the verification records the problem.
+        // A denied name that does not resolve leaves its denial out; protected
+        // run-zone names also withhold private allowances. Verification records
+        // the problem after the safe rules load.
         var unresolved = resolved.Problems ?? [];
         foreach (var problem in unresolved)
             error.WriteLine($"error: {problem.Detail}; its denial is missing from the rules");

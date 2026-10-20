@@ -107,6 +107,8 @@ public static class ZonePolicyRules
     {
         var rules = new List<string>();
         var rules6 = new List<string>();
+        var unresolved = (policy.Problems ?? []).Select(problem => problem.Destination)
+            .ToHashSet(StringComparer.Ordinal);
         var allNetworks = policy.Zones.SelectMany(zone => zone.Networks).ToList();
         var networks = new List<ZoneNetworkSpec>();
         foreach (var zone in policy.Zones)
@@ -120,7 +122,10 @@ public static class ZonePolicyRules
                 if (zone.Kind == ZoneKinds.Work)
                     RenderWork(rules, zone, network, scope);
                 else
-                    RenderRun(rules, zone, network, scope, allNetworks);
+                    RenderRun(rules, zone, network, scope, allNetworks,
+                        !zone.Denied.Any(destination =>
+                            (destination.Class is ZoneDestinationClasses.ControlPlane or ZoneDestinationClasses.SecretStore)
+                            && unresolved.Contains(destination.Name)));
                 rules6.Add(heading);
                 rules6.Add($"-A {ForwardChain} -i {network.Bridge} -m comment --comment \"{scope}: no IPv6\" -j DROP");
                 rules6.Add($"-A {ForwardChain} -o {network.Bridge} -m comment --comment \"{scope}: no IPv6\" -j DROP");
@@ -210,7 +215,8 @@ public static class ZonePolicyRules
     }
 
     private static void RenderRun(
-        List<string> rules, ResolvedZone zone, ZoneNetwork network, string scope, IReadOnlyList<ZoneNetwork> allNetworks)
+        List<string> rules, ResolvedZone zone, ZoneNetwork network, string scope, IReadOnlyList<ZoneNetwork> allNetworks,
+        bool protectedDenialsResolved)
     {
         // A denial covers the whole address: a destination's ports describe
         // what a work zone may use, never what a run zone may still reach.
@@ -242,10 +248,15 @@ public static class ZonePolicyRules
                   + $"-m comment --comment \"{scope}: isolate from other bridges\" -j DROP");
         rules.Add($"-A {ForwardChain} -i {network.Bridge} -o docker0 "
                   + $"-m comment --comment \"{scope}: isolate from docker0\" -j DROP");
-        foreach (var allowance in network.PrivateAllow ?? [])
-            rules.Add($"-A {ForwardChain} -i {network.Bridge} -d {allowance.Cidr} "
-                      + $"-m conntrack --ctorigdst {allowance.Cidr} "
-                      + $"-m comment --comment \"{scope}: allow private {allowance.Cidr} {allowance.Reason}\" -j RETURN");
+        // An unresolved protected name could point at an allowed private IP.
+        // Withhold every tenant exception until all protected denials are known.
+        if (protectedDenialsResolved)
+        {
+            foreach (var allowance in network.PrivateAllow ?? [])
+                rules.Add($"-A {ForwardChain} -i {network.Bridge} -d {allowance.Cidr} "
+                          + $"-m conntrack --ctorigdst {allowance.Cidr} "
+                          + $"-m comment --comment \"{scope}: allow private {allowance.Cidr} {allowance.Reason}\" -j RETURN");
+        }
         foreach (var range in PrivateIpv4Ranges.Concat(zone.ZeroTierRanges ?? []).Distinct(StringComparer.Ordinal))
         {
             // Both addresses matter: Docker can DNAT a public address to a

@@ -108,9 +108,9 @@ else:
   address. The work zone may use only port 53 of its gateway (the zone
   resolver) there.
 
-Both chains first return established and related traffic. Rejections use
-`icmp-admin-prohibited`, so a blocked tool fails at once ("No route to host")
-instead of timing out.
+Run-zone denials run before the established and related traffic return.
+Rejections use `icmp-admin-prohibited`, so a blocked tool fails at once
+("No route to host") instead of timing out.
 
 The run zone's named denials in `AGENT-ZONE-FWD` match `-m conntrack --ctorigdst`.
 FORWARD sees a connection after Docker's port forwarding has rewritten its
@@ -164,7 +164,11 @@ ipset conflict stops the apply before any rule loads.
 
 A name is resolved on the host only for a run-zone denial and for a blocked
 probe. If a denied name does not resolve, apply still loads every other rule,
-but that denial is missing. The verification then records the state as failed
+but that denial is missing. When any run-zone control-plane or secret-store
+name is unresolved, the rendered rules withhold every tenant private
+allowance in that zone. This prevents an exception from opening an address
+that the unresolved name could protect, including an established connection.
+The verification then records the state as failed
 (`setup deny <destination> expected resolved, observed unresolved`). If a
 blocked probe's host does not resolve, that blocked check fails during the
 verification. Neither stops the rules from loading.

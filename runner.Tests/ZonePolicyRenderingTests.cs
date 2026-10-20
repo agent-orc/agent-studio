@@ -465,6 +465,42 @@ public sealed class ZonePolicyRenderingTests
     }
 
     [Theory]
+    [InlineData("control-plane", "AGENT_ZONE_CONTROL_PLANE_HOSTS", "task-server.example.internal")]
+    [InlineData("secret-store", "AGENT_ZONE_SECRET_STORE_HOSTS", "vault.example.internal")]
+    public async Task Unresolved_protected_denial_removes_tenant_private_allowance(
+        string destination, string environmentKey, string protectedName)
+    {
+        var json = Policy();
+        json["zones"]![1]!["networks"]![0]!["privateAllow"] = JsonNode.Parse(
+            """[{"cidr":"192.168.50.10/32","reason":"managed database"}]""");
+        var environment = new Dictionary<string, string>(ZonePolicyTestFiles.Environment)
+        {
+            [environmentKey] = protectedName,
+        };
+        var healthyResolver = new FakeZoneResolver();
+        healthyResolver.Overrides[protectedName] = ["203.0.113.80"];
+        var healthy = ZonePolicyRules.Render(await ZonePolicyTestFiles.ResolveAsync(
+            json.ToJsonString(), healthyResolver, environment));
+        Assert.Contains("allow private 192.168.50.10/32 managed database", healthy.Iptables);
+        healthyResolver.Overrides[protectedName] = ["192.168.50.10"];
+        var overlap = await Assert.ThrowsAsync<ZonePolicyException>(() => ZonePolicyTestFiles.ResolveAsync(
+            json.ToJsonString(), healthyResolver, environment));
+        Assert.Contains(overlap.Errors, error => error.Contains("overlaps a denied control-plane or secret-store destination", StringComparison.Ordinal));
+
+        var failedResolver = new FakeZoneResolver();
+        failedResolver.Missing.Add(protectedName);
+        var policy = await ZonePolicyTestFiles.ResolveAsync(json.ToJsonString(), failedResolver, environment);
+        var failed = ZonePolicyRules.Render(policy);
+        Assert.Equal(destination, Assert.Single(policy.Problems!).Destination);
+        Assert.DoesNotContain("allow private 192.168.50.10/32", failed.Iptables);
+        var firewall = new FakeZoneFirewall(failed.Networks, failed.Iptables);
+        Assert.Equal(ZoneProbeOutcome.Rejected,
+            firewall.Connect("br-run-default", System.Net.IPAddress.Parse("192.168.50.10"), 5432, established: true));
+        Assert.Equal(ZoneProbeOutcome.Connected,
+            firewall.Connect("br-run-default", System.Net.IPAddress.Parse("203.0.113.40"), 443));
+    }
+
+    [Theory]
     [InlineData("10.0.0.0/08", "10.0.0.0/8")]
     [InlineData("10.0.0.0/8", "10.0.0.0/8")]
     [InlineData("192.0.2.7", "192.0.2.7/32")]

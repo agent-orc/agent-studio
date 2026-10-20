@@ -135,8 +135,8 @@ public sealed record ResolvedZoneProbe(string Expectation, string Host, string A
 
 /// <summary>
 /// A denied name that did not resolve at apply time. Its denial is missing
-/// from the rules; every other rule still loads, and the verification records
-/// the problem as a failed check.
+/// from the rules. A protected run-zone denial also suspends tenant private
+/// allowances, and verification records the problem as a failed check.
 /// </summary>
 public sealed record ZoneResolutionProblem(string Destination, string Detail);
 
@@ -471,8 +471,9 @@ public static class ZonePolicyParser
     /// must be known up front: for a run zone's denial and for a blocked probe.
     /// A configuration error throws. A name that does not resolve does not: a
     /// denied name becomes a <see cref="ZoneResolutionProblem"/> and a blocked
-    /// probe host an unresolved probe, so the apply still loads every other
-    /// rule (DNS may not be up yet at boot) and records the state as failed.
+    /// probe host an unresolved probe. Apply loads the safe rules and records
+    /// the state as failed; unresolved protected run-zone names suspend tenant
+    /// private allowances until their addresses are known.
     /// </summary>
     public static async Task<ResolvedZonePolicy> ResolveAsync(
         ZonePolicyDocument document,
