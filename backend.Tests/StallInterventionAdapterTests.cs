@@ -174,13 +174,13 @@ public sealed class StallInterventionAdapterTests : IDisposable
     [Fact]
     public void Batch_gate_drops_only_frozen_members_whose_keyed_card_is_positively_completed_or_stale()
     {
+        var gates = Path.Combine(_root, "batch-gates");
+        using var factory = Factory(gates);
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
         WriteCard(TaskStates.Completed, "completed-slug", "AGT-9101");
         WriteCard(TaskStates.Ready, "ready-slug", "AGT-9102");
         WriteCard(TaskStates.AutoReview, "review-slug", "AGT-9103");
         WriteCard(TaskStates.HumanReview, "human-slug", "AGT-9104");
-        var gates = Path.Combine(_root, "batch-gates");
-        using var factory = Factory(gates);
-        var store = factory.Services.GetRequiredService<BatchGateStore>();
         foreach (var (key, order) in new[] { ("AGT-9101", 0), ("AGT-9102", 1), ("AGT-9103", 2), ("AGT-9104", 3), ("AGT-9199", 4) })
             store.Enqueue(new BatchGatePendingRecord("review-" + key, Subject(key, order), ProjectPath, ProjectPath,
                 Path.Combine(ProjectPath, "unknown"), "direct-merge", "task", _clock.GetUtcNow().AddHours(-8)));
@@ -188,14 +188,13 @@ public sealed class StallInterventionAdapterTests : IDisposable
         var control = factory.Services.GetRequiredService<IBatchGateControl>();
 
         var facts = control.Read(Project, Now)!;
-        var dropped = control.Drop(Project, facts.Members.Select(item => item.ReviewAttemptId).ToArray(), "ai-operator:si-1");
-
         Assert.Equal(new (string, string?)[]
             {
                 ("AGT-9101", TaskStates.Completed), ("AGT-9102", TaskStates.Ready),
                 ("AGT-9103", TaskStates.AutoReview), ("AGT-9104", TaskStates.HumanReview), ("AGT-9199", null),
             }, facts.Members.Select(item => (item.Card, item.State)).ToArray());
         Assert.Equal(8, facts.OpenBatchWaitHours!.Value, 3);
+        var dropped = control.Drop(Project, facts.Members.Select(item => item.ReviewAttemptId).ToArray(), "ai-operator:si-1");
         Assert.Equal(["review-AGT-9101", "review-AGT-9102"], dropped);
         Assert.False(control.IsPending(Project, "review-AGT-9101"));
         Assert.True(control.IsPending(Project, "review-AGT-9103"));
