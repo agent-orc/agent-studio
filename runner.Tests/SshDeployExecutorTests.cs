@@ -1,5 +1,6 @@
 using System.Formats.Tar;
 using System.Security.Cryptography;
+using System.Text.Json;
 using AgentRunner;
 using AgentStudio.TaskServer.Contracts;
 using Xunit;
@@ -99,8 +100,15 @@ public sealed class SshDeployExecutorTests
             Assert.StartsWith("ssh:", calls[0]);
             Assert.StartsWith("scp:", calls[1]);
             Assert.Contains("\"action\":\"cleanup\"", calls[2]);
+            using var prepared = JsonDocument.Parse(calls[0][4..]);
+            using var cleaned = JsonDocument.Parse(calls[2][4..]);
+            Assert.Equal(prepared.RootElement.GetProperty("path").GetString(),
+                cleaned.RootElement.GetProperty("path").GetString());
             await executor.ExecuteAsync("web-vm", step, "bundle@sha256:" + digest, root,
                 new Dictionary<string, string>(), _ => Task.CompletedTask, CancellationToken.None);
+            using var retried = JsonDocument.Parse(calls[3][4..]);
+            Assert.NotEqual(prepared.RootElement.GetProperty("path").GetString(),
+                retried.RootElement.GetProperty("path").GetString());
             Assert.Contains(calls, call => call.StartsWith("scp:", StringComparison.Ordinal) && call != calls[1]);
             Assert.Contains("\"action\":\"switch\"", calls.Last());
         }
