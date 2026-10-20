@@ -33,6 +33,10 @@ internal static class KubernetesManifestVerifier
                 if (!item.TryGetProperty("metadata", out var metadata))
                     throw new InvalidDataException("Kubernetes object has no metadata.");
                 var name = RequiredString(metadata, "name");
+                if (metadata.TryGetProperty("annotations", out var annotations)
+                    && annotations.ValueKind == JsonValueKind.Object
+                    && annotations.TryGetProperty("helm.sh/hook", out _))
+                    throw new InvalidDataException("Kubernetes package contains a Helm hook that cannot be verified.");
                 if (metadata.TryGetProperty("namespace", out var declaredNamespace)
                     && declaredNamespace.ValueKind != JsonValueKind.Null
                     && declaredNamespace.GetString() != ns)

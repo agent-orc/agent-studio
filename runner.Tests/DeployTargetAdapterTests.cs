@@ -217,7 +217,7 @@ public sealed class DeployTargetAdapterTests
     }
 
     [Fact]
-    public async Task Kubernetes_HelmRendersPinnedImageBeforeUpgrade()
+    public async Task Kubernetes_HelmAppliesExactlyTheVerifiedRendering()
     {
         var (path, package) = Package("chart/Chart.yaml", "name: web\n");
         try
@@ -232,8 +232,52 @@ public sealed class DeployTargetAdapterTests
                 + "spec:\n  template:\n    spec:\n      containers:\n      - image: " + Image + "\n",
                 DryRunOutput = DeploymentObject(Image) };
             await Executor(new FakeSecrets(), calls).DeployAsync(request, CancellationToken.None);
-            Assert.Equal(new[] { "helm", "kubectl", "helm" }, calls.Calls.Select(call => call.Executable));
-            Assert.Contains("--atomic", calls.Calls[2].Arguments);
+            Assert.Equal(new[] { "helm", "kubectl", "kubectl", "kubectl" },
+                calls.Calls.Select(call => call.Executable));
+            Assert.Contains("template", calls.Calls[0].Arguments);
+            Assert.Contains("--dry-run=client", calls.Calls[1].Arguments);
+            Assert.Equal(calls.Calls[1].Arguments.Last(), calls.Calls[2].Arguments.Last());
+            Assert.Equal(calls.Output, calls.ManifestContents);
+            Assert.Contains("rollout", calls.Calls[3].Arguments);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Kubernetes_HelmRefusesRenderedHookBeforeApply()
+    {
+        var (path, package) = Package("chart/Chart.yaml", "name: web\n");
+        try
+        {
+            var request = Container("kubernetes") with
+            {
+                Target = new DeployTarget("kubernetes", "web-vm", "secret://demo/staging/KUBECONFIG",
+                    Namespace: "staging", ManifestPath: "chart", HelmRelease: "web", ImageResource: "web"),
+                ReleaseArtifacts = [Image, package], PackagePath = path, PackageArtifact = package,
+            };
+            var hook = JsonSerializer.Serialize(new
+            {
+                kind = "List",
+                items = new object[]
+                {
+                    JsonSerializer.Deserialize<JsonElement>(DeploymentObject(Image)).GetProperty("items")[0],
+                    new
+                    {
+                        kind = "Job",
+                        metadata = new Dictionary<string, object>
+                        {
+                            ["name"] = "migrate",
+                            ["annotations"] = new Dictionary<string, string> { ["helm.sh/hook"] = "pre-upgrade" },
+                        },
+                    },
+                },
+            });
+            var calls = new FakeCommands { Output = "kind: Deployment\n", DryRunOutput = hook };
+
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Executor(new FakeSecrets(), calls).DeployAsync(request, CancellationToken.None));
+            Assert.Equal(new[] { "helm", "kubectl" }, calls.Calls.Select(call => call.Executable));
+            Assert.Null(calls.ManifestContents);
         }
         finally { File.Delete(path); }
     }

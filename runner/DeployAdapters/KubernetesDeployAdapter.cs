@@ -23,6 +23,7 @@ public sealed class KubernetesDeployAdapter(IDeploySecretResolver secrets, IDepl
             await secrets.ResolveAsync(request.Target.CredentialSecret, ct), ct);
         if (request.Target.HelmRelease is { } release)
         {
+            // Render once and apply exactly the verified bytes; a second render by helm upgrade could differ.
             release = DeployTargetValidation.Identifier(release);
             var rendered = await commands.RunAsync("helm", ["--kubeconfig", kubeconfig, "--namespace", ns,
                 "template", release, content, "--set-string", "image.ref=" + image], null, ct);
@@ -30,10 +31,7 @@ public sealed class KubernetesDeployAdapter(IDeploySecretResolver secrets, IDepl
                 throw new InvalidDataException("Helm chart left an image placeholder unresolved.");
             var renderedPath = Path.Combine(temp.Path, "rendered.yaml");
             await File.WriteAllTextAsync(renderedPath, rendered.Output, ct);
-            await KubernetesManifestVerifier.VerifyAsync(commands, kubeconfig, ns, renderedPath, resource, image, ct);
-            await commands.RunAsync("helm", ["--kubeconfig", kubeconfig, "--namespace", ns,
-                "upgrade", "--install", release, content, "--set-string", "image.ref=" + image,
-                "--atomic", "--wait"], null, ct);
+            await ApplyVerifiedAsync(kubeconfig, ns, renderedPath, resource, image, ct);
             return;
         }
 
@@ -54,9 +52,15 @@ public sealed class KubernetesDeployAdapter(IDeploySecretResolver secrets, IDepl
             replaced++;
         }
         if (replaced == 0) throw new InvalidDataException("Manifest did not reference the release image.");
-        await KubernetesManifestVerifier.VerifyAsync(commands, kubeconfig, ns, content, resource, image, ct);
+        await ApplyVerifiedAsync(kubeconfig, ns, content, resource, image, ct);
+    }
+
+    private async Task ApplyVerifiedAsync(string kubeconfig, string ns, string source, string resource,
+        string image, CancellationToken ct)
+    {
+        await KubernetesManifestVerifier.VerifyAsync(commands, kubeconfig, ns, source, resource, image, ct);
         await commands.RunAsync("kubectl", ["--kubeconfig", kubeconfig, "--namespace", ns,
-            "apply", "-f", content], null, ct);
+            "apply", "-f", source], null, ct);
         await commands.RunAsync("kubectl", ["--kubeconfig", kubeconfig, "--namespace", ns,
             "rollout", "status", "deployment/" + resource, "--timeout=300s"], null, ct);
     }
