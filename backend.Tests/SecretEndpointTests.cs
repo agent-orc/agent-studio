@@ -166,6 +166,32 @@ public sealed class SecretEndpointTests : IDisposable
     }
 
     [Fact]
+    public async Task Repeated_identical_refused_writes_are_merged_per_actor_within_the_window()
+    {
+        using var factory = Networked();
+        using var client = Client(factory);
+        var owner = Owner(factory);
+        await Send(client, "POST", "/api/secrets/workspace", new { name = "MAIL_KEY", value = NewValue() }, owner);
+        var viewer = SignIn(factory, "team.viewer", StudioRoles.Viewer, ["*"]);
+
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await Send(client, "POST", "/api/secrets/workspace/MAIL_KEY/rotate", new { value = NewValue() }, viewer)).Status);
+            _clock.Advance(TimeSpan.FromSeconds(10));
+        }
+        _clock.Advance(SecretAuditLog.RefusalMergeWindow);
+        await Send(client, "POST", "/api/secrets/workspace", new { name = "OTHER_KEY", value = NewValue() }, owner);
+
+        using var audit = JsonDocument.Parse((await Send(client, "GET", "/api/secrets/audit", null, owner)).Body);
+        var refused = audit.RootElement.GetProperty("entries").EnumerateArray()
+            .Where(entry => entry.GetProperty("actor").GetString() == "human:team.viewer")
+            .Select(entry => (entry.GetProperty("action").GetString(),
+                entry.TryGetProperty("repeated", out var repeated) && repeated.ValueKind == JsonValueKind.Number ? repeated.GetInt32() : (int?)null))
+            .ToList();
+        Assert.Equal([("rotate", 3), ("rotate", (int?)null)], refused);
+    }
+
+    [Fact]
     public async Task Overview_flags_an_item_that_fails_its_check_instead_of_failing_the_page()
     {
         using var factory = Networked();

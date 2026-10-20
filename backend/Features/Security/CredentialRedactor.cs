@@ -15,25 +15,38 @@ public static partial class CredentialRedactor
 
     /// <summary>Shortest literal worth registering; shorter text would mask ordinary words.</summary>
     public const int MinimumLiteralLength = 16;
-    private const int MaximumLiterals = 64;
+    public const int MaximumLiterals = 64;
     private static readonly object LiteralGate = new();
     private static readonly List<string> Registered = [];
+    private static readonly List<string> Pinned = [];
     private static string[] _literals = [];
 
     /// <summary>
     /// Registers an exact credential the process itself holds, such as the
     /// secrets key-encryption key, so every later <see cref="Redact"/> masks
-    /// it even where no pattern matches. Registrations last for the process.
+    /// it even where no pattern matches. At most <see cref="MaximumLiterals"/>
+    /// unpinned literals are kept, oldest evicted first. A
+    /// <paramref name="pinned"/> literal (the key-encryption key) is never
+    /// evicted and does not count toward that bound.
     /// </summary>
-    public static void RegisterLiteral(string? literal)
+    public static void RegisterLiteral(string? literal, bool pinned = false)
     {
         if (string.IsNullOrWhiteSpace(literal) || literal.Length < MinimumLiteralLength) return;
         lock (LiteralGate)
         {
-            if (Registered.Contains(literal, StringComparer.Ordinal)) return;
-            Registered.Add(literal);
-            if (Registered.Count > MaximumLiterals) Registered.RemoveAt(0);
-            _literals = Registered.OrderByDescending(item => item.Length).ToArray();
+            if (Pinned.Contains(literal, StringComparer.Ordinal)) return;
+            if (pinned)
+            {
+                Registered.Remove(literal);
+                Pinned.Add(literal);
+            }
+            else
+            {
+                if (Registered.Contains(literal, StringComparer.Ordinal)) return;
+                Registered.Add(literal);
+                if (Registered.Count > MaximumLiterals) Registered.RemoveAt(0);
+            }
+            _literals = Pinned.Concat(Registered).OrderByDescending(item => item.Length).ToArray();
         }
     }
 

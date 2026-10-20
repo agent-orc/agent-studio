@@ -19,7 +19,8 @@ namespace AgentStudio.Secrets;
 /// once the metadata records the revocation, so restoring an older metadata
 /// file cannot make that version resolvable again. The key-encryption key is
 /// never part of this directory; a restore needs the same key from its own
-/// location, and the store creates a key only while it holds no item.
+/// location. The store creates a key only while it holds no item, and seals a
+/// new name only under a key that one of its items names.
 /// </summary>
 public sealed class BuiltInSecretStore : ISecretStore
 {
@@ -71,7 +72,8 @@ public sealed class BuiltInSecretStore : ISecretStore
                 catch (SecretIntegrityException ex) { unreadable.Add(Unreadable(id, UnreadableSecret.IntegrityFailed, ex.Message)); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    unreadable.Add(Unreadable(id, UnreadableSecret.ReadFailed, ex.GetType().Name + ": " + ex.Message));
+                    // The exception message names absolute paths; viewers get the type only.
+                    unreadable.Add(Unreadable(id, UnreadableSecret.ReadFailed, "The item could not be read: " + ex.GetType().Name + "."));
                 }
             }
             return new SecretListing(
@@ -103,7 +105,9 @@ public sealed class BuiltInSecretStore : ISecretStore
                 throw new InvalidOperationException("A new secret version must be newer than every stored version.");
 
             // A key is created only for an empty store; once items exist only the key that sealed them may open them.
-            var kek = _keys.Load(createIfMissing: !ItemIds().Any());
+            var existing = ItemIds().ToList();
+            var kek = _keys.Load(createIfMissing: existing.Count == 0);
+            if (current is null) RequireKeyOfExistingItems(kek, existing);
             var sealedVersion = SecretEnvelope.Seal(kek, id, version, value.Span);
             var directory = EnsureDirectory(Path.Combine(ItemsRoot, id));
             WriteAtomically(Path.Combine(directory, VersionFileName(version)),
@@ -177,6 +181,30 @@ public sealed class BuiltInSecretStore : ISecretStore
             ? Directory.EnumerateDirectories(ItemsRoot).Select(Path.GetFileName).OfType<string>()
                 .Where(id => !id.Contains('.', StringComparison.Ordinal))
             : [];
+
+    /// <summary>
+    /// Refuses to seal a new name under a valid but wrong key (stale or
+    /// mistyped environment key): when the store holds sealed items, at least
+    /// one of them must name the loaded key, or the store would fork.
+    /// </summary>
+    private void RequireKeyOfExistingItems(KeyEncryptionKey kek, IReadOnlyList<string> ids)
+    {
+        var sealedKeys = ids.Select(MetadataKeyId).OfType<string>().ToList();
+        if (sealedKeys.Count == 0 || sealedKeys.Contains(kek.Id, StringComparer.Ordinal)) return;
+        throw new SecretKeyUnavailableException(
+            $"The configured key-encryption key {kek.Id} sealed none of the {sealedKeys.Count} stored items "
+            + $"(they name {string.Join(", ", sealedKeys.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))}). "
+            + "A new secret is not sealed under it, so the store does not fork: configure the key that sealed the items.");
+    }
+
+    /// <summary>The key id an item's metadata names, unverified; null when the item has no readable metadata.</summary>
+    private string? MetadataKeyId(string id)
+    {
+        var path = Path.Combine(ItemsRoot, id, "metadata.json");
+        if (!File.Exists(path)) return null;
+        try { return JsonSerializer.Deserialize<MetadataEnvelope>(File.ReadAllBytes(path), Json)?.KeyId is { Length: > 0 } keyId ? keyId : null; }
+        catch (JsonException) { return null; }
+    }
 
     /// <summary>Scope and name come from the unverified payload, for display only; either may be null.</summary>
     private UnreadableSecret Unreadable(string id, string problem, string reason)

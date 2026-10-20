@@ -128,22 +128,51 @@ order:
 
 1. The environment variable named by `Secrets:KeyEnvironmentVariable`, by
    default `AGENT_STUDIO_SECRETS_KEK`. It holds 32 bytes in base64. The
-   backend reads it once while it starts, before any hosted service runs, and
-   then removes it from its own process environment. No child process (CLI
-   runs, build and test gates, project URL processes) inherits it. Supply it
-   from the service manager on every start. The variable's text is registered with `CredentialRedactor`, so a
-   printed environment or command line is masked as `[REDACTED_CREDENTIAL]`
-   in redacted logs.
+   backend reads it once while it starts, before any hosted service runs. It
+   then removes the variable from the environment that .NET passes to child
+   processes, so CLI runs, build and test gates and project URL processes
+   started by the backend do not inherit it. It also clears the copy that
+   the environment-variable configuration provider holds in `IConfiguration`.
+   Supply the variable from the service manager on every start. Its text is
+   registered with `CredentialRedactor` and never evicted there, so a printed
+   environment or command line is masked as `[REDACTED_CREDENTIAL]` in
+   redacted logs.
 2. The key file `Secrets:KeyFile`. In the `local` profile the default is
    `~/.config/agent-studio/keys/secrets.kek` (or `$XDG_CONFIG_HOME/...`). On
    Windows it is `%LOCALAPPDATA%\AgentStudio\keys\secrets.kek`. The key file
    text is registered with `CredentialRedactor` when it is loaded.
+
+**What the KEK protects.** The KEK protects copies and backups of the
+workspace: a copy of `.security/secrets` without the key reveals no value. It
+does not protect against code that runs as the service account. That code
+can read the key in several ways:
+
+- On Linux, `/proc/<pid>/environ` keeps the environment the backend started
+  with. Removing the variable inside the process does not change that block,
+  so every process of the same account can still read the variable there.
+- In key-file mode the key file is readable by the service account, and so by
+  every process of that account.
+- That code can also ask the running backend for values through any service
+  credential it holds.
+
+CLI agents, build gates and project processes that run under the backend's
+account therefore count as trusted with the KEK. To keep them out, run agent
+and project processes under a separate account or in a separate container
+that has no access to the key file, the backend's `/proc` entries or the
+workspace's `.security` directory.
 
 **Creating a key.** The store creates a key file only on the first write to a
 store that holds no item. Once items exist, a missing key file is an error
 (`secret-key-unavailable`) and no new key is created, so a redeploy that
 mounts only the workspace cannot fork the store under a second key. Restore
 the original key to open the items again.
+
+A valid but wrong key (a stale or mistyped environment key) cannot fork the
+store either. While items exist, a put of a new name is sealed only if at
+least one stored metadata file names the loaded key's fingerprint. Otherwise
+the put fails with `secret-key-unavailable` and writes nothing. A rotate or
+put of an existing name already needs that item's metadata to verify under
+the loaded key.
 
 **Profiles.** Outside the `local` profile the default key-file location is not
 used: set the environment variable or `Secrets:KeyFile` explicitly. With an
@@ -161,12 +190,14 @@ of returning wrong data. The overview (`GET /api/secrets`) and the Secrets
 page list such items under `unreadable` with the problem
 (`key-unavailable`, `integrity-failed` or `read-failed`); the readable secrets
 still list. The scope and name shown for an unreadable item are unverified.
+The reason of a `read-failed` item names only the exception type, never a
+file path.
 
 ### File protection
 
 | What | Unix | Windows |
 |---|---|---|
-| Key file | Created with mode 600. Every load refuses it when a group or other bit is set. | Created with a protected ACL (inherited entries removed) that grants full control to the service account only. Every load refuses it when an allow entry grants read, write, permission or ownership rights to anyone other than the service account, `SYSTEM` or the local Administrators group. |
+| Key file | Created with mode 600. Every load refuses it when a group or other bit is set. The owner is not compared: a mode-600 file of another account cannot be opened unless the service runs as root. | Created with a protected ACL (inherited entries removed) that grants full control to the service account only. Every load refuses it when its owner is not the service account, `SYSTEM` or the local Administrators group, or when an allow entry grants read, write, permission or ownership rights to anyone else. |
 | Key directory, store directories, audit directory | Created with mode 700. | Created with a protected ACL that grants full control to the service account only, inherited by everything created inside. |
 | Version, metadata and audit files | Created with mode 600. | Inherit the directory ACL. |
 
@@ -192,6 +223,14 @@ workload and outcome, never a value. Denied and failed attempts are included:
 
 A put refused by the access middleware names only its scope
 (`secret://<scope>/`), because the middleware does not read the request body.
+
+Refused writes are merged per actor. The first refusal is written at once.
+Further refusals with the same actor, action, scope, reference, version and
+outcome within one minute of it are only counted. Once that minute has passed,
+the next audit entry of any kind first writes one merged entry for them:
+`repeated` holds their count and `at` the time of the last one. The count is
+held in memory, so a burst that is still open when the backend stops keeps
+only its first entry.
 Not audited: requests without a signed-in person or service credential (they
 carry no actor) and requests whose scope or name is malformed (they name no
 secret).

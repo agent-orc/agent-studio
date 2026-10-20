@@ -126,6 +126,40 @@ public sealed class SecretProviderTests : IDisposable
     }
 
     [Fact]
+    public void Refusals_merge_only_when_actor_reference_and_outcome_match_and_the_window_is_open()
+    {
+        SecretAuditEntry Refusal(string actor, string reference) => new()
+        {
+            At = _clock.GetUtcNow().UtcDateTime, Action = SecretAuditActions.Rotate, Actor = actor, Scope = "workspace",
+            Reference = reference, Outcome = "denied:role-denied"
+        };
+
+        _audit.AppendRefusal(Refusal("human:viewer.one", "secret://workspace/MAIL"));
+        _clock.Advance(TimeSpan.FromSeconds(20));
+        _audit.AppendRefusal(Refusal("human:viewer.one", "secret://workspace/MAIL"));
+        _audit.AppendRefusal(Refusal("human:viewer.two", "secret://workspace/MAIL"));
+        _audit.AppendRefusal(Refusal("human:viewer.one", "secret://workspace/OTHER"));
+        _clock.Advance(TimeSpan.FromSeconds(20));
+        var lastMerged = _clock.GetUtcNow().UtcDateTime;
+        _audit.AppendRefusal(Refusal("human:viewer.one", "secret://workspace/MAIL"));
+        Assert.Equal(3, _audit.Read(null, 10).Count);
+
+        _clock.Advance(SecretAuditLog.RefusalMergeWindow);
+        _audit.AppendRefusal(Refusal("human:viewer.one", "secret://workspace/MAIL"));
+
+        var entries = _audit.Read(null, 10);
+        Assert.Equal(
+        [
+            ("human:viewer.one", "secret://workspace/MAIL", (int?)null),
+            ("human:viewer.one", "secret://workspace/MAIL", 2),
+            ("human:viewer.one", "secret://workspace/OTHER", null),
+            ("human:viewer.two", "secret://workspace/MAIL", null),
+            ("human:viewer.one", "secret://workspace/MAIL", null),
+        ], entries.Select(entry => (entry.Actor, entry.Reference, entry.Repeated)));
+        Assert.Equal(lastMerged, entries[1].At);
+    }
+
+    [Fact]
     public async Task Workloads_cannot_write_and_people_cannot_resolve()
     {
         Assert.Equal("human-required", (await Assert.ThrowsAsync<SecretAccessDeniedException>(() =>

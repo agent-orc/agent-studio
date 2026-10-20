@@ -104,6 +104,8 @@ public sealed record SecretAuditEntry
     public int? Version { get; init; }
     public string? Purpose { get; init; }
     public string? Workload { get; init; }
+    /// <summary>Set on a merged refusal entry: how many identical refusals it stands for; <see cref="At"/> is the last of them.</summary>
+    public int? Repeated { get; init; }
 }
 
 public static class SecretAuditActions

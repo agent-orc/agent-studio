@@ -10,9 +10,11 @@ namespace AgentStudio.Secrets;
 /// Windows, a created directory or key file gets a protected ACL (inherited
 /// entries removed) that grants full control to the service account alone;
 /// files created inside such a directory inherit it. A key file is verified on
-/// every load: on Unix no group or other bit may be set, on Windows no allow
-/// entry may grant read, write, permission or ownership rights to anyone but
-/// the service account, SYSTEM or the local Administrators group.
+/// every load: on Unix no group or other bit may be set, on Windows the owner
+/// must be the service account, SYSTEM or the local Administrators group, and
+/// no allow entry may grant read, write, permission or ownership rights to
+/// anyone else. On Unix the owner is not compared: a mode-600 file of another
+/// account cannot be opened by the service unless it runs as root.
 /// </summary>
 internal static class OwnerOnlyAccess
 {
@@ -71,18 +73,24 @@ internal static class OwnerOnlyAccess
     {
         const FileSystemRights sensitive = FileSystemRights.ReadData | FileSystemRights.WriteData | FileSystemRights.AppendData
                                            | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
-        var owner = ServiceAccount();
-        var rules = new FileInfo(path).GetAccessControl().GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier));
+        var account = ServiceAccount();
+        var security = new FileInfo(path).GetAccessControl();
+        if (security.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner || !Trusted(owner, account))
+            throw new SecretKeyUnavailableException(
+                "The key-encryption key file is owned by another account; it must be owned by the service account, SYSTEM or Administrators.");
+        var rules = security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier));
         foreach (FileSystemAccessRule rule in rules)
         {
             if (rule.AccessControlType != AccessControlType.Allow || (rule.FileSystemRights & sensitive) == 0) continue;
-            if (rule.IdentityReference is SecurityIdentifier sid
-                && (sid == owner || sid.IsWellKnown(WellKnownSidType.LocalSystemSid) || sid.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid)))
-                continue;
+            if (rule.IdentityReference is SecurityIdentifier sid && Trusted(sid, account)) continue;
             throw new SecretKeyUnavailableException(
                 $"The key-encryption key file grants access to {rule.IdentityReference.Value}; restrict its ACL to the service account.");
         }
     }
+
+    [SupportedOSPlatform("windows")]
+    private static bool Trusted(SecurityIdentifier sid, SecurityIdentifier account)
+        => sid == account || sid.IsWellKnown(WellKnownSidType.LocalSystemSid) || sid.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid);
 
     [SupportedOSPlatform("windows")]
     private static DirectorySecurity WindowsDirectorySecurity()

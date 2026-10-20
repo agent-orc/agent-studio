@@ -1,4 +1,7 @@
+using System.Runtime.Versioning;
+using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -187,6 +190,45 @@ public sealed class BuiltInSecretStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task A_valid_but_wrong_key_never_seals_a_new_name_into_a_store_that_holds_items()
+    {
+        await Append(Store(), SecretScope.Workspace, "MAIL", _value);
+        var staleKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var config = Configuration(("Secrets:KeyEnvironmentVariable", "STALE_KEK"));
+        var stale = new BuiltInSecretStore(config,
+            new ConfiguredKeyEncryptionKeySource(config, name => name == "STALE_KEK" ? staleKey : null, _ => { }));
+
+        var refused = await Assert.ThrowsAsync<SecretKeyUnavailableException>(() =>
+            Append(stale, SecretScope.ForProject("memowikis"), "API_TOKEN", _value));
+        Assert.Contains("sealed none of the 1 stored items", refused.Message);
+        Assert.False(Directory.Exists(Path.Combine(stale.Root, "items",
+            BuiltInSecretStore.SecretId(SecretScope.ForProject("memowikis"), "API_TOKEN"))));
+        await Assert.ThrowsAsync<SecretKeyUnavailableException>(() => Append(stale, SecretScope.Workspace, "MAIL", _value));
+
+        // The key that sealed the items still adds new names.
+        await Append(Store(), SecretScope.ForProject("memowikis"), "API_TOKEN", _value);
+        Assert.Equal(2, (await Store().ListAsync(default)).Records.Count);
+    }
+
+    [Fact]
+    public async Task A_read_failure_is_flagged_without_the_file_path()
+    {
+        var store = Store();
+        await Append(store, SecretScope.Workspace, "MAIL", _value);
+        var metadata = Path.Combine(store.Root, "items", BuiltInSecretStore.SecretId(SecretScope.Workspace, "MAIL"), "metadata.json");
+
+        SecretListing listing;
+        using (new FileStream(metadata, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            listing = await store.ListAsync(default);
+
+        var flagged = Assert.Single(listing.Unreadable);
+        Assert.Equal(UnreadableSecret.ReadFailed, flagged.Problem);
+        Assert.Contains(nameof(IOException), flagged.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain(_root, flagged.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("metadata.json", flagged.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task One_item_sealed_with_another_key_is_flagged_while_the_rest_still_list()
     {
         var store = Store();
@@ -275,10 +317,24 @@ public sealed class BuiltInSecretStoreTests : IDisposable
     }
 
     [Fact]
-    public void Key_file_text_is_registered_with_the_credential_redactor()
+    public void Environment_key_is_dropped_from_the_configuration_copy()
+    {
+        var encoded = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var config = Configuration(("Secrets:KeyEnvironmentVariable", "STUDIO_KEK"), ("STUDIO_KEK", encoded));
+
+        var source = new ConfiguredKeyEncryptionKeySource(config, name => name == "STUDIO_KEK" ? encoded : null, _ => { });
+
+        Assert.Null(config["STUDIO_KEK"]);
+        Assert.Equal("environment", source.Load(createIfMissing: false).Source);
+    }
+
+    [Fact]
+    public void Key_file_text_is_registered_with_the_credential_redactor_and_never_evicted()
     {
         new ConfiguredKeyEncryptionKeySource(Configuration(), _ => null, _ => { }).Load(createIfMissing: true);
         var encoded = File.ReadAllText(KeyFile).Trim();
+        for (var index = 0; index <= AgentStudio.Security.CredentialRedactor.MaximumLiterals; index++)
+            AgentStudio.Security.CredentialRedactor.RegisterLiteral("literal-" + Guid.NewGuid().ToString("N"));
 
         Assert.DoesNotContain(encoded, AgentStudio.Security.CredentialRedactor.Redact("cat secrets.kek: " + encoded), StringComparison.Ordinal);
     }
@@ -301,12 +357,23 @@ public sealed class BuiltInSecretStoreTests : IDisposable
         Assert.Equal(16, key.Id.Length);
         Assert.Equal("key-file", key.Source);
         Assert.Equal(32, Convert.FromBase64String(File.ReadAllText(KeyFile)).Length);
-        if (OperatingSystem.IsWindows()) return;
 
-        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(KeyFile));
-        File.SetUnixFileMode(KeyFile, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+        string refusal;
+        if (OperatingSystem.IsWindows())
+        {
+            AssertWindowsOwnerOnly(new FileInfo(KeyFile).GetAccessControl());
+            AssertWindowsOwnerOnly(new DirectoryInfo(Path.GetDirectoryName(KeyFile)!).GetAccessControl());
+            GrantEveryoneRead(KeyFile);
+            refusal = "grants access to " + new SecurityIdentifier(WellKnownSidType.WorldSid, null).Value;
+        }
+        else
+        {
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(KeyFile));
+            File.SetUnixFileMode(KeyFile, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+            refusal = "accessible to other users";
+        }
         var fresh = new ConfiguredKeyEncryptionKeySource(Configuration(), _ => null, _ => { });
-        Assert.Contains("accessible to other users", Assert.Throws<SecretKeyUnavailableException>(() => fresh.Load(createIfMissing: false)).Message);
+        Assert.Contains(refusal, Assert.Throws<SecretKeyUnavailableException>(() => fresh.Load(createIfMissing: false)).Message);
     }
 
     [Fact]
@@ -336,13 +403,55 @@ public sealed class BuiltInSecretStoreTests : IDisposable
     [Fact]
     public async Task Store_and_version_files_are_owner_only()
     {
-        if (OperatingSystem.IsWindows()) return;
         var store = Store();
         await Append(store, SecretScope.Workspace, "MAIL", _value);
-        var owner = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        var item = Path.Combine(store.Root, "items", BuiltInSecretStore.SecretId(SecretScope.Workspace, "MAIL"));
+        new SecretAuditLog(Path.Combine(store.Root, "audit")).Append(new SecretAuditEntry
+        {
+            At = _clock.GetUtcNow().UtcDateTime, Action = SecretAuditActions.Put, Actor = "human:first.owner",
+            Scope = "workspace", Reference = "secret://workspace/MAIL", Outcome = "ok"
+        });
+        string[] directories = [store.Root, Path.Combine(store.Root, "items"), item, Path.Combine(store.Root, "audit")];
 
+        if (OperatingSystem.IsWindows())
+        {
+            foreach (var directory in directories) AssertWindowsOwnerOnly(new DirectoryInfo(directory).GetAccessControl());
+            AssertWindowsServiceAccountOnly(new FileInfo(VersionPath(store, SecretScope.Workspace, "MAIL", 1)).GetAccessControl());
+            return;
+        }
+        var owner = UnixFileMode.UserRead | UnixFileMode.UserWrite;
         Assert.Equal(owner, File.GetUnixFileMode(VersionPath(store, SecretScope.Workspace, "MAIL", 1)));
-        Assert.Equal(owner | UnixFileMode.UserExecute, File.GetUnixFileMode(store.Root));
+        Assert.Equal(owner, File.GetUnixFileMode(Path.Combine(item, "metadata.json")));
+        foreach (var directory in directories) Assert.Equal(owner | UnixFileMode.UserExecute, File.GetUnixFileMode(directory));
+    }
+
+    /// <summary>A protected DACL (no inherited entries) with one allow entry: full control for the current user.</summary>
+    [SupportedOSPlatform("windows")]
+    private static void AssertWindowsOwnerOnly(FileSystemSecurity security)
+    {
+        Assert.True(security.AreAccessRulesProtected);
+        AssertWindowsServiceAccountOnly(security);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void AssertWindowsServiceAccountOnly(FileSystemSecurity security)
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        var rule = Assert.Single(security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+            .Cast<FileSystemAccessRule>());
+        Assert.Equal(AccessControlType.Allow, rule.AccessControlType);
+        Assert.Equal<IdentityReference>(identity.User!, rule.IdentityReference);
+        Assert.Equal(FileSystemRights.FullControl, rule.FileSystemRights & FileSystemRights.FullControl);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void GrantEveryoneRead(string path)
+    {
+        var file = new FileInfo(path);
+        var security = file.GetAccessControl();
+        security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.WorldSid, null),
+            FileSystemRights.Read, AccessControlType.Allow));
+        file.SetAccessControl(security);
     }
 
     private BuiltInSecretStore Store()

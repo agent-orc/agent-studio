@@ -49,15 +49,19 @@ public interface IKeyEncryptionKeySource
 /// <summary>
 /// Reads the key-encryption key from an environment variable (base64 of 32
 /// bytes) or from an OS-protected key file. The environment variable is read
-/// once, when the service starts, and then removed from the process
-/// environment, so no child process (CLI runs, build gates, project URL
-/// processes) inherits it; its text is registered with
+/// once, when the service starts, then removed from the environment that
+/// child processes (CLI runs, build gates, project URL processes) inherit and
+/// from the configuration copy; its text is registered with
 /// <see cref="CredentialRedactor"/>. The key file defaults to the service
 /// account's private configuration directory in the <c>local</c> profile; every
 /// other profile must name the key explicitly. The file is created owner-only,
 /// refused when other users can read it, and refused when it lies inside the
-/// workspace that holds the encrypted data. Backups of the workspace therefore
-/// never carry the key.
+/// workspace that holds the encrypted data.
+/// The KEK protects copies and backups of the workspace. It does not protect
+/// against code running as the service account: on Linux the start
+/// environment stays readable in <c>/proc/&lt;pid&gt;/environ</c>, and the key
+/// file is readable by that account. Run agent and project processes under a
+/// separate account or container for that (see secret-provider.md).
 /// </summary>
 public sealed class ConfiguredKeyEncryptionKeySource : IKeyEncryptionKeySource
 {
@@ -83,8 +87,10 @@ public sealed class ConfiguredKeyEncryptionKeySource : IKeyEncryptionKeySource
         if (readEnvironment(_environmentVariable) is not { Length: > 0 } encoded) return;
 
         _fromEnvironment = true;
-        CredentialRedactor.RegisterLiteral(encoded.Trim());
+        CredentialRedactor.RegisterLiteral(encoded.Trim(), pinned: true);
         removeEnvironment(_environmentVariable);
+        // The environment-variable configuration provider holds its own copy; drop it there too.
+        if (configuration[_environmentVariable] is not null) configuration[_environmentVariable] = null;
         try { _loaded = new KeyEncryptionKey(DecodeKey(encoded, "the environment variable"), "environment"); }
         catch (SecretKeyUnavailableException ex) { _environmentProblem = ex.Message; }
     }
@@ -120,7 +126,7 @@ public sealed class ConfiguredKeyEncryptionKeySource : IKeyEncryptionKeySource
             }
             OwnerOnlyAccess.RejectForeignAccess(path);
             var encoded = File.ReadAllText(path).Trim();
-            CredentialRedactor.RegisterLiteral(encoded);
+            CredentialRedactor.RegisterLiteral(encoded, pinned: true);
             return _loaded = new KeyEncryptionKey(DecodeKey(encoded, "the key file"), "key-file");
         }
     }

@@ -162,7 +162,7 @@ public static class SecretEndpoints
         if (context.RequestServices?.GetService<SecretAuditLog>() is not { } audit) return;
         var clock = context.RequestServices.GetService<TimeProvider>() ?? TimeProvider.System;
         name = routeName ?? name;
-        audit.Append(new SecretAuditEntry
+        audit.AppendRefusal(new SecretAuditEntry
         {
             At = clock.GetUtcNow().UtcDateTime,
             Action = action,
