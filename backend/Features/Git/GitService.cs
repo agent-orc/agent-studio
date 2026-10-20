@@ -349,6 +349,7 @@ public sealed record RemoteDeliveryCommitRange(
     /// <summary>True when the repository actively contradicts the claimed delivery.</summary>
     public bool IsDisproved =>
         Verification is DeliveryVerificationStatus.ShaMismatch
+            or DeliveryVerificationStatus.BaseNotAncestor
             or DeliveryVerificationStatus.RefMissing
             or DeliveryVerificationStatus.CommitMissing;
 }
@@ -4786,7 +4787,7 @@ public partial class GitService
             if (ancestorCode != 0)
                 return Failed(
                     $"Fenced delivery base {AbbreviateSha(baseSha)} is not an ancestor of result {AbbreviateSha(tip)}: {ancestorError.Trim()}",
-                    DeliveryVerificationStatus.ShaMismatch);
+                    DeliveryVerificationStatus.BaseNotAncestor);
 
             var integrationBranch = TaskIntegrationBranch.NormalizeRef(recordedIntegrationBranch);
             if (integrationBranch is null)

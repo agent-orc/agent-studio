@@ -29,6 +29,9 @@ public enum DeliveryVerificationStatus
     /// </summary>
     ShaMismatch,
 
+    /// <summary>The fenced base exists but is not in the result's history.</summary>
+    BaseNotAncestor,
+
     /// <summary>No ref was claimed and the commit is nowhere on the target repository.</summary>
     CommitMissing,
 
@@ -61,6 +64,7 @@ public sealed record DeliveryVerificationResult(
     /// </summary>
     public bool IsDisproved =>
         Status is DeliveryVerificationStatus.ShaMismatch
+            or DeliveryVerificationStatus.BaseNotAncestor
             or DeliveryVerificationStatus.RefMissing
             or DeliveryVerificationStatus.CommitMissing;
 
@@ -80,6 +84,8 @@ public sealed record DeliveryVerificationResult(
         DeliveryVerificationStatus.ShaMismatch =>
             $"Repository-Verifikation fehlgeschlagen: '{GitRef}' zeigt auf {Short(ResolvedRefSha)}, "
             + $"behauptet war {Short(ClaimedSha)} - der behauptete Commit ist dort nicht enthalten.",
+        DeliveryVerificationStatus.BaseNotAncestor =>
+            $"Repository verification failed: the delivery base is not an ancestor of {Short(ClaimedSha)}.",
         DeliveryVerificationStatus.CommitMissing =>
             $"Repository-Verifikation fehlgeschlagen: Commit {Short(ClaimedSha)} existiert nicht im Zielrepo.",
         _ => $"Repository-Verifikation nicht moeglich: {Message}",

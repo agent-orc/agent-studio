@@ -84,13 +84,13 @@ public sealed class GitWorkspace
         var continuationSha = string.IsNullOrWhiteSpace(continuationBaseSha)
             ? null
             : continuationBaseSha.Trim();
-        var continuationComplete = continuationBranch is not null && continuationSha is not null;
-        // AGT-3056: a review fix round exists to continue the graded delivery.
-        // Its base is never swapped for the integration branch, and a half
-        // reference keeps its known half for the typed failure.
-        _continuationBaseRequired = ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
-        _continuationBaseRef = continuationComplete || _continuationBaseRequired ? continuationBranch : null;
-        _continuationBaseSha = continuationComplete ? continuationSha : null;
+        // Every supplied continuation carries work that must survive the next
+        // claim. Even a half pair is a typed failure, never an implicit reset.
+        _continuationBaseRequired = continuationBranch is not null
+            || continuationSha is not null
+            || ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
+        _continuationBaseRef = continuationBranch;
+        _continuationBaseSha = continuationSha;
     }
 
     public string ProjectCachePath => CachePathForProject(_options.WorkDir, _projectId);
@@ -317,12 +317,9 @@ public sealed class GitWorkspace
 
     /// <summary>
     /// The continuation base this claim was given, resolved against origin, or
-    /// null when the claim named none. A ref that disappeared or moved is
-    /// reported and skipped rather than failing the round: the card's prompt
-    /// still names the salvage, and a round on the integration branch is a
-    /// worse outcome than no round at all only if it is silent. A review fix
-    /// round's base is required instead: any of those cases throws
-    /// <see cref="ContinuationBaseUnavailableException"/> (AGT-3056).
+    /// null when the claim named none. A named ref that disappeared or moved
+    /// fails preparation with <see cref="ContinuationBaseUnavailableException"/>
+    /// so the runner never silently drops the earlier work.
     /// </summary>
     private async Task<SalvageContinuationBase?> ResolveContinuationBaseAsync(CancellationToken ct)
     {

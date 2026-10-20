@@ -386,6 +386,13 @@
       </thead>
       <tbody>
         <tr>
+          <td>2026-10-20</td>
+          <td><code>AGT-3245</code>, <code>AGT-3246</code>, <code>AGT-3227</code><br><span class="small">delivery-fence-salvage-lineage</span></td>
+          <td>Unknown attempts left salvage commits, but a later attempt started from the current develop head. Its result lacked the earlier salvage commit, so the delivery ancestry fence refused completion.</td>
+          <td>Timeout continuation saved a prompt naming salvage but did not pin that salvage as the next worktree base. Optional continuation bases also fell back silently when the ref moved.</td>
+          <td>No CLI crashed. The refused attempts escalated without completion stamps. Continuations now start at the pinned salvage, and an ancestry refusal returns to Ready with both commits named for recovery.</td>
+        </tr>
+        <tr>
           <td>2026-10-04</td>
           <td><code>AGT-3010</code><br><span class="small">superseded-brief-remote-delivery (also AGT-2748, AGT-2795, AGT-2793, AGT-2807)</span></td>
           <td>No CLI crashed. An operator moved a running remote card from Progress to Backlog, edited its brief, and returned it to Ready. The old fenced run kept working and later delivered into Auto Review.</td>

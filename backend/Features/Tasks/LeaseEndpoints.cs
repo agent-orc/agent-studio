@@ -1,4 +1,5 @@
 using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Git;
 using AgentStudio.Cli;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
@@ -1834,6 +1835,7 @@ public static class LeaseEndpoints
                 ? deliveryCandidates[0].Ref
                 : null;
             RemoteDeliveryCommitRange? deliveryRange = null;
+            var fenceBaseRefused = false;
             RemoteCommitAttributionResult? remoteAttribution = null;
             string? attributionWarning = null;
             // Set when the completion cannot produce a verified, materializable
@@ -1940,12 +1942,19 @@ public static class LeaseEndpoints
                 // recorded, never upgraded to proof.
                 if (deliveryRange is not null && deliveryRange.IsDisproved)
                 {
+                    fenceBaseRefused = MonolithTransitionAdapter.DeliveryFenceRefusal(
+                        deliveryRange.Verification == DeliveryVerificationStatus.BaseNotAncestor,
+                        !string.IsNullOrWhiteSpace(deliveryBranch),
+                        !string.IsNullOrWhiteSpace(resultSha),
+                        !string.IsNullOrWhiteSpace(req.BaseSha))
+                        == DeliveryFenceRefusalAction.ContinueFromResult;
                     unverifiedDelivery =
                         $"Delivery not verified against the target repository: {attributionWarning} "
                         + "No completion stamp was written (AGT-2220).";
                     targetState = TaskStates.Escalated;
-                    mutations.AddJobTag(
-                        task.Id, OutOfBandStampPolicy.UnverifiedDeliveryTag, task.WatchPath);
+                    if (!fenceBaseRefused)
+                        mutations.AddJobTag(
+                            task.Id, OutOfBandStampPolicy.UnverifiedDeliveryTag, task.WatchPath);
                 }
             }
 
@@ -2279,6 +2288,33 @@ public static class LeaseEndpoints
                     RunAttemptId: attemptId));
             }
 
+            // A Ready completion can follow an operator interruption or a
+            // failed envelope. Its published salvage is the next pickup base,
+            // even when no bounded timeout continuation was opened.
+            if (targetState == TaskStates.Ready && outcome != "mechanicalfallback"
+                && RunSalvageReference.From(
+                    req.SalvageBranch, req.SalvageCommitSha,
+                    req.SalvageRecoveryBranch, req.SalvageRecoveryCommitSha) is { } readySalvage)
+            {
+                var readyBase = new ContinuationBaseRecord(
+                    readySalvage.Branch.StartsWith("refs/heads/", StringComparison.Ordinal)
+                        ? readySalvage.Branch
+                        : $"refs/heads/{readySalvage.Branch}",
+                    readySalvage.CommitSha, "ready-salvage-continuation", attemptId, DateTime.UtcNow);
+                var readyMarker = $"<!-- agent-studio:ready-salvage:{attemptId} -->";
+                var promptPath = Path.Combine(task.FolderPath, "prompt.md");
+                var promptHasReadyNote = File.Exists(promptPath)
+                    && File.ReadAllText(promptPath).Contains(readyMarker, StringComparison.Ordinal);
+                if (!ContinuationBaseStore.Save(task.FolderPath, readyBase)
+                    || (!promptHasReadyNote && !mutations.AppendContinuationNote(task.Id,
+                        $"{readyMarker}\nPrevious attempt {attemptId} preserved work on {readySalvage.Branch} "
+                        + $"at {readySalvage.CommitSha}. Continue from that commit and merge the current "
+                        + "integration branch without rewriting the salvage commit.", task.WatchPath)))
+                    return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable,
+                        title: "Ready salvage continuation could not be prepared",
+                        detail: "Retry completion before the card is claimed again.");
+            }
+
             // A remote claim reads the run-scoped fallback from the pending
             // intent. Once that run settles, remove both pending and consumed
             // forms so a later round returns to the card's own route.
@@ -2504,6 +2540,23 @@ public static class LeaseEndpoints
 
             if (targetState == TaskStates.Escalated)
             {
+                if (fenceBaseRefused && !string.IsNullOrWhiteSpace(deliveryBranch)
+                    && !string.IsNullOrWhiteSpace(resultSha)
+                    && !string.IsNullOrWhiteSpace(req.BaseSha))
+                {
+                    var continuation = await timeoutContinuations.StartAsync(
+                        task, new RunSalvageReference(deliveryBranch, resultSha),
+                        unverifiedDelivery!, attemptId, laneWrite, ct,
+                        RunContinuationCause.FenceRefusal(req.BaseSha, resultSha));
+                    if (!continuation.Started)
+                        return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable,
+                            title: "Delivery fence continuation could not be queued",
+                            detail: continuation.Reason);
+                    return Results.Ok(new RemoteRunCompletionResponse(
+                        req.TaskKey, responseOutcome, TaskStates.Ready,
+                        $"Delivery fence refused base {req.BaseSha} and result {resultSha}; automatic continuation is ready.",
+                        RunAttemptId: attemptId));
+                }
                 if (providerRejection is not null && providerRejectionPlan is not null)
                 {
                     if (providerRejectionPlan.Action == ProviderRejectionContinuationAction.StartContinuation

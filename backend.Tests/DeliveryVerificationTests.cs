@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using AgentStudio.Git;
+using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
 
@@ -18,6 +19,31 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class DeliveryVerificationTests
 {
+    [Theory]
+    [InlineData(true, true, true, true, DeliveryFenceRefusalAction.ContinueFromResult)]
+    [InlineData(false, true, true, true, DeliveryFenceRefusalAction.Escalate)]
+    [InlineData(true, false, true, true, DeliveryFenceRefusalAction.Escalate)]
+    [InlineData(true, true, false, true, DeliveryFenceRefusalAction.Escalate)]
+    [InlineData(true, true, true, false, DeliveryFenceRefusalAction.Escalate)]
+    public void Fence_refusal_only_continues_a_published_result_with_both_commits(
+        bool baseNotAncestor, bool hasResultRef, bool hasResultSha, bool hasBaseSha,
+        DeliveryFenceRefusalAction expected)
+    {
+        Assert.Equal(expected, DeliveryFenceRefusalPolicy.Decide(
+            baseNotAncestor, hasResultRef, hasResultSha, hasBaseSha));
+    }
+
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    public void Fence_repair_is_not_spent_by_the_coding_round_budget(
+        bool isFenceRefusal, bool exhausted, bool expected)
+    {
+        Assert.Equal(expected, DeliveryFenceRefusalPolicy.AllowsContinuation(isFenceRefusal, exhausted));
+    }
+
     // ---------------------------------------------------------------
     // Path 1 + 2: GitService.VerifyDeliveredCommit - the primitive every
     // stamping path funnels through.
@@ -198,6 +224,33 @@ public sealed class DeliveryVerificationTests
             Assert.True(range.Success, range.Warning);
             Assert.Equal(DeliveryVerificationStatus.Verified, range.Verification);
             Assert.False(range.IsDisproved);
+        });
+    }
+
+    [Fact]
+    public void Agt_3245_result_from_salvage_passes_the_fenced_ancestry_check()
+    {
+        WithRemoteFixture((git, repo, fixture) =>
+        {
+            var salvageSha = DivergentSha(repo, fixture);
+            var refused = git.InspectRemoteDeliveryCommitRange(
+                repo, DeliveryBranch, fixture.Tip, "refs/heads/develop", salvageSha);
+            Assert.Equal(DeliveryVerificationStatus.BaseNotAncestor, refused.Verification);
+            Assert.True(refused.IsDisproved);
+
+            var continuationBranch = "agent-studio/results/agt-3245/continued";
+            RunGit(repo, $"checkout -q -b agt-3245-continued {salvageSha}");
+            File.WriteAllText(Path.Combine(repo, "continued.txt"), "new attempt work");
+            RunGit(repo, "add -A");
+            RunGit(repo, "commit -q -m \"fix(AGT-3245): continue salvage\"");
+            var resultSha = RunGit(repo, "rev-parse HEAD");
+            RunGit(repo, $"push -q origin HEAD:refs/heads/{continuationBranch}");
+
+            var accepted = git.InspectRemoteDeliveryCommitRange(
+                repo, continuationBranch, resultSha, "refs/heads/develop", salvageSha);
+            Assert.True(accepted.Success, accepted.Warning);
+            Assert.Equal(salvageSha, accepted.MergeBaseSha);
+            Assert.Equal(resultSha, Assert.Single(accepted.Commits).Sha);
         });
     }
 
@@ -464,7 +517,9 @@ public sealed class DeliveryVerificationTests
 
     private static void TryDelete(string path)
     {
-        try { Directory.Delete(path, recursive: true); } catch { }
+        try { Directory.Delete(path, recursive: true); }
+        catch (IOException ex) { System.Diagnostics.Trace.WriteLine(ex); }
+        catch (UnauthorizedAccessException ex) { System.Diagnostics.Trace.WriteLine(ex); }
     }
 
     private static string RunGit(string cwd, string arguments)
@@ -477,6 +532,7 @@ public sealed class DeliveryVerificationTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         })!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();

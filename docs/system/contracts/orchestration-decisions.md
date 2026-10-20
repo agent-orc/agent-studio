@@ -81,7 +81,8 @@ a mode. The run-liveness, stale-progress, steer-timeout, timeout-salvage,
 gate-environment-retry, delivery-chain, cause-breaker, intake-routing and
 acceptance-rail rules live here (`RunLivenessPolicy`, `StaleProgressPolicy`,
 `SteerTimeoutPolicy`, `RunTimeoutSalvageContinuationPolicy`,
-`GateEnvironmentRetryPolicy`, `GateCancellationPolicy`, `DeliveryChainPolicy`, `CauseBreakerClosePolicy`,
+`GateEnvironmentRetryPolicy`, `GateCancellationPolicy`, `DeliveryChainPolicy`,
+`DeliveryFenceRefusalPolicy`, `CauseBreakerClosePolicy`,
 `IntakeRoutingPolicy`, `AcceptanceRailDecisionPolicy`). `AiOperatorDecisionPolicy`
 is the AI Operator role of AGT-W73 O1 A: it selects the decider's policy,
 classifies the effect with an autonomy class, and limits it (A0 and A1 act, A2

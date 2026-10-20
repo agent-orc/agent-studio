@@ -785,6 +785,32 @@ public sealed class GitWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Agt_3245_unknown_salvage_is_the_next_attempt_base_even_after_develop_advances()
+    {
+        await SeedOriginAsync();
+        const string salvageBranch = "agent-studio/salvage/runner-test/AGT-2147/previous/fence-1/salvage";
+        await GitAsync(_origin, "branch", salvageBranch, "main");
+        var salvageSha = await PublishRemoteCommitAsync(
+            salvageBranch, "earlier.txt", "previous attempt work", "wip(runner): salvage before teardown - outcome Unknown");
+        var currentMain = await PublishRemoteCommitAsync(
+            "main", "current.txt", "new integration work", "chore: advance main");
+
+        var next = CreateWorkspace(sourceRunAttemptId: "run_next", fencingToken: 2,
+            continuationBaseRef: $"refs/heads/{salvageBranch}",
+            continuationBaseSha: salvageSha,
+            continuationBaseReason: "run-timeout-salvage-continuation");
+        await next.PrepareAsync(CancellationToken.None);
+
+        Assert.Equal(salvageSha, next.BaseSha);
+        Assert.Equal(salvageSha, (await GitAsync(next.RepoPath, "rev-parse", "HEAD")).StdOut);
+        Assert.NotEqual(currentMain, next.BaseSha);
+        Assert.Equal("previous attempt work", await File.ReadAllTextAsync(Path.Combine(next.RepoPath, "earlier.txt")));
+        await File.WriteAllTextAsync(Path.Combine(next.RepoPath, "new.txt"), "new attempt work");
+        var result = await next.TeardownAsync("Done", "run_next", CancellationToken.None);
+        Assert.True((await RunGitAsync(_origin, "merge-base", "--is-ancestor", salvageSha, result.ResultSha!)).Success);
+    }
+
+    [Fact]
     public async Task Review_fix_round_starts_on_the_reviewed_result_and_keeps_the_integration_branch_as_target()
     {
         await SeedOriginAsync();
@@ -846,12 +872,11 @@ public sealed class GitWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task A_salvage_base_that_moved_keeps_todays_start_on_the_integration_branch()
+    public async Task A_salvage_base_that_moved_refuses_to_drop_the_previous_work()
     {
         await SeedOriginAsync();
         var (resultRef, reviewedSha) = await PublishReviewedResultAsync("salvaged.txt", "salvage");
         await PublishRemoteCommitAsync(resultRef["refs/heads/".Length..], "moved.txt", "moved", "move the ref");
-        var mainTip = (await GitAsync(_origin, "rev-parse", "refs/heads/main")).StdOut;
 
         var continuation = CreateWorkspace(
             sourceRunAttemptId: "run_next",
@@ -859,9 +884,25 @@ public sealed class GitWorkspaceTests : IDisposable
             continuationBaseRef: resultRef,
             continuationBaseSha: reviewedSha,
             continuationBaseReason: "lost-worker-with-salvage");
-        await continuation.PrepareAsync(CancellationToken.None);
+        var failure = await Assert.ThrowsAsync<ContinuationBaseUnavailableException>(
+            () => continuation.PrepareAsync(CancellationToken.None));
+        Assert.Equal(ContinuationBaseUnavailableException.Moved, failure.ReasonCode);
+        Assert.False(Directory.Exists(continuation.RepoPath));
+    }
 
-        Assert.Equal(mainTip, (await GitAsync(continuation.RepoPath, "rev-parse", "HEAD")).StdOut);
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Incomplete_salvage_claim_never_starts_on_the_integration_branch(bool hasRef)
+    {
+        await SeedOriginAsync();
+        var continuation = CreateWorkspace(sourceRunAttemptId: "run_next", fencingToken: 2,
+            continuationBaseRef: hasRef ? "refs/heads/previous-salvage" : null,
+            continuationBaseSha: hasRef ? null : new string('a', 40),
+            continuationBaseReason: "run-timeout-salvage-continuation");
+        var failure = await Assert.ThrowsAsync<ContinuationBaseUnavailableException>(
+            () => continuation.PrepareAsync(CancellationToken.None));
+        Assert.Equal(ContinuationBaseUnavailableException.Incomplete, failure.ReasonCode);
     }
 
     [Fact]

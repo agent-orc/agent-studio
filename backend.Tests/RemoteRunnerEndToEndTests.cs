@@ -1556,6 +1556,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Contains("Automatic remote delivery retry", retryPrompt);
         Assert.Contains(fenceBranch, retryPrompt);
         Assert.Contains("BaseSha", retryPrompt);
+        Assert.Equal(resultSha, AgentStudio.Runner.ContinuationBaseStore.Read(ready)?.CommitSha);
         using var taskJson = JsonDocument.Parse(File.ReadAllText(Path.Combine(ready, "task.json")));
         var failureState = taskJson.RootElement.GetProperty("remoteDeliveryFailure");
         Assert.Equal("delivery-failed", failureState.GetProperty("status").GetString());
@@ -1681,6 +1682,70 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         var decision = Assert.Single(ReviewDecisionLog.ReadAll(_workspace, ProjectName));
         Assert.Equal(ReviewDecisionKind.Escalate, decision.Kind);
         Assert.Contains("[unverified-delivery]", decision.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Agt_3245_salvage_base_outside_new_result_requeues_with_both_commits()
+    {
+        SeedTask(TaskStates.Progress, TaskKey, "AGT-3245 fence sequence", "Preserve earlier work.");
+        var origin = await SeedOriginAsync();
+        var publisher = Path.Combine(_workspace, "fence-publisher");
+        await GitAsync(_workspace, "clone", origin, publisher);
+        await GitAsync(publisher, "config", "user.name", "Test");
+        await GitAsync(publisher, "config", "user.email", "test@example.invalid");
+        await GitAsync(publisher, "checkout", "-b", "previous-salvage", "origin/main");
+        await File.WriteAllTextAsync(Path.Combine(publisher, "earlier.txt"), "earlier work");
+        await GitAsync(publisher, "add", "--all");
+        await GitAsync(publisher, "commit", "-m", "wip(runner): salvage before teardown - outcome Unknown");
+        var salvageSha = (await GitAsync(publisher, "rev-parse", "HEAD")).StdOut.Trim();
+        await GitAsync(publisher, "push", "origin", "HEAD:refs/heads/previous-salvage");
+
+        await GitAsync(publisher, "checkout", "-b", "develop", "origin/main");
+        await File.WriteAllTextAsync(Path.Combine(publisher, "develop.txt"), "current integration work");
+        await GitAsync(publisher, "add", "--all");
+        await GitAsync(publisher, "commit", "-m", "chore: advance develop");
+        await GitAsync(publisher, "push", "origin", "HEAD:refs/heads/develop");
+        await File.WriteAllTextAsync(Path.Combine(publisher, "new-result.txt"), "new attempt work");
+        await GitAsync(publisher, "add", "--all");
+        await GitAsync(publisher, "commit", "-m", "fix(AGT-3245): new result");
+        var resultSha = (await GitAsync(publisher, "rev-parse", "HEAD")).StdOut.Trim();
+        var mergeBase = (await GitAsync(publisher, "merge-base", salvageSha, resultSha)).StdOut.Trim();
+        Assert.NotEqual(salvageSha, mergeBase);
+        await GitAsync(_watchPath, "init");
+        await GitAsync(_watchPath, "remote", "add", "origin", origin);
+        await GitAsync(_watchPath, "fetch", "origin",
+            "refs/heads/previous-salvage:refs/remotes/origin/previous-salvage");
+
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await client.RegisterAsync(ProjectName, "service", CancellationToken.None);
+        var lease = await client.AcquireLeaseAsync(
+            new RAcquire(TaskKey, RunnerId, ProjectName, "hetzner-test", 4242, "codex"),
+            CancellationToken.None);
+        Assert.True(lease.Granted);
+        var resultRef = Contract.FencedGitRefs.ImmutableResult(
+            lease.Lease!.AttemptId!, lease.Lease.FencingToken, resultSha);
+        await GitAsync(publisher, "push", "origin", $"{resultSha}:{resultRef}");
+
+        var completion = await client.CompleteRunAsync(new RRemoteComplete(
+            TaskKey, lease.Lease.LeaseId, lease.Lease.FencingToken, RunnerId, "Done",
+            SalvageBranch: "previous-salvage", SalvageCommitSha: salvageSha,
+            ResultSha: resultSha, AttemptChainId: lease.Lease.LeaseId,
+            Repository: origin, AttemptId: lease.Lease.AttemptId,
+            AuthorityEpoch: lease.Lease.AuthorityEpoch,
+            IdempotencyKey: "agt-3245-fence-refusal",
+            BaseSha: salvageSha, ImmutableResultRef: resultRef,
+            ArtifactManifestDigest: new string('a', 64),
+            IntegrationBranch: "refs/heads/develop"), CancellationToken.None);
+
+        Assert.Equal(TaskStates.Ready, completion?.TargetState);
+        var ready = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        var prompt = File.ReadAllText(Path.Combine(ready, "prompt.md"));
+        Assert.Contains(salvageSha, prompt);
+        Assert.Contains(resultSha, prompt);
+        Assert.Equal(resultSha, AgentStudio.Runner.ContinuationBaseStore.Read(ready)?.CommitSha);
+        Assert.Null(ReviewSubjectStore.Read(ready));
     }
 
     [Fact]

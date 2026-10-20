@@ -170,12 +170,17 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
         Assert.Contains(SalvageBranch, prompt);
         Assert.Contains(SalvageSha, prompt);
         Assert.Contains("run timeout", prompt);
+        Assert.Contains("merge the current integration branch", prompt);
+        Assert.DoesNotContain("rebase onto", prompt);
         Assert.Contains("results/status.md", prompt);
 
         // Same model as the timed-out round, clean context.
         Assert.Equal("claude", queued.CliType);
         Assert.Equal("claude-opus-5", queued.Model);
         Assert.Equal(CliContextModes.Clean, queued.ContextMode);
+        var pickup = AgentStudio.Runner.ContinuationBaseStore.Read(queued.FolderPath);
+        Assert.Equal($"refs/heads/{SalvageBranch}", pickup?.Ref);
+        Assert.Equal(SalvageSha, pickup?.CommitSha);
 
         var round = Assert.Single(
             _timeline.ReadAll(queued.FolderPath),
@@ -195,6 +200,28 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
             RunTimeoutSalvageAction.Escalate,
             RunTimeoutSalvageContinuationPolicy.Decide(
                 "unknown", hasSalvageCommit: true, service.CountAutomaticRounds(queued)));
+    }
+
+    [Fact]
+    public async Task Fence_refusal_requeues_with_both_commits_and_pins_the_result_as_next_base()
+    {
+        WriteJob(TaskStates.Progress);
+        const string resultSha = "aaed50650a123456789012345678901234567890";
+        var cause = RunContinuationCause.FenceRefusal(SalvageSha, resultSha);
+        var continuation = await BuildService().StartAsync(
+            _scanner.FindJob(JobId, _watchPath)!,
+            new RunSalvageReference(SalvageBranch, resultSha),
+            "fence refused", "attempt-fence", Write(), default, cause);
+
+        Assert.True(continuation.Started, continuation.Reason);
+        var queued = _scanner.FindJob(JobId, _watchPath)!;
+        Assert.Equal(TaskStates.Ready, queued.State);
+        Assert.Equal(resultSha, AgentStudio.Runner.ContinuationBaseStore.Read(queued.FolderPath)?.CommitSha);
+        Assert.Equal(0, BuildService().CountAutomaticRounds(queued));
+        var prompt = File.ReadAllText(Path.Combine(queued.FolderPath, "prompt.md"));
+        Assert.Contains(SalvageSha, prompt);
+        Assert.Contains(resultSha, prompt);
+        Assert.Contains("merge its missing work", prompt);
     }
 
     [Fact]

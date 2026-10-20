@@ -629,6 +629,15 @@ unreported claim expires with its lease and is queued again.
   fenced session entry, and returns the task to Ready. The next claim reads
   that reason, qualifies its fresh route before execution, and carries the
   recorded result ref and SHA as its continuation base when available.
+- An Unknown or interrupted attempt with a published salvage passes its ref and
+  exact commit to the next claim. The runner prepares the next checkout on that
+  commit even if the integration branch advanced. Every supplied continuation
+  base is required: if its ref disappears or moves, preparation reports a typed
+  failure instead of starting on the integration branch. The next agent's
+  prompt names the salvage and asks it to integrate current branch changes.
+  A delivery ancestry refusal leaves the result unreviewed and starts a Ready
+  continuation from the result ref, with both the rejected base and result SHA
+  in the prompt. This is the AGT-3245 recovery path.
 - Review fix rounds (AGT-3056, AGT-W65 D17 A) continue on the delivery the
   review graded. The review-plane finding round, the `fix-rounds` sweep and
   an operator continue after a `ProductFailure` record the reviewed fenced
