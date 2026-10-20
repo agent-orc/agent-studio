@@ -283,11 +283,6 @@ app-status-bar {
 }
 
 @container statusbar (width <= 760px) {
-  .statusbar__group--center {
-    flex-basis: var(--studio-spacing-1);
-    min-width: var(--studio-spacing-1);
-  }
-
   .statusbar__group--right .statusbar__item {
     width: var(--statusbar-item-height);
     padding-inline: 0;
@@ -339,9 +334,5 @@ app-status-bar {
 
   .statusbar__item {
     padding-inline: var(--studio-spacing-1);
-  }
-
-  .statusbar .hquota {
-    gap: 0;
   }
 }

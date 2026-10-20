@@ -41,7 +41,8 @@ export class CredentialInventoryService {
 
   load(): void {
     // The local monolith has no Task Server credential inventory route.
-    if (this.auth.status()?.profile && this.auth.status()?.profile !== 'networked') {
+    const profile = this.auth.status()?.profile;
+    if (profile && profile !== 'networked') {
       this.inventory.set(null);
       this.state.set('unsupported');
       return;
@@ -49,17 +50,12 @@ export class CredentialInventoryService {
     if (!this.polling) {
       this.polling = true;
       timer(60_000, 60_000).pipe(takeUntilDestroyed(this.destroyRef))
-        .subscribe(() => this.refresh());
+        .subscribe(() => this.load());
     }
     this.refresh();
   }
 
   private refresh(): void {
-    if (this.auth.status()?.profile && this.auth.status()?.profile !== 'networked') {
-      this.inventory.set(null);
-      this.state.set('unsupported');
-      return;
-    }
     if (this.state() === 'loading') return;
     if (!this.http) {
       this.state.set('unavailable');
