@@ -55,7 +55,7 @@ public sealed class AccessSecurityMiddleware
     }
 
     /// <summary>
-    /// Who a handler attributes an action to: <c>sa:&lt;id&gt;</c> for a
+    /// Who a handler attributes an action to: <c>service-account:&lt;id&gt;</c> for a
     /// service account or API token, the user id for a signed-in human, and
     /// <paramref name="fallback"/> without a principal (local profile).
     /// </summary>
@@ -344,6 +344,15 @@ public sealed class AccessSecurityMiddleware
         var target = Target(context, path, required, safeMethod);
         var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
         var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
+        if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return;
+        // A caller with no binding at all on what the request addresses is
+        // refused as a non-member, not as a read-only or Product role.
+        if (decision.ScopeDenied
+            && !PermissionEvaluator.Evaluate(IamPermissions.ProjectRead, subject, bindings, target, SameProject).Allowed)
+        {
+            await RejectPermission(context, decision, required.Permission);
+            return;
+        }
         if (!safeMethod && projected.LegacyRole == StudioRoles.Viewer
             && required.Permission != IamPermissions.EnvironmentProductionDeployApprove)
         {
@@ -376,7 +385,7 @@ public sealed class AccessSecurityMiddleware
 
         if (!decision.Allowed)
         {
-            await Reject(context, 403, "permission-denied", decision.Reason ?? $"'{required.Permission}' is required.");
+            await RejectPermission(context, decision, required.Permission);
             return;
         }
 
@@ -454,12 +463,13 @@ public sealed class AccessSecurityMiddleware
         var (subject, bindings) = _store.PrincipalBindings(IamPrincipalKind.User, human.User.Id);
         var target = Target(context, path, required, safeMethod: true);
         var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
+        var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
+        if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return false;
         if (!decision.Allowed)
         {
-            await Reject(context, 403, "permission-denied", decision.Reason ?? $"'{required.Permission}' is required.");
+            await RejectPermission(context, decision, required.Permission);
             return false;
         }
-        var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
         context.Items[HumanPrincipalItem] = new HumanPrincipal(ProjectedUser(human.User, projected, subject, bindings), human.Session);
         context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject, projected.Role);
         return true;
@@ -470,7 +480,7 @@ public sealed class AccessSecurityMiddleware
     /// need no CSRF token. They act only through their own role bindings, never
     /// on access administration or the versioned Task Server plane; an
     /// unaddressed route needs a workspace binding. Handlers see a synthetic
-    /// principal <c>sa:&lt;id&gt;</c> projected like a human's, so collection
+    /// principal <c>service-account:&lt;id&gt;</c> projected like a human's, so collection
     /// filters and attribution apply unchanged.
     /// </summary>
     private async Task AuthorizeServiceAccount(HttpContext context, ServiceAccountPrincipal account, string path)
@@ -502,12 +512,13 @@ public sealed class AccessSecurityMiddleware
         var (subject, bindings) = _store.PrincipalBindings(IamPrincipalKind.ServiceAccount, account.AccountId);
         var target = Target(context, path, required, safeMethod);
         var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
+        var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
+        if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return;
         if (!decision.Allowed)
         {
-            await Reject(context, 403, "permission-denied", decision.Reason ?? $"'{required.Permission}' is required.");
+            await RejectPermission(context, decision, required.Permission);
             return;
         }
-        var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
         if (!safeMethod && projected.LegacyRole == StudioRoles.Viewer)
         {
             await Reject(context, 403, "role-denied", "Viewer role is read-only.");
@@ -590,6 +601,7 @@ public sealed class AccessSecurityMiddleware
         {
             // An unreadable declaration resolves to no environment: the
             // request then needs a workspace or project binding (fail closed).
+            SilentCatch.Note(exception, "AccessSecurityMiddleware: environment declaration unreadable");
             return null;
         }
     }
@@ -909,12 +921,14 @@ public sealed class AccessSecurityMiddleware
         // project against the route's permission in the handler.
         if (path.Equals("/api/tasks", StringComparison.OrdinalIgnoreCase))
             return ProjectRouteAddress.DeferredToHandler;
-        // Report and supervisor routes name their project in the segment after
-        // the area (/api/drift/{project}/...); their literal routes, such as
-        // /api/drift/actions/code-pattern-drift, stay unaddressed.
+        // Report, supervisor, bus, and runtime routes name their project in the
+        // segment after the area (/api/drift/{project}/...); their literal
+        // routes, such as /api/drift/actions/code-pattern-drift, stay unaddressed.
         if ((path.StartsWith("/api/analysis/", StringComparison.OrdinalIgnoreCase)
              || path.StartsWith("/api/drift/", StringComparison.OrdinalIgnoreCase)
-             || path.StartsWith("/api/supervisor/", StringComparison.OrdinalIgnoreCase))
+             || path.StartsWith("/api/supervisor/", StringComparison.OrdinalIgnoreCase)
+             || path.StartsWith("/api/bus/", StringComparison.OrdinalIgnoreCase)
+             || path.StartsWith("/api/runtime/", StringComparison.OrdinalIgnoreCase))
             && IsParameterSegment(endpoint, 2))
             return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(path.Split('/', StringSplitOptions.RemoveEmptyEntries)[2]));
         // An Epic is a card: its sub-task routes address the Epic's project.
@@ -1000,7 +1014,19 @@ public sealed class AccessSecurityMiddleware
         return [.. projects];
     }
 
-    /// <summary>Applies the route's declared <see cref="StudioRoleRequirement"/>, if any.</summary>
+    /// <summary>
+    /// A refused permission decision: <c>project-scope-denied</c> when a binding
+    /// grants the permission outside the addressed scope, else <c>permission-denied</c>.
+    /// </summary>
+    private static Task RejectPermission(HttpContext context, PermissionDecision decision, string permission)
+        => Reject(context, 403, decision.ScopeDenied ? "project-scope-denied" : "permission-denied",
+            decision.Reason ?? $"'{permission}' is required.");
+
+    /// <summary>
+    /// Applies the route's declared <see cref="StudioRoleRequirement"/>, if any,
+    /// to the role projected for this request, so a refused Owner route keeps
+    /// its <c>owner-required</c> answer.
+    /// </summary>
     private static async Task<bool> RejectedByRoleRequirement(HttpContext context, string role)
     {
         var requirement = context.GetEndpoint()?.Metadata.GetMetadata<StudioRoleRequirement>();

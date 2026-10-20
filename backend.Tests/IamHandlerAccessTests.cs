@@ -191,6 +191,89 @@ public sealed class IamHandlerAccessTests : IDisposable
         Assert.NotEqual(HttpStatusCode.Forbidden, admitted.StatusCode);
     }
 
+    [Theory]
+    [InlineData("cancel-run")]
+    [InlineData("force-fail")]
+    public async Task Supervisor_interventions_stop_only_runs_of_the_route_project(string action)
+    {
+        using var factory = BuildFactory();
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var ownerId = store.ListUsers().Single(user => user.Username == "first.owner").Id;
+        var now = factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
+        var alphaToken = store.CreateApiToken(new CreateApiTokenRequest("alpha operator bot", StudioRoles.Operator,
+            ["alpha"], now.AddDays(1)), ownerId).Secret;
+        var callers = new (string Name, HttpClient Client)[]
+        {
+            ("alpha developer", Client(factory, Invite(factory, "supervisor.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))))),
+            ("alpha-scoped operator api token", BearerClient(factory, alphaToken)),
+        };
+        var interventions = AgentStudio.Supervisor.SupervisorLogPaths.InterventionsFile(_workspace, "alpha");
+
+        foreach (var (name, client) in callers)
+        {
+            using (client)
+            {
+                foreach (var foreignJob in new[] { "beta-card", "no-such-card" })
+                {
+                    using var refused = await client.PostAsJsonAsync($"/api/supervisor/alpha/intervene/{action}",
+                        new { jobId = foreignJob, reason = "stop it" });
+                    Assert.True(refused.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Forbidden,
+                        $"{name}: {foreignJob} answered {(int)refused.StatusCode}");
+                }
+                Assert.False(File.Exists(interventions) && File.ReadAllText(interventions).Contains("beta-card", StringComparison.Ordinal),
+                    $"{name}: an intervention was recorded for a beta run");
+                Assert.True(Directory.Exists(Path.Combine(ProjectPath("beta"), TaskStates.Backlog, "beta-card")));
+
+                using var allowed = await client.PostAsJsonAsync($"/api/supervisor/alpha/intervene/{action}",
+                    new { jobId = "alpha-card", reason = "stop it" });
+                Assert.True(allowed.StatusCode == HttpStatusCode.OK, $"{name}: alpha-card answered {(int)allowed.StatusCode}");
+            }
+        }
+        Assert.Contains("alpha-card", File.ReadAllText(interventions), StringComparison.Ordinal);
+        Assert.False(File.Exists(AgentStudio.Supervisor.SupervisorLogPaths.InterventionsFile(_workspace, "beta")));
+    }
+
+    [Fact]
+    public async Task Bus_and_runtime_reads_address_their_project()
+    {
+        using var factory = BuildFactory();
+        using var client = Client(factory, Invite(factory, "bus.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+
+        foreach (var path in new[] { "/api/bus/beta/messages", "/api/bus/beta/summary", "/api/runtime/beta/events" })
+        {
+            using var refused = await client.GetAsync(path);
+            Assert.True(refused.StatusCode == HttpStatusCode.Forbidden, $"{path} answered {(int)refused.StatusCode}");
+        }
+        foreach (var path in new[] { "/api/bus/alpha/messages", "/api/runtime/alpha/events" })
+        {
+            using var allowed = await client.GetAsync(path);
+            Assert.True(allowed.StatusCode != HttpStatusCode.Forbidden, $"{path} answered {(int)allowed.StatusCode}");
+        }
+    }
+
+    [Fact]
+    public async Task Secret_routes_are_decided_by_the_secret_permissions_of_the_bindings()
+    {
+        using var factory = BuildFactory();
+        using var developer = Client(factory, Invite(factory, "secret.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+        using var admin = Client(factory, Invite(factory, "secret.admin", new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))));
+        var put = new { name = "DEPLOY_KEY", value = "fixture-value" };
+
+        using (var read = await developer.GetAsync("/api/projects/alpha/secrets"))
+            Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        using (var foreign = await developer.GetAsync("/api/projects/beta/secrets"))
+            Assert.Equal(HttpStatusCode.Forbidden, foreign.StatusCode);
+        using (var write = await developer.PostAsJsonAsync("/api/projects/alpha/secrets", put))
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, write.StatusCode);
+            Assert.Contains("permission-denied", await write.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        }
+        using (var workspace = await admin.PostAsJsonAsync("/api/secrets/workspace", put))
+            Assert.Equal(HttpStatusCode.Forbidden, workspace.StatusCode);
+        using (var write = await admin.PostAsJsonAsync("/api/projects/alpha/secrets", put))
+            Assert.DoesNotContain("permission-denied", await write.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
     private HttpRequestMessage OrphanFolderDelete() => new(HttpMethod.Delete, "/api/tasks/orphan-folder")
     {
         Content = JsonContent.Create(new { watchPath = ProjectPath("alpha"), lane = TaskStates.Archive, folder = "no-such-folder" }),

@@ -25,7 +25,7 @@ public sealed class ApiTokenAccessTests : IDisposable
         Assert.StartsWith("api.", made.Secret, StringComparison.Ordinal);
         // An API token is a service account with one token (AGT-3228).
         var principal = store.AuthenticateServiceAccount(made.Secret);
-        Assert.Equal(("sa:sa_" + made.Token.Id, made.Token.Id), (principal?.ActorId, principal?.TokenId));
+        Assert.Equal(("service-account:sa_" + made.Token.Id, made.Token.Id), (principal?.ActorId, principal?.TokenId));
         Assert.Equal("PROJ-002", Assert.Single(store.ListApiTokens().Single(token => token.Id == made.Token.Id).Projects));
         Assert.Equal(IamRoles.Admin, Assert.Single(store.ReadIamSnapshot().Bindings,
             binding => binding.PrincipalId == principal!.AccountId).Role);
@@ -58,7 +58,7 @@ public sealed class ApiTokenAccessTests : IDisposable
 
         var allowed = await Invoke(middleware, "PUT", "/api/projects/mine/settings", operatorToken.Secret);
         Assert.Equal(204, allowed.Response.StatusCode);
-        Assert.Equal("sa:sa_" + operatorToken.Token.Id, allowed.Items["ClientId"]);
+        Assert.Equal("service-account:sa_" + operatorToken.Token.Id, allowed.Items["ClientId"]);
         Assert.Equal(StudioRoles.Operator,
             (allowed.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role);
         var foreign = await Invoke(middleware, "GET", "/api/projects/foreign", operatorToken.Secret);
@@ -80,7 +80,7 @@ public sealed class ApiTokenAccessTests : IDisposable
         Assert.All(audit, row => Assert.DoesNotContain(operatorToken.Secret, row, StringComparison.Ordinal));
         Assert.All(audit, row => Assert.DoesNotContain(viewerToken.Secret, row, StringComparison.Ordinal));
         Assert.Contains(audit, row => row.Contains($"\"tokenId\":\"{operatorToken.Token.Id}\"", StringComparison.Ordinal)
-            && row.Contains($"\"actor\":\"sa:sa_{operatorToken.Token.Id}\"", StringComparison.Ordinal));
+            && row.Contains($"\"actor\":\"service-account:sa_{operatorToken.Token.Id}\"", StringComparison.Ordinal));
         Assert.Contains(audit, row => row.Contains("\"status\":204", StringComparison.Ordinal));
         Assert.Contains(audit, row => row.Contains("\"status\":403", StringComparison.Ordinal));
     }

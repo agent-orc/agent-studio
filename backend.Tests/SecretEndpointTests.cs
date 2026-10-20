@@ -239,7 +239,9 @@ public sealed class SecretEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.Forbidden, (await Send(client, "GET", "/api/secrets/audit?scope=other", null, operatorSession)).Status);
         Assert.DoesNotContain("secret://other/", (await Send(client, "GET", "/api/secrets/audit", null, operatorSession)).Body, StringComparison.Ordinal);
 
-        // Refused by the access middleware (foreign project) and by the scope rights check (workspace): both audited.
+        // Both writes are refused by the access middleware, which audits them:
+        // the workspace scope needs a workspace binding (AGT-3228), and the
+        // middleware does not read the body, so a refused put names its scope only.
         using var audit = JsonDocument.Parse((await Send(client, "GET", "/api/secrets/audit", null, owner)).Body);
         var refused = audit.RootElement.GetProperty("entries").EnumerateArray()
             .Where(entry => entry.GetProperty("actor").GetString() == "human:team.operator"
@@ -248,7 +250,7 @@ public sealed class SecretEndpointTests : IDisposable
             .ToList();
         Assert.Equal(
         [
-            ("put", "secret://workspace/OWN", "denied:project-scope-denied"),
+            ("put", "secret://workspace/", "denied:project-scope-denied"),
             ("put", "secret://other/", "denied:project-scope-denied"),
         ], refused);
     }

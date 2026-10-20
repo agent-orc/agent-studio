@@ -236,7 +236,7 @@ public sealed class IamMigrationTests : IDisposable
         var deploy = store.AuthenticateServiceAccount(apiSecret);
         Assert.Equal(("sa_" + apiTokens[0].Id, apiTokens[0].Id, ServiceAccountOrigins.ApiToken),
             (deploy?.AccountId, deploy?.TokenId, deploy?.Origin));
-        Assert.Equal("sa:sa_" + apiTokens[0].Id, deploy!.ActorId);
+        Assert.Equal("service-account:sa_" + apiTokens[0].Id, deploy!.ActorId);
         var account = snapshot.ServiceAccounts.Single(candidate => candidate.Id == deploy.AccountId);
         Assert.Equal(apiTokens[0].SecretHash, Assert.Single(account.Tokens).SecretHash);
         Assert.Equal(["admin@project:alpha"], Grants(snapshot, deploy.AccountId));

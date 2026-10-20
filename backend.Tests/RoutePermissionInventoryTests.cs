@@ -83,6 +83,14 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("GET", "/api/gate-artifacts/{runId}/{name}", IamPermissions.RunnerService)]
     [InlineData("POST", "/api/tasks", IamPermissions.ProjectCardsWrite)]
     [InlineData("POST", "/api/epics/{epicId}/sub-tasks", IamPermissions.ProjectCardsWrite)]
+    [InlineData("GET", "/api/secrets", IamPermissions.SecretsRead)]
+    [InlineData("POST", "/api/secrets/workspace", IamPermissions.SecretsWrite)]
+    [InlineData("GET", "/api/projects/{project}/secrets/{name}", IamPermissions.SecretsRead)]
+    [InlineData("DELETE", "/api/projects/{project}/secrets/{name}", IamPermissions.SecretsWrite)]
+    [InlineData("POST", "/api/projects/{project}/environments/{environment}/secrets/{name}/rotate", IamPermissions.SecretsWrite)]
+    [InlineData("POST", "/api/runner/secrets/resolve", IamPermissions.RunnerService)]
+    [InlineData("POST", "/api/projects/{projectName}/pipeline-definition/migration", IamPermissions.ProjectSettingsWrite)]
+    [InlineData("GET", "/api/bus/{project}/messages", IamPermissions.ProjectRead)]
     public void Representative_routes_resolve_to_their_permission(string method, string pattern, string permission)
     {
         var resolved = RoutePermissionCatalog.Resolve(method,
@@ -99,6 +107,25 @@ public sealed class RoutePermissionInventoryTests : IDisposable
 
         Assert.Equal("production", approve?.Environment);
         Assert.Equal("environmentId", rollback?.EnvironmentRouteValue);
+        Assert.Equal("environment", RoutePermissionCatalog.Resolve("GET", "/api/projects/{}/environments/{}/secrets")?.EnvironmentRouteValue);
+    }
+
+    [Fact]
+    public void Owner_role_routes_resolve_to_a_permission_only_the_owner_holds()
+    {
+        using var factory = Factory(SecurityProfiles.Networked, null);
+        var ownerRoutes = Routes(factory.Services)
+            .Where(endpoint => endpoint.Metadata.GetMetadata<StudioRoleRequirement>()?.MinimumRole == StudioRoles.Owner)
+            .ToList();
+
+        Assert.NotEmpty(ownerRoutes);
+        foreach (var endpoint in ownerRoutes)
+        foreach (var method in RoutePermissionCatalog.Methods(endpoint))
+        {
+            var permission = RoutePermissionCatalog.Resolve(endpoint, method)?.Permission;
+            Assert.NotNull(permission);
+            Assert.Equal([IamRoles.Owner], IamRoles.All.Where(role => role.Permissions.Contains(permission!)).Select(role => role.Id));
+        }
     }
 
     [Fact]

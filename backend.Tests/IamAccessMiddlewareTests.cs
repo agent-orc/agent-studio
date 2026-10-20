@@ -50,7 +50,7 @@ public sealed class IamAccessMiddlewareTests : IDisposable
             "/api/projects/alpha/environments/promotions/approve", developer);
         Assert.Equal((403, false), (production.Status, production.Called));
         var foreign = await Invoke("GET", "/api/projects/{projectName}/snapshot", "/api/projects/beta/snapshot", developer);
-        Assert.Equal((403, false), (foreign.Status, foreign.Called));
+        Assert.Equal((403, "project-scope-denied", false), (foreign.Status, foreign.Error, foreign.Called));
         var workspace = await Invoke("PUT", "/api/workspaces/{id}/autonomy", "/api/workspaces/main/autonomy", developer);
         Assert.Equal((403, "permission-denied"), (workspace.Status, workspace.Error));
     }
@@ -117,11 +117,11 @@ public sealed class IamAccessMiddlewareTests : IDisposable
 
         var write = await InvokeBearer("POST", "/api/projects/{projectName}/wiki/pages", "/api/projects/alpha/wiki/pages", token);
         Assert.True(write.Called);
-        Assert.Equal("sa:" + account.Id, write.Context.Items["ClientId"]);
-        Assert.Equal("sa:" + account.Id, AccessSecurityMiddleware.ActorId(write.Context, "local-operator"));
+        Assert.Equal("service-account:" + account.Id, write.Context.Items["ClientId"]);
+        Assert.Equal("service-account:" + account.Id, AccessSecurityMiddleware.ActorId(write.Context, "local-operator"));
         Assert.IsType<ServiceAccountPrincipal>(write.Context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem]);
         var synthetic = Assert.IsType<HumanPrincipal>(write.Context.Items[AccessSecurityMiddleware.HumanPrincipalItem]);
-        Assert.Equal(("sa:" + account.Id, StudioRoles.Operator), (synthetic.User.Id, synthetic.User.Role));
+        Assert.Equal(("service-account:" + account.Id, StudioRoles.Operator), (synthetic.User.Id, synthetic.User.Role));
         Assert.Equal(["alpha"], synthetic.User.Projects);
         // A service account is attributed as a non-human actor.
         var actor = AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(write.Context);
@@ -133,9 +133,9 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         var tasks = await InvokeBearer("GET", "/api/tasks/", "/api/tasks", token);
         Assert.True(tasks.Called);
         var collection = await InvokeBearer("GET", "/api/workspace/screenshots", "/api/workspace/screenshots", token);
-        Assert.Equal((403, "permission-denied"), (collection.Status, collection.Error));
+        Assert.Equal((403, "project-scope-denied"), (collection.Status, collection.Error));
         var audit = File.ReadAllLines(Path.Combine(_store.SecurityFolder, AccessSecurityStore.ServiceAccountAuditFileName));
-        Assert.Contains(audit, row => row.Contains($"\"actor\":\"sa:{account.Id}\"", StringComparison.Ordinal)
+        Assert.Contains(audit, row => row.Contains($"\"actor\":\"service-account:{account.Id}\"", StringComparison.Ordinal)
             && row.Contains("\"status\":403", StringComparison.Ordinal));
         Assert.All(audit, row => Assert.DoesNotContain(token, row, StringComparison.Ordinal));
         var session = await InvokeBearer("POST", "/api/auth/logout", "/api/auth/logout", token);
@@ -174,7 +174,7 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         var workspace = Invite("workspace.dev", new IamGrantRequest(IamRoles.Developer, IamScope.Workspace));
 
         var supervisor = await Invoke("POST", "/api/supervisor/pause", "/api/supervisor/pause", scoped);
-        Assert.Equal((403, "permission-denied", false), (supervisor.Status, supervisor.Error, supervisor.Called));
+        Assert.Equal((403, "project-scope-denied", false), (supervisor.Status, supervisor.Error, supervisor.Called));
         Assert.True((await Invoke("POST", "/api/supervisor/pause", "/api/supervisor/pause", workspace)).Called);
 
         // Body-addressed routes reach their handler, which checks every
@@ -204,7 +204,7 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         Assert.Equal((403, false), (foreign.Status, foreign.Called));
         // A literal route of the area names no project: its write needs the workspace.
         var literal = await Invoke("POST", "/api/drift/actions/code-pattern-drift", "/api/drift/actions/code-pattern-drift", scoped);
-        Assert.Equal((403, "permission-denied", false), (literal.Status, literal.Error, literal.Called));
+        Assert.Equal((403, "project-scope-denied", false), (literal.Status, literal.Error, literal.Called));
     }
 
     [Fact]

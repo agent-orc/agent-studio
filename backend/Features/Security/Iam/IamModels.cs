@@ -131,8 +131,11 @@ public sealed record ServiceAccountToken
 public sealed record ServiceAccountPrincipal(
     string AccountId, string AccountName, string TokenId, string? Origin = null, string? CreatedBy = null)
 {
-    /// <summary>How handlers and audit records attribute the account's actions.</summary>
-    public string ActorId => "sa:" + AccountId;
+    /// <summary>
+    /// How handlers, audit records, and card timelines attribute the account's
+    /// actions: the one non-human actor id <c>service-account:&lt;id&gt;</c>.
+    /// </summary>
+    public string ActorId => AgentStudio.Shared.TimelineActors.ServiceAccount(AccountId);
 }
 
 /// <summary>The principal an access decision is made for, with its group memberships.</summary>

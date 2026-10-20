@@ -212,6 +212,15 @@ public static class RoutePermissionCatalog
         Environment("PUT", IamPermissions.EnvironmentProductionDeployApprove, "/api/tasks/{}/release",
             IamEnvironments.Production);
 
+        // --- Secrets: write without read; no human route returns a value ----
+        // Only a Runner credential bound to a live lease resolves a value.
+        Add("POST", IamPermissions.RunnerService, "/api/runner/secrets/resolve");
+        Add("R", IamPermissions.SecretsRead,
+            "/api/secrets", "/api/secrets/audit", "/api/secrets/workspace/**", "/api/projects/{}/secrets/**");
+        Add("W", IamPermissions.SecretsWrite, "/api/secrets/workspace/**", "/api/projects/{}/secrets/**");
+        Environment("R", IamPermissions.SecretsRead, "/api/projects/{}/environments/{}/secrets/**", null, "environment");
+        Environment("W", IamPermissions.SecretsWrite, "/api/projects/{}/environments/{}/secrets/**", null, "environment");
+
         // --- Workspace administration, settings, and operation -------------
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/workspaces/{}/usage-calendar");
         Add("POST", IamPermissions.WorkspaceAdminister, "/api/projects/path-import");
@@ -289,7 +298,7 @@ public static class RoutePermissionCatalog
         Add("PUT", IamPermissions.ProjectSettingsWrite, "/api/projects/{}/*");
         Under("W", IamPermissions.ProjectSettingsWrite, "/api/projects/{}",
             "areas/{}/glossary", "build-profile", "build-profile/validate", "execution/override", "test-execution",
-            "publish/automation", "urls", "urls/**", "ownership-mappings/**");
+            "publish/automation", "urls", "urls/**", "ownership-mappings/**", "pipeline-definition/**");
 
         // --- Project reads -------------------------------------------------
         Add("R", IamPermissions.ProjectRead,

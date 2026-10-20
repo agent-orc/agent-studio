@@ -156,8 +156,13 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   board (`/api/tasks/grouped`, also `/api/v1/studio/board`),
   `code-review/defaults`, and `commit-owner/{sha}` are unaddressed reads and
   `DELETE /api/tasks/orphan-folder` is workspace-wide (`workspace.operate`).
-  `/api/analysis/{project}`, `/api/drift/{project}`, and
-  `/api/supervisor/{project}` address that project. A binding covers a
+  `/api/analysis/{project}`, `/api/drift/{project}`, `/api/supervisor/{project}`,
+  `/api/bus/{project}`, and `/api/runtime/{project}` address that project. A
+  supervisor `cancel-run` or `force-fail` refuses (404 `job-not-in-project`,
+  no intervention record) a job id that is not a card of the route project,
+  because the intervention stops the run its job id names anywhere. The
+  workspace health overview `/api/environment/health` lists only environments
+  of projects the caller's bindings grant the read on. A binding covers a
   project route when its scope is the workspace or that project; workspace-wide
   routes need a workspace binding. Unaddressed reads accept any binding because
   their handlers filter per project. Unaddressed writes need a workspace
@@ -203,19 +208,30 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   year), last use, and revocation. They need no CSRF token, can hold Admin,
   Developer, or Viewer, never hold a production approval, and need a
   workspace binding on unaddressed routes. They never call access
-  administration or the versioned `/api/v1` plane. Handlers see them as
-  `sa:<id>`, which is also the actor of approvals, rollbacks, and moves they
-  trigger; card timelines record them as the non-human actor
-  `service-account:<id>`. Runners and the engine keep their enrollment credentials and
+  administration or the versioned `/api/v1` plane. Handlers, audit records,
+  and card timelines all see them as the one non-human actor
+  `service-account:<id>`, which is also the actor of approvals, rollbacks, and
+  moves they trigger. Because that actor is not `human:`, a lane move by a
+  service account or API token no longer counts as an operator requeue out of
+  a decision lane or as an operator lane verdict, as a human operator's move
+  does; the automated review path treats it like any other non-human
+  transition. Runners and the engine keep their enrollment credentials and
   Runner scopes.
 - API tokens (AGT-3186) are service accounts with one `api.` token, created
   under `/api/auth/api-tokens` with Admin (`operator`) or Viewer bindings for
   the requested projects. They keep the API-token limits: no
   installation-wide writes even with `*`, and no use once the creating user is
   disabled.
-- `secrets.resolve` is granted to service accounts only; a human resolves a
-  secret value only through Owner (write without read, IP-D8 A). No secret
-  routes exist yet; the permissions are declared for IP-6 and IP-7.
+- Secret routes (AGT-3222) declare `secrets.read` for metadata reads and
+  `secrets.write` for put, rotate, revoke, and delete, at the workspace
+  (`/api/secrets/workspace`, which needs a workspace binding), project
+  (`/api/projects/{project}/secrets`), or environment scope
+  (`/api/projects/{project}/environments/{environment}/secrets`, whose
+  environment id resolves to its kind like a rollback). No human route returns
+  a value (write without read, IP-D8 A): `POST /api/runner/secrets/resolve`
+  accepts only a Runner credential bound to a live lease (`runner.service`).
+  `secrets.resolve` is declared for workload identities and grants no route
+  yet.
 - Migration: loading an older access state migrates a copy and replaces the
   live state only after a backup and the save succeed. Each migration writes
   its own backup `.security/access-state.v<from>.<UTC timestamp>.json`; older
@@ -287,7 +303,7 @@ with owner-only permissions on Unix.
 Each authenticated API-token call appends its token id, creator, method, route,
 and response status to `<TaskRepository>/.security/api-token-audit.jsonl`;
 other service-account calls go to `service-account-audit.jsonl` with the same
-fields and the actor `sa:<id>`. Refused calls are recorded too. Token values
+fields and the actor `service-account:<id>`. Refused calls are recorded too. Token values
 and query strings are omitted from that audit. IAM changes go to
 `iam-audit.jsonl`.
 

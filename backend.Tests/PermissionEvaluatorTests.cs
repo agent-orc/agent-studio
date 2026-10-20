@@ -289,6 +289,20 @@ public sealed class PermissionEvaluatorTests
             role => Assert.DoesNotContain(IamPermissions.AccessManage, role.Permissions));
     }
 
+    [Fact]
+    public void A_denial_says_whether_the_permission_is_missing_or_only_out_of_scope()
+    {
+        var developer = new[] { Binding(IamPrincipalKind.User, UserId, IamRoles.Developer, Project("alpha")) };
+
+        var foreign = Evaluate(IamPermissions.ProjectCardsWrite, User(), developer, Target("beta"));
+        var workspace = Evaluate(IamPermissions.ProjectRunsOperate, User(), developer, Target("*"));
+        var missing = Evaluate(IamPermissions.ProjectSettingsWrite, User(), developer, Target("alpha"));
+
+        Assert.Equal((false, true), (foreign.Allowed, foreign.ScopeDenied));
+        Assert.Equal((false, true), (workspace.Allowed, workspace.ScopeDenied));
+        Assert.Equal((false, false), (missing.Allowed, missing.ScopeDenied));
+    }
+
     private static PermissionDecision Evaluate(string permission, IamSubject subject, IEnumerable<RoleBinding> bindings, PermissionTarget target)
         => PermissionEvaluator.Evaluate(permission, subject, bindings, target);
 

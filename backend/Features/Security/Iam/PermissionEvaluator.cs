@@ -27,8 +27,16 @@ public sealed record ProjectedAccess(string LegacyRole, List<string> Projects, s
 
 public sealed record PermissionDecision(bool Allowed, IReadOnlyList<RoleBinding> GrantingBindings, string? Reason)
 {
+    /// <summary>
+    /// True when a binding grants the permission, but not in the scope the
+    /// request addresses (another project, or a project instead of the
+    /// workspace). The middleware then answers <c>project-scope-denied</c>.
+    /// </summary>
+    public bool ScopeDenied { get; init; }
+
     public static PermissionDecision Allow(IReadOnlyList<RoleBinding> granting) => new(true, granting, null);
     public static PermissionDecision Deny(string reason) => new(false, [], reason);
+    public static PermissionDecision DenyScope(string reason) => new(false, [], reason) { ScopeDenied = true };
 }
 
 /// <summary>
@@ -62,16 +70,16 @@ public static class PermissionEvaluator
         {
             case ProjectRouteScope.WorkspaceWide:
                 covering = granting.Where(IsWorkspace).ToList();
-                if (covering.Count == 0) return PermissionDecision.Deny($"'{permission}' is needed on the workspace for this route.");
+                if (covering.Count == 0) return PermissionDecision.DenyScope($"'{permission}' is needed on the workspace for this route.");
                 break;
             case ProjectRouteScope.Addressed:
-                if (target.Projects.Count == 0) return PermissionDecision.Deny("The route addresses no resolvable project.");
+                if (target.Projects.Count == 0) return PermissionDecision.DenyScope("The route addresses no resolvable project.");
                 covering = [];
                 foreach (var project in target.Projects)
                 {
-                    if (string.IsNullOrWhiteSpace(project)) return PermissionDecision.Deny("The route addresses no resolvable project.");
+                    if (string.IsNullOrWhiteSpace(project)) return PermissionDecision.DenyScope("The route addresses no resolvable project.");
                     var forProject = granting.Where(binding => Covers(binding, project, matches)).ToList();
-                    if (forProject.Count == 0) return PermissionDecision.Deny($"No role binding grants '{permission}' in project '{project}'.");
+                    if (forProject.Count == 0) return PermissionDecision.DenyScope($"No role binding grants '{permission}' in project '{project}'.");
                     covering.AddRange(forProject);
                 }
                 break;
@@ -85,7 +93,7 @@ public static class PermissionEvaluator
                 // service account keeps the API-token rule: an unaddressed
                 // route needs the workspace scope.
                 covering = subject.Kind == IamPrincipalKind.ServiceAccount ? granting.Where(IsWorkspace).ToList() : granting;
-                if (covering.Count == 0) return PermissionDecision.Deny($"A service account needs '{permission}' on the workspace for this route.");
+                if (covering.Count == 0) return PermissionDecision.DenyScope($"A service account needs '{permission}' on the workspace for this route.");
                 break;
         }
 
@@ -93,7 +101,7 @@ public static class PermissionEvaluator
         {
             covering = covering.Where(binding => Covers(binding, target.QueryProject, matches)).ToList();
             if (covering.Count == 0)
-                return PermissionDecision.Deny($"No role binding grants '{permission}' in project '{target.QueryProject}'.");
+                return PermissionDecision.DenyScope($"No role binding grants '{permission}' in project '{target.QueryProject}'.");
         }
         return PermissionDecision.Allow(covering.Distinct().ToList());
     }
