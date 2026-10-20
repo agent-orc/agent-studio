@@ -880,7 +880,8 @@ public sealed partial class BatchGatePilotServiceTests
     {
         var folder = CardFolder(arranged.TaskId);
         var subject = ReviewSubjectStore.Read(folder)!;
-        var earlier = DateTimeOffset.UtcNow.AddMinutes(-1);
+        // Older than the real integration's lane rows, which carry the wall clock.
+        var earlier = _clock.AddMinutes(-1);
         IntegrationLaneEvents.Append(folder, ProjectName, arranged.TaskId, "enqueued", sequence: 1,
             atUtc: earlier.AddSeconds(-1));
         Assert.True(factory.Services.GetRequiredService<TimelineLog>().Append(folder, new TimelineEvent
