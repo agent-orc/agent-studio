@@ -27,8 +27,11 @@ with a real request in an isolated scratch context. Each verdict is bound to
 the local credential generation and advertised as `model-acceptance:<provider>:<model>`.
 The quota view lists accepted models by host. A launch-time model refusal with
 no salvage marks that host model unavailable and puts the card back in Ready.
-Claim admission holds a refused primary until a later accepted probe. A refused
-fallback does not hold the card once quota admission can use its primary route.
+Claim admission holds a refused model until a later accepted probe. On Task
+Server the hold matches the route that the claim gives the runner: a required
+mechanical route, an operator-selected continuation, a provider-refusal sibling,
+or the stored primary. A refused primary does not hide a card whose claim uses
+another route, and a refused fallback does not hold a runnable primary.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable

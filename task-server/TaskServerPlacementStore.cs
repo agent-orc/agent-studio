@@ -147,39 +147,16 @@ public sealed partial class TaskServerStore
         SqliteConnection connection,
         SqliteTransaction transaction,
         string hostId,
-        string runnerId,
-        DateTime now,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        // A rejected fallback must not hold the card after quota admission
-        // returns to its primary route. The quota planner checks acceptance
-        // after resolving the effective route.
         await using var command = Command(connection, """
             SELECT t.id, t.project_id, t.task_key, t.title, t.state, t.version, t.created_at, t.updated_at, t.body,
                    t.archive_state, t.archived_at
               FROM tasks t
-              LEFT JOIN task_studio_fields primary_route ON primary_route.task_id = t.id
              WHERE t.state = '2-ready'
                AND NOT EXISTS (
                    SELECT 1 FROM leases l
                     WHERE l.task_id = t.id AND l.status IN ('active', 'process-unknown'))
-               AND NOT EXISTS (
-                   SELECT 1 FROM events held
-                    WHERE held.task_id = t.id
-                      AND held.kind = 'execution.model-capability-held'
-                      AND json_extract(held.payload_json, '$.runnerId') = $runner
-                      AND COALESCE(NULLIF(lower(primary_route.cli_type), ''), 'claude') =
-                          lower(json_extract(held.payload_json, '$.provider'))
-                      AND lower(primary_route.model) = lower(json_extract(held.payload_json, '$.model'))
-                      AND NOT EXISTS (
-                          SELECT 1 FROM runner_capabilities recovery
-                           WHERE recovery.runner_id = $runner
-                             AND recovery.capability_key =
-                                 'model-acceptance:' || json_extract(held.payload_json, '$.provider')
-                                 || ':' || json_extract(held.payload_json, '$.model')
-                             AND recovery.advertised_status = 'ready'
-                             AND recovery.credential_observed_at > held.occurred_at
-                             AND recovery.fresh_until > $now))
                AND (
                    NOT EXISTS (
                        SELECT 1 FROM host_project_policies policy
@@ -193,10 +170,118 @@ public sealed partial class TaskServerStore
                         WHERE allowed.host_id = $host
                           AND allowed.project_id = t.project_id))
              ORDER BY t.created_at, t.task_key;
-            """, transaction, ("$host", hostId), ("$runner", runnerId), ("$now", Iso(now)));
+            """, transaction, ("$host", hostId));
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
             yield return ReadTask(reader);
+    }
+
+    /// <summary>
+    /// Drops a ready task only while the route this claim would hand the runner
+    /// is held on this host. A refused primary model does not hide a card whose
+    /// claim resolves to a mechanical, operator-selected or provider-refusal
+    /// route, and a refused fallback does not hide a runnable primary.
+    /// </summary>
+    private async IAsyncEnumerable<TaskDto> ExceptHeldModelRoutesAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IAsyncEnumerable<TaskDto> readyInClaimOrder,
+        string runnerId,
+        DateTime now,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        await foreach (var task in readyInClaimOrder.WithCancellation(ct))
+        {
+            var held = await ReadHeldModelRoutesAsync(connection, transaction, task.TaskId, runnerId, now, ct);
+            if (held.Count > 0
+                && await ReadClaimRouteAsync(connection, transaction, task, ct) is { Model: { } model } route
+                && held.Contains((route.CliType, model.ToLowerInvariant())))
+                continue;
+            yield return task;
+        }
+    }
+
+    /// <summary>
+    /// The task's model holds on this runner that no accepted probe observed
+    /// after the refusal has cleared. Provider and model are lower case.
+    /// </summary>
+    private static async Task<HashSet<(string Provider, string Model)>> ReadHeldModelRoutesAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string taskId,
+        string runnerId,
+        DateTime now,
+        CancellationToken ct)
+    {
+        var held = new HashSet<(string Provider, string Model)>();
+        await using var command = Command(connection, """
+            SELECT DISTINCT lower(json_extract(held.payload_json, '$.provider')),
+                            lower(json_extract(held.payload_json, '$.model'))
+              FROM events held
+             WHERE held.kind = 'execution.model-capability-held'
+               AND held.task_id = $task
+               AND json_extract(held.payload_json, '$.runnerId') = $runner
+               AND NOT EXISTS (
+                   SELECT 1 FROM runner_capabilities recovery
+                    WHERE recovery.runner_id = $runner
+                      AND recovery.capability_key =
+                          'model-acceptance:' || json_extract(held.payload_json, '$.provider')
+                          || ':' || json_extract(held.payload_json, '$.model')
+                      AND recovery.advertised_status = 'ready'
+                      AND recovery.credential_observed_at > held.occurred_at
+                      AND recovery.fresh_until > $now);
+            """, transaction, ("$task", taskId), ("$runner", runnerId), ("$now", Iso(now)));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            if (!reader.IsDBNull(0) && !reader.IsDBNull(1))
+                held.Add((reader.GetString(0), reader.GetString(1)));
+        return held;
+    }
+
+    /// <summary>
+    /// The provider and model a claim of this task hands the runner, in the
+    /// runner's precedence: a required mechanical route, an operator-selected
+    /// continuation, a provider-refusal sibling, then the stored primary route.
+    /// A null model means the CLI default, which no model hold names.
+    /// </summary>
+    private async Task<(string CliType, string? Model)> ReadClaimRouteAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        TaskDto task,
+        CancellationToken ct)
+    {
+        var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
+        var previousSession = await ReadPreviousSessionAsync(connection, transaction, task.TaskId, ct);
+        if (await ReadMechanicalFreshRouteAsync(
+                connection, transaction, task.TaskId, mechanicalDelta, previousSession, ct) is { } mechanical)
+            return (NormalizeRouteCli(mechanical.CliType), Blank(mechanical.Model));
+        if (await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct) is
+            { Receipt.ExplicitSelection: true } intent)
+        {
+            var fields = intent.Selection;
+            return (NormalizeRouteCli(intent.CliType),
+                fields is null || fields.Model ? Blank(intent.Model) : null);
+        }
+        if (await ReadProviderFallbackForClaimAsync(connection, transaction, task, ct) is { } continuation)
+            return (NormalizeRouteCli(continuation.Fallback.CliType), Blank(continuation.Fallback.To));
+        string? cli = null;
+        string? model = null;
+        await using (var command = Command(connection, """
+            SELECT cli_type, model FROM task_studio_fields WHERE task_id = $task;
+            """, transaction, ("$task", task.TaskId)))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            if (await reader.ReadAsync(ct))
+            {
+                cli = reader.IsDBNull(0) ? null : reader.GetString(0);
+                model = reader.IsDBNull(1) ? null : reader.GetString(1);
+            }
+        }
+        return (NormalizeRouteCli(cli), Blank(model));
+
+        static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        static string NormalizeRouteCli(string? value)
+            => string.IsNullOrWhiteSpace(value) ? "claude" : value.Trim().ToLowerInvariant();
     }
 
     /// <summary>
