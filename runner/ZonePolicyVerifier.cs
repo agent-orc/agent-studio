@@ -66,10 +66,13 @@ public sealed class ZonePolicyVerifier(IZoneNetworkProbe probe, TimeProvider clo
                     var observation = await probe.ConnectAsync(network.Name, dns, target.Address, target.Port, ct);
                     checks.Add(new ZoneCheck(zone.Name, network.Name, target.Expectation, Endpoint(target),
                         target.Expectation, Observed(observation.Outcome),
-                        Satisfies(target.Expectation, observation.Outcome), observation.Detail));
+                        target.RequireControl
+                            ? Satisfies(target.Expectation, observation.Outcome)
+                            : observation.Outcome == ZoneProbeOutcome.Rejected, observation.Detail));
                 }
             }
-            foreach (var target in zone.Probes.Where(target => target is { Expectation: ZoneProbeExpectations.Blocked, Unresolved: null })
+            foreach (var target in zone.Probes.Where(target => target is { Expectation: ZoneProbeExpectations.Blocked,
+                                                                           Unresolved: null, RequireControl: true })
                          .DistinctBy(target => (target.Address, target.Port)))
             {
                 if (!controls.TryGetValue((target.Address, target.Port), out var control))

@@ -95,6 +95,10 @@ public static class ZonePolicyRules
     public const string ResolverPidFile = "/run/agent-zone-dns.pid";
     private const string Reject = "-j REJECT --reject-with icmp-admin-prohibited";
 
+    public static readonly IReadOnlyList<string> PrivateIpv4Ranges =
+        ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
+         "100.64.0.0/10", "127.0.0.0/8"];
+
     public static string IpSetName(string destination) => IpSetPrefix + destination;
 
     public static string Iptables(string family) => family == Ipv6 ? "ip6tables" : "iptables";
@@ -222,11 +226,11 @@ public static class ZonePolicyRules
                 rules.Add($"-A {InputChain} -i {network.Bridge} -d {address} "
                           + $"-m comment --comment \"{scope}: deny {destination.Name}\" {Reject}");
         }
-        // Each tenant network is its own island: its own bridge, and no path
-        // into another tenant, a work bridge, a Compose network (br-*) or
-        // Docker's default bridge on the same host.
-        rules.Add($"-A {ForwardChain} -i {network.Bridge} -o {network.Bridge} "
+        // Keep the tenant's own subnet ahead of the private-range deny. The
+        // named control-plane and secret-store denials above still take priority.
+        rules.Add($"-A {ForwardChain} -i {network.Bridge} -o {network.Bridge} -d {network.Subnet} "
                   + $"-m comment --comment \"{scope}: own network\" -j RETURN");
+        // Keep bridge isolation ahead of tenant exceptions as well.
         foreach (var other in allNetworks.Where(other => other.Bridge != network.Bridge
                                                          && !other.Bridge.StartsWith("br-", StringComparison.Ordinal)))
             rules.Add($"-A {ForwardChain} -i {network.Bridge} -o {other.Bridge} "
@@ -235,11 +239,26 @@ public static class ZonePolicyRules
                   + $"-m comment --comment \"{scope}: isolate from other bridges\" -j DROP");
         rules.Add($"-A {ForwardChain} -i {network.Bridge} -o docker0 "
                   + $"-m comment --comment \"{scope}: isolate from docker0\" -j DROP");
+        foreach (var allowance in network.PrivateAllow ?? [])
+            rules.Add($"-A {ForwardChain} -i {network.Bridge} -d {allowance.Cidr} "
+                      + $"-m conntrack --ctorigdst {allowance.Cidr} "
+                      + $"-m comment --comment \"{scope}: allow private {allowance.Cidr} {allowance.Reason}\" -j RETURN");
+        foreach (var range in PrivateIpv4Ranges.Concat(zone.ZeroTierRanges ?? []).Distinct(StringComparer.Ordinal))
+        {
+            // Both addresses matter: Docker can DNAT a public address to a
+            // private one before FORWARD, or publish a private address that
+            // translates to another container.
+            rules.Add($"-A {ForwardChain} -i {network.Bridge} -m conntrack --ctorigdst {range} "
+                      + $"-m comment --comment \"{scope}: deny private original {range}\" {Reject}");
+            rules.Add($"-A {ForwardChain} -i {network.Bridge} -d {range} "
+                      + $"-m comment --comment \"{scope}: deny private destination {range}\" {Reject}");
+        }
         // An app reaches the host only for name resolution; everything else on
         // the host, including services behind the bridge gateway address, is
         // closed to the run zone.
-        rules.Add($"-A {InputChain} -i {network.Bridge} -p udp --dport 53 -m comment --comment \"{scope}: host dns\" -j RETURN");
-        rules.Add($"-A {InputChain} -i {network.Bridge} -p tcp --dport 53 -m comment --comment \"{scope}: host dns\" -j RETURN");
+        var gateway = ZonePolicyParser.GatewayOf(network.Subnet);
+        rules.Add($"-A {InputChain} -i {network.Bridge} -d {gateway}/32 -p udp --dport 53 -m comment --comment \"{scope}: host dns\" -j RETURN");
+        rules.Add($"-A {InputChain} -i {network.Bridge} -d {gateway}/32 -p tcp --dport 53 -m comment --comment \"{scope}: host dns\" -j RETURN");
         rules.Add($"-A {InputChain} -i {network.Bridge} -m comment --comment \"{scope}: no host services\" {Reject}");
     }
 

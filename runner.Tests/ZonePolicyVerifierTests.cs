@@ -48,7 +48,7 @@ public sealed class ZonePolicyVerifierTests
         var run = report.Checks.Where(check => check.Zone == "run").ToList();
         Assert.Contains(run, check => check is { Kind: "reachable", Target: "example.com:443", Observed: "connected" });
         // Each control-plane address on every port, each secret-store address on its probe port.
-        Assert.Equal(4, run.Count(check => check.Kind == "blocked"));
+        Assert.Equal(7, run.Count(check => check.Kind == "blocked"));
         var controlPlane = resolver.Resolve("task-server.example.internal")[0];
         foreach (var port in new[] { 443, 5071 })
             Assert.Contains(run, check => check is { Kind: "blocked", Observed: "rejected" }
@@ -57,10 +57,37 @@ public sealed class ZonePolicyVerifierTests
                                       && check.Target == "secret-store (10.20.0.1:443)");
         Assert.Contains(run, check => check is { Kind: "blocked", Observed: "rejected" }
                                       && check.Target == "secret-store (192.0.2.80:443)");
+        foreach (var target in new[] { "169.254.169.254:80", "192.168.50.1:443", "198.51.100.7:443" })
+            Assert.Contains(run, check => check is { Kind: "blocked", Observed: "rejected", Passed: true }
+                                          && check.Target == target);
         // One positive control per blocked target, from outside the zones.
         Assert.Equal(4, run.Count(check => check is { Kind: "control", Network: "bridge", Passed: true }));
         Assert.All(network.DnsUsed.Where(item => item.Network == "agent-work"), item => Assert.Equal("172.30.0.1", item.Dns));
         Assert.All(network.DnsUsed.Where(item => item.Network != "agent-work"), item => Assert.Null(item.Dns));
+    }
+
+    [Fact]
+    public async Task Private_probes_require_a_reject_and_public_positive_control_must_connect()
+    {
+        var (policy, rules, resolver) = await CheckedInAsync();
+        var network = Network(rules, resolver);
+        network.ForcedFrom[("agent-run-default", "169.254.169.254", 80)] =
+            new ZoneProbeObservation(ZoneProbeOutcome.TimedOut, "timeout");
+        network.ForcedFrom[("agent-run-default", "192.168.50.1", 443)] =
+            new ZoneProbeObservation(ZoneProbeOutcome.Refused, "refused");
+        network.ForcedFrom[("agent-run-default", "198.51.100.7", 443)] =
+            new ZoneProbeObservation(ZoneProbeOutcome.Connected, "connected");
+        network.ForcedFrom[("agent-run-default", "example.com", 443)] =
+            new ZoneProbeObservation(ZoneProbeOutcome.Refused, "refused");
+
+        var report = await new ZonePolicyVerifier(network, _clock).VerifyAsync(policy, CancellationToken.None);
+
+        Assert.False(report.Passed);
+        Assert.All(report.Checks.Where(check => check.Zone == "run"
+            && new[] { "169.254.169.254:80", "192.168.50.1:443", "198.51.100.7:443", "example.com:443" }.Contains(check.Target)),
+            check => Assert.False(check.Passed));
+        Assert.DoesNotContain(report.Checks, check => check.Kind == "control"
+            && check.Target is "169.254.169.254:80" or "192.168.50.1:443" or "198.51.100.7:443");
     }
 
     [Fact]
@@ -206,7 +233,7 @@ public sealed class ZonePolicyVerifierTests
         var blocked = Assert.Single(report.Checks, check => check is { Kind: "blocked", Target: "example.com:80" });
         Assert.Equal("unresolved", blocked.Observed);
         Assert.False(blocked.Passed);
-        Assert.DoesNotContain(network.Connections, connection => connection.Port == 80);
+        Assert.DoesNotContain(network.Connections, connection => connection.Address == "example.com" && connection.Port == 80);
         Assert.DoesNotContain(report.Checks, check => check is { Kind: "control", Target: "example.com:80" });
     }
 
@@ -275,7 +302,7 @@ public sealed class ZonePolicyVerifierTests
         var report = await new ZonePolicyVerifier(network, _clock).VerifyAsync(policy, CancellationToken.None);
 
         Assert.True(report.Passed, string.Join("\n", report.Checks.Where(check => !check.Passed)));
-        Assert.Equal(8, report.Checks.Count(check => check is { Zone: "run", Kind: "blocked" }));
+        Assert.Equal(14, report.Checks.Count(check => check is { Zone: "run", Kind: "blocked" }));
         Assert.Equal(4, report.Checks.Count(check => check is { Zone: "run", Kind: "control" }));
         Assert.Equal(6, network.Connections.Count(connection => connection.Network == "bridge"));
     }

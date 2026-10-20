@@ -516,6 +516,9 @@ internal static class ZonePolicyTestFiles
         ["AGENT_ZONE_DNS_RESOLVERS"] = "192.0.2.53, 192.0.2.54",
         ["AGENT_ZONE_CONTROL_PLANE_HOSTS"] = "task-server.example.internal",
         ["AGENT_ZONE_SECRET_STORE_HOSTS"] = "192.0.2.80,10.20.0.0/16",
+        ["AGENT_ZONE_ZEROTIER_RANGES"] = "198.51.100.0/24",
+        ["AGENT_ZONE_LAN_PROBE"] = "192.168.50.1",
+        ["AGENT_ZONE_ZEROTIER_PEER"] = "198.51.100.7",
     };
 
     public static string RepoRoot([CallerFilePath] string sourceFile = "")
@@ -538,7 +541,7 @@ internal static class ZonePolicyTestFiles
 
     public static async Task<ResolvedZonePolicy> ResolveAsync(
         string json, FakeZoneResolver? resolver = null, IReadOnlyDictionary<string, string>? environment = null,
-        IReadOnlyCollection<string>? zones = null)
+        IReadOnlyCollection<string>? zones = null, IReadOnlyCollection<string>? zeroTierHostRanges = null)
         => await ZonePolicyParser.ResolveAsync(ZonePolicyParser.Parse(json), ZonePolicyParser.Sha256(json),
-            environment ?? Environment, resolver ?? new FakeZoneResolver(), CancellationToken.None, zones);
+            environment ?? Environment, resolver ?? new FakeZoneResolver(), CancellationToken.None, zones, zeroTierHostRanges);
 }

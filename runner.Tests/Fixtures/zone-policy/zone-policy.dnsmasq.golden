@@ -1,4 +1,4 @@
-# Rendered by agent-host zone-policy from policy 2026-10-20.3 (sha256:<policy-sha256>).
+# Rendered by agent-host zone-policy from policy 2026-10-20.4 (sha256:<policy-sha256>).
 # Zone resolver (dnsmasq): work containers use it with --dns <bridge gateway>.
 port=53
 bind-dynamic

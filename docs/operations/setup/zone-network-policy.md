@@ -4,8 +4,9 @@ AGT-3231 implements card IP-2 of the
 [integrated platform Dossier](../integrierte-plattform/index.html) (§4 and §5)
 for Docker hosts. Work containers (coding, review, gate) get no inbound path,
 and their egress is limited to an allowlist. Run-zone app containers never
-reach the control plane or the secret store, and each tenant gets its own
-network. One policy file is checked in. A host-side command renders it into
+reach the control plane, secret store, private networks, link-local metadata,
+CGNAT, loopback or ZeroTier peers unless a tenant has a named private
+destination exception. Each tenant gets its own network. One policy file is checked in. A host-side command renders it into
 iptables rules, applies them, and proves them with probe containers. The
 daemons then report the applied policy version as their `zone-policy`
 capability, and the Environment view shows it for each host.
@@ -72,7 +73,7 @@ probes. Those are internal addresses that the timer re-resolves.
 | Zone | Network | Inbound | Egress |
 |---|---|---|---|
 | work | `agent-work`, bridge `br-agent-work`, `172.30.0.0/24`, gateway `172.30.0.1`, inter-container traffic off, IPv6 off | none: no published ports, no connection into the bridge | allowlist only: the zone resolver on the gateway, control plane, Git hosts, package registries, model provider APIs; everything else is rejected |
-| run | one network per tenant (`agent-run-<tenant>`, bridge `br-run-<tenant>`), IPv6 off | not changed by this cut; the TLS proxy of the run-zone host agent publishes apps (IP-1, AGT-3229) | open, except every `control-plane` and `secret-store` destination, also through a published port; no path to another tenant, a work bridge, a Compose network (`br-*`), `docker0`, or host services other than DNS |
+| run | one network per tenant (`agent-run-<tenant>`, bridge `br-run-<tenant>`), IPv6 off | the TLS proxy of the run-zone host agent publishes apps (IP-1, AGT-3229) | public egress; private, link-local, CGNAT, loopback, ZeroTier, control-plane and secret-store addresses denied; audited tenant exceptions for private destinations; no path to another bridge or host service other than its own gateway DNS |
 
 Validation enforces the Dossier's fixed boundaries. A work zone cannot allow a
 `secret-store` destination. A run zone must deny every `control-plane` and
@@ -111,11 +112,30 @@ Both chains first return established and related traffic. Rejections use
 `icmp-admin-prohibited`, so a blocked tool fails at once ("No route to host")
 instead of timing out.
 
-The run zone's denials in `AGENT-ZONE-FWD` match `-m conntrack --ctorigdst`.
+The run zone's named denials in `AGENT-ZONE-FWD` match `-m conntrack --ctorigdst`.
 FORWARD sees a connection after Docker's port forwarding has rewritten its
 destination. Without `--ctorigdst`, an app that dials a port the control plane
-publishes on the host would get through. After the denials, a run network may
-reach its own bridge. Every other `br-+` bridge and `docker0` is dropped.
+publishes on the host would get through. After the named denials, a run network
+may reach its own subnet on its own bridge. Every other `br-+` bridge and
+`docker0` is dropped before tenant exceptions. Then private destinations are
+rejected on both the original and translated destination address, so Docker
+DNAT cannot bypass the deny. The fixed IPv4 ranges are `10/8`, `172.16/12`,
+`192.168/16`, `169.254/16`, `100.64/10` and `127/8`. All IPv6 on zone
+bridges, including `fe80::/10` and IPv4-mapped addresses, is dropped by the
+IPv6 chains.
+
+Every apply also reads IPv4 subnets from the host's `zt*` or ZeroTier-named
+interfaces. `egress.zeroTierRanges` adds the optional
+`AGENT_ZONE_ZEROTIER_RANGES` list. The resolved ranges appear in the rules
+digest; changing an interface subnet requires reapply, which the 15-minute
+timer does. An exception goes on the tenant's network only, as
+`privateAllow: [{"cidr":"192.168.50.10/32","reason":"managed database"}]`.
+The CIDR must be canonical and within a denied private or ZeroTier range,
+the reason is required and safe for a rule comment, and an exception cannot
+overlap a named control-plane or secret-store denial. The policy file and
+rendered comment record the tenant, address and reason for audit. Review the
+policy diff before applying an exception. An exception does not open host
+services or other Docker bridges.
 
 An IPv6 payload, loaded with `ip6tables-restore --noflush`, declares the same
 two chains and drops every packet on a zone bridge, in and out. Its
@@ -172,6 +192,11 @@ policy.
    AGENT_ZONE_CONTROL_PLANE_HOSTS=task-server.example.internal
    # Secret provider and credential manager addresses (run hosts only).
    AGENT_ZONE_SECRET_STORE_HOSTS=192.0.2.80
+   # On run hosts, set a reachable LAN target and a ZeroTier peer for probes.
+   AGENT_ZONE_LAN_PROBE=192.168.50.1
+   AGENT_ZONE_ZEROTIER_PEER=198.51.100.7
+   # Optional, comma-separated extra ZeroTier CIDRs (interfaces are read too).
+   AGENT_ZONE_ZEROTIER_RANGES=198.51.100.0/24
    # A work host applies only its zone; a run host sets AGENT_ZONES=run.
    AGENT_ZONES=work
    EOF
@@ -265,6 +290,13 @@ resolver (`--dns <gateway>`), as the work containers do:
   zone's `icmp-admin-prohibited` reject) or a timeout (a drop). "Connection
   refused" is a reset from the real destination. Nothing blocked that
   connection, so the check fails, like any other connect error.
+- Run-zone metadata (`169.254.169.254:80`), `AGENT_ZONE_LAN_PROBE:443`
+  and `AGENT_ZONE_ZEROTIER_PEER:443` probes require an explicit reject. They
+  do not require an outside-zone control because those targets may not answer
+  on every host. The public `example.com:443` reachable probe is the positive
+  egress control. Set LAN and peer values to addresses inside the denied
+  ranges; keep the peer address in `AGENT_ZONE_ZEROTIER_RANGES` if its
+  interface mask does not cover it.
 - A **control** probe runs once per blocked target from
   `verification.controlNetwork` (Docker's default `bridge`, outside every
   zone). It passes when the target answers there, with a connection or a
@@ -368,8 +400,8 @@ step 3). The first apply recreates everything.
   host.
 - Containers that a gate's Compose scenario starts get their own Compose
   networks and are not covered by the work zone rules.
-- Run-zone inbound (TLS proxy, domains) and app-declared egress belong to the
-  run-zone host agent (IP-1, AGT-3229). This cut only guarantees the denials.
+- Run-zone inbound (TLS proxy and domains) belongs to the run-zone host agent
+  (IP-1, AGT-3229). This policy governs run-zone egress.
 - A name the work zone allows also allows its subdomains (dnsmasq's `ipset=`
   and `server=` semantics). A container that connects to a resolved address
   without asking the zone resolver first is rejected. That is intended.
@@ -393,4 +425,4 @@ step 3). The first apply recreates everything.
 - Hosts on the allowlist reflect the CLIs in use. Gemini CLI's Google sign-in
   uses `cloudcode-pa.googleapis.com`, and GitHub release downloads redirect to
   `release-assets.githubusercontent.com`; both are listed since policy
-  `2026-10-20.3`.
+  `2026-10-20.4`.

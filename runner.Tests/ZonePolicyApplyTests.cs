@@ -343,7 +343,7 @@ public sealed class ZonePolicyApplyTests : IDisposable
         Assert.True(exit == 0, output + "\n" + error);
         Assert.Contains("verification passed", output.ToString());
         var state = ZonePolicyStateStore.TryRead(statePath)!.Value.State!;
-        Assert.Equal("2026-10-20.3", state.PolicyVersion);
+        Assert.Equal("2026-10-20.4", state.PolicyVersion);
         Assert.Equal(_clock.GetUtcNow(), state.AppliedAt);
         Assert.Equal(ZonePolicyParser.Sha256(ZonePolicyTestFiles.CheckedInPolicy), state.PolicySha256);
         Assert.Equal((await RulesAsync()).RulesSha256, state.RulesSha256);
@@ -363,7 +363,7 @@ public sealed class ZonePolicyApplyTests : IDisposable
         var capability = Assert.Single(RunnerCapabilityProbe.Advertise(options, gitPushReady: false, clock: _clock, hostBootId: BootId),
             item => item.Key == CapabilityProtocol.ZonePolicy);
         Assert.Equal("ready", capability.Status);
-        Assert.Equal("2026-10-20.3", capability.Version);
+        Assert.Equal("2026-10-20.4", capability.Version);
         Assert.Equal("work", capability.Identity);
         Assert.StartsWith("verifiedAt=2026-10-20T09:30:00Z; networks=agent-work; rules=sha256:", capability.Detail);
     }
@@ -404,7 +404,7 @@ public sealed class ZonePolicyApplyTests : IDisposable
         Assert.Equal(_clock.GetUtcNow(), state.Verification.CheckedAt);
         var capability = ZonePolicyCapability.Describe(statePath, ZoneKinds.Work, _clock, BootId)!;
         Assert.Equal("unavailable", capability.Status);
-        Assert.Equal("2026-10-20.3", capability.Version);
+        Assert.Equal("2026-10-20.4", capability.Version);
         Assert.Contains("verification failed at 2026-10-20T10:30:00Z", capability.Detail);
         Assert.Contains("blocked", capability.Detail);
     }
@@ -452,7 +452,7 @@ public sealed class ZonePolicyApplyTests : IDisposable
         var state = ZonePolicyStateStore.TryRead(statePath)!.Value.State!;
         Assert.False(state.Verification.Passed);
         // The version of the record that the broken file replaced stays visible.
-        Assert.Equal("2026-10-20.3", state.PolicyVersion);
+        Assert.Equal("2026-10-20.4", state.PolicyVersion);
         var capability = ZonePolicyCapability.Describe(statePath, ZoneKinds.Work, _clock, BootId)!;
         Assert.Equal("unavailable", capability.Status);
         Assert.Contains("setup policy expected valid, observed invalid (not a valid zone policy document", capability.Detail);
@@ -483,7 +483,7 @@ public sealed class ZonePolicyApplyTests : IDisposable
         Assert.Contains("allow control-plane", host.LoadedRules);
         Assert.Equal(4, host.Jumps.Count);
         var state = ZonePolicyStateStore.TryRead(statePath)!.Value.State!;
-        Assert.Equal("2026-10-20.3", state.PolicyVersion);
+        Assert.Equal("2026-10-20.4", state.PolicyVersion);
         Assert.Equal(["work", "run"], state.Zones.Select(zone => zone.Name));
         Assert.Equal(BootId, state.BootId);
         Assert.False(state.Verification.Passed);
@@ -521,7 +521,7 @@ public sealed class ZonePolicyApplyTests : IDisposable
         Assert.Equal(2, exit);
         Assert.Contains("apply failed: InvalidOperationException: docker socket vanished", thrown.ToString());
         var state = ZonePolicyStateStore.TryRead(statePath)!.Value.State!;
-        Assert.Equal("2026-10-20.3", state.PolicyVersion);
+        Assert.Equal("2026-10-20.4", state.PolicyVersion);
         var capability = ZonePolicyCapability.Describe(statePath, ZoneKinds.Work, _clock, BootId)!;
         Assert.Equal("unavailable", capability.Status);
         Assert.Contains("setup apply expected applied, observed error (InvalidOperationException: docker socket vanished)", capability.Detail);
@@ -651,6 +651,9 @@ public sealed class ZonePolicyApplyTests : IDisposable
             "AGENT_ZONE_DNS_RESOLVERS=192.0.2.53",
             "AGENT_ZONE_CONTROL_PLANE_HOSTS=\"task-server.example.internal\"",
             "AGENT_ZONE_SECRET_STORE_HOSTS=192.0.2.80",
+            "AGENT_ZONE_LAN_PROBE=192.168.50.1",
+            "AGENT_ZONE_ZEROTIER_PEER=198.51.100.7",
+            "AGENT_ZONE_ZEROTIER_RANGES=198.51.100.0/24",
         ]);
         var output = new StringWriter();
 

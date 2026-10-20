@@ -135,12 +135,11 @@ public sealed class ZonePolicyRenderingTests
                 Assert.Contains(lines, line => line.StartsWith($"-A {chain} -i {bridge} {match} ", StringComparison.Ordinal)
                                                && line.Contains("deny control-plane", StringComparison.Ordinal));
             }
-            Assert.DoesNotContain(lines, line => line.StartsWith($"-A AGENT-ZONE-FWD -i {bridge} -d ", StringComparison.Ordinal));
             var tenant = bridge == "br-run-acme" ? "acme" : "default";
             var isolation = lines.Where(line => line.StartsWith($"-A AGENT-ZONE-FWD -i {bridge} -o ", StringComparison.Ordinal)).ToList();
             Assert.Equal(
             [
-                $"-A AGENT-ZONE-FWD -i {bridge} -o {bridge} -m comment --comment \"run/agent-run-{tenant}: own network\" -j RETURN",
+                $"-A AGENT-ZONE-FWD -i {bridge} -o {bridge} -d {(tenant == "acme" ? "172.31.1.0/24" : "172.31.0.0/24")} -m comment --comment \"run/agent-run-{tenant}: own network\" -j RETURN",
                 $"-A AGENT-ZONE-FWD -i {bridge} -o br-+ -m comment --comment \"run/agent-run-{tenant}: isolate from other bridges\" -j DROP",
                 $"-A AGENT-ZONE-FWD -i {bridge} -o docker0 -m comment --comment \"run/agent-run-{tenant}: isolate from docker0\" -j DROP",
             ], isolation);
@@ -152,6 +151,50 @@ public sealed class ZonePolicyRenderingTests
         Assert.Equal(ZoneProbeOutcome.TimedOut, firewall.Connect("br-run-acme", System.Net.IPAddress.Parse("172.31.0.5"), 80));
         Assert.Equal(ZoneProbeOutcome.TimedOut, firewall.Connect("br-run-acme", System.Net.IPAddress.Parse("172.30.0.5"), 80));
         Assert.Equal(ZoneProbeOutcome.Connected, firewall.Connect("br-run-acme", System.Net.IPAddress.Parse("172.31.1.7"), 80));
+    }
+
+    [Fact]
+    public async Task Private_ranges_and_zerotier_are_denied_after_own_subnet_and_bridge_isolation()
+    {
+        var policy = await ZonePolicyTestFiles.ResolveAsync(ZonePolicyTestFiles.CheckedInPolicy,
+            zeroTierHostRanges: ["203.0.113.0/24"]);
+        var rules = ZonePolicyRules.Render(policy);
+        var lines = rules.Iptables.Split('\n').ToList();
+        var own = lines.FindIndex(line => line.Contains("run/agent-run-default: own network", StringComparison.Ordinal));
+        var bridge = lines.FindIndex(line => line.Contains("run/agent-run-default: isolate from other bridges", StringComparison.Ordinal));
+        var denial = lines.FindIndex(line => line.Contains("run/agent-run-default: deny private original 10.0.0.0/8", StringComparison.Ordinal));
+        Assert.True(own < bridge && bridge < denial);
+        var firewall = new FakeZoneFirewall(rules.Networks, rules.Iptables);
+        foreach (var address in new[] { "10.1.2.3", "172.20.1.2", "192.168.50.1", "169.254.169.254",
+                     "100.64.1.2", "127.0.0.1", "198.51.100.7", "203.0.113.8" })
+            Assert.Equal(ZoneProbeOutcome.Rejected,
+                firewall.Connect("br-run-default", System.Net.IPAddress.Parse(address), 443));
+        Assert.Equal(ZoneProbeOutcome.Connected,
+            firewall.Connect("br-run-default", System.Net.IPAddress.Parse("8.8.8.8"), 443));
+        Assert.Equal(ZoneProbeOutcome.Rejected,
+            firewall.Connect("br-run-default", System.Net.IPAddress.Parse("8.8.8.8"), 443,
+                translated: System.Net.IPAddress.Parse("169.254.169.254")));
+    }
+
+    [Fact]
+    public async Task Tenant_private_allowance_is_audited_scoped_and_cannot_override_named_denials()
+    {
+        var json = Policy();
+        json["zones"]![1]!["networks"]!.AsArray().Add(JsonNode.Parse(
+            """{ "name": "agent-run-acme", "bridge": "br-run-acme", "subnet": "172.31.1.0/24", "tenant": "acme", "privateAllow": [{ "cidr": "192.168.50.10/32", "reason": "managed database" }] }"""));
+        var policy = await ZonePolicyTestFiles.ResolveAsync(json.ToJsonString());
+        var rules = ZonePolicyRules.Render(policy);
+        var firewall = new FakeZoneFirewall(rules.Networks, rules.Iptables);
+        var database = System.Net.IPAddress.Parse("192.168.50.10");
+        Assert.Equal(ZoneProbeOutcome.Connected, firewall.Connect("br-run-acme", database, 5432));
+        Assert.Equal(ZoneProbeOutcome.Rejected, firewall.Connect("br-run-default", database, 5432));
+        Assert.Contains("run/agent-run-acme: allow private 192.168.50.10/32 managed database", rules.Iptables);
+        Assert.Equal(ZoneProbeOutcome.TimedOut,
+            firewall.Connect("br-run-acme", System.Net.IPAddress.Parse("172.31.0.5"), 5432));
+
+        json["zones"]![1]!["networks"]![1]!["privateAllow"]![0]!["cidr"] = "10.20.0.0/16";
+        var error = await Assert.ThrowsAsync<ZonePolicyException>(() => ZonePolicyTestFiles.ResolveAsync(json.ToJsonString()));
+        Assert.Contains(error.Errors, item => item.Contains("overlaps a denied control-plane or secret-store", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -405,6 +448,9 @@ public sealed class ZonePolicyRenderingTests
         { "$.zones[0].egress.allow", "[\"git-hosts\", \"artifactory\"]", "unknown destination 'artifactory'" },
         { "$.zones[1].egress.deny", "[\"control-plane\"]", "a run zone must deny secret-store destination 'secret-store'" },
         { "$.zones[1].networks[0].tenant", "null", "run network agent-run-default must name its tenant" },
+        { "$.zones[1].networks[0].privateAllow", "[{\"cidr\":\"192.168.1.1\",\"reason\":\"db\\\" -j ACCEPT\"}]", "needs an audit reason" },
+        { "$.zones[1].networks[0].privateAllow", "[{\"cidr\":\"192.168.1.0/024\",\"reason\":\"database\"}]", "must be a canonical IPv4 address or CIDR" },
+        { "$.zones[0].networks[0].privateAllow", "[{\"cidr\":\"192.168.1.1\",\"reason\":\"database\"}]", "privateAllow is only valid on a run network" },
         { "$.zones[1].networks[0].subnet", "\"172.30.0.128/25\"", "overlaps agent-work" },
         { "$.zones[1].networks[0].subnet", "\"172.31.0.1/24\"", "is not an IPv4 CIDR" },
         { "$.zones[1].networks[0].subnet", "\"172.31.0.0/024\"", "subnet '172.31.0.0/024' is not in canonical form; write 172.31.0.0/24" },
@@ -424,6 +470,7 @@ public sealed class ZonePolicyRenderingTests
         { "$.zones[1].networks[0].bridge", "\"br-agent-run-default\"", "at most 15 characters" },
         { "$.zones[1].networks[0].bridge", "\"br-agent-work\"", "must be a unique interface name" },
         { "$.zones[0].verify.blocked", "[]", "at least one reachable and one blocked probe" },
+        { "$.zones[1].verify.reachable[0].requireControl", "false", "requireControl=false is only valid for a blocked run probe" },
         { "$.zones[1].verify.blocked", "[{ \"destination\": \"secret-store\" }]", "needs a port because the destination has none" },
         { "$.zones[0].kind", "\"build\"", "kind must be 'work' or 'run'" },
         { "$.destinations.git-hosts.protocols", "[\"icmp\"]", "protocols must be tcp or udp" },
@@ -501,6 +548,24 @@ public sealed class ZonePolicyRenderingTests
         Assert.Equal([443, 443], run.Probes
             .Where(probe => probe is { Expectation: ZoneProbeExpectations.Blocked, Host: "secret-store" })
             .Select(probe => probe.Port));
+    }
+
+    [Fact]
+    public async Task Private_allowance_rejects_public_ranges_and_a_strict_probe_requires_a_denied_range()
+    {
+        var json = Policy();
+        json["zones"]![1]!["networks"]![0]!["privateAllow"] = JsonNode.Parse(
+            """[{"cidr":"8.8.8.8/32","reason":"invalid public exception"}]""");
+        var publicError = await Assert.ThrowsAsync<ZonePolicyException>(() =>
+            ZonePolicyTestFiles.ResolveAsync(json.ToJsonString()));
+        Assert.Contains(publicError.Errors, error => error.Contains("is not within a denied private or ZeroTier range", StringComparison.Ordinal));
+
+        json["zones"]![1]!["networks"]![0]!["privateAllow"] = new JsonArray();
+        json["zones"]![1]!["verify"]!["blocked"]!.AsArray().Add(JsonNode.Parse(
+            """{"host":"8.8.8.8","port":443,"requireControl":false}"""));
+        var probeError = await Assert.ThrowsAsync<ZonePolicyException>(() =>
+            ZonePolicyTestFiles.ResolveAsync(json.ToJsonString()));
+        Assert.Contains(probeError.Errors, error => error.Contains("without a control must target a denied private or ZeroTier range", StringComparison.Ordinal));
     }
 
     [Fact]
