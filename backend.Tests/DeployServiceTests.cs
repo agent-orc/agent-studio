@@ -715,6 +715,52 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void Release_selects_channel_at_commit_and_persists_its_lifecycle()
+    {
+        var (deploy, environments, _) = Build();
+        WriteProjectYml("""
+            lifecycles:
+              standard:
+                - phase: staging
+                  automatic: true
+                - phase: production
+                  approval: [Owner]
+                  requires: staging
+              hotfix:
+                - phase: production
+                  approval: [Owner]
+            channels:
+              - name: hotfix
+                lifecycle: hotfix
+                branchPattern: hotfix/*
+              - name: default
+                lifecycle: standard
+                default: true
+            """);
+        var commit = Commit("channel-configuration");
+        Git("branch", "hotfix/urgent", commit);
+        var artifact = Artifact('a');
+        WriteReleaseEvidence(artifact, commit);
+        Assert.True(environments.RegisterGateArtifact("demo", artifact, commit));
+        var outcome = deploy.CreateRelease("demo", artifact, commit, "owner", branch: "hotfix/urgent");
+        Assert.Equal(DeployOutcomeKind.Ok, outcome.Kind);
+        Assert.Equal("hotfix", outcome.Value!.Channel);
+        Assert.Empty(deploy.Deployments("demo", null)!);
+        Assert.Equal(LifecycleOutcome.AwaitApproval,
+            StandardLifecyclePolicy.Decide(new(DeployIntent.Deploy,
+                new("production", "demo", "Production", 1, EnvironmentKinds.Production), Owner,
+                false, true, ReleasePosition.Newer, false, false, false)
+            { Channel = "hotfix", Phases = [new("production", false, ["Owner"], null)] }).Outcome);
+        var denied = deploy.RequestDeployment("demo", outcome.Value.Id, new DeploymentRequest("stage"), Owner);
+        Assert.Contains("Channel 'hotfix' lifecycle has no phase", denied.Error);
+        var approved = deploy.RequestDeployment("demo", outcome.Value.Id,
+            new DeploymentRequest("production", Approve: true), Owner);
+        Assert.Equal(DeployOutcomeKind.Ok, approved.Kind);
+        Assert.Equal(DeploymentStates.Queued, approved.Value!.State);
+        Assert.Equal("hotfix", Assert.Single(deploy.Releases("demo")!).Channel);
+    }
+
+    [Fact]
     public async Task Routes_ServeTheSharedContract()
     {
         Build();
@@ -776,6 +822,7 @@ public sealed class DeployServiceTests : IDisposable
         using var releasePage = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/releases/page?offset=0&limit=1"));
         Assert.Equal(1, releasePage.RootElement.GetProperty("total").GetInt32());
         Assert.Single(releasePage.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal("default", releasePage.RootElement.GetProperty("items")[0].GetProperty("channel").GetString());
         using var runPage = JsonDocument.Parse(await client.GetStringAsync(
             "/api/projects/demo/deploy/deployments/page?environmentId=stage&state=queued&offset=0&limit=1"));
         Assert.Equal(1, runPage.RootElement.GetProperty("total").GetInt32());
@@ -816,11 +863,17 @@ public sealed class DeployServiceTests : IDisposable
         var production = Assert.Single(service.Deployments("demo", "production")!);
         using var agent = factory.CreateClient();
         agent.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        using var refusedRelease = await agent.PostAsJsonAsync("/api/projects/demo/deploy/releases",
+            new CreateDeployReleaseRequest(Artifact('a'), commit, "default", null, null));
+        Assert.Equal(HttpStatusCode.Forbidden, refusedRelease.StatusCode);
         using var refused = await agent.PostAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve", null);
         Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
         using var refusedPromotion = await agent.PostAsJsonAsync("/api/projects/demo/environments/promotions/approve",
             new PromotionDecisionRequest(Artifact('a')));
         Assert.Equal(HttpStatusCode.Forbidden, refusedPromotion.StatusCode);
+        using var invalidRelease = await client.PostAsJsonAsync("/api/projects/demo/deploy/releases",
+            new CreateDeployReleaseRequest("invalid", "invalid", "default", null, null));
+        Assert.Equal(HttpStatusCode.BadRequest, invalidRelease.StatusCode);
         using var approved = await client.PostAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve", null);
         Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
         Assert.Equal(auth.User!.Id, service.DeploymentById("demo", production.Id)!.ApprovedBy);

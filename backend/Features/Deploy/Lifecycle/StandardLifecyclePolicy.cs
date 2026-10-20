@@ -20,7 +20,11 @@ public sealed record LifecycleRequest(
     ReleasePosition Position,
     bool IsRollbackTarget,
     bool OtherActiveRunForRelease,
-    bool OtherRunOnHost);
+    bool OtherRunOnHost)
+{
+    public string Channel { get; init; } = ReleaseSnapshot.DefaultChannel;
+    public IReadOnlyList<AgentStudio.TaskServer.Contracts.ProjectLifecyclePhase> Phases { get; init; } = [];
+}
 
 /// <param name="Forbidden">The rejection is about the actor's approval role, not the environment's state.</param>
 public sealed record LifecycleDecision(LifecycleOutcome Outcome, string? ApprovedBy, string? Reason, bool Forbidden = false)
@@ -60,6 +64,9 @@ public static class StandardLifecyclePolicy
     public static LifecycleDecision Decide(LifecycleRequest request)
     {
         var environment = request.Environment;
+        var phase = request.Phases.Count == 0 ? null : request.Phases.FirstOrDefault(item => item.Phase == environment.Kind);
+        if (request.Phases.Count > 0 && phase is null)
+            return LifecycleDecision.Reject($"Channel '{request.Channel}' lifecycle has no phase for {environment.Name}.");
         if (request.OtherActiveRunForRelease)
             return LifecycleDecision.Reject(
                 $"This release is already queued, running or awaiting approval in {environment.Name}.");
@@ -72,8 +79,9 @@ public static class StandardLifecyclePolicy
             {
                 ReleasePosition.Current => $"The release is already current in {environment.Name}. Use redeploy.",
                 ReleasePosition.Older => $"The release is older than the current release in {environment.Name}. Use rollback.",
-                _ => environment.Order > 0 && !request.ReleaseSucceededInPreviousEnvironment
-                    ? $"{environment.Name} requires a successful deployment of this release to the previous environment."
+                _ => (phase?.Requires is not null || phase is null && environment.Order > 0)
+                    && !request.ReleaseSucceededInPreviousEnvironment
+                    ? $"Channel '{request.Channel}' lifecycle rule '{phase?.Requires ?? "previous environment"}' requires a successful deployment of this release before {environment.Name}."
                     : null,
             },
             DeployIntent.Redeploy => request.Position == ReleasePosition.Current
@@ -83,7 +91,7 @@ public static class StandardLifecyclePolicy
         };
         if (rejection is not null) return LifecycleDecision.Reject(rejection);
 
-        if (!RequiresApproval(environment))
+        if (phase is not null ? phase.Approval.Count == 0 : !RequiresApproval(environment))
             return new(LifecycleOutcome.Queue, null, null);
         if (!request.ApproveNow)
             return new(LifecycleOutcome.AwaitApproval, null, null);

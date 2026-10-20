@@ -135,6 +135,8 @@ public static class DeploymentReconciler
                 .LastOrDefault();
             if (record is null) continue;
             var release = record.Release;
+            if (record.Lifecycle.Count > 0 && !record.Lifecycle.Any(phase => phase.Phase == environment.Kind))
+                continue;
             // Any run for this release here since staging turned healthy answers
             // the promotion already, including a cancelled one.
             if (runs.Any(item => item.EnvironmentId == environment.Id && item.ReleaseId == release.Id

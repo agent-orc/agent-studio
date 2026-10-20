@@ -118,6 +118,40 @@ public sealed class ProjectDefinitionSchemaTwoTests
     }
 
     [Fact]
+    public void Channels_reference_named_lifecycles_and_variables_choose_the_most_specific_scope()
+    {
+        var yaml = Valid.Replace("deploy:\n",
+            "  hotfix:\n    - phase: production\n      approval: [Owner]\n"
+            + "channels:\n  - name: hotfix\n    lifecycle: hotfix\n    branchPattern: hotfix/*\n"
+            + "  - name: default\n    lifecycle: standard\n    default: true\ndeploy:\n",
+            StringComparison.Ordinal)
+            .Replace("  - name: DATABASE_URL",
+                "  - name: LOG_LEVEL\n    value: debug\n    environments: [production]\n"
+                + "    channels: [hotfix]\n  - name: DATABASE_URL", StringComparison.Ordinal);
+        var result = ProjectDefinitionReader.Parse(yaml);
+        Assert.True(result.IsValid, Describe(result));
+        var definition = result.Definition!.Deployment!;
+        Assert.Equal("hotfix", ProjectChannelPolicy.Select(definition, "2026.10.20.1", "hotfix/urgent", null, false).Channel?.Name);
+        Assert.Equal("default", ProjectChannelPolicy.Select(definition, "2026.10.20.1", "develop", null, false).Channel?.Name);
+        Assert.Contains("override", ProjectChannelPolicy.Select(definition, "", null, "hotfix", false).Refusal!);
+        Assert.Equal("debug", ProjectChannelPolicy.ResolveVariable(definition, "LOG_LEVEL", "production", "hotfix")?.Value);
+        Assert.Equal("info", ProjectChannelPolicy.ResolveVariable(definition, "LOG_LEVEL", "staging", "hotfix")?.Value);
+        Assert.Single(definition.Lifecycles["hotfix"]);
+    }
+
+    [Fact]
+    public void Channels_refuse_missing_default_unknown_lifecycle_and_unknown_variable_scope()
+    {
+        var yaml = Valid.Replace("deploy:\n",
+            "channels:\n  - name: preview\n    lifecycle: missing\n    preReleaseTag: preview\ndeploy:\n",
+            StringComparison.Ordinal).Replace("    value: info", "    value: info\n    channels: [other]", StringComparison.Ordinal);
+        var issues = ProjectDefinitionReader.Parse(yaml).Issues;
+        Assert.Contains(issues, issue => issue.Code == "channel-default-invalid");
+        Assert.Contains(issues, issue => issue.Code == "channel-lifecycle-invalid");
+        Assert.Contains(issues, issue => issue.Code == "variable-channel-unknown");
+    }
+
+    [Fact]
     public void Shorthand_environment_list_protects_production()
     {
         var shorthand = Cut(Valid, "environments:", "lifecycles:")
@@ -389,7 +423,7 @@ public sealed class ProjectDefinitionSchemaTwoTests
     [InlineData("    secret: DATABASE_URL\n", "    secret: \"postgres://db/app\"\n", "variable-secret-name-invalid")]
     [InlineData("    secret: DATABASE_URL\n", "    secret: DATABASE_URL\n    value: x\n", "variable-source-invalid")]
     [InlineData("    secret: DATABASE_URL\n    environments: [production]", "    secret: DATABASE_URL\n    environments: [preview]", "variable-environment-unknown")]
-    [InlineData("  - name: DATABASE_URL\n", "  - name: LOG_LEVEL\n", "variable-duplicate")]
+    [InlineData("  - name: DATABASE_URL\n    secret: DATABASE_URL\n    environments: [production]", "  - name: LOG_LEVEL\n    value: debug", "variable-duplicate")]
     public void Variable_rules_name_the_offending_entry(string before, string after, string code)
     {
         var result = ProjectDefinitionReader.Parse(Replace(Valid, before, after));
@@ -491,6 +525,8 @@ public sealed class ProjectDefinitionSchemaTwoTests
                 .Select(item => item.GetProperty("properties").GetProperty("type").GetProperty("const").GetString()));
         Assert.Equal(ProjectDeploymentVocabulary.VariableKeys,
             properties.GetProperty("variables").GetProperty("items").GetProperty("properties").EnumerateObject().Select(item => item.Name));
+        Assert.Equal(ProjectDeploymentVocabulary.ChannelKeys,
+            properties.GetProperty("channels").GetProperty("items").GetProperty("properties").EnumerateObject().Select(item => item.Name));
     }
 
     [Fact]

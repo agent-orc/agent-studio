@@ -293,6 +293,7 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(page.getByTestId('deploy-history-count')).toHaveText('50 of 80 runs');
     expect(requestedOffsets).toContain('25');
     await page.getByTestId('deploy-tab-releases').click();
+    await expect(page.getByRole('list', { name: 'Releases, newest first' }).getByText('default').first()).toBeVisible();
     await expect(page.getByRole('list', { name: 'Releases, newest first' }).getByRole('button')).toHaveCount(25);
     await page.getByTestId('deploy-releases-next').click();
     await expect(page.getByRole('list', { name: 'Releases, newest first' }).getByRole('button')).toHaveCount(15);

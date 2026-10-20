@@ -1,5 +1,6 @@
 using AgentStudio.Deploy;
 using AgentStudio.Projects;
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -187,6 +188,18 @@ public sealed class DeploymentReconcilerTests
         var run = Assert.Single(DeploymentReconciler.Reconcile(new([Staging, Production], [staticProduction], [], [],
             [promotion])).Deployments);
         Assert.Equal(DeployStepNames.PublishStatic, run.DeployStep);
+    }
+
+    [Fact]
+    public void Promotion_without_a_phase_in_the_release_channel_is_not_adopted()
+    {
+        var promotion = new EnvironmentPromotion(Artifact, "stage", "production", T0.AddMinutes(2), "pending");
+        var record = new ReleaseRecord(R1 with { Channel = "staging-only" }, [Declaration("stage", "container")])
+        {
+            Lifecycle = [new ProjectLifecyclePhase("staging", true, [], null)],
+        };
+        var result = DeploymentReconciler.Reconcile(new([Staging, Production], [record], [], [], [promotion]));
+        Assert.Empty(result.Deployments);
     }
 
     [Fact]

@@ -2563,7 +2563,7 @@ new fact even when its operator-facing summary is unchanged.
 
 `.agent-studio/project.yml` schema 1 remains valid for preparation and verification.
 Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,
-`environments`, `lifecycles.standard`, `deploy`, and `variables`. Existing
+`environments`, `lifecycles.standard`, named lifecycles, `channels`, `deploy`, and `variables`. Existing
 `commands` and `testSuites` remain the execution source until the pipeline
 engine is extended.
 Each release hashes these sections at its commit into its process and
@@ -2587,6 +2587,17 @@ in
   and the standard lifecycle.
 - `lifecycles.standard`: Staging is automatic after integration; Production
   requires successful Staging and approval by Owner or Maintainer.
+- `channels` select exactly one immutable release channel at creation. Each
+  entry names a lifecycle and may match a `preReleaseTag` or `branchPattern`
+  glob; exactly one entry has `default: true` and no matching rules. Overlapping
+  matches are refused. Explicit creation through
+  `POST /api/projects/{projectName}/deploy/releases` accepts `artifact`,
+  `commit`, optional `branch`, `versionTag`, and `channel`, and requires an
+  Owner or project approver. A supplied branch must point at the commit.
+  An explicit channel overrides matching rules but never changes an existing
+  release. The release stores its selected lifecycle, so later YAML edits do
+  not change promotion rules. Named lifecycles may omit Staging; Production
+  still requires approval.
 - `deploy` steps in P1 (AGT-3221) are configuration only. Nothing executes
   them yet; the SSH executor follows in a later card. `static-site` describes
   copying a static artifact to a `directory` on an SSH `target`. `container`
@@ -2609,7 +2620,10 @@ in
   `start-container` (configuration placeholder), `run`, `health`, and
   `approval` stay valid.
 - `variables` hold either a plain `value` or a `secret` name for the secret
-  provider, optionally scoped to `environments`. A plain value is refused as
+  provider, optionally scoped to `environments` and `channels`. Values in a
+  scope list match with OR; environment and channel scopes combine with AND.
+  More scoped dimensions win, and overlapping equally specific definitions
+  are refused. A plain value is refused as
   `secret-value-inline` in two cases. The first is a sensitive name: its last
   segment (split at `_` and camelCase) is in a curated list (`PASSWORD`,
   `PASSWD`, `PASS`, `PWD`, `PASSPHRASE`, `SECRET`, `TOKEN`, `KEY`, `APIKEY`,

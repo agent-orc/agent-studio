@@ -1,5 +1,8 @@
 namespace AgentStudio.Deploy;
 
+public sealed record CreateDeployReleaseRequest(string Artifact, string Commit, string? Channel,
+    string? Branch, string? VersionTag);
+
 /// <summary>BD-1 routes for the P1 data contract (releases, deployments, status, matrix).</summary>
 public static class DeployEndpoints
 {
@@ -23,6 +26,17 @@ public static class DeployEndpoints
         project.MapGet("/releases/{releaseId}", (string projectName, string releaseId, DeployService deploy) =>
             deploy.ReleaseDetail(projectName, releaseId) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
+
+        project.MapPost("/releases", (HttpContext context, string projectName,
+            CreateDeployReleaseRequest request, DeployService deploy) =>
+        {
+            var actor = Actor(context, projectName);
+            return actor.IsApprover
+                ? Respond(deploy.CreateRelease(projectName, request.Artifact, request.Commit, actor.Id,
+                    request.Channel, actor.IsApprover, request.Branch, request.VersionTag), accepted: true)
+                : Results.Json(new { error = "Creating a release explicitly requires the Owner or an approver role." },
+                    statusCode: StatusCodes.Status403Forbidden);
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapGet("/deployments", (string projectName, string? environmentId, DeployService deploy) =>
             deploy.Deployments(projectName, environmentId) is { } value ? Results.Ok(value) : UnknownProject(projectName));

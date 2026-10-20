@@ -348,7 +348,7 @@ public static partial class ProjectDefinitionReader
             "schemaVersion", "stack", "toolVersions", "commands", "testSuites",
             "cachePaths", "capabilities", "environment", "devServer", "image", "release",
             "project", "quality", "pipeline", "artifacts", "environments", "lifecycles", "deploy",
-            "variables",
+            "variables", "channels",
         };
         foreach (var line in lines.Where(line => line.Indent == 0))
         {
