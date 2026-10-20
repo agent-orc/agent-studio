@@ -27,11 +27,11 @@ done
 shift
 exec sh -c "$*"
 SSH
-# FAKE_DOCKER_RUNNING names containers that `compose ps --status running` still reports.
+# FAKE_DOCKER_RUNNING names containers that `compose ps --status ... --quiet` still reports.
 cat >"$work/bin/docker" <<'DOCKER'
 #!/bin/sh
 printf '%s\n' "$*" >>"$FAKE_LOG"
-case "$*" in *' ps --status running --quiet') [ -z "${FAKE_DOCKER_RUNNING:-}" ] || echo "$FAKE_DOCKER_RUNNING" ;; esac
+case "$*" in *' ps --status '*' --quiet') [ -z "${FAKE_DOCKER_RUNNING:-}" ] || echo "$FAKE_DOCKER_RUNNING" ;; esac
 DOCKER
 cat >"$work/bin/curl" <<'CURL'
 #!/bin/sh
@@ -51,7 +51,8 @@ done
 printf 'URL %s\n' "$url" >>"$FAKE_LOG"
 [ -z "$data" ] || printf 'BODY %s\n' "$(cat "$data")" >>"$FAKE_LOG"
 case "$url" in
-  */healthz) exit 7 ;;
+  # Stable answers while its fake start script has run and its stop script has not.
+  */healthz) [ -e "$FAKE_STABLE_UP" ] || exit 7; body=ok ;;
   */api/auth/status) body="{\"bootstrapRequired\":$FAKE_BOOTSTRAP}" ;;
   */api/auth/bootstrap|*/api/auth/login) body='{"csrfToken":"csrf-1"}' ;;
   */api/projects) body='[{"id":"PROJ-001"}]' ;;
@@ -65,7 +66,7 @@ if [ -n "$out" ]; then printf '%s' "$body" >"$out"; else printf '%s' "$body"; fi
 [ -z "$write" ] || printf 200
 CURL
 chmod 0755 "$work/bin/ssh" "$work/bin/docker" "$work/bin/curl"
-export FAKE_LOG="$work/fake.log" FAKE_BOOTSTRAP=true
+export FAKE_LOG="$work/fake.log" FAKE_BOOTSTRAP=true FAKE_STABLE_UP="$work/stable-up"
 PATH="$work/bin:$PATH"
 export PATH
 GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid
@@ -76,10 +77,18 @@ export MOVE_STABLE_HEALTH_URL=http://127.0.0.1:9/healthz
 printf 'name: agent-studio-website\n' >"$work/server/stack/compose.yaml"
 printf 'STUDIO_VERSION=1.0.0\nSTUDIO_DOMAIN=studio.test\nSTUDIO_DATA_DIR=%s\n' "$work/server/data" >"$work/server/stack/.env"
 
-# Stable checkout beside the workspace, with the api.sh under test.
-stable="$work/devspace/agent-taskboard-stable"
+# The real layout: workspace and devspace are siblings (C:\Projects\agent-taskboard-workspace
+# and C:\Projects\agent-taskboard-devspace). The devspace holds the Stable checkout
+# with the api.sh under test and the outer start/stop scripts.
+projects_root="$work/Projects"
+devspace="$projects_root/agent-taskboard-devspace"
+stable="$devspace/agent-taskboard-stable"
 mkdir -p "$stable"
 cp "$script_dir/../../api.sh" "$stable/api.sh"
+printf '#!/bin/sh\nrm -f "%s/stable-up"\ntouch "%s/stable-stopped"\n' "$work" "$work" >"$work/stop-stable.sh"
+printf '#!/bin/sh\n[ "$DETACH" = 1 ] || exit 9\ntouch "%s/stable-started" "%s/stable-up"\n' "$work" "$work" >"$devspace/start-stable.sh"
+chmod 0755 "$work/stop-stable.sh" "$devspace/start-stable.sh"
+cp "$work/stop-stable.sh" "$devspace/stop-stable.sh"
 
 # Project checkout and its remote.
 git init -q --bare -b main "$work/remotes/demo.git"
@@ -92,7 +101,7 @@ git -C "$work/code/Demo" remote add origin "git@test-server:$work/remotes/demo.g
 git -C "$work/code/Demo" push -q origin main
 
 # Workspace with pushed history, one unpushed commit, and untracked state.
-ws="$work/devspace/agent-taskboard-workspace"
+ws="$projects_root/agent-taskboard-workspace"
 git init -q --bare -b main "$work/remotes/workspace.git"
 git init -q -b main "$ws"
 mkdir -p "$ws/.metadata" "$ws/projects/demo/tasks/AGT-1" "$ws/projects/demo/tasks/AGT-2"
@@ -107,7 +116,8 @@ printf 'open\n' >"$ws/projects/demo/tasks/AGT-1/status.md"
 printf '# AGT-2\n' >"$ws/projects/demo/tasks/AGT-2/task.md"
 git -C "$ws" add -A
 git -C "$ws" commit -qm 'workspace'
-git -C "$ws" remote add origin "$work/remotes/workspace.git"
+# file:// like a network remote: a plain local path would hardlink objects with the source modes.
+git -C "$ws" remote add origin "file://$work/remotes/workspace.git"
 git -C "$ws" push -q origin main
 printf 'note\n' >"$ws/projects/demo/tasks/AGT-1/notes.md"
 git -C "$ws" add -A
@@ -131,10 +141,26 @@ printf '{"auths":{}}' >"$ws/.docker/config.json"
 # A CLI log that echoed a GitHub token, built at runtime.
 printf 'token %s_%s\n' 'ghp' "$(printf 'x%.0s' $(seq 1 36))" >"$ws/.runtime/cli-output/leak.log"
 
-run() { sh "$move" "$@" --workspace "$ws" --server test-server --server-root "$work/server" --state-dir "$work/state" >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "move-studio-to-server.sh $* exited non-zero"; }; }
+run() { sh "$move" "$@" --workspace "$ws" --devspace "$devspace" --server test-server --server-root "$work/server" --state-dir "$work/state" >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "move-studio-to-server.sh $* exited non-zero"; }; }
+
+run_fails() {
+  if sh "$move" "$@" --workspace "$ws" --devspace "$devspace" --server test-server --server-root "$work/server" --state-dir "$work/state" >"$work/out" 2>&1; then
+    cat "$work/out" >&2; fail "move-studio-to-server.sh $* succeeded but should fail"
+  fi
+}
+
+# The workspace is never guessed.
+if sh "$move" --dry-run --server test-server --server-root "$work/server" >"$work/out" 2>&1; then fail 'ran without --workspace'; fi
+check grep -q -- '--workspace is required' "$work/out"
+
+# Dry run without --devspace names what --apply will need.
+sh "$move" --dry-run --workspace "$ws" --server test-server --server-root "$work/server" --state-dir "$work/state" >"$work/out" 2>&1 \
+  || { cat "$work/out" >&2; fail 'dry run without --devspace exited non-zero'; }
+check grep -q 'devspace: --devspace is not set' "$work/out"
 
 # Dry run: inventory and preflight, nothing written on the server.
 run --dry-run
+check grep -qF "devspace $devspace: Stable checkout $stable, guard $devspace/.studio-moved-to-server" "$work/out"
 check grep -q 'attempt-authority' "$work/out"
 check grep -q 'not copied (credential): .git-credentials' "$work/out"
 check grep -q 'not copied (credential): runner.env' "$work/out"
@@ -190,6 +216,22 @@ run --transfer
 check grep -q 'Delta: 1 to copy, 1 to remove' "$work/out"
 check test "$(cat "$staged/projects/demo/tasks/AGT-1/status.md")" = 'edited after commit'
 
+# A token appears in a file an earlier pass sent: it leaves staging. A token in
+# orchestration state blocks the transfer instead of being dropped silently.
+sleep 1
+token="$(printf 'ghp')_$(printf 'y%.0s' $(seq 1 36))"
+printf 'pushed with %s\n' "$token" >>"$ws/.runtime/cli-output/AGT-3.log"
+run --transfer
+check grep -q 'not copied (contains a github-token): .runtime/cli-output/AGT-3.log' "$work/out"
+[ ! -e "$staged/.runtime/cli-output/AGT-3.log" ] || fail 'a file that now holds a token stayed in staging'
+cp "$ws/.orchestration-occurrences/o.json" "$work/o.json"
+printf '{"note":"%s"}' "$token" >"$ws/.orchestration-occurrences/o.json"
+run_fails --transfer
+check grep -q 'token-in-state.*\.orchestration-occurrences/o.json' "$work/out"
+check grep -q 'blocking inventory issues' "$work/out"
+cp "$work/o.json" "$ws/.orchestration-occurrences/o.json"
+rm "$ws/.runtime/cli-output/AGT-3.log"
+
 # Rehearsal: copy, relocation, separate Compose project, smoke checks, teardown.
 : >"$FAKE_LOG"
 run --rehearse --rehearsal-port 18443
@@ -201,34 +243,33 @@ check grep -q -- '-p studio-move-rehearsal' "$FAKE_LOG"
 check grep -q 'HEADER X-CSRF-Token: csrf-1' "$FAKE_LOG"
 check grep -q 'CONFIG header = "Authorization: Bearer test-secret"' "$FAKE_LOG"
 check grep -q '"availableSlots":0' "$FAKE_LOG"
+# Owner password and one-time codes reach the payloads through stdin, not node's command line.
+check grep -q 'BODY {"username":"move.rehearsal.owner","password":"Rehearsal-[0-9a-f]*","displayName":"Move rehearsal owner","bootstrapCode":"[0-9a-f]*"}' "$FAKE_LOG"
+check grep -qx 'BODY {"code":"enrol-1"}' "$FAKE_LOG"
 [ ! -e "$work/server/move-rehearsal" ] || fail 'rehearsal copy was not torn down'
 check test -f "$staged/.security/access-state.json"
 
 # Apply. Stable scripts record what ran; the guard and the maintenance marker
-# live in the devspace beside the workspace, where api.sh and the watchdog look.
-guard="$work/devspace/.studio-moved-to-server"
-maintenance="$work/devspace/.stable-maintenance"
+# live in the devspace, where api.sh and the watchdog look, not beside the workspace.
+guard="$devspace/.studio-moved-to-server"
+maintenance="$devspace/.stable-maintenance"
 data="$work/server/data"
-printf '#!/bin/sh\ntouch "%s/stable-stopped"\n' "$work" >"$work/stop-stable.sh"
-printf '#!/bin/sh\ntouch "%s/stable-started"\n' "$work" >"$work/start-stable.sh"
 # Registers a checkout without a repository URL while Stable stops: a blocking final inventory.
 cat >"$work/stop-stable-blocking.sh" <<STOP
 #!/bin/sh
+rm -f "$work/stable-up"
 touch "$work/stable-stopped"
 node -e 'const fs=require("fs");const f=process.argv[1];const r=JSON.parse(fs.readFileSync(f,"utf8"));r.Projects.push({Id:"PROJ-002",DisplayName:"Lost",RepositoryPath:process.argv[2],Urls:[]});fs.writeFileSync(f,JSON.stringify(r));' \
   "$ws/.metadata/projects.json" "$work/code/NoRemote"
 STOP
-chmod 0755 "$work/stop-stable.sh" "$work/start-stable.sh" "$work/stop-stable-blocking.sh"
-export MOVE_STABLE_STOP="$work/stop-stable.sh" MOVE_STABLE_START="$work/start-stable.sh"
+chmod 0755 "$work/stop-stable-blocking.sh"
+blocking_stop() { cp "$work/stop-stable-blocking.sh" "$devspace/stop-stable.sh"; }
+normal_stop() { cp "$work/stop-stable.sh" "$devspace/stop-stable.sh"; git -C "$ws" checkout -q -- .metadata/projects.json; }
 mkdir -p "$data/workspace"
 printf 'empty install' >"$data/workspace/README"
 
-fresh() { rm -f "$work/stable-stopped" "$work/stable-started"; : >"$FAKE_LOG"; }
-run_fails() {
-  if sh "$move" "$@" --workspace "$ws" --server test-server --server-root "$work/server" --state-dir "$work/state" >"$work/out" 2>&1; then
-    cat "$work/out" >&2; fail "move-studio-to-server.sh $* succeeded but should fail"
-  fi
-}
+# Each case starts with Stable serving.
+fresh() { rm -f "$work/stable-stopped" "$work/stable-started"; touch "$work/stable-up"; : >"$FAKE_LOG"; }
 pre_moves() { find "$data" -maxdepth 1 -name 'workspace.pre-move-*' | wc -l | tr -d ' '; }
 stable_refuses() {
   if API_REQUIRE_PREBUILT=1 bash "$stable/api.sh" start >"$work/api.out" 2>&1; then return 1; fi
@@ -245,6 +286,24 @@ restarted() {
   [ ! -e "$maintenance" ] || fail 'maintenance marker left behind after Stable restarted'
   check grep -q 'restarting Stable' "$work/out"
 }
+kept_down() {
+  [ ! -e "$work/stable-started" ] || fail 'Stable restarted although it had to stay down'
+  check test -f "$guard"
+  check test -f "$maintenance"
+  check stable_refuses
+  check grep -q 'Stable stays stopped behind the guard' "$work/out"
+  check grep -q 'Rollback:' "$work/out"
+}
+rollback() {
+  command=$(sed -n '/Rollback:/{n;p;}' "$work/out" | tail -n 1)
+  [ -n "$command" ] || fail 'no rollback command printed'
+  sh -c "$command"
+}
+# Nothing may land beside the workspace, where no reader looks.
+nothing_beside_workspace() {
+  [ ! -e "$projects_root/.studio-moved-to-server" ] || fail 'guard written beside the workspace'
+  [ ! -e "$projects_root/.stable-maintenance" ] || fail 'maintenance marker written beside the workspace'
+}
 
 # A Stable whose api.sh predates the guard: refused before Stable stops.
 printf '#!/bin/sh\n' >"$stable/api.sh"
@@ -254,34 +313,77 @@ check grep -q 'does not honour the moved-to-server guard' "$work/out"
 [ ! -e "$work/stable-stopped" ] || fail 'Stable stopped although its api.sh has no guard'
 cp "$script_dir/../../api.sh" "$stable/api.sh"
 
+# Apply needs the devspace that holds the Stable checkout and its scripts.
+fresh
+if sh "$move" --apply --yes --workspace "$ws" --server test-server --server-root "$work/server" --state-dir "$work/state" >"$work/out" 2>&1; then
+  fail 'apply ran without --devspace'
+fi
+check grep -q -- '--apply needs --devspace' "$work/out"
+if sh "$move" --apply --yes --workspace "$ws" --devspace "$projects_root" --server test-server --server-root "$work/server" --state-dir "$work/state" >"$work/out" 2>&1; then
+  fail 'apply ran with the folder beside the workspace as devspace'
+fi
+check grep -q 'holds no agent-taskboard-stable/api.sh and start-stable.sh' "$work/out"
+[ ! -e "$work/stable-stopped" ] || fail 'Stable stopped without a valid devspace'
+nothing_beside_workspace
+
 # A blocking issue in the final inventory restarts Stable and leaves the server alone.
 fresh
-MOVE_STABLE_STOP="$work/stop-stable-blocking.sh" run_fails --apply --yes
+blocking_stop
+run_fails --apply --yes
 check test -f "$work/stable-stopped"
 check grep -q 'missing-repository-url' "$work/out"
 restarted
 untouched
-git -C "$ws" checkout -q -- .metadata/projects.json
+normal_stop
 
 # A server stack that keeps running after stop: refused before live data moves, Stable restarts.
 fresh
 FAKE_DOCKER_RUNNING=website-api-1 run_fails --apply --yes
 check grep -q 'the server stack still runs after stop (website-api-1)' "$work/out"
+check grep -q 'ps --status running --status restarting --status paused --quiet' "$FAKE_LOG"
 restarted
 untouched
 
-# Failure after the switch began: Stable stays stopped behind the guard, and
-# the printed rollback command restores it.
+# Stable did not answer before the stop: a pre-switch failure keeps it down.
+fresh
+rm -f "$work/stable-up"
+blocking_stop
+run_fails --apply --yes
+kept_down
+check grep -qx 'status=switching' "$guard"
+untouched
+normal_stop
+rollback
+[ ! -e "$guard" ] || fail 'rollback did not lift the guard'
+
+# Failure after the switch began: the server stack is stopped again, Stable
+# stays stopped behind the guard, and the printed rollback command restores it.
 fresh
 FAKE_BOOTSTRAP=true run_fails --apply --yes
 check grep -q 'asks for owner bootstrap' "$work/out"
+check grep -q 'switch failed: server stack stopped' "$work/out"
+up_line=$(grep -n 'server/stack .* up -d' "$FAKE_LOG" | tail -n 1 | cut -d: -f1)
+stop_line=$(grep -n 'server/stack .* stop$' "$FAKE_LOG" | tail -n 1 | cut -d: -f1)
+[ -n "$up_line" ] && [ -n "$stop_line" ] && [ "$stop_line" -gt "$up_line" ] || fail 'a failed switch did not stop the server stack'
 [ ! -e "$work/stable-started" ] || fail 'Stable restarted although the server data was switched'
 check grep -qx 'status=switching' "$guard"
 check test -f "$maintenance"
 check stable_refuses
-rollback=$(sed -n '/Rollback:/{n;p;}' "$work/out")
-[ -n "$rollback" ] || fail 'no rollback command after a failed apply'
-sh -c "$rollback"
+nothing_beside_workspace
+check test "$(pre_moves)" -eq 1
+cp "$work/out" "$work/failed-switch.out"
+
+# A re-run after a failed switch is refused without --force, before Stable is touched.
+fresh
+rm -f "$work/stable-up"
+run_fails --apply --yes
+check grep -q 'an earlier apply did not finish' "$work/out"
+check grep -q 'workstation guard: status=switching' "$work/out"
+[ ! -e "$work/stable-stopped" ] || fail 'a re-run after a failed switch ran the Stable stop'
+check test "$(pre_moves)" -eq 1
+
+cp "$work/failed-switch.out" "$work/out"
+rollback
 check test -f "$work/stable-started"
 [ ! -e "$guard" ] || fail 'rollback did not lift the guard'
 [ ! -e "$maintenance" ] || fail 'rollback did not lift the maintenance marker'
@@ -301,6 +403,8 @@ check test -f "$data/workspace/logs/bus/day.jsonl"
 check test -d "$data/projects/demo/.git"
 check test "$(pre_moves)" -eq 2
 check test "$(stat -c %a "$data/workspace/.security/access-state.json")" = 600
+[ -z "$(find "$data/workspace" "$data/projects" ! -type l -perm /077 | head -n 1)" ] || fail 'moved data is readable by other accounts'
+check grep -q 'check: staging relocates with 0 unresolved paths' "$work/out"
 check grep -q 'check: server stack stopped' "$work/out"
 check grep -q 'check: https://studio.test answers locally with the moved accounts' "$work/out"
 check grep -q '^moved_at=' "$work/server/moved-to-server"
@@ -308,17 +412,31 @@ check grep -q '^moved_at=' "$work/server/moved-to-server"
 check grep -qx 'status=moved' "$guard"
 check grep -q '^move-studio-to-server apply ' "$maintenance"
 check stable_refuses
+nothing_beside_workspace
 check grep -q 'Rollback:' "$work/out"
-check grep -qF "$work/start-stable.sh" "$work/out"
+check grep -qF "DETACH=1 '$devspace/start-stable.sh'" "$work/out"
 check grep -q 'compose --project-directory .*/server/stack .*up -d' "$FAKE_LOG"
 
 # A second apply would roll the live server back to the workstation snapshot: refused before Stable stops.
 fresh
+rm -f "$work/stable-up"
 FAKE_BOOTSTRAP=false run_fails --apply --yes
 check grep -q 'Studio already moved' "$work/out"
 [ ! -e "$work/stable-stopped" ] || fail 'second apply stopped Stable'
 check test "$(pre_moves)" -eq 2
 check grep -qx 'status=moved' "$guard"
+
+# --force with a blocking final inventory: the server is the live Studio, so
+# Stable stays stopped and the moved guard stays in place.
+fresh
+blocking_stop
+FAKE_BOOTSTRAP=false run_fails --apply --yes --force
+check grep -q 'missing-repository-url' "$work/out"
+check grep -q 'an earlier apply left a moved marker or guard' "$work/out"
+kept_down
+check grep -qx 'status=moved' "$guard"
+check test "$(pre_moves)" -eq 2
+normal_stop
 
 # --force replaces the server data on purpose; the existing maintenance marker stays.
 sleep 1
@@ -330,4 +448,4 @@ check test "$(git -C "$data/workspace" rev-parse HEAD)" = "$head"
 check test -f "$maintenance"
 check grep -qx 'status=moved' "$guard"
 
-printf 'move-studio-to-server: read-only dry run, first pass, delta pass, idempotent repeat, rehearsal, apply guards, rollback, re-apply refusal, and forced apply verified.\n'
+printf 'move-studio-to-server: required workspace and devspace, read-only dry run, first pass, delta pass, idempotent repeat, rehearsal, apply guards, restart only when safe, failed-switch stop and re-run refusal, rollback, re-apply refusal, and forced apply verified.\n'

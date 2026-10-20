@@ -365,12 +365,17 @@ export function credentialChecklist({ home, exists, credentialHelper = '' }) {
  * Picks what the next archive pass must send. A file is copied when it is new
  * or its size or modification time changed since the previous manifest.
  * Modified tracked files are always copied because the Git sync resets the
- * server working tree first. Paths that vanished from the source, and tracked
- * files deleted in the working tree, are removed on the server.
+ * server working tree first. Paths that vanished from the source, tracked
+ * files deleted in the working tree, and untracked files sent earlier but
+ * excluded now (for example after a token appeared in them) are removed on
+ * the server. An excluded modified tracked file needs no removal: the Git
+ * sync already put the committed version back.
  */
 export function selectDelta({ entries, previous = null }) {
   const before = previous?.files ?? {};
-  const present = new Set(entries.map(entry => entry.path));
+  const present = new Set(entries
+    .filter(entry => entry.transfer !== 'exclude' || entry.state === 'tracked-modified')
+    .map(entry => entry.path));
   const copy = [];
   const remove = [];
   const files = {};
@@ -393,6 +398,33 @@ export function assertSafeRelative(relative) {
   if (!relative || relative.startsWith('/') || windowsPath.test(relative) || /[\0\n\r]/.test(relative)
     || normalized(relative).split('/').some(segment => segment === '..' || segment === ''))
     throw new Error(`Unsafe workspace path: ${JSON.stringify(relative)}`);
+}
+
+/** Relative task storage roots (registry StorageLocation inside the workspace). */
+export function taskRoots(workspace, projects) {
+  const roots = [];
+  for (const project of projects) {
+    const storage = project.storageLocation;
+    if (!storage || !isUnder(storage, workspace) || comparable(storage) === comparable(workspace)) continue;
+    roots.push(normalized(storage).slice(normalized(workspace).length + 1));
+  }
+  return roots;
+}
+
+/**
+ * Token hits in Studio state cannot be dropped silently: without the file the
+ * server's attempt authority, orchestration records, or task folder would be
+ * incomplete or keep an older copy. They block until the token is removed.
+ */
+export function tokenStateIssues(entries, roots = []) {
+  return entries
+    .filter(entry => entry.reason === 'token-pattern')
+    .filter(entry => {
+      const first = entry.path.split('/')[0];
+      return first === '.metadata' || first.startsWith('.orchestration-')
+        || ['results', 'attachments'].includes(entry.area) || roots.some(root => isUnder(entry.path, root));
+    })
+    .map(entry => ({ code: 'token-in-state', path: entry.path, token: entry.token }));
 }
 
 /**
@@ -418,7 +450,7 @@ export function buildInventory({
     })),
     mapping: plan.mapping,
     checkouts: plan.checkouts,
-    issues: plan.issues,
+    issues: [...plan.issues, ...tokenStateIssues(entries, taskRoots(workspace, projects))],
     credentials: credentialChecklist({ home, exists, credentialHelper }),
     entries,
   };
@@ -433,7 +465,8 @@ export function formatInventory(inventory) {
     lines.push(`  ${area.padEnd(20)} ${String(value.files).padStart(7)} files ${mb(value.bytes).padStart(10)}  tracked ${value.tracked}, untracked ${value.untracked}`);
   }
   for (const entry of inventory.entries.filter(item => item.transfer === 'exclude' && item.reason !== 'transient')) {
-    lines.push(`  not copied (${entry.reason === 'token-pattern' ? `contains a ${entry.token}` : entry.reason}): ${entry.path}`);
+    const committed = entry.state === 'tracked-modified' ? '; the server keeps the committed version' : '';
+    lines.push(`  not copied (${entry.reason === 'token-pattern' ? `contains a ${entry.token}` : entry.reason}${committed}): ${entry.path}`);
   }
   lines.push('Registered projects:');
   for (const project of inventory.projects) {

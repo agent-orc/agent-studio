@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   buildInventory, classifyPath, classifyWorkspace, credentialChecklist, fileTokenPattern, findTokenPattern, generateMapping,
-  readProjectRegistry, runCli, scanWorkspace, screenTokens, selectDelta, stripUrlCredentials,
+  readProjectRegistry, runCli, scanWorkspace, screenTokens, selectDelta, stripUrlCredentials, taskRoots, tokenStateIssues,
 } from './move-studio-to-server.mjs';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/move-studio-workspace.json', import.meta.url), 'utf8'));
@@ -294,6 +294,74 @@ test('delta selection sends new and changed files once and removes vanished ones
   assert.deepEqual(second.copy, ['.runtime/a.log', 'logs/bus/c.jsonl']);
   assert.deepEqual(second.remove, ['logs/bus/b.jsonl', 'projects/demo/gone.md']);
   assert.deepEqual(Object.keys(second.manifest.files), ['.runtime/a.log', 'logs/bus/c.jsonl']);
+});
+
+test('delta selection removes files sent earlier that are excluded now, except modified tracked files', () => {
+  const entry = (file, extra = {}) => ({ path: file, size: 10, mtimeMs: 1000, transfer: 'archive', state: 'untracked', ...extra });
+  const first = selectDelta({ entries: [
+    entry('.runtime/cli-output/AGT-1.log'),
+    entry('notes/scratch.md'),
+    entry('projects/demo/status.md', { state: 'tracked-modified' }),
+  ] });
+  assert.deepEqual(first.copy, ['.runtime/cli-output/AGT-1.log', 'notes/scratch.md', 'projects/demo/status.md']);
+
+  // A token appeared in two files after the first pass. The untracked one must
+  // leave staging; the Git sync already restored the committed tracked file.
+  const tokenHit = { size: 20, mtimeMs: 2000, transfer: 'exclude', reason: 'token-pattern', token: 'github-token' };
+  const second = selectDelta({ entries: [
+    entry('.runtime/cli-output/AGT-1.log', tokenHit),
+    entry('notes/scratch.md'),
+    entry('projects/demo/status.md', { ...tokenHit, state: 'tracked-modified' }),
+  ], previous: first.manifest });
+  assert.deepEqual(second.copy, []);
+  assert.deepEqual(second.remove, ['.runtime/cli-output/AGT-1.log']);
+  assert.deepEqual(Object.keys(second.manifest.files), ['notes/scratch.md']);
+});
+
+test('token hits in metadata, orchestration state, and task folders block the inventory', () => {
+  const workspace = fixture.workspace;
+  const projects = readRegistryFromFixture();
+  const roots = taskRoots(workspace, projects);
+  assert.deepEqual(roots, ['projects/demo/tasks', 'projects/docs/tasks', 'projects/demo-two/tasks', 'projects/task-only/tasks']);
+  const hit = (file, area, extra = {}) => ({ path: file, area, state: 'untracked', transfer: 'exclude', reason: 'token-pattern', token: 'github-token', ...extra });
+  const entries = [
+    hit('.metadata/attempt-authority.json', 'attempt-authority'),
+    hit('.metadata/runs/AGT-1.json', 'metadata'),
+    hit('.orchestration-ai-asks/ask-1.json', 'orchestration-state'),
+    hit('projects/demo/tasks/3-done/AGT-1/status.md', 'other', { state: 'tracked-modified' }),
+    hit('projects/elsewhere/AGT-9/results/report.html', 'results'),
+    hit('.runtime/cli-output/AGT-1.log', 'runtime'),
+    hit('logs/api.log', 'logs'),
+    { path: '.metadata/other.json', area: 'metadata', state: 'untracked', transfer: 'exclude', reason: 'credential' },
+  ];
+  assert.deepEqual(tokenStateIssues(entries, roots).map(issue => [issue.code, issue.path, issue.token]), [
+    ['token-in-state', '.metadata/attempt-authority.json', 'github-token'],
+    ['token-in-state', '.metadata/runs/AGT-1.json', 'github-token'],
+    ['token-in-state', '.orchestration-ai-asks/ask-1.json', 'github-token'],
+    ['token-in-state', 'projects/demo/tasks/3-done/AGT-1/status.md', 'github-token'],
+    ['token-in-state', 'projects/elsewhere/AGT-9/results/report.html', 'github-token'],
+  ]);
+});
+
+test('inventory exits 3 when a task folder file contains a token', async () => {
+  const { root, workspace } = await materialize({
+    'projects/demo/tasks/3-done/AGT-1/notes.md': `pushed with ${fakeToken.github()}\n`,
+    '.runtime/cli-output/AGT-1.log': `pushed with ${fakeToken.github()}\n`,
+  });
+  try {
+    const output = [];
+    await writeFile(path.join(root, 'remotes.tsv'), 'PROJ-003\thttps://github.com/example/demo-two.git\nPROJ-005\thttps://github.com/example/legacy.git\n');
+    await writeFile(path.join(root, 'extra.json'), JSON.stringify({ 'G:\\Elsewhere\\legacy-root': '/data/projects/legacy/root' }));
+    const status = runCli(['inventory', '--workspace', workspace, '--source-workspace', fixture.workspace, '--home', fixture.home,
+      '--remotes', path.join(root, 'remotes.tsv'), '--extra-mapping', path.join(root, 'extra.json'), '--out-dir', root],
+    { now: fixedClock, write: text => output.push(text) });
+    assert.equal(status, 3);
+    const inventory = JSON.parse(await readFile(path.join(root, 'inventory.json'), 'utf8'));
+    assert.deepEqual(inventory.issues.map(issue => [issue.code, issue.path]), [['token-in-state', 'projects/demo/tasks/3-done/AGT-1/notes.md']]);
+    assert.match(output.join(''), /not copied \(contains a github-token\): \.runtime\/cli-output\/AGT-1\.log/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('delta selection refuses paths that could escape the server workspace', () => {
