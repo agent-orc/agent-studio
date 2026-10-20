@@ -8,8 +8,8 @@ public static class ContinuationBaseReasons
 {
     /// <summary>
     /// The delivery a review graded ProductFailure; the fix round continues on
-    /// it. Unlike a salvage base, the runner never replaces it with the
-    /// integration branch: an unusable base fails the preparation.
+    /// it. Every explicit continuation base is required: an unusable base
+    /// fails preparation instead of dropping earlier work.
     /// </summary>
     public const string ReviewFixRound = "review-fix-round";
 

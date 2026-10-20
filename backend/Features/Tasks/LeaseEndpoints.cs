@@ -1929,23 +1929,19 @@ public static class LeaseEndpoints
                         attributionWarning);
                 }
 
-                // AGT-2220: a delivery the repository actively contradicts must
-                // not ride on into 4-auto-review as if it were clean. That is
-                // exactly what happened to AGT-2220 itself on 28.07.: origin held
-                // 744deb89 while the completion claimed f538f896, the mismatch
-                // was logged as a warning only, commits[] stayed empty - and the
-                // card was stamped Done anyway. A *disproved* delivery now routes
-                // to the honest escalated state. "Could not check" (no origin, no
-                // branch, no SHA) is deliberately NOT treated as disproof - it is
-                // recorded, never upgraded to proof.
+                // A contradicted delivery never reaches review or completion.
+                // BaseNotAncestor has a real result ref, so it can continue
+                // automatically with both histories named. Other disproofs
+                // still need the existing escalation path.
                 if (deliveryRange is not null && deliveryRange.IsDisproved)
                 {
                     unverifiedDelivery =
                         $"Delivery not verified against the target repository: {attributionWarning} "
                         + "No completion stamp was written (AGT-2220).";
                     targetState = TaskStates.Escalated;
-                    mutations.AddJobTag(
-                        task.Id, OutOfBandStampPolicy.UnverifiedDeliveryTag, task.WatchPath);
+                    if (deliveryRange.Verification != DeliveryVerificationStatus.BaseNotAncestor)
+                        mutations.AddJobTag(
+                            task.Id, OutOfBandStampPolicy.UnverifiedDeliveryTag, task.WatchPath);
                 }
             }
 
@@ -2504,6 +2500,36 @@ public static class LeaseEndpoints
 
             if (targetState == TaskStates.Escalated)
             {
+                if (MonolithTransitionAdapter.TransitionDecisionPolicyDeliveryFence(
+                        deliveryRange?.Verification == DeliveryVerificationStatus.BaseNotAncestor,
+                        ReviewSubjectStore.IsValidResultSha(req.BaseSha),
+                        ReviewSubjectStore.IsValidResultSha(resultSha),
+                        !string.IsNullOrWhiteSpace(deliveryBranch)) == TransitionAction.SalvageContinuation)
+                {
+                    var refusedResult = RunSalvageReference.From(deliveryBranch, resultSha, null, null)!;
+                    var continuation = await timeoutContinuations.StartAsync(
+                        task, refusedResult, unverifiedDelivery!, attemptId, laneWrite, ct,
+                        RunContinuationCause.DeliveryFenceRefusal(req.BaseSha!, resultSha!));
+                    if (continuation.Started)
+                    {
+                        orchestratorLog.Append(task.WatchPath, new OrchestratorLogEntry
+                        {
+                            Kind = OrchestratorLogKinds.Decision,
+                            Topic = "delivery-fence-refusal",
+                            JobId = task.Id,
+                            Summary = $"Requeued refused result {resultSha} to reconcile salvage base {req.BaseSha}.",
+                            Reasoning = unverifiedDelivery,
+                        });
+                        return Results.Ok(new RemoteRunCompletionResponse(
+                            req.TaskKey, responseOutcome, TaskStates.Ready,
+                            $"Automatic continuation from refused result {resultSha}; reconcile salvage base {req.BaseSha}.",
+                            RunAttemptId: attemptId));
+                    }
+                    loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerCompletion").LogWarning(
+                        "delivery-fence-continuation-not-started task={TaskKey} attempt={AttemptId} base={BaseSha} result={ResultSha} reason={Reason}",
+                        req.TaskKey, attemptId, req.BaseSha, resultSha, continuation.Reason);
+                    task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+                }
                 if (providerRejection is not null && providerRejectionPlan is not null)
                 {
                     if (providerRejectionPlan.Action == ProviderRejectionContinuationAction.StartContinuation

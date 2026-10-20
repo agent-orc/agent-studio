@@ -846,22 +846,53 @@ public sealed class GitWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task A_salvage_base_that_moved_keeps_todays_start_on_the_integration_branch()
+    public async Task A_salvage_base_that_moved_fails_preparation_without_dropping_the_work()
     {
         await SeedOriginAsync();
         var (resultRef, reviewedSha) = await PublishReviewedResultAsync("salvaged.txt", "salvage");
         await PublishRemoteCommitAsync(resultRef["refs/heads/".Length..], "moved.txt", "moved", "move the ref");
-        var mainTip = (await GitAsync(_origin, "rev-parse", "refs/heads/main")).StdOut;
-
         var continuation = CreateWorkspace(
             sourceRunAttemptId: "run_next",
             fencingToken: 2,
             continuationBaseRef: resultRef,
             continuationBaseSha: reviewedSha,
             continuationBaseReason: "lost-worker-with-salvage");
-        await continuation.PrepareAsync(CancellationToken.None);
+        var failure = await Assert.ThrowsAsync<ContinuationBaseUnavailableException>(
+            () => continuation.PrepareAsync(CancellationToken.None));
+        Assert.Equal(ContinuationBaseUnavailableException.Moved, failure.ReasonCode);
+        Assert.Equal(reviewedSha, failure.ExpectedSha);
+        Assert.False(Directory.Exists(continuation.RepoPath));
+    }
 
-        Assert.Equal(mainTip, (await GitAsync(continuation.RepoPath, "rev-parse", "HEAD")).StdOut);
+    [Fact]
+    public async Task Agt_3245_retry_merges_current_main_onto_the_salvage_and_keeps_the_fenced_base()
+    {
+        await SeedOriginAsync();
+        var first = CreateWorkspace(sourceRunAttemptId: "run_previous", fencingToken: 1);
+        await first.PrepareAsync(CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(first.RepoPath, "salvaged.txt"), "earlier work");
+        var salvage = await first.TeardownAsync("Unknown", "run_previous", CancellationToken.None);
+        var mainTip = await PublishRemoteCommitAsync("main", "new-main.txt", "current main", "advance main");
+
+        var retry = CreateWorkspace(
+            sourceRunAttemptId: "run_retry", fencingToken: 2,
+            continuationBaseRef: $"refs/heads/{salvage.Branch}",
+            continuationBaseSha: salvage.CommitSha,
+            continuationBaseReason: "run-timeout-with-salvage");
+        await retry.PrepareAsync(CancellationToken.None);
+
+        Assert.Equal(salvage.CommitSha, retry.BaseSha);
+        Assert.Equal("earlier work", await File.ReadAllTextAsync(Path.Combine(retry.RepoPath, "salvaged.txt")));
+        Assert.Equal("current main", await File.ReadAllTextAsync(Path.Combine(retry.RepoPath, "new-main.txt")));
+        Assert.True((await RunGitAsync(retry.RepoPath, "merge-base", "--is-ancestor",
+            salvage.CommitSha!, "HEAD")).Success);
+        Assert.True((await RunGitAsync(retry.RepoPath, "merge-base", "--is-ancestor",
+            mainTip, "HEAD")).Success);
+        await File.WriteAllTextAsync(Path.Combine(retry.RepoPath, "result.txt"), "finished work");
+        var result = await retry.TeardownAsync("Done", "run_retry", CancellationToken.None);
+        Assert.True((await RunGitAsync(_origin, "merge-base", "--is-ancestor",
+            salvage.CommitSha!, result.ResultSha!)).Success);
+        Assert.Equal(result.ResultSha, (await GitAsync(_origin, "rev-parse", result.ImmutableResultRef!)).StdOut);
     }
 
     [Fact]

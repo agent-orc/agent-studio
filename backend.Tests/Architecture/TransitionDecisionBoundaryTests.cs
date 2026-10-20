@@ -14,6 +14,20 @@ namespace AgentStudio.Tests.Architecture;
 [Trait("Category", "Guard")]
 public sealed class TransitionDecisionBoundaryTests
 {
+    [Theory]
+    [InlineData(true, true, true, true, TransitionAction.SalvageContinuation)]
+    [InlineData(false, true, true, true, TransitionAction.Escalate)]
+    [InlineData(true, false, true, true, TransitionAction.Escalate)]
+    [InlineData(true, true, false, true, TransitionAction.Escalate)]
+    [InlineData(true, true, true, false, TransitionAction.Escalate)]
+    public void Delivery_fence_requeues_only_a_materializable_base_ancestry_refusal(
+        bool baseNotAncestor, bool hasBaseSha, bool hasResultSha, bool hasResultRef,
+        TransitionAction expected)
+    {
+        Assert.Equal(expected, TransitionDecisionPolicy.DeliveryFence(
+            baseNotAncestor, hasBaseSha, hasResultSha, hasResultRef));
+    }
+
     private static readonly string[] OwnedPolicies =
     [
         "ReviewFollowUpPolicy", "ReviewRoundBudgetPolicy", "CardRoundBudgetPolicy",

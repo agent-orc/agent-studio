@@ -2418,6 +2418,111 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Contains($"`{canonical}` at `{canonicalSha}` was the authoritative pickup base", deliverables);
     }
 
+    [Fact]
+    public async Task Agt_3245_unknown_salvage_then_divergent_done_requeues_with_both_commits()
+    {
+        const string repositoryUrl = "https://example.invalid/agt-3245.git";
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 12, 0, 0, TimeSpan.Zero));
+        SeedTask(TaskStates.Progress, TaskKey, "Salvaged retry", "Finish the earlier work.",
+            enteredLaneAt: clock.GetUtcNow().UtcDateTime);
+        var origin = Path.Combine(_workspace, "agt-3245-origin.git");
+        var seed = Path.Combine(_workspace, "agt-3245-seed");
+        await GitAsync(_workspace, "init", "--bare", "--initial-branch=main", origin);
+        await GitAsync(_workspace, "init", seed);
+        await GitAsync(seed, "config", "user.name", "Test");
+        await GitAsync(seed, "config", "user.email", "test@example.invalid");
+        await File.WriteAllTextAsync(Path.Combine(seed, "base.txt"), "base");
+        await GitAsync(seed, "add", "--all");
+        await GitAsync(seed, "commit", "-m", "base");
+        await GitAsync(seed, "branch", "-M", "main");
+        await GitAsync(seed, "remote", "add", "origin", origin);
+        await GitAsync(seed, "push", "origin", "main");
+        var baseSha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
+        const string salvageBranch = "runner/agent-runner-e2e/AGT-RUNNER-E2E";
+        await GitAsync(seed, "checkout", "-b", salvageBranch);
+        await File.WriteAllTextAsync(Path.Combine(seed, "salvage.txt"), "earlier work");
+        await GitAsync(seed, "add", "--all");
+        await GitAsync(seed, "commit", "-m", "wip(runner): salvage before teardown - outcome Unknown");
+        var salvageSha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
+        await GitAsync(seed, "push", "origin", salvageBranch);
+        await GitAsync(seed, "checkout", "main");
+        await File.WriteAllTextAsync(Path.Combine(seed, "develop.txt"), "current head");
+        await GitAsync(seed, "add", "--all");
+        await GitAsync(seed, "commit", "-m", "advance main");
+        await GitAsync(seed, "push", "origin", "main");
+        await GitAsync(_watchPath, "init");
+        await GitAsync(_watchPath, "remote", "add", "origin", origin);
+        await GitAsync(_watchPath, "fetch", "origin", $"refs/heads/{salvageBranch}");
+
+        using var factory = BuildFactory(
+            authorityNow: () => clock.GetUtcNow().UtcDateTime,
+            leaseNow: () => clock.GetUtcNow().UtcDateTime,
+            clock: clock);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        var ct = CancellationToken.None;
+        await RegisterCodingRunnerAsync(client, http, ct,
+            advertisedAt: clock.GetUtcNow().UtcDateTime);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, repositoryUrl);
+        var first = await client.AcquireLeaseAsync(
+            new RAcquire(TaskKey, RunnerId, ProjectName, "host", 1, "codex"), ct);
+        Assert.True(first.Granted);
+        var firstLease = first.Lease!;
+        var firstRef = Contract.FencedGitRefs.ImmutableResult(
+            firstLease.AttemptId!, firstLease.FencingToken, salvageSha);
+        await GitAsync(seed, "push", "origin", $"{salvageSha}:{firstRef}");
+        var unknown = await client.CompleteRunAsync(new RRemoteComplete(
+            TaskKey, firstLease.LeaseId, firstLease.FencingToken, RunnerId, "Unknown",
+            Reason: "Interrupted after useful work", SalvageBranch: salvageBranch,
+            SalvageCommitSha: salvageSha, ResultSha: salvageSha,
+            AttemptChainId: firstLease.LeaseId, Repository: repositoryUrl,
+            AttemptId: firstLease.AttemptId, AuthorityEpoch: firstLease.AuthorityEpoch,
+            IdempotencyKey: "agt-3245-unknown", BaseSha: baseSha,
+            ImmutableResultRef: firstRef, ArtifactManifestDigest: new string('a', 64),
+            IntegrationBranch: "refs/heads/main"), ct);
+        Assert.Equal(TaskStates.Ready, unknown!.TargetState);
+        await client.ReleaseLeaseAsync(new RRelease(
+            TaskKey, firstLease.LeaseId, firstLease.FencingToken, RunnerId,
+            firstLease.AttemptId, firstLease.AuthorityEpoch, "agt-3245-release"), ct);
+
+        var retry = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "codex", IdempotencyKey: "agt-3245-retry"));
+        Assert.Equal(RClaimStatus.Claimed, retry.Status);
+        Assert.Equal($"refs/heads/{salvageBranch}", retry.ContinuationBaseRef);
+        Assert.Equal(salvageSha, retry.ContinuationBaseSha);
+        Assert.Contains(salvageSha, retry.RunSpec!.FollowUp!.Prompt);
+
+        // Reproduce the fleet bug: the retry reports the salvage as its base,
+        // but its result was actually made from current main without salvage.
+        await GitAsync(seed, "checkout", "-b", "wrong-retry", "main");
+        await File.WriteAllTextAsync(Path.Combine(seed, "result.txt"), "fine but divergent work");
+        await GitAsync(seed, "add", "--all");
+        await GitAsync(seed, "commit", "-m", "finish without salvage");
+        var resultSha = (await GitAsync(seed, "rev-parse", "HEAD")).StdOut.Trim();
+        var retryLease = retry.Lease!;
+        var resultRef = Contract.FencedGitRefs.ImmutableResult(
+            retryLease.AttemptId!, retryLease.FencingToken, resultSha);
+        await GitAsync(seed, "push", "origin", $"{resultSha}:{resultRef}");
+        var refused = await client.CompleteRunAsync(new RRemoteComplete(
+            retry.TaskKey!, retryLease.LeaseId, retryLease.FencingToken, RunnerId, "Done",
+            ResultSha: resultSha, AttemptChainId: retryLease.LeaseId,
+            Repository: repositoryUrl, AttemptId: retryLease.AttemptId,
+            AuthorityEpoch: retryLease.AuthorityEpoch,
+            IdempotencyKey: "agt-3245-refused", BaseSha: salvageSha,
+            ImmutableResultRef: resultRef, ArtifactManifestDigest: new string('b', 64),
+            IntegrationBranch: "refs/heads/main"), ct);
+        Assert.Equal(TaskStates.Ready, refused!.TargetState);
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        var prompt = await File.ReadAllTextAsync(Path.Combine(readyFolder, "prompt.md"));
+        Assert.Contains(salvageSha, prompt);
+        Assert.Contains(resultSha, prompt);
+        Assert.Equal(resultRef, AgentStudio.Runner.ContinuationBaseStore.Read(readyFolder)?.Ref);
+        Assert.Equal(resultSha, AgentStudio.Runner.ContinuationBaseStore.Read(readyFolder)?.CommitSha);
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey)));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey)));
+    }
+
     /// <summary>
     /// AGT-2494 - the canonical branch of a divergent salvage keeps the remote
     /// tip it collided with, so naming it as the review ref pins the subject to

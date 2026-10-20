@@ -29,6 +29,9 @@ public enum DeliveryVerificationStatus
     /// </summary>
     ShaMismatch,
 
+    /// <summary>The result ref has the claimed tip, but its history omits the fenced base.</summary>
+    BaseNotAncestor,
+
     /// <summary>No ref was claimed and the commit is nowhere on the target repository.</summary>
     CommitMissing,
 
@@ -61,6 +64,7 @@ public sealed record DeliveryVerificationResult(
     /// </summary>
     public bool IsDisproved =>
         Status is DeliveryVerificationStatus.ShaMismatch
+            or DeliveryVerificationStatus.BaseNotAncestor
             or DeliveryVerificationStatus.RefMissing
             or DeliveryVerificationStatus.CommitMissing;
 

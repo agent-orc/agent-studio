@@ -385,6 +385,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-agt-3245-salvage-fence-base">
+          <td>2026-10-20</td>
+          <td><code>AGT-3245</code><br><span class="small">also AGT-3246 and AGT-3227; fix AGT-3257</span></td>
+          <td>Previous attempts ended Unknown and published salvage commits. New attempts used the current develop head as their worktree start while their delivery envelopes named the earlier salvage SHA as the fenced base. Their useful results failed the ancestor check and received no completion stamp.</td>
+          <td>Timeout continuations saved an instruction but no continuation base, and the runner treated other salvage bases as optional when a ref moved or disappeared. The worktree and fence could therefore disagree.</td>
+          <td>Unknown salvage continuations now pin the prior commit in the claim, and an unavailable explicit base fails preparation. A clean retry merges current integration history into the salvage checkout while retaining salvage as the fenced base. A remaining base ancestry refusal queues a Ready continuation on the refused result, with both commits in its prompt. Terminal at discovery: escalated after a refused delivery.</td>
+        </tr>
         <tr>
           <td>2026-10-04</td>
           <td><code>AGT-3010</code><br><span class="small">superseded-brief-remote-delivery (also AGT-2748, AGT-2795, AGT-2793, AGT-2807)</span></td>

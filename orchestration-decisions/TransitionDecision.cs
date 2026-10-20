@@ -191,4 +191,10 @@ public static class TransitionDecisionPolicy
         => !string.Equals(outcome?.Trim(), CompletionOutcomeKinds.Unknown, StringComparison.OrdinalIgnoreCase)
             ? TransitionAction.Continue : hasCommit && Math.Max(0, roundsUsed) < 1
                 ? TransitionAction.SalvageContinuation : TransitionAction.Escalate;
+
+    public static TransitionAction DeliveryFence(bool baseNotAncestor, bool hasBaseSha,
+        bool hasResultSha, bool hasResultRef)
+        => baseNotAncestor && hasBaseSha && hasResultSha && hasResultRef
+            ? TransitionAction.SalvageContinuation
+            : TransitionAction.Escalate;
 }

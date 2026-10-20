@@ -202,6 +202,28 @@ public sealed class DeliveryVerificationTests
     }
 
     [Fact]
+    public void InspectRemoteDeliveryCommitRange_Agt3245BaseMissingFromResult_IsTypedDisproof()
+    {
+        WithRemoteFixture((git, repo, fixture) =>
+        {
+            var salvageSha = DivergentSha(repo, fixture);
+            var refused = git.InspectRemoteDeliveryCommitRange(
+                repo, DeliveryBranch, fixture.Tip, "refs/heads/develop", salvageSha);
+            Assert.False(refused.Success);
+            Assert.Equal(DeliveryVerificationStatus.BaseNotAncestor, refused.Verification);
+            Assert.True(refused.IsDisproved);
+            Assert.Contains(salvageSha[..8], refused.Warning!, StringComparison.Ordinal);
+            Assert.Contains(fixture.Tip[..8], refused.Warning!, StringComparison.Ordinal);
+
+            var accepted = git.InspectRemoteDeliveryCommitRange(
+                repo, DeliveryBranch, fixture.Tip, "refs/heads/develop", fixture.First);
+            Assert.True(accepted.Success, accepted.Warning);
+            Assert.Equal(DeliveryVerificationStatus.Verified, accepted.Verification);
+            Assert.Equal(fixture.First, accepted.MergeBaseSha);
+        });
+    }
+
+    [Fact]
     public void InspectRemoteDeliveryCommitRange_MissingRepository_IsNotDisproved()
     {
         var git = NewGitService(Path.GetTempPath());

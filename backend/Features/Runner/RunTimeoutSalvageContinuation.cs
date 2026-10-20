@@ -18,9 +18,8 @@ namespace AgentStudio.Runner;
 /// </param>
 /// <param name="StartsFromSalvage">
 /// Whether the next round's worktree is prepared on the salvage commit instead
-/// of the integration branch. Timeouts keep their AGT-2861 behaviour and start
-/// on the integration branch, because their agent is alive to fetch the ref
-/// itself; a lost worker's round starts on the rescued work.
+/// of the integration branch. Every salvage continuation starts on the rescued
+/// work, regardless of how the earlier worker ended.
 /// </param>
 public sealed record RunContinuationCause(
     string Reason,
@@ -36,7 +35,8 @@ public sealed record RunContinuationCause(
             RunTimeoutSalvageContinuationPolicy.ContinuationReason,
             "remote-run-timeout-continuation",
             $"hit the run timeout{ReportedOutcome(reportedReason)}",
-            "timeout");
+            "timeout",
+            StartsFromSalvage: true);
 
     /// <summary>AGT-2870: the detached worker died before it recorded a result.</summary>
     public static RunContinuationCause WorkerLost(string? reportedReason, string? crashLine)
@@ -46,6 +46,16 @@ public sealed record RunContinuationCause(
             $"lost its worker process before it recorded a result{ReportedOutcome(reportedReason)}",
             "loss",
             ComposeEvidence(crashLine),
+            StartsFromSalvage: true);
+
+    public static RunContinuationCause DeliveryFenceRefusal(string baseSha, string resultSha)
+        => new(
+            "delivery-fence-refusal",
+            "remote-delivery-fence-continuation",
+            "was refused by the delivery fence",
+            "fence refusal",
+            $"The previous attempt's salvage base was {baseSha}; the refused result was {resultSha}. "
+            + "The result does not contain that salvage commit. Carry both histories into the next delivery.",
             StartsFromSalvage: true);
 
     public string Describe() => Ending;
@@ -148,16 +158,42 @@ public sealed class RunTimeoutContinuationService
         var epoch = OperatorReviewRequeueService.ReadEpoch(task.FolderPath);
         var round = CountAutomaticRounds(task) + 1;
         cause ??= RunContinuationCause.Timeout(reportedReason);
+        var maximumRounds = cause.Reason == "delivery-fence-refusal"
+            ? cardBudget.Allowed
+            : RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds;
         var prompt = BuildPrompt(task, salvage, cause);
         var promptPath = Path.Combine(task.FolderPath, "prompt.md");
         var previousPrompt = File.Exists(promptPath) ? File.ReadAllText(promptPath) : null;
         var previousContextMode = task.ContextMode;
+        var previousContinuationBase = ContinuationBaseStore.Read(task.FolderPath);
 
-        // The prompt note and the intent are written before the lane move so a
-        // claim can never observe the card in Ready without its finishing
-        // instruction.
+        void RestoreContinuationBase()
+        {
+            if (cause?.StartsFromSalvage != true) return;
+            if (previousContinuationBase is null)
+                ContinuationBaseStore.Clear(task.FolderPath);
+            else if (!ContinuationBaseStore.Save(task.FolderPath, previousContinuationBase))
+                _logger.LogWarning(
+                    "continuation-base-rollback-failed task={TaskKey} attempt={AttemptId} folder={Folder}",
+                    task.TaskKey, attemptId, task.FolderPath);
+        }
+
+        // Pin the exact commit before publishing the finishing instruction.
+        // A failed write must never expose a Ready card whose claim drops the
+        // salvage and starts on the integration branch.
+        if (cause.StartsFromSalvage && !ContinuationBaseStore.Save(task.FolderPath,
+                new ContinuationBaseRecord(
+                    salvage.Branch.StartsWith("refs/heads/", StringComparison.Ordinal)
+                        ? salvage.Branch
+                        : $"refs/heads/{salvage.Branch}",
+                    salvage.CommitSha, cause.Reason, attemptId, DateTime.UtcNow)))
+            return Failed("The salvage continuation base could not be persisted.");
+
         if (!_mutations.AppendContinuationNote(task.Id, prompt, task.WatchPath))
+        {
+            RestoreContinuationBase();
             return Failed("The continuation instruction could not be appended to the task prompt.");
+        }
 
         var intent = _mutations.SavePendingIntent(
             task.Id,
@@ -167,40 +203,30 @@ public sealed class RunTimeoutContinuationService
             activeJobId: null,
             watchPath: task.WatchPath);
         if (intent is null)
+        {
+            RestoreContinuationBase();
+            _mutations.RestorePromptOnFolder(task.FolderPath, previousPrompt);
             return Failed("The continuation intent could not be persisted.");
+        }
 
         // A salvaged worktree leaves no resumable session behind, so the round
         // starts from a clean CLI context rather than whatever the previous one
         // left on the host.
         _mutations.SetContextModeOnFolder(task.FolderPath, CliContextModes.Clean);
 
-        // A round whose previous agent is gone cannot fetch the salvage itself,
-        // so the claim hands the ref to the runner and the next worktree is
-        // prepared on the rescued commit.
-        if (cause.StartsFromSalvage)
-        {
-            ContinuationBaseStore.Save(task.FolderPath, new ContinuationBaseRecord(
-                salvage.Branch.StartsWith("refs/heads/", StringComparison.Ordinal)
-                    ? salvage.Branch
-                    : $"refs/heads/{salvage.Branch}",
-                salvage.CommitSha,
-                cause.Reason,
-                attemptId,
-                DateTime.UtcNow));
-        }
-
         var move = await _transitions.MoveAsync(
             task.Id,
             TaskStates.Ready,
             task.WatchPath,
             ct,
-            cause: $"{cause.LaneCause}:{round}/{RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds}",
+            cause: $"{cause.LaneCause}:{round}/{maximumRounds}",
             authorityWrite: authorityWrite,
             suppressProductExecution: true,
             transitionCause: LaneChangeCauses.RunnerRequeue,
             transitionDetail: cause.Reason);
         if (move.Status != MoveJobStatus.Success)
         {
+            RestoreContinuationBase();
             _mutations.DiscardPendingIntent(task.FolderPath);
             if (!_mutations.RestorePromptOnFolder(task.FolderPath, previousPrompt))
             {
@@ -236,7 +262,7 @@ public sealed class RunTimeoutContinuationService
         receipt["attemptEpoch"] = Invariant(epoch);
         receipt["reason"] = cause.Reason;
         receipt["round"] = Invariant(round);
-        receipt["maximumRounds"] = Invariant(RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds);
+        receipt["maximumRounds"] = Invariant(maximumRounds);
         receipt["salvageBranch"] = salvage.Branch;
         receipt["salvageCommitSha"] = salvage.CommitSha;
         receipt["mode"] = ContinueModes.Steer;
@@ -258,7 +284,7 @@ public sealed class RunTimeoutContinuationService
             attemptId,
             epoch,
             round,
-            RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds,
+            maximumRounds,
             salvage.Branch,
             salvage.CommitSha,
             position);
@@ -280,10 +306,12 @@ public sealed class RunTimeoutContinuationService
             + $"Your previous round {cause.Describe()}; the worktree was salvaged as "
             + $"'{salvage.Branch}' at {salvage.CommitSha}. The work exists, it only lacks its finishing round. "
             + evidence
-            + $"Fetch '{salvage.Branch}', continue from {salvage.CommitSha}, and finish: rebase onto the current "
-            + "integration branch, resolve every conflict conservatively without dropping the salvaged changes, "
+            + $"The runner prepares the worktree from {salvage.CommitSha}. Continue from that history and finish: "
+            + "incorporate the current integration branch, resolve every conflict conservatively without dropping the salvaged changes, "
             + "build, run the tests that cover the touched code, write results/status.md, and deliver. "
-            + $"Budget your time: this is the last automatic round, so a second {cause.RepeatNoun} parks the card for an operator.";
+            + (cause.Reason == "delivery-fence-refusal"
+                ? "The card's remaining automatic round budget applies to this reconciliation."
+                : $"Budget your time: this is the last automatic round, so a second {cause.RepeatNoun} parks the card for an operator.");
     }
 
     private static RunTimeoutContinuationResult Failed(string reason)

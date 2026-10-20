@@ -78,9 +78,8 @@ public static class LostWorkerContinuationPolicy
 /// <summary>
 /// The commit a continuation round starts its worktree from, saved on the card
 /// so the next claim can hand it to the runner. Single use: the claim that reads
-/// it clears it, because a later round of the same card must not silently start
-/// on a stale generation's salvage. A review fix-round base lives until its run
-/// completes (<see cref="ContinuationBaseStore.ConsumeForClaim"/>).
+/// it retains it through preparation retries. A settled round clears the base,
+/// unless a newer continuation has replaced it.
 /// </summary>
 /// <param name="Ref">Full <c>refs/heads/...</c> name of the salvage ref.</param>
 public sealed record ContinuationBaseRecord(
@@ -150,27 +149,22 @@ public static class ContinuationBaseStore
     }
 
     /// <summary>
-    /// The claim path's read. Every base is single use and cleared by the claim
-    /// that reads it, except a review fix round's (AGT-3056): a claim that fails
-    /// before the agent starts must not leave the retry to begin silently on the
-    /// integration branch, so that base stays until a run of the card completes
-    /// (<see cref="ClearAfterCompletion"/>) or a later round replaces it.
+    /// The claim path's read. A failed preparation must not make the next claim
+    /// silently start on the integration branch, so the base stays until a run
+    /// completes or a later round replaces it.
     /// </summary>
     public static ContinuationBaseRecord? ConsumeForClaim(string folderPath)
     {
-        var record = Read(folderPath);
-        if (record is not null && !ReviewFixRoundBase.IsFixRound(record.Reason)) Clear(folderPath);
-        return record;
+        return Read(folderPath);
     }
 
     /// <summary>
-    /// Retires a review fix-round base once a run that started from it settled.
-    /// A base of any other reason was already consumed by its claim, or belongs
-    /// to a round this completion has just opened, and is left alone.
+    /// Retires the claim's base once its run settled. Callers preserve a newer
+    /// queued round's base before invoking this method.
     /// </summary>
     public static void ClearAfterCompletion(string folderPath)
     {
-        if (ReviewFixRoundBase.IsFixRound(Read(folderPath)?.Reason)) Clear(folderPath);
+        Clear(folderPath);
     }
 
     public static void Clear(string folderPath)
@@ -183,8 +177,7 @@ public static class ContinuationBaseStore
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            // A stale base is bounded by its own verification: the runner starts
-            // from the integration branch when the ref no longer resolves.
+            // A stale base is bounded by the runner's required-base verification.
             SilentCatch.Note(exception, $"continuation base could not be cleared in {folderPath}");
         }
     }

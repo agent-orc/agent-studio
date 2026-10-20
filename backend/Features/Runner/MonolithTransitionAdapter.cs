@@ -222,6 +222,10 @@ public static class MonolithTransitionAdapter
     public static bool RunTimeoutSalvageContinuationPolicyIsNonTerminalOutcome(string? outcome)
         => RunTimeoutSalvageContinuationPolicy.IsNonTerminalOutcome(outcome);
 
+    public static TransitionAction TransitionDecisionPolicyDeliveryFence(bool baseNotAncestor,
+        bool hasBaseSha, bool hasResultSha, bool hasResultRef)
+        => TransitionDecisionPolicy.DeliveryFence(baseNotAncestor, hasBaseSha, hasResultSha, hasResultRef);
+
     public static TransitionFacts StageDecisionPolicyFacts(string taskId, int reissues, StagePayload payload)
         => StageDecisionPolicy.Facts(taskId, reissues, payload);
 

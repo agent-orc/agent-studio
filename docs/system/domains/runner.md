@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-10-17
+Version: 2026-10-20
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -629,6 +629,16 @@ unreported claim expires with its lease and is queued again.
   fenced session entry, and returns the task to Ready. The next claim reads
   that reason, qualifies its fresh route before execution, and carries the
   recorded result ref and SHA as its continuation base when available.
+- Salvage continuations, including an Unknown or interrupted attempt, persist
+  the earlier ref and SHA before returning to Ready. Claims retain that base
+  through preparation failures. `GitWorkspace` requires the exact ref tip,
+  starts the worktree from that commit, and merges the current integration head
+  when Git can do so cleanly. The result envelope keeps the salvage SHA as its
+  base, so the delivery fence can verify ancestry. A missing or moved salvage
+  ref fails preparation instead of opening a checkout on the integration head.
+  If the fence still finds that the result omits its base, completion returns
+  the card to Ready with a continuation on the refused result ref and names
+  both the omitted base and result SHAs in the prompt (AGT-3257).
 - Review fix rounds (AGT-3056, AGT-W65 D17 A) continue on the delivery the
   review graded. The review-plane finding round, the `fix-rounds` sweep and
   an operator continue after a `ProductFailure` record the reviewed fenced

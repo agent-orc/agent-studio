@@ -2,6 +2,7 @@ using System.Text.Json;
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -171,6 +172,11 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
         Assert.Contains(SalvageSha, prompt);
         Assert.Contains("run timeout", prompt);
         Assert.Contains("results/status.md", prompt);
+        var baseRecord = AgentStudio.Runner.ContinuationBaseStore.ConsumeForClaim(queued.FolderPath);
+        Assert.NotNull(baseRecord);
+        Assert.Equal($"refs/heads/{SalvageBranch}", baseRecord.Ref);
+        Assert.Equal(SalvageSha, baseRecord.CommitSha);
+        Assert.Equal(baseRecord, AgentStudio.Runner.ContinuationBaseStore.ConsumeForClaim(queued.FolderPath));
 
         // Same model as the timed-out round, clean context.
         Assert.Equal("claude", queued.CliType);
@@ -228,6 +234,11 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
         var original = _scanner.FindJob(JobId, _watchPath)!;
         var promptPath = Path.Combine(original.FolderPath, "prompt.md");
         var originalPrompt = File.ReadAllText(promptPath);
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 12, 0, 0, TimeSpan.Zero));
+        var previousBase = new AgentStudio.Runner.ContinuationBaseRecord(
+            "refs/heads/previous-salvage", new string('b', 40), "lost-worker-with-salvage",
+            "attempt-0", clock.GetUtcNow().UtcDateTime);
+        Assert.True(AgentStudio.Runner.ContinuationBaseStore.Save(original.FolderPath, previousBase));
 
         // A file at the destination path makes the state-machine move fail
         // without changing the source folder.
@@ -249,6 +260,7 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
         Assert.Equal(originalPrompt, File.ReadAllText(promptPath));
         Assert.Null(unchanged.PendingIntent);
         Assert.Null(unchanged.ContextMode);
+        Assert.Equal(previousBase, AgentStudio.Runner.ContinuationBaseStore.Read(unchanged.FolderPath));
         using var taskJson = JsonDocument.Parse(File.ReadAllText(Path.Combine(unchanged.FolderPath, "task.json")));
         Assert.False(taskJson.RootElement.TryGetProperty("contextMode", out _));
         Assert.DoesNotContain(

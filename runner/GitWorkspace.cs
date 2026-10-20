@@ -25,6 +25,7 @@ public sealed class GitWorkspace
     private readonly string? _continuationBaseRef;
     private readonly string? _continuationBaseSha;
     private readonly bool _continuationBaseRequired;
+    private readonly bool _mergeIntegrationIntoContinuation;
     private string? _preparedIntegrationBranch;
     private string? _startedHead;
     private readonly string? _restoredBaseSha;
@@ -88,9 +89,12 @@ public sealed class GitWorkspace
         // AGT-3056: a review fix round exists to continue the graded delivery.
         // Its base is never swapped for the integration branch, and a half
         // reference keeps its known half for the typed failure.
-        _continuationBaseRequired = ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
+        _continuationBaseRequired = continuationBranch is not null || continuationSha is not null
+            || ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
+        _mergeIntegrationIntoContinuation = continuationComplete
+            && !ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
         _continuationBaseRef = continuationComplete || _continuationBaseRequired ? continuationBranch : null;
-        _continuationBaseSha = continuationComplete ? continuationSha : null;
+        _continuationBaseSha = continuationComplete || _continuationBaseRequired ? continuationSha : null;
     }
 
     public string ProjectCachePath => CachePathForProject(_options.WorkDir, _projectId);
@@ -306,6 +310,8 @@ public sealed class GitWorkspace
                 || string.Equals(branch, _workBranch, StringComparison.Ordinal);
             _startedHead = (await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim();
             WriteWorktreeLease(_startedHead);
+            if (continuation is not null && _mergeIntegrationIntoContinuation)
+                await MergeIntegrationIntoContinuationAsync(requestedBase, authoritativeBase, ct);
             _log($"task worktree ready on '{_workBranch}' at {ShortSha(_startedHead)}");
             return branch;
         }
@@ -317,11 +323,9 @@ public sealed class GitWorkspace
 
     /// <summary>
     /// The continuation base this claim was given, resolved against origin, or
-    /// null when the claim named none. A ref that disappeared or moved is
-    /// reported and skipped rather than failing the round: the card's prompt
-    /// still names the salvage, and a round on the integration branch is a
-    /// worse outcome than no round at all only if it is silent. A review fix
-    /// round's base is required instead: any of those cases throws
+    /// null when the claim named none. A ref that disappeared or moved fails
+    /// preparation rather than silently discarding the earlier delivery. Any
+    /// unavailable explicit continuation base throws
     /// <see cref="ContinuationBaseUnavailableException"/> (AGT-3056).
     /// </summary>
     private async Task<SalvageContinuationBase?> ResolveContinuationBaseAsync(CancellationToken ct)
@@ -386,6 +390,33 @@ public sealed class GitWorkspace
             (inner is null ? string.Empty : $" error={OneLine(inner.Message)}") +
             "; not starting from the integration branch");
         return failure;
+    }
+
+    private async Task MergeIntegrationIntoContinuationAsync(
+        string integrationBranch, string salvageSha, CancellationToken ct)
+    {
+        var integrationSha = await FetchRemoteBranchHeadAsync(integrationBranch, ct)
+            ?? throw new InvalidOperationException($"Integration branch 'origin/{integrationBranch}' disappeared during continuation preparation.");
+        if (await IsAncestorAsync(integrationSha, salvageSha, ct)) return;
+
+        // The envelope base remains the salvage SHA. A clean merge advances the
+        // checkout while keeping that base in the result's ancestry.
+        var merge = await ProcessRunner.RunAsync("git",
+            ["-c", "user.name=Agent Studio Runner", "-c", "user.email=runner@agent-studio.invalid",
+                "merge", "--no-ff", "--no-edit", $"origin/{integrationBranch}"],
+            workingDirectory: RepoPath, ct: ct);
+        if (!merge.Success)
+        {
+            var mergeHead = await ProcessRunner.RunAsync("git", ["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+                workingDirectory: RepoPath, ct: ct);
+            if (!mergeHead.Success)
+                throw new InvalidOperationException(
+                    $"Integration merge failed before conflicts could be reported: {merge.StdErr.Trim()}");
+            await Git(["merge", "--abort"], RepoPath, ct);
+            _log($"worktree-continuation-integration-conflict salvageSha={salvageSha} integrationSha={integrationSha}; agent must reconcile both commits");
+            return;
+        }
+        _log($"worktree-continuation-integration-merged salvageSha={salvageSha} integrationSha={integrationSha} resultSha={(await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim()}");
     }
 
     private static string ToBranchName(string value)
