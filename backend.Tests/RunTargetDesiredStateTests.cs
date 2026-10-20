@@ -412,6 +412,35 @@ public sealed class RunTargetDesiredStateTests : IDisposable
     }
 
     [Fact]
+    public void CrashRollbackStillListedByTheHost_DoesNotRollBackALaterRedeploy()
+    {
+        var service = Build();
+        Deploy(service, _first, healthy: true);
+        Deploy(service, _second, healthy: true);
+        var crashedAt = _clock.GetUtcNow().UtcDateTime;
+        RunTargetEvent[] crash = [new(crashedAt, "crash-rollback", _second), new(crashedAt, "rolled-back", _first)];
+        service.RecordObserved("run-host", new([new("demo", "stage", "running", _first, _second, 8, crashedAt, crash)]));
+        var rollback = Assert.Single(service.DesiredState("run-host").Environments);
+        Assert.True(service.Report("demo", rollback.JobId!, new(rollback.LeaseToken!, true, "health-ok")));
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        Deploy(service, _second, healthy: true);
+
+        var redeployedAt = _clock.GetUtcNow().UtcDateTime;
+        service.RecordObserved("run-host", new([new("demo", "stage", "running", _second, _first, 8, redeployedAt,
+            [.. crash, new(redeployedAt, "swapped", _second)])]));
+
+        Assert.DoesNotContain(service.Read("demo")!.Jobs, item => item.Status == "queued");
+
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        var crashedAgainAt = _clock.GetUtcNow().UtcDateTime;
+        service.RecordObserved("run-host", new([new("demo", "stage", "running", _first, _second, 13, crashedAgainAt,
+            [.. crash, new(redeployedAt, "swapped", _second), new(crashedAgainAt, "crash-rollback", _second)])]));
+
+        var job = Assert.Single(service.Read("demo")!.Jobs, item => item.Status == "queued");
+        Assert.Equal((_first, true), (job.Artifact, job.IsRollback));
+    }
+
+    [Fact]
     public void Policy_Placement_RemovesOnlyAfterTheGrace_AndOnlyOnItsHost()
     {
         var now = _clock.GetUtcNow().UtcDateTime;

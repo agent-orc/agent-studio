@@ -157,6 +157,16 @@ public static partial class RunTargetDesiredStatePolicy
             || JsonSerializer.Serialize(stored with { ObservedAt = default })
                 != JsonSerializer.Serialize(next with { ObservedAt = default });
 
+    /// <summary>
+    /// The host rolled back from the deployed artifact after a crash loop and
+    /// Studio has not seen that event before. The host keeps its last events,
+    /// so an event already stored must not roll back a later redeploy of the
+    /// same artifact.
+    /// </summary>
+    public static bool NewCrashRollback(RunTargetObservation? stored, RunTargetObservation next, string? deployed)
+        => deployed is not null && next.Events.Any(item => item.Kind == "crash-rollback" && item.Artifact == deployed
+            && !(stored?.Events ?? []).Contains(item));
+
     private static bool IsOwner(RunTargetDomainClaim claim, string project, string environmentId)
         => string.Equals(claim.Project, project, StringComparison.OrdinalIgnoreCase)
             && string.Equals(claim.EnvironmentId, environmentId, StringComparison.Ordinal);

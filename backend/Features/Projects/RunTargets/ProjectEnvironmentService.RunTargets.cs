@@ -125,8 +125,7 @@ public sealed partial class ProjectEnvironmentService
                         state.Observed.Add(new(declaration.Id, sanitized));
                     }
                     var deployed = state.History.LastOrDefault(row => row.EnvironmentId == declaration.Id)?.Item.Artifact;
-                    if (deployed is not null
-                        && sanitized.Events.Any(item => item.Kind == "crash-rollback" && item.Artifact == deployed)
+                    if (RunTargetDesiredStatePolicy.NewCrashRollback(stored, sanitized, deployed)
                         && !state.Jobs.Any(job => job.EnvironmentId == declaration.Id && job.Status is "queued" or "claimed"))
                         QueueRollback(group.Key, declaration, state, "crash-rollback");
                 }
