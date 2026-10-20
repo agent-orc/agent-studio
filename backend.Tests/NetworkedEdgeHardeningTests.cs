@@ -213,7 +213,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
             Results.Text("<html><body><script>alert(document.cookie)</script></body></html>", "text/html", System.Text.Encoding.UTF8));
         await app.StartAsync();
         using var client = app.GetTestClient();
-        client.BaseAddress = new Uri(Studio);
+        client.BaseAddress = new Uri("https://localhost");
 
         using var html = await client.GetAsync($"/api/tasks/{TaskKey}/files/x.html");
 
