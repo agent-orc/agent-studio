@@ -19,7 +19,7 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     string Artifact, string Template, string Destination, string? HealthUrl,
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
-    string? RequestedBy = null);
+    string? RequestedBy = null, bool ReservedSlot = false);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -37,6 +37,9 @@ public sealed record ReleaseArtifactRequest(string Artifact, string Commit);
 public sealed record PromotionDecisionRequest(string Artifact);
 public sealed record GateArtifactRequest(string Project, string Artifact, string Commit);
 
+/// <summary>A deploy action refused by the workspace or project quota; the message names the limit.</summary>
+public sealed class DeployQuotaRefusedException(string message) : InvalidOperationException(message);
+
 /// <summary>Repository declarations and a separate, durable host-deploy queue.</summary>
 public sealed class ProjectEnvironmentService
 {
@@ -50,16 +53,38 @@ public sealed class ProjectEnvironmentService
     private readonly GitService _git;
     private readonly ProjectSettingsService _settings;
     private readonly TimeProvider _clock;
+    private readonly AgentStudio.Quota.WorkspaceQuotaService? _quota;
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public ProjectEnvironmentService(IConfiguration configuration, TaskScannerService scanner,
-        GitService git, ProjectSettingsService settings, TimeProvider clock)
+        GitService git, ProjectSettingsService settings, TimeProvider clock,
+        AgentStudio.Quota.WorkspaceQuotaService? quota = null)
     {
         _configuration = configuration;
         _scanner = scanner;
         _git = git;
         _settings = settings;
         _clock = clock;
+        _quota = quota;
+    }
+
+    /// <summary>Hosting-slot key of a declared environment, apart from the publish website slot.</summary>
+    public static string SlotKey(string environmentId) => "env:" + environmentId;
+
+    /// <summary>
+    /// Quota admission of a deploy action. Deploying to an environment that is
+    /// not running yet needs a free hosting slot; a running one does not.
+    /// </summary>
+    private string? QuotaRefusal(string project, string environmentId)
+    {
+        if (_quota is null) return null;
+        var admission = _quota.Admit(project, hosting: !_quota.HasProjectEnvironment(project, SlotKey(environmentId)));
+        return admission.Allowed ? null : admission.Message ?? "Quota reached.";
+    }
+
+    private void RequireQuota(string project, string environmentId)
+    {
+        if (QuotaRefusal(project, environmentId) is { } refusal) throw new DeployQuotaRefusedException(refusal);
     }
 
     public IReadOnlyList<EnvironmentDeclaration>? Declarations(string project)
@@ -121,6 +146,11 @@ public sealed class ProjectEnvironmentService
             var state = Load(project);
             AdvanceTimedPromotions(project, declarations, state);
             Save(project, state);
+            // A removed declaration no longer runs and gives its hosting slot back.
+            foreach (var environmentId in _quota?.ProjectEnvironmentIds(project) ?? [])
+                if (environmentId.StartsWith("env:", StringComparison.Ordinal)
+                    && declarations.All(item => SlotKey(item.Id) != environmentId))
+                    _quota!.SetProjectEnvironment(project, environmentId, false);
             return new(project, declarations.Select(item =>
             {
                 var history = state.History.Where(row => row.EnvironmentId == item.Id)
@@ -129,7 +159,7 @@ public sealed class ProjectEnvironmentService
                 var pending = state.Jobs.LastOrDefault(job => job.EnvironmentId == item.Id
                     && (job.Status is "queued" or "claimed"));
                 return new ProjectEnvironmentView(item, latest?.Artifact,
-                    latest is null ? "unknown" : latest.Status == "failed" ? "failed" : "healthy",
+                    latest is null ? "unknown" : latest.Status is "failed" or "stopped" ? latest.Status : "healthy",
                     pending?.Artifact, history);
             }).ToArray(), state.Promotions.ToArray(), state.Jobs.Select(Sanitize).ToArray(),
                 state.History.Where(row => row.Item.Status == "failed").AsEnumerable().Reverse()
@@ -157,6 +187,7 @@ public sealed class ProjectEnvironmentService
             if (stage is null || production is null) return false;
             var state = Load(project);
             if (state.Promotions.Any(item => item.Artifact == artifact && item.Status is not ("rejected" or "failed"))) return false;
+            RequireQuota(project, stage.Id);
             state.Promotions.Add(new(artifact, stage.Id, production.Id, DateTime.MinValue, "stage-queued"));
             Queue(project, stage, artifact, state, actor: "release-gate");
             Save(project, state);
@@ -249,6 +280,7 @@ public sealed class ProjectEnvironmentService
                 || promotion.ExpiresAt <= _clock.GetUtcNow().UtcDateTime) return false;
             var production = declarations.FirstOrDefault(item => item.Id == promotion.ProductionId);
             if (production is null) return false;
+            if (approve) RequireQuota(project, production.Id);
             state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with
             { Status = approve ? "production-queued" : "rejected", Actor = actor };
             if (approve) Queue(project, production, artifact, state, actor: actor);
@@ -269,6 +301,7 @@ public sealed class ProjectEnvironmentService
                 && (row.Item.Status is "healthy" or "rolled-back")
                 && row.Item.Artifact != currentArtifact);
             if (previous is null) return false;
+            RequireQuota(project, environmentId);
             Queue(project, declaration, previous.Item.Artifact, state, rollback: true, actor: actor);
             Save(project, state);
             return true;
@@ -295,12 +328,58 @@ public sealed class ProjectEnvironmentService
                 var job = state.Jobs.FirstOrDefault(item => item.HostId == hostId &&
                     (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt < now.AddMinutes(-5)));
                 if (job is null) continue;
-                var claimed = job with { Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N") };
+                if (!TryAdmitClaim(project, job, out var reserved)) continue;
+                var claimed = job with { Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N"),
+                    ReservedSlot = job.ReservedSlot || reserved };
                 state.Jobs[state.Jobs.IndexOf(job)] = claimed;
                 Save(project, state);
+                _quota?.RecordDeployStart(project, claimed.Id, claimed.EnvironmentId);
                 return claimed;
             }
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Admits a deploy claim. An environment that is not running reserves its
+    /// hosting slot atomically with the admission; a refused job stays queued.
+    /// </summary>
+    private bool TryAdmitClaim(string project, DeployJob job, out bool reserved)
+    {
+        reserved = false;
+        if (_quota is null) return true;
+        try
+        {
+            var key = SlotKey(job.EnvironmentId);
+            if (_quota.HasProjectEnvironment(project, key)) return _quota.Admit(project).Allowed;
+            reserved = _quota.ReserveProjectEnvironment(project, key);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Operator confirmation that an environment no longer serves traffic. It
+    /// records the stop and gives the hosting slot back.
+    /// </summary>
+    public bool Stop(string project, string environmentId, string actor)
+    {
+        lock (_gate)
+        {
+            var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == environmentId);
+            if (declaration is null) return false;
+            var state = Load(project);
+            var current = state.History.LastOrDefault(row => row.EnvironmentId == environmentId)?.Item;
+            if (current is null || current.Status == "stopped") return false;
+            var now = _clock.GetUtcNow().UtcDateTime;
+            state.History.Add(new(environmentId, now, new(now, "stopped", current.Artifact, current.Artifact,
+                "stopped-by:" + actor)));
+            Save(project, state);
+            _quota?.SetProjectEnvironment(project, SlotKey(environmentId), false);
+            return true;
         }
     }
 
@@ -321,6 +400,11 @@ public sealed class ProjectEnvironmentService
             var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
+            _quota?.RecordDeployEnd(project, job.Id);
+            // A healthy deploy runs the environment. A failed first deploy gives
+            // back the slot its claim reserved; a failed redeploy keeps the live one.
+            if (success) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), true);
+            else if (job.ReservedSlot) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
             var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact);
             if (promotion is not null)
             {
@@ -357,6 +441,8 @@ public sealed class ProjectEnvironmentService
                 !state.History.Any(row => row.EnvironmentId == production.Id
                     && (row.Item.Status is "healthy" or "rolled-back")) ||
                 _clock.GetUtcNow().UtcDateTime - promotion.StageHealthyAt < TimeSpan.FromMinutes(10)) continue;
+            // A refused automatic promotion stays pending until quota frees up or the promotion expires.
+            if (QuotaRefusal(project, production.Id) is not null) continue;
             state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with
             { Status = "production-queued", Actor = "stage-health-rule" };
             Queue(project, production, promotion.Artifact, state, actor: "stage-health-rule");

@@ -289,6 +289,89 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal(_artifact, service.Claim("prod-host")!.Artifact);
     }
 
+    [Fact]
+    public void Hosting_slots_admit_deploys_meter_jobs_and_free_on_stop()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var stage = service.Claim("stage-host")!;
+        Assert.True(stage.ReservedSlot);
+        _clock.Advance(TimeSpan.FromMinutes(3));
+        Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+        var running = quota.Snapshot(workspaceId);
+        Assert.Equal(1, running.Usage.HostingSlots);
+        Assert.Equal(0.05m, running.Usage.ComputeCoreHours);
+
+        // Production is not running yet and the only slot is taken by stage.
+        var refused = Assert.Throws<DeployQuotaRefusedException>(() => service.Decide("demo", _artifact, true, "operator"));
+        Assert.Contains("All 1 hosting slots are in use", refused.Message, StringComparison.Ordinal);
+        Assert.Equal("pending", Assert.Single(service.Read("demo")!.Promotions).Status);
+
+        Assert.True(service.Stop("demo", "stage", "operator"));
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Equal("stopped", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+        Assert.True(service.Decide("demo", _artifact, true, "operator"));
+        var production = service.Claim("prod-host")!;
+        Assert.True(service.Report("demo", production.Id, new(production.LeaseToken!, true, "health-ok")));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    [Fact]
+    public void Deploy_claim_waits_at_the_slot_boundary_and_a_failed_first_deploy_returns_its_slot()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        // Another deploy takes the last slot between queueing and claiming.
+        Assert.True(quota.ReserveProjectEnvironment("demo", "website"));
+
+        Assert.Null(service.Claim("stage-host"));
+        Assert.Equal("queued", Assert.Single(service.Read("demo")!.Jobs).Status);
+
+        quota.SetProjectEnvironment("demo", "website", false);
+        var stage = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, false, "health-http-failed")));
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    private WebApplicationFactory<Program> QuotaFactory() => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+    {
+        builder.UseEnvironment("Test");
+        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "quota-workspace"), ["PublicDemo:Enabled"] = "false",
+        }));
+        builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<TimeProvider>();
+            services.AddSingleton<TimeProvider>(_clock);
+        });
+    });
+
+    private (AgentStudio.Quota.WorkspaceQuotaService Quota, string WorkspaceId) QuotaFor(
+        WebApplicationFactory<Program> factory, AgentStudio.Quota.QuotaLimits limits)
+    {
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var storage = Path.Combine(_root, "quota-workspace", "projects", "demo");
+        Directory.CreateDirectory(storage);
+        services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>()
+            .EnsureProjectForStorage(storage, "demo", workspace.Id, _clock);
+        var quota = services.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>();
+        quota.SetLimits(workspace.Id, null, limits);
+        return (quota, workspace.Id);
+    }
+
     private bool QueueGateRelease(ProjectEnvironmentService service, string artifact, string commit)
     {
         WriteReleaseEvidence("demo", artifact, commit);
@@ -316,7 +399,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false,
-        string project = "demo")
+        string project = "demo", AgentStudio.Quota.WorkspaceQuotaService? quota = null)
     {
         var repo = Path.Combine(_root, "repo");
         var watch = Path.Combine(_root, "workspace", "projects", project);
@@ -354,7 +437,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
-        return (new(config, scanner, git, settings, _clock), repo, watch);
+        return (new(config, scanner, git, settings, _clock, quota), repo, watch);
     }
 
     private string Git(string directory, params string[] arguments)

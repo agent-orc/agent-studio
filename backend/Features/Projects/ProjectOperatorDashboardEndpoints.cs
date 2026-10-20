@@ -11,10 +11,10 @@ public static class ProjectOperatorDashboardEndpoints
             Results.Ok(flow.Build()));
 
         app.MapPost("/api/deploy/gate-releases", (GateArtifactRequest request,
-            ProjectEnvironmentService environments) =>
+            ProjectEnvironmentService environments) => QuotaRefusable(() =>
             environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit)
             && environments.QueueRelease(request.Project, request.Artifact, request.Commit)
-                ? Results.Accepted() : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." }))
+                ? Results.Accepted() : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." })))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapGet("/api/projects/{projectName}/environments", (string projectName,
@@ -22,17 +22,17 @@ public static class ProjectOperatorDashboardEndpoints
                 ? Results.Ok(value) : Results.NotFound());
 
         app.MapPost("/api/projects/{projectName}/environments/releases", (string projectName,
-            ReleaseArtifactRequest request, ProjectEnvironmentService environments) =>
+            ReleaseArtifactRequest request, ProjectEnvironmentService environments) => QuotaRefusable(() =>
             environments.QueueRelease(projectName, request.Artifact, request.Commit)
-                ? Results.Accepted() : Results.BadRequest(new { error = "Artifact, commit, or stage and production declarations are invalid." }))
+                ? Results.Accepted() : Results.BadRequest(new { error = "Artifact, commit, or stage and production declarations are invalid." })))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapPost("/api/projects/{projectName}/environments/promotions/approve", (
             HttpContext context, string projectName, PromotionDecisionRequest request, ProjectEnvironmentService environments) =>
-            environments.Decide(projectName, request.Artifact, true,
+            QuotaRefusable(() => environments.Decide(projectName, request.Artifact, true,
                 context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                     ? human.User.Id : "local-operator")
-                ? Results.Ok() : Results.Conflict(new { error = "Promotion is not pending." }))
+                ? Results.Ok() : Results.Conflict(new { error = "Promotion is not pending." })))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/projects/{projectName}/environments/promotions/reject", (
@@ -45,11 +45,19 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapPost("/api/projects/{projectName}/environments/{environmentId}/rollback", (
             HttpContext context, string projectName, string environmentId, ProjectEnvironmentService environments) =>
-            environments.Rollback(projectName, environmentId,
+            QuotaRefusable(() => environments.Rollback(projectName, environmentId,
                 context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                     ? human.User.Id : "local-operator")
-                ? Results.Accepted() : Results.Conflict(new { error = "No previous artifact is available." }))
+                ? Results.Accepted() : Results.Conflict(new { error = "No previous artifact is available." })))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
+        app.MapPost("/api/projects/{projectName}/environments/{environmentId}/stop", (
+            HttpContext context, string projectName, string environmentId, ProjectEnvironmentService environments) =>
+            environments.Stop(projectName, environmentId,
+                context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                    ? human.User.Id : "local-operator")
+                ? Results.Ok() : Results.Conflict(new { error = "The environment is not deployed or is already stopped." }))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/deploy/jobs/claim", (HttpContext context, DeployClaimRequest request,
             ProjectEnvironmentService environments, IConfiguration configuration) =>
@@ -114,5 +122,11 @@ public static class ProjectOperatorDashboardEndpoints
             var item = evidence.Acknowledge(projectName, itemId);
             return item is null ? Results.NotFound() : Results.Ok(item);
         });
+    }
+
+    private static IResult QuotaRefusable(Func<IResult> action)
+    {
+        try { return action(); }
+        catch (DeployQuotaRefusedException ex) { return Results.Conflict(new { error = ex.Message, reason = "quota" }); }
     }
 }
