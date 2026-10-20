@@ -17,8 +17,20 @@ test.beforeAll(async () => {
 test('Operations shows database binding, volume schedule, restore confirmation and audit in both themes', async ({ page }) => {
   let hour: number | null = 4;
   const actions: string[] = [];
+  await page.route('**/hubs/v1/studio/negotiate?*', route => route.fulfill({ json: {
+    negotiateVersion: 1, connectionId: 'hosted-data-e2e', connectionToken: 'hosted-data-e2e',
+    availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+  } }));
+  await page.routeWebSocket('**/hubs/v1/studio*', socket => {
+    socket.onMessage(message => {
+      if (typeof message === 'string' && message.includes('"protocol":"json"')) socket.send(`{}\u001e`);
+    });
+  });
   await page.route('**/api/projects/*/environments', route => route.fulfill({ json: {
-    project: projectName, environments: [{ declaration: { id: 'stage', name: 'Stage' } }], promotions: [], jobs: [], failureCards: [],
+    project: projectName, environments: [{
+      declaration: { id: 'stage', name: 'Stage', kind: 'stage', address: 'https://stage.example', healthUrl: null },
+      deployedArtifact: null, health: 'unknown', pendingArtifact: null, history: [],
+    }], promotions: [], jobs: [], failureCards: [],
   } }));
   await page.route('**/api/projects/*/environments/stage/volumes**', route => {
     const url = route.request().url();
