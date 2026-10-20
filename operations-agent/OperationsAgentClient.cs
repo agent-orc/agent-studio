@@ -100,7 +100,7 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
         {
             var report = JsonSerializer.Deserialize<AttemptReportRequest>(await File.ReadAllTextAsync(marker, ct), OperationsProtocol.Json)
                          ?? throw new InvalidDataException("Restart execution marker is empty.");
-            await ReportAsync(Path.GetFileName(marker)[..^".restart-started".Length], report, ct);
+            await ReportAsync(Path.GetFileNameWithoutExtension(marker), report, ct);
             File.Delete(marker);
         }
     }

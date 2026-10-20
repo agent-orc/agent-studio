@@ -139,7 +139,7 @@ public sealed class AttemptAuthorityService
         {
             var now = _utcNow();
             if (_reviewRestartFences.Contains(hostId) || _state.ReviewAttempts.Any(review =>
-                    IsCurrentReview(review) && review.State == AttemptLifecycleState.Leased
+                    review.State == AttemptLifecycleState.Leased
                     && review.Lease is { } lease && lease.ExpiresAt > now && Same(lease.HostId, hostId)))
                 return null;
             _reviewRestartFences.Add(hostId);
