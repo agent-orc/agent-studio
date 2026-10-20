@@ -356,9 +356,10 @@ function cardsFor(deployed: boolean, release: Release | null, releaseRecordsKnow
 }
 
 function healthFor(status: EnvironmentStatus | null, base: CardBase): DeployHealth {
-  const raw = status?.health ?? base.view?.health;
-  const map = status ? STATUS_HEALTH : HOST_HEALTH;
-  const state = raw === undefined ? 'unknown' : map[raw] ?? 'unknown';
+  // AGT-3201 health wins when it knows; it reads a host rollback as unknown, AGT-3176 as healthy.
+  const reported = status ? STATUS_HEALTH[status.health] ?? 'unknown' : 'unknown';
+  const host = base.view ? HOST_HEALTH[base.view.health] ?? 'unknown' : 'unknown';
+  const state = reported !== 'unknown' ? reported : host;
   // Without a declared health URL there is nothing to check.
   return state === 'unknown' && base.view && !base.healthUrl ? { status: 'no-checks' } : { status: 'reported', state };
 }

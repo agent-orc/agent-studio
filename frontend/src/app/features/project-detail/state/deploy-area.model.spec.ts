@@ -176,6 +176,13 @@ describe('deploy area model', () => {
       expect(buildEnvironmentCards(host)[0].health).toEqual({ status: 'reported', state: 'unhealthy' });
     });
 
+    it('falls back to the host health when AGT-3201 reports unknown health', () => {
+      const sources = deploySourcesFixture();
+      sources.statuses![0].health = 'unknown';
+      sources.environments!.environments[0].health = 'healthy';
+      expect(buildEnvironmentCards(sources)[0].health).toEqual({ status: 'reported', state: 'healthy' });
+    });
+
     it('reads "no checks" only for an unknown health without a declared health URL', () => {
       const host = hostOnlySourcesFixture();
       host.environments!.environments[0].health = 'unknown';
