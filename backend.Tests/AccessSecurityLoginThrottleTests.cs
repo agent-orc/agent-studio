@@ -180,9 +180,11 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
         store.Bootstrap(new BootstrapRequest("owner", Password, null));
         Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
             store.Login("invented", "wrong", "192.0.2.1")).Status);
+        store.Login("owner", Password, "192.0.2.5");
         Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
             store.Login("owner", "wrong", "192.0.2.2")).Status);
 
+        Assert.Equal("owner", store.Login("owner", Password, "192.0.2.5").User.Username);
         Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
             store.Login("owner", Password, "192.0.2.3")).Status);
         _clock.Advance(TimeSpan.FromSeconds(3));

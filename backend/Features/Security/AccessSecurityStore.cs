@@ -146,6 +146,8 @@ public sealed class AccessSecurityStore
                     _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10), overflowDelay))
                 throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again shortly.");
             if (!_usernameLoginAttempts.ContainsKey(normalized) && _usernameLoginAttempts.Count >= MaxTrackedUsernames
+                && (!_recentSuccessfulLogins.TryGetValue(loginKey!, out var overflowSuccessAt)
+                    || now - overflowSuccessAt > RecentSuccessWindow)
                 && !_overflowUsernameAttempts.CanHash(normalized, loginKey!, now, LoginWindow,
                     _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20), overflowDelay))
                 throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again shortly.");
