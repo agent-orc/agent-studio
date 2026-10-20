@@ -2168,6 +2168,22 @@ output after the script exits, kills that group and waits for its output streams
 to close. Install scripts on the assigned deploy host before
 invoking the runbook.
 
+The project deploy API exposes these runbook routes:
+
+| Method and path | Operation |
+|---|---|
+| `GET /api/projects/{projectName}/deploy/runbooks` | List definitions from the integration branch. |
+| `GET /api/projects/{projectName}/deploy/runbooks/runs?environmentId={environmentId}` | List runs, optionally filtered by environment. |
+| `GET /api/projects/{projectName}/deploy/runbooks/runs/{runId}` | Read one run and its step states. |
+| `GET /api/projects/{projectName}/deploy/runbooks/runs/{runId}/log?step={step}` | Read the shared run log, optionally filtered by step. |
+| `POST /api/projects/{projectName}/deploy/environments/{environmentId}/runbooks/{name}/runs` | Request a run on the named environment; returns the run with HTTP 202. |
+| `POST /api/projects/{projectName}/deploy/runbooks/runs/{runId}/approve` | Approve a waiting run and queue its frozen steps. |
+| `POST /api/projects/{projectName}/deploy/runbooks/runs/{runId}/reject` | Reject a waiting run and record the cancellation. |
+
+The three POST routes use the signed-in deploy actor and deny execution in the
+public demo profile. Approval and rejection require an Owner or Maintainer;
+their responses contain the updated run and return HTTP 200 on success.
+
 ## Verification
 
 - Outcome and grammar changes need focused unit tests for analyzer, policy,
