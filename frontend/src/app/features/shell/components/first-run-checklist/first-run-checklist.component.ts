@@ -42,10 +42,10 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   private gitPoll: ReturnType<typeof setInterval> | null = null;
   private reloadQueued = false;
   readonly openProjectSettings = output<string>();
-
   readonly loading = signal(false);
   readonly nowMs = signal(Date.now());
   readonly identity = signal<Probe<InstallationIdentity>>({ value: null, error: false });
+  readonly taskServerUnavailable = computed(() => !this.localProfile() && this.identity().error);
   readonly projects = signal<Probe<readonly ProjectRegistryEntry[]>>({ value: null, error: false });
   readonly repository = signal<Probe<RepositoryStatus>>({ value: null, error: false });
   readonly proof = signal<ProofCard | null>(this.savedProof());

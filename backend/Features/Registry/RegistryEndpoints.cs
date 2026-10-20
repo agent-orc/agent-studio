@@ -425,12 +425,19 @@ public static class RegistryEndpoints
         app.MapPut(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}", (string projId, UpdateProjectRequest body,
             ProjectRegistry projects, WorkspaceRegistry workspaces,
             AgentStudio.Projects.ProjectSettingsService projectSettings,
-            ClientIdentityStore clients, WikiContentCache wikiContentCache, ILoggerFactory loggerFactory) =>
+            ClientIdentityStore clients, WikiContentCache wikiContentCache, ILoggerFactory loggerFactory,
+            IConfiguration configuration, HttpContext context, AccessSecurityStore accessSecurity) =>
         {
             if (body == null) return Results.BadRequest(new { error = "body required" });
             var previous = projects.FindById(projId);
             if (previous == null)
                 return Results.NotFound(new { error = $"Unknown projectId '{projId}'" });
+
+            var repositoryUrlChanged = body.RepositoryUrl != null || body.ClearRepositoryUrl == true;
+            var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
+            if (repositoryUrlChanged && SecurityProfiles.IsNetworked(configuration)
+                && human?.User.Role != StudioRoles.Owner)
+                return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden);
 
             var updateExecutionRunner = body.ExecutionRunner != null || body.ClearExecutionRunner == true;
             string? executionRunner = null;
@@ -451,6 +458,11 @@ public static class RegistryEndpoints
             try
             {
                 var result = projects.Update(projId, body, workspaces);
+                if (repositoryUrlChanged && SecurityProfiles.IsNetworked(configuration))
+                    accessSecurity.AppendProjectRepositoryAudit(
+                        projId, human!.User.Id, human.User.Username,
+                        previous.Urls.FirstOrDefault(url => url.Id == "repo")?.Url,
+                        result.Urls.FirstOrDefault(url => url.Id == "repo")?.Url);
                 if (!string.Equals(previous.DisplayName, result.DisplayName, StringComparison.Ordinal)
                     || updateExecutionRunner)
                 {

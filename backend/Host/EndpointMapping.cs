@@ -81,7 +81,7 @@ public static class EndpointMapping
         app.MapDemoReplayEndpoints();
         app.MapArtifactIngestionEndpoints();
         app.MapRegistryEndpoints();
-        if (mapsLocalV1)
+        if (SecurityProfiles.IsLocal(app.Configuration))
         {
             app.MapLocalFirstRunRepositoryEndpoints();
             app.MapLocalFirstRunGitSetupEndpoints();

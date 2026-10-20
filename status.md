@@ -1,3 +1,10 @@
+# AGT-3238 networked first-run and repository authority status
+
+- Result SHA-256 (implementation files): `1e3a3067ef12e2abb37656bc898ec75808625d37f651fb991d2c95056d310edc`.
+- Implemented the recommended unavailable-plane state: `/api/first-run/...` routes are mapped only for the local profile; a networked checklist explains when its Task Server plane is absent. Networked project repository URL changes and clears require the Owner and append actor, old/new URL, project, and injected timestamp to `.security/project-repository-audit.jsonl`.
+- Updated `docs/operations/security/overview.md`; `docs/studio-route-ownership/routes.json` already described the local-profile route ownership, so it needed no change.
+- Verification: `dotnet build backend.Tests/OrchestratorApi.Tests.csproj --no-restore -m:1 -nodeReuse:false -p:UseSharedCompilation=false` passed, building the changed backend and test project. The focused `FirstRunOwnerAccessTests` filter passed 14 tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests and had no matches in `runner.Tests/AgentRunner.Tests.csproj` or `task-server.Tests/TaskServer.Tests.csproj`. The first-run checklist component spec passed 19 tests; `npm --prefix frontend run lint` passed. `npm --prefix frontend run e2e -- e2e/settings/first-run-networked-monolith.spec.ts` passed one test and saved `first-run-networked-monolith.png` to the task results directory.
+
 # AGT-3231 zone network policy status
 
 - Result SHA: the platform's delivery commit of this working tree on base `9ce339492868f8a3bc9325c013ffab8978fa7602` (this run does not commit; see the commit-push doctrine). Changed-file SHA-256: `e136fc706f6d0c04aacff547621d9f8ad6f4272509d54527f30b0470a59d2e34`.
