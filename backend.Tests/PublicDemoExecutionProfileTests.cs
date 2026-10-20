@@ -196,7 +196,10 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // artifact digest and queues stage, so public demo must deny it.
         // AGT-3221 added the project.yml schema 2 migration confirm on PostStep:
         // it commits and pushes project.yml through the managed repository write.
-        Assert.Equal(113, routes.Count);
+        // AGT-3068 adds three rule mutations (Continue) and one host occurrence (Start),
+        // and maps the engine decision-job (Start) and receipt (Continue) routes in
+        // every profile.
+        Assert.Equal(119, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -213,13 +216,23 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/projects/{projectName}/pipeline-definition/migration", ExecutionAdmissionPath.PostStep),
             ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue),
             ("/api/orchestration/decision-receipts/{receiptId}/operator-intent", ExecutionAdmissionPath.Continue),
-            ("/api/tasks/{jobId}/preview-feedback", ExecutionAdmissionPath.Continue)
+            ("/api/tasks/{jobId}/preview-feedback", ExecutionAdmissionPath.Continue),
+            ("/api/workspaces/{workspaceId}/decision-rules/versions", ExecutionAdmissionPath.Continue),
+            ("/api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/activate", ExecutionAdmissionPath.Continue),
+            ("/api/workspaces/{workspaceId}/decision-rules/versions/{versionId}/rollback", ExecutionAdmissionPath.Continue),
+            ("/api/v1/orchestration/host-decisions", ExecutionAdmissionPath.Start),
+            ("/api/v1/orchestration/decision-jobs", ExecutionAdmissionPath.Start)
         })
         {
             var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText == routePath);
             Assert.Equal(admissionPath, route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
             Assert.Contains("POST", route.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
         }
+        var receiptRoute = Assert.Single(routes, route =>
+            route.RoutePattern.RawText == "/api/v1/orchestration/runs/{runId}/decision-receipt");
+        Assert.Equal(ExecutionAdmissionPath.Continue,
+            receiptRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+        Assert.Contains("PUT", receiptRoute.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
         var migrationRoute = Assert.Single(routes, route =>
             route.RoutePattern.RawText == "/api/projects/{project}/model-migrations/apply");
         Assert.Equal(ExecutionAdmissionPath.Preview,
@@ -238,8 +251,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 9,
-                [ExecutionAdmissionPath.Start] = 19,
-                [ExecutionAdmissionPath.Continue] = 22,
+                [ExecutionAdmissionPath.Start] = 21,
+                [ExecutionAdmissionPath.Continue] = 26,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 28,
