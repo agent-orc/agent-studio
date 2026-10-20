@@ -14,6 +14,8 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -120,7 +122,8 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         var resultsPath = Path.Combine(_workspace, "projects", ProjectName, "3-progress", TaskKey, "results");
         Directory.CreateDirectory(resultsPath);
         File.WriteAllText(Path.Combine(resultsPath, "report.html"), "<html><body>report</body></html>");
-        File.WriteAllBytes(Path.Combine(resultsPath, "image.png"), [1, 2, 3]);
+        using (var source = new Image<Rgba32>(16, 16, new Rgba32(32, 80, 140)))
+            source.SaveAsPng(Path.Combine(resultsPath, "image.png"));
         File.WriteAllText(Path.Combine(resultsPath, "..", "x.html"), "<html><body><script>alert(document.cookie)</script></body></html>");
         Directory.CreateDirectory(Path.Combine(_workspace, "projects", ProjectName, "docs"));
         File.WriteAllText(Path.Combine(_workspace, "projects", ProjectName, "docs", "diagram.svg"),
@@ -175,6 +178,17 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         {
             Assert.Equal(HttpStatusCode.OK, image.StatusCode);
             Assert.Equal("no-store", Header(image, "Cache-Control"));
+        }
+
+        using (var thumbnail = await SendAsync(client, HttpMethod.Get,
+                   $"/api/tasks/{TaskKey}/thumbnail?path=image.png", owner.SessionToken))
+        {
+            Assert.Equal(HttpStatusCode.OK, thumbnail.StatusCode);
+            var cacheDirectives = Header(thumbnail, "Cache-Control")
+                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            Assert.Contains("private", cacheDirectives);
+            Assert.Contains("max-age=3600", cacheDirectives);
+            Assert.DoesNotContain("no-store", cacheDirectives);
         }
 
         // The networked boundary keeps task files Runner-only (prompt.md under
