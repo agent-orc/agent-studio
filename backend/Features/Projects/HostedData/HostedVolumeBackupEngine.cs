@@ -215,25 +215,38 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
     private void RecoverPendingRestores()
     {
         if (!Directory.Exists(_volumeRoot)) return;
-        foreach (var marker in Directory.EnumerateFiles(_volumeRoot, "*.restore-pending", SearchOption.AllDirectories))
+        if ((File.GetAttributes(_volumeRoot) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Volume root is a symbolic link.");
+        foreach (var project in Directory.EnumerateDirectories(_volumeRoot))
+        foreach (var environment in Directory.EnumerateDirectories(project))
         {
-            var destination = marker[..^".restore-pending".Length];
-            var restoreId = File.ReadAllText(marker);
-            if (!Guid.TryParseExact(restoreId, "N", out _)) throw new InvalidDataException("Invalid pending volume restore marker.");
-            var previous = destination + ".previous-" + restoreId;
-            var staging = destination + ".restore-" + restoreId;
-            if (!Directory.Exists(destination))
-            {
-                if (!Directory.Exists(previous)) throw new InvalidDataException("Pending volume restore has no live or previous directory.");
-                Directory.Move(previous, destination);
-            }
-            File.Delete(marker);
-            if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
-            if (Directory.Exists(previous))
-            {
-                try { _deletePrevious(previous); }
-                catch (Exception ex) { _logger.LogWarning(ex, "Recovered volume, but could not remove previous directory {Previous}", previous); }
-            }
+            if ((File.GetAttributes(project) & FileAttributes.ReparsePoint) != 0
+                || (File.GetAttributes(environment) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("Volume identity directory is a symbolic link.");
+            foreach (var marker in Directory.EnumerateFiles(environment, "*.restore-pending"))
+                RecoverPendingRestore(marker);
+        }
+    }
+
+    private void RecoverPendingRestore(string marker)
+    {
+        var destination = marker[..^".restore-pending".Length];
+        Segment(Path.GetFileName(destination));
+        var restoreId = File.ReadAllText(marker);
+        if (!Guid.TryParseExact(restoreId, "N", out _)) throw new InvalidDataException("Invalid pending volume restore marker.");
+        var previous = destination + ".previous-" + restoreId;
+        var staging = destination + ".restore-" + restoreId;
+        if (!Directory.Exists(destination))
+        {
+            if (!Directory.Exists(previous)) throw new InvalidDataException("Pending volume restore has no live or previous directory.");
+            Directory.Move(previous, destination);
+        }
+        File.Delete(marker);
+        if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+        if (Directory.Exists(previous))
+        {
+            try { _deletePrevious(previous); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Recovered volume, but could not remove previous directory {Previous}", previous); }
         }
     }
 

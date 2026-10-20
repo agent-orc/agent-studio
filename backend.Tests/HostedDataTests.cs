@@ -160,6 +160,9 @@ public sealed class HostedDataTests : IDisposable
         Directory.CreateDirectory(path);
         File.WriteAllText(Path.Combine(path, "data.txt"), "live-before-restore");
         var restoreId = Guid.NewGuid().ToString("N");
+        var staging = path + ".restore-" + restoreId;
+        Directory.CreateDirectory(staging);
+        File.WriteAllText(Path.Combine(staging, "data.txt"), "staged-replacement");
 
         engine.MoveLiveAside(path, restoreId);
         Assert.False(Directory.Exists(path));
@@ -169,5 +172,6 @@ public sealed class HostedDataTests : IDisposable
         Assert.Equal("live-before-restore", File.ReadAllText(Path.Combine(path, "data.txt")));
         Assert.False(File.Exists(path + ".restore-pending"));
         Assert.False(Directory.Exists(path + ".previous-" + restoreId));
+        Assert.False(Directory.Exists(staging));
     }
 }
