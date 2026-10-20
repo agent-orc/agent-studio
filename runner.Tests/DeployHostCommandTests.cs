@@ -31,6 +31,8 @@ public sealed class DeployHostCommandTests
         {
             var commands = 0;
             JsonElement report = default;
+            var clock = new FakeTimeProvider();
+            var secondHealth = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var steps = Enumerable.Range(0, 3).Select(index => new ProjectDeployStep(
                 "container", "app", "web-vm", null, null, null, [], ["staging"])
             {
@@ -55,7 +57,11 @@ public sealed class DeployHostCommandTests
                     return new(HttpStatusCode.OK);
                 }
                 if (path == "/0") return new(HttpStatusCode.OK);
-                if (path == "/1") return new(HttpStatusCode.ServiceUnavailable);
+                if (path == "/1")
+                {
+                    secondHealth.TrySetResult();
+                    return new(HttpStatusCode.ServiceUnavailable);
+                }
                 throw new InvalidOperationException("Later steps and health probes must not run.");
             })) { BaseAddress = new Uri("https://studio.test/") };
             var executor = new SshDeployExecutor((_, _, _, _) =>
@@ -64,9 +70,12 @@ public sealed class DeployHostCommandTests
                 return Task.FromResult(new ProcessResult(0, "", ""));
             });
 
-            var result = await DeployHostCommand.RunAsync(
+            var running = DeployHostCommand.RunAsync(
                 ["https://studio.test", "web-vm", tokenFile, "/unused"], CancellationToken.None,
-                client, executor, client);
+                client, executor, client, clock);
+            await secondHealth.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            clock.Advance(TimeSpan.FromSeconds(1));
+            var result = await running.WaitAsync(TimeSpan.FromSeconds(5));
 
             Assert.Equal(1, result);
             Assert.Equal(2, commands);

@@ -120,7 +120,7 @@ public static class DeployHostCommand
                 await heartbeat;
                 claim.Token.ThrowIfCancellationRequested();
                 using var reportLimit = CancellationTokenSource.CreateLinkedTokenSource(claim.Token);
-                reportLimit.CancelAfter(TimeSpan.FromSeconds(30));
+                using var reportTimeout = CancelAfter(reportLimit, clock, TimeSpan.FromSeconds(30));
                 using var report = await client.PostAsJsonAsync(
                     $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/report",
                     new { job.LeaseToken, Healthy = healthy, Evidence = evidence, Steps = stepResults }, reportLimit.Token);
@@ -149,7 +149,7 @@ public static class DeployHostCommand
             while (await timer.WaitForNextTickAsync(stop))
             {
                 using var renewLimit = CancellationTokenSource.CreateLinkedTokenSource(stop);
-                renewLimit.CancelAfter(TimeSpan.FromSeconds(15));
+                using var renewTimeout = CancelAfter(renewLimit, clock, TimeSpan.FromSeconds(15));
                 using var response = await client.PostAsJsonAsync(
                     $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/renew",
                     new { job.LeaseToken }, renewLimit.Token);
@@ -176,10 +176,14 @@ public static class DeployHostCommand
         TimeProvider clock, CancellationToken ct)
     {
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        limit.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(seconds ?? 60, 1, 900)));
+        using var timeout = CancelAfter(limit, clock, TimeSpan.FromSeconds(Math.Clamp(seconds ?? 60, 1, 900)));
         try { return await CheckHealth(url, transport, clock, limit.Token); }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return false; }
     }
+
+    private static ITimer CancelAfter(CancellationTokenSource source, TimeProvider clock, TimeSpan delay)
+        => clock.CreateTimer(state => ((CancellationTokenSource)state!).Cancel(), source,
+            delay, Timeout.InfiniteTimeSpan);
 
     private static async Task<Dictionary<string, string>> ResolveVariables(Job job, HttpClient client, CancellationToken ct)
     {
@@ -327,7 +331,7 @@ public static class DeployHostCommand
             try
             {
                 using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                attempt.CancelAfter(TimeSpan.FromSeconds(10));
+                using var attemptTimeout = CancelAfter(attempt, clock, TimeSpan.FromSeconds(10));
                 using var response = await client.GetAsync(url, attempt.Token);
                 if (response.IsSuccessStatusCode) return true;
             }
