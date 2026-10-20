@@ -1,0 +1,43 @@
+# Work-zone overlay for a Docker work host whose control plane runs elsewhere
+# (AGT-3231), for example the review and gate containers on a dedicated VM:
+#
+#   docker compose -f docker-compose.yml -f deploy/zones/compose.work-zone.yaml \
+#     up -d --no-deps agent-host-distributed agent-host-review-distributed
+#
+# Each agent host leaves the stack's control and runner networks for the zone's
+# agent-work network, which deploy/zones/apply-zone-policy.sh --execute creates
+# and firewalls; it publishes no port and reads the applied zone policy state to
+# report it as its zone-policy capability. Export RUNNER_SERVER_URL as the
+# remote control plane URL, whose host the policy's control-plane destination
+# allows. Do not use this overlay on a one-box install, where the agent hosts
+# reach the Task Server over the stack's control network.
+x-zone-policy-state: &zone-policy-state
+  type: bind
+  source: /var/lib/agent-studio/zone-policy
+  target: /var/lib/agent-studio/zone-policy
+  read_only: true
+
+services:
+  agent-host-distributed:
+    networks: !override [agent-work]
+    ports: !reset []
+    depends_on: !reset {}
+    environment:
+      RUNNER_SERVER_URL: ${RUNNER_SERVER_URL:?set RUNNER_SERVER_URL to the remote control plane URL}
+      RUNNER_ZONE_POLICY_STATE: /var/lib/agent-studio/zone-policy/applied.json
+    volumes:
+      - *zone-policy-state
+
+  agent-host-review-distributed:
+    networks: !override [agent-work]
+    ports: !reset []
+    depends_on: !reset {}
+    environment:
+      RUNNER_SERVER_URL: ${RUNNER_SERVER_URL:?set RUNNER_SERVER_URL to the remote control plane URL}
+      RUNNER_ZONE_POLICY_STATE: /var/lib/agent-studio/zone-policy/applied.json
+    volumes:
+      - *zone-policy-state
+
+networks:
+  agent-work:
+    external: true

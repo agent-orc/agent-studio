@@ -292,6 +292,15 @@ public sealed class RunnerOptions
     public int LoadGateSustainedSeconds { get; init; } = 120;
 
     /// <summary>
+    /// AGT-3231: the zone policy state <c>agent-host zone-policy apply
+    /// --execute</c> records on this host. The daemon reports it as the
+    /// <c>zone-policy</c> capability; a missing file reports nothing. Parsed
+    /// options default to <see cref="ZonePolicyStateStore.DefaultPath"/> on
+    /// Linux and to none elsewhere.
+    /// </summary>
+    public string ZonePolicyStatePath { get; init; } = "";
+
+    /// <summary>
     /// AGT-2993: filesystem whose free space admits a compose scenario review
     /// step (the Docker data root, where its images and build cache land). When
     /// the path does not exist the review workspace's filesystem is measured.
@@ -551,6 +560,8 @@ public sealed class RunnerOptions
             CommandSilenceWatchdogSeconds = EnvInt("RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS", 600),
             LoadGateSustainedSeconds = EnvInt("RUNNER_LOAD_GATE_SUSTAINED_SECONDS", 120),
             DockerDataRoot = Env("RUNNER_DOCKER_DATA_ROOT", "/var/lib/docker"),
+            ZonePolicyStatePath = Env("RUNNER_ZONE_POLICY_STATE",
+                OperatingSystem.IsLinux() ? ZonePolicyStateStore.DefaultPath : ""),
             ComposeScenarioMinFreePercent = Math.Min(100, EnvIntAllowingZero(
                 "RUNNER_COMPOSE_SCENARIO_MIN_FREE_PERCENT",
                 ComposeScenarioDiskAdmission.DefaultMinFreePercent)),

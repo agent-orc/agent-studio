@@ -1,0 +1,9 @@
+zone policy 2026-10-20.1 (policy sha256:<policy-sha256>, rules sha256:<rules-sha256>)
+1. ensure docker network agent-work (zone work, bridge br-agent-work, subnet 172.30.0.0/24, inter-container off)
+   when missing: docker network create --driver bridge --subnet 172.30.0.0/24 --opt com.docker.network.bridge.name=br-agent-work --opt com.docker.network.bridge.enable_icc=false --label org.agent-studio.zone=work agent-work
+2. ensure docker network agent-run-default (zone run, bridge br-run-default, subnet 172.31.0.0/24, inter-container on)
+   when missing: docker network create --driver bridge --subnet 172.31.0.0/24 --opt com.docker.network.bridge.name=br-run-default --opt com.docker.network.bridge.enable_icc=true --label org.agent-studio.zone=run --label org.agent-studio.tenant=default agent-run-default
+3. iptables-restore --noflush: replace AGENT-ZONE-FWD and AGENT-ZONE-IN with 69 rules
+4. ensure DOCKER-USER jumps to AGENT-ZONE-FWD (iptables -I DOCKER-USER 1 -j AGENT-ZONE-FWD)
+5. ensure INPUT jumps to AGENT-ZONE-IN (iptables -I INPUT 1 -j AGENT-ZONE-IN)
+6. verify with probe containers, then record the applied state

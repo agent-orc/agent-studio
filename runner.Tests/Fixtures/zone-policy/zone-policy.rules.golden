@@ -1,0 +1,77 @@
+# Rendered by agent-host zone-policy from policy 2026-10-20.1 (sha256:<policy-sha256>).
+# Load with iptables-restore --noflush; only the AGENT-ZONE-* chains are replaced.
+*filter
+:AGENT-ZONE-FWD - [0:0]
+:AGENT-ZONE-IN - [0:0]
+-A AGENT-ZONE-FWD -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+-A AGENT-ZONE-IN -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+# zone work (work) network agent-work bridge br-agent-work subnet 172.30.0.0/24
+-A AGENT-ZONE-FWD -o br-agent-work -m comment --comment "work/agent-work: no inbound" -j DROP
+-A AGENT-ZONE-FWD -i br-agent-work -d 192.0.2.53/32 -p udp --dport 53 -m comment --comment "work/agent-work: allow dns" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 192.0.2.53/32 -p tcp --dport 53 -m comment --comment "work/agent-work: allow dns" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 192.0.2.54/32 -p udp --dport 53 -m comment --comment "work/agent-work: allow dns" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 192.0.2.54/32 -p tcp --dport 53 -m comment --comment "work/agent-work: allow dns" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.18.186.112/32 -p tcp -m multiport --dports 443,5071 -m comment --comment "work/agent-work: allow control-plane" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.18.4.175/32 -p tcp -m multiport --dports 22,443 -m comment --comment "work/agent-work: allow git-hosts" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.18.164.34/32 -p tcp -m multiport --dports 22,443 -m comment --comment "work/agent-work: allow git-hosts" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.18.235.1/32 -p tcp -m multiport --dports 22,443 -m comment --comment "work/agent-work: allow git-hosts" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.19.48.151/32 -p tcp -m multiport --dports 22,443 -m comment --comment "work/agent-work: allow git-hosts" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.19.107.170/32 -p tcp -m multiport --dports 22,443 -m comment --comment "work/agent-work: allow git-hosts" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.18.153.86/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.18.170.42/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.18.207.163/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.19.23.200/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.19.138.51/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.19.193.16/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.19.212.96/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.19.242.101/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.18.36.12/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.18.62.72/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.18.74.127/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.18.120.58/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.18.204.37/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.19.30.216/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.19.77.56/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.19.121.151/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -d 198.19.255.151/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-FWD -i br-agent-work -m comment --comment "work/agent-work: deny other egress" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-IN -i br-agent-work -d 192.0.2.53/32 -p udp --dport 53 -m comment --comment "work/agent-work: allow dns" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 192.0.2.53/32 -p tcp --dport 53 -m comment --comment "work/agent-work: allow dns" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 192.0.2.54/32 -p udp --dport 53 -m comment --comment "work/agent-work: allow dns" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 192.0.2.54/32 -p tcp --dport 53 -m comment --comment "work/agent-work: allow dns" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.18.186.112/32 -p tcp -m multiport --dports 443,5071 -m comment --comment "work/agent-work: allow control-plane" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.18.4.175/32 -p tcp -m multiport --dports 22,443 -m comment --comment "work/agent-work: allow git-hosts" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.18.164.34/32 -p tcp -m multiport --dports 22,443 -m comment --comment "work/agent-work: allow git-hosts" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.18.235.1/32 -p tcp -m multiport --dports 22,443 -m comment --comment "work/agent-work: allow git-hosts" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.19.48.151/32 -p tcp -m multiport --dports 22,443 -m comment --comment "work/agent-work: allow git-hosts" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.19.107.170/32 -p tcp -m multiport --dports 22,443 -m comment --comment "work/agent-work: allow git-hosts" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.18.153.86/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.18.170.42/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.18.207.163/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.19.23.200/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.19.138.51/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.19.193.16/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.19.212.96/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.19.242.101/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow package-registries" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.18.36.12/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.18.62.72/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.18.74.127/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.18.120.58/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.18.204.37/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.19.30.216/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.19.77.56/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.19.121.151/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -d 198.19.255.151/32 -p tcp --dport 443 -m comment --comment "work/agent-work: allow model-providers" -j RETURN
+-A AGENT-ZONE-IN -i br-agent-work -m comment --comment "work/agent-work: deny other egress" -j REJECT --reject-with icmp-admin-prohibited
+# zone run (run) network agent-run-default bridge br-run-default subnet 172.31.0.0/24 tenant default
+-A AGENT-ZONE-FWD -i br-run-default -d 198.18.186.112/32 -m comment --comment "run/agent-run-default: deny control-plane" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -d 10.20.0.0/16 -m comment --comment "run/agent-run-default: deny secret-store" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -d 192.0.2.80/32 -m comment --comment "run/agent-run-default: deny secret-store" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-IN -i br-run-default -d 198.18.186.112/32 -m comment --comment "run/agent-run-default: deny control-plane" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-IN -i br-run-default -d 10.20.0.0/16 -m comment --comment "run/agent-run-default: deny secret-store" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-IN -i br-run-default -d 192.0.2.80/32 -m comment --comment "run/agent-run-default: deny secret-store" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -o br-agent-work -m comment --comment "run/agent-run-default: isolate from agent-work" -j DROP
+-A AGENT-ZONE-IN -i br-run-default -p udp --dport 53 -m comment --comment "run/agent-run-default: host dns" -j RETURN
+-A AGENT-ZONE-IN -i br-run-default -p tcp --dport 53 -m comment --comment "run/agent-run-default: host dns" -j RETURN
+-A AGENT-ZONE-IN -i br-run-default -m comment --comment "run/agent-run-default: no host services" -j REJECT --reject-with icmp-admin-prohibited
+COMMIT

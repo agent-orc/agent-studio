@@ -158,6 +158,8 @@ internal static class RunnerCapabilityProbe
         foreach (var requirement in ReviewLibraryStepPolicy.ToolchainRequirements)
             AddToolchain(list, requirement.Key, requirement.ProbeExecutable);
         AddComposeRender(list, ComposeRenderVersion);
+        if (ZonePolicyCapability.Describe(options.ZonePolicyStatePath, ZoneKinds.Work) is { } zonePolicy)
+            list.Add(zonePolicy);
         return list;
     }
 
