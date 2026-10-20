@@ -70,6 +70,7 @@ import { GlobalSearchComponent } from './components/global-search/global-search.
 import { ChatSessionsPanelComponent, OrchestratorFeedStore } from '../orchestrator';
 import { UsageDetailSurfaceComponent } from '../usage-cockpit';
 import { EnvironmentFlowComponent } from './components/environment-flow/environment-flow.component';
+import { WorkspaceDeploymentDashboardComponent } from '../deployments';
 /** Canonicalise project storage paths so titlebar workspace lookup survives
  * slash style, trailing separator, and case differences. */
 function normalizeStorage(path: string): string {
@@ -104,7 +105,7 @@ function cliColorFor(cli: string): string {
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHeaderComponent, UsageDetailSurfaceComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent],
+  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHeaderComponent, UsageDetailSurfaceComponent, ChatSessionsPanelComponent, EnvironmentFlowComponent, WorkspaceDeploymentDashboardComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -152,7 +153,7 @@ export class StudioShellComponent {
   private readonly workspaceOverlays = inject(WorkspaceOverlaysService);
   private readonly projectLookup = inject(ProjectLookupService);
   private readonly themeService = inject(ThemeService);
-  private readonly orchestratorFeed = inject(OrchestratorFeedStore);
+  readonly orchestratorFeed = inject(OrchestratorFeedStore);
 
   /** Tab list + active selection re-exposed for the template. */
   readonly tabs = this.tabState.tabs;
@@ -656,6 +657,12 @@ export class StudioShellComponent {
     this.tabState.open({ kind: 'board', projectName });
   }
 
+  openDeploymentDashboard(): void { this.tabState.open({ kind: 'deployment-dashboard' }); }
+
+  openProjectDeployment(projectName: string): void {
+    this.tabState.open({ kind: 'hub', projectName, section: 'deployment' });
+  }
+
   openFeed(): void {
     this.orchestratorFeed.markAlertsSeen();
     this.tabState.open({ kind: 'feed' });
@@ -681,12 +688,7 @@ export class StudioShellComponent {
     this.tabState.open({ kind: 'hub', projectName, section: area });
   }
 
-  /**
-   * AGT-2067 — open (or focus) a Project URL's embedded preview tab. Replaces
-   * the old `window.open` browser jump on the Explorer URL row: the URL now
-   * renders inside a sandboxed iframe as its own editor tab (one tab per URL),
-   * so it docks beside the Orchestrator side sheet like every other surface.
-   */
+  /** Open or focus a Project URL preview as a shell tab. */
   openUrlPreview(e: { projectName: string; urlId: string }): void {
     this.tabState.open({ kind: 'url-preview', projectName: e.projectName, urlId: e.urlId });
   }
@@ -1159,6 +1161,8 @@ export class StudioShellComponent {
         return this.findProjectUrl(tab.projectName, tab.urlId)?.label || tab.urlId;
       case 'workspace-settings':
         return 'Workspace settings';
+      case 'deployment-dashboard':
+        return 'Deployment dashboard';
       case 'welcome':
         return 'Welcome';
       default:

@@ -1,0 +1,20 @@
+@if (cases().length) {
+  <section class="operational-stalls" aria-label="Open host and container stalls" data-testid="operational-stalls">
+    <h3>Open host and container stalls <strong>{{ cases().length }}</strong></h3>
+    <ul>
+      @for (item of cases(); track item.id) {
+        <li [attr.data-severity]="item.severity">
+          <span class="operational-stalls__dot" aria-hidden="true"></span>
+          <div>
+            <strong>{{ subjectLabel(item.subject) }}</strong>
+            <span>{{ item.lastSummary }}</span>
+            <small>{{ item.severity }} · {{ item.blockedCount ?? item.affectedCards.length }} affected cards
+              @if (item.sinceUtc) { · since <time [attr.datetime]="item.sinceUtc">{{ timeLabel(item.sinceUtc) }}</time> }
+            </small>
+            @if (item.suggestedAction) { <p>Suggested action: {{ item.suggestedAction }}</p> }
+          </div>
+        </li>
+      }
+    </ul>
+  </section>
+}

@@ -122,9 +122,8 @@
               (click)="toggleTheme()">
         <app-studio-icon [name]="theme() === 'light' ? 'moon' : 'sun'" [size]="14"></app-studio-icon>
       </button>
-      <button type="button" class="studio-titlebar__iconbtn" cacTooltip="Notifications" aria-label="Notifications"
-              data-nav-inline-from="desktop">
-        <app-studio-icon name="bell" [size]="14"></app-studio-icon>
+      <button type="button" class="studio-titlebar__iconbtn" data-testid="studio-open-stalls" [attr.aria-label]="orchestratorFeed.openStallCount() + ' open stalls'" cacTooltip="Open stall events" (click)="openFeed()">
+        <app-studio-icon name="bell" [size]="14"></app-studio-icon> @if (orchestratorFeed.openStallCount()) { <strong class="studio-titlebar__stall-count">{{ orchestratorFeed.openStallCount() }}</strong> }
       </button>
     </div>
   </app-usage-cockpit-header>
@@ -226,6 +225,8 @@
           @switch (activePanel()) {
             @case ('explorer') {
               <section class="studio-explorer">
+                <button type="button" class="studio-deployment-entry" data-testid="studio-open-deployment-dashboard"
+                        (click)="openDeploymentDashboard()">Deployment dashboard</button>
                 <!-- F46: two-level workspace → project tree. The flat
                      project list is grouped under its registry workspace
                      by <app-explorer-workspace-tree>; the shell keeps
@@ -493,10 +494,18 @@
           inside the new shell without re-implementing handlers here.
         -->
         <ng-content select="[studioContent]"></ng-content>
+        @if (activeTab()?.kind === 'deployment-dashboard') {
+          <app-workspace-deployment-dashboard
+            [projectNames]="knownProjectNames()"
+            [projectStorageByName]="projectStorageByName()"
+            [workspaces]="registryWorkspaces()"
+            (openDeployment)="openProjectDeployment($event)" />
+        }
         @if (activeTab() === null) {
           <app-studio-welcome
             [projects]="projectRows()"
             (boardOpened)="openBoard($event)"
+            (deploymentDashboardOpened)="openDeploymentDashboard()"
             (chatOpened)="chatToggle.emit()" />
         }
         </div>

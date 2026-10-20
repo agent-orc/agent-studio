@@ -1,0 +1,21 @@
+:host { display: block; }
+.access { display: grid; gap: var(--studio-spacing-5); color: var(--studio-fg); }
+.access h2, .access h3, .access p { margin: 0; }
+.access header, .access__group { display: grid; gap: var(--studio-spacing-3); }
+.access header p, .access small, .access__notice { color: var(--studio-fg-muted); }
+.access__group { padding: var(--studio-spacing-3) 0; }
+.access__form { display: flex; flex-wrap: wrap; align-items: end; gap: var(--studio-spacing-3); }
+.access__form label { display: grid; gap: var(--studio-spacing-1); min-width: 10rem; flex: 1; }
+.access input, .access select { width: 100%; min-height: 2rem; color: var(--studio-fg); background: var(--studio-bg-surface); border: 1px solid var(--studio-border); border-radius: var(--studio-action-radius-sm); }
+.access button { min-height: 2rem; color: var(--studio-fg); background: var(--studio-bg-surface); border: 1px solid var(--studio-border); border-radius: var(--studio-action-radius-sm); cursor: pointer; }
+.access button:focus-visible, .access input:focus-visible, .access select:focus-visible { outline: 2px solid var(--studio-accent); }
+.access button:disabled { opacity: .5; cursor: default; }
+.access__list { display: grid; }
+.access__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--studio-spacing-3); padding: var(--studio-spacing-3) 0; border-top: 1px solid var(--studio-border); }
+.access__row > div:first-child { display: grid; gap: var(--studio-spacing-1); min-width: 0; }
+.access__row small { overflow-wrap: anywhere; font-size: .8rem; font-variant-numeric: tabular-nums; }
+.access__actions { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); }
+.access__edit { flex-basis: 100%; }
+.access__secret { display: grid; gap: var(--studio-spacing-2); padding: var(--studio-spacing-4); background: var(--studio-bg-hover); }
+.access__secret code { overflow-wrap: anywhere; user-select: all; }
+.access__error { color: var(--studio-error); }
