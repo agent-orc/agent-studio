@@ -27,7 +27,7 @@ function setup(role: 'owner' | 'viewer' = 'owner') {
   });
   const service = {
     overview, state: signal('ready'), error: signal<string | null>(null), load: vi.fn(),
-    environments: vi.fn(() => of(['stage', 'prod'])),
+    environments: vi.fn(() => of([{ id: 'stage', kind: 'staging' }, { id: 'prod', kind: 'production' }])),
     add: vi.fn(() => of(secret('workspace', 'NEW_KEY'))),
     rotate: vi.fn(() => of(secret('workspace', 'MAIL_KEY'))),
     revoke: vi.fn(() => of(secret('workspace', 'MAIL_KEY'))),

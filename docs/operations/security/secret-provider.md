@@ -102,7 +102,8 @@ and reason (`not-bound`, `not-found`, `revoked`, `unreadable`, or
 `{ "reference": "secret://...", "approve": true|false }`. Only the current
 Owner or Operator secret-management check may write. A Production binding
 also needs an interactive Owner or project production approver with
-`approve: true`; the binding records that approval. This is the single
+`approve: true`; Production is identified by the declaration's `kind`, even
+when its environment ID is custom. The binding records that approval. This is the single
 permission seam for AGT-3228 to replace with scope roles.
 
 Bindings are persisted under

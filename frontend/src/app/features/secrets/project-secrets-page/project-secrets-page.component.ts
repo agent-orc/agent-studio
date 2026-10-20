@@ -1,7 +1,7 @@
-import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { AuthSessionState } from '../../../services/auth.service';
-import { SecretsService } from '../secrets.service';
+import { SecretsService, type SecretEnvironment } from '../secrets.service';
 import { SecretsPanelComponent } from '../secrets-panel/secrets-panel.component';
 
 interface Binding { name: string; reference: string; approvedBy: string | null }
@@ -22,7 +22,9 @@ export class ProjectSecretsPageComponent {
   private readonly auth = inject(AuthSessionState);
   readonly projectName = input.required<string>();
   readonly environment = signal('preview');
-  readonly environments = signal<readonly string[]>(['preview', 'stage', 'prod']);
+  readonly environments = signal<readonly string[]>(['preview']);
+  readonly declarations = signal<readonly SecretEnvironment[]>([]);
+  readonly isProduction = computed(() => this.declarations().some(item => item.id === this.environment() && item.kind === 'production'));
   readonly check = signal<Preflight | null>(null);
   readonly name = signal('');
   readonly reference = signal('');
@@ -38,8 +40,10 @@ export class ProjectSecretsPageComponent {
   constructor() {
     effect(() => {
       const project = this.projectName();
-      this.secrets.environments(project).subscribe(ids =>
-        this.environments.set([...new Set(['preview', ...ids])]));
+      this.secrets.environments(project).subscribe(declarations => {
+        this.declarations.set(declarations);
+        this.environments.set([...new Set(['preview', ...declarations.map(item => item.id)])]);
+      });
     });
     effect(() => this.refresh(this.projectName(), this.environment()));
   }
@@ -48,6 +52,7 @@ export class ProjectSecretsPageComponent {
     this.environment.set(value);
     this.name.set('');
     this.reference.set('');
+    this.approve.set(false);
   }
 
   selectMissing(item: Missing): void {

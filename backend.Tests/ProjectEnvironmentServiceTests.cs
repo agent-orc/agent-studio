@@ -43,10 +43,12 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.DoesNotContain("sensitive-value", JsonSerializer.Serialize(service.Read("demo")));
     }
 
-    [Fact]
-    public async Task Bindings_require_production_approval_and_preflight_checks_inherited_and_revoked_values()
+    [Theory]
+    [InlineData("production")]
+    [InlineData("live-east")]
+    public async Task Bindings_require_production_approval_and_preflight_checks_inherited_and_revoked_values(string productionId)
     {
-        var (environments, _, _) = Build();
+        var (environments, _, _) = Build(productionId: productionId);
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = Path.Combine(_root, "workspace"),
@@ -57,21 +59,24 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
             new SecretAuditLog(config), new SecretValueScrubber(_clock), _clock,
             NullLogger<SecretProvider>.Instance);
         var bindings = new ProjectSecretBindings(config, provider, environments, _clock);
-        var before = await bindings.CheckAsync("demo", "production");
+        var reference = $"secret://demo/{productionId}/DATABASE_URL";
+        var before = await bindings.CheckAsync("demo", productionId);
         Assert.Equal("not-bound", Assert.Single(before.Missing).Reason);
-        Assert.Throws<SecretAccessDeniedException>(() => bindings.Bind("demo", "production", "DATABASE_URL",
-            "secret://demo/production/DATABASE_URL", "human:owner", null));
-        Assert.Throws<SecretValidationException>(() => bindings.Bind("demo", "production", "DATABASE_URL",
+        Assert.Throws<SecretAccessDeniedException>(() => bindings.Bind("demo", productionId, "DATABASE_URL",
+            reference, "human:owner", null));
+        Assert.Empty(bindings.ApprovedReferences("demo", productionId));
+        Assert.Throws<SecretValidationException>(() => bindings.Bind("demo", productionId, "DATABASE_URL",
             "secret://other/DATABASE_URL", "human:owner", "owner"));
-        bindings.Bind("demo", "production", "DATABASE_URL", "secret://demo/production/DATABASE_URL",
+        bindings.Bind("demo", productionId, "DATABASE_URL", reference,
             "human:owner", "owner");
-        Assert.Equal("not-found", Assert.Single((await bindings.CheckAsync("demo", "production")).Missing).Reason);
+        Assert.Equal(reference, bindings.ApprovedReferences("demo", productionId)["DATABASE_URL"]);
+        Assert.Equal("not-found", Assert.Single((await bindings.CheckAsync("demo", productionId)).Missing).Reason);
         var value = "runtime-" + Guid.NewGuid().ToString("N");
         await provider.PutAsync(SecretScope.ForProject("demo"), "DATABASE_URL", value, SecretActor.Human("owner"));
-        Assert.True((await bindings.CheckAsync("demo", "production")).Ready);
+        Assert.True((await bindings.CheckAsync("demo", productionId)).Ready);
         Assert.DoesNotContain(value, File.ReadAllText(Directory.GetFiles(Path.Combine(_root, "workspace", ".security", "secret-bindings"))[0]));
         await provider.RevokeAsync(SecretScope.ForProject("demo"), "DATABASE_URL", null, SecretActor.Human("owner"));
-        Assert.Equal("revoked", Assert.Single((await bindings.CheckAsync("demo", "production")).Missing).Reason);
+        Assert.Equal("revoked", Assert.Single((await bindings.CheckAsync("demo", productionId)).Missing).Reason);
     }
 
     [Fact]
@@ -392,7 +397,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false,
-        string project = "demo")
+        string project = "demo", string productionId = "production")
     {
         var repo = Path.Combine(_root, "repo");
         var watch = Path.Combine(_root, "workspace", "projects", project);
@@ -414,7 +419,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         }));
         File.WriteAllText(Path.Combine(declarations, "production.json"), JsonSerializer.Serialize(new
         {
-            id = "production", name = "Production", kind = "production", targetHostId = "prod-host",
+            id = productionId, name = "Production", kind = "production", targetHostId = "prod-host",
             address = "https://example", template = "container", destination = "8082",
             healthUrl = "https://example/health", approval = timedApproval ? "stage-healthy-10m" : "person",
             secretRefs = new[] { "DATABASE_URL" },

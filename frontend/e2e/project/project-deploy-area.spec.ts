@@ -349,7 +349,13 @@ test.describe('Project Deploy area (mocked)', () => {
 });
 
 test('Project Secrets shows missing references, binds Production after approval, and keeps values write-only', async ({ page }) => {
-  await openDeploy(page, fullMocks());
+  const productionId = 'live-east';
+  const declared = deployEnvironmentsFixture();
+  await openDeploy(page, fullMocks({ environments: {
+    ...declared,
+    environments: declared.environments.map(item => item.declaration.kind === 'production'
+      ? { ...item, declaration: { ...item.declaration, id: productionId } } : item),
+  } }));
   let bound = false;
   await page.route('**/api/secrets', route => route.fulfill({ json: {
     store: 'builtin', keySource: 'key-file', canWriteWorkspace: true, secrets: [], unreadable: [],
@@ -359,23 +365,23 @@ test('Project Secrets shows missing references, binds Production after approval,
     const environment = url.pathname.split('/')[5];
     if (route.request().method() === 'PUT') {
       const body = route.request().postDataJSON() as { reference: string; approve: boolean };
-      expect(body).toEqual({ reference: `secret://${PROJECT}/production/DATABASE_URL`, approve: true });
+      expect(body).toEqual({ reference: `secret://${PROJECT}/${productionId}/DATABASE_URL`, approve: true });
       bound = true;
       await route.fulfill({ json: { name: 'DATABASE_URL', reference: body.reference, approvedBy: 'owner' } });
       return;
     }
-    const reference = `secret://${PROJECT}/production/DATABASE_URL`;
+    const reference = `secret://${PROJECT}/${productionId}/DATABASE_URL`;
     await route.fulfill({ json: {
-      project: PROJECT, environment, ready: environment !== 'production' || bound,
+      project: PROJECT, environment, ready: environment !== productionId || bound,
       bindings: bound ? [{ name: 'DATABASE_URL', reference, approvedBy: 'owner' }] : [],
-      missing: environment === 'production' && !bound
-        ? [{ name: 'DATABASE_URL', reference, scope: `${PROJECT}/production`, reason: 'not-bound' }] : [],
+      missing: environment === productionId && !bound
+        ? [{ name: 'DATABASE_URL', reference, scope: `${PROJECT}/${productionId}`, reason: 'not-bound' }] : [],
     } });
   });
   await page.getByTestId('deploy-tab-secrets').click();
   const secrets = page.getByTestId('project-secrets-page');
   await expect(secrets).toBeVisible();
-  await secrets.getByTestId('project-secrets-environment').selectOption('production');
+  await secrets.getByTestId('project-secrets-environment').selectOption(productionId);
   await expect(secrets.getByTestId('project-secrets-missing')).toContainText('not-bound');
   await secrets.getByRole('button', { name: 'Bind DATABASE_URL' }).click();
   await secrets.getByTestId('project-secrets-approve').check();
