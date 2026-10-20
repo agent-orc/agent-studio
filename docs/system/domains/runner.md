@@ -2181,8 +2181,14 @@ second pending intervention on the subject and compares the live value
 a mismatch it records `superseded` and does nothing. Cards and gate members are
 re-checked at apply time as well.
 An admission reduction also checks fresh overload or memory pressure immediately
-before the side effect. The restart path re-reads slot telemetry and active
-review leases immediately before recreating the container.
+before the side effect. Both lowering and restoring admission use an atomic
+compare-and-set against the planned before-value, so a capacity edit made by a
+person between the live read and the write is preserved. The restart path
+fences new review claims, confirms the host is drained using fresh slot
+telemetry and active leases, then holds the fence through the Operations Server
+attempt. The agent writes a durable restart-started marker before Docker runs;
+if result spooling fails after recreation, replay reports an unknown outcome
+and never recreates the service a second time.
 
 An action whose effect cannot be measured right after it ran is escalated at
 once and not reported as done; an admission change, a reroute or a pinned base
