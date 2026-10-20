@@ -1,0 +1,13 @@
+:host { display: block; }
+.runbooks { margin-top: var(--studio-spacing-5); padding-top: var(--studio-spacing-4); border-top: 1px solid var(--studio-border); }
+.runbooks header, .runbooks__definition, .runbooks__run, .runbooks__approval { display: flex; align-items: center; justify-content: space-between; gap: var(--studio-spacing-3); }
+.runbooks__definition, .runbooks__run, .runbooks__approval { flex-wrap: wrap; }
+.runbooks h3, .runbooks h4 { margin: 0 0 var(--studio-spacing-3); color: var(--studio-fg-strong); }
+.runbooks h4 { margin-top: var(--studio-spacing-4); }
+.runbooks p { margin: var(--studio-spacing-1) 0; color: var(--studio-fg-dim); }
+.runbooks__definition, .runbooks > ol > li { padding: var(--studio-spacing-3) 0; border-top: 1px solid var(--studio-border); }
+.runbooks ol { padding-left: var(--studio-spacing-5); }
+.runbooks button { padding: var(--studio-spacing-2) var(--studio-spacing-3); border: 1px solid var(--studio-border-strong); border-radius: 6px; background: var(--studio-surface-muted); color: var(--studio-fg); cursor: pointer; }
+.runbooks button:disabled { opacity: .5; cursor: default; }
+.runbooks__approval { justify-content: start; margin-top: var(--studio-spacing-2); }
+.runbooks__log { background: var(--studio-surface-muted); padding: var(--studio-spacing-3) var(--studio-spacing-3) var(--studio-spacing-3) var(--studio-spacing-5) !important; }

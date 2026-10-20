@@ -22,6 +22,12 @@
             <h3>{{ environment.declaration.name }}</h3>
             <span class="project-environments__state" [attr.data-health]="environment.health">{{ healthLabel(environment.health) }}</span>
             <p>{{ environment.deployedArtifact ? 'Running ' + environment.deployedArtifact : 'Nothing deployed yet' }}</p>
+            @if (environment.declaration.kind === 'stage' || environment.declaration.kind === 'production') {
+              @defer (on immediate) {
+                <app-project-runbooks [projectName]="projectName()" [environmentId]="environment.declaration.id"
+                  [environmentKind]="environment.declaration.kind === 'stage' ? 'staging' : 'production'" />
+              }
+            }
           </article>
         }
       </div>

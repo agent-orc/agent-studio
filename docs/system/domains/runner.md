@@ -2127,6 +2127,68 @@ not labelled as drift. The policy accepts a deployment start error when one is
 provided by a release source; the current collector does not yet receive
 compose errors or image digests for arbitrary containers.
 
+## Environment runbooks
+
+`project.yml` schema 2 accepts `runbooks` as named ordered lists:
+
+```yaml
+runbooks:
+  - name: restart
+    steps: [restart-container]
+  - name: backup
+    steps: [backup]
+  - name: enter-maintenance
+    steps: [maintenance-on]
+  - name: leave-maintenance
+    steps: [maintenance-off]
+  - name: rotation
+    steps: [rotate-secrets, restart-container]
+```
+
+Optional `environments`
+restricts a runbook to staging or production. The integration branch version
+is read when the run is requested; its steps and environment-scoped variables
+are frozen in the run. Plain variables and secret-provider names follow the
+deployment variable contract. A production run waits for a signed-in Owner or
+Maintainer; approval queues the frozen steps through the existing deploy host
+claim and report lease. No artifact is required and the release and deployment
+history remain unchanged. Runs share the deployment log and audit store.
+
+The project deployment API uses the prefix
+`/api/projects/{projectName}/deploy`. The environment page uses these
+runbook routes:
+
+| Method | Path after the prefix | Purpose |
+|---|---|---|
+| `GET` | `/runbooks` | List runbook definitions from the integration branch. |
+| `GET` | `/runbooks/runs?environmentId={environmentId}` | List runs for one environment; omit the query to list all project runs. |
+| `GET` | `/runbooks/runs/{runId}` | Read one run, including its steps and approval state. |
+| `GET` | `/runbooks/runs/{runId}/log?step={stepName}` | Read the run log; omit `step` for every step. |
+| `POST` | `/environments/{environmentId}/runbooks/{name}/runs` | Request a run with no request body. Returns `202 Accepted` and the run. |
+| `POST` | `/runbooks/runs/{runId}/approve` | Approve a waiting run and queue its frozen steps. Returns the updated run. |
+| `POST` | `/runbooks/runs/{runId}/reject` | Reject a waiting run. Returns the updated run. |
+
+The mutation routes use the signed-in project actor and the same public-demo
+execution admission as deployment mutations. Production approval and rejection
+require an Owner or Maintainer. `GET /audit` under the same prefix includes
+runbook request, approval, rejection and completion events. A run response
+includes its `id`, `environmentId`, `state`, `steps` and `definitionCommit`;
+each step has a `logRef` for its filtered log.
+
+The target host keeps operator-owned scripts at
+`/etc/agent-host/runbooks/<project>/<step>.sh`. The host runs each script with
+`sh` and no shell text from the repository. It supplies
+`AGENT_STUDIO_PROJECT`, `AGENT_STUDIO_ENVIRONMENT`,
+`AGENT_STUDIO_DESTINATION`, scoped plain variables and named secrets as
+environment variables. Scripts must exit zero to advance; failure stops the
+remaining steps. The host drains output locally and reports only step success
+or failure, so logs do not expose secret values. A step times out after nine
+minutes, and the whole run after ten. On Linux, `setsid` gives each script its
+own process group; timeout or host cancellation also applies while draining
+output after the script exits, kills that group and waits for its output streams
+to close. Install scripts on the assigned deploy host before
+invoking the runbook.
+
 ## Verification
 
 - Outcome and grammar changes need focused unit tests for analyzer, policy,

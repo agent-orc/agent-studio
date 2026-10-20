@@ -392,12 +392,12 @@ describe('ProjectDeployAreaComponent', () => {
     expect(host().querySelector('app-project-deployment-panel')).not.toBeNull();
   });
 
-  it('marks the active tab for assistive technology and keeps P2 tabs disabled', async () => {
+  it('marks the active tab for assistive technology and keeps the P2 tab disabled', async () => {
     await click('deploy-tab-history');
 
     expect(byTestId('deploy-tab-history')?.getAttribute('aria-current')).toBe('page');
     expect(byTestId('deploy-tab-overview')?.getAttribute('aria-current')).toBeNull();
     const disabled = Array.from(host().querySelectorAll('.deploy-tabs button:disabled')).map(button => button.textContent?.trim());
-    expect(disabled).toEqual(['Variables · P2', 'Runbooks · P2']);
+    expect(disabled).toEqual(['Variables · P2']);
   });
 });

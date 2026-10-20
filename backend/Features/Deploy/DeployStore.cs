@@ -74,6 +74,22 @@ public sealed class DeployStore
         File.Move(WriteFlushed(path, deployments), path, true);
     }
 
+    public IReadOnlyList<RunbookRun> ReadRunbookRuns(string project)
+    {
+        var path = Path.Combine(ProjectRoot(project), "runbooks.json");
+        return File.Exists(path)
+            ? JsonSerializer.Deserialize<List<RunbookRun>>(File.ReadAllText(path), _json) ?? []
+            : [];
+    }
+
+    public void SaveRunbookRuns(string project, IReadOnlyList<RunbookRun> runs)
+    {
+        var root = ProjectRoot(project);
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "runbooks.json");
+        File.Move(WriteFlushed(path, runs), path, true);
+    }
+
     public void AppendLog(string project, IEnumerable<DeploymentLogEntry> entries)
     {
         foreach (var group in entries.GroupBy(item => item.DeploymentId, StringComparer.Ordinal))
