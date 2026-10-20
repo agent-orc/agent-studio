@@ -2,8 +2,10 @@ import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
 
 interface ExecutionInfrastructure {
-  gate: { host: string | null; busy: number; total: number; reachability: string;
-    lastReachedAt: string | null; lastFailureAt: string | null };
+  gate: { host: string | null; transport?: 'pull' | 'ssh'; busy: number; total: number; reachability: string;
+    lastReachedAt: string | null; lastFailureAt: string | null;
+    workers?: readonly { id: string; name: string; slots: number; busy: number;
+      lastHeartbeat: string; currentRun: string | null }[] };
   taskServer: string;
   engine: { state: string; required: boolean; lastContact: string | null; lastEngineId: string | null };
   workstation: string;

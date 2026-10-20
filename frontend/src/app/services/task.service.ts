@@ -2281,6 +2281,12 @@ export class TaskService {
     );
   }
 
+  getOperationalStalls() {
+    return this.http.get<{ count: number; cases: import('../features/orchestrator').OperationalStallCase[] }>(
+      `${this.baseUrl}/watcher/stalls`,
+    );
+  }
+
   /**
    * Read the per-project list of 4-review jobs whose latest CLI output
    * carries an unresolved [[TASK_NEEDS_INPUT]] sentinel. Drives the

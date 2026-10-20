@@ -1,0 +1,10 @@
+# Use with compose.yaml when Studio shares a Docker host with coding runners.
+services:
+  api:
+    cgroup_parent: studio.slice
+    mem_reservation: 1g
+    mem_limit: 4g
+  frontend:
+    cgroup_parent: studio.slice
+  edge:
+    cgroup_parent: studio.slice

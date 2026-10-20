@@ -61,6 +61,48 @@ public sealed class RunLeaseServiceTests
         Assert.True(leases.TryAcquire(Acquire("AGT-1", "remote-runner")).Granted);
     }
 
+    [Fact]
+    public void Local_held_lease_observes_stop_between_steps_and_releases_it()
+    {
+        var now = new DateTime(2026, 10, 16, 12, 0, 0, DateTimeKind.Utc);
+        var authority = new AttemptAuthorityService(
+            NullLogger<AttemptAuthorityService>.Instance, () => now);
+        var leases = new RunLeaseService(NullLogger<RunLeaseService>.Instance, authority, () => now);
+        var stops = new RemoteRunStopRequestStore(() => now);
+        var identity = new RunnerIdentity("local-runner", "local", "host", "backend", "token", "1");
+        var local = new LocalRunClaimAdapter(leases, identity, NullLogger.Instance, stops);
+        var booked = local.TryAcquire("AGT-1", () => { });
+        var lease = booked.Lease!;
+        var stop = stops.Record("AGT-1", RemoteRunStopReasons.User,
+            lease.AttemptId, "operator", lease.FencingToken, "local-stop");
+
+        Assert.True(local.StopRequested("AGT-1"));
+        Assert.Equal("observed", stops.GetReceipt(stop.CommandId)?.State);
+        local.Release("AGT-1");
+
+        Assert.Equal("Free", leases.Peek("AGT-1").Outcome);
+        Assert.Equal("stopped", authority.GetTaskProjection("AGT-1").CurrentRunAttempt?.TerminalOutcome);
+        Assert.Equal("settled", stops.GetReceipt(stop.CommandId)?.TerminalReason);
+        Assert.Null(stops.Peek("AGT-1"));
+    }
+
+    [Fact]
+    public void Remote_held_lease_delivers_stop_only_to_matching_attempt()
+    {
+        var now = new DateTime(2026, 10, 16, 12, 0, 0, DateTimeKind.Utc);
+        var leases = NewService(() => now);
+        var stops = new RemoteRunStopRequestStore(() => now);
+        var lease = leases.TryAcquire(Acquire("AGT-2", "remote-runner")).Lease!;
+        var stop = stops.Record("AGT-2", RemoteRunStopReasons.User,
+            lease.AttemptId, "operator", lease.FencingToken, "remote-stop");
+
+        Assert.True(leases.Renew(Heartbeat(lease)).Granted);
+        Assert.Null(stops.Observe("AGT-2", lease.AttemptId, lease.FencingToken + 1));
+        Assert.Equal(stop.CommandId,
+            stops.Observe("AGT-2", lease.AttemptId, lease.FencingToken)?.CommandId);
+        Assert.Equal("Held", leases.Peek("AGT-2").Outcome);
+    }
+
     // §8.2C: "Two runner processes race the same ready task; only one gets a lease."
     [Fact]
     public void TwoRunnersRaceSameTask_OnlyOneGetsLease()

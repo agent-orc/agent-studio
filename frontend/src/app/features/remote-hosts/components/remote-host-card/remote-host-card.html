@@ -121,10 +121,10 @@
                 <span class="provider-auth__badge"
                       [attr.data-state]="auth.state"
                       [attr.data-testid]="'remote-host-provider-auth-' + auth.provider"
-                      [appTooltip]="auth.detail">
+                      [appTooltip]="auth.detail + ' Last checked: ' + (auth.advertisedAt || 'not checked')">
                   <span class="provider-auth__dot" aria-hidden="true"></span>
                   <strong>{{ auth.providerLabel }}</strong>
-                  <span>{{ auth.state }}</span>
+                  <span>{{ providerLoginStateLabel(auth) }}</span>
                 </span>
                 @if (signInLabel(auth); as label) { <button type="button" class="provider-auth__sign-in"
                   [attr.data-testid]="'remote-host-' + auth.provider + '-sign-in'" (click)="openSignIn(auth)">{{ label }}</button> }

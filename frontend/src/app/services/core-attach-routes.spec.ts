@@ -61,6 +61,7 @@ describe('core-attach versioned routes', () => {
   it('sends the five auth operations to /api/v1/studio/auth', () => {
     const auth = TestBed.inject(AuthService);
     auth.initialize();
+    expectRequest('GET', '/api/auth/status', { profile: 'local', bootstrapRequired: false, authenticated: false });
     expectRequest('GET', '/api/v1/studio/auth/status');
     auth.login('owner', 'secret').subscribe();
     expectRequest('POST', '/api/v1/studio/auth/login');

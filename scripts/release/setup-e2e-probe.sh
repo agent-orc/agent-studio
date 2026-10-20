@@ -262,6 +262,7 @@ systemd_root="$probe_root/etc/systemd"
 setup_binary="$release_root/agent-studio-setup"
 control_output="$probe_root/control-output"
 join_file="$probe_root/join.token"
+owner_session_file="$probe_root/owner.session"
 base_url="http://127.0.0.1:$port"
 
 export AGENT_SETUP_SKIP_ROOT_CHECK=1
@@ -302,13 +303,32 @@ if [[ "${SETUP_E2E_CONTROL_ONLY:-0}" == 1 ]]; then
   exit 0
 fi
 
-[[ -s "$orchestrator_config/join.token" ]] || {
-  echo "Control Plane setup did not create a protected join token file." >&2
+[[ "$(stat -c '%a' "$orchestrator_config/studio.token")" == 600 ]] || {
+  echo "Control Plane management token is not owner-only." >&2
   exit 4
 }
-cp "$orchestrator_config/join.token" "$join_file"
-chmod 0600 "$join_file"
-rm -f -- "$control_output"
+python3 "$repo_root/scripts/release/installation-first-use.py" \
+  --server-url "$base_url" \
+  --studio-token-file "$orchestrator_config/studio.token" \
+  --owner-code-file "$orchestrator_config/owner_bootstrap_code" \
+  --owner-session-file "$owner_session_file" \
+  --repository-url "$SCENARIO_GIT_REMOTE" \
+  >"$runtime_root/first-use.log"
+"$setup_binary" join-token \
+  --runner-name agent-runner-02-e2e \
+  --route reverse-tunnel \
+  --server-url "$base_url" \
+  --authority-url "$base_url" \
+  --token-file "$orchestrator_config/studio.token" \
+  --owner-session-file "$owner_session_file" \
+  --join-token-file "$join_file" \
+  --release-version "$version" \
+  >"$runtime_root/join-issuance.log"
+[[ "$(head -c 6 "$join_file")" == 'aosj2.' ]] || {
+  echo "Join-token command did not issue a current single-use token." >&2
+  exit 4
+}
+rm -f -- "$control_output" "$owner_session_file"
 
 if ! "$setup_binary" \
   --join \
@@ -336,7 +356,7 @@ for name in sys.argv[1:]:
         if "git" not in line.lower() and "read-only" not in line.lower():
             continue
         line = re.sub(r"(?i)\b[0-9a-f]{64}\b", "[redacted]", line)
-        line = re.sub(r"aosj1[.][A-Za-z0-9._-]+", "[redacted]", line)
+        line = re.sub(r"aosj[12][.][A-Za-z0-9._-]+", "[redacted]", line)
         print(line[:300])
 PY
   echo "The scratch repository did not provide Git write access." >&2
@@ -344,12 +364,6 @@ PY
 fi
 
 curl -fsS "$base_url/readyz" >"$runtime_root/ready.json"
-python3 "$repo_root/scripts/release/installation-first-use.py" \
-  --server-url "$base_url" \
-  --studio-token-file "$orchestrator_config/studio.token" \
-  --owner-code-file "$orchestrator_config/owner_bootstrap_code" \
-  --repository-url "$SCENARIO_GIT_REMOTE" \
-  >"$runtime_root/first-use.log"
 token="$(sed -n '1p' "$orchestrator_config/studio.token")"
 remote_hosts="$(
   curl -fsS \
@@ -390,10 +404,10 @@ PASS
 2. Every release asset passed SHA-256 verification before extraction.
 3. The setup executable installed the Control Plane into isolated native paths and /readyz reported ready.
 4. The setup executable installed the matching Studio static tree.
-5. The Control Plane emitted an aosj1 join token. The probe transferred it only through a mode-0600 temporary file and did not retain the token.
+5. The owner bootstrapped and the setup join-token command issued an aosj2 single-use token through a mode-0600 temporary file. The probe did not retain the token.
 6. The same setup executable consumed the join token, verified a fake host-owned Codex login and Git read access, installed agent-host, and started it through the isolated systemctl fixture.
 7. Setup waited for the daemon's startup capability result and required Git write access to the scratch repository.
-8. The owner bootstrap API accepted the installer-generated one-time code, and the owner registered the scratch repository as a project.
+8. The owner bootstrap API accepted the installer-generated one-time code, and the owner registered the scratch repository as a project before token issuance.
 9. The real Task Server management API reported the joined runner identity.
 10. Task Server, Orchestrator Engine, and Agent Host processes were live at the final assertion.
 
