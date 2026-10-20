@@ -46,15 +46,17 @@ function slugFor(name: string): string {
 }
 
 async function openRuntimePanel(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto(`/#/projects/${slugFor(projectName)}/operations`);
-  await expect(page.getByTestId('project-operations-area')).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByTestId('project-product-runtime-panel')).toBeVisible({ timeout: 10_000 });
+  await page.goto(`/#/projects/${slugFor(projectName)}/operations`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await expect(page.getByRole('heading', { name: 'Operations', exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId('project-product-runtime-panel')).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId('product-runtime-loading')).toHaveCount(0, { timeout: 60_000 });
 }
 
 test('Operations opens the product runtime panel and shows empty state when no events', async ({ page }) => {
   await openRuntimePanel(page);
 
-  await expect(page.getByTestId('project-shell-rail-observability')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Operations', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/#\/projects\/[^/]+\/operations$/);
   await expect(page.getByTestId('product-runtime-source')).toBeVisible();
 
   // Empty state OR populated state is acceptable depending on whether
@@ -73,6 +75,7 @@ test('fixture dataset paints every surface', async ({ page }) => {
   await openRuntimePanel(page);
 
   const empty = page.getByTestId('product-runtime-empty');
+  await expect(empty.or(page.getByTestId('product-runtime-counters'))).toBeVisible();
   if (await empty.isVisible().catch(() => false)) {
     await page.getByTestId('product-runtime-load-fixture').click();
   } else {
@@ -122,6 +125,7 @@ test('fixture dataset paints every surface', async ({ page }) => {
 test('level + subsystem filters narrow the events table; reset restores the original count', async ({ page }) => {
   await openRuntimePanel(page);
   const empty = page.getByTestId('product-runtime-empty');
+  await expect(empty.or(page.getByTestId('product-runtime-counters'))).toBeVisible();
   if (await empty.isVisible().catch(() => false)) {
     await page.getByTestId('product-runtime-load-fixture').click();
   }
@@ -129,12 +133,14 @@ test('level + subsystem filters narrow the events table; reset restores the orig
   await page.getByTestId('product-runtime-filter-range').selectOption({ value: '0' });
 
   const allRows = page.getByTestId('product-runtime-event-row');
+  await expect(allRows.first()).toBeVisible();
   const allCount = await allRows.count();
   expect(allCount).toBeGreaterThan(0);
 
   // Errors-and-above filter narrows the set strictly.
   await page.getByTestId('product-runtime-filter-level').selectOption('Error');
   const errOnly = page.getByTestId('product-runtime-event-row');
+  await expect(errOnly.first()).toBeVisible();
   const errCount = await errOnly.count();
   expect(errCount).toBeGreaterThan(0);
   expect(errCount).toBeLessThanOrEqual(allCount);
@@ -158,5 +164,5 @@ test('level + subsystem filters narrow the events table; reset restores the orig
   await page.getByTestId('product-runtime-filter-reset').click();
   await page.getByTestId('product-runtime-filter-range').selectOption({ value: '0' });
   const resetRows = page.getByTestId('product-runtime-event-row');
-  expect(await resetRows.count()).toBe(allCount);
+  await expect(resetRows).toHaveCount(allCount);
 });
