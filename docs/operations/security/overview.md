@@ -179,7 +179,11 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   the card release flag address `production`, and a rollback resolves its
   `environmentId` to the kind of that declaration (an undeclared id resolves
   to no environment, so only workspace and project bindings grant it). The
-  store refuses any other environment key with `invalid-scope`.
+  deployment-request route reads `environmentId` from the JSON body and
+  requires `environment.deploy` on that declared environment in both the
+  route permission check and the handler's scope check. A stage binding cannot
+  request a deployment to another environment. The store refuses any other
+  environment key with `invalid-scope`.
 - Deployment status, release, deployment, log, and audit reads require
   `project.read`. Deployment actions require a deploy permission. Production
   approve and reject routes require `environment.production.deploy.approve`;

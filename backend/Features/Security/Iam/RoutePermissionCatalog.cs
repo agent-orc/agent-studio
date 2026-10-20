@@ -10,12 +10,15 @@ namespace AgentStudio.Security;
 /// fixed canonical environment key (<see cref="IamEnvironments"/>);
 /// <see cref="EnvironmentRouteValue"/> names the route value that carries an
 /// environment id, which resolves to the key of its declaration.
+/// <see cref="EnvironmentBodyField"/> names a JSON request field carrying an
+/// environment id when the route does not contain it.
 /// </summary>
 public sealed record RequiredPermissionMetadata(
     string Permission,
     string? Environment = null,
     string? EnvironmentRouteValue = null,
-    bool ProjectBindingsSuffice = false);
+    bool ProjectBindingsSuffice = false,
+    string? EnvironmentBodyField = null);
 
 /// <summary>
 /// One route's permission split by method: <see cref="Read"/> for GET, HEAD,
@@ -163,6 +166,8 @@ public static class RoutePermissionCatalog
             => Add(methods, permission, [.. suffixes.Select(suffix => prefix + "/" + suffix)]);
         void Environment(string methods, string permission, string pattern, string? environment, string? routeValue = null)
             => rules.Add(new Rule(methods, Split(pattern), new RequiredPermissionMetadata(permission, environment, routeValue)));
+        void BodyEnvironment(string methods, string permission, string pattern, string field)
+            => rules.Add(new Rule(methods, Split(pattern), new RequiredPermissionMetadata(permission, EnvironmentBodyField: field)));
 
         // --- Anonymous, own session, and access administration -------------
         Add("*", IamPermissions.Anonymous, "/healthz/**");
@@ -219,8 +224,8 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/deploy/deployments", "/api/projects/{}/deploy/deployments/page",
             "/api/projects/{}/deploy/deployments/{}",
             "/api/projects/{}/deploy/deployments/{}/log", "/api/projects/{}/deploy/audit");
-        Environment("POST", IamPermissions.EnvironmentDeploy,
-            "/api/projects/{}/deploy/releases/{}/deployments", null);
+        BodyEnvironment("POST", IamPermissions.EnvironmentDeploy,
+            "/api/projects/{}/deploy/releases/{}/deployments", "environmentId");
         Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
             "/api/projects/{}/deploy/deployments/{}/approve", IamEnvironments.Production);
         Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,

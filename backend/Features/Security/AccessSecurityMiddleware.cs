@@ -341,7 +341,7 @@ public sealed class AccessSecurityMiddleware
         }
 
         var (subject, bindings) = _store.PrincipalBindings(IamPrincipalKind.User, human.User.Id);
-        var target = Target(context, path, required, safeMethod);
+        var target = await TargetAsync(context, path, required, safeMethod);
         var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
         var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
         if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return;
@@ -461,7 +461,7 @@ public sealed class AccessSecurityMiddleware
             return false;
         }
         var (subject, bindings) = _store.PrincipalBindings(IamPrincipalKind.User, human.User.Id);
-        var target = Target(context, path, required, safeMethod: true);
+        var target = await TargetAsync(context, path, required, safeMethod: true);
         var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
         var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
         if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return false;
@@ -510,7 +510,7 @@ public sealed class AccessSecurityMiddleware
         }
         var safeMethod = IsSafe(context.Request.Method, path);
         var (subject, bindings) = _store.PrincipalBindings(IamPrincipalKind.ServiceAccount, account.AccountId);
-        var target = Target(context, path, required, safeMethod);
+        var target = await TargetAsync(context, path, required, safeMethod);
         var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
         var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
         if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return;
@@ -566,7 +566,7 @@ public sealed class AccessSecurityMiddleware
     /// needs a workspace binding (review item 1) unless the route declares
     /// that its handler checks every project it touches.
     /// </summary>
-    private PermissionTarget Target(HttpContext context, string path, RequiredPermissionMetadata required, bool safeMethod)
+    private async Task<PermissionTarget> TargetAsync(HttpContext context, string path, RequiredPermissionMetadata required, bool safeMethod)
     {
         var endpoint = context.GetEndpoint();
         var address = path.StartsWith("/api/secrets/workspace", StringComparison.OrdinalIgnoreCase)
@@ -575,11 +575,38 @@ public sealed class AccessSecurityMiddleware
         var scope = address.Scope == ProjectRouteScope.Unaddressed && !safeMethod && !required.ProjectBindingsSuffice
             ? ProjectRouteScope.WorkspaceWide
             : address.Scope;
-        var environment = required.Environment
-            ?? (required.EnvironmentRouteValue is { } key
-                ? ResolveEnvironmentKey(address, RouteValue(context, path, endpoint, key))
-                : null);
+        var environmentId = required.EnvironmentRouteValue is { } key
+            ? RouteValue(context, path, endpoint, key)
+            : required.EnvironmentBodyField is { } field
+                ? await BodyEnvironmentIdAsync(context.Request, field)
+                : null;
+        var environment = required.Environment ?? ResolveEnvironmentKey(address, environmentId);
         return new PermissionTarget(scope, address.Projects, environment, context.Request.Query["project"].FirstOrDefault());
+    }
+
+    private static async Task<string?> BodyEnvironmentIdAsync(HttpRequest request, string field)
+    {
+        request.EnableBuffering();
+        try
+        {
+            using var document = await System.Text.Json.JsonDocument.ParseAsync(request.Body,
+                cancellationToken: request.HttpContext.RequestAborted);
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            foreach (var property in document.RootElement.EnumerateObject())
+                if (string.Equals(property.Name, field, StringComparison.OrdinalIgnoreCase))
+                    return property.Value.ValueKind == System.Text.Json.JsonValueKind.String
+                        ? property.Value.GetString() : null;
+            return null;
+        }
+        catch (System.Text.Json.JsonException exception)
+        {
+            SilentCatch.Note(exception, "AccessSecurityMiddleware: invalid environment request body");
+            return null;
+        }
+        finally
+        {
+            request.Body.Position = 0;
+        }
     }
 
     /// <summary>

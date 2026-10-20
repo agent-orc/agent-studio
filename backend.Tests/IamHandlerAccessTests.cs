@@ -390,6 +390,34 @@ public sealed class IamHandlerAccessTests : IDisposable
         Assert.Equal(HttpStatusCode.Forbidden, deniedApproval.StatusCode);
     }
 
+    [Fact]
+    public async Task Environment_developer_can_request_only_its_declared_deployment_environment()
+    {
+        using var factory = BuildFactory();
+        WriteEnvironmentDeclaration("alpha", "staging-id", "stage");
+        WriteEnvironmentDeclaration("alpha", "preview-id", "other");
+        var declarations = factory.Services.GetRequiredService<ProjectEnvironmentService>().Declarations("alpha")!;
+        Assert.Equal(2, declarations.Count);
+        var now = factory.Services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
+        factory.Services.GetRequiredService<AgentStudio.Deploy.DeployStore>().AppendRelease("alpha",
+            new AgentStudio.Deploy.ReleaseRecord(new AgentStudio.Deploy.Release("stage-release", "alpha", "1.0.0",
+                new string('a', 40), ["registry.test/app@sha256:" + new string('b', 64)], "process", "variables", [],
+                now, AgentStudio.Deploy.ReleaseSnapshot.DefaultChannel), declarations));
+        using var client = Client(factory, Invite(factory, "stage.deployer",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForEnvironment("alpha", IamEnvironments.Stage))));
+
+        using var stage = await client.PostAsJsonAsync("/api/projects/alpha/deploy/releases/stage-release/deployments",
+            new DeploymentRequest("staging-id"));
+        Assert.Equal(HttpStatusCode.Accepted, stage.StatusCode);
+
+        using var other = await client.PostAsJsonAsync("/api/projects/alpha/deploy/releases/stage-release/deployments",
+            new DeploymentRequest("preview-id"));
+        Assert.Equal(HttpStatusCode.Forbidden, other.StatusCode);
+        using var foreign = await client.PostAsJsonAsync("/api/projects/beta/deploy/releases/missing/deployments",
+            new DeploymentRequest("staging-id"));
+        Assert.Equal(HttpStatusCode.Forbidden, foreign.StatusCode);
+    }
+
     private HttpRequestMessage OrphanFolderDelete() => new(HttpMethod.Delete, "/api/tasks/orphan-folder")
     {
         Content = JsonContent.Create(new { watchPath = ProjectPath("alpha"), lane = TaskStates.Archive, folder = "no-such-folder" }),
@@ -434,6 +462,18 @@ public sealed class IamHandlerAccessTests : IDisposable
     }
 
     private string ProjectPath(string project) => Path.Combine(_workspace, "projects", project);
+
+    private void WriteEnvironmentDeclaration(string project, string id, string kind)
+    {
+        var declarations = Path.Combine(ProjectPath(project), "docs", "deployments", "environments");
+        Directory.CreateDirectory(declarations);
+        File.WriteAllText(Path.Combine(declarations, id + ".json"), JsonSerializer.Serialize(new
+        {
+            id, name = id, kind, targetHostId = "test-host", address = "https://example.test",
+            template = "container", destination = "8081", healthUrl = "https://example.test/health",
+            approval = "person", secretRefs = Array.Empty<string>(),
+        }));
+    }
 
     private BatchMoveRequest BatchMove(string jobId, string project, string target) => new()
     {

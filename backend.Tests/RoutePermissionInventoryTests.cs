@@ -126,6 +126,8 @@ public sealed class RoutePermissionInventoryTests : IDisposable
 
         Assert.Equal("production", approve?.Environment);
         Assert.Equal("environmentId", rollback?.EnvironmentRouteValue);
+        Assert.Equal("environmentId", RoutePermissionCatalog.Resolve("POST",
+            "/api/projects/{}/deploy/releases/{}/deployments")?.EnvironmentBodyField);
         Assert.Equal("environment", RoutePermissionCatalog.Resolve("GET", "/api/projects/{}/environments/{}/secrets")?.EnvironmentRouteValue);
     }
 

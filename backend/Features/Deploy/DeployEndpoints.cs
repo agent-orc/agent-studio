@@ -45,8 +45,19 @@ public static class DeployEndpoints
             deploy.Audit(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
         project.MapPost("/releases/{releaseId}/deployments", (HttpContext context, string projectName,
-            string releaseId, DeploymentRequest request, DeployService deploy) =>
-            Respond(deploy.RequestDeployment(projectName, releaseId, request, Actor(context, projectName)), accepted: true))
+            string releaseId, DeploymentRequest request, DeployService deploy,
+            ProjectEnvironmentService environments) =>
+        {
+            if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access)
+            {
+                var environment = IamEnvironments.ForDeclaration(environments.Declarations(projectName), request.EnvironmentId);
+                if (!access.Allows(IamPermissions.EnvironmentDeploy,
+                        PermissionTarget.ForProject(projectName, environment)))
+                    return Results.Json(new { error = "environment-scope-denied" },
+                        statusCode: StatusCodes.Status403Forbidden);
+            }
+            return Respond(deploy.RequestDeployment(projectName, releaseId, request, Actor(context, projectName)), accepted: true);
+        })
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapPost("/deployments/{deploymentId}/approve", (HttpContext context, string projectName,
