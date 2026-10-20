@@ -30,6 +30,141 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
     }
 
     [Fact]
+    public void Oversized_usernames_count_only_against_the_client_budget()
+    {
+        var store = NewStore(new() { ["Security:LoginThrottle:ClientMaxFailures"] = "2" }, (_, _) => false);
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        var oversized = new string('x', 100_000);
+
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login(oversized, "wrong password", "192.0.2.1")).Status);
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login(oversized + "2", "wrong password", "192.0.2.1")).Status);
+        Assert.Equal((1, 0, 0, 0), store.LoginStateCounts);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", Password, "192.0.2.1")).Status);
+    }
+
+    [Fact]
+    public void Distinct_unknown_users_and_clients_cannot_evict_active_failure_budgets()
+    {
+        var store = NewStore(new()
+        {
+            ["Security:LoginThrottle:MaxTrackedClients"] = "4",
+            ["Security:LoginThrottle:MaxTrackedUsernames"] = "4",
+            ["Security:LoginThrottle:ClientMaxFailures"] = "2",
+            ["Security:LoginThrottle:UsernameMaxFailures"] = "100"
+        }, (_, _) => false);
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+
+        for (var i = 0; i < 4; i++)
+            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("invented." + i, "wrong", "192.0.2." + i)).Status);
+        for (var i = 4; i < 104; i++)
+            Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("invented." + i, "wrong", "198.51.100." + i)).Status);
+
+        Assert.Equal((4, 4, 0, 0), store.LoginStateCounts);
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented.0", "wrong", "192.0.2.0")).Status);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented.0", "wrong", "192.0.2.0")).Status);
+        Assert.Equal((4, 4, 0, 0), store.LoginStateCounts);
+    }
+
+    [Fact]
+    public void Many_unknown_usernames_from_one_client_keep_the_username_table_bounded()
+    {
+        var store = NewStore(new()
+        {
+            ["Security:LoginThrottle:MaxTrackedUsernames"] = "3",
+            ["Security:LoginThrottle:ClientMaxFailures"] = "5"
+        }, (_, _) => false);
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        for (var i = 0; i < 3; i++)
+            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("invented." + i, "wrong", "192.0.2.1")).Status);
+        for (var i = 3; i < 103; i++)
+            Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("invented." + i, "wrong", "192.0.2.1")).Status);
+        Assert.Equal((1, 3, 0, 0), store.LoginStateCounts);
+    }
+
+    [Fact]
+    public void Known_account_can_sign_in_when_failure_tables_are_full()
+    {
+        var store = NewStore(new()
+        {
+            ["Security:LoginThrottle:MaxTrackedClients"] = "1",
+            ["Security:LoginThrottle:MaxTrackedUsernames"] = "1"
+        }, (password, _) => password == Password);
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented", "wrong", "192.0.2.1")).Status);
+
+        Assert.Equal("owner", store.Login("owner", Password, "192.0.2.2").User.Username);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", "wrong", "192.0.2.2")).Status);
+        Assert.Equal((1, 1, 1, 0), store.LoginStateCounts);
+    }
+
+    [Fact]
+    public void Expired_failure_budgets_release_capacity_but_active_lockouts_remain()
+    {
+        var store = NewStore(new()
+        {
+            ["Security:LoginThrottle:WindowMinutes"] = "1",
+            ["Security:LoginThrottle:ClientLockoutMinutes"] = "3",
+            ["Security:LoginThrottle:ClientMaxFailures"] = "1",
+            ["Security:LoginThrottle:MaxTrackedClients"] = "2",
+            ["Security:LoginThrottle:MaxTrackedUsernames"] = "2"
+        }, (_, _) => false);
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        foreach (var i in new[] { 1, 2 })
+            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("invented." + i, "wrong", "192.0.2." + i)).Status);
+
+        _clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented.3", "wrong", "192.0.2.3")).Status);
+        Assert.Equal((2, 0, 0, 0), store.LoginStateCounts);
+
+        _clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented.3", "wrong", "192.0.2.3")).Status);
+        Assert.Equal((1, 1, 0, 0), store.LoginStateCounts);
+    }
+
+    [Fact]
+    public void Recent_successes_and_delays_expire_and_stay_bounded()
+    {
+        var store = NewStore(new()
+        {
+            ["Security:LoginThrottle:WindowMinutes"] = "1",
+            ["Security:LoginThrottle:RecentSuccessMinutes"] = "2",
+            ["Security:LoginThrottle:UsernameMaxFailures"] = "1",
+            ["Security:LoginThrottle:ClientMaxFailures"] = "100",
+            ["Security:LoginThrottle:MaxRecentSuccesses"] = "3",
+            ["Security:LoginThrottle:MaxDelayEntries"] = "3"
+        }, (password, _) => password == Password);
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        for (var i = 0; i < 30; i++)
+            store.Login("owner", Password, "192.0.2." + i);
+        Assert.Equal(3, store.LoginStateCounts.RecentSuccesses);
+
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", "wrong", "192.0.2.30")).Status);
+        for (var i = 31; i < 60; i++)
+            Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("owner", "wrong", "192.0.2." + i)).Status);
+        Assert.Equal(3, store.LoginStateCounts.Delays);
+        _clock.Advance(TimeSpan.FromMinutes(3));
+        // Any login triggers expiry without relying on wall-clock time.
+        store.Login("owner", Password, "192.0.2.90");
+        Assert.Equal((0, 0, 1, 0), store.LoginStateCounts);
+    }
+
+    [Fact]
     public void Username_budget_delays_new_clients_but_preserves_a_recently_successful_client()
     {
         var store = NewStore(new()

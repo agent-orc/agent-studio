@@ -30,6 +30,7 @@ public sealed class AccessSecurityStore
     private readonly Dictionary<string, DateTime> _recentSuccessfulLogins = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTime> _usernameClientDelays = new(StringComparer.Ordinal);
     private readonly HashSet<string> _clientsHashing = new(StringComparer.Ordinal);
+    private DateTime _nextLoginPruneAt = DateTime.MinValue;
     private readonly SemaphoreSlim _passwordHashSlots;
     private readonly Func<string, string, bool> _verifyPassword;
     private static readonly string DummyPasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken());
@@ -58,6 +59,17 @@ public sealed class AccessSecurityStore
             : _configuration["TaskRepository"]!, ".security");
     private string StatePath => Path.Combine(SecurityFolder, "access-state.json");
     private DateTime Now => _clock.GetUtcNow().UtcDateTime;
+    private int MaxTrackedClients => Math.Clamp(_configuration.GetValue("Security:LoginThrottle:MaxTrackedClients", 8192), 1, 65536);
+    private int MaxTrackedUsernames => Math.Clamp(_configuration.GetValue("Security:LoginThrottle:MaxTrackedUsernames", 8192), 1, 65536);
+    private int MaxRecentSuccesses => Math.Clamp(_configuration.GetValue("Security:LoginThrottle:MaxRecentSuccesses", 8192), 1, 65536);
+    private int MaxDelayEntries => Math.Clamp(_configuration.GetValue("Security:LoginThrottle:MaxDelayEntries", 8192), 1, 65536);
+    private TimeSpan RecentSuccessWindow => TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:RecentSuccessMinutes", 1440));
+
+    internal (int Clients, int Usernames, int RecentSuccesses, int Delays) LoginStateCounts
+    {
+        get { lock (_gate) return (_clientLoginAttempts.Count, _usernameLoginAttempts.Count,
+            _recentSuccessfulLogins.Count, _usernameClientDelays.Count); }
+    }
 
     public bool BootstrapRequired
     {
@@ -92,33 +104,58 @@ public sealed class AccessSecurityStore
 
     public (StudioUser User, string SessionToken, string CsrfToken) Login(string username, string password, string clientKey)
     {
-        var normalized = NormalizeUsername(username ?? string.Empty);
+        // Reject oversized input before normalization can retain a user-controlled key.
+        var normalized = (username?.Length ?? 0) > 64 ? null : NormalizeUsername(username);
         clientKey = string.IsNullOrWhiteSpace(clientKey) ? "unknown" : clientKey.Trim().ToLowerInvariant();
-        var loginKey = normalized + "|" + clientKey;
+        if (clientKey.Length > 64)
+            throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
+        var loginKey = normalized is null ? null : normalized + "|" + clientKey;
         StudioUser? candidate;
         lock (_gate)
         {
             var now = Now;
+            PruneLoginStateLocked(now);
             if (_clientLoginAttempts.TryGetValue(clientKey, out var attempt) && attempt.LockedUntil > now)
                 throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
+            if (normalized is null || !IsValidUsername(normalized))
+            {
+                var recorded = RegisterLoginFailureLocked(_clientLoginAttempts, clientKey, now,
+                    _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10),
+                    TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15)), MaxTrackedClients);
+                throw recorded
+                    ? new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.")
+                    : new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
+            }
+            candidate = StateLocked().Users.FirstOrDefault(x => x.Username == normalized);
+            // At capacity, unknown identities cannot spend an untracked hash. A known
+            // account can still sign in from a new client while attack keys are full.
+            if (candidate is null && ((!_clientLoginAttempts.ContainsKey(clientKey) && _clientLoginAttempts.Count >= MaxTrackedClients)
+                || (!_usernameLoginAttempts.ContainsKey(normalized) && _usernameLoginAttempts.Count >= MaxTrackedUsernames)))
+            {
+                RegisterLoginFailureLocked(_clientLoginAttempts, clientKey, now,
+                    _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10),
+                    TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15)), MaxTrackedClients);
+                throw new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
+            }
             var usernameBudget = _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20);
             if (_usernameLoginAttempts.TryGetValue(normalized, out var usernameAttempt)
                 && usernameAttempt.Failures >= usernameBudget
                 && now - usernameAttempt.WindowStartedAt <= LoginWindow
-                && (!_recentSuccessfulLogins.TryGetValue(loginKey, out var successAt)
-                    || now - successAt > TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:RecentSuccessMinutes", 1440))))
+                && (!_recentSuccessfulLogins.TryGetValue(loginKey!, out var successAt)
+                    || now - successAt > RecentSuccessWindow))
             {
                 var delay = TimeSpan.FromSeconds(_configuration.GetValue("Security:LoginThrottle:UsernameDelaySeconds", 2));
-                if (!_usernameClientDelays.TryGetValue(loginKey, out var retryAt))
+                if (!_usernameClientDelays.TryGetValue(loginKey!, out var retryAt))
                 {
-                    _usernameClientDelays[loginKey] = now + delay;
+                    if (!EnsureLoginCapacityLocked(_usernameClientDelays, loginKey!, MaxDelayEntries))
+                        throw new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
+                    _usernameClientDelays[loginKey!] = now + delay;
                     throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again shortly.");
                 }
                 if (retryAt > now)
                     throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again shortly.");
-                _usernameClientDelays.Remove(loginKey);
+                _usernameClientDelays.Remove(loginKey!);
             }
-            candidate = StateLocked().Users.FirstOrDefault(x => x.Username == normalized);
             if (!_clientsHashing.Add(clientKey))
                 throw new SecurityOperationException(429, "login-throttled", "Another login from this client is in progress.");
         }
@@ -143,19 +180,24 @@ public sealed class AccessSecurityStore
                 var now = Now;
                 if (current is null || current.Disabled || !ReferenceEquals(current, candidate) || !passwordMatches)
                 {
-                    RegisterLoginFailureLocked(_clientLoginAttempts, clientKey, now,
+                    var clientRecorded = RegisterLoginFailureLocked(_clientLoginAttempts, clientKey, now,
                         _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10),
-                        TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15)));
-                    RegisterLoginFailureLocked(_usernameLoginAttempts, normalized, now,
-                        _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20), null);
-                    if (_usernameLoginAttempts[normalized].Failures >= _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20))
-                        _usernameClientDelays[loginKey] = now + TimeSpan.FromSeconds(_configuration.GetValue("Security:LoginThrottle:UsernameDelaySeconds", 2));
+                        TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15)), MaxTrackedClients);
+                    var usernameRecorded = RegisterLoginFailureLocked(_usernameLoginAttempts, normalized, now,
+                        _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20), null, MaxTrackedUsernames);
+                    if (usernameRecorded && _usernameLoginAttempts[normalized].Failures >= _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20)
+                        && EnsureLoginCapacityLocked(_usernameClientDelays, loginKey!, MaxDelayEntries))
+                        _usernameClientDelays[loginKey!] = now + TimeSpan.FromSeconds(_configuration.GetValue("Security:LoginThrottle:UsernameDelaySeconds", 2));
+                    if (!clientRecorded || !usernameRecorded)
+                        throw new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
                     throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
                 }
 
                 _clientLoginAttempts.Remove(clientKey);
-                _recentSuccessfulLogins[loginKey] = now;
-                _usernameClientDelays.Remove(loginKey);
+                if (!EnsureLoginCapacityLocked(_recentSuccessfulLogins, loginKey!, MaxRecentSuccesses))
+                    _recentSuccessfulLogins.Remove(_recentSuccessfulLogins.MinBy(x => x.Value).Key);
+                _recentSuccessfulLogins[loginKey!] = now;
+                _usernameClientDelays.Remove(loginKey!);
                 var created = CreateSessionLocked(state, current);
                 SaveLocked(state);
                 return (current, created.Token, created.Csrf);
@@ -697,14 +739,38 @@ public sealed class AccessSecurityStore
 
     private TimeSpan LoginWindow => TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:WindowMinutes", 15));
 
-    private void RegisterLoginFailureLocked(Dictionary<string, LoginAttempt> attempts, string key, DateTime now,
-        int maxFailures, TimeSpan? lockout)
+    private bool RegisterLoginFailureLocked(Dictionary<string, LoginAttempt> attempts, string key, DateTime now,
+        int maxFailures, TimeSpan? lockout, int capacity)
     {
+        if (!EnsureLoginCapacityLocked(attempts, key, capacity)) return false;
         var prior = attempts.GetValueOrDefault(key);
         var newWindow = prior is null || now - prior.WindowStartedAt > LoginWindow;
         var failures = newWindow ? 1 : prior!.Failures + 1;
         attempts[key] = new LoginAttempt(failures, newWindow ? now : prior!.WindowStartedAt,
             failures >= maxFailures && lockout is { } duration ? now + duration : null);
+        return true;
+    }
+
+    private static bool EnsureLoginCapacityLocked<T>(Dictionary<string, T> entries, string key, int capacity)
+        => entries.ContainsKey(key) || entries.Count < capacity;
+
+    private void PruneLoginStateLocked(DateTime now)
+    {
+        if (now < _nextLoginPruneAt) return;
+        _nextLoginPruneAt = now.AddMinutes(1);
+        foreach (var key in _clientLoginAttempts.Where(x => now - x.Value.WindowStartedAt > LoginWindow
+            && (x.Value.LockedUntil is not { } until || until <= now)).Select(x => x.Key).ToArray())
+            _clientLoginAttempts.Remove(key);
+        foreach (var key in _usernameLoginAttempts.Where(x => now - x.Value.WindowStartedAt > LoginWindow)
+            .Select(x => x.Key).ToArray())
+            _usernameLoginAttempts.Remove(key);
+        foreach (var key in _recentSuccessfulLogins.Where(x => now - x.Value > RecentSuccessWindow)
+            .Select(x => x.Key).ToArray())
+            _recentSuccessfulLogins.Remove(key);
+        // Keep an elapsed delay long enough for a client to return and use it.
+        foreach (var key in _usernameClientDelays.Where(x => now - x.Value > LoginWindow)
+            .Select(x => x.Key).ToArray())
+            _usernameClientDelays.Remove(key);
     }
 
     private SecurityState StateLocked()
@@ -775,9 +841,12 @@ public sealed class AccessSecurityStore
     private static void ValidateUsername(string value)
     {
         var normalized = NormalizeUsername(value ?? string.Empty);
-        if (normalized.Length is < 3 or > 64 || normalized.Any(ch => !(char.IsLetterOrDigit(ch) || ch is '.' or '_' or '-')))
+        if (!IsValidUsername(normalized))
             throw new SecurityOperationException(400, "invalid-username", "Username must be 3 to 64 letters, digits, dots, underscores, or hyphens.");
     }
+    private static bool IsValidUsername(string normalized)
+        => normalized.Length is >= 3 and <= 64
+            && normalized.All(ch => char.IsLetterOrDigit(ch) || ch is '.' or '_' or '-');
     private static void ValidatePassword(string? password, string username)
     {
         password ??= string.Empty;
