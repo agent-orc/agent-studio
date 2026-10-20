@@ -63,6 +63,10 @@ that is already allowed to edit that project's checkout.
   clients grouped by /64; default 5 failures, then a 15-minute lockout) and per
   username across all addresses (default 20 failures per 15 minutes,
   `Security:LoginThrottle:MaxFailuresPerUsername` and `UsernameWindowMinutes`).
+  The per-client key table expires old entries and holds at most 4,096 keys
+  (`Security:LoginThrottle:MaxTrackedKeys`, capped at 4,096). When full, new
+  failed login keys receive 429 until entries expire; existing keys retain
+  their lockout counters.
   Password resets create a temporary
   password, revoke existing sessions, and force a change at the next login.
 - Human sessions use a random opaque token stored only as a SHA-256 hash on the

@@ -397,26 +397,43 @@ public sealed class AccessSecurityTests : IDisposable
     }
 
     [Fact]
-    public void Guessed_usernames_do_not_grow_the_account_failure_table()
+    public void Guessed_usernames_and_addresses_keep_throttle_state_bounded()
     {
-        var (store, _, _) = NewStore(new Dictionary<string, string?>
+        var (store, _, clock) = NewStore(new Dictionary<string, string?>
         {
-            ["Security:LoginThrottle:MaxFailuresPerUsername"] = "2"
+            ["Security:LoginThrottle:MaxFailuresPerUsername"] = "2",
+            ["Security:LoginThrottle:MaxFailures"] = "2",
+            ["Security:LoginThrottle:MaxTrackedKeys"] = "8"
         });
         store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
-
-        for (var index = 0; index < 8; index++)
-            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
-                store.Login($"guessed.user.{index}", "wrong password", $"unknown|{index}")).Status);
 
         var field = typeof(AccessSecurityStore).GetField("_usernameFailures",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
         var budgets = Assert.IsAssignableFrom<System.Collections.IDictionary>(field!.GetValue(store));
-        Assert.Empty(budgets);
+        var clientField = typeof(AccessSecurityStore).GetField("_loginAttempts",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var clients = Assert.IsAssignableFrom<System.Collections.IDictionary>(clientField!.GetValue(store));
 
+        for (var index = 0; index < 16; index++)
+        {
+            var failure = Assert.Throws<SecurityOperationException>(() =>
+                store.Login($"guessed.user.{index}", "wrong password", $"unknown|{index}"));
+            Assert.Equal(index < 8 ? 401 : 429, failure.Status);
+            Assert.InRange(clients.Count + budgets.Count, 0, 8);
+        }
+        Assert.Equal(8, clients.Count);
+        Assert.Empty(budgets);
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("guessed.user.0", "wrong password", "unknown|0")).Status);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("guessed.user.0", "wrong password", "unknown|0")).Status);
+        Assert.Equal(8, clients.Count);
+
+        clock.Advance(TimeSpan.FromMinutes(16));
         for (var index = 0; index < 2; index++)
             Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
                 store.Login("first.owner", "wrong password", $"owner|{index}")).Status);
+        Assert.Equal(2, clients.Count);
         Assert.Single(budgets);
         Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
             store.Login("first.owner", "correct horse battery staple!", "owner|new-address")).Status);

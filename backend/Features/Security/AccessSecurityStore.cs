@@ -25,6 +25,7 @@ public sealed class AccessSecurityStore
     private readonly ILogger<AccessSecurityStore> _logger;
     private readonly TimeProvider _clock;
     private readonly object _gate = new();
+    private const int MaxLoginAttemptEntries = 4096;
     private readonly Dictionary<string, LoginAttempt> _loginAttempts = new(StringComparer.OrdinalIgnoreCase);
     // Failure times per normalized username, whatever the client address: a
     // client that rotates addresses still spends one account budget (AGT-3230).
@@ -83,6 +84,7 @@ public sealed class AccessSecurityStore
         lock (_gate)
         {
             var now = Now;
+            PruneExpiredLoginAttemptsLocked(now);
             var state = StateLocked();
             var user = state.Users.FirstOrDefault(x => x.Username == normalized);
             if ((_loginAttempts.TryGetValue(throttleKey, out var attempt) && attempt.LockedUntil > now)
@@ -645,9 +647,24 @@ public sealed class AccessSecurityStore
         var window = TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:WindowMinutes", 15));
         var max = _configuration.GetValue("Security:LoginThrottle:MaxFailures", 5);
         var lockout = TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:LockoutMinutes", 15));
+        if (!_loginAttempts.ContainsKey(key) && _loginAttempts.Count >= LoginAttemptCapacity)
+            throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
         var prior = _loginAttempts.GetValueOrDefault(key);
         var failures = prior is null || now - prior.WindowStartedAt > window ? 1 : prior.Failures + 1;
         _loginAttempts[key] = new LoginAttempt(failures, prior is null || now - prior.WindowStartedAt > window ? now : prior.WindowStartedAt, failures >= max ? now + lockout : null);
+    }
+
+    private int LoginAttemptCapacity
+        => Math.Clamp(_configuration.GetValue("Security:LoginThrottle:MaxTrackedKeys", MaxLoginAttemptEntries), 1, MaxLoginAttemptEntries);
+
+    private void PruneExpiredLoginAttemptsLocked(DateTime now)
+    {
+        if (_loginAttempts.Count == 0) return;
+        var window = TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:WindowMinutes", 15));
+        foreach (var key in _loginAttempts.Where(entry => now - entry.Value.WindowStartedAt > window
+                     && (entry.Value.LockedUntil is null || entry.Value.LockedUntil <= now))
+                     .Select(entry => entry.Key).ToList())
+            _loginAttempts.Remove(key);
     }
 
     private TimeSpan UsernameFailureWindow
