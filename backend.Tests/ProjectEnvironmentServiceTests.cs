@@ -198,7 +198,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         foreach (var (broken, message) in new[]
         {
             (JsonSerializer.Serialize(new { id = "stage", kind = "stage" }), "requires targetHostId"),
-            (JsonSerializer.Serialize(new { id = "stage", name = 5, kind = "stage" }), "name must be a string"),
+            (JsonSerializer.Serialize(new { id = "stage", kind = "stage", targetHostId = "h", template = "container", destination = "8081", healthUrl = "https://stage.example/health", name = 5 }), "name must be a string"),
             (JsonSerializer.Serialize(new { id = "stage", kind = "stage", targetHostId = "h", template = "container", secretRefs = "X" }),
                 "secretRefs must be an array"),
             ("[]", "must be a JSON object"),
