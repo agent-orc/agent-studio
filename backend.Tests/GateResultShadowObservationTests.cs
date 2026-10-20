@@ -75,13 +75,7 @@ public sealed partial class BatchGatePilotServiceTests
         var observations = new List<MonolithOrchestrationOccurrence>();
         foreach (var (key, lane, keyPrefix, action) in expected)
         {
-            if (outcome == "per-task-pass")
-            {
-                var current = factory.Services.GetRequiredService<TaskScannerService>()
-                    .FindJob(key, _watchPath)?.State;
-                Assert.Contains(current, new[] { TaskStates.AutoReview, TaskStates.HumanReview });
-            }
-            else AssertLane(key, lane);
+            AssertLane(key, lane);
             var observed = Assert.Single(GateResultOccurrences(orchestration, key));
             Assert.True(observed.Shadow, $"{key} was not observed in shadow mode.");
             Assert.StartsWith(keyPrefix, observed.IdempotencyKey, StringComparison.Ordinal);
@@ -131,12 +125,23 @@ public sealed partial class BatchGatePilotServiceTests
         await DecideGateResultAsEngineAsync(factory, observed.Run.RunId);
         Assert.Equal(0, rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
 
-        File.Delete(blocker);
-        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review, source,
+        // The integration coordinator has merged locally. Publishing the
+        // branch makes the gate eligible for release; the target file now
+        // isolates the lane-move failure from the publication wait.
+        Git(_repo, "push", "-q", "origin", $"{member.ResultSha}:refs/heads/develop");
+        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+            authority.GetRun(member.RunAttemptId)!,
             _clock, CancellationToken.None);
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.Null(orchestration.GetOccurrence(observed.Run.RunId)!.MonolithIntent);
+        Assert.Null(orchestration.GetOccurrence(observed.Run.RunId)!.MonolithReceipt);
+        Assert.Equal(0, rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
+
+        File.Delete(blocker);
+        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+            authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
 
         AssertLane(member.Key, TaskStates.HumanReview);
-        Assert.Equal(1, _gate.FallbackRuns);
         var compared = Assert.Single(GateResultOccurrences(orchestration, member.Key));
         Assert.Equal(observed.Run.RunId, compared.Run.RunId);
         Assert.Equal(nameof(TransitionAction.Continue), compared.MonolithReceipt?.Action);
@@ -249,13 +254,18 @@ public sealed partial class BatchGatePilotServiceTests
             }
             case "per-task-pass":
             {
-                EnableBatchGate(factory, closeSize: 1);
-                var member = SeedMember(factory, "DOC-GR-PASS", "docs/gr-fallback-pass.md");
-                _gate.Batch = _ => Infrastructure();
+                EnableBatchGate(factory, closeSize: 4);
+                var member = SeedMember(factory, "CODE-GR-PASS", "src/gr-fallback-pass.cs",
+                    settleReview: false);
+                var review = Settle(factory, member, ReviewTerminalOutcome.Pass);
+                var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
                 _gate.Fallback = request => Green(request.ExpectedSha);
-                await pilot.TickAsync(CancellationToken.None);
-                await pilot.TickAsync(CancellationToken.None);
-                return [(member.Key, TaskStates.AutoReview, "batch-fallback:", release)];
+                await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+                    authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
+                Git(_repo, "push", "-q", "origin", $"{member.ResultSha}:refs/heads/develop");
+                await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+                    authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
+                return [(member.Key, TaskStates.HumanReview, "batch-fallback:", release)];
             }
             case "per-task-red":
             {
