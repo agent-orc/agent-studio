@@ -10,6 +10,7 @@ import { JobsHubClient, type JobsHubHandlers } from '../../../services/jobs-hub-
 import { ProjectLookupService } from '../../../services/project-lookup.service';
 import { TaskSelectionService } from './task-selection.service';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
+import { CardDeploymentService } from '../../deployments/services/card-deployment.service';
 import type { TaskCore } from '../../../models/task-core.model';
 
 const projectNames: Record<string, string> = { 'PROJ-A': 'Alpha', 'PROJ-B': 'Beta' };
@@ -99,6 +100,7 @@ describe('TaskSelectionService · board record reuse', () => {
         provideHttpClientTesting(),
         provideRouter([]),
         { provide: JobsHubClient, useClass: JobsHubClientStub },
+        { provide: CardDeploymentService, useValue: { badges: () => [] } },
       ],
     }).compileComponents();
     selection = TestBed.inject(TaskSelectionService);

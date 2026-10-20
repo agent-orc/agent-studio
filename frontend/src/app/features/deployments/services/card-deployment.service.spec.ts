@@ -14,7 +14,7 @@ describe('CardDeploymentService refresh', () => {
     vi.useRealTimers();
   });
 
-  it('updates badges after task events and deployment polling, coalescing an in-flight refresh', () => {
+  it('loads badges when observed, then refreshes after task events and deployment polling', async () => {
     vi.useFakeTimers();
     const task = { projectName: 'demo', key: 'DEMO-1', id: 'demo-1' } as TaskInfo;
     const jobs = signal<TaskInfo[]>([task]);
@@ -25,6 +25,11 @@ describe('CardDeploymentService refresh', () => {
     });
     const service = TestBed.inject(CardDeploymentService);
     const http = TestBed.inject(HttpTestingController);
+    http.expectNone('/api/deploy/cards');
+    taskEvents.next({ kind: 'mutated', id: task.id });
+    http.expectNone('/api/deploy/cards');
+    expect(service.badges(task)).toEqual([]);
+    await Promise.resolve();
     TestBed.tick();
     const first = http.expectOne('/api/deploy/cards');
     taskEvents.next({ kind: 'mutated', id: task.id });

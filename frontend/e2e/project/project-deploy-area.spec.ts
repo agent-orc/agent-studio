@@ -93,6 +93,14 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
     const offset = Number(new URL(route.request().url()).searchParams.get('offset') ?? 0);
     return answer(route, { items: releases.slice(offset, offset + 25), offset, limit: 25, total: releases.length });
   });
+  await page.route(`**${DEPLOY}/releases/*/notes`, route => {
+    if (!Array.isArray(deploy.releases)) return answer(route, MISSING);
+    const id = route.request().url().split('/').at(-2);
+    const release = deploy.releases.find(item => item.id === id);
+    return release ? answer(route, { releaseId: release.id, version: release.version, preview: true,
+      notes: release.cardKeys.map(cardKey => ({ cardKey, text: cardKey === 'WEB-35' ? 'Faster project search' : `Delivered ${cardKey}` })) })
+      : answer(route, MISSING);
+  });
   await page.route(`**${DEPLOY}/deployments/page?*`, route => {
     if (deploy.deployments === MISSING || (deploy.deployments && typeof deploy.deployments === 'object' && 'status' in deploy.deployments))
       return answer(route, deploy.deployments);
@@ -316,6 +324,7 @@ test.describe('Project Deploy area (mocked)', () => {
         await capture(page, `deploy-overview-${width}-${theme}`);
         await page.getByTestId('deploy-tab-releases').click();
         await expect(page.getByTestId('deploy-release-detail')).toContainText('WEB-35');
+        await expect(page.getByTestId('deploy-release-notes')).toContainText('Faster project search');
         await capture(page, `deploy-releases-${width}-${theme}`);
         await page.getByTestId('deploy-tab-pipeline').click();
         await expect(page.getByTestId('pipeline-node-staging')).toBeVisible();

@@ -53,6 +53,14 @@ describe('ProjectDeployDataService', () => {
     expect(log.at(-1)).toEqual({ status: 'ready', value: deploymentLogFixture('run-b-stage') });
   });
 
+  it('reads product-language release notes for the included cards', () => {
+    const notes = collect(service.releaseNotes('Web Site', 'release one'));
+    const response = { releaseId: 'release one', version: '1', preview: true,
+      notes: [{ cardKey: 'WEB-1', text: 'Faster project search' }] };
+    http.expectOne(`${DEPLOY}/releases/release%20one/notes`).flush(response);
+    expect(notes.at(-1)).toEqual({ status: 'ready', value: response });
+  });
+
   it('requests bounded release and filtered deployment pages', () => {
     const releases = collect(service.releasePage('Web Site', 25));
     const runs = collect(service.deploymentPage('Web Site', 50,

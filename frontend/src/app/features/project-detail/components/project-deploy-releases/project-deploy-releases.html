@@ -44,6 +44,7 @@
                 <dd><ul class="releases__digests">@for (digest of release.artifactDigests; track digest) { <li><code>{{ digest }}</code></li> }</ul></dd>
                 <dt>Running in</dt><dd data-testid="deploy-release-live-in">{{ liveIn().length ? liveIn().join(', ') : 'No environment' }}</dd>
               </dl>
+              <app-project-deploy-release-notes [release]="release" />
             </article>
           }
         </div>

@@ -1,5 +1,5 @@
 import { HttpClient } from '@angular/common/http';
-import { Injectable, effect, inject, signal } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { finalize, interval } from 'rxjs';
 import type { TaskInfo } from '../../../models/task.model';
@@ -12,27 +12,23 @@ export class CardDeploymentService {
   private readonly tasks = inject(TaskService);
   private readonly byCard = signal<ReadonlyMap<string, CardDeploymentView>>(new Map());
   private initialRequested = false;
+  private observed = false;
   private inFlight = false;
   private pending = false;
 
   constructor() {
-    effect(() => {
-      if (this.tasks.jobs().length && !this.initialRequested) {
-        this.initialRequested = true;
-        this.refresh();
-      }
-    });
-    this.tasks.taskEvents.pipe(takeUntilDestroyed()).subscribe(() => {
-      if (this.tasks.jobs().length) this.refresh();
+    this.tasks.taskEvents?.pipe(takeUntilDestroyed()).subscribe(() => {
+      if (this.observed && this.hasTasks()) this.refresh();
     });
     // Deployments can change without a task event. Reconcile the badges on the
     // same 30-second fallback cadence as the board while the board is active.
     interval(30_000).pipe(takeUntilDestroyed()).subscribe(() => {
-      if (this.tasks.jobs().length) this.refresh();
+      if (this.observed && this.hasTasks()) this.refresh();
     });
   }
 
   refresh(): void {
+    this.initialRequested = true;
     if (this.inFlight) {
       this.pending = true;
       return;
@@ -51,6 +47,14 @@ export class CardDeploymentService {
   }
 
   badges(task: Pick<TaskInfo, 'projectName' | 'key' | 'id'>): CardEnvironmentBadge[] {
+    // The service also feeds board filters in views that do not show badges.
+    // Start the first read only when a badge is actually observed. Reading jobs
+    // here tracks the board's task signal, so newly loaded cards retry this path.
+    this.observed = true;
+    if (this.hasTasks() && !this.initialRequested) {
+      this.initialRequested = true;
+      queueMicrotask(() => this.refresh());
+    }
     return this.byCard().get(this.ref(task.projectName, task.key || task.id))?.environments ?? [];
   }
 
@@ -59,4 +63,6 @@ export class CardDeploymentService {
   }
 
   private ref(project: string, key: string): string { return `${project.toLowerCase()}::${key.toLowerCase()}`; }
+
+  private hasTasks(): boolean { return typeof this.tasks.jobs === 'function' && this.tasks.jobs().length > 0; }
 }
