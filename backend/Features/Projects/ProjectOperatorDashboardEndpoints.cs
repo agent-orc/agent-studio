@@ -15,10 +15,10 @@ public static class ProjectOperatorDashboardEndpoints
         // starts the automatic Staging phase of the standard lifecycle.
         app.MapPost("/api/deploy/gate-releases", (GateArtifactRequest request,
             ProjectEnvironmentService environments, DeployService deploy) =>
-            environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit)
+            QuotaRefusable(() => environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit)
                 ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate"),
                     "Gate artifact or environment declarations are invalid.")
-                : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." }))
+                : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." })))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapGet("/api/projects/{projectName}/environments", (string projectName,
@@ -27,9 +27,9 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapPost("/api/projects/{projectName}/environments/releases", (HttpContext context, string projectName,
             ReleaseArtifactRequest request, DeployService deploy) =>
-            ReleaseCreated(deploy.CreateRelease(projectName, request.Artifact, request.Commit,
+            QuotaRefusable(() => ReleaseCreated(deploy.CreateRelease(projectName, request.Artifact, request.Commit,
                 DeployEndpoints.Actor(context, projectName).Id),
-                "Artifact, commit, or stage and production declarations are invalid."))
+                "Artifact, commit, or stage and production declarations are invalid.")))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         // Production approval follows the BD-1 standard lifecycle: Owner or
@@ -37,12 +37,12 @@ public static class ProjectOperatorDashboardEndpoints
         // and the lifecycle decides each approval again.
         app.MapPost("/api/projects/{projectName}/environments/promotions/approve", (
             HttpContext context, string projectName, PromotionDecisionRequest request, DeployService deploy) =>
-            DecidePromotion(context, projectName, request, approve: true, deploy))
+            QuotaRefusable(() => DecidePromotion(context, projectName, request, approve: true, deploy)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/projects/{projectName}/environments/promotions/reject", (
             HttpContext context, string projectName, PromotionDecisionRequest request, DeployService deploy) =>
-            DecidePromotion(context, projectName, request, approve: false, deploy))
+            QuotaRefusable(() => DecidePromotion(context, projectName, request, approve: false, deploy)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/projects/{projectName}/environments/{environmentId}/rollback", (
@@ -52,15 +52,21 @@ public static class ProjectOperatorDashboardEndpoints
             if (!actor.IsApprover && deploy.Environments(projectName)?.FirstOrDefault(item => item.Id == environmentId)
                     is { } environment && StandardLifecyclePolicy.RequiresApproval(environment))
                 return ApprovalRequired();
-            return deploy.RollbackEnvironment(projectName, environmentId, actor) switch
+            return QuotaRefusable(() => deploy.RollbackEnvironment(projectName, environmentId, actor) switch
             {
                 { Kind: DeployOutcomeKind.Ok } => Results.Accepted(),
                 { Kind: DeployOutcomeKind.NotFound } => Results.Conflict(new { error = "No previous artifact is available." }),
                 { Kind: DeployOutcomeKind.Forbidden } refused => Results.Json(new { error = refused.Error },
                     statusCode: StatusCodes.Status403Forbidden),
                 var refused => Results.Conflict(new { error = refused.Error }),
-            };
+            });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
+        app.MapPost("/api/projects/{projectName}/environments/{environmentId}/stop", (
+            HttpContext context, string projectName, string environmentId, ProjectEnvironmentService environments) =>
+            environments.Stop(projectName, environmentId, DeployEndpoints.Actor(context, projectName).Id)
+                ? Results.Ok() : Results.Conflict(new { error = "The environment is not deployed or is already stopped." }))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/deploy/jobs/claim", (HttpContext context, DeployClaimRequest request,
             ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration) =>
@@ -165,4 +171,13 @@ public static class ProjectOperatorDashboardEndpoints
     private static IResult ApprovalRequired() => Results.Json(
         new { error = $"Production approval requires the {StandardLifecyclePolicy.ApprovalRoles} role." },
         statusCode: StatusCodes.Status403Forbidden);
+
+    private static IResult QuotaRefusable(Func<IResult> action)
+    {
+        try { return action(); }
+        catch (DeployQuotaRefusedException ex)
+        {
+            return Results.Conflict(new { error = ex.Message, reason = "quota" });
+        }
+    }
 }
