@@ -160,6 +160,20 @@ public sealed class StallInterventionEffect(
         };
         if (settled is not null)
         {
+            if (original?.Action == StallInterventionActions.RerouteProvider
+                && plan.Action == StallInterventionActions.ConfirmCleared)
+            {
+                routes.Restore(original.Host, original.Provider ?? "unknown");
+                if (routes.IsExcluded(original.Host, original.Provider ?? "unknown"))
+                    settled = settled with
+                    {
+                        Status = StallInterventionStatuses.Escalated,
+                        EffectObserved = false,
+                        EffectEvidence = "the provider exclusion remains in force",
+                        Outcome = "The login stall cleared, but the route exclusion remains in force."
+                            + " I handed the event to a person and kept the original reroute undoable.",
+                    };
+            }
             store.Save(settled);
             if (original is not null && settled.Status != StallInterventionStatuses.Observed) Settle(original, settled, now);
             receipts.Publish(settled, store.All());
@@ -303,7 +317,7 @@ public sealed class StallInterventionEffect(
                 break;
             case StallInterventionActions.RerouteProvider:
                 routes.Restore(record.Host, record.Provider ?? "unknown");
-                undone = !routes.IsRerouted(record.Host, record.Provider ?? "unknown");
+                undone = !routes.IsExcluded(record.Host, record.Provider ?? "unknown");
                 evidence = undone ? $"{record.Provider} is routed to {record.Host} again" : "the route exclusion is still in force";
                 break;
             case StallInterventionActions.RequeueFromDelivery:
@@ -501,14 +515,12 @@ public sealed class StallInterventionEffect(
         {
             _ when followUp.Trigger == StallInterventionTriggers.Restore => original.Status,
             StallInterventionActions.Escalate => StallInterventionStatuses.Escalated,
-            StallInterventionActions.ConfirmCleared => StallInterventionStatuses.Verified,
+            StallInterventionActions.ConfirmCleared => followUp.Status == StallInterventionStatuses.Verified
+                ? StallInterventionStatuses.Verified : StallInterventionStatuses.Escalated,
             StallInterventionActions.RestoreAdmission => restored ? StallInterventionStatuses.Verified : StallInterventionStatuses.Escalated,
             _ => original.Status,
         };
         if (status == original.Status && !restored) return;
-        if (original.Action == StallInterventionActions.RerouteProvider
-            && followUp.Action == StallInterventionActions.ConfirmCleared)
-            routes.Restore(original.Host, original.Provider ?? "unknown");
         store.Save(original with
         {
             Status = status,

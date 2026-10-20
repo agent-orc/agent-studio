@@ -100,12 +100,17 @@ public sealed class StallInterventionAdapterTests : IDisposable
         control.Reroute("agent-runner-01", "codex", "si-2");
 
         Assert.True(control.IsRerouted("kori-review-01", "codex"));
+        Assert.True(control.IsExcluded("kori-review-01", "codex"));
         Assert.DoesNotContain("provider-auth:codex", registry.AdmittedReviewCapabilities("kori-review-01-runner", "kori-review-01:1"));
         Assert.Contains("provider-auth:codex", registry.AdmittedReviewCapabilities("kori-review-02-runner", "kori-review-02:1"));
         // A host without a review registration is never reported as rerouted.
         Assert.False(control.IsRerouted("agent-runner-01", "codex"));
+        var withoutSnapshot = new ReviewProviderRouteControl(new V1ReviewExecutorRegistry(_clock, exclusions), exclusions, _clock);
+        Assert.False(withoutSnapshot.IsRerouted("kori-review-01", "codex"));
+        Assert.True(withoutSnapshot.IsExcluded("kori-review-01", "codex"));
 
         control.Restore("kori-review-01", "codex");
+        Assert.False(control.IsExcluded("kori-review-01", "codex"));
         Assert.False(control.IsRerouted("kori-review-01", "codex"));
         Assert.Contains("provider-auth:codex", registry.AdmittedReviewCapabilities("kori-review-01-runner", "kori-review-01:1"));
     }

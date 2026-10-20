@@ -82,6 +82,9 @@ public interface IProviderRouteControl
     /// <summary>True only for a review host whose provider capability is excluded and no longer admitted.</summary>
     bool IsRerouted(string host, string provider);
 
+    /// <summary>True while the durable provider exclusion still blocks this host.</summary>
+    bool IsExcluded(string host, string provider);
+
     void Reroute(string host, string provider, string interventionId);
 
     void Restore(string host, string provider);

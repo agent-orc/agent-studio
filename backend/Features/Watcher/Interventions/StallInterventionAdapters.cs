@@ -387,6 +387,8 @@ public sealed class ReviewProviderRouteControl(V1ReviewExecutorRegistry registry
                 .Contains("provider-auth:" + provider));
     }
 
+    public bool IsExcluded(string host, string provider) => exclusions.IsExcluded(host, host, provider);
+
     public void Reroute(string host, string provider, string interventionId) => exclusions.Exclude(host, provider, interventionId);
 
     public void Restore(string host, string provider) => exclusions.Include(host, provider);

@@ -199,6 +199,26 @@ public sealed class StallInterventionScenarioTests : IDisposable
     }
 
     [Fact]
+    public async Task Reroute_recovery_escalates_when_the_exclusion_remains_in_force()
+    {
+        _h.Routes.Healthy.Add("kori-review-02");
+        _h.Raise(Snapshot(providers: [new("kori-review-01", "codex", "auth-invalid", Now0.AddHours(-2), ["AGT-3194"], "CredentialInvalid")]));
+        await _h.Service.RunOnceAsync();
+        var reroute = Assert.Single(_h.Store.All());
+
+        _h.Routes.IgnoreRestore = true;
+        _h.Clear();
+        await _h.Service.RunOnceAsync();
+
+        var followUp = Assert.Single(_h.Store.All(), item => item.Action == StallInterventionActions.ConfirmCleared);
+        Assert.Equal(StallInterventionStatuses.Escalated, followUp.Status);
+        Assert.False(followUp.EffectObserved);
+        Assert.Equal(StallInterventionStatuses.Escalated, _h.Store.Find(reroute.Id)!.Status);
+        Assert.True(_h.Store.Find(reroute.Id)!.Undoable);
+        Assert.Contains(("kori-review-01", "codex"), _h.Routes.Excluded);
+    }
+
+    [Fact]
     public async Task Stuck_batch_gate_drops_completed_members_and_closes_the_overdue_batch()
     {
         _h.WriteCard(TaskStates.Completed, "AGT-3097");
@@ -1015,13 +1035,18 @@ public sealed class StallInterventionScenarioTests : IDisposable
         public IReadOnlyList<string> HealthyHosts(string provider, string exceptHost) => Healthy.Where(host => host != exceptHost).ToArray();
         public bool IsReviewHost(string host) => host.StartsWith("kori-review", StringComparison.Ordinal);
         public bool IsRerouted(string host, string provider) => Excluded.Contains((host, provider));
+        public bool IsExcluded(string host, string provider) => Excluded.Contains((host, provider));
         public bool IgnoreReroute { get; set; }
+        public bool IgnoreRestore { get; set; }
 
         public void Reroute(string host, string provider, string interventionId)
         {
             if (!IgnoreReroute) Excluded.Add((host, provider));
         }
-        public void Restore(string host, string provider) => Excluded.Remove((host, provider));
+        public void Restore(string host, string provider)
+        {
+            if (!IgnoreRestore) Excluded.Remove((host, provider));
+        }
     }
 
     /// <summary>Pending members by review attempt id.</summary>
