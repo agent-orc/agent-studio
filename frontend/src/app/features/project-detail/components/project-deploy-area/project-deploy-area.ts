@@ -4,13 +4,15 @@ import { ProjectDeployOverviewComponent } from '../project-deploy-overview/proje
 import { ProjectDeployReleasesComponent } from '../project-deploy-releases/project-deploy-releases';
 import { ProjectDeployPipelineComponent } from '../project-deploy-pipeline/project-deploy-pipeline';
 import { ProjectDeployDataService, type ProjectDeploySnapshot } from '../../services/project-deploy-data.service';
+import { EnvironmentHealthPanelComponent } from '../../../environment-health';
 
-type DeployView = 'overview' | 'releases' | 'pipeline' | 'tools';
+type DeployView = 'overview' | 'releases' | 'pipeline' | 'operations' | 'tools';
 
 @Component({
   selector: 'app-project-deploy-area',
   standalone: true,
-  imports: [ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent, ProjectDeploymentPanelComponent],
+  imports: [ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent, ProjectDeploymentPanelComponent,
+    EnvironmentHealthPanelComponent],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

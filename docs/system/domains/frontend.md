@@ -25,6 +25,13 @@ in verified publications. Gate waiting comes from the active auto-review gate
 queue, and batch gate waiting from its pending store. Deployment card counts
 have no global attribution source yet, so that value remains unavailable.
 
+The view also lists application health for every declared environment from
+`GET /api/environment/health`: status, uptime over 24 hours, 7 days and
+30 days, p50 and p95 latency, and the start of an open incident. The project
+Deploy area's Operations tab shows the same data per environment and check,
+including certificate expiry
+([environment health checks](../../operations/environment-health-checks.md)).
+
 ## Workspace deployment dashboard
 
 The workspace shell opens a Deployment dashboard at `#/workspace/deployments`.

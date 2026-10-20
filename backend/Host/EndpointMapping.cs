@@ -109,6 +109,7 @@ public static class EndpointMapping
         app.MapProjectSnapshotEndpoints();
         app.MapProjectOperatorDashboardEndpoints();
         app.MapProjectPipelineDefinitionEndpoints();
+        app.MapEnvironmentHealthEndpoints();
         app.MapProjectCycleTimeEndpoints();
         app.MapTestRunEndpoints();
         app.MapProjectGraphEndpoints();

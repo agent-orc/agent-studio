@@ -43,6 +43,7 @@
         </div>
       </section>
     } @else { <p role="status">Loading card flow…</p> }
+    <app-environment-health-overview />
     <section aria-labelledby="environment-hosts-title"><h2 id="environment-hosts-title">Hosts <small>{{ hosts().length }}</small></h2>
       <div class="environment-flow__hosts">
         @for (host of hosts(); track host.id) {
