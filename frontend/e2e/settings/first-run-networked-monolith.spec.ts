@@ -43,5 +43,11 @@ test('networked monolith explains that the first-run Task Server plane is unavai
   await expect(page.getByTestId('first-run-owner')).toHaveAttribute('data-state', 'pending');
 
   mkdirSync(resultDir, { recursive: true });
-  await page.screenshot({ path: join(resultDir, 'first-run-networked-monolith.png'), fullPage: true });
+  const bounds = await page.getByTestId('first-run-checklist').boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.screenshot({
+    path: join(resultDir, 'first-run-networked-monolith.png'),
+    clip: { x: bounds!.x, y: bounds!.y, width: bounds!.width, height: Math.min(bounds!.height, 510) },
+  });
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
 });
