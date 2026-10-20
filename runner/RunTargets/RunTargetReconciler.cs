@@ -22,7 +22,11 @@ public sealed record RunTargetCycleResult(
 /// <see cref="RunTargetCrashPolicy"/> backoff, and a revision that keeps
 /// crashing is rolled back to the kept one. Only an explicit removal from
 /// Studio takes an app down: an app Studio does not mention keeps running with
-/// its routes and its previous revision.
+/// its routes and its previous revision. Supervision needs only the host's own
+/// state, so it also runs while Studio cannot be reached
+/// (<see cref="SuperviseOnlyAsync"/>). An app key belongs to the project
+/// environment stored under it: a spec or removal for another environment
+/// that maps to the same key is refused.
 /// </summary>
 public sealed class RunTargetReconciler(
     IRunTargetDocker docker,
@@ -36,20 +40,55 @@ public sealed class RunTargetReconciler(
 {
     private const int MaxEvents = 20;
 
-    public async Task<RunTargetCycleResult> ReconcileAsync(RunTargetDesiredState desired, CancellationToken ct)
+    public Task<RunTargetCycleResult> ReconcileAsync(RunTargetDesiredState desired, CancellationToken ct)
+        => CycleAsync(desired, offlineReason: null, ct);
+
+    /// <summary>
+    /// The pass for a poll that got no desired state: every app is held, so the
+    /// host still restarts crashed apps, rolls back a crash loop, and writes
+    /// secret files again (after a reboot the tmpfs is empty), all from its
+    /// persisted state.
+    /// </summary>
+    public Task SuperviseOnlyAsync(string reason, CancellationToken ct)
+        => CycleAsync(new RunTargetDesiredState("", clock.GetUtcNow().UtcDateTime, [], [], []), reason, ct);
+
+    private async Task<RunTargetCycleResult> CycleAsync(RunTargetDesiredState desired, string? offlineReason,
+        CancellationToken ct)
     {
         var state = store.Load();
         var reports = new List<RunTargetJobReport>();
         var specs = new Dictionary<string, RunTargetEnvironmentSpec>(StringComparer.Ordinal);
-        foreach (var spec in desired.Environments
-                     .OrderBy(item => item.Project, StringComparer.Ordinal)
-                     .ThenBy(item => item.EnvironmentId, StringComparer.Ordinal))
-            specs.TryAdd(RunTargetNames.AppKey(spec.Project, spec.EnvironmentId), spec);
+        var refused = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var group in desired.Environments.GroupBy(item => RunTargetNames.AppKey(item.Project, item.EnvironmentId),
+                     StringComparer.Ordinal))
+        {
+            var spec = group.First();
+            var conflict = group.Skip(1).Any()
+                ? $"{string.Join(", ", group.Select(Name))} share app key {group.Key}"
+                : state.Apps.TryGetValue(group.Key, out var stored) && !Owns(stored, spec.Project, spec.EnvironmentId)
+                    ? $"{Name(spec)} maps to app key {group.Key} of {stored.Project}/{stored.EnvironmentId}"
+                    : null;
+            if (conflict is null)
+            {
+                specs[group.Key] = spec;
+                continue;
+            }
+            log($"run-target: refused: {conflict}");
+            refused.Add(group.Key);
+            foreach (var item in group) Report(item, reports, false, RunTargetEvidence.StepFailed);
+        }
         var removals = new Dictionary<string, RunTargetRemoval>(StringComparer.Ordinal);
         foreach (var removal in desired.Removals ?? [])
         {
             var key = RunTargetNames.AppKey(removal.Project, removal.EnvironmentId);
-            if (!specs.ContainsKey(key)) removals.TryAdd(key, removal);
+            if (specs.ContainsKey(key) || refused.Contains(key)) continue;
+            if (state.Apps.TryGetValue(key, out var stored) && !Owns(stored, removal.Project, removal.EnvironmentId))
+            {
+                log($"run-target: refused removal of {removal.Project}/{removal.EnvironmentId}: app key {key} "
+                    + $"belongs to {stored.Project}/{stored.EnvironmentId}");
+                continue;
+            }
+            removals.TryAdd(key, removal);
         }
         var removed = new List<RunTargetRemoval>();
 
@@ -58,12 +97,7 @@ public sealed class RunTargetReconciler(
             // Removals first, so a domain they free can go to a new app in this cycle.
             foreach (var (key, removal) in removals)
             {
-                if (state.Apps.TryGetValue(key, out var app))
-                {
-                    if (!await RemoveSlotAsync(app.Current, ct) || !await RemoveSlotAsync(app.Previous, ct)) continue;
-                    state.Apps.Remove(key);
-                    log($"run-target: removed {app.Project}/{app.EnvironmentId}; Studio took it off this host");
-                }
+                if (state.Apps.TryGetValue(key, out var app) && !await RemoveAppAsync(key, app, state, ct)) continue;
                 removed.Add(removal);
             }
             store.Save(state);
@@ -85,8 +119,11 @@ public sealed class RunTargetReconciler(
                 if (!app.Held)
                 {
                     app.Held = true;
-                    log($"run-target: keeping {app.Project}/{app.EnvironmentId} as it is; " + (skipped.TryGetValue(app.Project, out var reason)
-                        ? $"Studio could not read its project ({reason})" : "Studio sent neither a desired state nor a removal for it"));
+                    log($"run-target: keeping {app.Project}/{app.EnvironmentId} as it is; " + (
+                        offlineReason is not null ? $"Studio is unreachable ({offlineReason})"
+                        : refused.Contains(key) ? "its desired state was refused"
+                        : skipped.TryGetValue(app.Project, out var reason) ? $"Studio could not read its project ({reason})"
+                        : "Studio sent neither a desired state nor a removal for it"));
                 }
                 if (edgeReady && app.Current is not null) await SuperviseAsync(key, app, state, ct);
             }
@@ -107,14 +144,39 @@ public sealed class RunTargetReconciler(
         return new(observations, reports);
     }
 
+    private static string Name(RunTargetEnvironmentSpec spec) => $"{spec.Project}/{spec.EnvironmentId}";
+
+    private static bool Owns(RunTargetAppState app, string project, string environmentId)
+        => string.Equals(app.Project, project, StringComparison.Ordinal)
+            && string.Equals(app.EnvironmentId, environmentId, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Takes both revisions and the app network down. Each slot is cleared and
+    /// saved as soon as it is gone, so a retry continues where a failure stopped.
+    /// </summary>
+    private async Task<bool> RemoveAppAsync(string key, RunTargetAppState app, RunTargetHostState state, CancellationToken ct)
+    {
+        if (!await RemoveSlotAsync(app.Current, ct)) return false;
+        app.Current = null;
+        store.Save(state);
+        if (!await RemoveSlotAsync(app.Previous, ct)) return false;
+        app.Previous = null;
+        var network = await docker.RemoveNetworkAsync(RunTargetNames.AppNetwork(key), ct);
+        if (!network.Ok) log($"run-target: could not remove network {RunTargetNames.AppNetwork(key)}: {network.Detail}");
+        state.Apps.Remove(key);
+        log($"run-target: removed {app.Project}/{app.EnvironmentId}; Studio took it off this host");
+        return true;
+    }
+
     private async Task ConvergeAsync(string key, RunTargetEnvironmentSpec spec, RunTargetAppState app,
         RunTargetHostState state, List<RunTargetJobReport> reports, CancellationToken ct)
     {
-        var name = $"{spec.Project}/{spec.EnvironmentId}";
+        var name = Name(spec);
         if (spec.Artifact is null)
         {
-            // Studio knows no healthy release. That is not a removal: whatever runs keeps running.
+            // Studio knows no healthy release. That is not a removal: whatever runs keeps running and is supervised.
             if (app.Current is null) app.Status = "stopped";
+            else if (await AttachAsync(key, name, ct)) await SuperviseAsync(key, app, state, ct);
             return;
         }
         if (RunTargetNames.Invalid(spec) is { } invalid)
@@ -126,23 +188,21 @@ public sealed class RunTargetReconciler(
         app.Domains = [.. spec.Domains];
         app.Edge = spec.Edge;
         if ((spec.RefusedDomains ?? []).Count > 0)
-            NoteDomainConflict(app, $"Studio refused {string.Join(", ", spec.RefusedDomains!)}: another environment on this host owns it");
-        var network = RunTargetNames.AppNetwork(key);
-        var attach = await docker.EnsureNetworkAsync(network, ct);
-        if (attach.Ok) attach = await docker.ConnectAsync(network, RunTargetNames.EdgeContainer, ct);
-        if (!attach.Ok)
         {
-            log($"run-target: {name} network unavailable: {attach.Detail}");
-            return;
+            NoteDomainConflict(app, $"Studio refused {string.Join(", ", spec.RefusedDomains!)}: "
+                + "the project's allowed domain suffixes do not cover it, or another environment on this host owns it");
         }
+        if (!await AttachAsync(key, name, ct)) return;
 
         var revision = RunTargetNames.Revision(spec);
-        if (app.Current?.Revision == revision)
+        if (app.Current is { } running && running.Revision == revision)
         {
             await SuperviseAsync(key, app, state, ct);
             if (spec.JobId is not null)
             {
-                var healthy = app.Status == "running" && await WaitHealthyAsync(app.Current, attempts: 3, ct);
+                // A crash rollback in this pass replaced the revision the job asks for.
+                var healthy = app.Current == running && app.Status == "running"
+                    && await WaitHealthyAsync(running, attempts: 3, ct);
                 Report(spec, reports, healthy, healthy ? RunTargetEvidence.HealthOk : RunTargetEvidence.HealthFailed);
             }
             return;
@@ -163,7 +223,7 @@ public sealed class RunTargetReconciler(
         var candidate = restoring ? app.Previous! : new RunTargetSlot(revision, spec.Artifact, composeProject,
             Path.Combine(store.AppsDirectory, composeProject, "compose.yaml"), spec.ContainerPort, spec.HealthPath,
             spec.SecretRefs);
-        if (await PrepareSecretsAsync(name, app.Project, candidate, ct) is not { } resolved)
+        if (await PrepareSecretsAsync(name, spec.Project, candidate, ct) is not { } resolved)
         {
             Fail(app, spec, reports, RunTargetEvidence.StepFailed, "deploy-step-failed");
             return;
@@ -234,6 +294,8 @@ public sealed class RunTargetReconciler(
             app.CrashRollbackRevision = null;
         app.Status = "running";
         app.CrashAttempts = 0;
+        // Docker counts restarts per container; the new current one starts at zero.
+        app.DockerRestarts = 0;
         app.LastRestartAt = app.NextRestartAt = null;
         app.RecentRestarts.Clear();
         return true;
@@ -301,18 +363,33 @@ public sealed class RunTargetReconciler(
 
     /// <summary>
     /// Restores the kept previous revision when the current one restarted too
-    /// often. The crashing revision becomes the previous one and is not rolled
-    /// back to; Studio is told through the <c>crash-rollback</c> event and
-    /// queues the matching rollback job.
+    /// often. Only after a successful swap is the crashing revision marked as
+    /// rolled back from; it becomes the previous one and is not rolled back to.
+    /// Studio is told through the <c>crash-rollback</c> event and queues the
+    /// matching rollback job. A failed restore keeps the current revision and
+    /// tries again after another full count of restarts.
     /// </summary>
     private async Task<bool> RollBackCrashLoopAsync(string name, RunTargetAppState app, RunTargetHostState state,
         CancellationToken ct)
     {
         var crashed = app.Current!;
         if (app.Previous is not { } previous || app.CrashRollbackRevision is not null) return false;
-        app.CrashRollbackRevision = crashed.Revision;
         log($"run-target: {name} restarted {app.RecentRestarts.Count} times within {RunTargetCrashPolicy.RollbackWindow.TotalMinutes:0} min; "
             + $"rolling back to {previous.Artifact}");
+        if (!await RestoreForRollbackAsync(name, app, previous, state, ct))
+        {
+            app.RecentRestarts.Clear();
+            return false;
+        }
+        app.CrashRollbackRevision = crashed.Revision;
+        AddEvent(app, "crash-rollback", crashed.Artifact);
+        AddEvent(app, "rolled-back", previous.Artifact);
+        return true;
+    }
+
+    private async Task<bool> RestoreForRollbackAsync(string name, RunTargetAppState app, RunTargetSlot previous,
+        RunTargetHostState state, CancellationToken ct)
+    {
         if (await PrepareSecretsAsync(name, app.Project, previous, ct) is not { } resolved) return false;
         var started = await docker.ComposeUpAsync(previous.ComposeProject, previous.ComposeFile, ct);
         if (!started.Ok || !await WaitHealthyAsync(previous, settings.HealthAttempts, ct))
@@ -322,10 +399,7 @@ public sealed class RunTargetReconciler(
             await DiscardCandidateAsync(previous, restoring: true, ct);
             return false;
         }
-        if (!await SwapAsync(name, app, previous, restoring: true, state, ct)) return false;
-        AddEvent(app, "crash-rollback", crashed.Artifact);
-        AddEvent(app, "rolled-back", previous.Artifact);
-        return true;
+        return await SwapAsync(name, app, previous, restoring: true, state, ct);
     }
 
     /// <summary>Resolves the slot's secrets from its project's own root and writes them to tmpfs.</summary>
@@ -364,8 +438,26 @@ public sealed class RunTargetReconciler(
         var status = await docker.InspectAsync(RunTargetNames.EdgeContainer, ct);
         if (!composeChanged && status.State == RunTargetContainerState.Running) return true;
         var started = await docker.ComposeUpAsync(RunTargetNames.EdgeContainer, store.EdgeComposePath, ct);
-        if (!started.Ok) log($"run-target: edge unavailable: {started.Detail}");
-        return started.Ok;
+        if (!started.Ok)
+        {
+            log($"run-target: edge unavailable: {started.Detail}");
+            return false;
+        }
+        // A recreated edge has lost the app networks attached at run time,
+        // including those of apps Studio sends no spec for.
+        foreach (var (key, app) in state.Apps.Where(item => item.Value.Current is not null))
+            await AttachAsync(key, $"{app.Project}/{app.EnvironmentId}", ct);
+        return true;
+    }
+
+    /// <summary>Creates the app network if needed and connects the edge to it.</summary>
+    private async Task<bool> AttachAsync(string key, string name, CancellationToken ct)
+    {
+        var network = RunTargetNames.AppNetwork(key);
+        var attach = await docker.EnsureNetworkAsync(network, ct);
+        if (attach.Ok) attach = await docker.ConnectAsync(network, RunTargetNames.EdgeContainer, ct);
+        if (!attach.Ok) log($"run-target: {name} network unavailable: {attach.Detail}");
+        return attach.Ok;
     }
 
     /// <summary>Renders the routes of every current revision and reloads Caddy when they changed.</summary>

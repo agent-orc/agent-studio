@@ -20,9 +20,10 @@ namespace AgentStudio.Tests;
 /// <summary>
 /// IP-1 run-target protocol on the Studio side: edge-hosted declarations, the
 /// desired state a host polls (claiming the AGT-3176 deploy job with a bounded
-/// lease), skip markers for unreadable projects, explicit removals, first-claim
-/// domain ownership per host, sanitized observed state, and the deploy-scoped,
-/// host-bound routes.
+/// lease), skip markers for unreadable projects placed on the host, removals
+/// that need an operator confirmation or a tombstone for production and stage,
+/// first-claim domain ownership per host within operator-owned suffixes,
+/// sanitized observed state, and the deploy-scoped, host-bound routes.
 /// </summary>
 public sealed class RunTargetDesiredStateTests : IDisposable
 {
@@ -30,6 +31,7 @@ public sealed class RunTargetDesiredStateTests : IDisposable
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 19, 10, 0, 0, TimeSpan.Zero));
     private readonly string _first = "registry.example/app@sha256:" + new string('a', 64);
     private readonly string _second = "registry.example/app@sha256:" + new string('b', 64);
+    private ProjectSettingsService? _settings;
 
     public void Dispose()
     {
@@ -203,6 +205,14 @@ public sealed class RunTargetDesiredStateTests : IDisposable
         using var observed = await client.PostAsJsonAsync($"/api/deploy/run-targets/{runnerId}/observed-state",
             new RunTargetObservedReport([]));
         Assert.Equal(HttpStatusCode.OK, observed.StatusCode);
+
+        // The run target cannot decide a removal or widen the domains it may claim.
+        using var confirm = await client.PostAsJsonAsync("/api/projects/demo/environments/stage/run-target-removal/confirm",
+            new RunTargetRemovalConfirmRequest(runnerId));
+        using var suffixes = await client.PutAsJsonAsync("/api/projects/demo/run-target-domain-suffixes",
+            new RunTargetDomainSuffixesRequest(["com.example"]));
+        Assert.Contains(confirm.StatusCode, new[] { HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden });
+        Assert.Contains(suffixes.StatusCode, new[] { HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden });
     }
 
     [Fact]
@@ -223,6 +233,8 @@ public sealed class RunTargetDesiredStateTests : IDisposable
             Assert.Empty(desired.Environments);
             Assert.Empty(desired.Removals);
             Assert.Equal(new RunTargetSkip("demo", "declaration-invalid"), Assert.Single(desired.Skipped));
+            // A host the project is not placed on does not hear about it.
+            Assert.Empty(service.DesiredState("other-host").Skipped);
         }
         File.WriteAllText(stage, valid);
         var restored = service.DesiredState("run-host");
@@ -256,7 +268,7 @@ public sealed class RunTargetDesiredStateTests : IDisposable
     }
 
     [Fact]
-    public void UnreadableDeployState_SkipsTheProject()
+    public void UnreadableDeployState_SendsNoSpecAndNoRemoval()
     {
         var service = Build();
         var path = Path.Combine(_root, "workspace", "deployments", "demo.json");
@@ -265,12 +277,14 @@ public sealed class RunTargetDesiredStateTests : IDisposable
 
         var desired = service.DesiredState("run-host");
 
-        Assert.Equal(new RunTargetSkip("demo", "state-unreadable"), Assert.Single(desired.Skipped));
+        // The placements are unknown, so no host is told; every host keeps its apps.
+        Assert.Empty(desired.Skipped);
         Assert.Empty(desired.Environments);
+        Assert.Empty(desired.Removals);
     }
 
     [Fact]
-    public void DeletedEnvironment_IsRemovedAfterTheGrace_UntilTheHostConfirms()
+    public void DeletedStageDeclaration_StaysPendingUntilAnOperatorConfirms_ThenIsRemovedUntilTheHostConfirms()
     {
         var service = Build();
         Assert.Single(service.DesiredState("run-host").Environments);
@@ -279,15 +293,98 @@ public sealed class RunTargetDesiredStateTests : IDisposable
         RunTargetObservedReport Removed() => new([new("demo", "stage", "removed", null, null, 0, now, [])]);
 
         Assert.Empty(service.DesiredState("run-host").Removals);
+        _clock.Advance(RunTargetDesiredStatePolicy.RemovalGrace * 10);
+        Assert.Empty(service.DesiredState("run-host").Removals);
         Assert.Equal(0, service.RecordObserved("run-host", Removed()));
-        _clock.Advance(RunTargetDesiredStatePolicy.RemovalGrace);
+        var pending = Assert.Single(service.Read("demo")!.RunTargetRemovals!);
+        Assert.Equal(("stage", "run-host", "stage", "pending-confirmation", now), (pending.EnvironmentId, pending.HostId,
+            pending.Kind, pending.Status, pending.MissingSince));
+
+        Assert.False(service.ConfirmRunTargetRemoval("demo", "stage", "other-host", "operator-1"));
+        Assert.True(service.ConfirmRunTargetRemoval("demo", "stage", null, "operator-1"));
+        Assert.False(service.ConfirmRunTargetRemoval("demo", "stage", null, "operator-2"));
 
         Assert.Equal(new RunTargetRemoval("demo", "stage"), Assert.Single(service.DesiredState("run-host").Removals));
-        Assert.Single(service.DesiredState("run-host").Removals);
+        Assert.Equal("removing", Assert.Single(service.Read("demo")!.RunTargetRemovals!).Status);
         Assert.Empty(service.DesiredState("other-host").Removals);
         Assert.Equal(0, service.RecordObserved("other-host", Removed()));
         Assert.Equal(1, service.RecordObserved("run-host", Removed()));
         Assert.Empty(service.DesiredState("run-host").Removals);
+        var record = Assert.Single(service.Read("demo")!.RunTargetRemovals!);
+        Assert.Equal(("removed", "operator", "operator-1", _clock.GetUtcNow().UtcDateTime),
+            (record.Status, record.Decision, record.Actor, record.RemovedAt));
+    }
+
+    [Fact]
+    public void RenamedOrRetargetedStageDeclaration_RemovesNothingWithoutAConfirmation()
+    {
+        var service = Build();
+        Assert.Single(service.DesiredState("run-host").Environments);
+        var stage = Path.Combine(DeclarationDirectory, "stage.json");
+        var valid = File.ReadAllText(stage);
+
+        File.WriteAllText(stage, valid.Replace("\"id\":\"stage\"", "\"id\":\"stage-eu\"", StringComparison.Ordinal));
+        _clock.Advance(RunTargetDesiredStatePolicy.RemovalGrace * 2);
+        var renamed = service.DesiredState("run-host");
+        Assert.Empty(renamed.Removals);
+        Assert.Equal("stage-eu", Assert.Single(renamed.Environments).EnvironmentId);
+        Assert.Equal(("stage", "pending-confirmation"), (Assert.Single(service.Read("demo")!.RunTargetRemovals!).EnvironmentId,
+            service.Read("demo")!.RunTargetRemovals![0].Status));
+
+        File.WriteAllText(stage, valid.Replace("\"targetHostId\":\"run-host\"", "\"targetHostId\":\"new-host\"", StringComparison.Ordinal));
+        _clock.Advance(RunTargetDesiredStatePolicy.RemovalGrace * 2);
+        Assert.Empty(service.DesiredState("run-host").Removals);
+        Assert.Single(service.DesiredState("new-host").Environments);
+    }
+
+    [Fact]
+    public void Tombstone_RemovesAProductionOrStageEnvironmentWithoutWaiting()
+    {
+        var service = Build();
+        Assert.Single(service.DesiredState("run-host").Environments);
+        File.WriteAllText(Path.Combine(DeclarationDirectory, "stage.json"), """{ "id": "stage", "removed": true }""");
+
+        var desired = service.DesiredState("run-host");
+
+        Assert.Empty(desired.Environments);
+        Assert.Equal(new RunTargetRemoval("demo", "stage"), Assert.Single(desired.Removals));
+        Assert.Equal("tombstone", Assert.Single(service.Read("demo")!.RunTargetRemovals!).Decision);
+        Assert.DoesNotContain(service.Declarations("demo")!, item => item.Id == "stage");
+    }
+
+    [Fact]
+    public void TombstoneForADeclaredId_IsAnInvalidDeclaration()
+    {
+        var service = Build();
+        service.DesiredState("run-host");
+        File.WriteAllText(Path.Combine(DeclarationDirectory, "stage-gone.json"), """{ "id": "stage", "removed": true }""");
+
+        var desired = service.DesiredState("run-host");
+
+        Assert.Empty(desired.Removals);
+        Assert.Equal(new RunTargetSkip("demo", "declaration-invalid"), Assert.Single(desired.Skipped));
+    }
+
+    [Fact]
+    public void DeletedOtherKindDeclaration_IsRemovedAfterTheGrace()
+    {
+        var service = Build();
+        var preview = Path.Combine(DeclarationDirectory, "preview.json");
+        File.WriteAllText(preview, JsonSerializer.Serialize(new
+        {
+            id = "preview", name = "Preview", kind = "other", targetHostId = "run-host",
+            address = "https://preview.example.com", template = "container", destination = "edge",
+            domains = new[] { "preview.example.com" },
+        }));
+        Assert.Equal(2, service.DesiredState("run-host").Environments.Count);
+        File.Delete(preview);
+
+        Assert.Empty(service.DesiredState("run-host").Removals);
+        Assert.Equal("pending-grace", Assert.Single(service.Read("demo")!.RunTargetRemovals!).Status);
+        _clock.Advance(RunTargetDesiredStatePolicy.RemovalGrace);
+
+        Assert.Equal(new RunTargetRemoval("demo", "preview"), Assert.Single(service.DesiredState("run-host").Removals));
+        Assert.Equal("grace", Assert.Single(service.Read("demo")!.RunTargetRemovals!).Decision);
     }
 
     [Fact]
@@ -333,6 +430,34 @@ public sealed class RunTargetDesiredStateTests : IDisposable
         var stage = Path.Combine(DeclarationDirectory, "stage.json");
         File.WriteAllText(stage, File.ReadAllText(stage).Replace("\"stage.example.com\"", "\"demo.example.com\"", StringComparison.Ordinal));
         Assert.Equal(["stage.example.com"], service.DesiredState("run-host").Environments.Single(item => item.Project == "aaa").Domains);
+    }
+
+    [Fact]
+    public void Domains_OutsideTheOperatorsSuffixes_AreRefused_AndNeverClaimed()
+    {
+        var service = Build();
+        _settings!.SetRunTargetDomainSuffixes("demo", ["other.example.org"]);
+
+        var spec = Assert.Single(service.DesiredState("run-host").Environments);
+
+        Assert.Empty(spec.Domains);
+        Assert.Equal(["stage.example.com"], spec.RefusedDomains!);
+        Assert.False(File.Exists(Path.Combine(_root, "workspace", "deployments", "run-targets", "run-host.json")));
+
+        _settings.SetRunTargetDomainSuffixes("demo", ["example.com"]);
+        Assert.Equal(["stage.example.com"], Assert.Single(service.DesiredState("run-host").Environments).Domains);
+    }
+
+    [Theory]
+    [InlineData(new[] { "Example.COM", "*.shop.example.org", "example.com" }, new[] { "example.com", "shop.example.org" })]
+    [InlineData(new[] { "com" }, null)]
+    [InlineData(new[] { "exa mple.com" }, null)]
+    public void Policy_DomainSuffixes_AreNormalizedAndMatchWholeLabels(string[] input, string[]? expected)
+    {
+        Assert.Equal(expected, RunTargetDesiredStatePolicy.NormalizeDomainSuffixes(input));
+        Assert.Equal(["example.com", "a.example.com"], RunTargetDesiredStatePolicy.AllowedDomains(
+            ["example.com", "a.example.com", "badexample.com", "example.com.evil.org"], ["example.com"]));
+        Assert.Empty(RunTargetDesiredStatePolicy.AllowedDomains(["example.com"], null));
     }
 
     [Fact]
@@ -441,29 +566,39 @@ public sealed class RunTargetDesiredStateTests : IDisposable
     }
 
     [Fact]
-    public void Policy_Placement_RemovesOnlyAfterTheGrace_AndOnlyOnItsHost()
+    public void Policy_Placement_RemovesProductionAndStageOnlyOnADecision_OtherAfterTheGrace_AndOnlyOnItsHost()
     {
         var now = _clock.GetUtcNow().UtcDateTime;
         var grace = RunTargetDesiredStatePolicy.RemovalGrace;
         RunTargetPlacement[] placements =
         [
-            new("kept", "run-host", now.AddMinutes(-3)),
-            new("new-gone", "run-host"),
-            new("almost", "run-host", now - grace + TimeSpan.FromSeconds(1)),
-            new("due", "run-host", now - grace),
-            new("due", "other-host", now - grace),
+            new("kept", "run-host", now.AddMinutes(-3), "production"),
+            new("new-gone", "run-host", Kind: "other"),
+            new("almost", "run-host", now - grace + TimeSpan.FromSeconds(1), "other"),
+            new("due", "run-host", now - grace, "other"),
+            new("prod-gone", "run-host", now.AddDays(-3), "production"),
+            new("legacy", "run-host", now.AddDays(-3)),
+            new("confirmed", "run-host", now.AddMinutes(-1), "stage", "operator", "operator-1", now),
+            new("tombstoned", "run-host", Kind: "production"),
+            new("due", "other-host", now - grace, "other"),
         ];
 
-        var decision = RunTargetDesiredStatePolicy.Place(placements, "run-host", ["kept", "added"], now);
+        var decision = RunTargetDesiredStatePolicy.Place(placements, "run-host",
+            [new("kept", "production"), new("added", "stage")], new HashSet<string> { "tombstoned" }, now);
 
-        Assert.Equal(["due"], decision.Removals);
+        Assert.Equal(["due", "confirmed", "tombstoned"], decision.Removals);
         Assert.Equal(
         [
-            new("kept", "run-host"), new("new-gone", "run-host", now), placements[2], placements[3], placements[4],
-            new("added", "run-host"),
+            new("kept", "run-host", Kind: "production"), new("new-gone", "run-host", now, "other"), placements[2],
+            placements[3] with { RemovalDecision = "grace", RemovalDecidedAt = now }, placements[4], placements[5],
+            placements[6], new("tombstoned", "run-host", now, "production", "tombstone", null, now), placements[8],
+            new("added", "run-host", Kind: "stage"),
         ], decision.Placements);
-        Assert.False(RunTargetDesiredStatePolicy.AcceptsRemoval(new("kept", "run-host"), now));
-        Assert.True(RunTargetDesiredStatePolicy.AcceptsRemoval(placements[3], now));
+        Assert.False(RunTargetDesiredStatePolicy.AcceptsRemoval(placements[4]));
+        Assert.True(RunTargetDesiredStatePolicy.AcceptsRemoval(placements[6]));
+        Assert.Null(RunTargetDesiredStatePolicy.ConfirmRemoval(placements[0] with { MissingSince = null }, "op", now));
+        Assert.Equal(("operator", "op"), (RunTargetDesiredStatePolicy.ConfirmRemoval(placements[4], "op", now)!.RemovalDecision,
+            RunTargetDesiredStatePolicy.ConfirmRemoval(placements[4], "op", now)!.RemovalActor));
     }
 
     [Theory]
@@ -595,6 +730,10 @@ public sealed class RunTargetDesiredStateTests : IDisposable
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        // The operator allows the test domains; Domains_OutsideTheOperatorsSuffixes narrows them.
+        settings.SetRunTargetDomainSuffixes("demo", ["example.com"]);
+        foreach (var (project, _) in extra) settings.SetRunTargetDomainSuffixes(project, ["example.com"]);
+        _settings = settings;
         return new(config, scanner, git, settings, _clock);
     }
 

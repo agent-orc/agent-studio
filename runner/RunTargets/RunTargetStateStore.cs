@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 
 namespace AgentRunner.RunTargets;
@@ -50,8 +51,14 @@ public sealed class RunTargetHostState
     public Dictionary<string, string> DomainOwners { get; set; } = new(StringComparer.Ordinal);
 }
 
-/// <summary>Durable host state so a restarted agent knows current and previous revisions.</summary>
-public sealed class RunTargetStateStore(string stateDirectory)
+/// <summary>
+/// Durable host state so a restarted agent knows current and previous
+/// revisions. Every write is flushed to disk before it replaces the old file,
+/// and the state is kept twice: <c>state.json</c> and <c>state.last-good.json</c>.
+/// A torn or unparsable <c>state.json</c> falls back to the last-good copy, so
+/// the host keeps supervising its apps.
+/// </summary>
+public sealed class RunTargetStateStore(string stateDirectory, Action<string>? log = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
@@ -61,14 +68,28 @@ public sealed class RunTargetStateStore(string stateDirectory)
     public string CaddyDirectory => Path.Combine(EdgeDirectory, "caddy");
     public string CaddyfilePath => Path.Combine(CaddyDirectory, "Caddyfile");
     public string EdgeComposePath => Path.Combine(EdgeDirectory, "compose.yaml");
-    private string StatePath => Path.Combine(Directory, "state.json");
+    public string StatePath => Path.Combine(Directory, "state.json");
+    public string LastGoodPath => Path.Combine(Directory, "state.last-good.json");
 
+    /// <exception cref="InvalidDataException">Neither copy of an existing state can be read.</exception>
     public RunTargetHostState Load()
-        => File.Exists(StatePath)
-            ? JsonSerializer.Deserialize<RunTargetHostState>(File.ReadAllText(StatePath), Json) ?? new()
-            : new();
+    {
+        if (!File.Exists(StatePath) && !File.Exists(LastGoodPath)) return new();
+        if (TryParse(StatePath, out var state)) return state;
+        if (TryParse(LastGoodPath, out var lastGood))
+        {
+            log?.Invoke($"run-target: {StatePath} is unreadable; continuing from {LastGoodPath}");
+            return lastGood;
+        }
+        throw new InvalidDataException($"Neither {StatePath} nor {LastGoodPath} holds a readable run-target state.");
+    }
 
-    public void Save(RunTargetHostState state) => WriteIfChanged(StatePath, JsonSerializer.Serialize(state, Json));
+    public void Save(RunTargetHostState state)
+    {
+        var text = JsonSerializer.Serialize(state, Json);
+        if (!WriteIfChanged(StatePath, text)) return;
+        WriteAtomically(LastGoodPath, text);
+    }
 
     /// <summary>Writes when the content differs; returns whether it changed.</summary>
     public bool WriteIfChanged(string path, string content)
@@ -80,11 +101,32 @@ public sealed class RunTargetStateStore(string stateDirectory)
 
     public string? Read(string path) => File.Exists(path) ? File.ReadAllText(path) : null;
 
+    /// <summary>Writes a temporary file, flushes it to disk, then renames it over <paramref name="path"/>.</summary>
     public static void WriteAtomically(string path, string content)
     {
         System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        File.WriteAllText(temporary, content);
+        using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
+        {
+            stream.Write(new UTF8Encoding(false).GetBytes(content));
+            stream.Flush(flushToDisk: true);
+        }
         File.Move(temporary, path, true);
+    }
+
+    private static bool TryParse(string path, out RunTargetHostState state)
+    {
+        state = new();
+        if (!File.Exists(path)) return false;
+        try
+        {
+            if (JsonSerializer.Deserialize<RunTargetHostState>(File.ReadAllText(path), Json) is not { } parsed) return false;
+            state = parsed;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 }

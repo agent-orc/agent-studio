@@ -62,6 +62,12 @@ public sealed record RunTargetEnvironmentSpec(
     bool IsRollback,
     IReadOnlyList<string>? RefusedDomains = null);
 
+/// <summary>Operator confirmation of a pending removal; without a host it applies to every host it is pending on.</summary>
+public sealed record RunTargetRemovalConfirmRequest(string? HostId);
+
+/// <summary>Replaces a project's operator-owned run-target domain suffixes.</summary>
+public sealed record RunTargetDomainSuffixesRequest(IReadOnlyList<string>? Suffixes);
+
 public sealed record RunTargetObservedReport(IReadOnlyList<RunTargetObservation> Environments);
 
 public sealed record RunTargetObservation(

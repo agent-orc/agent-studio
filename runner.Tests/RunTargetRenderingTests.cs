@@ -112,6 +112,7 @@ public sealed class RunTargetRenderingTests
         Assert.Contains("    restart: \"on-failure:3\"\n", text);
         Assert.Contains("    cpus: 1.5\n    mem_limit: \"768m\"\n    memswap_limit: \"768m\"\n    pids_limit: 200\n", text);
         Assert.Contains("      - \"no-new-privileges:true\"\n", text);
+        Assert.Contains("    cap_drop:\n      - \"NET_RAW\"\n      - \"MKNOD\"\n", text);
         Assert.Contains("      - \"GREETING=costs $$5 \\\"now\\\"\"\n", text);
         Assert.Contains("      - \"DATABASE_URL_FILE=/run/secrets/database-url\"\n      - \"STRIPE_KEY_FILE=/run/secrets/stripe.key\"\n", text);
         Assert.Contains("    secrets:\n      - \"database-url\"\n      - \"stripe.key\"\n", text);
@@ -162,9 +163,13 @@ public sealed class RunTargetRenderingTests
     {
         var key = RunTargetNames.AppKey("Demo Shop / Ä", "prod.eu");
 
-        Assert.Matches("^rt-[a-z0-9-]+-[0-9a-f]{8}$", key);
+        Assert.Matches("^rt-[a-z0-9-]+-[0-9a-f]{20}$", key);
         Assert.Equal(key, RunTargetNames.AppKey("Demo Shop / Ä", "prod.eu"));
         Assert.NotEqual(key, RunTargetNames.AppKey("Demo Shop / Ä", "prod-eu"));
+        // Ids that share a slug differ only in the 80-bit hash.
+        Assert.Equal(3, new[] { "prod", "prod.", "prod._-" }.Select(id => RunTargetNames.AppKey("demo", id)).Distinct().Count());
+        var longest = RunTargetNames.AppKey(new string('p', 64), new string('e', 64)) + "-" + new string('r', 12);
+        Assert.True(longest.Length <= 63, longest);
     }
 
     [Theory]

@@ -19,6 +19,9 @@ public interface IRunTargetDocker
     Task<RunTargetDockerResult> PullAsync(string image, CancellationToken ct);
     Task<RunTargetDockerResult> EnsureNetworkAsync(string network, CancellationToken ct);
     Task<RunTargetDockerResult> ConnectAsync(string network, string container, CancellationToken ct);
+
+    /// <summary>Disconnects whatever is still attached (the edge) and removes the network; a missing network is a success.</summary>
+    Task<RunTargetDockerResult> RemoveNetworkAsync(string network, CancellationToken ct);
     Task<RunTargetDockerResult> ComposeUpAsync(string project, string composeFile, CancellationToken ct);
     Task<RunTargetDockerResult> ComposeStopAsync(string project, string composeFile, CancellationToken ct);
     Task<RunTargetDockerResult> ComposeDownAsync(string project, string composeFile, CancellationToken ct);
@@ -52,6 +55,19 @@ public sealed class DockerCliRunTarget(string docker = "docker") : IRunTargetDoc
         if (members.Ok && members.Detail.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(container, StringComparer.Ordinal))
             return RunTargetDockerResult.Success;
         return await Run(["network", "connect", network, container], ct);
+    }
+
+    public async Task<RunTargetDockerResult> RemoveNetworkAsync(string network, CancellationToken ct)
+    {
+        var members = await RunWithOutput(
+            ["network", "inspect", network, "--format", "{{range .Containers}}{{.Name}} {{end}}"], ct);
+        if (!members.Ok) return RunTargetDockerResult.Success;
+        foreach (var container in members.Detail.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var disconnected = await Run(["network", "disconnect", "--force", network, container], ct);
+            if (!disconnected.Ok) return disconnected;
+        }
+        return await Run(["network", "rm", network], ct);
     }
 
     public Task<RunTargetDockerResult> ComposeUpAsync(string project, string composeFile, CancellationToken ct)

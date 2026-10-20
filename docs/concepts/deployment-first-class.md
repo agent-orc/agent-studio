@@ -61,7 +61,10 @@ run-target role instead (IP-1, `RUNNER_ROLE=run-target`). It declares
 next to the running one behind an edge Caddy, and switches traffic only after
 the health check passes. It keeps the previous revision for rollback,
 restarts crashed apps with backoff, and rolls a crash-looping revision back.
-It removes an app only on Studio's explicit removal signal. Secrets reach the
+It removes an app only on Studio's explicit removal signal. For production
+and stage, Studio sends that signal only after an operator confirms the
+pending removal or the repository holds a tombstone (`"removed": true`).
+Domains must fall under the project's operator-owned suffixes. Secrets reach the
 app as files on tmpfs, named by `<NAME>_FILE`. The same deploy jobs,
 promotions, and automatic rollback apply. See the
 [runner domain map](../system/domains/runner.md#run-target-host-app-hosting-ip-1).

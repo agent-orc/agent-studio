@@ -71,6 +71,26 @@ public sealed class RunTargetProtocolContractTests : IDisposable
     }
 
     [Fact]
+    public async Task UnexpectedFailure_EndsOnlyTheCycle_NotTheDaemon()
+    {
+        var waits = new List<TimeSpan>();
+        using var stop = new CancellationTokenSource();
+        var log = new List<string>();
+        var daemon = new RunTargetDaemon(new BrokenStudio(), Reconciler(new FakeRunTargetDocker(), log),
+            TimeSpan.FromSeconds(15), (wait, _) =>
+            {
+                waits.Add(wait);
+                if (waits.Count == 2) stop.Cancel();
+                return Task.CompletedTask;
+            }, log.Add);
+
+        await daemon.RunAsync(stop.Token);
+
+        Assert.Equal(2, waits.Count);
+        Assert.Equal(2, log.Count(line => line.Contains("cycle failed (NotSupportedException", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public async Task DesiredStateWithoutRemovalFields_FromAnOlderStudio_RemovesNothing()
     {
         var docker = new FakeRunTargetDocker();
@@ -123,6 +143,14 @@ public sealed class RunTargetProtocolContractTests : IDisposable
             => throw new InvalidOperationException("must not report without a desired state");
         public Task<bool> ReportJobAsync(RunTargetJobReport report, CancellationToken ct)
             => throw new InvalidOperationException("must not report without a desired state");
+    }
+
+    private sealed class BrokenStudio : IRunTargetControlPlane
+    {
+        public Task<RunTargetDesiredState> GetDesiredStateAsync(CancellationToken ct)
+            => throw new NotSupportedException("unexpected");
+        public Task PostObservedStateAsync(RunTargetObservedReport report, CancellationToken ct) => Task.CompletedTask;
+        public Task<bool> ReportJobAsync(RunTargetJobReport report, CancellationToken ct) => Task.FromResult(true);
     }
 
     private sealed record Recorded(string Method, string Host, string Path, string Body);

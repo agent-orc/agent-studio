@@ -51,6 +51,28 @@ public static class ProjectOperatorDashboardEndpoints
                 ? Results.Accepted() : Results.Conflict(new { error = "No previous artifact is available." }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
+        // IP-1: a production or stage environment that is no longer placed on
+        // its run target waits here for the operator's decision.
+        app.MapPost("/api/projects/{projectName}/environments/{environmentId}/run-target-removal/confirm", (
+            HttpContext context, string projectName, string environmentId, RunTargetRemovalConfirmRequest? request,
+            ProjectEnvironmentService environments) =>
+            environments.ConfirmRunTargetRemoval(projectName, environmentId, request?.HostId,
+                context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                    ? human.User.Id : "local-operator")
+                ? Results.Accepted() : Results.Conflict(new { error = "No removal is pending for this environment." }))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
+        app.MapPut("/api/projects/{projectName}/run-target-domain-suffixes", (string projectName,
+            RunTargetDomainSuffixesRequest request, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(item => string.Equals(item.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (RunTargetDesiredStatePolicy.NormalizeDomainSuffixes(request.Suffixes) is not { } suffixes)
+                return Results.BadRequest(new { error = "Every suffix must be a domain such as example.com." });
+            settings.SetRunTargetDomainSuffixes(projectName, suffixes);
+            return Results.Ok(new { suffixes });
+        });
+
         app.MapPost("/api/deploy/jobs/claim", (HttpContext context, DeployClaimRequest request,
             ProjectEnvironmentService environments, IConfiguration configuration) =>
             SecurityProfiles.IsNetworked(configuration) &&

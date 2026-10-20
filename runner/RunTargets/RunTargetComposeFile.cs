@@ -36,6 +36,8 @@ public static class RunTargetComposeFile
         text.Append("    memswap_limit: \"").Append(spec.Resources.MemoryMb).Append("m\"\n");
         text.Append("    pids_limit: ").Append(spec.Resources.PidsLimit).Append('\n');
         text.Append("    security_opt:\n      - \"no-new-privileges:true\"\n");
+        // No raw sockets (packet spoofing on the app network) and no device nodes.
+        text.Append("    cap_drop:\n      - \"NET_RAW\"\n      - \"MKNOD\"\n");
         var variables = spec.Variables.OrderBy(item => item.Key, StringComparer.Ordinal).ToArray();
         var secretRefs = spec.SecretRefs.Order(StringComparer.Ordinal).ToArray();
         if (variables.Length + secretRefs.Length > 0)

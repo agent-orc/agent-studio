@@ -65,8 +65,11 @@ public sealed partial record RunTargetOptions(
 /// <summary>
 /// <c>RUNNER_ROLE=run-target</c>: polls Studio for the desired state of the
 /// environments placed on this host, converges them, and reports observed state
-/// and deploy-job results. It never listens on a port. A Studio outage leaves
-/// the running apps untouched; polling backs off until Studio answers again.
+/// and deploy-job results. It never listens on a port. A Studio outage changes
+/// nothing Studio decides: polling backs off until Studio answers again, and
+/// each failed poll runs a supervise-only pass from the host's own state, so
+/// crash restarts, crash rollbacks, and secret files after a reboot do not wait
+/// for Studio. No failure ends the daemon; only cancellation does.
 /// </summary>
 public sealed class RunTargetDaemon(
     IRunTargetControlPlane controlPlane,
@@ -87,8 +90,7 @@ public sealed class RunTargetDaemon(
                 await CycleAsync(ct);
                 failures = 0;
             }
-            catch (Exception ex) when (!ct.IsCancellationRequested && ex is HttpRequestException or TaskCanceledException
-                or IOException or InvalidDataException or System.Text.Json.JsonException or UnauthorizedAccessException)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 failures++;
                 log($"run-target: cycle failed ({ex.GetType().Name}: {ex.Message}); attempt {failures}, running apps are unchanged");
@@ -102,7 +104,16 @@ public sealed class RunTargetDaemon(
 
     public async Task CycleAsync(CancellationToken ct)
     {
-        var desired = await controlPlane.GetDesiredStateAsync(ct);
+        RunTargetDesiredState desired;
+        try
+        {
+            desired = await controlPlane.GetDesiredStateAsync(ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            await SuperviseWithoutStudioAsync($"{ex.GetType().Name}: {ex.Message}", ct);
+            throw;
+        }
         var result = await reconciler.ReconcileAsync(desired, ct);
         foreach (var report in result.JobReports)
         {
@@ -110,6 +121,18 @@ public sealed class RunTargetDaemon(
                 log($"run-target: Studio no longer holds deploy job {report.JobId}; the next poll reconciles it");
         }
         await controlPlane.PostObservedStateAsync(new(result.Observations), ct);
+    }
+
+    private async Task SuperviseWithoutStudioAsync(string reason, CancellationToken ct)
+    {
+        try
+        {
+            await reconciler.SuperviseOnlyAsync(reason, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            log($"run-target: supervise-only pass failed ({ex.GetType().Name}: {ex.Message})");
+        }
     }
 
     /// <summary>Production composition for <c>RUNNER_ROLE=run-target</c>.</summary>
@@ -120,7 +143,7 @@ public sealed class RunTargetDaemon(
             new DockerCliRunTarget(),
             new FileRunTargetSecretSource(options.SecretDirectory),
             new RunTargetSecretFiles(options.SecretRuntimeDirectory, RunTargetSecretFiles.ProcMountsIsMemoryBacked),
-            new RunTargetStateStore(options.StateDirectory),
+            new RunTargetStateStore(options.StateDirectory, log),
             options.Reconciler,
             TimeProvider.System,
             Delay,

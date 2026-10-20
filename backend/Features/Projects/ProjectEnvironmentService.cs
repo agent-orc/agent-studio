@@ -30,7 +30,7 @@ public sealed record DeploymentFailureCard(string EnvironmentId, string Artifact
 
 public sealed record ProjectEnvironmentsResponse(string Project, IReadOnlyList<ProjectEnvironmentView> Environments,
     IReadOnlyList<EnvironmentPromotion> Promotions, IReadOnlyList<DeployJob> Jobs,
-    IReadOnlyList<DeploymentFailureCard> FailureCards);
+    IReadOnlyList<DeploymentFailureCard> FailureCards, IReadOnlyList<RunTargetRemovalRecord>? RunTargetRemovals = null);
 
 public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string? Evidence);
 public sealed record DeployClaimRequest(string HostId);
@@ -65,21 +65,27 @@ public sealed partial class ProjectEnvironmentService
 
     public IReadOnlyList<EnvironmentDeclaration>? Declarations(string project)
     {
-        var (source, declarations) = ReadDeclarations(project);
+        var (source, declarations, _) = ReadDeclarations(project);
         return source == DeclarationSource.UnknownProject ? null : declarations;
     }
 
     private enum DeclarationSource { UnknownProject, CheckoutMissing, FolderMissing, Read }
 
-    /// <summary>Tells a complete read apart from a missing checkout or folder; an invalid file throws.</summary>
-    private (DeclarationSource Source, IReadOnlyList<EnvironmentDeclaration> Declarations) ReadDeclarations(string project)
+    /// <summary>
+    /// Tells a complete read apart from a missing checkout or folder; an invalid file throws.
+    /// A file with <c>"removed": true</c> is a tombstone: it declares nothing and tells
+    /// the run-target protocol to take that environment id off its hosts.
+    /// </summary>
+    private (DeclarationSource Source, IReadOnlyList<EnvironmentDeclaration> Declarations, IReadOnlySet<string> Tombstones)
+        ReadDeclarations(string project)
     {
+        var tombstones = new HashSet<string>(StringComparer.Ordinal);
         if (!_scanner.GetWatchPaths().Any(item => string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase)))
-            return (DeclarationSource.UnknownProject, []);
+            return (DeclarationSource.UnknownProject, [], tombstones);
         var root = _git.ResolveRepoRootForProject(project);
-        if (root is null) return (DeclarationSource.CheckoutMissing, []);
+        if (root is null) return (DeclarationSource.CheckoutMissing, [], tombstones);
         var directory = Path.Combine(root, "docs", "deployments", "environments");
-        if (!Directory.Exists(directory)) return (DeclarationSource.FolderMissing, []);
+        if (!Directory.Exists(directory)) return (DeclarationSource.FolderMissing, [], tombstones);
         var result = new List<EnvironmentDeclaration>();
         foreach (var file in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
         {
@@ -89,6 +95,12 @@ public sealed partial class ProjectEnvironmentService
                 ?? throw new JsonException($"Environment {Path.GetFileName(file)} requires {name}.");
             string? Optional(string name) => value.TryGetProperty(name, out var property) ? property.GetString() : null;
             var id = Required("id");
+            if (value.TryGetProperty("removed", out var removed) && removed.ValueKind == JsonValueKind.True)
+            {
+                if (!Identifier.IsMatch(id)) throw new JsonException($"Environment {Path.GetFileName(file)} has an invalid id.");
+                tombstones.Add(id);
+                continue;
+            }
             var kind = Required("kind");
             var host = Required("targetHostId");
             var template = Required("template");
@@ -120,8 +132,10 @@ public sealed partial class ProjectEnvironmentService
         }
         if (result.GroupBy(item => item.Id, StringComparer.Ordinal).Any(group => group.Count() > 1))
             throw new JsonException("Environment ids must be unique within a project.");
+        if (result.Any(item => tombstones.Contains(item.Id)))
+            throw new JsonException("An environment id cannot be declared and removed at the same time.");
         return (DeclarationSource.Read, result.OrderBy(item => item.Kind == "stage" ? 0 : item.Kind == "production" ? 1 : 2)
-            .ThenBy(item => item.Id, StringComparer.Ordinal).ToArray());
+            .ThenBy(item => item.Id, StringComparer.Ordinal).ToArray(), tombstones);
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -148,7 +162,8 @@ public sealed partial class ProjectEnvironmentService
                 state.History.Where(row => row.Item.Status == "failed").AsEnumerable().Reverse()
                     .Take(20).Select(row => new DeploymentFailureCard(row.EnvironmentId,
                         row.Item.Artifact, row.At, row.Item.Evidence ?? "deploy-step-failed",
-                        row.Item.PreviousArtifact)).ToArray());
+                        row.Item.PreviousArtifact)).ToArray(),
+                RunTargetDesiredStatePolicy.Removals(state.Placements, state.RunTargetRemovals));
         }
     }
 
@@ -433,6 +448,7 @@ public sealed partial class ProjectEnvironmentService
         public List<EnvironmentHistoryRow> History { get; set; } = [];
         public List<RunTargetObservedRow> Observed { get; set; } = [];
         public List<RunTargetPlacement> Placements { get; set; } = [];
+        public List<RunTargetRemovalRecord> RunTargetRemovals { get; set; } = [];
     }
     public sealed record EnvironmentHistoryRow(string EnvironmentId, DateTime At, DeploymentHistoryItem Item);
     public sealed record RunTargetObservedRow(string EnvironmentId, RunTargetObservation Observation);

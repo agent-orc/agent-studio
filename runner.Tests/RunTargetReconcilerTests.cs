@@ -46,6 +46,19 @@ public sealed class RunTargetReconcilerTests : IDisposable
 
     private static string Key => RunTargetNames.AppKey("demo", "stage");
 
+    private RunTargetDaemon OutageDaemon()
+        => new(new UnreachableStudio(), _reconciler, TimeSpan.FromSeconds(15), (_, _) => Task.CompletedTask, _log.Add);
+
+    private sealed class UnreachableStudio : IRunTargetControlPlane
+    {
+        public Task<RunTargetDesiredState> GetDesiredStateAsync(CancellationToken ct)
+            => throw new HttpRequestException("connection refused");
+        public Task PostObservedStateAsync(RunTargetObservedReport report, CancellationToken ct)
+            => throw new InvalidOperationException("must not report without a desired state");
+        public Task<bool> ReportJobAsync(RunTargetJobReport report, CancellationToken ct)
+            => throw new InvalidOperationException("must not report without a desired state");
+    }
+
     private static RunTargetEnvironmentSpec Spec(string? artifact, string? jobId = "job-1", bool rollback = false,
         string[]? domains = null)
         => new("demo", "stage", "stage", artifact, 8080, "/healthz", domains ?? ["stage.example.com"], "acme",
@@ -253,6 +266,8 @@ public sealed class RunTargetReconcilerTests : IDisposable
         Assert.Equal([("crash-rollback", Second), ("rolled-back", First)],
             observed.Events.TakeLast(2).Select(item => (item.Kind, item.Artifact)));
         Assert.Contains(_log, line => line.Contains("rolling back to " + First, StringComparison.Ordinal));
+        var rolledBack = _store.Load().Apps[Key];
+        Assert.Equal((0, RunTargetNames.Revision(running)), (rolledBack.DockerRestarts, rolledBack.CrashRollbackRevision));
 
         // Studio still names the crashing release without a job: the host keeps the rollback.
         var calls = _docker.Calls.Count;
@@ -462,6 +477,7 @@ public sealed class RunTargetReconcilerTests : IDisposable
 
         Assert.Contains("down " + Slot(second), _docker.Calls);
         Assert.Contains("down " + Slot(first), _docker.Calls);
+        Assert.Contains("network-rm " + RunTargetNames.AppNetwork(Key), _docker.Calls);
         Assert.Empty(_store.Load().Apps);
         Assert.Empty(_store.Load().DomainOwners);
         Assert.DoesNotContain("reverse_proxy", Caddyfile);
@@ -487,6 +503,209 @@ public sealed class RunTargetReconcilerTests : IDisposable
         Assert.Empty(result.Observations);
         Assert.NotNull(_store.Load().Apps[Key].Current);
         Assert.Contains($"reverse_proxy {Slot(Spec(First))}:8080", Caddyfile);
+    }
+
+    [Fact]
+    public async Task Removal_ThatFailsOnThePreviousRevision_RetriesOnlyWhatIsLeft()
+    {
+        var first = Spec(First);
+        var second = Spec(Second, jobId: "job-2");
+        await Converge(first);
+        await Converge(second);
+        _docker.DownFailsFor.Add(Slot(first));
+
+        var result = await Desired([], removals: [new RunTargetRemoval("demo", "stage")]);
+
+        Assert.Empty(result.Observations);
+        var app = _store.Load().Apps[Key];
+        Assert.Equal(((RunTargetSlot?)null, First), (app.Current, app.Previous!.Artifact));
+        Assert.DoesNotContain("reverse_proxy", Caddyfile);
+
+        _docker.DownFailsFor.Clear();
+        var calls = _docker.Calls.Count;
+        result = await Desired([], removals: [new RunTargetRemoval("demo", "stage")]);
+
+        Assert.Equal(["down " + Slot(first)], _docker.Calls.Skip(calls).Where(call => call.StartsWith("down ")));
+        Assert.Equal("removed", Assert.Single(result.Observations).State);
+        Assert.Empty(_store.Load().Apps);
+    }
+
+    [Fact]
+    public async Task ForcedAppKeyCollision_RefusesTheSpecAndTheRemoval_AndLeavesTheOwnerRunning()
+    {
+        var owner = Spec(First, jobId: null);
+        await Converge(owner);
+        // Force a collision: the key of shop/stage now holds demo/stage.
+        var state = _store.Load();
+        var intruderKey = RunTargetNames.AppKey("shop", "stage");
+        state.Apps[intruderKey] = state.Apps[Key];
+        state.Apps.Remove(Key);
+        _store.Save(state);
+        var calls = _docker.Calls.Count;
+        var intruder = Spec(Second, jobId: "job-x") with { Project = "shop" };
+
+        var result = await Converge(intruder);
+        var removal = await Desired([], removals: [new RunTargetRemoval("shop", "stage")]);
+
+        Assert.DoesNotContain(_docker.Calls.Skip(calls), call => call.StartsWith("pull ") || call.StartsWith("down ")
+            || call.StartsWith("stop "));
+        Assert.Equal(new RunTargetJobReport("shop", "job-x", "lease-job-x", false, RunTargetEvidence.StepFailed),
+            Assert.Single(result.JobReports));
+        Assert.Empty(removal.Observations);
+        var kept = _store.Load().Apps[intruderKey];
+        Assert.Equal(("demo", "stage", First), (kept.Project, kept.EnvironmentId, kept.Current!.Artifact));
+        Assert.Contains(_log, line => line.Contains($"maps to app key {intruderKey} of demo/stage", StringComparison.Ordinal));
+        Assert.Contains(_log, line => line.Contains("refused removal of shop/stage", StringComparison.Ordinal));
+        Assert.DoesNotContain(_log, line => line.Contains("shop/stage is missing secret references", StringComparison.Ordinal));
+        Assert.True(Directory.Exists(SecretDirectory(owner)));
+    }
+
+    [Fact]
+    public async Task DuplicateAppKeysInOneDesiredState_AreAllRefused()
+    {
+        await Converge(Spec(First, jobId: null));
+        var calls = _docker.Calls.Count;
+
+        var result = await Converge(Spec(Second, jobId: "job-a"), Spec(Third, jobId: "job-b"));
+
+        Assert.DoesNotContain(_docker.Calls.Skip(calls), call => call.StartsWith("pull "));
+        Assert.Equal(["job-a", "job-b"], result.JobReports.Where(item => !item.Healthy).Select(item => item.JobId).Order());
+        Assert.Empty(result.Observations);
+        Assert.Equal(First, _store.Load().Apps[Key].Current!.Artifact);
+        Assert.Contains(_log, line => line.Contains($"share app key {Key}", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task SpecWithoutArtifact_StillSupervisesAndAttachesTheRunningRevision()
+    {
+        var spec = Spec(First, jobId: null);
+        await Converge(spec);
+        _docker.Crash(Slot(spec));
+        var calls = _docker.Calls.Count;
+
+        var result = await Converge(Spec(null, jobId: null));
+
+        Assert.Contains("up " + Slot(spec), _docker.Calls.Skip(calls));
+        Assert.Contains($"connect {RunTargetNames.AppNetwork(Key)} {RunTargetNames.EdgeContainer}", _docker.Calls.Skip(calls));
+        Assert.Equal(("starting", First), (Assert.Single(result.Observations).State, result.Observations[0].RunningArtifact));
+    }
+
+    [Fact]
+    public async Task RecreatedEdge_IsReconnectedToHeldApps()
+    {
+        await Converge(Spec(First));
+        _docker.Containers[RunTargetNames.EdgeContainer] = new(RunTargetContainerState.Exited, 0);
+        var calls = _docker.Calls.Count;
+
+        await Converge();
+
+        var after = _docker.Calls.Skip(calls).ToArray();
+        Assert.Contains("up " + RunTargetNames.EdgeContainer, after);
+        Assert.Contains($"connect {RunTargetNames.AppNetwork(Key)} {RunTargetNames.EdgeContainer}", after);
+    }
+
+    [Fact]
+    public async Task CrashRollbackInTheSamePass_ReportsTheJobsRevisionUnhealthy()
+    {
+        await Converge(Spec(First, jobId: null));
+        await Converge(Spec(Second, jobId: "job-2"));
+        var crashing = Slot(Spec(Second));
+        _docker.Crash(crashing);
+        await Converge(Spec(Second, jobId: null));
+        _clock.Advance(TimeSpan.FromSeconds(15));
+        _docker.Crash(crashing);
+
+        // Studio hands out a job for the revision that is crashing right now.
+        var result = await Converge(Spec(Second, jobId: "job-3"));
+
+        Assert.Equal(First, Assert.Single(result.Observations).RunningArtifact);
+        Assert.Equal(new RunTargetJobReport("demo", "job-3", "lease-job-3", false, RunTargetEvidence.HealthFailed),
+            Assert.Single(result.JobReports));
+    }
+
+    [Fact]
+    public async Task FailedCrashRollback_DoesNotMarkTheRevision_AndRetriesAfterAnotherCountOfRestarts()
+    {
+        await Converge(Spec(First, jobId: null));
+        await Converge(Spec(Second, jobId: "job-2"));
+        var running = Spec(Second, jobId: null);
+        var crashing = Slot(running);
+        _docker.UnhealthyProjects.Add(Slot(Spec(First)));
+        _docker.Crash(crashing);
+        await Converge(running);
+        _clock.Advance(TimeSpan.FromSeconds(15));
+        _docker.Crash(crashing);
+
+        await Converge(running);
+
+        var app = _store.Load().Apps[Key];
+        Assert.Equal((Second, (string?)null), (app.Current!.Artifact, app.CrashRollbackRevision));
+        Assert.Contains(_log, line => line.Contains("did not come up healthy", StringComparison.Ordinal));
+
+        _docker.UnhealthyProjects.Clear();
+        RunTargetCycleResult? result = null;
+        foreach (var attempts in new[] { 2, 3 })
+        {
+            _clock.Advance(RunTargetCrashPolicy.Backoff(attempts));
+            _docker.Crash(crashing);
+            result = await Converge(running);
+        }
+
+        Assert.Equal(First, Assert.Single(result!.Observations).RunningArtifact);
+        Assert.Equal(RunTargetNames.Revision(running), _store.Load().Apps[Key].CrashRollbackRevision);
+    }
+
+    [Fact]
+    public async Task StudioOutage_StillRestartsACrashedApp()
+    {
+        var spec = Spec(First, jobId: null);
+        await Converge(spec);
+        _docker.Crash(Slot(spec));
+        var calls = _docker.Calls.Count;
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => OutageDaemon().CycleAsync(CancellationToken.None));
+
+        Assert.Contains("up " + Slot(spec), _docker.Calls.Skip(calls));
+        Assert.Equal("starting", _store.Load().Apps[Key].Status);
+        Assert.Contains(_log, line => line.Contains("Studio is unreachable (HttpRequestException", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task StudioOutageAfterAReboot_WritesTheSecretFilesAgain_AndStartsTheApp()
+    {
+        var spec = Spec(First, jobId: null);
+        await Converge(spec);
+        // A reboot empties the tmpfs and leaves the container exited.
+        Directory.Delete(_runtime, recursive: true);
+        _docker.Containers[Slot(spec)] = new(RunTargetContainerState.Exited, 0);
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => OutageDaemon().CycleAsync(CancellationToken.None));
+
+        Assert.Equal(_secret, File.ReadAllText(Path.Combine(SecretDirectory(spec), "database-url")));
+        Assert.Equal(Slot(spec), _docker.Ups[^1].Project);
+        Assert.Equal(RunTargetContainerState.Running, _docker.Containers[Slot(spec)].State);
+    }
+
+    [Fact]
+    public async Task TornStateFile_FallsBackToTheLastGoodCopy()
+    {
+        var spec = Spec(First, jobId: null);
+        await Converge(spec);
+        File.WriteAllText(_store.StatePath, "{\"apps\": {\"rt-");
+        _docker.Crash(Slot(spec));
+        var calls = _docker.Calls.Count;
+
+        var result = await Converge(spec);
+
+        Assert.DoesNotContain(_docker.Calls.Skip(calls), call => call.StartsWith("pull "));
+        Assert.Contains("up " + Slot(spec), _docker.Calls.Skip(calls));
+        Assert.Equal(First, Assert.Single(result.Observations).RunningArtifact);
+        Assert.Contains(_log, line => line.Contains("continuing from " + _store.LastGoodPath, StringComparison.Ordinal));
+        Assert.Equal(First, _store.Load().Apps[Key].Current!.Artifact);
+
+        File.WriteAllText(_store.StatePath, "");
+        File.WriteAllText(_store.LastGoodPath, "{");
+        await Assert.ThrowsAsync<InvalidDataException>(() => Converge(spec));
     }
 
     [Fact]

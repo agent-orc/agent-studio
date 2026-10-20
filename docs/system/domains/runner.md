@@ -180,18 +180,52 @@ edge job. Studio writes a project's deploy state and the host's domain claims
 only when they changed.
 
 Only an explicit removal takes an app off the host. A project whose checkout,
-environments folder, declaration files, or deploy state Studio cannot read is
-listed in `skipped` (`checkout-missing`, `declarations-missing`,
-`declaration-invalid`, `declaration-unreadable`, `state-unreadable`) and adds
-neither specs nor removals. Studio records each placement (environment and
-host). When a complete read no longer places the environment on the host for
-10 minutes, Studio sends it in `removals`. A file that is missing only briefly
-during a checkout therefore removes nothing. The host takes both revisions
-down, then confirms with an observation in state `removed`, and Studio drops
-the placement. An app the desired state does not mention is kept as it is,
-with its route, its previous revision, and crash supervision. So is an app
-whose environment has no healthy artifact in Studio. A host talking to an
-older Studio without these fields never removes anything.
+environments folder, declaration files, or deploy state Studio cannot read
+adds neither specs nor removals. When the project has a placement on the
+polling host, it is listed in that host's `skipped` (`checkout-missing`,
+`declarations-missing`, `declaration-invalid`, `declaration-unreadable`). With
+unreadable deploy state the placements are unknown, so no host is told.
+Studio records each placement: environment, host, and the environment kind
+of its last declaration. When a complete read no longer places the
+environment on the host, the placement is pending removal and is listed in
+`runTargetRemovals` of `GET /api/projects/{project}/environments`. Studio
+sends it in `removals` only on a decision:
+
+- `tombstone`: the repository holds `{ "id": "<id>", "removed": true }` in
+  `docs/deployments/environments/`. A tombstone for an id that is still
+  declared makes the declarations invalid.
+- `operator`: an operator calls
+  `POST /api/projects/{project}/environments/{id}/run-target-removal/confirm`
+  (optional body `{ "hostId": ... }`). The actor is recorded.
+- `grace`: kind `other` only, after 10 minutes missing.
+
+Deleting, renaming, or retargeting a `production` or `stage` declaration
+therefore removes nothing by itself. It stays `pending-confirmation`, and
+placements recorded before kinds were kept are treated the same way. A
+declaration that comes back clears the pending removal. The host takes both
+revisions down, each slot cleared as soon as it is gone, so a retry continues
+where a failure stopped. It then removes the app network and confirms with an
+observation in state `removed`. Studio drops the placement and keeps the last
+20 removals, with decision and actor, in `runTargetRemovals`. An app the
+desired state does not mention is kept as it is, with its route, its previous
+revision, and crash supervision. So is an app whose environment has no
+healthy artifact in Studio; it is still supervised and attached to the edge.
+A host talking to an older Studio without these fields never removes anything.
+
+Supervision does not depend on Studio. When the desired-state read fails,
+the daemon runs a supervise-only pass from its persisted state: every app is
+held, so crash restarts, crash rollbacks, and secret files after a reboot
+proceed without Studio. A failure of any type ends only the cycle, never the
+daemon. The host writes `state.json` through a flushed temporary file and a
+rename, and keeps the same content in `state.last-good.json`. A torn or
+unparsable `state.json` falls back to that copy. Studio flushes the domain
+claims file the same way before its rename.
+
+An app key (`rt-<project>-<environment>-<80-bit hash>`) belongs to the project
+environment stored under it. A spec or removal for another environment that
+maps to the same key is refused and its job reported failed. So are specs that
+share a key within one desired state. The stored app stays as it is, and
+secrets resolve only for the spec's own project after that check.
 
 `RunTargetReconciler` converges each environment through Docker Compose. A
 revision (artifact, port, health path, variables, secret names, resources) is
@@ -215,20 +249,32 @@ the same artifact. Until then the host does not return to the crashing
 revision; only a new deploy job brings it back. Apps get `cpus`,
 `mem_limit`, `memswap_limit`, `pids_limit`, and `no-new-privileges`. They
 publish no port, use no host network, and mount nothing from the host other
-than their secret files.
+than their secret files. They drop `NET_RAW` and `MKNOD`. Logs are capped
+at three 10 MB files. The writable layer has no size limit of its own,
+because Docker's `storage_opt size` works only on overlay2 over xfs with
+`pquota`. Bound it by placing `/var/lib/docker` on its own file system (or
+xfs with project quotas) sized for the apps of the host, so a growing
+container cannot fill the host's root file system.
 
 The edge is the `rt-edge` Caddy container. `RUN_TARGET_EDGE_IMAGE` must be
 pinned by digest, like app images. The default is `caddy:2.11-alpine` at
 the digest of `caddy:2-alpine` on 2026-10-20, and the image needs `wget` for
 the health check. It publishes
 `RUN_TARGET_HTTP_PORT`/`RUN_TARGET_HTTPS_PORT` (80/443) and joins each app
-network with `docker network connect`. `RunTargetCaddyfile` gives `acme` sites
+network with `docker network connect`. When the edge is (re)started, the host
+connects it again to the network of every app with a current revision, held
+apps included. `RunTargetCaddyfile` gives `acme` sites
 automatic HTTPS (`RUN_TARGET_ACME_EMAIL`). `cloudflare` sites use the origin
 certificate in `RUN_TARGET_CLOUDFLARE_CERT_DIR` (`origin.pem`, `origin.key`;
 SSL mode Full strict) or else Caddy's internal CA (SSL mode Full). With
 `RUN_TARGET_CLOUDFLARE_TRUSTED_PROXIES` set, the client IP comes from
-`CF-Connecting-IP`. A domain belongs to the first environment that claims
-it on a host. Studio persists the claims per host
+`CF-Connecting-IP`. Studio offers a declared domain only when it falls under one
+of the project's operator-owned suffixes. They are set with
+`PUT /api/projects/{project}/run-target-domain-suffixes`
+(`{ "suffixes": ["example.com"] }`) and kept in Studio's project settings,
+never in the repository. `example.com` covers itself and its subdomains;
+without a suffix a project claims no domain. A domain belongs to the first
+environment that claims it on a host. Studio persists the claims per host
 (`deployments/run-targets/<host>.json`). It sends a later claimant the domain
 in `refusedDomains`, not in `domains`. A claim ends when its owner no longer
 declares the domain. It stays while the owner's project is skipped or its
@@ -246,14 +292,17 @@ never used. The host writes each value to a file under
 `RUN_TARGET_SECRET_RUNTIME_DIR` (default `/run/agent-host/run-target-secrets`,
 directory `0700`, files `0444` so any container user can read them). It
 refuses unless `/proc/self/mounts` shows that path on `tmpfs` or `ramfs`. Run
-the service with `RuntimeDirectory=agent-host`, or point the variable at
-another tmpfs. Compose mounts each file read-only at `/run/secrets/<secretRef>`.
+the service with `RuntimeDirectory=agent-host` and `RuntimeDirectoryPreserve=yes`,
+or point the variable at another tmpfs. Without `RuntimeDirectoryPreserve`,
+systemd deletes the directory when the agent stops, and Docker cannot restart
+an app container on its own until the agent writes the files again. Compose mounts each file read-only at `/run/secrets/<secretRef>`.
 The container gets only the path, in `<NAME>_FILE` (for example
 `DATABASE_URL_FILE`), so the app reads the value from that file. Docker's
 container configuration (`config.v2.json`) therefore holds paths, not values.
 A revision's files exist only while it may run: they go when it is stopped,
 discarded, or removed, and are written again before a restart, restore, or
-rollback. After a reboot the files are gone until the host restarts the app.
+rollback. After a reboot the files are gone until the host restarts the app,
+which its supervision does even while Studio is unreachable.
 Values never enter compose files, host state (`RUN_TARGET_STATE_DIR`, default
 `$RUNNER_STATE_DIR/run-target`), Docker's container configuration, Studio, or
 logs; every diagnostic is masked before it is logged. Values exist on the host

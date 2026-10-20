@@ -54,9 +54,13 @@ public static partial class RunTargetNames
         return scope is "." or ".." ? null : scope;
     }
 
-    /// <summary>Stable key of one project environment on this host.</summary>
+    /// <summary>
+    /// Stable key of one project environment on this host. The slugs only make
+    /// it readable; 80 hash bits keep it distinct. With the 12-character
+    /// revision the compose project name stays within Docker's 63 characters.
+    /// </summary>
     public static string AppKey(string project, string environmentId)
-        => $"rt-{Slug(project, 20)}-{Slug(environmentId, 16)}-{Hash(project + "\n" + environmentId, 8)}";
+        => $"rt-{Slug(project, 14)}-{Slug(environmentId, 10)}-{Hash(project + "\n" + environmentId, 20)}";
 
     public static string AppNetwork(string appKey) => appKey + "-net";
 

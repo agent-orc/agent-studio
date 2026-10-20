@@ -7,8 +7,26 @@ namespace AgentStudio.Projects;
 /// Studio's record that an environment runs on a host. It outlives the
 /// declaration until the host confirms the removal, so Studio keeps sending
 /// the removal signal and keeps the environment's domains reserved meanwhile.
+/// <see cref="Kind"/> is the environment kind of its last declaration.
+/// <see cref="RemovalDecision"/> says why Studio sends the removal:
+/// <c>operator</c> (with <see cref="RemovalActor"/>), <c>tombstone</c>, or
+/// <c>grace</c>; while it is null a missing placement sends nothing.
 /// </summary>
-public sealed record RunTargetPlacement(string EnvironmentId, string HostId, DateTime? MissingSince = null);
+public sealed record RunTargetPlacement(string EnvironmentId, string HostId, DateTime? MissingSince = null,
+    string? Kind = null, string? RemovalDecision = null, string? RemovalActor = null, DateTime? RemovalDecidedAt = null);
+
+/// <summary>An edge-hosted environment a complete read places on the polling host.</summary>
+public sealed record RunTargetHostedEnvironment(string Id, string Kind);
+
+/// <summary>
+/// A placement the declarations no longer show on its host, as the
+/// environments API lists it: <c>pending-confirmation</c> (production or stage
+/// waiting for an operator), <c>pending-grace</c> (kind other within
+/// <see cref="RunTargetDesiredStatePolicy.RemovalGrace"/>), <c>removing</c>
+/// (sent to the host), or <c>removed</c> (the host confirmed it).
+/// </summary>
+public sealed record RunTargetRemovalRecord(string EnvironmentId, string HostId, string? Kind, string Status,
+    DateTime? MissingSince, string? Decision, string? Actor, DateTime? DecidedAt, DateTime? RemovedAt = null);
 
 public sealed record RunTargetPlacementDecision(IReadOnlyList<RunTargetPlacement> Placements, IReadOnlyList<string> Removals);
 
@@ -30,11 +48,14 @@ public static partial class RunTargetDesiredStatePolicy
     public const int MaxEventsPerEnvironment = 20;
 
     /// <summary>
-    /// How long an environment must stay undeclared for its host before Studio
-    /// sends the removal, so a checkout caught in the middle of an update takes
-    /// nothing down.
+    /// How long an environment of kind other must stay undeclared for its host
+    /// before Studio sends the removal, so a checkout caught in the middle of an
+    /// update takes nothing down. Production and stage never leave on time alone.
     /// </summary>
     public static readonly TimeSpan RemovalGrace = TimeSpan.FromMinutes(10);
+
+    /// <summary>Removal records kept per project for the environments API.</summary>
+    public const int MaxRemovalRecords = 20;
 
     /// <summary>Longest time a run target may hold one deploy job, counted from its first claim.</summary>
     public static readonly TimeSpan MaxJobLease = TimeSpan.FromMinutes(30);
@@ -68,34 +89,89 @@ public static partial class RunTargetDesiredStatePolicy
 
     /// <summary>
     /// Runs only on a complete read of one project's declarations. Hosted
-    /// environments are placed; a placed environment that is no longer hosted
-    /// gets a removal once it has been missing for <see cref="RemovalGrace"/>.
+    /// environments are placed. A placed environment that is no longer hosted
+    /// is pending removal; Studio sends the removal once a decision exists: a
+    /// declaration tombstone for its id, an operator confirmation
+    /// (<see cref="ConfirmRemoval"/>), or, for kind other only,
+    /// <see cref="RemovalGrace"/>. Deleting, renaming, or retargeting a
+    /// production or stage declaration therefore removes nothing by itself.
     /// Placements on other hosts are left alone.
     /// </summary>
     public static RunTargetPlacementDecision Place(IReadOnlyList<RunTargetPlacement> placements, string hostId,
-        IReadOnlyCollection<string> hostedIds, DateTime now)
+        IReadOnlyList<RunTargetHostedEnvironment> hosted, IReadOnlySet<string> tombstones, DateTime now)
     {
         var result = new List<RunTargetPlacement>();
         var removals = new List<string>();
         foreach (var placement in placements)
         {
+            var declared = hosted.FirstOrDefault(item => item.Id == placement.EnvironmentId);
             if (placement.HostId != hostId) result.Add(placement);
-            else if (hostedIds.Contains(placement.EnvironmentId)) result.Add(placement with { MissingSince = null });
+            else if (declared is not null)
+                result.Add(new(placement.EnvironmentId, hostId, Kind: declared.Kind));
             else
             {
                 var missing = placement with { MissingSince = placement.MissingSince ?? now };
+                if (missing.RemovalDecision is null && tombstones.Contains(missing.EnvironmentId))
+                    missing = missing with { RemovalDecision = "tombstone", RemovalDecidedAt = now };
+                else if (missing.RemovalDecision is null && !RequiresConfirmation(missing.Kind)
+                    && now - missing.MissingSince >= RemovalGrace)
+                    missing = missing with { RemovalDecision = "grace", RemovalDecidedAt = now };
                 result.Add(missing);
-                if (AcceptsRemoval(missing, now)) removals.Add(placement.EnvironmentId);
+                if (AcceptsRemoval(missing)) removals.Add(placement.EnvironmentId);
             }
         }
-        foreach (var id in hostedIds.Where(id => !result.Any(item => item.HostId == hostId && item.EnvironmentId == id)))
-            result.Add(new(id, hostId));
+        foreach (var item in hosted.Where(item => !result.Any(placement => placement.HostId == hostId
+                     && placement.EnvironmentId == item.Id)))
+            result.Add(new(item.Id, hostId, Kind: item.Kind));
         return new(result, removals);
     }
 
+    /// <summary>Production, stage, and placements recorded before kinds were kept leave a host only on a decision.</summary>
+    public static bool RequiresConfirmation(string? kind) => kind is not "other";
+
     /// <summary>A host may confirm a removal only for a placement Studio is removing.</summary>
-    public static bool AcceptsRemoval(RunTargetPlacement placement, DateTime now)
-        => placement.MissingSince is { } since && now - since >= RemovalGrace;
+    public static bool AcceptsRemoval(RunTargetPlacement placement)
+        => placement.MissingSince is not null && placement.RemovalDecision is not null;
+
+    /// <summary>The operator's decision for a pending removal; null when the placement is not pending.</summary>
+    public static RunTargetPlacement? ConfirmRemoval(RunTargetPlacement placement, string actor, DateTime now)
+        => placement.MissingSince is null || placement.RemovalDecision is not null ? null
+            : placement with { RemovalDecision = "operator", RemovalActor = actor, RemovalDecidedAt = now };
+
+    /// <summary>Pending and sent removals first, then the latest confirmed ones.</summary>
+    public static IReadOnlyList<RunTargetRemovalRecord> Removals(IReadOnlyList<RunTargetPlacement> placements,
+        IReadOnlyList<RunTargetRemovalRecord> removed)
+        => placements.Where(item => item.MissingSince is not null)
+            .Select(item => Record(item, item.RemovalDecision is not null ? "removing"
+                : RequiresConfirmation(item.Kind) ? "pending-confirmation" : "pending-grace"))
+            .Concat(removed.AsEnumerable().Reverse())
+            .ToArray();
+
+    public static RunTargetRemovalRecord Removed(RunTargetPlacement placement, DateTime now)
+        => Record(placement, "removed") with { RemovedAt = now };
+
+    /// <summary>Domains under one of the project's operator-owned suffixes; no suffix allows no domain.</summary>
+    public static IReadOnlyList<string> AllowedDomains(IReadOnlyList<string> domains, IReadOnlyList<string>? suffixes)
+        => domains.Where(domain => (suffixes ?? []).Any(suffix => domain == suffix
+            || domain.EndsWith("." + suffix, StringComparison.Ordinal))).ToArray();
+
+    /// <summary>Lowercases and checks an operator's suffix list; null when an entry is not a domain.</summary>
+    public static IReadOnlyList<string>? NormalizeDomainSuffixes(IEnumerable<string>? suffixes)
+    {
+        var result = new List<string>();
+        foreach (var suffix in suffixes ?? [])
+        {
+            var value = (suffix ?? "").Trim().ToLowerInvariant();
+            if (value.StartsWith("*.", StringComparison.Ordinal)) value = value[2..];
+            if (!RunTargetHostingDeclaration.Domain().IsMatch(value)) return null;
+            if (!result.Contains(value)) result.Add(value);
+        }
+        return result;
+    }
+
+    private static RunTargetRemovalRecord Record(RunTargetPlacement placement, string status)
+        => new(placement.EnvironmentId, placement.HostId, placement.Kind, status, placement.MissingSince,
+            placement.RemovalDecision, placement.RemovalActor, placement.RemovalDecidedAt);
 
     /// <summary>
     /// The first environment that claims a domain on a host keeps it while it

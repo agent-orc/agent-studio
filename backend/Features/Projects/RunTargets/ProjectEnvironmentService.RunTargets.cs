@@ -5,14 +5,17 @@ namespace AgentStudio.Projects;
 // IP-1 run-target protocol on top of the deploy queue. Both routes run under
 // the queue's gate. A project Studio cannot read completely contributes
 // neither specs nor removals: the host keeps its apps exactly as they are.
+// A production or stage environment leaves its host only after an operator
+// confirms the pending removal or the repository holds a tombstone for it.
 public sealed partial class ProjectEnvironmentService
 {
     /// <summary>
     /// Desired state of every edge-hosted environment placed on this host. An
     /// open deploy job is claimed, or its lease renewed, by the same read, so a
-    /// polling host keeps the job while it converges. Unreadable projects are
-    /// listed in <see cref="RunTargetDesiredState.Skipped"/>; an environment
-    /// leaves the host only through <see cref="RunTargetDesiredState.Removals"/>.
+    /// polling host keeps the job while it converges. Unreadable projects with
+    /// a placement on this host are listed in <see cref="RunTargetDesiredState.Skipped"/>;
+    /// an environment leaves the host only through <see cref="RunTargetDesiredState.Removals"/>.
+    /// A domain is offered only under the project's operator-owned suffixes.
     /// </summary>
     public RunTargetDesiredState DesiredState(string hostId)
     {
@@ -25,22 +28,22 @@ public sealed partial class ProjectEnvironmentService
             var projects = new List<RunTargetProjectRead>();
             foreach (var project in _scanner.GetWatchPaths().Select(item => item.Name).Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                var (declarations, reason) = ReadRunTargetDeclarations(project);
-                if (declarations is null)
+                var (declarations, tombstones, reason) = ReadRunTargetDeclarations(project);
+                var state = TryLoad(project);
+                if (declarations is null || state is null)
                 {
-                    skipped.Add(new(project, reason ?? "declarations-missing"));
-                    continue;
-                }
-                if (TryLoad(project) is not { } state)
-                {
-                    skipped.Add(new(project, "state-unreadable"));
+                    // Only a host the project is placed on hears about it. With
+                    // unreadable state the placements are unknown, and the host
+                    // keeps its apps all the same.
+                    if (state?.Placements.Any(item => item.HostId == hostId) == true)
+                        skipped.Add(new(project, reason ?? "declarations-missing"));
                     continue;
                 }
                 var before = JsonSerializer.Serialize(state, _json);
                 AdvanceTimedPromotions(project, declarations, state);
                 var hosted = declarations.Where(item => item.TargetHostId == hostId && item.Hosting is not null).ToArray();
                 var placement = RunTargetDesiredStatePolicy.Place(state.Placements, hostId,
-                    hosted.Select(item => item.Id).ToArray(), now);
+                    hosted.Select(item => new RunTargetHostedEnvironment(item.Id, item.Kind)).ToArray(), tombstones, now);
                 state.Placements = [.. placement.Placements];
                 removals.AddRange(placement.Removals.Select(id => new RunTargetRemoval(project, id)));
                 projects.Add(new(project, declarations, hosted, state, before));
@@ -60,8 +63,9 @@ public sealed partial class ProjectEnvironmentService
             var claims = RunTargetDesiredStatePolicy.ClaimDomains(
                 (storedClaims is null ? null : JsonSerializer.Deserialize<Dictionary<string, RunTargetDomainClaim>>(storedClaims, _json))
                     ?? new Dictionary<string, RunTargetDomainClaim>(),
-                projects.SelectMany(read => read.Hosted.Select(item =>
-                    new RunTargetDomainCandidate(read.Project, item.Id, item.Hosting!.Domains))).ToArray(),
+                projects.SelectMany(read => read.Hosted.Select(item => new RunTargetDomainCandidate(read.Project, item.Id,
+                    RunTargetDesiredStatePolicy.AllowedDomains(item.Hosting!.Domains,
+                        _settings.Get(read.Project).RunTargetDomainSuffixes)))).ToArray(),
                 UnseenOwnerKeeps, now);
 
             var environments = new List<RunTargetEnvironmentSpec>();
@@ -85,8 +89,9 @@ public sealed partial class ProjectEnvironmentService
 
     /// <summary>
     /// Keeps the latest sanitized observation per environment placed on this
-    /// host, ends removal signals the host confirms, and queues a rollback when
-    /// the host rolled back from a crash-looping release.
+    /// host, ends removal signals the host confirms (keeping a record with the
+    /// decision and its actor), and queues a rollback when the host rolled back
+    /// from a crash-looping release.
     /// </summary>
     public int RecordObserved(string hostId, RunTargetObservedReport report)
     {
@@ -96,7 +101,7 @@ public sealed partial class ProjectEnvironmentService
             var accepted = 0;
             foreach (var group in (report.Environments ?? []).GroupBy(item => item.Project, StringComparer.Ordinal))
             {
-                var (declarations, reason) = ReadRunTargetDeclarations(group.Key);
+                var (declarations, _, reason) = ReadRunTargetDeclarations(group.Key);
                 if (declarations is null && reason is null) continue;
                 if (TryLoad(group.Key) is not { } state) continue;
                 var before = JsonSerializer.Serialize(state, _json);
@@ -106,9 +111,13 @@ public sealed partial class ProjectEnvironmentService
                     {
                         var placement = state.Placements.FirstOrDefault(item => item.HostId == hostId
                             && item.EnvironmentId == observation.EnvironmentId);
-                        if (placement is null || !RunTargetDesiredStatePolicy.AcceptsRemoval(placement, now)) continue;
+                        if (placement is null || !RunTargetDesiredStatePolicy.AcceptsRemoval(placement)) continue;
                         state.Placements.Remove(placement);
                         state.Observed.RemoveAll(row => row.EnvironmentId == observation.EnvironmentId);
+                        state.RunTargetRemovals.Add(RunTargetDesiredStatePolicy.Removed(placement, now));
+                        if (state.RunTargetRemovals.Count > RunTargetDesiredStatePolicy.MaxRemovalRecords)
+                            state.RunTargetRemovals.RemoveRange(0,
+                                state.RunTargetRemovals.Count - RunTargetDesiredStatePolicy.MaxRemovalRecords);
                         accepted++;
                         continue;
                     }
@@ -132,6 +141,33 @@ public sealed partial class ProjectEnvironmentService
                 if (JsonSerializer.Serialize(state, _json) != before) Save(group.Key, state);
             }
             return accepted;
+        }
+    }
+
+    /// <summary>
+    /// Records the operator's decision to take a pending environment off its
+    /// host (one host, or every host it is pending on). False when nothing is
+    /// pending: the environment is still declared there, or already removing.
+    /// </summary>
+    public bool ConfirmRunTargetRemoval(string project, string environmentId, string? hostId, string actor)
+    {
+        if (!_scanner.GetWatchPaths().Any(item => string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase)))
+            return false;
+        lock (_gate)
+        {
+            if (TryLoad(project) is not { } state) return false;
+            var now = _clock.GetUtcNow().UtcDateTime;
+            var confirmed = false;
+            for (var index = 0; index < state.Placements.Count; index++)
+            {
+                var placement = state.Placements[index];
+                if (placement.EnvironmentId != environmentId || hostId is not null && placement.HostId != hostId) continue;
+                if (RunTargetDesiredStatePolicy.ConfirmRemoval(placement, actor, now) is not { } decided) continue;
+                state.Placements[index] = decided;
+                confirmed = true;
+            }
+            if (confirmed) Save(project, state);
+            return confirmed;
         }
     }
 
@@ -163,30 +199,33 @@ public sealed partial class ProjectEnvironmentService
     }
 
     /// <returns>
-    /// The declarations of a complete read. Otherwise null with the skip
-    /// reason, or with a null reason when Studio does not know the project.
+    /// The declarations and tombstoned ids of a complete read. Otherwise null
+    /// with the skip reason, or with a null reason when Studio does not know
+    /// the project.
     /// </returns>
-    private (IReadOnlyList<EnvironmentDeclaration>? Declarations, string? Skip) ReadRunTargetDeclarations(string project)
+    private (IReadOnlyList<EnvironmentDeclaration>? Declarations, IReadOnlySet<string> Tombstones, string? Skip)
+        ReadRunTargetDeclarations(string project)
     {
+        var none = new HashSet<string>(StringComparer.Ordinal);
         try
         {
-            var (source, declarations) = ReadDeclarations(project);
+            var (source, declarations, tombstones) = ReadDeclarations(project);
             return source switch
             {
-                DeclarationSource.Read => (declarations, null),
-                DeclarationSource.CheckoutMissing => (null, "checkout-missing"),
-                DeclarationSource.FolderMissing => (null, "declarations-missing"),
-                _ => (null, null),
+                DeclarationSource.Read => (declarations, tombstones, null),
+                DeclarationSource.CheckoutMissing => (null, none, "checkout-missing"),
+                DeclarationSource.FolderMissing => (null, none, "declarations-missing"),
+                _ => (null, none, null),
             };
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException or FormatException)
         {
             // The project's environment page reports the parse error.
-            return (null, "declaration-invalid");
+            return (null, none, "declaration-invalid");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return (null, "declaration-unreadable");
+            return (null, none, "declaration-unreadable");
         }
     }
 
@@ -205,11 +244,16 @@ public sealed partial class ProjectEnvironmentService
     private string DomainClaimsPath(string hostId)
         => Path.Combine(StoreRoot(), "run-targets", SafeProjectName(hostId) + ".json");
 
+    /// <summary>Flushes to disk before the rename, so a crash leaves the old claims or the new ones, never a torn file.</summary>
     private static void WriteStoreFile(string path, string content)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        File.WriteAllText(temporary, content);
+        using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
+        {
+            stream.Write(System.Text.Encoding.UTF8.GetBytes(content));
+            stream.Flush(flushToDisk: true);
+        }
         File.Move(temporary, path, true);
     }
 }
