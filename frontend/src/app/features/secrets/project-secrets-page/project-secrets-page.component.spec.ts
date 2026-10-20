@@ -8,13 +8,14 @@ import { SecretsService } from '../secrets.service';
 import { ProjectSecretsPageComponent } from './project-secrets-page.component';
 
 describe('ProjectSecretsPageComponent', () => {
-  it('shows missing references by environment and binds only a reference after approval', () => {
+  it('uses declared production kind for approval even when the environment id is custom', () => {
     TestBed.configureTestingModule({
       imports: [ProjectSecretsPageComponent],
       providers: [provideHttpClient(), provideHttpClientTesting(),
         { provide: AuthSessionState, useValue: { status: signal({ user: { role: 'owner' } }) } },
         { provide: SecretsService, useValue: {
-          environments: () => of(['stage', 'prod']), load: vi.fn(), overview: signal(null),
+          environments: () => of(['stage', 'live-east']),
+          load: vi.fn(), overview: signal(null),
           state: signal('ready'), error: signal(null),
         } },
       ],
@@ -23,33 +24,45 @@ describe('ProjectSecretsPageComponent', () => {
     const fixture = TestBed.createComponent(ProjectSecretsPageComponent);
     fixture.componentRef.setInput('projectName', 'demo');
     fixture.detectChanges();
+    http.expectOne('/api/projects/demo/environments').flush({ environments: [
+      { declaration: { id: 'stage', kind: 'stage' } },
+      { declaration: { id: 'live-east', kind: 'production' } },
+    ] });
     http.expectOne('/api/projects/demo/secret-bindings/preview').flush({
       project: 'demo', environment: 'preview', bindings: [], missing: [], ready: true,
     });
     fixture.detectChanges();
     const element = fixture.nativeElement as HTMLElement;
     const select = element.querySelector('[data-testid="project-secrets-environment"]') as HTMLSelectElement;
-    expect(select.textContent).toContain('prod');
-    select.value = 'prod';
+    expect(select.textContent).toContain('live-east');
+    select.value = 'stage';
     select.dispatchEvent(new Event('change'));
     fixture.detectChanges();
-    http.expectOne('/api/projects/demo/secret-bindings/prod').flush({
-      project: 'demo', environment: 'prod', bindings: [], ready: false,
-      missing: [{ name: 'DATABASE_URL', reference: 'secret://demo/prod/DATABASE_URL', scope: 'demo/prod', reason: 'not-bound' }],
+    http.expectOne('/api/projects/demo/secret-bindings/stage').flush({
+      project: 'demo', environment: 'stage', bindings: [], missing: [], ready: true,
+    });
+    fixture.detectChanges();
+    expect(element.querySelector('[data-testid="project-secrets-approve"]')).toBeNull();
+    select.value = 'live-east';
+    select.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    http.expectOne('/api/projects/demo/secret-bindings/live-east').flush({
+      project: 'demo', environment: 'live-east', bindings: [], ready: false,
+      missing: [{ name: 'DATABASE_URL', reference: 'secret://demo/live-east/DATABASE_URL', scope: 'demo/live-east', reason: 'not-bound' }],
     });
     fixture.detectChanges();
     expect(element.querySelector('[data-testid="project-secrets-missing"]')?.textContent).toContain('not-bound');
-    expect(element.querySelector('[data-testid="secrets-panel"]')?.textContent).toContain('secret://demo/prod/NAME');
+    expect(element.querySelector('[data-testid="secrets-panel"]')?.textContent).toContain('secret://demo/live-east/NAME');
     (element.querySelector('[data-testid="project-secrets-missing"] button') as HTMLButtonElement).click();
     fixture.detectChanges();
     (element.querySelector('[data-testid="project-secrets-approve"]') as HTMLInputElement).click();
     (element.querySelector('[data-testid="project-secrets-bind"]') as HTMLButtonElement).click();
-    const put = http.expectOne('/api/projects/demo/secret-bindings/prod/DATABASE_URL');
+    const put = http.expectOne('/api/projects/demo/secret-bindings/live-east/DATABASE_URL');
     expect(put.request.method).toBe('PUT');
-    expect(put.request.body).toEqual({ reference: 'secret://demo/prod/DATABASE_URL', approve: true });
-    put.flush({ name: 'DATABASE_URL', reference: 'secret://demo/prod/DATABASE_URL', approvedBy: 'owner' });
-    http.expectOne('/api/projects/demo/secret-bindings/prod').flush({
-      project: 'demo', environment: 'prod', bindings: [], missing: [], ready: true,
+    expect(put.request.body).toEqual({ reference: 'secret://demo/live-east/DATABASE_URL', approve: true });
+    put.flush({ name: 'DATABASE_URL', reference: 'secret://demo/live-east/DATABASE_URL', approvedBy: 'owner' });
+    http.expectOne('/api/projects/demo/secret-bindings/live-east').flush({
+      project: 'demo', environment: 'live-east', bindings: [], missing: [], ready: true,
     });
     http.verify();
   });

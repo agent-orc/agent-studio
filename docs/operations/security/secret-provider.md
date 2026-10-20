@@ -104,6 +104,8 @@ Owner or Operator secret-management check may write. A Production binding
 also needs an interactive Owner or project production approver with
 `approve: true`; the binding records that approval. This is the single
 permission seam for AGT-3228 to replace with scope roles.
+Production is determined by the environment declaration's `kind`, not by
+its ID; custom IDs receive the same approval control and server check.
 
 Bindings are persisted under
 `<TaskRepository>/.security/secret-bindings/<key>.json`, separate from the
