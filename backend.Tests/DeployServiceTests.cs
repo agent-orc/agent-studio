@@ -394,13 +394,16 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
-    public void ReportAfterTheLease_IsAcceptedWhileTheClaimStands()
+    public void ReportAfterTheLease_IsRefusedUntilTheHostReclaims()
     {
         var (deploy, environments, _) = Build();
         CreateRelease(deploy, Artifact('a'), Head());
         var job = environments.Claim("stage-host")!;
         _clock.Advance(TimeSpan.FromMinutes(8));
-        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
+        Assert.False(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
+        var reclaimed = environments.Claim("stage-host")!;
+        Assert.NotEqual(job.LeaseToken, reclaimed.LeaseToken);
+        Assert.True(environments.Report("demo", reclaimed.Id, new(reclaimed.LeaseToken!, true, "health-ok")));
         deploy.SyncAfterHostCall("demo");
         Assert.Equal(DeploymentStates.Succeeded, deploy.Deployments("demo", "stage")!.Single().State);
     }
