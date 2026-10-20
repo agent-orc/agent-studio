@@ -15,8 +15,8 @@ public sealed record OtlpIntakeOutcome(int StatusCode, byte[] Body, string Conte
 /// attribute, memory, and stored-byte caps, time-window admission, then a
 /// non-blocking enqueue. Body read and decoding
 /// share one deadline; past it the request gets 408 and frees its slot.
-/// Nothing here touches the store; a full queue or no free slot answers 429
-/// with Retry-After.
+/// Series admission consults the store and pending batches before acknowledgement;
+/// a full queue or no free slot answers 429 with Retry-After.
 /// </summary>
 public sealed class TelemetryIntakeService
 {
@@ -141,6 +141,9 @@ public sealed class TelemetryIntakeService
                 return Busy(encoding);
             case TelemetryEnqueueResult.TooLarge:
                 return TooLarge(encoding);
+            case TelemetryEnqueueResult.TooManySeries:
+                return Error(encoding, 429, 8, "The telemetry series limit is reached; retry after old series expire.")
+                    with { RetryAfterSeconds = RetryAfterSeconds };
             case TelemetryEnqueueResult.Unavailable:
                 return Error(encoding, 503, 14, "Telemetry staging is unavailable; retry later.")
                     with { RetryAfterSeconds = RetryAfterSeconds };

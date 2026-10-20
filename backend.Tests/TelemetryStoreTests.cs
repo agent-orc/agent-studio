@@ -50,6 +50,62 @@ public sealed class TelemetryStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Failed_cumulative_batch_is_retried_before_the_next_batch()
+    {
+        var options = new TelemetryOptions { StoreRoot = _root };
+        var store = Store(options);
+        var queue = new TelemetryIntakeQueue(options);
+        var writer = new TelemetryWriter(queue, store, [], new CredentialTelemetryValueMasker(),
+            options, _clock, NullLogger<TelemetryWriter>.Instance);
+        var now = Nanos(_clock.GetUtcNow());
+        var start = now - 10 * 60 * Second;
+        MetricSample Counter(double value, long time) => new("ordered", "1", MetricKind.Sum,
+            MetricTemporality.Cumulative, TelemetryAttributes.Empty, time, start, value, 1, null, null, true);
+        Assert.Equal(TelemetryEnqueueResult.Accepted, queue.TryEnqueue(new(_stage, [Counter(100, now)], [], 256)));
+        Assert.Equal(TelemetryEnqueueResult.Accepted, queue.TryEnqueue(new(_stage, [Counter(105, now + 60 * Second)], [], 256)));
+
+        var databasePath = store.DatabasePath(_stage);
+        Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
+        Directory.CreateDirectory(databasePath);
+        Assert.Equal(0, await writer.DrainOnceAsync(CancellationToken.None));
+        Directory.Delete(databasePath);
+        Assert.Equal(2, await writer.DrainOnceAsync(CancellationToken.None));
+
+        _clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal([5d], Assert.Single(Query(store, "ordered", 60, MetricAggregation.Sum).Series)
+            .Points.Select(point => point.Value));
+        Assert.Equal(0, queue.PendingRecords);
+    }
+
+    [Fact]
+    public async Task Restart_replays_multiple_cumulative_batches_in_intake_order()
+    {
+        var options = new TelemetryOptions { StoreRoot = _root };
+        var firstQueue = new TelemetryIntakeQueue(options);
+        var now = Nanos(_clock.GetUtcNow());
+        var start = now - 10 * 60 * Second;
+        MetricSample Counter(double value, long time) => new("replayed", "1", MetricKind.Sum,
+            MetricTemporality.Cumulative, TelemetryAttributes.Empty, time, start, value, 1, null, null, true);
+        Assert.Equal(TelemetryEnqueueResult.Accepted, firstQueue.TryEnqueue(new(_stage, [Counter(100, now)], [], 256)));
+        Assert.Equal(TelemetryEnqueueResult.Accepted, firstQueue.TryEnqueue(new(_stage, [Counter(105, now + 60 * Second)], [], 256)));
+        var filenames = Directory.EnumerateFiles(Path.Combine(_root, "pending"), "*.json")
+            .Select(Path.GetFileName).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        Assert.Equal(2, filenames.Length);
+        Assert.StartsWith("00000000000000000001-", filenames[0]);
+        Assert.StartsWith("00000000000000000002-", filenames[1]);
+
+        var recovered = new TelemetryIntakeQueue(options);
+        var store = Store(options);
+        var writer = new TelemetryWriter(recovered, store, [], new CredentialTelemetryValueMasker(),
+            options, _clock, NullLogger<TelemetryWriter>.Instance);
+        Assert.Equal(2, await writer.DrainOnceAsync(CancellationToken.None));
+        _clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.Equal([5d], Assert.Single(Query(store, "replayed", 60, MetricAggregation.Sum).Series)
+            .Points.Select(point => point.Value));
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "pending"), "*.json"));
+    }
+
+    [Fact]
     public void Successive_cumulative_sum_exports_contribute_deltas_and_handle_resets()
     {
         var store = Store();

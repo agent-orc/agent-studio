@@ -82,11 +82,15 @@ public sealed partial class TelemetryStore
                     "INSERT OR IGNORE INTO ingest_commits (id) VALUES ($id)", ("$id", batchId)) == 0)
                 {
                     transaction.Commit();
+                    TelemetryDurability.FlushParentDirectory(path);
                     return new TelemetryWriteResult(0, 0, 0, 0);
                 }
                 var (stored, rejected) = WriteMetrics(connection, transaction, path, metrics, now);
                 var evicted = WriteLogs(connection, transaction, logs);
                 transaction.Commit();
+                // SQLite FULL syncs the WAL commit; persist a newly created database's
+                // directory entry before its stage file can be removed.
+                if (batchId is not null) TelemetryDurability.FlushParentDirectory(path);
                 return new TelemetryWriteResult(stored, rejected, logs.Count, evicted);
             }
             catch
@@ -95,6 +99,30 @@ public sealed partial class TelemetryStore
                 _series.Remove(path);
                 throw;
             }
+        }
+    }
+
+    /// <summary>Conservatively reserves series for queued batches before HTTP acknowledgement.</summary>
+    public bool WouldRejectSeries(TelemetryEnvironmentKey key, IEnumerable<MetricSample> pendingAndIncoming)
+    {
+        lock (_writeGate)
+        {
+            var path = DatabasePath(key);
+            using var connection = Open(path, create: true)!;
+            using var transaction = connection.BeginTransaction();
+            var cache = SeriesFor(path, connection, transaction);
+            var unseen = new HashSet<(string Name, string Attributes, string Unit, string Kind, MetricTemporality Temporality)>();
+            var bytes = cache.Bytes;
+            foreach (var sample in pendingAndIncoming)
+            {
+                var json = sample.Attributes.Json;
+                var identity = (sample.Name, json, sample.Unit, sample.Kind.ToString(), sample.Temporality);
+                if (cache.Entries.ContainsKey(identity) || !unseen.Add(identity)) continue;
+                if (cache.Entries.Count + unseen.Count > _options.MaxSeriesPerEnvironment) return true;
+                bytes += SeriesBytes(sample.Name, json);
+                if (bytes > _options.MaxSeriesBytesPerEnvironment) return true;
+            }
+            return false;
         }
     }
 
@@ -388,7 +416,7 @@ public sealed partial class TelemetryStore
             PRAGMA busy_timeout = 5000;
             PRAGMA auto_vacuum = INCREMENTAL;
             PRAGMA journal_mode = WAL;
-            PRAGMA synchronous = NORMAL;
+            PRAGMA synchronous = FULL;
             CREATE TABLE IF NOT EXISTS series (
               id INTEGER PRIMARY KEY,
               name TEXT NOT NULL,

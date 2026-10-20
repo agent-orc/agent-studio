@@ -7,16 +7,24 @@ internal sealed class TelemetryBatchJournal
 {
     private readonly string _root;
     private readonly ITelemetryValueMasker? _masker;
+    private long _nextOrder;
 
     public TelemetryBatchJournal(string root, ITelemetryValueMasker? masker)
     {
         _root = Path.Combine(root, "pending");
         _masker = masker;
         Directory.CreateDirectory(_root);
+        TelemetryDurability.FlushParentDirectory(_root);
+        TelemetryDurability.FlushParentDirectory(Path.GetDirectoryName(_root)!);
+        foreach (var completed in Directory.EnumerateFiles(_root, "*.done")) File.Delete(completed);
+        _nextOrder = Directory.EnumerateFiles(_root, "*.json")
+            .Select(path => OrderOf(Path.GetFileNameWithoutExtension(path))).DefaultIfEmpty().Max();
     }
 
     public IEnumerable<TelemetryIngestBatch> Recover()
-        => Directory.EnumerateFiles(_root, "*.json").OrderBy(path => path, StringComparer.Ordinal)
+        => Directory.EnumerateFiles(_root, "*.json")
+            .OrderBy(path => OrderOf(Path.GetFileNameWithoutExtension(path)))
+            .ThenBy(path => path, StringComparer.Ordinal)
             .Select(path => Read(path));
 
     public TelemetryIngestBatch Stage(TelemetryIngestBatch batch)
@@ -28,7 +36,7 @@ internal sealed class TelemetryBatchJournal
             Logs = batch.Logs.Select(item => item with
                 { Body = _masker.Mask(item.Body), Attributes = item.Attributes.MapValues(_masker.Mask) }).ToArray()
         };
-        staged = staged with { StageId = Guid.NewGuid().ToString("N") };
+        staged = staged with { StageId = $"{++_nextOrder:D20}-{Guid.NewGuid():N}" };
         var path = PathFor(staged.StageId);
         var temporary = path + ".tmp";
         try
@@ -38,7 +46,7 @@ internal sealed class TelemetryBatchJournal
                 JsonSerializer.Serialize(stream, ToWire(staged));
                 stream.Flush(flushToDisk: true);
             }
-            File.Move(temporary, path);
+            TelemetryDurability.MoveStagedFile(temporary, path);
             return staged;
         }
         finally
@@ -49,8 +57,20 @@ internal sealed class TelemetryBatchJournal
 
     public void Complete(TelemetryIngestBatch batch)
     {
-        if (batch.StageId is not null) File.Delete(PathFor(batch.StageId));
+        if (batch.StageId is not null)
+        {
+            var staged = PathFor(batch.StageId);
+            var completed = staged + ".done";
+            // Persist the rename before the SQLite replay marker is removed. A
+            // crash may leave a .done file, but it cannot replay that batch.
+            if (File.Exists(staged)) TelemetryDurability.MoveStagedFile(staged, completed);
+            if (File.Exists(completed)) File.Delete(completed);
+        }
     }
+
+    private static long OrderOf(string stageId)
+        => stageId.Length > 21 && stageId[20] == '-' && long.TryParse(stageId[..20], out var order)
+            ? order : 0; // Legacy UUID stages have no recoverable intake order.
 
     private TelemetryIngestBatch Read(string path)
     {

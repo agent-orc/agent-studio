@@ -147,6 +147,23 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Series_cap_refuses_new_stream_before_http_success()
+    {
+        var harness = await Start(new TelemetryOptions { MaxSeriesPerEnvironment = 1 });
+        var token = (await CreateToken(harness)).Secret;
+        var time = TelemetryAdmissionPolicy.UnixNanos(_clock.GetUtcNow());
+        byte[] Export(string name) => Encoding.UTF8.GetBytes(
+            $$"""{"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"{{name}}","gauge":{"dataPoints":[{"timeUnixNano":"{{time}}","asDouble":1}]}}]}]}]}""");
+
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Metrics, Export("first"), token, "application/json")).StatusCode);
+        var refused = await Send(harness, Metrics, Export("second"), token, "application/json");
+        Assert.Equal(HttpStatusCode.TooManyRequests, refused.StatusCode);
+        Assert.Equal(8, JsonDocument.Parse(await refused.Content.ReadAsStringAsync()).RootElement.GetProperty("code").GetInt32());
+        Assert.Equal(1, harness.Queue.PendingRecords);
+        Assert.Equal(1, await harness.Writer.DrainOnceAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Burst_beyond_the_queue_budget_is_refused_with_retry_after_and_never_waits()
     {
         // One environment may fill half of the 20 queued records.
