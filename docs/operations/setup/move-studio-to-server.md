@@ -96,6 +96,8 @@ ssh agent-runner-01 'docker compose --project-directory /srv/agent-studio/stack 
 
 Order matters: stop the server stack first, then lift the guard, then start Stable. `DETACH=1` starts Stable in the background, as the Stable updater does. The command lists `.stable-maintenance` only when this apply set it; a marker that was there before stays until you remove it. The workstation workspace was never modified, so Stable resumes from the exact state it had when it stopped. Work done on the server after the switch is not carried back. Never run both instances against their copies at the same time. The server keeps `moved-to-server` after a rollback, so moving again later needs `--apply --force`.
 
+For a forced apply, the script also prints the server snapshot names `<data>/workspace.pre-move-<stamp>` and `<data>/projects.pre-move-<stamp>` if the data move began. Resolve `<data>` from `STUDIO_DATA_DIR` in the stack `.env` before restoring a previous server copy.
+
 ## After the move
 
 Sign in at `https://robert.omgai.dev`, complete the credential replacements, point remote runners at the new URL, and keep the state directory until the old setup is retired. Backups, updates, and stopping the stack follow [studio-website.md](./studio-website.md).
