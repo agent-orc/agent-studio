@@ -100,6 +100,37 @@ public sealed class ExternalSecretStoreTests
         Assert.Null(await store.FindAsync(Scope, "API_KEY", default));
     }
 
+    [Fact]
+    public async Task OnePassword_persists_use_metadata_without_sending_the_value_and_reports_a_failed_patch()
+    {
+        using var remote = new FakeRemote("onepassword");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero));
+        var binding = Bind("onepassword", remote.Url);
+        var store = new OnePasswordConnectSecretStore(binding, remote.Client, (_, _) => Task.FromResult(remote.Token), clock);
+        var provider = Provider(store, clock);
+        var value = Value();
+        await provider.PutAsync(Scope, "API_KEY", value, Owner);
+
+        await Resolve(provider, "secret://workspace/API_KEY");
+        var persisted = await store.FindAsync(Scope, "API_KEY", default);
+        Assert.Equal("task:test", persisted!.LastUsedPurpose);
+        Assert.Equal(clock.GetUtcNow().UtcDateTime, persisted.LastUsedAt);
+        Assert.Equal(1, Assert.Single(persisted.Versions).Version);
+        Assert.Contains(remote.Requests, request => request.StartsWith("PATCH ", StringComparison.Ordinal));
+        Assert.DoesNotContain(value, remote.LastPatchBody, StringComparison.Ordinal);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        remote.FailNextPatch = true;
+        var failed = await Assert.ThrowsAsync<SecretBackendException>(() => Resolve(provider, "secret://workspace/API_KEY"));
+        Assert.Equal("backend-unavailable", failed.Code);
+        var afterFailure = await store.FindAsync(Scope, "API_KEY", default);
+        Assert.Equal(persisted.LastUsedAt, afterFailure!.LastUsedAt);
+
+        remote.IgnoreNextPatch = true;
+        var ignored = await Assert.ThrowsAsync<SecretBackendException>(() => Resolve(provider, "secret://workspace/API_KEY"));
+        Assert.Equal("backend-version-conflict", ignored.Code);
+    }
+
     [Theory]
     [InlineData("vault")]
     [InlineData("onepassword")]
@@ -249,6 +280,9 @@ public sealed class ExternalSecretStoreTests
         public string Url => Client.BaseAddress!.ToString();
         public int ValueReads { get; private set; }
         public List<string> Requests { get; } = [];
+        public string? LastPatchBody { get; private set; }
+        public bool FailNextPatch { get; set; }
+        public bool IgnoreNextPatch { get; set; }
 
         public FakeRemote(string kind)
         {
@@ -355,6 +389,23 @@ public sealed class ExternalSecretStoreTests
             {
                 if (_item is null) { context.Response.StatusCode = 404; return; }
                 ValueReads++;
+                await context.Response.WriteAsJsonAsync(_item.Value);
+                return;
+            }
+            if (context.Request.Method == "PATCH")
+            {
+                if (FailNextPatch) { FailNextPatch = false; context.Response.StatusCode = 500; return; }
+                if (_item is null) { context.Response.StatusCode = 404; return; }
+                using var patch = await JsonDocument.ParseAsync(context.Request.Body);
+                LastPatchBody = patch.RootElement.GetRawText();
+                var change = Assert.Single(patch.RootElement.EnumerateArray());
+                Assert.Equal("replace", change.GetProperty("op").GetString());
+                Assert.Equal("/notesPlain", change.GetProperty("path").GetString());
+                var node = JsonNode.Parse(_item.Value.GetRawText())!.AsObject();
+                if (IgnoreNextPatch) IgnoreNextPatch = false;
+                else node["notesPlain"] = change.GetProperty("value").GetString();
+                node["version"] = ++_itemVersion;
+                _item = JsonSerializer.SerializeToElement(node);
                 await context.Response.WriteAsJsonAsync(_item.Value);
                 return;
             }

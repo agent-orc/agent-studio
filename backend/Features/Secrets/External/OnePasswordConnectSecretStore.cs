@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace AgentStudio.Secrets;
 
@@ -52,15 +53,44 @@ public sealed class OnePasswordConnectSecretStore(SecretBackendBinding binding, 
     {
         var notes = RequiredString(item, "notesPlain");
         SecretRecord? record;
-        try { record = JsonSerializer.Deserialize<SecretRecord>(notes, Json); }
+        int? storedRevision;
+        try
+        {
+            using var metadata = JsonDocument.Parse(notes);
+            record = metadata.RootElement.Deserialize<SecretRecord>(Json);
+            storedRevision = metadata.RootElement.TryGetProperty("itemRevision", out var stored)
+                ? stored.ValueKind == JsonValueKind.Number && stored.TryGetInt32(out var parsedRevision)
+                    ? parsedRevision : throw new JsonException("Invalid item revision")
+                : null;
+        }
         catch (JsonException) { throw new SecretBackendException("backend-record-invalid", "The selected backend item has invalid Studio metadata."); }
-        if (record is null || record.Scope != scope.Key || record.Name != name)
+        if (record is null || record.Scope != scope.Key || record.Name != name || record.Versions.Count == 0)
             throw new SecretBackendException("backend-record-invalid", "The selected backend item does not match its scope.");
         if (!item.TryGetProperty("version", out var remoteVersion)
             || remoteVersion.ValueKind != JsonValueKind.Number || !remoteVersion.TryGetInt32(out var revision)
-            || revision != record.Versions.Max(version => version.Version))
+            || revision != (storedRevision ?? record.Versions.Max(version => version.Version)))
             throw new SecretBackendException("backend-version-conflict", "The 1Password item revision changed outside Studio.");
         return record;
+    }
+
+    private static int Revision(JsonElement item)
+        => item.TryGetProperty("version", out var version) && version.ValueKind == JsonValueKind.Number
+            && version.TryGetInt32(out var revision) && revision > 0
+                ? revision
+                : throw new SecretBackendException("backend-response-invalid", "The selected backend returned an invalid revision.");
+
+    private static int NextRevision(JsonElement item)
+    {
+        var current = Revision(item);
+        return current < int.MaxValue ? current + 1
+            : throw new SecretBackendException("backend-version-conflict", "The 1Password item revision cannot advance.");
+    }
+
+    private static string Notes(SecretRecord record, int revision)
+    {
+        var metadata = JsonSerializer.SerializeToNode(record, Json)!.AsObject();
+        metadata["itemRevision"] = revision;
+        return metadata.ToJsonString(Json);
     }
 
     public override async Task<SecretListing> ListAsync(CancellationToken ct)
@@ -101,19 +131,20 @@ public sealed class OnePasswordConnectSecretStore(SecretBackendBinding binding, 
             if (current is not null && transition(current).Versions.Any(item => item.Active && item.Version != current.Versions.Max(v => v.Version) + 1))
                 throw new SecretBackendException("backend-rotation-unsupported", "1Password Connect cannot retain readable historical versions; use Replace.");
             var next = transition(current) with { Id = BuiltInSecretStore.SecretId(scope, name), Scope = scope.Key, Name = name };
+            var expectedRevision = old is null ? 1 : NextRevision(old.RootElement);
             var payload = new
             {
                 vault = new { id = Binding.VaultId },
                 title = Title(scope, name),
                 category = "SECURE_NOTE",
-                notesPlain = JsonSerializer.Serialize(next, Json),
+                notesPlain = Notes(next, expectedRevision),
                 fields = new[] { new { id = "value", label = "value", type = "CONCEALED", value = Encoding.UTF8.GetString(value.Span) } }
             };
             using var response = await RequestAsync(detail is null ? HttpMethod.Post : HttpMethod.Put,
                 detail is null ? Items : Item(detail.Value.Id), payload, ct);
             if (response is null || !response.RootElement.TryGetProperty("version", out var remoteVersion)
                 || remoteVersion.ValueKind != JsonValueKind.Number || !remoteVersion.TryGetInt32(out var revision)
-                || revision != next.Versions.Max(item => item.Version))
+                || revision != expectedRevision)
                 throw new SecretBackendException("backend-version-conflict", "The 1Password item revision changed during the write.");
             Invalidate(scope, name);
             return next;
@@ -124,12 +155,29 @@ public sealed class OnePasswordConnectSecretStore(SecretBackendBinding binding, 
     public override async Task<SecretRecord> UpdateAsync(SecretScope scope, string name,
         Func<SecretRecord, SecretRecord> transition, CancellationToken ct)
     {
-        var current = await FindAsync(scope, name, ct) ?? throw new SecretNotFoundException(new SecretReference(scope, name).ToString());
-        var next = transition(current);
-        if (next.Versions.Any(item => current.Versions.Any(old => old.Version == item.Version && old.Active && !item.Active)))
-            throw new SecretBackendException("backend-revoke-unsupported", "1Password Connect cannot revoke an individual item revision; delete the item instead.");
-        // Workload use is audited by SecretProvider. Connect has no metadata-only update.
-        return next;
+        await WriteGate.WaitAsync(ct);
+        try
+        {
+            var detail = await Detail(scope, name, ct)
+                ?? throw new SecretNotFoundException(new SecretReference(scope, name).ToString());
+            using var document = detail.Detail;
+            var current = Record(document.RootElement, scope, name);
+            var next = transition(current);
+            if (next.Versions.Any(item => current.Versions.Any(old => old.Version == item.Version && old.Active && !item.Active)))
+                throw new SecretBackendException("backend-revoke-unsupported", "1Password Connect cannot revoke an individual item revision; delete the item instead.");
+            if (ReferenceEquals(current, next)) return current;
+
+            // PATCH changes only Studio's notes. The concealed value never enters this request.
+            var expectedRevision = NextRevision(document.RootElement);
+            var notes = Notes(next, expectedRevision);
+            var patch = new[] { new { op = "replace", path = "/notesPlain", value = notes } };
+            using var response = await RequestAsync(HttpMethod.Patch, Item(detail.Id), patch, ct);
+            if (response is null || Revision(response.RootElement) != expectedRevision
+                || RequiredString(response.RootElement, "notesPlain") != notes)
+                throw new SecretBackendException("backend-version-conflict", "The 1Password item revision changed during the update.");
+            return next;
+        }
+        finally { WriteGate.Release(); }
     }
 
     protected override async Task<byte[]> FetchValueAsync(SecretScope scope, string name, int version, CancellationToken ct)

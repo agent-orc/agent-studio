@@ -53,7 +53,11 @@ or CLI and is not this transport. Connect exposes the
 current item, so put replaces its value and delete removes it. Historical
 version reads, rotate and version-specific revoke return a clear unsupported
 error. The item title carries `agent-studio/<scope>/<name>` and its notes
-carry Studio metadata. Do not edit these managed fields outside Studio.
+carry Studio metadata. A workload resolution patches `notesPlain` to persist
+last-use metadata without sending the concealed value again. Connect increments
+the item revision for this patch, so Studio tracks the item revision separately
+from the value version shown in `secret://` references. Do not edit these
+managed fields outside Studio.
 
 External value reads are cached for the selected 1-300 second TTL. A local
 write, revoke or delete invalidates its cached values. Backend errors are
@@ -64,6 +68,47 @@ built-in store. Switching a scope does not migrate existing secrets: copy
 them explicitly before changing the selection, and verify the new backend's
 health and contents. Audit entries for external operations use the same
 append-only audit log as the built-in store, including failures.
+
+### Backend settings API
+
+`GET /api/secrets` remains the metadata-only overview. Its JSON response adds
+`backends` and `backendHealth` arrays. Each `backends` entry is a
+`SecretBackendBinding` with `scope`, `kind`, `url`, `mount`, `vaultId`,
+`credentialReference`, `credentialEnvironmentVariable`, and `ttlSeconds`.
+Each `backendHealth` entry has `scope`, `kind`, `state` (`healthy` or
+`unavailable`), and a sanitized `reason` when unavailable. The overview is
+filtered to scopes the signed-in person may see; it never includes adapter
+credential values or secret values. An external scope that cannot be listed
+appears in `unreadable` with its scope and a sanitized reason.
+
+`PUT /api/secrets/backends` selects one backend for one scope. The JSON body
+uses the same binding fields. For example:
+
+```json
+{
+  "scope": "memowikis/prod",
+  "kind": "vault",
+  "url": "https://vault.example.internal",
+  "mount": "secret",
+  "vaultId": null,
+  "credentialReference": "secret://workspace/VAULT_TOKEN",
+  "credentialEnvironmentVariable": null,
+  "ttlSeconds": 30
+}
+```
+
+`kind` is `builtin`, `vault`, or `onepassword`. Use `vaultId` for
+`onepassword` and `mount` for `vault`; the other field may be null. A `builtin`
+selection removes the external binding for that exact scope. The URL must use
+HTTPS, except HTTP to loopback. TTL is 1 to 300 seconds. An external binding's
+credential source must be a built-in workspace secret reference or an
+environment variable name; the API does not accept a credential value. The
+response is `200` with the submitted binding. Only a caller with
+workspace-wide secret write rights may
+select a backend. Invalid input returns `400` with `error` and `message`;
+failed value operations return `503` with the same error shape.
+The selection writes a `backend-select` audit entry with `ok` or a failure
+outcome. Selection does not copy secrets between stores.
 
 ## References and scopes
 
