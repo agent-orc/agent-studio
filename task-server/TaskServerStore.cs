@@ -4378,6 +4378,8 @@ public sealed partial class TaskServerStore
         // (docs/studio-route-ownership/index.html): each group below owns a
         // disjoint set of new tables and touches no other group's schema.
         await ApplyStudioHostsMigrationAsync(connection, ct);
+        if (storedVersion < CurrentSchemaVersion)
+            await GuardRetiredSchemaRemovalAsync(connection, ct);
         await ApplyStudioProjectMetaMigrationAsync(connection, ct);
         await ApplyStudioRunnerOrchestratorMigrationAsync(connection, ct);
         await ApplyStudioTaskMetadataMigrationAsync(connection, ct);
@@ -4459,6 +4461,12 @@ public sealed partial class TaskServerStore
             throw new InvalidOperationException(
                 $"Task Server store schema {storedVersion} is newer than this service supports ({supportedVersion}).");
     }
+
+    // The old reader checks meta.schema_version. Commit this guard before the
+    // retired schema is dropped so a crash cannot expose a version-36 store
+    // with the fields that reader expects already missing.
+    internal static Task GuardRetiredSchemaRemovalAsync(SqliteConnection connection, CancellationToken ct)
+        => SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
 
     /// <summary>
     /// Upgrades a pre-retention store where <c>artifacts.content</c> is <c>NOT NULL</c>. Archiving clears

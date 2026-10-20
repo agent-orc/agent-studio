@@ -60,4 +60,57 @@ public sealed partial class TaskServerStoreTests
             TaskServerStore.RejectUnsupportedSchemaVersion(storedVersion, previousBinarySchemaVersion));
         Assert.Contains("newer than this service supports (36)", error.Message);
     }
+
+    [Fact]
+    public async Task InterruptedRetiredSchemaRemovalRejectsVersion36AndFinishesOnRestart()
+    {
+        const int previousBinarySchemaVersion = 36;
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+
+        await using (var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var legacy = connection.CreateCommand();
+            legacy.CommandText = """
+                CREATE TABLE epics(id TEXT PRIMARY KEY);
+                CREATE TABLE epic_tasks(epic_id TEXT, task_id TEXT);
+                ALTER TABLE task_studio_fields ADD COLUMN epic_id TEXT;
+                UPDATE meta SET value = '36' WHERE key = 'schema_version';
+                DELETE FROM schema_migrations WHERE version = 37;
+                """;
+            await legacy.ExecuteNonQueryAsync();
+
+            await TaskServerStore.GuardRetiredSchemaRemovalAsync(connection, default);
+            await store.ApplyStudioProjectMetaMigrationAsync(connection, default);
+            // Simulate termination after the tables are dropped but before
+            // the task metadata field and final migration receipt are updated.
+        }
+
+        await using (var interrupted = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
+        {
+            await interrupted.OpenAsync();
+            await using var check = interrupted.CreateCommand();
+            check.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
+            var storedVersion = int.Parse((string)(await check.ExecuteScalarAsync())!);
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                TaskServerStore.RejectUnsupportedSchemaVersion(storedVersion, previousBinarySchemaVersion));
+            Assert.Contains("newer than this service supports (36)", error.Message);
+            check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('task_studio_fields') WHERE name = 'epic_id';";
+            Assert.Equal(1L, (long)(await check.ExecuteScalarAsync())!);
+            check.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('epics', 'epic_tasks');";
+            Assert.Equal(0L, (long)(await check.ExecuteScalarAsync())!);
+        }
+
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        await using var verify = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False");
+        await verify.OpenAsync();
+        await using var command = verify.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('task_studio_fields') WHERE name = 'epic_id';";
+        Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+        command.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
+        Assert.Equal("37", (string)(await command.ExecuteScalarAsync())!);
+    }
 }
