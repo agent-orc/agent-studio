@@ -58,6 +58,17 @@ public sealed class CardDeploymentProjectionTests
             Assert.Single(views.Where(item => item.CardKey == "WEB-2")).Environments[0].State);
     }
 
+    [Fact]
+    public void DescendantRelease_KeepsCardsFromAnAncestorRelease()
+    {
+        var views = CardDeploymentProjection.Project("demo", [Production], [R1, R2],
+            [Run("d1", R2, Production, DeploymentStates.Succeeded, 2)],
+            releaseContains: (origin, target) => origin.Id == R1.Id && target.Id == R2.Id);
+
+        var badge = Assert.Single(views.Where(item => item.CardKey == "WEB-1")).Environments[0];
+        Assert.Equal((DeploymentStates.Succeeded, R2.Id), (badge.State, badge.ReleaseId));
+    }
+
     [Theory]
     [InlineData(DeploymentStates.Queued)]
     [InlineData(DeploymentStates.Failed)]

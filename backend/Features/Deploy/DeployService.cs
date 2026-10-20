@@ -809,9 +809,11 @@ public sealed class DeployService
         var messages = _git.ListRevisionMessages(repo, commit, previousCommit,
             previousCommit is null ? FirstReleaseCommitWindow : ReleaseCommitWindow);
         var mentioned = ReleaseCardAttribution.FindKeys(messages);
+        var committedAt = _git.GetCommitterDateUtc(repo, commit);
         return integrated.Where(card => !priorKeys.Contains(card.Key) &&
                 (card.Shas.Any(revisions.Contains) || mentioned.Contains(card.Key)
-                 || card.RecordedAtUtc <= now &&
+                 || committedAt is { } commitTime && card.RecordedAtUtc > DateTime.MinValue
+                    && card.RecordedAtUtc <= commitTime && card.RecordedAtUtc <= now &&
                     (previousCreatedAt is null || card.RecordedAtUtc > previousCreatedAt)))
             .Select(card => card.Key)
             .Distinct(StringComparer.OrdinalIgnoreCase)

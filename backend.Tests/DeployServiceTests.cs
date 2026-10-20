@@ -135,6 +135,19 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void DelayedGateForOlderCommit_DoesNotClaimLaterVerifiedCard()
+    {
+        var (deploy, _, _) = Build();
+        var olderCommit = Head();
+        _clock.Advance(TimeSpan.FromHours(1));
+        Card("DEMO-6", new string('0', 40));
+
+        var release = CreateRelease(deploy, Artifact('a'), olderCommit);
+
+        Assert.Empty(release.CardKeys);
+    }
+
+    [Fact]
     public void Production_WaitsForApproval_ByOwnerOrMaintainerOnly()
     {
         var (deploy, environments, _) = Build();
@@ -1004,6 +1017,13 @@ public sealed class DeployServiceTests : IDisposable
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = _repo,
             RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        if (arguments.Length > 0 && arguments[0] == "commit")
+        {
+            var when = _clock.GetUtcNow().ToString("yyyy-MM-ddTHH:mm:sszzz",
+                System.Globalization.CultureInfo.InvariantCulture);
+            start.Environment["GIT_AUTHOR_DATE"] = when;
+            start.Environment["GIT_COMMITTER_DATE"] = when;
+        }
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();

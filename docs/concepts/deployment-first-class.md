@@ -68,8 +68,10 @@ stays the only executor; releases and runs describe and steer it.
   attribution reads verified integration records, including their recorded
   integration time. A matching commit or card key in the release delta is used
   when present; the verification record also keeps the mapping when a rebase or
-  squash rewrites both the SHA and commit message. Cards already included by an
-  ancestor release are excluded from the new release's added cards.
+  squash rewrites both the SHA and commit message, provided the rewritten commit
+  was committed after verification. This bound keeps a delayed gate for an older
+  commit from claiming later cards. Cards already included by an ancestor
+  release are excluded from the new release's added cards.
 - **Release order.** Releases never move back in history. A commit that is a
   strict ancestor of the newest release's commit is refused with 409 and
   `"reason":"superseded"`, so a gate

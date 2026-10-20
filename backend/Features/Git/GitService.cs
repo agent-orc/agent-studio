@@ -8183,6 +8183,18 @@ public partial class GitService
         return code == 0 ? output.Split('\0', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
     }
 
+    /// <summary>The UTC committer time of a release commit, including a rewritten rebase or squash.</summary>
+    public DateTime? GetCommitterDateUtc(string repoRoot, string commit)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !ReviewSubjectStore.IsValidResultSha(commit)) return null;
+        var (output, _, code) = RunGitArgs(repoRoot, "log", "-1", "--pretty=format:%cI", commit);
+        return code == 0 && DateTime.TryParse(output.Trim(),
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+            out var committedAt) ? DateTime.SpecifyKind(committedAt, DateTimeKind.Utc) : null;
+    }
+
     /// <summary>
     /// BD-1: whether <paramref name="ancestor"/> is an ancestor of
     /// <paramref name="descendant"/>, or null when git cannot answer. Unlike
