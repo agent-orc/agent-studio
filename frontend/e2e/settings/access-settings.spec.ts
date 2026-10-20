@@ -16,10 +16,12 @@ test('owner manages access from Settings and sees each created token once', asyn
   await page.route('**/favicon.ico', route => route.fulfill({ status: 204, body: '' }));
   await page.route('**/healthz', route => route.fulfill({ status: 200, body: 'ok' }));
   await page.route('**/update/status**', route => route.fulfill(json({ available: false })));
+  await page.route('**/api/**', route => route.fulfill(json([])));
   await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill(json({
     negotiateVersion: 1, connectionId: 'access-e2e', connectionToken: 'access-e2e',
     availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
   })));
+  await page.route('**/api/watch-paths', route => route.fulfill(json([])));
   await page.routeWebSocket('**/hubs/v1/studio*', socket => {
     socket.onMessage(message => {
       if (typeof message === 'string' && message.includes('"protocol":"json"')) socket.send(`{}\u001e`);
