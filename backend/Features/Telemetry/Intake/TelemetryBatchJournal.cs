@@ -7,15 +7,17 @@ internal sealed class TelemetryBatchJournal
 {
     private readonly string _root;
     private readonly ITelemetryValueMasker? _masker;
+    private readonly ITelemetryDurability _durability;
     private long _nextOrder;
 
-    public TelemetryBatchJournal(string root, ITelemetryValueMasker? masker)
+    public TelemetryBatchJournal(string root, ITelemetryValueMasker? masker, ITelemetryDurability durability)
     {
         _root = Path.Combine(root, "pending");
         _masker = masker;
+        _durability = durability;
         Directory.CreateDirectory(_root);
-        TelemetryDurability.FlushParentDirectory(_root);
-        TelemetryDurability.FlushParentDirectory(Path.GetDirectoryName(_root)!);
+        _durability.FlushParentDirectory(_root);
+        _durability.FlushParentDirectory(Path.GetDirectoryName(_root)!);
         foreach (var completed in Directory.EnumerateFiles(_root, "*.done")) File.Delete(completed);
         _nextOrder = Directory.EnumerateFiles(_root, "*.json")
             .Select(path => OrderOf(Path.GetFileNameWithoutExtension(path))).DefaultIfEmpty().Max();
@@ -34,7 +36,9 @@ internal sealed class TelemetryBatchJournal
             Metrics = batch.Metrics.Select(item => item with
                 { Attributes = item.Attributes.MapValues(_masker.Mask) }).ToArray(),
             Logs = batch.Logs.Select(item => item with
-                { Body = _masker.Mask(item.Body), Attributes = item.Attributes.MapValues(_masker.Mask) }).ToArray()
+                { Body = _masker.Mask(item.Body), SeverityText = _masker.Mask(item.SeverityText),
+                    EventName = item.EventName is null ? null : _masker.Mask(item.EventName),
+                    Attributes = item.Attributes.MapValues(_masker.Mask) }).ToArray()
         };
         staged = staged with { StageId = $"{++_nextOrder:D20}-{Guid.NewGuid():N}" };
         var path = PathFor(staged.StageId);
@@ -46,7 +50,7 @@ internal sealed class TelemetryBatchJournal
                 JsonSerializer.Serialize(stream, ToWire(staged));
                 stream.Flush(flushToDisk: true);
             }
-            TelemetryDurability.MoveStagedFile(temporary, path);
+            _durability.MoveStagedFile(temporary, path);
             return staged;
         }
         finally
@@ -63,7 +67,7 @@ internal sealed class TelemetryBatchJournal
             var completed = staged + ".done";
             // Persist the rename before the SQLite replay marker is removed. A
             // crash may leave a .done file, but it cannot replay that batch.
-            if (File.Exists(staged)) TelemetryDurability.MoveStagedFile(staged, completed);
+            if (File.Exists(staged)) _durability.MoveStagedFile(staged, completed);
             if (File.Exists(completed)) File.Delete(completed);
         }
     }

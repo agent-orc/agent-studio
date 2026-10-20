@@ -31,6 +31,10 @@ public sealed class TelemetryIntakeQueue
     private long _refusedBatches;
 
     public TelemetryIntakeQueue(TelemetryOptions options, ITelemetryValueMasker? masker = null, TelemetryStore? store = null)
+        : this(options, masker, store, TelemetryDurability.Instance) { }
+
+    internal TelemetryIntakeQueue(TelemetryOptions options, ITelemetryValueMasker? masker, TelemetryStore? store,
+        ITelemetryDurability durability)
     {
         _store = store;
         _masker = masker;
@@ -40,7 +44,7 @@ public sealed class TelemetryIntakeQueue
         _maxBytesPerEnvironment = options.MaxQueuedBytesPerEnvironment;
         if (options.StoreRoot is not null)
         {
-            _journal = new TelemetryBatchJournal(options.StoreRoot, masker);
+            _journal = new TelemetryBatchJournal(options.StoreRoot, masker, durability);
             foreach (var recovered in _journal.Recover())
             {
                 Add(recovered.Environment, recovered.RecordCount, recovered.EstimatedBytes);

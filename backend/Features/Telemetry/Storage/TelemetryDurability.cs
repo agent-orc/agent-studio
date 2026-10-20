@@ -4,11 +4,18 @@ using System.Runtime.InteropServices;
 namespace AgentStudio.Telemetry;
 
 /// <summary>Persists the directory entries that connect staged files and committed SQLite databases.</summary>
-internal static class TelemetryDurability
+internal interface ITelemetryDurability
 {
+    void MoveStagedFile(string source, string destination);
+    void FlushParentDirectory(string path);
+}
+
+internal sealed class TelemetryDurability : ITelemetryDurability
+{
+    public static readonly ITelemetryDurability Instance = new TelemetryDurability();
     private const int MoveFileWriteThrough = 0x8;
 
-    public static void MoveStagedFile(string source, string destination)
+    public void MoveStagedFile(string source, string destination)
     {
         if (OperatingSystem.IsWindows())
         {
@@ -22,12 +29,30 @@ internal static class TelemetryDurability
         }
     }
 
-    public static void FlushParentDirectory(string path)
+    public void FlushParentDirectory(string path)
     {
-        // MoveFileEx with WRITE_THROUGH persists the stage rename on Windows. A stale
-        // stage after deletion is safe because the SQLite commit marker is idempotent.
-        if (OperatingSystem.IsWindows()) return;
         var directory = Path.GetDirectoryName(Path.GetFullPath(path))!;
+        if (OperatingSystem.IsWindows())
+        {
+            // Windows cannot flush a directory handle. A flushed marker and a
+            // write-through rename force a metadata operation in that directory.
+            var marker = Path.Combine(directory, ".telemetry-sync-" + Guid.NewGuid().ToString("N"));
+            var renamed = marker + ".done";
+            try
+            {
+                using (var stream = new FileStream(marker, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                    1, FileOptions.WriteThrough)) stream.Flush(flushToDisk: true);
+                if (!MoveFileEx(marker, renamed, MoveFileWriteThrough))
+                    throw new IOException($"Cannot sync telemetry directory {directory}.",
+                        new Win32Exception(Marshal.GetLastPInvokeError()));
+            }
+            finally
+            {
+                if (File.Exists(marker)) File.Delete(marker);
+                if (File.Exists(renamed)) File.Delete(renamed);
+            }
+            return;
+        }
         var descriptor = OpenDirectory(directory, 0);
         if (descriptor < 0) throw new IOException($"Cannot open telemetry directory {directory} for sync.",
             new Win32Exception(Marshal.GetLastPInvokeError()));

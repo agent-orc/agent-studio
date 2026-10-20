@@ -256,6 +256,38 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Log_name_and_severity_are_masked_before_staging_storage_query_and_export()
+    {
+        var sink = new RecordingSink();
+        var harness = await Start(sink: sink);
+        var token = (await CreateToken(harness)).Secret;
+        var secret = new string('q', 24);
+        var credential = "Authorization: Bearer " + secret;
+        var body = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            resourceLogs = new[] { new { scopeLogs = new[] { new { logRecords = new[] { new
+            {
+                timeUnixNano = TelemetryAdmissionPolicy.UnixNanos(_clock.GetUtcNow().AddMinutes(-1)).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                severityNumber = 17, severityText = credential, eventName = credential,
+                body = new { stringValue = "event" }
+            } } } } } }
+        });
+
+        Assert.Equal(HttpStatusCode.OK, (await Send(harness, Logs, body, token, "application/json")).StatusCode);
+        var stage = Assert.Single(Directory.EnumerateFiles(Path.Combine(_root, "telemetry", "pending"), "*.json"));
+        Assert.DoesNotContain(secret, await File.ReadAllTextAsync(stage));
+
+        Assert.Equal(1, await harness.Writer.DrainOnceAsync(CancellationToken.None));
+        var query = await harness.Client.GetStringAsync(Environment + "/logs?from=2026-10-16T11:00:00Z");
+        Assert.DoesNotContain(secret, query);
+        Assert.Contains("[REDACTED]", query);
+        var exported = Assert.Single(Assert.Single(sink.Batches).Logs);
+        Assert.DoesNotContain(secret, exported.SeverityText);
+        Assert.DoesNotContain(secret, exported.EventName);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "telemetry", "pending"), "*.json"));
+    }
+
+    [Fact]
     public async Task Gzip_bomb_of_points_is_refused_with_413_and_queues_nothing()
     {
         var harness = await Start();

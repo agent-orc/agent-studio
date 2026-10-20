@@ -38,13 +38,18 @@ public sealed partial class TelemetryStore
     private const long SeriesEntryBytes = 192;
     private readonly TelemetryOptions _options;
     private readonly ILogger<TelemetryStore> _logger;
+    private readonly ITelemetryDurability _durability;
     private readonly object _writeGate = new();
     private readonly Dictionary<string, SeriesCache> _series = new(StringComparer.Ordinal);
 
     public TelemetryStore(TelemetryOptions options, ILogger<TelemetryStore> logger)
+        : this(options, logger, TelemetryDurability.Instance) { }
+
+    internal TelemetryStore(TelemetryOptions options, ILogger<TelemetryStore> logger, ITelemetryDurability durability)
     {
         _options = options;
         _logger = logger;
+        _durability = durability;
     }
 
     public static bool IsValidEnvironmentId(string? environment) => environment is not null && EnvironmentId.IsMatch(environment);
@@ -82,7 +87,7 @@ public sealed partial class TelemetryStore
                     "INSERT OR IGNORE INTO ingest_commits (id) VALUES ($id)", ("$id", batchId)) == 0)
                 {
                     transaction.Commit();
-                    TelemetryDurability.FlushParentDirectory(path);
+                    PersistDatabaseDirectory(path);
                     return new TelemetryWriteResult(0, 0, 0, 0);
                 }
                 var (stored, rejected) = WriteMetrics(connection, transaction, path, metrics, now);
@@ -90,7 +95,7 @@ public sealed partial class TelemetryStore
                 transaction.Commit();
                 // SQLite FULL syncs the WAL commit; persist a newly created database's
                 // directory entry before its stage file can be removed.
-                if (batchId is not null) TelemetryDurability.FlushParentDirectory(path);
+                if (batchId is not null) PersistDatabaseDirectory(path);
                 return new TelemetryWriteResult(stored, rejected, logs.Count, evicted);
             }
             catch
@@ -100,6 +105,13 @@ public sealed partial class TelemetryStore
                 throw;
             }
         }
+    }
+
+    private void PersistDatabaseDirectory(string path)
+    {
+        _durability.FlushParentDirectory(path);
+        // The first database creates a project directory. Its entry lives in StoreRoot.
+        _durability.FlushParentDirectory(Path.GetDirectoryName(path)!);
     }
 
     /// <summary>Conservatively reserves series for queued batches before HTTP acknowledgement.</summary>

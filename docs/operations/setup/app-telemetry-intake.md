@@ -111,8 +111,8 @@ the batch processor, `send_batch_max_size`).
 
 Points older than the hourly retention, log records older than the log
 retention, and anything more than 10 minutes in the future count as rejected.
-Log bodies and the attribute values of logs and metrics pass through the
-credential redactor before they are stored or exported. Values held by the secret provider (AGT-3222) will
+Log bodies, event names, severity text, and the attribute values of logs and metrics pass through the
+credential redactor before durable staging, storage, queries, or export. Values held by the secret provider (AGT-3222) will
 be masked once that provider exists.
 
 ## Storage and retention

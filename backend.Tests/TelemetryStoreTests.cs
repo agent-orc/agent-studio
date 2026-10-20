@@ -127,6 +127,68 @@ public sealed class TelemetryStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task New_project_directory_is_synced_after_commit_and_before_stage_cleanup()
+    {
+        var options = new TelemetryOptions { StoreRoot = _root };
+        var durability = new RecordingDurability();
+        var store = new TelemetryStore(options, NullLogger<TelemetryStore>.Instance, durability);
+        var queue = new TelemetryIntakeQueue(options, null, null, durability);
+        var databasePath = store.DatabasePath(_stage);
+        Assert.False(Directory.Exists(Path.GetDirectoryName(databasePath)));
+        Assert.Equal(TelemetryEnqueueResult.Accepted,
+            queue.TryEnqueue(new(_stage, [Gauge("durable", 1, Nanos(_clock.GetUtcNow()))], [], 256)));
+        durability.Events.Clear();
+        durability.OnSync = path =>
+        {
+            if (path != databasePath) return;
+            using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM ingest_commits";
+            Assert.Equal(1L, (long)command.ExecuteScalar()!);
+        };
+        var writer = new TelemetryWriter(queue, store, [], new CredentialTelemetryValueMasker(),
+            options, _clock, NullLogger<TelemetryWriter>.Instance);
+
+        Assert.Equal(1, await writer.DrainOnceAsync(CancellationToken.None));
+
+        var projectSync = durability.Events.IndexOf("sync:" + databasePath);
+        var rootSync = durability.Events.IndexOf("sync:" + Path.GetDirectoryName(databasePath));
+        var cleanup = durability.Events.FindIndex(item => item.StartsWith("move:", StringComparison.Ordinal)
+            && item.EndsWith(".done", StringComparison.Ordinal));
+        Assert.True(projectSync >= 0 && rootSync > projectSync && cleanup > rootSync,
+            string.Join(" | ", durability.Events));
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "pending"), "*.json"));
+    }
+
+    [Fact]
+    public async Task Failed_store_root_sync_keeps_the_stage_for_retry()
+    {
+        var options = new TelemetryOptions { StoreRoot = _root };
+        var durability = new RecordingDurability();
+        var store = new TelemetryStore(options, NullLogger<TelemetryStore>.Instance, durability);
+        var queue = new TelemetryIntakeQueue(options, null, null, durability);
+        var databasePath = store.DatabasePath(_stage);
+        Assert.Equal(TelemetryEnqueueResult.Accepted,
+            queue.TryEnqueue(new(_stage, [Gauge("retry", 2, Nanos(_clock.GetUtcNow()))], [], 256)));
+        durability.OnSync = path =>
+        {
+            if (path == Path.GetDirectoryName(databasePath)) throw new IOException("root sync failed");
+        };
+        var writer = new TelemetryWriter(queue, store, [], new CredentialTelemetryValueMasker(),
+            options, _clock, NullLogger<TelemetryWriter>.Instance);
+
+        Assert.Equal(0, await writer.DrainOnceAsync(CancellationToken.None));
+        Assert.Single(Directory.EnumerateFiles(Path.Combine(_root, "pending"), "*.json"));
+        Assert.Equal(1, queue.PendingRecords);
+        durability.OnSync = null;
+        Assert.Equal(1, await writer.DrainOnceAsync(CancellationToken.None));
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "pending"), "*.json"));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(1d, Assert.Single(Assert.Single(Query(store, "retry", 60).Series).Points).Count);
+    }
+
+    [Fact]
     public void Successive_cumulative_sum_exports_contribute_deltas_and_handle_resets()
     {
         var store = Store();
@@ -532,4 +594,23 @@ public sealed class TelemetryStoreTests : IDisposable
 
     private static TelemetryAttributes Attributes((string Key, string Value)[] values)
         => TelemetryAttributes.From(values.Select(item => KeyValuePair.Create(item.Key, item.Value)));
+
+    private sealed class RecordingDurability : ITelemetryDurability
+    {
+        public List<string> Events { get; } = [];
+        public Action<string>? OnSync { get; set; }
+
+        public void FlushParentDirectory(string path)
+        {
+            Events.Add("sync:" + path);
+            OnSync?.Invoke(path);
+            TelemetryDurability.Instance.FlushParentDirectory(path);
+        }
+
+        public void MoveStagedFile(string source, string destination)
+        {
+            Events.Add("move:" + destination);
+            TelemetryDurability.Instance.MoveStagedFile(source, destination);
+        }
+    }
 }
