@@ -33,38 +33,9 @@ internal sealed class MachineGateSlots
                 var busy = 0;
                 for (var slot = 0; slot < count; slot++)
                 {
-                    var path = SlotPath(slot);
-                    var semaphore = ProcessSlots.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
-                    if (!await semaphore.WaitAsync(0, bounded.Token).ConfigureAwait(false))
-                    {
-                        busy++;
-                        continue;
-                    }
-                    var passedToLease = false;
-                    try
-                    {
-                        var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite,
-                            OperatingSystem.IsWindows() ? FileShare.None : FileShare.ReadWrite);
-                        try
-                        {
-                            if (!OperatingSystem.IsWindows() && !TryLock(stream))
-                            {
-                                stream.Dispose();
-                                busy++;
-                                continue;
-                            }
-                            passedToLease = true;
-                            return new Lease(slot, count, stream, semaphore,
-                                (long)_clock.GetElapsedTime(started).TotalMilliseconds, collision);
-                        }
-                        catch { stream.Dispose(); throw; }
-                    }
-                    catch (IOException) { busy++; }
-                    finally
-                    {
-                        // Ownership passes to the lease only when a stream was returned.
-                        if (!passedToLease) semaphore.Release();
-                    }
+                    var lease = await TryTakeAsync(slot, count, started, collision, bounded.Token).ConfigureAwait(false);
+                    if (lease is not null) return lease;
+                    busy++;
                 }
                 collision = true;
                 if (busy != lastReportedBusy)
@@ -76,6 +47,56 @@ internal sealed class MachineGateSlots
             }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return null; }
+    }
+
+    /// <summary>
+    /// One pass over the slots without waiting (AGT-3232): up to
+    /// <paramref name="wanted"/> slots that are free right now. A gate that
+    /// already holds a slot borrows these as extra test-shard lanes; each slot
+    /// stands for the processors one gate suite is budgeted.
+    /// </summary>
+    internal async Task<IReadOnlyList<Lease>> TryAcquireFreeAsync(int count, int wanted, CancellationToken ct)
+    {
+        if (count is < 1 or > 64) throw new ArgumentOutOfRangeException(nameof(count));
+        var started = _clock.GetTimestamp();
+        var leases = new List<Lease>();
+        for (var slot = 0; slot < count && leases.Count < wanted; slot++)
+        {
+            var lease = await TryTakeAsync(slot, count, started, collision: false, ct).ConfigureAwait(false);
+            if (lease is not null) leases.Add(lease);
+        }
+        return leases;
+    }
+
+    private async Task<Lease?> TryTakeAsync(int slot, int count, long started, bool collision, CancellationToken ct)
+    {
+        var path = SlotPath(slot);
+        var semaphore = ProcessSlots.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
+        if (!await semaphore.WaitAsync(0, ct).ConfigureAwait(false)) return null;
+        var passedToLease = false;
+        try
+        {
+            var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite,
+                OperatingSystem.IsWindows() ? FileShare.None : FileShare.ReadWrite);
+            try
+            {
+                if (!OperatingSystem.IsWindows() && !TryLock(stream))
+                {
+                    stream.Dispose();
+                    return null;
+                }
+                passedToLease = true;
+                return new Lease(slot, count, stream, semaphore,
+                    (long)_clock.GetElapsedTime(started).TotalMilliseconds, collision);
+            }
+            catch { stream.Dispose(); throw; }
+        }
+        catch (IOException) { return null; }
+        finally
+        {
+            // Ownership passes to the lease only when a stream was returned.
+            if (!passedToLease) semaphore.Release();
+        }
     }
 
     internal string SlotPath(int slot) => _lockPrefix + "." + slot + ".lock";

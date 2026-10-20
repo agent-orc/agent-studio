@@ -16,20 +16,33 @@ public sealed record GateResourceEvidence(
 public sealed record GateBudgetExtensionEvidence(long OriginalLimitMs, long EffectiveLimitMs, string Reason, GateResourceEvidence Resources);
 
 /// <summary>One allowance shared by every verification command in a gate run.</summary>
+/// <remarks>Parallel test shards (AGT-3232) read and extend it concurrently.</remarks>
 internal sealed class GateContentionBudget(TimeSpan originalLimit)
 {
+    private readonly object _sync = new();
+    private TimeSpan _limit = originalLimit;
+    private bool _failedTestsObserved;
+    private GateBudgetExtensionEvidence? _extension;
+
     internal TimeSpan OriginalLimit { get; } = originalLimit;
-    internal TimeSpan Limit { get; private set; } = originalLimit;
-    internal bool FailedTestsObserved { get; set; }
-    internal GateBudgetExtensionEvidence? Extension { get; private set; }
+    internal TimeSpan Limit { get { lock (_sync) return _limit; } }
+    internal bool FailedTestsObserved
+    {
+        get { lock (_sync) return _failedTestsObserved; }
+        set { lock (_sync) _failedTestsObserved = value; }
+    }
+    internal GateBudgetExtensionEvidence? Extension { get { lock (_sync) return _extension; } }
 
     internal bool TryExtend(GateResourceEvidence resources, bool failedTests)
     {
-        if (!ShouldExtend(resources, failedTests || FailedTestsObserved, Extension is not null)) return false;
-        Limit += TimeSpan.FromMilliseconds(Math.Min(OriginalLimit.TotalMilliseconds * .5, 900_000));
-        Extension = new((long)OriginalLimit.TotalMilliseconds, (long)Limit.TotalMilliseconds,
-            "host-cpu>=90%; external-cpu>=25%; sustained>=60s; process-tree-progress", resources);
-        return true;
+        lock (_sync)
+        {
+            if (!ShouldExtend(resources, failedTests || _failedTestsObserved, _extension is not null)) return false;
+            _limit += TimeSpan.FromMilliseconds(Math.Min(OriginalLimit.TotalMilliseconds * .5, 900_000));
+            _extension = new((long)OriginalLimit.TotalMilliseconds, (long)_limit.TotalMilliseconds,
+                "host-cpu>=90%; external-cpu>=25%; sustained>=60s; process-tree-progress", resources);
+            return true;
+        }
     }
 
     internal static bool ShouldExtend(GateResourceEvidence resources, bool failedTests, bool alreadyExtended)
