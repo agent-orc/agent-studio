@@ -54,7 +54,7 @@ public sealed partial class TaskServerStore
     // 35 adds project review plans, integration commands, publication leases
     // and the continuation base reason of the standalone review loop (I11).
     // 36 adds one-time Studio invitations and per-project production approval.
-    // 37 removes retired epic tables and the task_studio_fields.epic_id column.
+    // 37 removes retired parent tables and their task metadata field.
     // Older binaries must reject this store before reading task metadata.
     public const int CurrentSchemaVersion = 37;
 
