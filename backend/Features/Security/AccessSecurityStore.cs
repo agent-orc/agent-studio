@@ -26,6 +26,9 @@ public sealed class AccessSecurityStore
     private readonly TimeProvider _clock;
     private readonly object _gate = new();
     private readonly Dictionary<string, LoginAttempt> _loginAttempts = new(StringComparer.OrdinalIgnoreCase);
+    // Failure times per normalized username, whatever the client address: a
+    // client that rotates addresses still spends one account budget (AGT-3230).
+    private readonly Dictionary<string, Queue<DateTime>> _usernameFailures = new(StringComparer.Ordinal);
     private static readonly string DummyPasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken());
     private SecurityState? _state;
 
@@ -80,7 +83,8 @@ public sealed class AccessSecurityStore
         lock (_gate)
         {
             var now = Now;
-            if (_loginAttempts.TryGetValue(throttleKey, out var attempt) && attempt.LockedUntil > now)
+            if ((_loginAttempts.TryGetValue(throttleKey, out var attempt) && attempt.LockedUntil > now)
+                || UsernameBudgetSpentLocked(normalized, now))
                 throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
 
             var state = StateLocked();
@@ -94,6 +98,7 @@ public sealed class AccessSecurityStore
             if (!valid)
             {
                 RegisterLoginFailureLocked(throttleKey, now);
+                RegisterUsernameFailureLocked(normalized, now);
                 throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
             }
 
@@ -643,6 +648,36 @@ public sealed class AccessSecurityStore
         var prior = _loginAttempts.GetValueOrDefault(key);
         var failures = prior is null || now - prior.WindowStartedAt > window ? 1 : prior.Failures + 1;
         _loginAttempts[key] = new LoginAttempt(failures, prior is null || now - prior.WindowStartedAt > window ? now : prior.WindowStartedAt, failures >= max ? now + lockout : null);
+    }
+
+    private TimeSpan UsernameFailureWindow
+        => TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:UsernameWindowMinutes", 15));
+
+    private bool UsernameBudgetSpentLocked(string username, DateTime now)
+    {
+        if (!_usernameFailures.TryGetValue(username, out var failures)) return false;
+        while (failures.Count > 0 && now - failures.Peek() >= UsernameFailureWindow) failures.Dequeue();
+        if (failures.Count == 0)
+        {
+            _usernameFailures.Remove(username);
+            return false;
+        }
+        return failures.Count >= _configuration.GetValue("Security:LoginThrottle:MaxFailuresPerUsername", 20);
+    }
+
+    private void RegisterUsernameFailureLocked(string username, DateTime now)
+    {
+        if (!_usernameFailures.TryGetValue(username, out var failures))
+        {
+            // Guessed usernames each add an entry; drop the expired ones
+            // before the table grows past a bounded size.
+            if (_usernameFailures.Count >= 4096)
+                foreach (var stale in _usernameFailures.Where(entry => now - entry.Value.Last() >= UsernameFailureWindow)
+                             .Select(entry => entry.Key).ToList())
+                    _usernameFailures.Remove(stale);
+            _usernameFailures[username] = failures = new Queue<DateTime>();
+        }
+        failures.Enqueue(now);
     }
 
     private SecurityState StateLocked()

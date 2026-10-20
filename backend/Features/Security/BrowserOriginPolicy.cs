@@ -13,6 +13,10 @@ public sealed record BrowserOriginDecision(bool Allowed, string? Code = null, st
 /// <c>Sec-Fetch-Site: same-origin</c>. Browsers send at least one of them on
 /// every unsafe method. Requests without a browser credential (Runner bearer,
 /// enrollment code) are service protocol and stay outside this rule.
+/// Event streams (<c>/hubs/*</c> and every WebSocket upgrade) are checked on
+/// every method, because the upgrade is a GET that a sibling host can open
+/// with the session cookie. Non-browser stream clients send neither header
+/// and stay allowed.
 /// </summary>
 public static class BrowserOriginPolicy
 {
@@ -26,15 +30,22 @@ public static class BrowserOriginPolicy
         => HttpMethods.IsGet(method) || HttpMethods.IsHead(method)
            || HttpMethods.IsOptions(method) || HttpMethods.IsTrace(method);
 
+    /// <summary>SignalR hubs and any WebSocket upgrade, whatever the method.</summary>
+    public static bool IsEventStream(string path, IHeaderDictionary headers)
+        => path.Equals("/hubs", StringComparison.OrdinalIgnoreCase)
+           || path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase)
+           || headers.Upgrade.Any(value => value?.Contains("websocket", StringComparison.OrdinalIgnoreCase) == true);
+
     public static BrowserOriginDecision Decide(
         string method,
         bool browserCredential,
+        bool eventStream,
         string? origin,
         string? secFetchSite,
         string requestScheme,
         HostString requestHost)
     {
-        if (IsSafeMethod(method) || !browserCredential) return BrowserOriginDecision.Allow;
+        if (!browserCredential || (IsSafeMethod(method) && !eventStream)) return BrowserOriginDecision.Allow;
         if (!string.IsNullOrEmpty(secFetchSite)
             && !string.Equals(secFetchSite, "same-origin", StringComparison.OrdinalIgnoreCase))
             return new(false, "cross-site-request", "Studio accepts browser changes only from its own pages.");
@@ -42,7 +53,7 @@ public static class BrowserOriginPolicy
             return OriginMatches(origin, requestScheme, requestHost)
                 ? BrowserOriginDecision.Allow
                 : new(false, "origin-mismatch", "The request Origin does not match this Studio.");
-        return string.IsNullOrEmpty(secFetchSite)
+        return string.IsNullOrEmpty(secFetchSite) && !eventStream
             ? new(false, "origin-required", "A browser change must carry its Origin or Sec-Fetch-Site.")
             : BrowserOriginDecision.Allow;
     }
