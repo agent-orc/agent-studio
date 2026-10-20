@@ -73,14 +73,17 @@ with the registry in backups; losing the key makes stored provenance unverifiabl
 
 On restart, a queued job saved before release IDs were added can recover its
 release from a persisted deployment run linked by job ID. An automatic rollback
-also requires the failed job and its last healthy source job to identify the
-same release. A digest match alone never selects a release. The claim and
+persists the failed job ID when it is queued and uses that link to find the
+last healthy source job and its release after restart. A digest match or equal
+timestamps never select a release. The claim and
 artifact routes refuse jobs whose release or registry provenance cannot be
 verified. A claim verifies only the selected host's next eligible job; an
 unverified job fails without changing jobs for other hosts. A temporary
 registry read failure leaves the job queued or claimed for retry and never
-allows artifact transfer. If provenance disappears during a lease, artifact
-access is denied; an unverified report fails the job.
+allows artifact transfer. A later queued job for the same environment waits
+behind that retry; jobs for other environments remain eligible. If provenance
+disappears during a lease, artifact access is denied; an unverified report
+fails the job.
 
 The host contract is `GET /api/deploy/jobs/{project}/{jobId}/artifact` with
 `Authorization: Bearer <runner.deploy token>` and
@@ -101,8 +104,10 @@ record's `location` is `external`; the host pulls the immutable image reference
 by digest from the external registry. A bad or expired lease returns `403`; a
 job with no matching release or unverified provenance returns `409`. The
 content request returns `409` when no built-in blob is available. The host
-reports a failed deploy when any of these checks fails. The gate's required
-files and `runner.release` push request are specified in the
+reports a failed deploy for these permanent refusals. A temporary registry
+read failure returns `503`; the host transfers nothing and leaves the claim
+unreported so its lease can be retried. The gate's required files and
+`runner.release` push request are specified in the
 [promotion handoff](../operations/develop-main-promotion.md#release-evidence-and-registry-handoff).
 
 ### Releases, standard lifecycle and deploy runs (BD-1)

@@ -43,13 +43,13 @@ public static class DeployJobReleaseBinding
         var index = jobs.ToList().FindIndex(item => item.Id == rollback.Id);
         if (index < 0) return null;
         var earlier = jobs.Take(index).ToArray();
-        // Report queues this rollback at the failed job's finish time, using
-        // the last healthy job for the same environment and previous digest.
-        var failures = earlier.Where(item => item.EnvironmentId == rollback.EnvironmentId
-            && item.Status == "failed" && !item.IsRollback && item.PreviousArtifact == rollback.Artifact
-            && item.FinishedAt == rollback.CreatedAt).ToArray();
-        if (failures.Length != 1) return null;
-        var source = earlier.LastOrDefault(item => item.EnvironmentId == rollback.EnvironmentId
+        // The failed job id is persisted with the rollback before either job
+        // can be observed by a restarted process. Clock equality is not evidence.
+        var failure = earlier.SingleOrDefault(item => item.Id == rollback.RollbackOfJobId);
+        if (failure is null || failure.EnvironmentId != rollback.EnvironmentId
+            || failure.Status != "failed" || failure.IsRollback
+            || failure.PreviousArtifact != rollback.Artifact) return null;
+        var source = earlier.TakeWhile(item => item.Id != failure.Id).LastOrDefault(item => item.EnvironmentId == rollback.EnvironmentId
             && item.Artifact == rollback.Artifact && item.Status == "healthy");
         if (source is null) return null;
         var linked = runs.Where(run => run.JobId == source.Id).Select(run => run.ReleaseId)

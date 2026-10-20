@@ -58,6 +58,49 @@ public sealed class DeployHostCommandTests
         finally { Directory.Delete(root, true); }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TemporaryRegistryFailure_LeavesClaimForRetryWithoutTransferOrReport(bool atContent)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "deploy-retry-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var token = Path.Combine(root, "token");
+        await File.WriteAllTextAsync(token, "deploy-test-token");
+        var digest = new string('a', 64);
+        var artifact = "release-package@sha256:" + digest;
+        var calls = new List<string>();
+        using var client = new HttpClient(new RouteHandler(request =>
+        {
+            calls.Add(request.RequestUri!.PathAndQuery);
+            if (request.RequestUri.AbsolutePath.EndsWith("/claim", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new
+                {
+                    id = "job", project = "demo", environmentId = "stage", hostId = "host",
+                    artifact, template = "static", destination = Path.Combine(root, "destination"),
+                    healthUrl = (string?)null, secretRefs = Array.Empty<string>(), containerPort = 80,
+                    previousArtifact = (string?)null, status = "claimed", leaseToken = "lease",
+                }) };
+            if (atContent && !request.RequestUri.Query.Contains("content", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new
+                {
+                    project = "demo", commit = new string('b', 40), artifact, digest,
+                    gateRunId = "gate/test", template = "static", builderIdentity = "builder",
+                    location = "built-in", sourceDigest = digest,
+                }) };
+            return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+        })) { BaseAddress = new Uri("https://studio.test/") };
+        try
+        {
+            Assert.Equal(0, await DeployHostCommand.RunAsync(
+                ["https://studio.test", "host", token, Path.Combine(root, "cache")], CancellationToken.None, client));
+            Assert.Equal(atContent ? 3 : 2, calls.Count);
+            Assert.DoesNotContain(calls, call => call.EndsWith("/report", StringComparison.Ordinal));
+            Assert.False(Directory.Exists(Path.Combine(root, "destination")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private sealed class RouteHandler(Func<HttpRequestMessage, HttpResponseMessage> reply) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

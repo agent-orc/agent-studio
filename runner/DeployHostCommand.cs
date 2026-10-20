@@ -12,6 +12,7 @@ namespace AgentRunner;
 /// <summary>Host-local executor for claimable deploy jobs. No agent CLI is involved.</summary>
 public static class DeployHostCommand
 {
+    private sealed class RetryableRegistryException : Exception;
     private sealed record Claim(string HostId);
     private sealed record Job(string Id, string Project, string EnvironmentId, string HostId,
         string Artifact, string Template, string Destination, string? HealthUrl,
@@ -52,6 +53,11 @@ public static class DeployHostCommand
             healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
             if (healthy) evidence = "health-ok";
         }
+        catch (RetryableRegistryException)
+        {
+            // Keep the claim for a later lease retry. No bytes were deployed.
+            return 0;
+        }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
             or HttpRequestException or JsonException or System.ComponentModel.Win32Exception)
         {
@@ -78,7 +84,7 @@ public static class DeployHostCommand
     {
         using var request = ArtifactRequest(job, content: false);
         using var response = await client.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
+        EnsureArtifactAvailable(response);
         var record = await response.Content.ReadFromJsonAsync<Provenance>(cancellationToken: ct);
         if (record is null || record.Project != job.Project || record.Artifact != job.Artifact
             || record.Template != job.Template || string.IsNullOrWhiteSpace(record.Commit)
@@ -102,7 +108,7 @@ public static class DeployHostCommand
         }
         using var request = ArtifactRequest(job, content: true);
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
+        EnsureArtifactAvailable(response);
         var temporary = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
@@ -114,6 +120,13 @@ public static class DeployHostCommand
             File.Move(temporary, target, true);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    private static void EnsureArtifactAvailable(HttpResponseMessage response)
+    {
+        if (response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+            throw new RetryableRegistryException();
+        response.EnsureSuccessStatusCode();
     }
 
     private static async Task DeployStatic(Job job, string artifactStore, CancellationToken ct)

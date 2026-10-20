@@ -78,8 +78,14 @@ public sealed class DeployServiceTests : IDisposable
         var secondCommit = Commit("second");
         CreateRelease(deploy, Artifact('b'), secondCommit);
         var failed = environments.Claim("stage-host", requireVerifiedRelease: true)!;
-        Assert.True(environments.Report("demo", failed.Id, new(failed.LeaseToken!, false, "deploy-step-failed"),
+        var advancing = new ProjectEnvironmentService(_configuration!, _scanner!, _git!, _settings!,
+            new AdvancingTimeProvider(_clock, TimeSpan.FromSeconds(1)),
+            new ReleaseArtifactRegistry(_configuration!), new DeployStore(_configuration!));
+        Assert.True(advancing.Report("demo", failed.Id, new(failed.LeaseToken!, false, "deploy-step-failed"),
             requireVerifiedRelease: true));
+        var queuedRollback = environments.Read("demo")!.Jobs.Last();
+        Assert.Equal(failed.Id, queuedRollback.RollbackOfJobId);
+        Assert.True(queuedRollback.CreatedAt > environments.Read("demo")!.Jobs.Single(item => item.Id == failed.Id).FinishedAt);
         // The queue has durably written the automatic rollback, but the run
         // reconciler has not yet adopted it when the process restarts.
         StripPersistedReleaseIds();
@@ -153,6 +159,75 @@ public sealed class DeployServiceTests : IDisposable
         Assert.NotNull(claimant.FindClaimedJob("demo", job.Id, job.LeaseToken!, requireVerifiedRelease: true));
         Assert.True(claimant.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok"),
             requireVerifiedRelease: true));
+    }
+
+    [Fact]
+    public void RegistryRecordReadError_IsRetryableButMissingRecordIsUnverified()
+    {
+        var (deploy, environments, _) = Build();
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        var record = Directory.GetFiles(Path.Combine(_root, "workspace", "release-registry", "records"),
+            "*.json", SearchOption.AllDirectories).Single();
+        var backup = record + ".backup";
+        File.Move(record, backup);
+        Directory.CreateDirectory(record);
+        try
+        {
+            Assert.Null(environments.Claim("stage-host", requireVerifiedRelease: true));
+            Assert.Equal("queued", environments.Read("demo")!.Jobs.Single().Status);
+            Assert.Throws<UnauthorizedAccessException>(() => new ReleaseArtifactRegistry(_configuration!)
+                .VerifiedForDeployment("demo", release.CommitSha, Artifact('a'), "container"));
+        }
+        finally
+        {
+            Directory.Delete(record);
+            File.Move(backup, record);
+        }
+        var claimed = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.Equal(release.Id, claimed.ReleaseId);
+        Assert.True(environments.Report("demo", claimed.Id, new(claimed.LeaseToken!, true, "health-ok"),
+            requireVerifiedRelease: true));
+    }
+
+    [Fact]
+    public void RetryableFirstRelease_PreservesEnvironmentOrderAndAllowsOtherEnvironment()
+    {
+        var (deploy, environments, _) = Build();
+        WriteProduction(host: "stage-host", destination: "8082");
+        var first = CreateRelease(deploy, Artifact('a'), Commit("shared-host"));
+        var stage = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.True(environments.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok"),
+            requireVerifiedRelease: true));
+        deploy.SyncAfterHostCall("demo");
+        var second = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        var third = CreateRelease(deploy, Artifact('c'), Commit("third"));
+        var production = deploy.Deployments("demo", "production")!.Single(item => item.ReleaseId == first.Id);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", production.Id, Owner).Kind);
+        var registry = new FaultingRegistry(_configuration!) { UnavailableArtifact = Artifact('b') };
+        var claimant = EnvironmentsWithRegistry(registry);
+
+        var unrelated = claimant.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.Equal("production", unrelated.EnvironmentId);
+        Assert.Equal(first.Id, unrelated.ReleaseId);
+        Assert.DoesNotContain(Artifact('c'), registry.Calls);
+        Assert.Equal([second.Id, third.Id], claimant.Read("demo")!.Jobs
+            .Where(item => item.EnvironmentId == "stage" && item.Status == "queued")
+            .Select(item => item.ReleaseId));
+        Assert.True(claimant.Report("demo", unrelated.Id, new(unrelated.LeaseToken!, true, "health-ok"),
+            requireVerifiedRelease: true));
+        Assert.Null(claimant.Claim("stage-host", requireVerifiedRelease: true));
+        registry.UnavailableArtifact = null;
+        Assert.Equal(second.Id, claimant.Claim("stage-host", requireVerifiedRelease: true)!.ReleaseId);
+    }
+
+    private sealed class AdvancingTimeProvider(FakeTimeProvider clock, TimeSpan step) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow()
+        {
+            var now = clock.GetUtcNow();
+            clock.Advance(step);
+            return now;
+        }
     }
 
     private ProjectEnvironmentService EnvironmentsWithRegistry(ReleaseArtifactRegistry registry)
@@ -999,6 +1074,21 @@ public sealed class DeployServiceTests : IDisposable
         using var unverified = await host.SendAsync(unverifiedRequest);
         Assert.Equal(HttpStatusCode.Forbidden, unverified.StatusCode);
         File.WriteAllBytes(provenanceFile, provenanceBytes);
+        File.Move(provenanceFile, provenanceFile + ".backup");
+        Directory.CreateDirectory(provenanceFile);
+        try
+        {
+            using var retryRequest = new HttpRequestMessage(HttpMethod.Get, artifactUrl);
+            retryRequest.Headers.Add("X-Deploy-Lease", stage.LeaseToken);
+            using var retry = await host.SendAsync(retryRequest);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, retry.StatusCode);
+            Assert.Equal("claimed", hosts.Read("demo")!.Jobs.Single(item => item.Id == stage.Id).Status);
+        }
+        finally
+        {
+            Directory.Delete(provenanceFile);
+            File.Move(provenanceFile + ".backup", provenanceFile);
+        }
         Assert.True(hosts.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
         service.SyncAfterHostCall("demo");
         var production = Assert.Single(service.Deployments("demo", "production")!);

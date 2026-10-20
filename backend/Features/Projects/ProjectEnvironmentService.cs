@@ -25,7 +25,7 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
     string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0,
-    string? ReleaseId = null);
+    string? ReleaseId = null, string? RollbackOfJobId = null);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -521,15 +521,21 @@ public sealed class ProjectEnvironmentService
                 return null;
             foreach (var (project, state) in states)
             {
+                var retryableEnvironments = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var job in state.Jobs.Where(item => item.HostId == hostId &&
                     (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration)).ToArray())
                 {
+                    if (retryableEnvironments.Contains(job.EnvironmentId)) continue;
                     // The queue filename is normalized; provenance keeps the
                     // project's original case. Never use the filename as its identity.
                     var verification = string.Equals(job.Project, project, StringComparison.OrdinalIgnoreCase)
                         ? VerifyRelease(job.Project, job, state, requireVerifiedRelease)
                         : new ReleaseVerification(null);
-                    if (verification.Retryable) continue;
+                    if (verification.Retryable)
+                    {
+                        retryableEnvironments.Add(job.EnvironmentId);
+                        continue;
+                    }
                     if (verification.Job is not { } verified)
                     {
                         RefuseUnverified(state, job, now);
@@ -553,24 +559,30 @@ public sealed class ProjectEnvironmentService
     /// <summary>A claimed job whose lease token matches and has not gone stale, for secret issuance.</summary>
     public DeployJob? FindClaimedJob(string project, string jobId, string leaseToken,
         bool requireVerifiedRelease = false)
+        => FindClaimedJobVerification(project, jobId, leaseToken, requireVerifiedRelease).Job;
+
+    public (DeployJob? Job, bool Retryable) FindClaimedJobVerification(string project, string jobId,
+        string leaseToken, bool requireVerifiedRelease = false)
     {
         if (string.IsNullOrWhiteSpace(project) || project is "." or ".." || project.IndexOfAny(['/', '\\', '\0']) >= 0)
-            return null;
+            return (null, false);
         lock (_gate)
         {
             var state = Load(project);
             var job = state.Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
                 && item.LeaseToken is not null && CryptographicOperations.FixedTimeEquals(
                     System.Text.Encoding.UTF8.GetBytes(item.LeaseToken), System.Text.Encoding.UTF8.GetBytes(leaseToken)));
-            if (job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration) return null;
-            var verified = VerifyRelease(project, job, state, requireVerifiedRelease).Job;
-            if (verified is null) return null;
+            if (job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration)
+                return (null, false);
+            var verification = VerifyRelease(project, job, state, requireVerifiedRelease);
+            var verified = verification.Job;
+            if (verified is null) return (null, verification.Retryable);
             if (verified != job)
             {
                 state.Jobs[state.Jobs.IndexOf(job)] = verified;
                 Save(project, state);
             }
-            return verified;
+            return (verified, false);
         }
     }
 
@@ -661,7 +673,7 @@ public sealed class ProjectEnvironmentService
                     && item.Artifact == job.PreviousArtifact && item.Status == "healthy");
                 if (declaration is not null) Queue(project, DeployedSpec(state, declaration, job.PreviousArtifact),
                     job.PreviousArtifact, state, rollback: true, actor: "automatic-rollback",
-                    releaseId: previous?.ReleaseId);
+                    releaseId: previous?.ReleaseId, rollbackOfJobId: job.Id);
             }
             Save(project, state);
             return true;
@@ -745,7 +757,7 @@ public sealed class ProjectEnvironmentService
         => declarations?.Any(item => item.Id == environmentId) == true;
 
     private DeployJob Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
-        bool rollback = false, string? actor = null, string? releaseId = null)
+        bool rollback = false, string? actor = null, string? releaseId = null, string? rollbackOfJobId = null)
     {
         var previous = state.History.Where(row => row.EnvironmentId == declaration.Id
             && (row.Item.Status is "healthy" or "rolled-back"))
@@ -754,7 +766,7 @@ public sealed class ProjectEnvironmentService
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
-            IsRollback: rollback, RequestedBy: actor, ReleaseId: releaseId);
+            IsRollback: rollback, RequestedBy: actor, ReleaseId: releaseId, RollbackOfJobId: rollbackOfJobId);
         state.Jobs.Add(job);
         return job;
     }

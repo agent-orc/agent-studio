@@ -117,10 +117,13 @@ public class ReleaseArtifactRegistry
         try
         {
             var path = RecordPath(project, commit, digest);
-            if (!File.Exists(path)) return null;
             var record = JsonSerializer.Deserialize<RegisteredArtifact>(File.ReadAllText(path));
             return record is not null && record.Project == project && record.Commit == commit
                 && record.Artifact == artifact && record.Template == template && Verify(record) ? record : null;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return null;
         }
         catch (Exception ex) when (ex is JsonException or ArgumentException or InvalidDataException)
         {
@@ -145,17 +148,30 @@ public class ReleaseArtifactRegistry
 
     private static bool MatchesDigest(string path, string digest)
     {
-        if (!File.Exists(path)) return false;
-        using var stream = File.OpenRead(path);
-        return Convert.ToHexString(SHA256.HashData(stream)).Equals(digest, StringComparison.OrdinalIgnoreCase);
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return Convert.ToHexString(SHA256.HashData(stream)).Equals(digest, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return false;
+        }
     }
 
     private bool SignatureMatches(RegisteredArtifact record)
     {
-        if (record.Signature is null || record.Signature.Length != 64 || !File.Exists(KeyPath())) return false;
-        var expected = Sign(record with { Signature = "" }, createKey: false);
-        return CryptographicOperations.FixedTimeEquals(
-            System.Text.Encoding.ASCII.GetBytes(expected), System.Text.Encoding.ASCII.GetBytes(record.Signature));
+        if (record.Signature is null || record.Signature.Length != 64) return false;
+        try
+        {
+            var expected = Sign(record with { Signature = "" }, createKey: false);
+            return CryptographicOperations.FixedTimeEquals(
+                System.Text.Encoding.ASCII.GetBytes(expected), System.Text.Encoding.ASCII.GetBytes(record.Signature));
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return false;
+        }
     }
 
     private string Sign(RegisteredArtifact unsigned, bool createKey)

@@ -93,26 +93,36 @@ public static class ProjectOperatorDashboardEndpoints
             IConfiguration configuration) =>
         {
             var lease = context.Request.Headers["X-Deploy-Lease"].ToString();
-            var job = environments.FindClaimedJob(project, jobId, lease, requireVerifiedRelease: true);
+            var claim = environments.FindClaimedJobVerification(project, jobId, lease, requireVerifiedRelease: true);
+            if (claim.Retryable) return RegistryUnavailable();
+            var job = claim.Job;
             if (job is null || SecurityProfiles.IsNetworked(configuration)
                 && (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
                     || principal.RunnerId != job.HostId))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
-            var record = releases.ReadReleaseRecords(project).SingleOrDefault(item =>
-                item.Release.Id == job.ReleaseId
-                && item.Release.ArtifactDigests.Contains(job.Artifact, StringComparer.Ordinal)
-                && item.Environments.Any(environment => environment.Id == job.EnvironmentId
-                    && environment.Template == job.Template));
-            if (record is null) return Results.Conflict(new { error = "The deploy job has no release." });
-            var provenance = registry.Verified(project, record.Release.CommitSha, job.Artifact, job.Template);
-            if (provenance is null) return Results.Conflict(new { error = "Artifact provenance is unverified." });
-            if (context.Request.Query.ContainsKey("content"))
+            try
             {
-                var path = registry.VerifiedBlob(provenance);
-                return path is null ? Results.Conflict(new { error = "Artifact content is unavailable." })
-                    : Results.File(path, "application/octet-stream");
+                var record = releases.ReadReleaseRecords(project).SingleOrDefault(item =>
+                    item.Release.Id == job.ReleaseId
+                    && item.Release.ArtifactDigests.Contains(job.Artifact, StringComparer.Ordinal)
+                    && item.Environments.Any(environment => environment.Id == job.EnvironmentId
+                        && environment.Template == job.Template));
+                if (record is null) return Results.Conflict(new { error = "The deploy job has no release." });
+                var provenance = registry.VerifiedForDeployment(project, record.Release.CommitSha, job.Artifact,
+                    job.Template);
+                if (provenance is null) return Results.Conflict(new { error = "Artifact provenance is unverified." });
+                if (context.Request.Query.ContainsKey("content"))
+                {
+                    var path = registry.VerifiedBlob(provenance);
+                    return path is null ? Results.Conflict(new { error = "Artifact content is unavailable." })
+                        : Results.File(path, "application/octet-stream");
+                }
+                return Results.Ok(provenance);
             }
-            return Results.Ok(provenance);
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return RegistryUnavailable();
+            }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         app.MapGet("/api/projects/{projectName}/throughput", (
@@ -198,6 +208,8 @@ public static class ProjectOperatorDashboardEndpoints
     private static IResult ApprovalRequired() => Results.Json(
         new { error = $"Production approval requires the {StandardLifecyclePolicy.ApprovalRoles} role." },
         statusCode: StatusCodes.Status403Forbidden);
+
+    private static IResult RegistryUnavailable() => Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
 
     private static RunnerPrincipal? GateBuilder(HttpContext context, IConfiguration configuration,
         AccessSecurityStore security)
