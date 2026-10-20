@@ -17,7 +17,7 @@
     @switch (view()) {
       @case ('overview') { <app-project-deploy-overview [snapshot]="data" (openTools)="show('tools')" (openReleases)="show('releases')" /> }
       @case ('releases') { <app-project-deploy-releases [snapshot]="data" /> }
-      @case ('pipeline') { <app-project-deploy-pipeline [snapshot]="data" /> }
+      @case ('pipeline') { <app-project-deploy-pipeline [projectName]="projectName()" /> }
       @case ('operations') { <app-environment-health-panel [projectName]="projectName()" /> }
       @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" /> }
       @case ('tools') {

@@ -41,10 +41,4 @@
 .deploy-detail-grid, .deploy-run-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--studio-spacing-4); }
 .deploy-run { background: var(--studio-surface-muted); border-radius: 8px; padding: var(--studio-spacing-4); }
 .deploy-run ol, .deploy-release-detail ul { padding-left: var(--studio-spacing-5); }
-.deploy-flow { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: var(--studio-spacing-3); padding: 0; margin: var(--studio-spacing-5) 0 0; list-style: none; overflow-x: auto; }
-.deploy-flow__stage { position: relative; border: 1px solid var(--studio-border); border-radius: 8px; background: var(--studio-surface-muted); padding: var(--studio-spacing-4); }
-.deploy-flow__stage:not(:last-child)::after { content: '→'; position: absolute; right: -12px; top: 50%; z-index: 1; color: var(--studio-accent-3-strong); }
-.deploy-flow__number { display: inline-block; color: var(--studio-fg-dim); font-variant-numeric: tabular-nums; margin-bottom: var(--studio-spacing-3); }
-.deploy-flow__stage ol { padding-left: var(--studio-spacing-4); margin-top: var(--studio-spacing-4); }
-.deploy-flow__stage li { margin-bottom: var(--studio-spacing-2); }
 @media (max-width: 900px) { .deploy-grid, .deploy-lower, .deploy-releases { grid-template-columns: 1fr; } .deploy-area { padding: var(--studio-spacing-4); } }

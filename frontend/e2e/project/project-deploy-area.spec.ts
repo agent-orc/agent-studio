@@ -44,6 +44,24 @@ test('Deploy area shows the P1 views and preserves review captures in both theme
         preview: false, notes: [{ cardKey: 'WEB-29', text: 'Clearer account settings' }] } : [];
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   });
+  await page.route('**/api/projects/**/pipeline-definition', route => route.fulfill({ json: {
+    project: projectName, path: '.agent-studio/project.yml', exists: true, schemaVersion: 2,
+    valid: true, issues: [], migrationAvailable: false,
+    diagram: {
+      schemaVersion: 2, environmentsDefaulted: false, lifecycleDefaulted: false,
+      gate: { source: 'pipeline', build: ['npm run site-build'], test: ['npm run site-test'], testSuites: [] },
+      artifacts: [{ path: 'artifacts[0]', name: 'site', type: 'static', source: 'dist' }],
+      environments: [
+        { path: 'environments[0]', name: 'staging', order: 0, protected: false,
+          automatic: true, approval: [], requires: null, variables: [],
+          steps: [{ path: 'deploy[0]', kind: 'health' }] },
+        { path: 'environments[1]', name: 'production', order: 1, protected: true,
+          automatic: false, approval: ['Owner'], requires: 'staging', variables: [],
+          steps: [{ path: 'deploy[1]', kind: 'publish-static', artifact: 'site', target: 'web-vm' },
+            { path: 'deploy[2]', kind: 'health' }] },
+      ],
+    },
+  } }));
   const slug = projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   await page.goto(`/#/projects/${slug}/deploy`);
   await expect(page.getByTestId('project-deploy-area')).toBeVisible();
@@ -65,7 +83,10 @@ test('Deploy area shows the P1 views and preserves review captures in both theme
           await expect(page.getByTestId('deploy-release-detail')).toContainText('Approved by Owner');
           await expect(page.getByTestId('deploy-release-notes')).toContainText('Clearer account settings');
         }
-        if (view === 'pipeline') await expect(page.getByTestId('deploy-stage-production')).toContainText('Health check');
+        if (view === 'pipeline') {
+          await expect(page.getByTestId('deploy-pipeline').getByTestId('pipeline-node-production')).toContainText('Health check');
+          await expect(page.getByTestId('deploy-pipeline').getByTestId('pipeline-node-gate')).toContainText('npm run site-build');
+        }
         await page.screenshot({ path: path.join(results, `deploy-${view}-${width}x${height}-${theme}.png`) });
       }
     }

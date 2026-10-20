@@ -50,7 +50,9 @@ and labels its values as sample data. The `Environment`, `Release`, `Deployment`
 `EnvironmentStatus` contracts live under `frontend/src/app/features/deployments/`.
 
 The project Deploy area reads `/api/projects/{projectName}/deploy/status`,
-`/releases`, and `/deployments` when configured. The release view loads
+`/releases`, and `/deployments` when configured. Its Pipeline view reads the
+parsed project.yml diagram from `/api/projects/{projectName}/pipeline-definition`.
+The release view loads
 `/releases/{releaseId}/notes` from the included cards. The board and task detail
 share environment badges from `/api/deploy/cards`; the board can filter cards
 that are in Staging only, in Production, not yet in Production, or rolled back.

@@ -155,12 +155,25 @@ stays the only executor; releases and runs describe and steer it.
 
 Routes, under `/api/projects/{project}/deploy`: `GET environments`, `status`
 (one EnvironmentStatus per environment), `releases`, `releases/{id}`,
-`deployments[?environmentId=]`, `deployments/{id}`, `deployments/{id}/log[?step=]`
-and `audit`; `POST releases/{id}/deployments` (`{environmentId, approve}`),
+`releases/{id}/notes`, `cards`, `deployments[?environmentId=]`,
+`deployments/{id}`, `deployments/{id}/log[?step=]` and `audit`;
+`POST releases/{id}/deployments` (`{environmentId, approve}`),
 `deployments/{id}/approve`, `deployments/{id}/reject`, `deployments/{id}/cancel`,
 `environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve}`).
 `GET /api/deploy/matrix` returns the workspace dashboard rows, filtered to the
-caller's projects.
+caller's projects. `GET /api/deploy/cards` returns card environment badges across
+the caller's projects. The project-scoped `cards` route returns the same badges
+for one project. Each card has `projectId`, `cardKey` and `environments`; each
+badge has `environmentId`, `environmentName`, `kind`, `state`, `releaseId`,
+`releaseVersion` and `atUtc`. Badge `state` is `not-deployed`, `queued`,
+`running`, `succeeded`, `failed`, `cancelled`, `awaiting-approval` or
+`rolled-back`. `rolled-back` marks a card withdrawn by a successful rollback;
+`not-deployed` means the card has no deployment in that environment. The
+release notes response has `releaseId`, `version`, `preview` and `notes` entries
+with `cardKey` and product-facing `text` captured from the included cards.
+Deployment `state` uses `queued`, `running`, `succeeded`, `failed`, `cancelled`
+and `awaiting-approval`. Step `state` also permits `pending` and `skipped`.
+EnvironmentStatus `health` is `healthy`, `unhealthy` or `unknown`.
 
 The deploy host uses a credential with only `runner.deploy`; its service
 identity must match `targetHostId`. In the managed host record, the deploy

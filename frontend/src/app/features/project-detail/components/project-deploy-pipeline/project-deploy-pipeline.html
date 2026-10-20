@@ -1,13 +1,14 @@
 <section class="deploy-section" data-testid="deploy-pipeline">
-  <header><h2>From CI to Production</h2><p class="deploy-muted">CI stages from project.yml · standard release lifecycle · environment steps</p></header>
-  <ol class="deploy-flow" aria-label="Deployment pipeline">
-    @for (stage of snapshot().pipeline; track stage.id) {
-      <li class="deploy-flow__stage" [attr.data-testid]="'deploy-stage-' + stage.id">
-        <span class="deploy-flow__number">{{ $index + 1 }}</span>
-        <div><p class="deploy-eyebrow">{{ stage.source }}</p><h3>{{ stage.name }}</h3>
-          <ol>@for (step of stage.steps; track step) { <li>{{ step }}</li> }</ol>
-        </div>
-      </li>
+  <header><h2>From CI to Production</h2><p class="deploy-muted">Pipeline from this project's project.yml</p></header>
+  @if (loadError()) {
+    <p role="alert">The pipeline definition could not be loaded.</p>
+  } @else if (definition(); as current) {
+    @if (current.diagram; as diagram) {
+      <app-project-pipeline-diagram [diagram]="diagram" [issues]="current.issues" />
+    } @else {
+      <p data-testid="deploy-pipeline-empty">No pipeline definition is available for this project.</p>
     }
-  </ol>
+  } @else {
+    <p role="status">Loading pipeline definition...</p>
+  }
 </section>

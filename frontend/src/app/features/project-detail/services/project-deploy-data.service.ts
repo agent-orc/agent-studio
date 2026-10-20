@@ -27,7 +27,7 @@ export type DeploymentState = 'queued' | 'running' | 'succeeded' | 'failed' | 'c
 
 export interface DeploymentStep {
   name: string;
-  state: DeploymentState;
+  state: DeploymentState | 'pending' | 'skipped';
   startedAtUtc: string | null;
   finishedAtUtc: string | null;
   logRef: string | null;
@@ -53,18 +53,10 @@ export interface EnvironmentStatus {
   health: 'healthy' | 'unhealthy' | 'unknown';
 }
 
-export interface PipelineStage {
-  id: string;
-  name: string;
-  steps: string[];
-  source: string;
-}
-
 export interface ProjectDeploySnapshot {
   environments: EnvironmentStatus[];
   releases: Release[];
   deployments: Deployment[];
-  pipeline: PipelineStage[];
   source: 'fixture' | 'api';
 }
 
@@ -80,7 +72,7 @@ export class ProjectDeployDataService {
         releases: this.http.get<Release[]>(`${root}/releases`),
         deployments: this.http.get<Deployment[]>(`${root}/deployments`),
       }).pipe(
-        map(data => ({ ...data, pipeline: this.fixturePipeline(), source: 'api' as const })),
+        map(data => ({ ...data, source: 'api' as const })),
       );
     }
     return this.fixture(projectId);
@@ -89,17 +81,6 @@ export class ProjectDeployDataService {
   notes(projectId: string, releaseId: string): Observable<ReleaseNotes> {
     if (!this.http) return of({ releaseId, version: '', preview: true, notes: [] });
     return this.http.get<ReleaseNotes>(`/api/projects/${encodeURIComponent(projectId)}/deploy/releases/${encodeURIComponent(releaseId)}/notes`);
-  }
-
-  private fixturePipeline(): PipelineStage[] {
-    return [
-      { id: 'prepare', name: 'Prepare', steps: ['commands.prepare'], source: 'project.yml' },
-      { id: 'build', name: 'Build', steps: ['commands.build', 'Artifact digest'], source: 'project.yml' },
-      { id: 'test', name: 'Test', steps: ['commands.test', 'commands.lint'], source: 'project.yml' },
-      { id: 'release', name: 'Release', steps: ['Commit and card snapshot', 'Artifact provenance'], source: 'P1 lifecycle' },
-      { id: 'staging', name: 'Staging', steps: ['Publish static bundle', 'Health check'], source: 'P1 lifecycle' },
-      { id: 'production', name: 'Production', steps: ['Owner or Maintainer approval', 'Publish static bundle', 'Health check'], source: 'P1 lifecycle' },
-    ];
   }
 
   fixture(projectId: string): Observable<ProjectDeploySnapshot> {
@@ -128,7 +109,6 @@ export class ProjectDeployDataService {
       ],
       releases,
       deployments,
-      pipeline: this.fixturePipeline(),
       source: 'fixture' as const,
     });
   }
