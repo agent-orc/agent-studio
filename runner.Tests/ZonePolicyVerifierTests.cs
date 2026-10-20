@@ -48,7 +48,7 @@ public sealed class ZonePolicyVerifierTests
         var run = report.Checks.Where(check => check.Zone == "run").ToList();
         Assert.Contains(run, check => check is { Kind: "reachable", Target: "example.com:443", Observed: "connected" });
         // Each control-plane address on every port, each secret-store address on its probe port.
-        Assert.Equal(4, run.Count(check => check.Kind == "blocked"));
+        Assert.Equal(7, run.Count(check => check.Kind == "blocked"));
         var controlPlane = resolver.Resolve("task-server.example.internal")[0];
         foreach (var port in new[] { 443, 5071 })
             Assert.Contains(run, check => check is { Kind: "blocked", Observed: "rejected" }
@@ -57,10 +57,38 @@ public sealed class ZonePolicyVerifierTests
                                       && check.Target == "secret-store (10.20.0.1:443)");
         Assert.Contains(run, check => check is { Kind: "blocked", Observed: "rejected" }
                                       && check.Target == "secret-store (192.0.2.80:443)");
+        foreach (var target in new[] { "169.254.169.254:80", "192.168.50.1:443", "198.51.100.7:443" })
+            Assert.Contains(run, check => check is { Kind: "blocked", Observed: "rejected", Passed: true }
+                                          && check.Target == target);
         // One positive control per blocked target, from outside the zones.
-        Assert.Equal(4, run.Count(check => check is { Kind: "control", Network: "bridge", Passed: true }));
+        Assert.Equal(6, run.Count(check => check is { Kind: "control", Network: "bridge", Passed: true }));
         Assert.All(network.DnsUsed.Where(item => item.Network == "agent-work"), item => Assert.Equal("172.30.0.1", item.Dns));
         Assert.All(network.DnsUsed.Where(item => item.Network != "agent-work"), item => Assert.Null(item.Dns));
+    }
+
+    [Fact]
+    public async Task Private_probes_require_a_reject_and_public_positive_control_must_connect()
+    {
+        var (policy, rules, resolver) = await CheckedInAsync();
+        var network = Network(rules, resolver);
+        network.ForcedFrom[("agent-run-default", "169.254.169.254", 80)] =
+            new ZoneProbeObservation(ZoneProbeOutcome.TimedOut, "timeout");
+        network.ForcedFrom[("agent-run-default", "192.168.50.1", 443)] =
+            new ZoneProbeObservation(ZoneProbeOutcome.Refused, "refused");
+        network.ForcedFrom[("agent-run-default", "198.51.100.7", 443)] =
+            new ZoneProbeObservation(ZoneProbeOutcome.Connected, "connected");
+        network.ForcedFrom[("agent-run-default", "example.com", 443)] =
+            new ZoneProbeObservation(ZoneProbeOutcome.Refused, "refused");
+
+        var report = await new ZonePolicyVerifier(network, _clock).VerifyAsync(policy, CancellationToken.None);
+
+        Assert.False(report.Passed);
+        Assert.All(report.Checks.Where(check => check.Zone == "run" && check.Kind != "control"
+            && new[] { "169.254.169.254:80", "192.168.50.1:443", "198.51.100.7:443", "example.com:443" }.Contains(check.Target)),
+            check => Assert.False(check.Passed));
+        Assert.DoesNotContain(report.Checks, check => check is { Kind: "control", Target: "169.254.169.254:80" });
+        Assert.Contains(report.Checks, check => check is { Kind: "control", Target: "192.168.50.1:443" });
+        Assert.Contains(report.Checks, check => check is { Kind: "control", Target: "198.51.100.7:443" });
     }
 
     [Fact]
@@ -77,6 +105,58 @@ public sealed class ZonePolicyVerifierTests
         Assert.All(blocked, check => Assert.Equal("connected", check.Observed));
         Assert.All(blocked, check => Assert.False(check.Passed));
         Assert.All(report.Checks.Where(check => check.Kind == "reachable"), check => Assert.True(check.Passed));
+    }
+
+    [Fact]
+    public async Task An_unreachable_target_cannot_pass_when_its_deny_rule_is_missing()
+    {
+        var (policy, rules, resolver) = await CheckedInAsync();
+        var withoutPrivateDenials = string.Join('\n', rules.Iptables.Split('\n').Where(line =>
+            !line.Contains("deny private", StringComparison.Ordinal)));
+        var network = Network(rules, resolver, () => withoutPrivateDenials);
+        network.ForcedFrom[("agent-run-default", "192.168.50.1", 443)] =
+            new ZoneProbeObservation(ZoneProbeOutcome.Rejected, "No route to host");
+        network.ForcedFrom[("bridge", "192.168.50.1", 443)] =
+            new ZoneProbeObservation(ZoneProbeOutcome.Rejected, "No route to host");
+        network.ForcedFrom[("agent-run-default", "169.254.169.254", 80)] =
+            new ZoneProbeObservation(ZoneProbeOutcome.Rejected, "No route to host");
+
+        var report = await new ZonePolicyVerifier(network, _clock).VerifyAsync(policy, CancellationToken.None);
+
+        Assert.False(report.Passed);
+        Assert.False(Assert.Single(report.Checks, check => check is
+            { Kind: "control", Target: "192.168.50.1:443" }).Passed);
+        Assert.False(Assert.Single(report.Checks, check => check is
+            { Kind: "blocked", Target: "169.254.169.254:80" }).Passed);
+    }
+
+    [Fact]
+    public void Metadata_requires_a_matching_local_reject_counter_increment()
+    {
+        const string rule = " -A AGENT-ZONE-FWD -i br-run-default -m conntrack --ctorigdst 169.254.0.0/16 "
+            + "-m comment --comment \"run/agent-run-default: deny private original 169.254.0.0/16\" -j REJECT";
+        Assert.True(ZoneFirewallEvidence.DenyHit("[2:160]" + rule, "[3:240]" + rule,
+            "br-run-default", "169.254.169.254"));
+        Assert.False(ZoneFirewallEvidence.DenyHit("[2:160]" + rule, "[2:160]" + rule,
+            "br-run-default", "169.254.169.254"));
+        Assert.False(ZoneFirewallEvidence.DenyHit("", "[3:240]" + rule,
+            "br-run-default", "169.254.169.254"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Docker_metadata_probe_requires_a_local_counter_increment(bool increment)
+    {
+        var host = new CounterZoneHost(increment);
+        var probe = new DockerZoneNetworkProbe(host, ZonePolicyRules.DefaultProbeImage, 4);
+
+        var result = await probe.ConnectWithLocalDenyAsync("agent-run-default", "169.254.169.254", 80,
+            CancellationToken.None);
+
+        Assert.Equal(ZoneProbeOutcome.Rejected, result.Outcome);
+        Assert.Equal(increment, result.LocalDenyObserved);
+        Assert.Equal(["docker network", "iptables-save -c", "docker run", "iptables-save -c"], host.Commands);
     }
 
     [Fact]
@@ -206,7 +286,7 @@ public sealed class ZonePolicyVerifierTests
         var blocked = Assert.Single(report.Checks, check => check is { Kind: "blocked", Target: "example.com:80" });
         Assert.Equal("unresolved", blocked.Observed);
         Assert.False(blocked.Passed);
-        Assert.DoesNotContain(network.Connections, connection => connection.Port == 80);
+        Assert.DoesNotContain(network.Connections, connection => connection.Address == "example.com" && connection.Port == 80);
         Assert.DoesNotContain(report.Checks, check => check is { Kind: "control", Target: "example.com:80" });
     }
 
@@ -275,9 +355,9 @@ public sealed class ZonePolicyVerifierTests
         var report = await new ZonePolicyVerifier(network, _clock).VerifyAsync(policy, CancellationToken.None);
 
         Assert.True(report.Passed, string.Join("\n", report.Checks.Where(check => !check.Passed)));
-        Assert.Equal(8, report.Checks.Count(check => check is { Zone: "run", Kind: "blocked" }));
-        Assert.Equal(4, report.Checks.Count(check => check is { Zone: "run", Kind: "control" }));
-        Assert.Equal(6, network.Connections.Count(connection => connection.Network == "bridge"));
+        Assert.Equal(14, report.Checks.Count(check => check is { Zone: "run", Kind: "blocked" }));
+        Assert.Equal(6, report.Checks.Count(check => check is { Zone: "run", Kind: "control" }));
+        Assert.Equal(8, network.Connections.Count(connection => connection.Network == "bridge"));
     }
 
     [Theory]
@@ -342,6 +422,32 @@ public sealed class ZonePolicyVerifierTests
             return Task.FromResult(args[0] == "ps"
                 ? new ZoneCommandResult(0, "review-1\t\ngate-1\t0.0.0.0:9000->9000/tcp\n", "")
                 : new ZoneCommandResult(0, "", ""));
+        }
+
+        public bool PathExists(string path) => true;
+    }
+
+    private sealed class CounterZoneHost(bool increment) : IZoneHost
+    {
+        private int _reads;
+        public List<string> Commands { get; } = [];
+
+        public Task<ZoneCommandResult> RunAsync(
+            string executable, IReadOnlyList<string> args, string? standardInput, CancellationToken ct)
+        {
+            Commands.Add($"{executable} {args[0]}");
+            if (executable == "docker" && args[0] == "network")
+                return Task.FromResult(new ZoneCommandResult(0, "br-run-default\n", ""));
+            if (executable == "docker" && args[0] == "run")
+                return Task.FromResult(new ZoneCommandResult(1, "", "bash: connect: No route to host"));
+            if (executable == "iptables-save")
+            {
+                var packets = ++_reads == 2 && increment ? 3 : 2;
+                return Task.FromResult(new ZoneCommandResult(0,
+                    $"[{packets}:160] -A AGENT-ZONE-FWD -i br-run-default -m conntrack "
+                    + "--ctorigdst 169.254.0.0/16 -j REJECT\n", ""));
+            }
+            throw new InvalidOperationException($"unexpected {executable} {args[0]}");
         }
 
         public bool PathExists(string path) => true;
