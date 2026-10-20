@@ -49,10 +49,13 @@ public interface IServiceWorkload
 
     /// <summary>Fence new claims on a review host until the restart attempt settles.</summary>
     IDisposable? TryFenceClaims(string host, string role);
+
+    bool HasRestartFence(string host, string role) => false;
+    void ReleaseRestartFence(string host, string role) { }
 }
 
 /// <summary>Outcome of one Operations Server restart; <see cref="Evidence"/> is shown in the receipt.</summary>
-public sealed record ServiceRestartOutcome(bool Succeeded, string Evidence);
+public sealed record ServiceRestartOutcome(bool Succeeded, string Evidence, bool TerminalConfirmed = true);
 
 /// <summary>Restarts an allowlisted service through the Operations Server.</summary>
 public interface IServiceRestartControl
@@ -62,6 +65,10 @@ public interface IServiceRestartControl
 
     Task<ServiceRestartOutcome> RestartAsync(string host, string service, string idempotencyKey,
         string reason, CancellationToken ct);
+
+    /// <summary>True if the accepted attempt is terminal, false if active or unreadable, null if absent.</summary>
+    Task<bool?> IsTerminalAsync(string idempotencyKey, CancellationToken ct)
+        => Task.FromResult<bool?>(false);
 }
 
 /// <summary>Routes provider attempts away from a host whose provider login is invalid.</summary>

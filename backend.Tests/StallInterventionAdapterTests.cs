@@ -128,7 +128,8 @@ public sealed class StallInterventionAdapterTests : IDisposable
         authority.ClaimReview(review.AttemptId, "kori-review-01-runner", "kori-review-01", 3600,
             "claim-AGT-9201");
         var reader = new ServiceWorkloadReader(registry, authority, new BatchGateStore(Path.Combine(_root, "gates")),
-            new GateSlotUsageTracker(_configuration, _clock), _configuration);
+            new GateSlotUsageTracker(_configuration, _clock),
+            new PullGateStore(Path.Combine(_root, "pull-gates"), _clock), _configuration);
 
         var reading = reader.Read("kori-review-01", "review", Now);
 
@@ -159,6 +160,59 @@ public sealed class StallInterventionAdapterTests : IDisposable
             3600, "claim-after-restart");
         Assert.Equal(AttemptWriteStatus.Accepted, claimed.Status);
         Assert.Null(authority.TryFenceReviewHost("kori-review-01"));
+    }
+
+    [Fact]
+    public void Review_restart_fence_survives_status_read_failure_and_studio_restart()
+    {
+        var authority = Authority();
+        var run = Deliver(authority, "AGT-9203", reviewed: false);
+        var review = authority.CreateReviewAttempt(new CreateReviewAttemptRequest("AGT-9203", RepositoryId,
+            ResultSha, run.AttemptId, "requirements", "policy", [], "create-AGT-9203")).ReviewAttempt!;
+        var fence = Assert.IsAssignableFrom<IRestartClaimFence>(authority.TryFenceReviewHost("kori-review-01"));
+        fence.Retain(); // The command is queued; reading its status failed.
+        Assert.Equal(AttemptWriteStatus.InvalidState, authority.ClaimReview(review.AttemptId,
+            "kori-review-01-runner", "kori-review-01", 3600, "claim-during-queue").Status);
+
+        var restartedStudio = Authority();
+        Assert.True(restartedStudio.HasReviewRestartFence("kori-review-01"));
+        Assert.Equal(AttemptWriteStatus.InvalidState, restartedStudio.ClaimReview(review.AttemptId,
+            "kori-review-01-runner", "kori-review-01", 3600, "claim-after-studio-restart").Status);
+        fence.Dispose();
+        Assert.True(restartedStudio.HasReviewRestartFence("kori-review-01"));
+
+        restartedStudio.ReleaseReviewRestartFence("kori-review-01"); // only after remote terminal confirmation
+        Assert.Equal(AttemptWriteStatus.Accepted, restartedStudio.ClaimReview(review.AttemptId,
+            "kori-review-01-runner", "kori-review-01", 3600, "claim-after-terminal").Status);
+    }
+
+    [Fact]
+    public void Pull_gate_reader_counts_only_queued_jobs_and_fences_claims_through_restart()
+    {
+        var pull = new PullGateStore(Path.Combine(_root, "pull-gates"), _clock);
+        pull.Register("kori-gate", "KORI");
+        var bundle = Path.Combine(_root, "bundle");
+        File.WriteAllText(bundle, "bundle");
+        var runId = Guid.NewGuid().ToString("N");
+        pull.Enqueue(new RemoteGateInvocation(1, runId, new string('b', 64),
+            new BuildTestGateRequest("source.git", BaseSha, "test")
+            { InfrastructureTimeout = TimeSpan.FromMinutes(1) },
+            null, null, PostStepMode.Fail, 60, 120), bundle);
+        var reader = new ServiceWorkloadReader(new V1ReviewExecutorRegistry(_clock,
+                new ProviderRouteExclusions(() => _root)), Authority(),
+            new BatchGateStore(Path.Combine(_root, "gates")),
+            new GateSlotUsageTracker(_configuration, _clock), pull, _configuration);
+
+        Assert.Equal((0, 1), (reader.Read("kori-gate", "gate", Now)!.BusySlots,
+            reader.Read("kori-gate", "gate", Now)!.ClaimableWaiting));
+        var fence = Assert.IsAssignableFrom<IRestartClaimFence>(reader.TryFenceClaims("kori-gate", "gate"));
+        Assert.Null(pull.Claim("kori-gate"));
+        fence.Dispose();
+        Assert.NotNull(pull.Claim("kori-gate"));
+        Assert.Equal((1, 0), (reader.Read("kori-gate", "gate", Now)!.BusySlots,
+            reader.Read("kori-gate", "gate", Now)!.ClaimableWaiting));
+        Assert.Null(reader.TryFenceClaims("kori-gate", "gate"));
+        Assert.Null(reader.Read("unknown-gate", "gate", Now));
     }
 
     [Fact]
@@ -204,6 +258,23 @@ public sealed class StallInterventionAdapterTests : IDisposable
             BaseSha, "run-timeout-salvage", delivery.AttemptId, Now));
         Assert.Equal(StallContinuationBases.EmptySalvage, control.RateLimitedRuns(["AGT-9001"])[0].BaseKind);
         Assert.Equal(ResultSha, control.PinLastDelivery("AGT-9001", "si-3")!.Sha);
+    }
+
+    [Fact]
+    public void Requeue_preserves_a_human_base_written_after_candidate_selection()
+    {
+        var folder = WriteCard(TaskStates.Ready, "rate-limited-race", "AGT-9010");
+        var authority = Authority();
+        Deliver(authority, "AGT-9010", reviewed: true);
+        _clock.Advance(TimeSpan.FromHours(1));
+        Fail(authority, "AGT-9010", "codex: rate limit exceeded (429 Too Many Requests)");
+        var human = new ContinuationBaseRecord("refs/heads/human-choice", new string('3', 40),
+            "human-choice", "operator", Now);
+        var control = new DeliveryContinuationControl(Scanner(), authority, _clock,
+            () => Assert.True(ContinuationBaseStore.Save(folder, human)));
+
+        Assert.Null(control.PinLastDelivery("AGT-9010", "si-race"));
+        Assert.Equal(human, ContinuationBaseStore.Read(folder));
     }
 
     [Fact]

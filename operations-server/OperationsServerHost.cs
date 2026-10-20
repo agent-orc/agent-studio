@@ -76,6 +76,8 @@ public static class OperationsServerHost
             operations.SubmitAsync(Principal(context), command, ct));
         app.MapGet("/api/operations/v1/attempts/{id}", (string id, HttpContext context, OperationsCoordinator operations) =>
             operations.ReadAsync(Principal(context), id));
+        app.MapGet("/api/operations/v1/attempts/by-key/{key}", (string key, HttpContext context, OperationsCoordinator operations) =>
+            operations.ReadByKeyAsync(Principal(context), key));
         app.MapPost("/api/operations/v1/attempts/{id}/cancel", (string id, HttpContext context, OperationsCoordinator operations) =>
             operations.ReadAsync(Principal(context), id, cancel: true));
         app.MapPost("/api/operations/v1/attempts/{id}/renew", (string id, AttemptLeaseRequest request, HttpContext context, OperationsCoordinator operations, CancellationToken ct) =>

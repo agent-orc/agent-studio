@@ -38,6 +38,25 @@ public sealed class ServiceRestartTests
     }
 
     [Fact]
+    public async Task Accepted_restart_can_be_found_by_its_idempotency_key_after_a_lost_response()
+    {
+        await using var f = await Start();
+        var agent = Agent(f, [], exitCodes: [0, 0]);
+        await agent.RegisterAsync(default);
+        var command = Restart(f, "review-daemon");
+        var accepted = await f.Submit(command);
+
+        var recovered = await f.Service.GetFromJsonAsync<OperationAttempt>(Fixture.Api
+            + $"attempts/by-key/{command.IdempotencyKey}");
+        Assert.Equal(accepted.Id, recovered!.Id);
+        Assert.Equal("queued", recovered.State);
+        await agent.PollOnceAsync(default);
+        var terminal = await f.Service.GetFromJsonAsync<OperationAttempt>(Fixture.Api
+            + $"attempts/by-key/{command.IdempotencyKey}");
+        Assert.Equal("succeeded", terminal!.State);
+    }
+
+    [Fact]
     public async Task Invalid_configuration_fails_without_touching_the_container()
     {
         await using var f = await Start();
@@ -192,6 +211,28 @@ public sealed class ServiceRestartTests
 
         // Without the kill the runner would wait for the 60 s tool to exit.
         Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(30), $"the tool kept running for {elapsed.Elapsed}");
+    }
+
+    [Fact]
+    public async Task Process_output_is_bounded_while_both_pipes_continue_to_drain()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var start = new ProcessStartInfo("sh")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        start.ArgumentList.Add("-c");
+        start.ArgumentList.Add("head -c 131072 /dev/zero | tr '\\0' x; head -c 131072 /dev/zero | tr '\\0' y >&2");
+
+        var result = await ServiceRestart.RunAsync(start, TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.False(result.TimedOut);
+        Assert.Equal(2048, result.Output.Length);
+        Assert.All(result.Output, letter => Assert.Equal('x', letter));
     }
 
     private static async Task<Fixture> Start()

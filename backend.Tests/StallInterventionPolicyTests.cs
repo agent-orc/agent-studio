@@ -121,6 +121,23 @@ public sealed class StallInterventionPolicyTests
     }
 
     [Fact]
+    public void Gate_restart_requires_claimable_queue_and_zero_running_work()
+    {
+        var baseService = new StallServiceFacts("kori-gate", "gate", "gate-worker", true, false,
+            Now.AddMinutes(-40), WaitingCount: 1, FreeSlots: 2, false,
+            BusySlots: 0, RunningWork: false, ClaimableWaiting: 1);
+        var facts = Facts(StallKinds.IdleCapacity, "host:kori-gate:gate") with { Service = baseService };
+
+        Assert.Equal(StallInterventionActions.RestartService, Decide(facts).Effect);
+        Assert.Equal(AiOperatorDisposition.Propose,
+            Decide(facts with { Service = baseService with { BusySlots = 1 } }).Disposition);
+        Assert.Equal(AiOperatorDisposition.Propose,
+            Decide(facts with { Service = baseService with { BusySlots = null } }).Disposition);
+        Assert.Equal(AiOperatorDisposition.Propose,
+            Decide(facts with { Service = baseService with { ClaimableWaiting = 0 } }).Disposition);
+    }
+
+    [Fact]
     public void Invalid_provider_login_reroutes_to_healthy_hosts_and_proposes_the_renewal()
     {
         var rerouted = Decide(Provider(["kori-review-02", "kori-review-03"], alreadyRerouted: false));

@@ -18,6 +18,7 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
     private readonly V1ReviewExecutorRegistry _reviewHosts;
     private readonly ReviewClaimUnclaimableLog _unclaimable;
     private readonly GateSlotUsageTracker _gateSlots;
+    private readonly PullGateStore _pullGates;
     private readonly IConfiguration _configuration;
 
     public string Name => "operational-stalls";
@@ -25,7 +26,7 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
     public OperationalStallProbe(ClientIdentityStore clients, HostTelemetryStore telemetry,
         AttemptAuthorityService attempts, BatchGateStore gates, TaskScannerService tasks,
         HostReleaseDriftWatchdog releaseDrift, V1ReviewExecutorRegistry reviewHosts,
-        ReviewClaimUnclaimableLog unclaimable, GateSlotUsageTracker gateSlots,
+        ReviewClaimUnclaimableLog unclaimable, GateSlotUsageTracker gateSlots, PullGateStore pullGates,
         IConfiguration configuration)
     {
         _clients = clients;
@@ -37,6 +38,7 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
         _reviewHosts = reviewHosts;
         _unclaimable = unclaimable;
         _gateSlots = gateSlots;
+        _pullGates = pullGates;
         _configuration = configuration;
     }
 
@@ -96,6 +98,8 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
                 Stopped: x.RunnerDaemonState != "running"))
             .Concat(allReviewHosts.Select(x => new HostHeartbeatFact(x.HostId, "review", x.LastSeenAt,
                 pendingReviews.Select(p => p.TaskKey).Distinct().ToArray())))
+            .Concat(_pullGates.Hosts().Select(host => new HostHeartbeatFact(host.Id, "gate",
+                host.LastHeartbeat.UtcDateTime, [])))
             .ToArray();
         bool CanClaim(Contract.RunnerCapabilitySnapshotDto host, ReviewAttemptDto attempt)
             => OperationalStallProbe.CanClaim(_reviewHosts, host, attempt);
@@ -108,11 +112,20 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
         var slots = _gateSlots.Snapshot();
         var gateHost = _configuration["RemoteGate:SshHost"]?.Trim();
         if (pendingGate.Count > 0 && !string.IsNullOrWhiteSpace(gateHost)
+            && !_pullGates.Hosts().Any(host => host.Id == gateHost)
             && _gateSlots.Reachability == "reachable" && slots.Total > slots.Busy)
             capacity.Add(new CapacityStallFact(QuotaProbeSignalProbe.WorkspaceProject, gateHost,
                 "gate", slots.Total - slots.Busy, pendingGate.Count,
                 pendingGate.Min(y => y.EnqueuedAtUtc.UtcDateTime),
                 pendingGate.Select(y => y.Subject.TaskKey).Distinct().ToArray()));
+        foreach (var host in _pullGates.Hosts())
+        {
+            var workload = _pullGates.Workload(host.Id);
+            var oldest = _pullGates.OldestQueuedAtUtc();
+            if (workload is { Busy: 0, Queued: > 0 } && oldest is { } since)
+                capacity.Add(new CapacityStallFact(QuotaProbeSignalProbe.WorkspaceProject, host.Id,
+                    "gate", host.Slots, workload.Value.Queued, since, []));
+        }
 
         var cardClaims = jobs.Where(x => (x.State is TaskStates.Ready or TaskStates.Progress or TaskStates.AutoReview)
                 && x.RemoteClaimFailure is not null)

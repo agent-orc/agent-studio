@@ -71,15 +71,24 @@ public sealed class ClientIdentityAdmissionControl(ClientIdentityStore clients, 
 /// per-task gate is in flight.
 /// </summary>
 public sealed class ServiceWorkloadReader(V1ReviewExecutorRegistry registry, AttemptAuthorityService attempts,
-    BatchGateStore gates, GateSlotUsageTracker gateSlots, IConfiguration configuration) : IServiceWorkload
+    BatchGateStore gates, GateSlotUsageTracker gateSlots, PullGateStore pullGates, IConfiguration configuration) : IServiceWorkload
 {
     /// <summary>How long the gate host's own slot count, reported to a waiting run, stays current.</summary>
     public static readonly TimeSpan RemoteSlotsFresh = TimeSpan.FromMinutes(10);
 
     public IDisposable? TryFenceClaims(string host, string role)
-        => role == "review" ? attempts.TryFenceReviewHost(host) : new NoopFence();
+        => role == "review" ? attempts.TryFenceReviewHost(host)
+            : role == "gate" ? pullGates.TryFenceHostClaims(host) : null;
 
-    private sealed class NoopFence : IDisposable { public void Dispose() { } }
+    public bool HasRestartFence(string host, string role)
+        => role == "review" ? attempts.HasReviewRestartFence(host)
+            : role == "gate" && pullGates.HasRestartFence(host);
+
+    public void ReleaseRestartFence(string host, string role)
+    {
+        if (role == "review") attempts.ReleaseReviewRestartFence(host);
+        else if (role == "gate") pullGates.ReleaseRestartFence(host);
+    }
 
     public ServiceWorkloadReading? Read(string host, string role, DateTime nowUtc)
     {
@@ -100,6 +109,14 @@ public sealed class ServiceWorkloadReader(V1ReviewExecutorRegistry registry, Att
                     .Count(attempt => snapshots.Any(snapshot => OperationalStallProbe.CanClaim(registry, snapshot, attempt)));
                 return new ServiceWorkloadReading(busy, leased, claimable);
             case "gate":
+                if (pullGates.Workload(host) is { } pull)
+                {
+                    var active = BatchGateInterventionControl.ActiveBatchProjects(gates).Count > 0
+                        || gates.ListPending().Any(item => item.Subject.ActivePerTaskGate);
+                    return new ServiceWorkloadReading(pull.Busy, active, pull.Queued,
+                        new StallGateSlotFacts(pullGates.Hosts().First(item => item.Id == host).Slots,
+                            pull.Busy, pull.Busy, active));
+                }
                 var gateHost = configuration["RemoteGate:SshHost"]?.Trim();
                 if (string.IsNullOrWhiteSpace(gateHost) || !string.Equals(gateHost, host, StringComparison.OrdinalIgnoreCase))
                     return null;
@@ -130,6 +147,26 @@ public sealed class OperationsServerRestartControl(
 {
     public const string HttpClientName = "operations-server";
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
+
+    public async Task<bool?> IsTerminalAsync(string idempotencyKey, CancellationToken ct)
+    {
+        try
+        {
+            using var client = Client();
+            var key = OperationsProtocol.Digest(idempotencyKey)[..48];
+            using var response = await client.GetAsync($"api/operations/v1/attempts/by-key/{key}", ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+            if (!response.IsSuccessStatusCode) return false;
+            var attempt = await response.Content.ReadFromJsonAsync<OperationAttempt>(OperationsProtocol.Json, ct);
+            return attempt?.State is "succeeded" or "failed" or "cancelled" or "timed-out";
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException or JsonException
+            or InvalidDataException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "stall-intervention-restart-recovery-read-failed");
+            return false;
+        }
+    }
 
     public bool CanRestart(string host, string service)
     {
@@ -164,7 +201,7 @@ public sealed class OperationsServerRestartControl(
             {
                 await Task.Delay(PollInterval, time, ct);
                 using var read = await client.GetAsync($"api/operations/v1/attempts/{attempt.Id}", ct);
-                if (!read.IsSuccessStatusCode) return new(false, $"the restart state is unreadable: {await Error(read, ct)}");
+                if (!read.IsSuccessStatusCode) return new(false, $"the restart state is unreadable: {await Error(read, ct)}", false);
                 attempt = await read.Content.ReadFromJsonAsync<OperationAttempt>(OperationsProtocol.Json, ct) ?? attempt;
             }
             var restarted = attempt.Result?.Output.ValueKind == JsonValueKind.Object
@@ -172,13 +209,14 @@ public sealed class OperationsServerRestartControl(
             return attempt.State == "succeeded" && restarted
                 ? new(true, $"Operations Server attempt {attempt.Id} restarted {service} on {host}")
                 : new(false, $"Operations Server attempt {attempt.Id} ended {attempt.State}"
-                    + (attempt.Result is null ? string.Empty : $" ({attempt.Result.ExitClassification})"));
+                    + (attempt.Result is null ? string.Empty : $" ({attempt.Result.ExitClassification})"),
+                    attempt.State is "succeeded" or "failed" or "cancelled" or "timed-out");
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException or JsonException
             or InvalidDataException or TaskCanceledException && !ct.IsCancellationRequested)
         {
             logger.LogWarning(exception, "stall-intervention-restart-failed host={Host} service={Service}", host, service);
-            return new(false, $"the Operations Server is unreachable: {exception.Message}");
+            return new(false, $"the Operations Server is unreachable: {exception.Message}", false);
         }
     }
 
@@ -406,7 +444,7 @@ public sealed class BatchGateInterventionControl(BatchGateStore store, BatchGate
 /// only the start of one of the card's attempts and never a result with work.
 /// </summary>
 public sealed class DeliveryContinuationControl(TaskScannerService scanner, AttemptAuthorityService authority,
-    TimeProvider time) : IContinuationControl
+    TimeProvider time, Action? beforePin = null) : IContinuationControl
 {
     public const string Reason = "rate-limit-last-delivery";
 
@@ -426,12 +464,18 @@ public sealed class DeliveryContinuationControl(TaskScannerService scanner, Atte
     {
         var job = Job(card);
         if (job is null) return null;
+        var expectedBase = ContinuationBaseStore.Read(job.FolderPath);
         var candidate = Candidate(card, job);
         if (candidate.State != TaskStates.Ready || !candidate.LastRunRateLimited
             || candidate.BaseKind is not (StallContinuationBases.Missing or StallContinuationBases.EmptySalvage)
             || candidate.LastDeliveryRef is null || candidate.LastDeliverySha is null) return null;
-        if (!ContinuationBaseStore.Save(job.FolderPath, new ContinuationBaseRecord(candidate.LastDeliveryRef,
-                candidate.LastDeliverySha, Reason, interventionId, time.GetUtcNow().UtcDateTime))) return null;
+        beforePin?.Invoke();
+        if (!ContinuationBaseStore.TrySaveWhen(job.FolderPath, expectedBase,
+                new ContinuationBaseRecord(candidate.LastDeliveryRef, candidate.LastDeliverySha,
+                    Reason, interventionId, time.GetUtcNow().UtcDateTime),
+                () => Directory.Exists(job.FolderPath)
+                    && string.Equals(Path.GetFileName(Path.GetDirectoryName(job.FolderPath)),
+                        TaskStates.Ready, StringComparison.OrdinalIgnoreCase))) return null;
         return Read(card);
     }
 

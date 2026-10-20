@@ -108,8 +108,8 @@ public static class ServiceRestart
     {
         using var process = new Process { StartInfo = start };
         process.Start();
-        var stdout = process.StandardOutput.ReadToEndAsync(ct);
-        var stderr = process.StandardError.ReadToEndAsync(ct);
+        var stdout = ReadBoundedAsync(process.StandardOutput, ct);
+        var stderr = ReadBoundedAsync(process.StandardError, ct);
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
         limit.CancelAfter(timeout);
         try
@@ -121,10 +121,24 @@ public static class ServiceRestart
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync(CancellationToken.None);
             ct.ThrowIfCancellationRequested();
+            await Task.WhenAll(stdout, stderr);
             return new ToolRun(-1, "timeout", true);
         }
-        var text = (await stdout) + (await stderr);
-        return new ToolRun(process.ExitCode, text.Length <= 2048 ? text : text[..2048], false);
+        var output = (await stdout) + (await stderr);
+        return new ToolRun(process.ExitCode, output.Length <= 2048 ? output : output[..2048], false);
+    }
+
+    private static async Task<string> ReadBoundedAsync(StreamReader reader, CancellationToken ct)
+    {
+        var captured = new System.Text.StringBuilder(2048);
+        var buffer = new char[4096];
+        int count;
+        while ((count = await reader.ReadAsync(buffer.AsMemory(), ct)) > 0)
+        {
+            if (captured.Length < 2048)
+                captured.Append(buffer, 0, Math.Min(count, 2048 - captured.Length));
+        }
+        return captured.ToString();
     }
 
     public static ProcessStartInfo Docker(params string[] arguments)

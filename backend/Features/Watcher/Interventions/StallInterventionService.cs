@@ -47,6 +47,7 @@ public sealed class StallInterventionService(
         var root = configuration["TaskRepository"];
         if (string.IsNullOrWhiteSpace(root)) return new(0, 0, 0, 0, "no-task-repository");
         var now = time.GetUtcNow().UtcDateTime;
+        await effect.RecoverRestartFencesAsync(ct);
         store.Prune(now);
         foreach (var record in store.All().Where(item => item.Status == StallInterventionStatuses.Applying
             && now - item.DecidedAtUtc >= StallInterventionEffect.InterruptedAfter).ToArray())

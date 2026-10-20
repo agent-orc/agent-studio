@@ -77,7 +77,9 @@ public sealed class StallInterventionStore
         if (directory is null) return 0;
         var removed = 0;
         foreach (var record in All().Where(item => !StallInterventionStatuses.Pending.Contains(item.Status)
-            && !item.AdmissionInForce && nowUtc - (item.ResolvedAtUtc ?? item.DecidedAtUtc) > Retention))
+            && !item.AdmissionInForce
+            && !(item.Action == StallInterventionActions.RestartService && item.EffectObserved != true)
+            && nowUtc - (item.ResolvedAtUtc ?? item.DecidedAtUtc) > Retention))
         {
             try
             {

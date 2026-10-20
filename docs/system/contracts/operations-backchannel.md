@@ -176,6 +176,11 @@ The agent's capacity of 1 serializes restarts, so two never overlap. The
 caller needs the `service.restart` and `maintenance.execute` scopes, the agent
 principal the `service.restart` scope. A late report after an expired lease is
 kept as evidence, like a late inspection, and the attempt stays `unreachable`.
+The submitting principal can recover a lost response with
+`GET /api/operations/v1/attempts/by-key/{key}` under `operations.read`. The
+lookup is scoped to that principal's idempotency key. A queued or running
+attempt keeps restart claim fences active; only a confirmed terminal attempt
+releases them. Docker output is drained continuously and captured up to 2 KiB.
 
 Events have monotonically ordered attempt-local cursors and digest-only payloads.
 The command carries the actor and correlation ID joining the attempt to Task

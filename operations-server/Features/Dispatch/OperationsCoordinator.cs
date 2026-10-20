@@ -137,6 +137,18 @@ public sealed class OperationsCoordinator(OperationsStore store, IOperationPermi
             return Task.FromResult(attempt);
         });
 
+    /// <summary>Finds an accepted command after its submitting Studio lost the response.</summary>
+    public Task<OperationAttempt> ReadByKeyAsync(OperationsPrincipal principal, string key) =>
+        store.TransactionAsync(state =>
+        {
+            Reject(OperationsAccessPolicy.Denial(principal, "service", "operations.read"), 403);
+            Expire(state);
+            var attempt = state.Attempts.Values.FirstOrDefault(item => item.PrincipalId == principal.Id
+                && item.Command.IdempotencyKey == key);
+            if (attempt is null) throw new OperationRejected("attempt-not-found", 404);
+            return Task.FromResult(attempt);
+        });
+
     private void Expire(OperationsState state)
     {
         foreach (var attempt in state.Attempts.Values.ToArray())

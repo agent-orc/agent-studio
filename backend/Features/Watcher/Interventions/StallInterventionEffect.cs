@@ -1,3 +1,5 @@
+using AgentStudio.Runner;
+
 namespace AgentStudio.Watcher;
 
 /// <summary>Result of a person's undo request.</summary>
@@ -34,6 +36,32 @@ public sealed class StallInterventionEffect(
     public static readonly TimeSpan InterruptedAfter = TimeSpan.FromMinutes(10);
 
     public string Decider => AiOperatorDeciders.StallIntervention;
+
+    /// <summary>Releases a durable claim drain only after its remote attempt is terminal.</summary>
+    public async Task RecoverRestartFencesAsync(CancellationToken ct)
+    {
+        var latest = store.All().Where(item => item.Action == StallInterventionActions.RestartService
+                && item.Status is not (StallInterventionStatuses.Superseded or StallInterventionStatuses.Observed))
+            .GroupBy(item => item.Subject, StringComparer.Ordinal)
+            .Select(group => group.OrderByDescending(item => item.DecidedAtUtc).First());
+        foreach (var record in latest)
+        {
+            var role = record.Subject.Split(':') is { Length: > 2 } parts ? parts[2] : "coding";
+            if (!workloads.HasRestartFence(record.Host, role)) continue;
+            var terminal = await restarts.IsTerminalAsync(record.WriteKey, ct);
+            // An absent attempt can only be declared safe after the command's
+            // submission deadline and the interrupted-record window have passed.
+            if (terminal != true && !(terminal is null
+                    && time.GetUtcNow().UtcDateTime - record.DecidedAtUtc > InterruptedAfter)) continue;
+            workloads.ReleaseRestartFence(record.Host, role);
+            if (workloads.HasRestartFence(record.Host, role)) continue;
+            var updated = record with { Outcome = (record.Outcome ?? string.Empty)
+                + " The remote restart attempt is terminal or its submission window expired; new claims may start."
+                + " The service effect still needs its own check." };
+            store.Save(updated);
+            receipts.Publish(updated, store.All());
+        }
+    }
 
     /// <summary>
     /// The idempotency key of one decision: case id, episode start, action and
@@ -380,7 +408,10 @@ public sealed class StallInterventionEffect(
                         return Superseded(record, now, "a review lease started before the restart claim fence");
                     if (record.Action == StallInterventionActions.RestartService && LiveMismatch(record) is { } restartMismatch)
                         return Superseded(record, now, restartMismatch);
+                    if (fence is IRestartClaimFence durableFence) durableFence.Retain();
                     var outcome = await restarts.RestartAsync(record.Host, record.Service ?? "unknown", record.WriteKey, record.Done, ct);
+                    if (outcome.TerminalConfirmed && fence is IRestartClaimFence confirmedFence)
+                        confirmedFence.ConfirmTerminal();
                     record = record with { EffectObserved = outcome.Succeeded, EffectEvidence = outcome.Evidence };
                 }
                 break;
