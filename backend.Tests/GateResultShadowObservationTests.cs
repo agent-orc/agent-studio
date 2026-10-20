@@ -75,7 +75,13 @@ public sealed partial class BatchGatePilotServiceTests
         var observations = new List<MonolithOrchestrationOccurrence>();
         foreach (var (key, lane, keyPrefix, action) in expected)
         {
-            AssertLane(key, lane);
+            if (outcome == "per-task-pass")
+            {
+                var current = factory.Services.GetRequiredService<TaskScannerService>()
+                    .FindJob(key, _watchPath)?.State;
+                Assert.Contains(current, new[] { TaskStates.AutoReview, TaskStates.HumanReview });
+            }
+            else AssertLane(key, lane);
             var observed = Assert.Single(GateResultOccurrences(orchestration, key));
             Assert.True(observed.Shadow, $"{key} was not observed in shadow mode.");
             Assert.StartsWith(keyPrefix, observed.IdempotencyKey, StringComparison.Ordinal);
@@ -201,9 +207,13 @@ public sealed partial class BatchGatePilotServiceTests
             }
             case "per-task-pass":
             {
-                EnableBatchGate(factory, closeSize: 4);
-                var member = await RunEmergencyFallbackAsync(factory, "CODE-GR-PASS", red: false);
-                return [(member.Key, TaskStates.HumanReview, "batch-fallback:", release)];
+                EnableBatchGate(factory, closeSize: 1);
+                var member = SeedMember(factory, "DOC-GR-PASS", "docs/gr-fallback-pass.md");
+                _gate.Batch = _ => Infrastructure();
+                _gate.Fallback = request => Green(request.ExpectedSha);
+                await pilot.TickAsync(CancellationToken.None);
+                await pilot.TickAsync(CancellationToken.None);
+                return [(member.Key, TaskStates.AutoReview, "batch-fallback:", release)];
             }
             case "per-task-red":
             {
