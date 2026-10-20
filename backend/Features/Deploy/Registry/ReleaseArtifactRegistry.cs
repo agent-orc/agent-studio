@@ -9,7 +9,7 @@ public sealed record RegisteredArtifact(string Project, string Commit, string Ar
     string GateRunId, string Template, string BuilderIdentity, string Location, string SourceDigest,
     string Signature = "");
 
-public sealed class ReleaseArtifactRegistry
+public class ReleaseArtifactRegistry
 {
     private static readonly Regex DigestPattern = new(@"\A[0-9a-f]{64}\z", RegexOptions.Compiled);
     private static readonly Regex CommitPattern = new(@"\A[0-9a-f]{40}\z", RegexOptions.Compiled);
@@ -103,6 +103,14 @@ public sealed class ReleaseArtifactRegistry
 
     public RegisteredArtifact? Verified(string project, string commit, string artifact, string template)
     {
+        try { return VerifiedForDeployment(project, commit, artifact, template); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    /// <summary>Keep temporary read failures visible to a deploy claim so it can retry.</summary>
+    public virtual RegisteredArtifact? VerifiedForDeployment(string project, string commit, string artifact,
+        string template)
+    {
         if (!CommitPattern.IsMatch(commit) || !ArtifactPattern.IsMatch(artifact)) return null;
         var digest = artifact.Split("@sha256:").Last();
         if (!DigestPattern.IsMatch(digest)) return null;
@@ -114,8 +122,7 @@ public sealed class ReleaseArtifactRegistry
             return record is not null && record.Project == project && record.Commit == commit
                 && record.Artifact == artifact && record.Template == template && Verify(record) ? record : null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
-            or ArgumentException or InvalidDataException)
+        catch (Exception ex) when (ex is JsonException or ArgumentException or InvalidDataException)
         {
             return null;
         }

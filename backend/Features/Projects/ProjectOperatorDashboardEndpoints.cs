@@ -14,10 +14,11 @@ public static class ProjectOperatorDashboardEndpoints
         // BD-1: a green integration build becomes an immutable release and
         // starts the automatic Staging phase of the standard lifecycle.
         app.MapPost("/api/deploy/gate-releases", (HttpContext context, GateArtifactRequest request,
-            ProjectEnvironmentService environments, DeployService deploy) =>
+            ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration,
+            AccessSecurityStore security) =>
         {
-            if (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal builder
-                || !builder.Scopes.Contains(RunnerScopes.Release))
+            var builder = GateBuilder(context, configuration, security);
+            if (builder is null || !builder.Scopes.Contains(RunnerScopes.Release))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             return environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit, builder.RunnerId)
                 ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate"),
@@ -197,4 +198,16 @@ public static class ProjectOperatorDashboardEndpoints
     private static IResult ApprovalRequired() => Results.Json(
         new { error = $"Production approval requires the {StandardLifecyclePolicy.ApprovalRoles} role." },
         statusCode: StatusCodes.Status403Forbidden);
+
+    private static RunnerPrincipal? GateBuilder(HttpContext context, IConfiguration configuration,
+        AccessSecurityStore security)
+    {
+        if (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is RunnerPrincipal principal)
+            return principal;
+        if (SecurityProfiles.IsNetworked(configuration)) return null;
+        var authorization = context.Request.Headers.Authorization;
+        if (authorization.Count != 1 || authorization[0] is not { } bearer
+            || !bearer.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return null;
+        return security.AuthenticateRunner(bearer["Bearer ".Length..].Trim());
+    }
 }

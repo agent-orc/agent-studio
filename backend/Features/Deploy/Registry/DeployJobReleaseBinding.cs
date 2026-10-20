@@ -32,7 +32,7 @@ public static class DeployJobReleaseBinding
             || declaration.Destination != job.Destination || declaration.HealthUrl != job.HealthUrl
             || declaration.ContainerPort != job.ContainerPort
             || !declaration.SecretRefs.SequenceEqual(job.SecretRefs, StringComparer.Ordinal)
-            || registry.Verified(project, record.Release.CommitSha, job.Artifact, job.Template) is null)
+            || registry.VerifiedForDeployment(project, record.Release.CommitSha, job.Artifact, job.Template) is null)
             return null;
         return job with { ReleaseId = releaseId };
     }

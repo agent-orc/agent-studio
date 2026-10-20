@@ -229,6 +229,55 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GateReleaseRoute_LocalProfileAuthenticatesOnlyTheReleaseCredential()
+    {
+        var (_, repo, watch) = Build();
+        Git(repo, "add", ".");
+        Git(repo, "commit", "-m", "declarations");
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        WriteReleaseEvidence("demo", _artifact, commit);
+        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.UseSetting("TaskRepository", Path.Combine(_root, "workspace"));
+            builder.UseSetting("Deploy:ReleaseEvidenceRoot", Path.Combine(_root, "release-evidence"));
+            builder.UseSetting("WatchPaths:0:Name", "demo");
+            builder.UseSetting("WatchPaths:0:Path", watch);
+            builder.UseSetting("WatchPaths:0:RootPath", repo);
+            builder.UseSetting("WatchPaths:0:RepositoryPath", repo);
+            builder.UseSetting("Security:Profile", "local");
+            builder.UseSetting("Logging:BackendFile:LogDirectory", Path.Combine(_root, "logs"));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(_clock);
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var request = new GateArtifactRequest("demo", _artifact, commit);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync("/api/deploy/gate-releases", request)).StatusCode);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "invalid-credential");
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync("/api/deploy/gate-releases", request)).StatusCode);
+        var deploy = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest("deploy-only",
+            [RunnerScopes.Deploy], null, null)).Code);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", deploy.Secret);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync("/api/deploy/gate-releases", request)).StatusCode);
+        var builder = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest("release-builder",
+            [RunnerScopes.Release], null, null)).Code);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", builder.Secret);
+        using var accepted = await client.PostAsJsonAsync("/api/deploy/gate-releases", request);
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        var registered = factory.Services.GetRequiredService<ReleaseArtifactRegistry>()
+            .Verified("demo", commit, _artifact, "container");
+        Assert.Equal(builder.Runner.Id, registered?.BuilderIdentity);
+    }
+
+    [Fact]
     public void StageDeclaration_RequiresHealthUrl()
     {
         var (service, repo, _) = Build();

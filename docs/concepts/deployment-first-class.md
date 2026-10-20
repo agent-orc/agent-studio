@@ -28,7 +28,7 @@ SHA-256 digest.
 After the full gate passes and the release is pushed, the promotion script can
 submit the measured package digest or the gate-built image's registry digest
 to `POST /api/deploy/gate-releases`. This route requires a service credential
-with only `runner.release`. The script checks that a container image carries
+with only `runner.release` in both local and networked profiles. The script checks that a container image carries
 the exact gated commit as its OCI revision label. Studio records the immutable
 commit/digest pair before queueing stage. The operator release route accepts
 only an artifact already recorded for that exact commit. For a static package,
@@ -76,8 +76,11 @@ release from a persisted deployment run linked by job ID. An automatic rollback
 also requires the failed job and its last healthy source job to identify the
 same release. A digest match alone never selects a release. The claim and
 artifact routes refuse jobs whose release or registry provenance cannot be
-verified. If provenance disappears during a lease, artifact access is denied;
-an unverified report fails the job.
+verified. A claim verifies only the selected host's next eligible job; an
+unverified job fails without changing jobs for other hosts. A temporary
+registry read failure leaves the job queued or claimed for retry and never
+allows artifact transfer. If provenance disappears during a lease, artifact
+access is denied; an unverified report fails the job.
 
 The host contract is `GET /api/deploy/jobs/{project}/{jobId}/artifact` with
 `Authorization: Bearer <runner.deploy token>` and

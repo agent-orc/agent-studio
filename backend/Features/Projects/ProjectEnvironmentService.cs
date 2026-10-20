@@ -513,22 +513,7 @@ public sealed class ProjectEnvironmentService
             {
                 var project = Uri.UnescapeDataString(Path.GetFileNameWithoutExtension(file));
                 var state = Load(project);
-                var changed = AdvanceQueue(state);
-                foreach (var job in state.Jobs.Where(item => item.Status is "queued" or "claimed").ToArray())
-                {
-                    var verified = VerifyRelease(project, job, state, requireVerifiedRelease);
-                    if (verified is null)
-                    {
-                        RefuseUnverified(state, job, now);
-                        changed = true;
-                    }
-                    else if (verified != job)
-                    {
-                        state.Jobs[state.Jobs.IndexOf(job)] = verified;
-                        changed = true;
-                    }
-                }
-                if (changed) Save(project, state);
+                if (AdvanceQueue(state)) Save(project, state);
                 states.Add((project, state));
             }
             if (states.Any(item => item.State.Jobs.Any(job =>
@@ -536,16 +521,26 @@ public sealed class ProjectEnvironmentService
                 return null;
             foreach (var (project, state) in states)
             {
-                var job = state.Jobs.FirstOrDefault(item => item.HostId == hostId &&
-                    (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration));
-                if (job is null) continue;
-                var claimed = job with
+                foreach (var job in state.Jobs.Where(item => item.HostId == hostId &&
+                    (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration)).ToArray())
                 {
-                    Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N"), Claims = job.Claims + 1,
-                };
-                state.Jobs[state.Jobs.IndexOf(job)] = claimed;
-                Save(project, state);
-                return claimed;
+                    var verification = VerifyRelease(project, job, state, requireVerifiedRelease);
+                    if (verification.Retryable) continue;
+                    if (verification.Job is not { } verified)
+                    {
+                        RefuseUnverified(state, job, now);
+                        Save(project, state);
+                        continue;
+                    }
+                    var claimed = verified with
+                    {
+                        Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N"),
+                        Claims = job.Claims + 1,
+                    };
+                    state.Jobs[state.Jobs.IndexOf(job)] = claimed;
+                    Save(project, state);
+                    return claimed;
+                }
             }
             return null;
         }
@@ -564,7 +559,7 @@ public sealed class ProjectEnvironmentService
                 && item.LeaseToken is not null && CryptographicOperations.FixedTimeEquals(
                     System.Text.Encoding.UTF8.GetBytes(item.LeaseToken), System.Text.Encoding.UTF8.GetBytes(leaseToken)));
             if (job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration) return null;
-            var verified = VerifyRelease(project, job, state, requireVerifiedRelease);
+            var verified = VerifyRelease(project, job, state, requireVerifiedRelease).Job;
             if (verified is null) return null;
             if (verified != job)
             {
@@ -575,19 +570,24 @@ public sealed class ProjectEnvironmentService
         }
     }
 
-    private DeployJob? VerifyRelease(string project, DeployJob job, State state, bool requireRelease)
+    private readonly record struct ReleaseVerification(DeployJob? Job, bool Retryable = false);
+
+    private ReleaseVerification VerifyRelease(string project, DeployJob job, State state, bool requireRelease)
     {
         try
         {
             var releases = _deployStore.ReadReleaseRecords(project);
-            if (releases.Count == 0 && job.ReleaseId is null && !requireRelease) return job;
-            return DeployJobReleaseBinding.Verify(project, job, state.Jobs, releases,
-                _deployStore.ReadDeployments(project), _registry);
+            if (releases.Count == 0 && job.ReleaseId is null && !requireRelease) return new(job);
+            return new(DeployJobReleaseBinding.Verify(project, job, state.Jobs, releases,
+                _deployStore.ReadDeployments(project), _registry));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
-            or InvalidOperationException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return null;
+            return new(null, Retryable: true);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return new(null);
         }
     }
 
@@ -619,8 +619,13 @@ public sealed class ProjectEnvironmentService
                 if (advanced) Save(project, state);
                 return false;
             }
-            var verified = VerifyRelease(project, job, state, requireVerifiedRelease);
-            if (verified is null)
+            var verification = VerifyRelease(project, job, state, requireVerifiedRelease);
+            if (verification.Retryable)
+            {
+                if (advanced) Save(project, state);
+                return false;
+            }
+            if (verification.Job is not { } verified)
             {
                 RefuseUnverified(state, job, _clock.GetUtcNow().UtcDateTime);
                 Save(project, state);

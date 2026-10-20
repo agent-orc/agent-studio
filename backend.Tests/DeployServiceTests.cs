@@ -98,6 +98,80 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal("artifact-unverified", restarted.Read("demo")!.Jobs.Single(item => item.Id == rollback.Id).Evidence);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Claim_VerifiesOnlyTheSelectedHostsJob(bool otherHostClaimed)
+    {
+        var (deploy, environments, _) = Build();
+        var first = CreateRelease(deploy, Artifact('a'), Head());
+        var stage = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.True(environments.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok"),
+            requireVerifiedRelease: true));
+        deploy.SyncAfterHostCall("demo");
+        var waiting = deploy.Deployments("demo", "production")!.Single(item => item.ReleaseId == first.Id);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting.Id, Owner).Kind);
+        var second = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        var registry = new FaultingRegistry(_configuration!);
+        var claimant = EnvironmentsWithRegistry(registry);
+        var other = claimant.Read("demo")!.Jobs.Single(item => item.ReleaseId == second.Id);
+        if (otherHostClaimed)
+        {
+            var claim = claimant.Claim("stage-host", requireVerifiedRelease: true)!;
+            Assert.Equal(other.Id, claim.Id);
+        }
+        registry.UnavailableArtifact = Artifact('b');
+        registry.Calls.Clear();
+
+        var production = claimant.Claim("prod-host", requireVerifiedRelease: true)!;
+
+        Assert.Equal((first.Id, Artifact('a')), (production.ReleaseId, production.Artifact));
+        Assert.DoesNotContain(Artifact('b'), registry.Calls);
+        var untouched = claimant.Read("demo")!.Jobs.Single(item => item.Id == other.Id);
+        Assert.Equal(otherHostClaimed ? "claimed" : "queued", untouched.Status);
+        Assert.Null(untouched.Evidence);
+    }
+
+    [Fact]
+    public void TransientRegistryRead_KeepsClaimAndReportRetryable()
+    {
+        var (deploy, _, _) = Build();
+        CreateRelease(deploy, Artifact('a'), Head());
+        var registry = new FaultingRegistry(_configuration!) { UnavailableArtifact = Artifact('a') };
+        var claimant = EnvironmentsWithRegistry(registry);
+
+        Assert.Null(claimant.Claim("stage-host", requireVerifiedRelease: true));
+        Assert.Equal("queued", claimant.Read("demo")!.Jobs.Single().Status);
+        registry.UnavailableArtifact = null;
+        var job = claimant.Claim("stage-host", requireVerifiedRelease: true)!;
+        registry.UnavailableArtifact = Artifact('a');
+        Assert.Null(claimant.FindClaimedJob("demo", job.Id, job.LeaseToken!, requireVerifiedRelease: true));
+        Assert.False(claimant.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok"),
+            requireVerifiedRelease: true));
+        Assert.Equal("claimed", claimant.Read("demo")!.Jobs.Single().Status);
+        registry.UnavailableArtifact = null;
+        Assert.NotNull(claimant.FindClaimedJob("demo", job.Id, job.LeaseToken!, requireVerifiedRelease: true));
+        Assert.True(claimant.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok"),
+            requireVerifiedRelease: true));
+    }
+
+    private ProjectEnvironmentService EnvironmentsWithRegistry(ReleaseArtifactRegistry registry)
+        => new(_configuration!, _scanner!, _git!, _settings!, _clock, registry, new DeployStore(_configuration!));
+
+    private sealed class FaultingRegistry(IConfiguration configuration) : ReleaseArtifactRegistry(configuration)
+    {
+        public string? UnavailableArtifact { get; set; }
+        public List<string> Calls { get; } = [];
+
+        public override RegisteredArtifact? VerifiedForDeployment(string project, string commit, string artifact,
+            string template)
+        {
+            Calls.Add(artifact);
+            if (artifact == UnavailableArtifact) throw new IOException("Transient registry read failure.");
+            return base.VerifiedForDeployment(project, commit, artifact, template);
+        }
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
