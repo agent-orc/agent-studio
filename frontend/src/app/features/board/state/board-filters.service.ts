@@ -5,6 +5,9 @@ import { ClientService } from '../../../services/client.service';
 import { TagRegistryStore } from '../../../services/tag-registry.store';
 import { projectIdentity } from '../../../services/project-identity.util';
 import { kvValueOf, routeSegmentOf, withKvSegment } from '../../../services/url-hash.util';
+import { CardDeploymentService } from '../../deployments/services/card-deployment.service';
+
+export type EnvironmentCardFilter = 'all' | 'staging-only' | 'production' | 'not-production' | 'rolled-back';
 
 /**
  * Cycle 9 board feature service: free-text search query, four faceted
@@ -27,7 +30,7 @@ import { kvValueOf, routeSegmentOf, withKvSegment } from '../../../services/url-
  */
 
 export interface ActiveFilterPill {
-  kind: 'search' | 'owner' | 'project' | 'type' | 'tag' | 'dependsOn' | 'integration' | 'release';
+  kind: 'search' | 'owner' | 'project' | 'type' | 'tag' | 'dependsOn' | 'integration' | 'release' | 'environment';
   kindLabel: string;
   /** Identifier used by the remove handler. */
   value: string;
@@ -44,6 +47,7 @@ export class BoardFiltersService {
   private readonly clientService = inject(ClientService);
   private readonly tagRegistryStore = inject(TagRegistryStore);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly deployCards = inject(CardDeploymentService);
   constructor() {
     if (typeof window === 'undefined') return;
     const syncHashFilters = () => this.readFilterHash();
@@ -86,6 +90,7 @@ export class BoardFiltersService {
    * dependent's card, which is the surface that carries the inline action.
    */
   readonly waitingForReleaseOnly = signal(false);
+  readonly environmentFilter = signal<EnvironmentCardFilter>('all');
   private readonly stalledIntegrationTaskRefs = signal<ReadonlySet<string>>(new Set());
 
   /** Single-select view of the type filter. Null = no type filter. */
@@ -105,7 +110,8 @@ export class BoardFiltersService {
     || !!this.activeClientFilter()
     || !!this.activeDependsOnFilter()
     || this.stalledIntegrationOnly()
-    || this.waitingForReleaseOnly());
+    || this.waitingForReleaseOnly()
+    || this.environmentFilter() !== 'all');
 
   readonly hasActiveFiltersOrSearch = computed(() =>
     this.searchQuery().trim().length > 0
@@ -114,7 +120,8 @@ export class BoardFiltersService {
     || this.activeType() !== null
     || this.activeTagFilter().size > 0
     || this.stalledIntegrationOnly()
-    || this.waitingForReleaseOnly());
+    || this.waitingForReleaseOnly()
+    || this.environmentFilter() !== 'all');
 
   readonly activeFilterCount = computed(() => {
     let n = 0;
@@ -125,6 +132,7 @@ export class BoardFiltersService {
     n += this.activeTagFilter().size;
     if (this.stalledIntegrationOnly()) n += 1;
     if (this.waitingForReleaseOnly()) n += 1;
+    if (this.environmentFilter() !== 'all') n += 1;
     return n;
   });
 
@@ -152,6 +160,7 @@ export class BoardFiltersService {
     const stalledIntegrationOnly = this.stalledIntegrationOnly();
     const stalledIntegrationTaskRefs = this.stalledIntegrationTaskRefs();
     const waitingForReleaseOnly = this.waitingForReleaseOnly();
+    const environmentFilter = this.environmentFilter();
     // The targets are derived from the dependents' server-computed waitsOn
     // overlay, so the facet needs one pass over the unfiltered feed before the
     // per-card predicate runs. Only paid for while the facet is on.
@@ -160,7 +169,8 @@ export class BoardFiltersService {
       : EMPTY_TASK_REFS;
     const query = this.searchQuery().trim().toLowerCase();
     const noFilters = active.size === 0 && !ownerId && !dependsOnKey && types.size === 0
-      && tagIds.size === 0 && !stalledIntegrationOnly && !waitingForReleaseOnly && !query;
+      && tagIds.size === 0 && !stalledIntegrationOnly && !waitingForReleaseOnly
+      && environmentFilter === 'all' && !query;
     if (noFilters) return grouped;
     const matchesQuery = (j: TaskInfo) => {
       if (!query) return true;
@@ -192,6 +202,16 @@ export class BoardFiltersService {
           && !stalledIntegrationTaskRefs.has(integrationAlertTaskRef(j.projectName, j.id))) return false;
       if (waitingForReleaseOnly && !isWaitingForRelease(j)
           && !pendingReleaseTargets.has(releaseTargetRef(j.key))) return false;
+      if (environmentFilter !== 'all') {
+        if (!this.deployCards.badges(j).length) return false;
+        const staging = this.deployCards.inEnvironment(j, 'staging');
+        const production = this.deployCards.inEnvironment(j, 'production');
+        if (environmentFilter === 'staging-only' && (!staging || production)) return false;
+        if (environmentFilter === 'production' && !production) return false;
+        if (environmentFilter === 'not-production' && production) return false;
+        if (environmentFilter === 'rolled-back'
+          && !this.deployCards.badges(j).some(badge => badge.state === 'rolled-back')) return false;
+      }
       if (!matchesQuery(j)) return false;
       return true;
     });
@@ -313,6 +333,16 @@ export class BoardFiltersService {
         label: 'Waiting for release', swatch: null,
       });
     }
+    if (this.environmentFilter() !== 'all') {
+      const labels: Record<Exclude<EnvironmentCardFilter, 'all'>, string> = {
+        'staging-only': 'In Staging, not Production',
+        production: 'In Production',
+        'not-production': 'Not yet in Production',
+        'rolled-back': 'Rolled back',
+      };
+      const value = this.environmentFilter() as Exclude<EnvironmentCardFilter, 'all'>;
+      pills.push({ kind: 'environment', kindLabel: 'Environment', value, label: labels[value], swatch: null });
+    }
     return pills;
   });
 
@@ -343,6 +373,9 @@ export class BoardFiltersService {
       case 'release':
         this.setWaitingForReleaseOnly(false);
         break;
+      case 'environment':
+        this.setEnvironmentFilter('all');
+        break;
     }
   }
 
@@ -372,6 +405,11 @@ export class BoardFiltersService {
   /** Narrow the board to the release gate's two sides, or clear the facet. */
   setWaitingForReleaseOnly(value: boolean): void {
     this.waitingForReleaseOnly.set(value);
+    this.writeFilterHash();
+  }
+
+  setEnvironmentFilter(value: EnvironmentCardFilter): void {
+    this.environmentFilter.set(value);
     this.writeFilterHash();
   }
 
@@ -514,6 +552,7 @@ export class BoardFiltersService {
     this.activeDependsOnFilter.set(null);
     this.stalledIntegrationOnly.set(false);
     this.waitingForReleaseOnly.set(false);
+    this.environmentFilter.set('all');
     this.activeProjects.set(new Set());
     this.explicitProjectFilter.set(false);
     localStorage.setItem('activeProjects', '[]');
@@ -585,6 +624,7 @@ export class BoardFiltersService {
     this.activeTypeFilter.set(new Set());
     this.stalledIntegrationOnly.set(false);
     this.waitingForReleaseOnly.set(false);
+    this.environmentFilter.set('all');
 
     const rawFilters = kvValueOf(hash, 'filters');
     if (rawFilters != null) {
@@ -597,6 +637,7 @@ export class BoardFiltersService {
       const tags = new Set<string>();
       let stalledIntegrationOnly = false;
       let waitingForReleaseOnly = false;
+      let environmentFilter: EnvironmentCardFilter = 'all';
       for (const p of parts) {
         const idx = p.indexOf(':');
         if (idx <= 0) continue;
@@ -610,6 +651,8 @@ export class BoardFiltersService {
         else if (k === 'tags') v.split(',').filter(Boolean).forEach(x => tags.add(x));
         else if (k === 'integration' && v === 'stalled') stalledIntegrationOnly = true;
         else if (k === 'release' && v === 'waiting') waitingForReleaseOnly = true;
+        else if (k === 'environment' && ['staging-only', 'production', 'not-production', 'rolled-back'].includes(v))
+          environmentFilter = v as EnvironmentCardFilter;
       }
       this.activeClientFilter.set(owner);
       this.activeDependsOnFilter.set(dependsOn);
@@ -621,6 +664,7 @@ export class BoardFiltersService {
       this.commitTagFilter(tags);
       this.stalledIntegrationOnly.set(stalledIntegrationOnly);
       this.waitingForReleaseOnly.set(waitingForReleaseOnly);
+      this.environmentFilter.set(environmentFilter);
       return;
     }
     const rawLegacy = kvValueOf(hash, 'filter');
@@ -662,6 +706,7 @@ export class BoardFiltersService {
     if (tags.length > 0) segments.push(`tags:${tags.join(',')}`);
     if (this.stalledIntegrationOnly()) segments.push('integration:stalled');
     if (this.waitingForReleaseOnly()) segments.push('release:waiting');
+    if (this.environmentFilter() !== 'all') segments.push(`environment:${this.environmentFilter()}`);
     // Segment-aware upsert: the route segment of an open overlay (workspace
     // settings, project shell, epics) and legacy segments survive; only the
     // filters= segment is owned here. See url-hash.util.ts for the contract.

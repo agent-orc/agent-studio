@@ -28,13 +28,18 @@ export class ProjectDeployAreaComponent {
   /** Emits each view the user selects so the host can keep Run steps in the route. */
   readonly viewChange = output<DeployView>();
   readonly snapshot = signal<ProjectDeploySnapshot | null>(null);
+  readonly loadError = signal(false);
   readonly view = signal<DeployView>('overview');
 
   constructor() {
     effect(() => this.view.set(this.initialView()));
     effect(onCleanup => {
       this.snapshot.set(null);
-      const subscription = this.data.load(this.projectName()).subscribe(snapshot => this.snapshot.set(snapshot));
+      this.loadError.set(false);
+      const subscription = this.data.load(this.projectName()).subscribe({
+        next: snapshot => this.snapshot.set(snapshot),
+        error: () => this.loadError.set(true),
+      });
       onCleanup(() => subscription.unsubscribe());
     });
   }

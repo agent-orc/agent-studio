@@ -1,5 +1,6 @@
-import { Injectable } from '@angular/core';
-import { Observable, of } from 'rxjs';
+import { HttpClient } from '@angular/common/http';
+import { Injectable, inject } from '@angular/core';
+import { Observable, forkJoin, map, of } from 'rxjs';
 
 export interface Environment {
   id: string;
@@ -26,7 +27,7 @@ export type DeploymentState = 'queued' | 'running' | 'succeeded' | 'failed' | 'c
 
 export interface DeploymentStep {
   name: string;
-  state: DeploymentState;
+  state: DeploymentState | 'pending' | 'skipped';
   startedAtUtc: string | null;
   finishedAtUtc: string | null;
   logRef: string | null;
@@ -52,25 +53,37 @@ export interface EnvironmentStatus {
   health: 'healthy' | 'unhealthy' | 'unknown';
 }
 
-export interface PipelineStage {
-  id: string;
-  name: string;
-  steps: string[];
-  source: string;
-}
-
 export interface ProjectDeploySnapshot {
   environments: EnvironmentStatus[];
   releases: Release[];
   deployments: Deployment[];
-  pipeline: PipelineStage[];
   source: 'fixture' | 'api';
 }
 
-/** BD-1 will replace this read adapter with API calls without changing view contracts. */
 @Injectable({ providedIn: 'root' })
 export class ProjectDeployDataService {
+  private readonly http = inject(HttpClient, { optional: true });
+
   load(projectId: string): Observable<ProjectDeploySnapshot> {
+    if (this.http) {
+      const root = `/api/projects/${encodeURIComponent(projectId)}/deploy`;
+      return forkJoin({
+        environments: this.http.get<EnvironmentStatus[]>(`${root}/status`),
+        releases: this.http.get<Release[]>(`${root}/releases`),
+        deployments: this.http.get<Deployment[]>(`${root}/deployments`),
+      }).pipe(
+        map(data => ({ ...data, source: 'api' as const })),
+      );
+    }
+    return this.fixture(projectId);
+  }
+
+  notes(projectId: string, releaseId: string): Observable<ReleaseNotes> {
+    if (!this.http) return of({ releaseId, version: '', preview: true, notes: [] });
+    return this.http.get<ReleaseNotes>(`/api/projects/${encodeURIComponent(projectId)}/deploy/releases/${encodeURIComponent(releaseId)}/notes`);
+  }
+
+  fixture(projectId: string): Observable<ProjectDeploySnapshot> {
     const releases: Release[] = [
       { id: 'release-4', projectId, version: '2026.10.16.4', commitSha: '6b8a34d', artifactDigests: ['sha256:6b8a34d-demo-bundle'], processVersion: 'project.yml@6b8a34d', variablesVersion: 'project.yml@6b8a34d', cardKeys: ['WEB-36'], createdAtUtc: '2026-10-16T10:42:00Z', channel: 'standard' },
       { id: 'release-3', projectId, version: '2026.10.16.3', commitSha: '4f1c2e0', artifactDigests: ['sha256:4f1c2e0-demo-bundle'], processVersion: 'project.yml@4f1c2e0', variablesVersion: 'project.yml@4f1c2e0', cardKeys: ['WEB-33', 'WEB-34', 'WEB-35'], createdAtUtc: '2026-10-16T09:45:00Z', channel: 'standard' },
@@ -96,15 +109,14 @@ export class ProjectDeployDataService {
       ],
       releases,
       deployments,
-      pipeline: [
-        { id: 'prepare', name: 'Prepare', steps: ['commands.prepare'], source: 'project.yml' },
-        { id: 'build', name: 'Build', steps: ['commands.build', 'Artifact digest'], source: 'project.yml' },
-        { id: 'test', name: 'Test', steps: ['commands.test', 'commands.lint'], source: 'project.yml' },
-        { id: 'release', name: 'Release', steps: ['Commit and card snapshot', 'Artifact provenance'], source: 'P1 lifecycle' },
-        { id: 'staging', name: 'Staging', steps: ['Publish static bundle', 'Health check'], source: 'P1 lifecycle' },
-        { id: 'production', name: 'Production', steps: ['Owner or Maintainer approval', 'Publish static bundle', 'Health check'], source: 'P1 lifecycle' },
-      ],
       source: 'fixture' as const,
     });
   }
+}
+
+export interface ReleaseNotes {
+  releaseId: string;
+  version: string;
+  preview: boolean;
+  notes: { cardKey: string; text: string }[];
 }

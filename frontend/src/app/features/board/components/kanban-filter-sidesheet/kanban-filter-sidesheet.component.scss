@@ -43,6 +43,19 @@
   border-bottom: 1px solid var(--studio-border);
 }
 .sheet__section:last-of-type { border-bottom: 0; }
+.sheet__filter-label {
+  display: block;
+  margin-bottom: var(--studio-spacing-2);
+  color: var(--studio-fg-dim);
+}
+.sheet__select {
+  width: 100%;
+  padding: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: 6px;
+  color: var(--studio-fg);
+  background: var(--studio-bg-elevated);
+}
 .sheet__section-title {
   margin: 0 0 8px;
   font-size: 11px;
