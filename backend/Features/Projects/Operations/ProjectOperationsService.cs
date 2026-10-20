@@ -34,18 +34,24 @@ public sealed class ProjectOperationsService(DeployService deploy, TaskScannerSe
         {
             var metrics = telemetry.ReadMetrics(project, environment.Id, since, until);
             return new EnvironmentOperationsView(environment, metrics is not null, metrics,
-            deployments.Where(run => run.EnvironmentId == environment.Id
-                    && (run.StartedAtUtc ?? run.CreatedAtUtc) >= since.UtcDateTime)
-                .OrderByDescending(run => run.StartedAtUtc ?? run.CreatedAtUtc)
-                .Select(run => new OperationsMarker(run.Id, run.ReleaseId,
-                    releaseById.TryGetValue(run.ReleaseId, out var release) ? release.Version : run.ReleaseId,
-                    run.StartedAtUtc ?? run.CreatedAtUtc, run.Trigger, run.State,
-                    release?.CardKeys ?? []))
-                .ToArray());
+                CompletedMarkers(environment.Id, deployments, releaseById, since, until));
         }).ToArray();
         return new(project, since, until, rows,
             DoraMetrics.Calculate(environments, releases, deployments, cards, since, until));
     }
+
+    public static IReadOnlyList<OperationsMarker> CompletedMarkers(string environmentId,
+        IReadOnlyList<Deployment> deployments, IReadOnlyDictionary<string, Release> releases,
+        DateTimeOffset since, DateTimeOffset until) => deployments
+        .Where(run => run.EnvironmentId == environmentId && run.State == DeploymentStates.Succeeded
+            && run.Trigger is DeploymentTriggers.Deploy or DeploymentTriggers.Redeploy
+                or DeploymentTriggers.Rollback or DeploymentTriggers.AutomaticRollback
+            && run.FinishedAtUtc >= since.UtcDateTime && run.FinishedAtUtc <= until.UtcDateTime)
+        .OrderByDescending(run => run.FinishedAtUtc).ThenByDescending(run => run.Id, StringComparer.Ordinal)
+        .Select(run => new OperationsMarker(run.Id, run.ReleaseId,
+            releases.TryGetValue(run.ReleaseId, out var release) ? release.Version : run.ReleaseId,
+            run.FinishedAtUtc!.Value, run.Trigger, run.State, release?.CardKeys ?? []))
+        .ToArray();
 
     public OperationsLogResult? SearchLogs(string project, string environmentId, DateTimeOffset? since,
         DateTimeOffset? until, string? level, string? releaseId, string? text, int? limit)

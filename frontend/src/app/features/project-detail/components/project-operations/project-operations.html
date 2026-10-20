@@ -75,19 +75,19 @@
       <h3 id="operations-logs-title">Search application logs</h3>
       @if (!telemetryAvailable() && !logs()) { <p role="status">Application logs will be searchable when the telemetry intake store is connected.</p> }
       <div class="project-operations__filters">
-        <label>Environment <select data-testid="operations-log-environment" [value]="selectedEnvironment()" (change)="selectedEnvironment.set($any($event.target).value)">
+        <label>Environment <select data-testid="operations-log-environment" [value]="selectedEnvironment()" (change)="changeFilter(selectedEnvironment, $any($event.target).value)">
           @for (row of state.environments; track row.environment.id) { <option [value]="row.environment.id">{{ row.environment.name }}</option> }
         </select></label>
-        <label>From <input type="datetime-local" [value]="since()" (change)="since.set($any($event.target).value)"></label>
-        <label>To <input type="datetime-local" [value]="until()" (change)="until.set($any($event.target).value)"></label>
-        <label>Level <select [value]="level()" (change)="level.set($any($event.target).value)">
+        <label>From <input type="datetime-local" [value]="since()" (change)="changeFilter(since, $any($event.target).value)"></label>
+        <label>To <input type="datetime-local" [value]="until()" (change)="changeFilter(until, $any($event.target).value)"></label>
+        <label>Level <select [value]="level()" (change)="changeFilter(level, $any($event.target).value)">
           <option value="">All levels</option><option value="error">Error</option><option value="warn">Warning</option><option value="info">Info</option><option value="debug">Debug</option>
         </select></label>
-        <label>Release <select [value]="release()" (change)="release.set($any($event.target).value)">
+        <label>Release <select [value]="release()" (change)="changeFilter(release, $any($event.target).value)">
           <option value="">All releases</option>
           @for (option of releaseOptions(); track option[0]) { <option [value]="option[0]">{{ option[1] }}</option> }
         </select></label>
-        <label>Text <input type="search" [value]="searchText()" (input)="searchText.set($any($event.target).value)" placeholder="Search text"></label>
+        <label>Text <input type="search" [value]="searchText()" (input)="changeFilter(searchText, $any($event.target).value)" placeholder="Search text"></label>
         <button type="button" data-testid="operations-search-logs" (click)="search()">Search logs</button>
       </div>
       @if (logError(); as message) { <p role="alert">{{ message }}</p> }

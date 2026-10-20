@@ -188,6 +188,20 @@ public sealed class DeployService
         }
     }
 
+    public DeployPage<Release>? ReleasePageContaining(string project, string releaseId, int limit)
+    {
+        lock (_gate)
+        {
+            var releases = SyncLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
+                .ThenByDescending(item => item.Id, StringComparer.Ordinal).ToArray();
+            if (releases is null) return null;
+            var index = Array.FindIndex(releases, item => item.Id == releaseId);
+            if (index < 0) return null;
+            var pageSize = Math.Clamp(limit, 1, 50);
+            return Page(releases, index / pageSize * pageSize, pageSize);
+        }
+    }
+
     public ReleaseDetailResponse? ReleaseDetail(string project, string releaseId)
     {
         lock (_gate)

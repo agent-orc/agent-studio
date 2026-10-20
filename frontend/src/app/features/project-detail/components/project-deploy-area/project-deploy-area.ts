@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, untracked, type WritableSignal } from '@angular/core';
-import { Subscription, filter, take } from 'rxjs';
+import { Subscription, take } from 'rxjs';
 import { ProjectDeploymentPanelComponent } from '../project-deployment-panel/project-deployment-panel.component';
 import { ProjectDeployOverviewComponent } from '../project-deploy-overview/project-deploy-overview';
 import { ProjectDeployReleasesComponent } from '../project-deploy-releases/project-deploy-releases';
@@ -93,11 +93,16 @@ export class ProjectDeployAreaComponent {
   openRelease(id: string): void {
     this.highlightedReleaseId.set(id);
     this.show('releases');
-    this.data.releases(this.projectName()).pipe(filter(panel => panel.status !== 'loading'), take(1)).subscribe(panel => {
-      if (panel.status !== 'ready') return;
-      const sorted = [...panel.value].sort((a, b) => Date.parse(b.createdAtUtc) - Date.parse(a.createdAtUtc));
-      const index = sorted.findIndex(item => item.id === id);
-      if (index >= 0) this.changeReleasePage(Math.floor(index / 25) * 25);
+    this.releaseReads.unsubscribe();
+    this.releaseReads = new Subscription();
+    const generation = ++this.releaseGeneration;
+    this.releaseReads.add(this.data.releasePageContaining(this.projectName(), id).subscribe(panel => {
+      if (generation !== this.releaseGeneration || this.highlightedReleaseId() !== id) return;
+      if (panel.status === 'ready') {
+        this.releaseOffset.set(panel.value.offset);
+        this.releaseTotal.set(panel.value.total);
+      }
+      this.releasePanel.set(this.items(panel));
     });
   }
 

@@ -61,6 +61,44 @@ public sealed class ProjectOperationsMetricsTests
         Assert.Equal(1, result.ChangeFailureRate);
     }
 
+    [Fact]
+    public void Redeploying_an_old_card_inside_the_window_does_not_change_its_first_arrival_lead_time()
+    {
+        var oldRelease = Release("old", "CARD-OLD");
+        var newRelease = Release("new", "CARD-NEW");
+        var runs = new[] { Run("prod", "old", DeploymentStates.Succeeded, -24 * 40),
+            Run("prod", "old", DeploymentStates.Succeeded, -24),
+            Run("prod", "new", DeploymentStates.Succeeded, -12) };
+        var cards = new Dictionary<string, DateTime> { ["CARD-OLD"] = End.AddDays(-50).UtcDateTime,
+            ["CARD-NEW"] = End.AddDays(-2).UtcDateTime };
+
+        var result = DoraMetrics.Calculate([Production], [oldRelease, newRelease], runs, cards, End.AddDays(-30), End);
+
+        Assert.Equal(2, result.SuccessfulProductionDeploys);
+        Assert.Equal(1, result.CardsMeasured);
+        Assert.Equal(36, result.MedianCardToProductionHours);
+    }
+
+    [Fact]
+    public void Markers_include_only_completed_successful_changes_at_completion_time()
+    {
+        var completed = Run("prod", "new", DeploymentStates.Succeeded, -2) with
+        { StartedAtUtc = End.AddDays(-40).UtcDateTime };
+        var rollback = Run("prod", "old", DeploymentStates.Succeeded, -1) with
+        { Trigger = DeploymentTriggers.Rollback };
+        var queued = Run("prod", "queued", DeploymentStates.Queued, -3);
+        var failed = Run("prod", "failed", DeploymentStates.Failed, -4);
+        var old = Run("prod", "old", DeploymentStates.Succeeded, -24 * 40);
+
+        var markers = ProjectOperationsService.CompletedMarkers("prod", [completed, rollback, queued, failed, old],
+            new[] { Release("new", "CARD-NEW"), Release("old", "CARD-OLD") }
+                .ToDictionary(item => item.Id), End.AddDays(-30), End);
+
+        Assert.Equal([rollback.Id, completed.Id], markers.Select(item => item.DeploymentId));
+        Assert.Equal(rollback.FinishedAtUtc, markers[0].AtUtc);
+        Assert.Equal(completed.FinishedAtUtc, markers[1].AtUtc);
+    }
+
     private static Release Release(string id, string card) => new(id, "demo", id, id, [], "", "", [card],
         End.AddDays(-3).UtcDateTime, "default");
 

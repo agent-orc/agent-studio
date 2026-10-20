@@ -93,6 +93,16 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
     const offset = Number(new URL(route.request().url()).searchParams.get('offset') ?? 0);
     return answer(route, { items: releases.slice(offset, offset + 25), offset, limit: 25, total: releases.length });
   });
+  await page.route(`**${DEPLOY}/releases/*/page?*`, route => {
+    if (deploy.releases === MISSING || (deploy.releases && typeof deploy.releases === 'object' && 'status' in deploy.releases))
+      return answer(route, deploy.releases);
+    const releases = deploy.releases as { id: string }[];
+    const id = route.request().url().split('/').at(-2)!;
+    const index = releases.findIndex(item => item.id === id);
+    if (index < 0) return answer(route, { status: 404, body: { error: 'Unknown release.' } });
+    const offset = Math.floor(index / 25) * 25;
+    return answer(route, { items: releases.slice(offset, offset + 25), offset, limit: 25, total: releases.length });
+  });
   await page.route(`**${DEPLOY}/deployments/page?*`, route => {
     if (deploy.deployments === MISSING || (deploy.deployments && typeof deploy.deployments === 'object' && 'status' in deploy.deployments))
       return answer(route, deploy.deployments);
@@ -150,7 +160,9 @@ test.describe('Project Deploy area (mocked)', () => {
       environments: [{ environment: { id: 'production', name: 'Production', kind: 'production' },
         telemetryAvailable: false, metrics: null,
         markers: [{ deploymentId: 'rollback-1', releaseId: release.id, version: release.version,
-          atUtc: '2026-10-19T10:00:00Z', trigger: 'rollback', state: 'succeeded', cardKeys: release.cardKeys }] }],
+          atUtc: '2026-10-19T10:00:00Z', trigger: 'rollback', state: 'succeeded', cardKeys: release.cardKeys }] },
+        { environment: { id: 'stage', name: 'Staging', kind: 'staging' },
+          telemetryAvailable: false, metrics: null, markers: [] }],
       dora: { successfulProductionDeploys: 2, deploysPerWeek: 0.5, medianCardToProductionHours: 12,
         cardsMeasured: 1, changeFailureRate: 0.25, medianRecoveryHours: 3, recoveriesMeasured: 1 },
     }));
@@ -166,6 +178,23 @@ test.describe('Project Deploy area (mocked)', () => {
       fs.mkdirSync(results, { recursive: true });
       await operations.screenshot({ path: path.join(results, `operations-${theme}--mocked.png`) });
     }
+    await page.route(`**${DEPLOY}/operations/logs?*`, route => answer(route, { telemetryAvailable: true,
+      lines: [{ at: '2026-10-20T00:00:00Z', level: 'error', message: 'Old production error', releaseId: null }] }));
+    await operations.getByTestId('operations-search-logs').click();
+    await expect(operations).toContainText('Old production error');
+    await operations.getByTestId('operations-log-environment').selectOption('stage');
+    await expect(operations).not.toContainText('Old production error');
+    let finishSearch: (() => void) | undefined;
+    await page.route(`**${DEPLOY}/operations/logs?*`, async route => {
+      await new Promise<void>(resolve => { finishSearch = resolve; });
+      await answer(route, { telemetryAvailable: true,
+        lines: [{ at: '2026-10-20T00:00:00Z', level: 'error', message: 'Stale stage error', releaseId: null }] });
+    });
+    await operations.getByTestId('operations-search-logs').click();
+    await expect.poll(() => Boolean(finishSearch)).toBe(true);
+    await operations.getByPlaceholder('Search text').fill('new');
+    finishSearch!();
+    await expect(operations).not.toContainText('Stale stage error');
     await operations.getByTestId(`operations-release-${release.id}`).click();
     await expect(page.getByTestId('deploy-release-detail')).toContainText(release.version);
   });

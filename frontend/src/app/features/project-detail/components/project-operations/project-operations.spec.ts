@@ -67,6 +67,45 @@ describe('ProjectOperationsComponent', () => {
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="operations-logs-empty"]')).not.toBeNull();
   });
 
+  it('clears shown logs on environment and filter changes and ignores an in-flight older search', async () => {
+    const fixture = TestBed.createComponent(ProjectOperationsComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    const requests = TestBed.inject(HttpTestingController);
+    requests.expectOne('/api/projects/demo/deploy/operations').flush({ ...snapshot, environments: [
+      ...snapshot.environments, { ...snapshot.environments[0], environment: { id: 'stage', name: 'Staging', kind: 'staging' } },
+    ] });
+    await fixture.whenStable();
+    const host = fixture.nativeElement as HTMLElement;
+    const view = fixture.componentInstance;
+    const result = { telemetryAvailable: true, lines: [{ at: '2026-10-20T00:00:00Z', level: 'error',
+      message: 'Old production error', releaseId: null }] };
+    view.search();
+    requests.expectOne(req => req.url.endsWith('/deploy/operations/logs')).flush(result);
+    await fixture.whenStable();
+    expect(host.textContent).toContain('Old production error');
+
+    const environment = host.querySelector<HTMLSelectElement>('[data-testid="operations-log-environment"]')!;
+    environment.value = 'stage'; environment.dispatchEvent(new Event('change'));
+    await fixture.whenStable();
+    expect(host.textContent).not.toContain('Old production error');
+    view.search();
+    const oldRequest = requests.expectOne(req => req.url.endsWith('/deploy/operations/logs'));
+    const text = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+    text.value = 'new'; text.dispatchEvent(new Event('input'));
+    oldRequest.flush(result);
+    await fixture.whenStable();
+    expect(host.textContent).not.toContain('Old production error');
+
+    view.search();
+    const current = requests.expectOne(req => req.url.endsWith('/deploy/operations/logs'));
+    expect(current.request.params.get('environmentId')).toBe('stage');
+    expect(current.request.params.get('text')).toBe('new');
+    current.flush({ telemetryAvailable: true, lines: [{ ...result.lines[0], message: 'New stage error' }] });
+    await fixture.whenStable();
+    expect(host.textContent).toContain('New stage error');
+  });
+
   it('renders telemetry measurements, daily anonymous usage and marked trend curves', async () => {
     const fixture = TestBed.createComponent(ProjectOperationsComponent);
     fixture.componentRef.setInput('projectName', 'demo');

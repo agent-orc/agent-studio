@@ -1,6 +1,6 @@
 import { DatePipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, output, signal, type WritableSignal } from '@angular/core';
 import { take } from 'rxjs';
 import { metric, ratio, type OperationsLogResult, type ProjectOperations } from './project-operations.model';
 import { OperationsTrendComponent } from '../operations-trend/operations-trend';
@@ -51,10 +51,20 @@ export class ProjectOperationsComponent {
     });
   }
 
+  changeFilter(filter: WritableSignal<string>, value: string): void {
+    if (filter() === value) return;
+    filter.set(value);
+    ++this.logGeneration;
+    this.logs.set(null);
+    this.logError.set(null);
+  }
+
   search(): void {
     const environmentId = this.selectedEnvironment();
     if (!environmentId) return;
     const generation = ++this.logGeneration;
+    this.logs.set(null);
+    this.logError.set(null);
     const params: Record<string, string> = { environmentId };
     if (this.since()) params['since'] = new Date(this.since()).toISOString();
     if (this.until()) params['until'] = new Date(this.until()).toISOString();

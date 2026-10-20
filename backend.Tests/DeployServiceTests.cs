@@ -115,6 +115,21 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void Release_navigation_returns_only_the_page_containing_the_selected_release()
+    {
+        var (deploy, _, _) = Build();
+        var firstCommit = Head();
+        var first = CreateRelease(deploy, Artifact('a'), firstCommit);
+        var second = CreateRelease(deploy, Artifact('b'), Commit("second"));
+
+        var page = deploy.ReleasePageContaining("demo", first.Id, 1)!;
+        Assert.Equal((1, 1, 2), (page.Offset, page.Limit, page.Total));
+        Assert.Equal(first.Id, Assert.Single(page.Items).Id);
+        Assert.Equal(second.Id, Assert.Single(deploy.ReleasePageContaining("demo", second.Id, 1)!.Items).Id);
+        Assert.Null(deploy.ReleasePageContaining("demo", "missing", 1));
+    }
+
+    [Fact]
     public void Release_IncludesOnlyCardsIntegratedSincePreviousRelease()
     {
         var (deploy, _, _) = Build();
@@ -776,6 +791,10 @@ public sealed class DeployServiceTests : IDisposable
         using var releasePage = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/releases/page?offset=0&limit=1"));
         Assert.Equal(1, releasePage.RootElement.GetProperty("total").GetInt32());
         Assert.Single(releasePage.RootElement.GetProperty("items").EnumerateArray());
+        using var selectedPage = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/demo/deploy/releases/{releaseId}/page?limit=1"));
+        Assert.Equal(0, selectedPage.RootElement.GetProperty("offset").GetInt32());
+        Assert.Equal(releaseId, selectedPage.RootElement.GetProperty("items")[0].GetProperty("id").GetString());
         using var runPage = JsonDocument.Parse(await client.GetStringAsync(
             "/api/projects/demo/deploy/deployments/page?environmentId=stage&state=queued&offset=0&limit=1"));
         Assert.Equal(1, runPage.RootElement.GetProperty("total").GetInt32());

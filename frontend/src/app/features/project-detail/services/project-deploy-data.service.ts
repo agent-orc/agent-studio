@@ -70,6 +70,13 @@ export class ProjectDeployDataService {
       { params: { offset, limit: 25 } }), 'Releases could not be loaded.', true);
   }
 
+
+  releasePageContaining(projectName: string, releaseId: string): Observable<DeployPanel<DeployPage<Release>>> {
+    return panel(this.http.get<DeployPage<Release>>(
+      `${deployRoot(projectName)}/releases/${encodeURIComponent(releaseId)}/page`, { params: { limit: 25 } }),
+    'The selected release could not be loaded.', true);
+  }
+
   /** AGT-3201 deploy runs, newest first. */
   deployments(projectName: string): Observable<DeployPanel<Deployment[]>> {
     return panel(this.http.get<Deployment[]>(`${deployRoot(projectName)}/deployments`),

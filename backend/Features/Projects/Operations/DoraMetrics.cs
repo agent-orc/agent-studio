@@ -16,9 +16,10 @@ public static class DoraMetrics
         var production = environments.Where(item => item.Kind == EnvironmentKinds.Production)
             .Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
         var releaseById = releases.ToDictionary(item => item.Id, StringComparer.Ordinal);
-        var runs = deployments.Where(item => production.Contains(item.EnvironmentId) && item.FinishedAtUtc is not null
-                && item.FinishedAtUtc >= since.UtcDateTime && item.FinishedAtUtc <= until.UtcDateTime)
+        var history = deployments.Where(item => production.Contains(item.EnvironmentId) && item.FinishedAtUtc is not null)
             .OrderBy(item => item.FinishedAtUtc).ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
+        var runs = history.Where(item => item.FinishedAtUtc >= since.UtcDateTime
+            && item.FinishedAtUtc <= until.UtcDateTime).ToArray();
         var changes = runs.Where(item => item.Trigger is DeploymentTriggers.Deploy or DeploymentTriggers.Redeploy).ToArray();
         var successes = changes.Where(item => item.State == DeploymentStates.Succeeded).ToArray();
         var failedChanges = changes.Where(item => item.State == DeploymentStates.Failed)
@@ -38,16 +39,17 @@ public static class DoraMetrics
             }
         }
         var leads = new List<double>();
-        var measuredCards = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var run in successes)
+        var arrivedCards = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var run in history.Where(item => item.Trigger is DeploymentTriggers.Deploy or DeploymentTriggers.Redeploy
+                     && item.State == DeploymentStates.Succeeded))
         {
             if (!releaseById.TryGetValue(run.ReleaseId, out var release)) continue;
             foreach (var key in release.CardKeys)
-                if (!measuredCards.Contains(key) && cardCreatedAt.TryGetValue(key, out var created)
+                if (arrivedCards.Add(key) && run.FinishedAtUtc >= since.UtcDateTime
+                    && run.FinishedAtUtc <= until.UtcDateTime && cardCreatedAt.TryGetValue(key, out var created)
                     && created.Year >= 2000
                     && run.FinishedAtUtc!.Value >= created)
                 {
-                    measuredCards.Add(key);
                     leads.Add((run.FinishedAtUtc.Value - created).TotalHours);
                 }
         }

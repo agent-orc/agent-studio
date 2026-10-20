@@ -48,6 +48,17 @@ class FakeDeployData {
       ? { status: 'ready', value: { items: (panel.value as unknown[]).slice(offset, offset + 25), total: (panel.value as unknown[]).length, offset, limit: 25 } }
       : panel));
   }
+  releasePageContaining(_project: string, id: string): Observable<DeployPanel<unknown>> {
+    this.requests.push(`release-containing:${id}`);
+    return this.releasesPanel.pipe(map(panel => {
+      if (panel.status !== 'ready') return panel;
+      const releases = panel.value as { id: string }[];
+      const index = releases.findIndex(item => item.id === id);
+      if (index < 0) return { status: 'error', message: 'The selected release could not be loaded.' };
+      const offset = Math.floor(index / 25) * 25;
+      return { status: 'ready', value: { items: releases.slice(offset, offset + 25), total: releases.length, offset, limit: 25 } };
+    }));
+  }
   deploymentPage(_project: string, offset: number, filter?: { environmentId: string; state: string; period: string }): Observable<DeployPanel<unknown>> {
     this.requests.push(`deployments:${offset}:${filter?.environmentId ?? 'all'}`);
     if (this.controlledReads) {
@@ -365,6 +376,25 @@ describe('ProjectDeployAreaComponent', () => {
     await click('deploy-releases-next');
     expect(host().querySelectorAll('.releases__row')).toHaveLength(15);
     expect(data.requests).toContain('releases:25');
+  });
+
+  it('opens a marker release through one bounded containing page', async () => {
+    data.serveEverything();
+    const release = deployReleasesFixture()[0];
+    data.releasesPanel.next({ status: 'ready', value: Array.from({ length: 40 }, (_, index) => ({
+      ...release, id: `release-${index}`, version: `version-${index}`,
+      createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    })) });
+    await settle();
+    data.requests.length = 0;
+
+    fixture.componentInstance.openRelease('release-35');
+    await settle();
+
+    expect(data.requests).toEqual(['release-containing:release-35']);
+    expect(fixture.componentInstance.releaseOffset()).toBe(25);
+    expect(host().querySelectorAll('.releases__row')).toHaveLength(15);
+    expect(text('deploy-release-detail')).toContain('version-35');
   });
 
   it('clears server history filters when leaving History so the reopened controls match the data', async () => {

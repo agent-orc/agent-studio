@@ -20,6 +20,10 @@ public static class DeployEndpoints
             deploy.ReleasePage(projectName, offset ?? 0, limit ?? 25) is { } value
                 ? Results.Ok(value) : UnknownProject(projectName));
 
+        project.MapGet("/releases/{releaseId}/page", (string projectName, string releaseId, int? limit, DeployService deploy) =>
+            deploy.ReleasePageContaining(projectName, releaseId, limit ?? 25) is { } value
+                ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
+
         project.MapGet("/releases/{releaseId}", (string projectName, string releaseId, DeployService deploy) =>
             deploy.ReleaseDetail(projectName, releaseId) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
