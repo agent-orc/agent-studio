@@ -45,8 +45,12 @@ public static class DeployHostCommand
         {
             var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
             if (job.Template == "container")
-                await DeployContainer(job, secretRoot, cancellationToken, runCommand ??
-                    ((executable, commandArgs, ct) => Command(executable, commandArgs, ct)));
+            {
+                Func<string, IReadOnlyList<string>, CancellationToken, bool, Task> commands = runCommand is null
+                    ? (executable, commandArgs, ct, allowFailure) => Command(executable, commandArgs, ct, allowFailure)
+                    : (executable, commandArgs, ct, _) => runCommand(executable, commandArgs, ct);
+                await DeployContainer(job, secretRoot, cancellationToken, commands);
+            }
             else if (job.Template == "static")
             {
                 if (job.Variables.Count > 0 || job.SecretVariableRefs.Count > 0)
@@ -124,7 +128,7 @@ public static class DeployHostCommand
     }
 
     private static async Task DeployContainer(Job job, string secretRoot, CancellationToken ct,
-        Func<string, IReadOnlyList<string>, CancellationToken, Task> runCommand)
+        Func<string, IReadOnlyList<string>, CancellationToken, bool, Task> runCommand)
     {
         if (!int.TryParse(job.Destination, out var port) || port is < 1 or > 65535)
             throw new InvalidOperationException("Invalid proxy port.");
@@ -173,12 +177,11 @@ public static class DeployHostCommand
                 await using var writer = new StreamWriter(file);
                 foreach (var line in lines) await writer.WriteLineAsync(line.AsMemory(), ct);
             }
-            await runCommand("docker", ["pull", job.Artifact], ct);
-            try { await runCommand("docker", ["rm", "-f", name], ct); }
-            catch (InvalidOperationException) { /* An absent prior container is expected. */ }
+            await runCommand("docker", ["pull", job.Artifact], ct, false);
+            await runCommand("docker", ["rm", "-f", name], ct, true);
             if (job.ContainerPort is < 1 or > 65535) throw new InvalidOperationException("Invalid container port.");
             await runCommand("docker", ["run", "-d", "--name", name, "--restart", "unless-stopped",
-                "--publish", $"127.0.0.1:{port}:{job.ContainerPort}", "--env-file", envFile, job.Artifact], ct);
+                "--publish", $"127.0.0.1:{port}:{job.ContainerPort}", "--env-file", envFile, job.Artifact], ct, false);
         }
         finally
         {
