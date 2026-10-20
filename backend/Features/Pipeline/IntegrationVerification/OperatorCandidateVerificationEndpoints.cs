@@ -52,8 +52,10 @@ public static class OperatorCandidateVerificationEndpoints
             var branch = TaskIntegrationBranch.Name(settings.Get(registered.DisplayName).IntegrationBranch);
             var root = git.ResolveRepoRootForWatchPath(registered.StorageLocation);
             if (root is null) return Results.Conflict(new { error = "Project repository is unavailable." });
-            var published = git.GetBranchTip(root, git.HasOriginRemote(root)
-                ? $"refs/remotes/origin/{branch}" : $"refs/heads/{branch}");
+            var containment = git.CheckPublishedDelivery(root, branch, sha, context.RequestAborted);
+            if (containment == PublishedDeliveryContainment.Unavailable)
+                return Results.Conflict(new { error = $"Published {branch} could not be refreshed from origin." });
+            var published = git.GetBranchTip(root, $"refs/remotes/origin/{branch}");
             if (!ReviewSubjectStore.IsValidResultSha(published) || !git.IsAncestor(root, sha, published!))
                 return Results.Conflict(new { error = $"Candidate {sha} is not on published {branch}." });
 
@@ -75,7 +77,8 @@ public static class OperatorCandidateVerificationEndpoints
                     results.Add(new(address, false, "Card was not found in the project."));
                     continue;
                 }
-                var delivery = ReviewSubjectStore.Read(card.FolderPath)?.ResultSha;
+                var subject = ReviewSubjectStore.Read(card.FolderPath);
+                var delivery = subject?.ResultSha;
                 if (!ReviewSubjectStore.IsValidResultSha(delivery))
                 {
                     results.Add(new(address, false, "Card has no full reviewed delivery SHA."));
@@ -95,6 +98,10 @@ public static class OperatorCandidateVerificationEndpoints
                     IntegrationBranch = branch,
                     IntegrationSha = sha,
                     SourceSha = delivery,
+                    DeliveryEpoch = subject!.RunAttemptId,
+                    CommitShas = card.Commits.Where(commit => ReviewSubjectStore.IsValidResultSha(commit.Sha)
+                            && git.IsAncestor(root, commit.Sha, delivery!))
+                        .Select(commit => commit.Sha).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                     Actor = TimelineActors.Human(principal.User.Id),
                     VerificationHost = request.VerificationHost.Trim(),
                     SuiteSummary = summary,
@@ -105,42 +112,43 @@ public static class OperatorCandidateVerificationEndpoints
                     VerificationEndedAtUtc = request.EndedAtUtc.UtcDateTime,
                     Evidence = $"Verified by operator candidate {sha}: {summary}. Log SHA-256 {request.LogHash.Trim().ToLowerInvariant()}.",
                 };
-                var previous = card.IntegrationRecords.FirstOrDefault(item => item.Id == record.Id);
-                if (previous is not null && (previous.IntegrationSha != record.IntegrationSha
-                    || previous.SourceSha != record.SourceSha || previous.VerificationHost != record.VerificationHost
-                    || previous.SuiteSummary != record.SuiteSummary || previous.LogHash != record.LogHash
-                    || !previous.VerificationSuites.SequenceEqual(record.VerificationSuites)
-                    || previous.VerificationStartedAtUtc != record.VerificationStartedAtUtc
-                    || previous.VerificationEndedAtUtc != record.VerificationEndedAtUtc))
+                IntegrationRecordWriteResult write;
+                lock (TaskJsonFile.SyncRoot(card.FolderPath))
+                {
+                    write = mutations.AppendIntegrationRecordOnFolder(card.FolderPath, record);
+                    if (write.Succeeded && !write.Conflict)
+                    {
+                        var hasAudit = timeline.ReadAll(card.FolderPath).Any(item =>
+                            item.Kind == TimelineEventKinds.IntegrationVerificationRecorded
+                            && item.Details?.GetValueOrDefault("recordId") == record.Id);
+                        if (!hasAudit && !timeline.Append(card.FolderPath, new TimelineEvent
+                            {
+                                Ts = now,
+                                Kind = TimelineEventKinds.IntegrationVerificationRecorded,
+                                Actor = record.Actor!,
+                                Summary = record.Evidence,
+                                Details = new Dictionary<string, string>
+                                {
+                                    ["state"] = IntegrationVerificationStates.Verified,
+                                    ["sha"] = sha,
+                                    ["evidence"] = "operator-candidate",
+                                    ["recordId"] = record.Id,
+                                },
+                            }))
+                        {
+                            results.Add(new(address, false, "The record was persisted but its audit event failed; retry this post."));
+                            continue;
+                        }
+                    }
+                }
+                if (write.Conflict)
                 {
                     results.Add(new(address, false, "An immutable record with this candidate and delivery already has different evidence."));
                     continue;
                 }
-                var write = mutations.AppendIntegrationRecordOnFolder(card.FolderPath, record);
                 if (!write.Succeeded)
                 {
                     results.Add(new(address, false, "The integration record could not be persisted."));
-                    continue;
-                }
-                var hasAudit = timeline.ReadAll(card.FolderPath).Any(item =>
-                    item.Kind == TimelineEventKinds.IntegrationVerificationRecorded
-                    && item.Details?.GetValueOrDefault("recordId") == record.Id);
-                if (!hasAudit && !timeline.Append(card.FolderPath, new TimelineEvent
-                    {
-                        Ts = now,
-                        Kind = TimelineEventKinds.IntegrationVerificationRecorded,
-                        Actor = record.Actor!,
-                        Summary = record.Evidence,
-                        Details = new Dictionary<string, string>
-                        {
-                            ["state"] = IntegrationVerificationStates.Verified,
-                            ["sha"] = sha,
-                            ["evidence"] = "operator-candidate",
-                            ["recordId"] = record.Id,
-                        },
-                    }))
-                {
-                    results.Add(new(address, false, "The record was persisted but its audit event failed; retry this post."));
                     continue;
                 }
                 results.Add(new(address, true, write.Appended ? "Recorded." : "Already recorded."));

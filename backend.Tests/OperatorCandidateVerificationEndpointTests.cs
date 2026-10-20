@@ -5,6 +5,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Pipeline;
 using AgentStudio.Security;
+using AgentStudio.Shared;
+using AgentStudio.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -59,6 +61,7 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         WriteCard(watchPath, "AGT-3166", delivery);
         WriteCard(watchPath, "AGT-3171", ancestor);
         WriteCard(watchPath, "AGT-3185", missing);
+        WriteCard(watchPath, "AGT-3190", ancestor);
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
@@ -113,6 +116,23 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         Assert.False(results[2].GetProperty("recorded").GetBoolean());
         Assert.Contains("not contained", results[2].GetProperty("reason").GetString());
 
+        File.WriteAllText(Path.Combine(repository, "later.txt"), "later card\n");
+        Git(repository, "add", ".");
+        Git(repository, "commit", "-q", "-m", "later card");
+        Git(repository, "push", "-q", "origin", "develop");
+
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var mappedCard = scanner.FindJob("AGT-3166", watchPath)!;
+        var status = factory.Services.GetRequiredService<TaskIntegrationStatusService>()
+            .BuildLookup([mappedCard])[mappedCard.TaskKey];
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Equal(IntegrationVerificationStates.Verified, status.Verification?.State);
+        Assert.True(new IntegrationGenerationReconcileSweep(factory.Services.GetRequiredService<TaskMutationService>())
+            .Reconcile(mappedCard, status));
+        using (var reconciled = JsonDocument.Parse(File.ReadAllText(Path.Combine(mappedCard.FolderPath, "task.json"))))
+            Assert.Equal(CommitIntegrationRules.IntegratedByContent, reconciled.RootElement.GetProperty("commits")[0]
+                .GetProperty("integrationRule").GetString());
+
         using var repeated = await client.PostAsJsonAsync(path, summary with { Cards = ["AGT-3166"] });
         repeated.EnsureSuccessStatusCode();
         using var replay = JsonDocument.Parse(await repeated.Content.ReadAsStringAsync());
@@ -136,11 +156,68 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         var timeline = factory.Services.GetRequiredService<TimelineLog>().ReadAll(cardFolder);
         Assert.Single(timeline, item => item.Details?.GetValueOrDefault("recordId") == record.GetProperty("id").GetString());
 
+        var titleUpdates = Task.Run(() =>
+        {
+            var mutations = factory.Services.GetRequiredService<TaskMutationService>();
+            for (var index = 0; index < 20; index++)
+                Assert.True(mutations.SetJobTitle("AGT-3190", $"title-{index}", watchPath));
+        });
+        var concurrent = Enumerable.Range(0, 12).Select(index => client.PostAsJsonAsync(path,
+            summary with { Cards = ["AGT-3190"], VerificationHost = index % 2 == 0 ? "gate-host" : "other-host" }));
+        var concurrentResponses = await Task.WhenAll(concurrent);
+        await titleUpdates;
+        foreach (var response in concurrentResponses) response.EnsureSuccessStatusCode();
+        var concurrentResults = await Task.WhenAll(concurrentResponses.Select(async response =>
+        {
+            using (response)
+            using (var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync()))
+                return (Recorded: payload.RootElement.GetProperty("results")[0].GetProperty("recorded").GetBoolean(),
+                    Reason: payload.RootElement.GetProperty("results")[0].GetProperty("reason").GetString());
+        }));
+        Assert.Contains(concurrentResults, item => item.Reason == "Recorded.");
+        Assert.Contains(concurrentResults, item => item.Reason == "Already recorded.");
+        Assert.Contains(concurrentResults, item => !item.Recorded && item.Reason!.Contains("different evidence"));
+        var concurrentFolder = Path.Combine(watchPath, "5-human-review", "AGT-3190");
+        using (var persisted = JsonDocument.Parse(File.ReadAllText(Path.Combine(concurrentFolder, "task.json"))))
+        {
+            Assert.Single(persisted.RootElement.GetProperty("integrationRecords").EnumerateArray());
+            Assert.Equal("title-19", persisted.RootElement.GetProperty("title").GetString());
+        }
+        Assert.Single(factory.Services.GetRequiredService<TimelineLog>().ReadAll(concurrentFolder),
+            item => item.Kind == TimelineEventKinds.IntegrationVerificationRecorded);
+
+        ReviewSubjectStore.Write(cardFolder, new ReviewSubjectRecord
+        {
+            TaskKey = "AGT-3166", RunAttemptId = "attempt-2", AttemptChainId = "chain-2",
+            ResultSha = missing, Project = "candidate-test", Repository = "repository",
+        });
+        var nextDelivery = scanner.FindJob("AGT-3166", watchPath)!;
+        Assert.NotEqual(IntegrationStatuses.Integrated,
+            factory.Services.GetRequiredService<TaskIntegrationStatusService>()
+                .BuildLookup([nextDelivery])[nextDelivery.TaskKey].Status);
+
         using var unpublished = await client.PostAsJsonAsync(path, summary with
         {
             CandidateSha = missing, Cards = ["AGT-3185"],
         });
         Assert.Equal(HttpStatusCode.Conflict, unpublished.StatusCode);
+
+        Git(repository, "checkout", "-q", "-b", "rewritten", ancestor);
+        File.WriteAllText(Path.Combine(repository, "replacement.txt"), "replacement\n");
+        Git(repository, "add", ".");
+        Git(repository, "commit", "-q", "-m", "rewrite publication");
+        Git(repository, "push", "-q", "--force", "origin", "rewritten:develop");
+        Git(repository, "update-ref", "refs/remotes/origin/develop", candidate);
+        // origin/develop still names the old candidate until the route fetches.
+        Assert.Equal(candidate, Git(repository, "rev-parse", "refs/remotes/origin/develop"));
+        using var stale = await client.PostAsJsonAsync(path, summary with { Cards = ["AGT-3166"] });
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        Assert.NotEqual(candidate, Git(repository, "rev-parse", "refs/remotes/origin/develop"));
+
+        Git(repository, "remote", "set-url", "origin", Path.Combine(_root, "unavailable.git"));
+        using var failedFetch = await client.PostAsJsonAsync(path, summary with { Cards = ["AGT-3171"] });
+        Assert.Equal(HttpStatusCode.Conflict, failedFetch.StatusCode);
+        Assert.Contains("could not be refreshed", await failedFetch.Content.ReadAsStringAsync());
     }
 
     private static void WriteCard(string watchPath, string key, string sha)
@@ -151,6 +228,8 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         {
             id = key, key, title = key, state = "5-human-review", order = 1,
             agent = "codex", cliType = "codex", taskType = "feature",
+            commits = new[] { new { sha, shortSha = sha[..7], message = "delivery", runAttemptId = "attempt-1",
+                resultSha = sha, deliveryGeneration = 1, filesChanged = 1, files = new[] { "delivered.txt" } } },
         }));
         File.WriteAllText(Path.Combine(folder, "prompt.md"), "Fixture delivery.");
         ReviewSubjectStore.Write(folder, new ReviewSubjectRecord

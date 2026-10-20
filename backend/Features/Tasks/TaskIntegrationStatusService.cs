@@ -768,16 +768,24 @@ public sealed class TaskIntegrationStatusService
     /// </summary>
     private static IEnumerable<string> CuratedMappingIntegrationShas(TaskInfo job, string sourceSha,
         string? deliveryEpoch, string branch, HashSet<string>? publishedAncestors)
-        => publishedAncestors is null || string.IsNullOrWhiteSpace(deliveryEpoch)
-            ? []
-            : job.IntegrationRecords.Where(record =>
-                    record.Classification == IntegrationRecordClasses.CuratedMapping
+    {
+        if (publishedAncestors is null || string.IsNullOrWhiteSpace(deliveryEpoch)) return [];
+        var subject = CurrentReviewSubject(job);
+        return job.IntegrationRecords.Where(record =>
+                (record.Classification == IntegrationRecordClasses.CuratedMapping
                     && string.Equals(record.SourceSha, sourceSha, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(record.DeliveryEpoch, deliveryEpoch, StringComparison.Ordinal)
-                    && string.Equals(record.IntegrationBranch, branch, StringComparison.OrdinalIgnoreCase)
-                    && record.IntegrationSha?.Length == 40
-                    && AncestorSetContains(publishedAncestors, record.IntegrationSha))
-                .Select(record => record.IntegrationSha!);
+                    || record.Classification == IntegrationRecordClasses.IntegratedVerified
+                    && record.Id.StartsWith("operator-candidate-", StringComparison.Ordinal)
+                    && subject is not null
+                    && string.Equals(record.SourceSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase)
+                    && (string.Equals(sourceSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase)
+                        || record.CommitShas.Contains(sourceSha, StringComparer.OrdinalIgnoreCase)))
+                && string.Equals(record.DeliveryEpoch, deliveryEpoch, StringComparison.Ordinal)
+                && IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, branch)
+                && record.IntegrationSha?.Length == 40
+                && AncestorSetContains(publishedAncestors, record.IntegrationSha))
+            .Select(record => record.IntegrationSha!);
+    }
 
     /// <summary>
     /// The repository/branch the card is answered from when it carries no

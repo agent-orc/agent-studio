@@ -145,11 +145,15 @@ STUDIO_OPERATOR_TOKEN=<operator-token> python3 scripts/record-operator-candidate
 ```
 
 The script computes the log SHA-256 and posts the summary. The route checks
-that the candidate is on the published integration branch and that each
+that origin can be fetched and the candidate is an ancestor of the refreshed
+published integration branch. It checks that each
 card's reviewed delivery is an ancestor or patch-equivalent. It returns a
 reason for each refused card. Successful card records and their timeline
 audit events are append-only; reposting identical evidence is a no-op. A
-changed summary for the same candidate and delivery is refused.
+changed summary for the same candidate and delivery is refused, including
+when two posts race. Patch-equivalent records carry the review attempt and
+attributed commits so the board and reconciliation recognize the current
+delivery while the published branch retains the verified candidate.
 
 ### Detached launch
 
