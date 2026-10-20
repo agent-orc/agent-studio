@@ -25,7 +25,12 @@ public sealed class PermissionEvaluatorTests
         { "owner holds access management", IamRoles.Owner, Workspace, IamPermissions.AccessManage, "*", null, true },
         { "owner holds workspace administration", IamRoles.Owner, Workspace, IamPermissions.WorkspaceAdminister, "-", null, true },
         { "owner resolves secrets as break-glass", IamRoles.Owner, Workspace, IamPermissions.SecretsResolve, "alpha", "production", true },
-        { "admin reads access", IamRoles.Admin, Workspace, IamPermissions.AccessRead, "*", null, true },
+        { "admin does not read access (Owner only, as before)", IamRoles.Admin, Workspace, IamPermissions.AccessRead, "*", null, false },
+        { "workspace admin writes workspace settings", IamRoles.Admin, Workspace, IamPermissions.WorkspaceSettingsWrite, "*", null, true },
+        { "workspace admin operates the installation", IamRoles.Admin, Workspace, IamPermissions.WorkspaceOperate, "*", null, true },
+        { "project admin no longer writes workspace settings", IamRoles.Admin, Project("alpha"), IamPermissions.WorkspaceSettingsWrite, "-", null, false },
+        { "project admin no longer operates the installation", IamRoles.Admin, Project("alpha"), IamPermissions.WorkspaceOperate, "-", null, false },
+        { "project admin cannot write settings even addressed", IamRoles.Admin, Project("alpha"), IamPermissions.WorkspaceSettingsWrite, "alpha", null, false },
         { "admin cannot manage access", IamRoles.Admin, Workspace, IamPermissions.AccessManage, "*", null, false },
         { "admin cannot administer the installation", IamRoles.Admin, Workspace, IamPermissions.WorkspaceAdminister, "-", null, false },
         { "admin approves production", IamRoles.Admin, Workspace, IamPermissions.EnvironmentProductionDeployApprove, "alpha", "production", true },
@@ -125,6 +130,61 @@ public sealed class PermissionEvaluatorTests
         Assert.False(Evaluate(IamPermissions.ProjectRead, User(), bindings, Target("alpha")).Allowed);
         Assert.True(Evaluate(IamPermissions.ProjectRead, account,
             [Binding(IamPrincipalKind.ServiceAccount, AccountId, IamRoles.Viewer, Workspace)], PermissionTarget.Unaddressed).Allowed);
+    }
+
+    [Fact]
+    public void Service_accounts_never_approve_production()
+    {
+        var account = IamSubject.ForServiceAccount(AccountId);
+        RoleBinding[] bindings = [Binding(IamPrincipalKind.ServiceAccount, AccountId, IamRoles.Admin, Workspace)];
+
+        Assert.False(Evaluate(IamPermissions.EnvironmentProductionDeployApprove, account, bindings, Target("alpha", "production")).Allowed);
+        Assert.True(Evaluate(IamPermissions.EnvironmentProductionDeploy, account, bindings, Target("alpha", "production")).Allowed);
+        Assert.True(Evaluate(IamPermissions.EnvironmentProductionDeployApprove, User(),
+            [Binding(IamPrincipalKind.User, UserId, IamRoles.Admin, Workspace)], Target("alpha", "production")).Allowed);
+    }
+
+    [Fact]
+    public void Body_addressed_routes_pass_with_a_project_binding_for_the_handler_to_check()
+    {
+        var deferred = new PermissionTarget(ProjectRouteScope.DeferredToHandler, []);
+        RoleBinding[] human = [Binding(IamPrincipalKind.User, UserId, IamRoles.Developer, Project("alpha"))];
+        RoleBinding[] account = [Binding(IamPrincipalKind.ServiceAccount, AccountId, IamRoles.Developer, Project("alpha"))];
+
+        Assert.True(Evaluate(IamPermissions.ProjectCardsWrite, User(), human, deferred).Allowed);
+        Assert.True(Evaluate(IamPermissions.ProjectCardsWrite, IamSubject.ForServiceAccount(AccountId), account, deferred).Allowed);
+        Assert.False(Evaluate(IamPermissions.ProjectCardsWrite, User(),
+            [Binding(IamPrincipalKind.User, UserId, IamRoles.Viewer, Project("alpha"))], deferred).Allowed);
+    }
+
+    [Fact]
+    public void The_projected_principal_holds_the_route_permission_projects_and_the_covering_role()
+    {
+        RoleBinding[] bindings =
+        [
+            Binding(IamPrincipalKind.User, UserId, IamRoles.Contributor, Project("beta")),
+            Binding(IamPrincipalKind.User, UserId, IamRoles.Developer, Project("alpha")),
+            Binding(IamPrincipalKind.User, UserId, IamRoles.Viewer, Project("gamma")),
+        ];
+
+        var beta = PermissionEvaluator.Project(IamPermissions.ProjectCardsWrite, User(), bindings, Target("beta"));
+        Assert.Equal((StudioRoles.Contributor, IamRoles.Contributor), (beta.LegacyRole, beta.Role));
+        Assert.Equal(["beta", "alpha"], beta.Projects);
+        var alpha = PermissionEvaluator.Project(IamPermissions.ProjectCardsWrite, User(), bindings, Target("alpha"));
+        Assert.Equal(StudioRoles.Operator, alpha.LegacyRole);
+        var runs = PermissionEvaluator.Project(IamPermissions.ProjectRunsOperate, User(), bindings, PermissionTarget.Unaddressed);
+        Assert.Equal(["alpha"], runs.Projects);
+        var reads = PermissionEvaluator.Project(IamPermissions.ProjectRead, User(), bindings, PermissionTarget.Unaddressed);
+        Assert.Equal(["beta", "alpha", "gamma"], reads.Projects);
+        var gamma = PermissionEvaluator.Project(IamPermissions.ProjectRead, User(), bindings, Target("gamma"));
+        Assert.Equal(StudioRoles.Viewer, gamma.LegacyRole);
+
+        var owner = PermissionEvaluator.Project(IamPermissions.ProjectRead, User(),
+            [Binding(IamPrincipalKind.User, UserId, IamRoles.Owner, Workspace)], Target("gamma"));
+        Assert.Equal(StudioRoles.Owner, owner.LegacyRole);
+        var workspaceViewer = PermissionEvaluator.Project(IamPermissions.ProjectRead, User(),
+            [Binding(IamPrincipalKind.User, UserId, IamRoles.Viewer, Workspace)], PermissionTarget.Unaddressed);
+        Assert.Equal(["*"], workspaceViewer.Projects);
     }
 
     [Fact]

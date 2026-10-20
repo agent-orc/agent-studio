@@ -170,7 +170,9 @@ public sealed class AccessSecurityTests : IDisposable
     {
         var (store, config, _) = NewStore();
         store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
-        var created = store.CreateUser(new CreateUserRequest("ops.user", "Ops", StudioRoles.Operator, null, "temporary pass phrase!"));
+        // An operator without projects holds no role binding (AGT-3228), so
+        // the mutating operator here holds the all-projects grant.
+        var created = store.CreateUser(new CreateUserRequest("ops.user", "Ops", StudioRoles.Operator, ["*"], "temporary pass phrase!"));
         var login = store.Login(created.User.Username, created.TemporaryPassword, "ops|127.0.0.1");
         store.ChangePassword(new HumanPrincipal(login.User, store.AuthenticateSession(login.SessionToken)!.Session),
             new ChangePasswordRequest(created.TemporaryPassword, "new permanent pass phrase!"));

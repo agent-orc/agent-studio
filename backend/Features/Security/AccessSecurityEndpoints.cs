@@ -93,16 +93,16 @@ public static class AccessSecurityEndpoints
         auth.MapPost("/users", (CreateUserRequest request, HttpContext context, AccessSecurityStore store) =>
             Execute(() =>
             {
-                RequireOwner(context, store);
-                var result = store.CreateUser(request);
+                var owner = RequireOwner(context, store);
+                var result = store.CreateUser(request, owner.User.Id);
                 return Results.Ok(new { user = ToResponse(result.User), temporaryPassword = result.TemporaryPassword, mustChangePassword = true });
             }));
 
         auth.MapPost("/invitations", (InviteUserRequest request, HttpContext context, AccessSecurityStore store) =>
             Execute(() =>
             {
-                RequireOwner(context, store);
-                var invitation = store.InviteUser(request);
+                var owner = RequireOwner(context, store);
+                var invitation = store.InviteUser(request, owner.User.Id);
                 return Results.Ok(new
                 {
                     user = ToResponse(invitation.User),
@@ -168,8 +168,8 @@ public static class AccessSecurityEndpoints
         auth.MapDelete("/api-tokens/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
             Execute(() =>
             {
-                RequireOwner(context, store);
-                store.RevokeApiToken(id);
+                var owner = RequireOwner(context, store);
+                store.RevokeApiToken(id, owner.User.Id);
                 return Results.NoContent();
             }));
 

@@ -18,10 +18,13 @@ public sealed record LegacyRoleSummary(string Role, List<string> Projects, List<
 /// <para>
 /// Summary: the reverse projection keeps <see cref="StudioUser.Role"/>,
 /// <see cref="StudioUser.Projects"/>, and
-/// <see cref="StudioUser.ProductionApprovalProjects"/> as the strongest role
-/// and the union of bound projects, so handler checks that still read them
-/// never grant more than the bindings do. The permission check narrows the
-/// rest.
+/// <see cref="StudioUser.ProductionApprovalProjects"/> for display, for the
+/// legacy role PUT, and for an older binary that reads the file after a
+/// downgrade. It is downgrade-safe: every listed project is covered by a
+/// binding at least as strong as the summary role, so only Admin becomes
+/// operator, and Developer or Approver never do. Requests never authorize
+/// through it; the middleware projects a per-request principal instead
+/// (<see cref="PermissionEvaluator.Project"/>).
 /// </para>
 /// </summary>
 public static class LegacyRoleMapping
@@ -74,27 +77,47 @@ public static class LegacyRoleMapping
             return new LegacyRoleSummary(StudioRoles.Owner, [], []);
         if (bindings.Count == 0) return new LegacyRoleSummary(StudioRoles.Viewer, [], []);
 
-        var strongest = bindings.Select(binding => IamRoles.Find(binding.Role)!).MaxBy(role => role.Rank)!;
-        var role = strongest.Id switch
+        var admins = bindings.Where(binding => binding.Role == IamRoles.Admin).ToList();
+        if (admins.Count > 0) return new LegacyRoleSummary(StudioRoles.Operator, ProjectsOf(admins), []);
+
+        var contributors = bindings.Where(binding => binding.Role == IamRoles.Contributor).ToList();
+        if (contributors.Count > 0)
         {
-            // Approver needs unsafe methods on the approval routes; the
-            // permission check narrows it to approvals and reads.
-            IamRoles.Admin or IamRoles.Developer or IamRoles.Approver => StudioRoles.Operator,
-            IamRoles.Contributor => StudioRoles.Contributor,
-            _ => StudioRoles.Viewer,
-        };
-        var projects = bindings.Any(binding => binding.Scope.Kind == IamScopeKind.Workspace)
-            ? [ProjectAccessAuthorization.AllProjectsGrant]
-            : Normalize(bindings.Select(binding => binding.Scope.Project).OfType<string>().ToList());
-        var approvals = role == StudioRoles.Contributor
-            ? Normalize(bindings
+            var projects = ProjectsOf(contributors);
+            var approvals = Normalize(bindings
                 .Where(binding => binding.Role == IamRoles.Approver && binding.Scope.Project is not null
                     && (binding.Scope.Kind == IamScopeKind.Project
                         || string.Equals(binding.Scope.Environment, ProductionEnvironment, StringComparison.OrdinalIgnoreCase)))
                 .Select(binding => binding.Scope.Project!).ToList())
-            : [];
-        return new LegacyRoleSummary(role, projects, approvals);
+                .Where(project => projects.Contains(project, StringComparer.OrdinalIgnoreCase)).ToList();
+            return new LegacyRoleSummary(StudioRoles.Contributor, projects, approvals);
+        }
+
+        // Developer, Approver, and Viewer read their scopes; an older binary
+        // must not let them write, so they summarize as viewer.
+        return new LegacyRoleSummary(StudioRoles.Viewer, ProjectsOf(bindings), []);
     }
+
+    /// <summary>
+    /// True when the direct bindings are exactly what a legacy role PUT would
+    /// write for the summary, so that PUT can replace them without loss.
+    /// </summary>
+    public static bool IsLegacyRepresentable(IReadOnlyList<RoleBinding> directBindings, LegacyRoleSummary summary)
+    {
+        var expected = Grants(summary.Role, summary.Projects, summary.ProductionApprovalProjects)
+            .Select(grant => Key(grant.Role, grant.Scope)).Order(StringComparer.Ordinal).ToList();
+        var actual = directBindings.Select(binding => Key(binding.Role, binding.Scope))
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        return expected.SequenceEqual(actual, StringComparer.Ordinal);
+    }
+
+    private static string Key(string role, IamScope scope)
+        => $"{role}|{scope.Kind}|{scope.Project?.ToLowerInvariant()}|{scope.Environment?.ToLowerInvariant()}";
+
+    private static List<string> ProjectsOf(IReadOnlyList<RoleBinding> bindings)
+        => bindings.Any(binding => binding.Scope.Kind == IamScopeKind.Workspace)
+            ? [ProjectAccessAuthorization.AllProjectsGrant]
+            : Normalize(bindings.Select(binding => binding.Scope.Project).OfType<string>().ToList());
 
     private static IReadOnlyList<IamGrantRequest> Scoped(string role, bool allProjects, IReadOnlyList<string> projects)
         => allProjects

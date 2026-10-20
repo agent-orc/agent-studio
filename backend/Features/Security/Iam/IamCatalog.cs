@@ -56,8 +56,8 @@ public static class IamPermissions
         new(SelfSession, PermissionLevel.Workspace, "The caller's own session: read it, change the password, sign out."),
         new(RunnerService, PermissionLevel.Workspace, "Runner and engine service routes; Runner credential scopes decide."),
         new(WorkspaceRead, PermissionLevel.Project, "Read workspace surfaces: system, models, usage, search, runner status."),
-        new(WorkspaceSettingsWrite, PermissionLevel.Project, "Change workspace, model, quota, prompt, and tag settings; create projects."),
-        new(WorkspaceOperate, PermissionLevel.Project, "Operate the installation: Task Server, hosts, supervisor, sweeps, recovery."),
+        new(WorkspaceSettingsWrite, PermissionLevel.Workspace, "Change workspace, model, quota, prompt, and tag settings; create projects."),
+        new(WorkspaceOperate, PermissionLevel.Workspace, "Operate the installation: Task Server, hosts, supervisor, sweeps, recovery."),
         new(WorkspaceAdminister, PermissionLevel.Workspace, "Installation-wide changes reserved to the Owner, such as path import."),
         new(AccessRead, PermissionLevel.Workspace, "See users, groups, service accounts, and role bindings."),
         new(AccessManage, PermissionLevel.Workspace, "Invite users and change groups, service accounts, and role bindings."),
@@ -129,7 +129,7 @@ public static class IamRoles
     private static readonly string[] AdminSet =
     [
         .. DeveloperSet,
-        IamPermissions.WorkspaceSettingsWrite, IamPermissions.WorkspaceOperate, IamPermissions.AccessRead,
+        IamPermissions.WorkspaceSettingsWrite, IamPermissions.WorkspaceOperate,
         IamPermissions.ProjectSettingsWrite, IamPermissions.EnvironmentProductionDeploy,
         IamPermissions.EnvironmentProductionDeployApprove, IamPermissions.SecretsWrite,
     ];
@@ -158,6 +158,19 @@ public static class IamRoles
         All.ToDictionary(role => role.Id, StringComparer.Ordinal);
 
     public static RoleDefinition? Find(string? id) => id is not null && ById.TryGetValue(id, out var role) ? role : null;
+
+    /// <summary>
+    /// The legacy role a handler check reads for a role of this model: Admin
+    /// and Developer act as operator, Approver as viewer. Used only for the
+    /// per-request projection, never persisted (see <see cref="LegacyRoleMapping.Summarize"/>).
+    /// </summary>
+    public static string LegacyRole(string? id) => id switch
+    {
+        Owner => StudioRoles.Owner,
+        Admin or Developer => StudioRoles.Operator,
+        Contributor => StudioRoles.Contributor,
+        _ => StudioRoles.Viewer,
+    };
 
     public static bool Grants(string role, string permission)
         => Find(role)?.Permissions.Contains(permission) == true;

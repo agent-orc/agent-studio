@@ -58,6 +58,16 @@ public sealed record StudioGroup
     public DateTime CreatedAt { get; init; }
 }
 
+public static class ServiceAccountOrigins
+{
+    /// <summary>
+    /// A Studio API token (AGT-3186), migrated or issued through
+    /// <c>/api/auth/api-tokens</c>: one token, <c>api.*</c> secret, and
+    /// valid only while the user who created it stays active.
+    /// </summary>
+    public const string ApiToken = "api-token";
+}
+
 /// <summary>A non-human principal with its own API tokens, scopes, expiry, and revocation.</summary>
 public sealed record ServiceAccount
 {
@@ -65,6 +75,9 @@ public sealed record ServiceAccount
     public required string Name { get; init; }
     public string? Description { get; init; }
     public DateTime CreatedAt { get; init; }
+    public string? CreatedBy { get; init; }
+    /// <summary><c>null</c> for an account created in the Access area, else <see cref="ServiceAccountOrigins"/>.</summary>
+    public string? Origin { get; init; }
     public DateTime? DisabledAt { get; init; }
     public List<ServiceAccountToken> Tokens { get; init; } = [];
 }
@@ -80,7 +93,12 @@ public sealed record ServiceAccountToken
     public DateTime? RevokedAt { get; init; }
 }
 
-public sealed record ServiceAccountPrincipal(string AccountId, string AccountName, string TokenId);
+public sealed record ServiceAccountPrincipal(
+    string AccountId, string AccountName, string TokenId, string? Origin = null, string? CreatedBy = null)
+{
+    /// <summary>How handlers and audit records attribute the account's actions.</summary>
+    public string ActorId => "sa:" + AccountId;
+}
 
 /// <summary>The principal an access decision is made for, with its group memberships.</summary>
 public sealed record IamSubject(IamPrincipalKind Kind, string Id, IReadOnlySet<string> GroupIds)
@@ -99,7 +117,7 @@ public sealed record ServiceAccountTokenResponse(
     string Id, string? Name, DateTime CreatedAt, DateTime? ExpiresAt, DateTime? LastUsedAt, DateTime? RevokedAt);
 public sealed record ServiceAccountResponse(
     string Id, string Name, string? Description, DateTime CreatedAt, DateTime? DisabledAt,
-    IReadOnlyList<ServiceAccountTokenResponse> Tokens);
+    IReadOnlyList<ServiceAccountTokenResponse> Tokens, string? Origin = null, string? CreatedBy = null);
 public sealed record OneTimeServiceAccountTokenResponse(
     string ServiceAccountId, string TokenId, string Token, DateTime? ExpiresAt);
 public sealed record IamRoleResponse(

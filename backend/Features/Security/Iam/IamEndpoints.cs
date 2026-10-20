@@ -78,8 +78,8 @@ public static class IamEndpoints
             HttpContext context, AccessSecurityStore store) =>
             AccessSecurityEndpoints.Execute(() =>
             {
-                Require(context, store, IamPermissions.AccessManage);
-                var created = store.CreateServiceAccountToken(id, request);
+                var actor = Require(context, store, IamPermissions.AccessManage);
+                var created = store.CreateServiceAccountToken(id, request, actor);
                 context.Response.Headers.CacheControl = "no-store";
                 return Results.Ok(new OneTimeServiceAccountTokenResponse(
                     created.Account.Id, created.Token.Id, created.Secret, created.Token.ExpiresAt));
@@ -89,16 +89,14 @@ public static class IamEndpoints
             HttpContext context, AccessSecurityStore store) =>
             AccessSecurityEndpoints.Execute(() =>
             {
-                Require(context, store, IamPermissions.AccessManage);
-                store.RevokeServiceAccountToken(id, tokenId);
+                store.RevokeServiceAccountToken(id, tokenId, Require(context, store, IamPermissions.AccessManage));
                 return Results.NoContent();
             })).RequirePermission(IamPermissions.AccessManage);
 
         iam.MapDelete("/service-accounts/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
             AccessSecurityEndpoints.Execute(() =>
             {
-                Require(context, store, IamPermissions.AccessManage);
-                store.DisableServiceAccount(id);
+                store.DisableServiceAccount(id, Require(context, store, IamPermissions.AccessManage));
                 return Results.NoContent();
             })).RequirePermission(IamPermissions.AccessManage);
     }
@@ -131,5 +129,6 @@ public static class IamEndpoints
     private static ServiceAccountResponse ToResponse(ServiceAccount account) => new(
         account.Id, account.Name, account.Description, account.CreatedAt, account.DisabledAt,
         account.Tokens.Select(token => new ServiceAccountTokenResponse(
-            token.Id, token.Name, token.CreatedAt, token.ExpiresAt, token.LastUsedAt, token.RevokedAt)).ToList());
+            token.Id, token.Name, token.CreatedAt, token.ExpiresAt, token.LastUsedAt, token.RevokedAt)).ToList(),
+        account.Origin, account.CreatedBy);
 }

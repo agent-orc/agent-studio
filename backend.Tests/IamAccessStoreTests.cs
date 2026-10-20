@@ -28,14 +28,15 @@ public sealed class IamAccessStoreTests : IDisposable
 
         Assert.True(store.AuthorizeUser(member.Id, IamPermissions.ProjectCardsWrite, PermissionTarget.ForProject("beta")).Allowed);
         Assert.False(store.AuthorizeUser(member.Id, IamPermissions.ProjectCardsWrite, PermissionTarget.ForProject("alpha")).Allowed);
+        // The persisted summary is downgrade-safe: Developer never becomes operator.
         var summary = store.ListUsers().Single(user => user.Id == member.Id);
-        Assert.Equal(StudioRoles.Operator, summary.Role);
+        Assert.Equal(StudioRoles.Viewer, summary.Role);
         Assert.Equal(["alpha", "beta"], summary.Projects.Order(StringComparer.Ordinal));
 
         store.UpdateGroup(group.Id, new UpdateGroupRequest(null, null, []), owner);
 
         Assert.False(store.AuthorizeUser(member.Id, IamPermissions.ProjectCardsWrite, PermissionTarget.ForProject("beta")).Allowed);
-        Assert.Equal(StudioRoles.Viewer, store.ListUsers().Single(user => user.Id == member.Id).Role);
+        Assert.Equal(["alpha"], store.ListUsers().Single(user => user.Id == member.Id).Projects);
     }
 
     [Fact]
@@ -191,7 +192,7 @@ public sealed class IamAccessStoreTests : IDisposable
              new IamGrantRequest(IamRoles.Approver, IamScope.ForEnvironment("alpha", "production"))]));
         var accepted = store.AcceptInvitation(new AcceptInvitationRequest(invite.Token, "developer pass phrase!"));
 
-        Assert.Equal(StudioRoles.Operator, accepted.User.Role);
+        Assert.Equal(StudioRoles.Viewer, accepted.User.Role);
         Assert.Equal(["alpha"], accepted.User.Projects);
         Assert.True(store.AuthorizeUser(accepted.User.Id, IamPermissions.ProjectRunsOperate, PermissionTarget.ForProject("alpha")).Allowed);
         Assert.False(store.AuthorizeUser(accepted.User.Id, IamPermissions.ProjectSettingsWrite, PermissionTarget.ForProject("alpha")).Allowed);
@@ -207,7 +208,6 @@ public sealed class IamAccessStoreTests : IDisposable
         var user = store.CreateUser(new CreateUserRequest("legacy.user", "Legacy", StudioRoles.Operator, ["alpha"], Password)).User;
         var group = store.CreateGroup(new CreateGroupRequest("Readers", null, [user.Id]), owner);
         store.AddBinding(new IamBindingRequest(IamPrincipalKind.Group, group.Id, IamRoles.Viewer, IamScope.ForProject("gamma")), owner);
-        store.AddBinding(new IamBindingRequest(IamPrincipalKind.User, user.Id, IamRoles.Developer, IamScope.ForProject("beta")), owner);
 
         var updated = store.UpdateUser(user.Id, new UpdateUserRequest(null, StudioRoles.Contributor, ["delta"], null, ["delta"]), owner);
 
@@ -217,12 +217,174 @@ public sealed class IamAccessStoreTests : IDisposable
             bindings.Where(binding => binding.PrincipalId == user.Id).Select(binding => $"{binding.Role}:{binding.Scope.Project}").Order());
         Assert.Contains(bindings, binding => binding.PrincipalId == group.Id);
         Assert.Equal(StudioRoles.Contributor, updated.Role);
-        Assert.Equal(["delta", "gamma"], updated.Projects.Order(StringComparer.Ordinal));
+        Assert.Equal(["delta"], updated.Projects);
         Assert.Equal(["delta"], updated.ProductionApprovalProjects);
 
         var renamed = store.UpdateUser(user.Id, new UpdateUserRequest("Renamed", null, null, null), owner);
         Assert.Equal("Renamed", renamed.DisplayName);
         Assert.Equal(3, store.ReadIamSnapshot().Bindings.Count(binding => binding.PrincipalId == user.Id || binding.PrincipalId == group.Id));
+    }
+
+    public static TheoryData<string, IamScope> BindingManagedUsers => new()
+    {
+        { IamRoles.Developer, IamScope.ForProject("alpha") },
+        { IamRoles.Approver, IamScope.ForEnvironment("alpha", "production") },
+        { IamRoles.Approver, IamScope.Workspace },
+    };
+
+    [Theory]
+    [MemberData(nameof(BindingManagedUsers))]
+    public void Rename_and_disable_with_the_current_summary_keep_binding_managed_access(string role, IamScope scope)
+    {
+        var (store, owner) = Bootstrapped();
+        var invite = store.InviteUser(new InviteUserRequest("managed.user", "Managed", "", null, [new IamGrantRequest(role, scope)]), owner);
+        var before = store.ReadIamSnapshot().Bindings.Where(binding => binding.PrincipalId == invite.User.Id).ToList();
+        var listed = store.ListUsers().Single(user => user.Id == invite.User.Id);
+
+        // The develop Access UI always sends role and projects with a rename or a disable.
+        store.UpdateUser(invite.User.Id, new UpdateUserRequest("Renamed", listed.Role, listed.Projects, null), owner);
+        store.UpdateUser(invite.User.Id, new UpdateUserRequest(null, listed.Role, listed.Projects, true), owner);
+
+        var after = store.ReadIamSnapshot().Bindings.Where(binding => binding.PrincipalId == invite.User.Id).ToList();
+        Assert.Equal(before, after);
+        var user = store.ListUsers().Single(candidate => candidate.Id == invite.User.Id);
+        Assert.Equal(("Renamed", true), (user.DisplayName, user.Disabled));
+
+        var changed = Assert.Throws<SecurityOperationException>(() =>
+            store.UpdateUser(invite.User.Id, new UpdateUserRequest(null, StudioRoles.Operator, ["alpha"], null), owner));
+        Assert.Equal((409, "bindings-managed"), (changed.Status, changed.Code));
+        Assert.Equal(before, store.ReadIamSnapshot().Bindings.Where(binding => binding.PrincipalId == invite.User.Id).ToList());
+    }
+
+    [Fact]
+    public void A_refused_update_leaves_the_state_and_file_untouched()
+    {
+        var (store, owner) = Bootstrapped();
+        var file = Path.Combine(store.SecurityFolder, "access-state.json");
+        var before = File.ReadAllText(file);
+
+        var demote = Assert.Throws<SecurityOperationException>(() =>
+            store.UpdateUser(owner, new UpdateUserRequest("Renamed Owner", StudioRoles.Operator, ["*"], null), owner));
+        Assert.Equal("last-owner-protection", demote.Code);
+        var disable = Assert.Throws<SecurityOperationException>(() =>
+            store.UpdateUser(owner, new UpdateUserRequest("Renamed Owner", null, null, true), owner));
+        Assert.Equal("last-owner-protection", disable.Code);
+
+        var second = store.CreateUser(new CreateUserRequest("second.admin", "Second", StudioRoles.Operator, ["*"], Password), owner).User;
+        var unchanged = File.ReadAllText(file);
+        var last = Assert.Throws<SecurityOperationException>(() =>
+            store.UpdateUser(owner, new UpdateUserRequest("Renamed Owner", StudioRoles.Viewer, ["*"], false), second.Id));
+        Assert.Equal("last-owner-protection", last.Code);
+
+        Assert.Equal(unchanged, File.ReadAllText(file));
+        Assert.NotEqual(before, unchanged);
+        var current = store.ListUsers().Single(user => user.Id == owner);
+        Assert.Equal(("first.owner", StudioRoles.Owner, false), (current.DisplayName, current.Role, current.Disabled));
+        Assert.Contains(store.ReadIamSnapshot().Bindings, binding => binding.PrincipalId == owner && binding.Role == IamRoles.Owner);
+    }
+
+    [Fact]
+    public void A_user_without_effective_bindings_is_summarized_as_a_viewer_of_no_project()
+    {
+        var (store, owner) = Bootstrapped();
+        var admin = store.CreateUser(new CreateUserRequest("all.admin", "All", StudioRoles.Operator, ["*"], Password), owner).User;
+        Assert.Equal(StudioRoles.Operator, admin.Role);
+        Assert.Equal(["*"], admin.Projects);
+
+        store.RemoveBinding(store.ReadIamSnapshot().Bindings.Single(binding => binding.PrincipalId == admin.Id).Id, owner);
+
+        var summary = store.ListUsers().Single(user => user.Id == admin.Id);
+        Assert.Equal(StudioRoles.Viewer, summary.Role);
+        Assert.Empty(summary.Projects);
+        Assert.Empty(summary.ProductionApprovalProjects);
+    }
+
+    [Fact]
+    public void Iam_changes_are_audited_append_only_with_the_acting_user_and_the_injected_clock()
+    {
+        var (store, owner) = Bootstrapped();
+        var created = store.CreateUser(new CreateUserRequest("audited.user", "Audited", StudioRoles.Viewer, ["alpha"], Password), owner).User;
+        var group = store.CreateGroup(new CreateGroupRequest("Audited", null, [created.Id]), owner);
+        store.UpdateGroup(group.Id, new UpdateGroupRequest(null, null, []), owner);
+        var binding = store.AddBinding(new IamBindingRequest(IamPrincipalKind.Group, group.Id, IamRoles.Viewer, IamScope.Workspace), owner);
+        store.RemoveBinding(binding.Id, owner);
+        store.DeleteGroup(group.Id, owner);
+        var account = store.CreateServiceAccount(new CreateServiceAccountRequest("audited-bot", null, null), owner);
+        var token = store.CreateServiceAccountToken(account.Id, new CreateServiceAccountTokenRequest(null, null), owner);
+        store.RevokeServiceAccountToken(account.Id, token.Token.Id, owner);
+        store.DisableServiceAccount(account.Id, owner);
+        var apiToken = store.CreateApiToken(new CreateApiTokenRequest("audited api", StudioRoles.Viewer, ["alpha"],
+            _clock.GetUtcNow().UtcDateTime.AddDays(1)), owner);
+        store.RevokeApiToken(apiToken.Token.Id, owner);
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        store.UpdateUser(created.Id, new UpdateUserRequest(null, StudioRoles.Operator, ["alpha"], null), owner);
+
+        var file = Path.Combine(store.SecurityFolder, AccessSecurityStore.IamAuditFileName);
+        var rows = File.ReadAllLines(file).Select(line => System.Text.Json.JsonDocument.Parse(line).RootElement).ToList();
+        var actions = rows.Select(row => row.GetProperty("action").GetString()).ToList();
+        foreach (var expected in new[]
+        {
+            "binding.add", "group.create", "group.update", "binding.remove", "group.delete", "service-account.create",
+            "token.issue", "token.revoke", "service-account.disable", "user.legacy-role",
+        })
+            Assert.Contains(expected, actions);
+        Assert.All(rows.Skip(1), row => Assert.Equal(owner, row.GetProperty("actor").GetString()));
+        var update = rows.Single(row => row.GetProperty("action").GetString() == "group.update");
+        Assert.Equal(created.Id, Assert.Single(update.GetProperty("details").GetProperty("membersRemoved").EnumerateArray()).GetString());
+        Assert.Equal(_clock.GetUtcNow().UtcDateTime, rows.Last().GetProperty("timestamp").GetDateTime());
+        Assert.Equal(owner, store.ReadIamSnapshot().Bindings.Single(binding => binding.PrincipalId == created.Id).CreatedBy);
+    }
+
+    [Fact]
+    public void Created_and_invited_users_bindings_name_their_creator()
+    {
+        var (store, owner) = Bootstrapped();
+
+        var created = store.CreateUser(new CreateUserRequest("created.user", "Created", StudioRoles.Viewer, ["alpha"], Password), owner).User;
+        var invited = store.InviteUser(new InviteUserRequest("invited.user", "Invited", "", null,
+            [new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))]), owner).User;
+
+        var bindings = store.ReadIamSnapshot().Bindings;
+        Assert.Equal(owner, bindings.Single(binding => binding.PrincipalId == created.Id).CreatedBy);
+        Assert.Equal(owner, bindings.Single(binding => binding.PrincipalId == invited.Id).CreatedBy);
+    }
+
+    [Fact]
+    public void Disabled_service_accounts_are_reported_as_denied()
+    {
+        var (store, owner) = Bootstrapped();
+        var account = store.CreateServiceAccount(new CreateServiceAccountRequest("checked-bot", null,
+            [new IamGrantRequest(IamRoles.Viewer, IamScope.Workspace)]), owner);
+        Assert.True(store.CheckPermission(IamPrincipalKind.ServiceAccount, account.Id, IamPermissions.ProjectRead,
+            PermissionTarget.ForProject("alpha")).Allowed);
+
+        store.DisableServiceAccount(account.Id, owner);
+
+        var decision = store.CheckPermission(IamPrincipalKind.ServiceAccount, account.Id, IamPermissions.ProjectRead,
+            PermissionTarget.ForProject("alpha"));
+        Assert.False(decision.Allowed);
+        Assert.Contains("disabled", decision.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Names_descriptions_and_token_names_are_length_limited()
+    {
+        var (store, owner) = Bootstrapped();
+
+        Assert.Equal("invalid-name", Assert.Throws<SecurityOperationException>(() =>
+            store.CreateGroup(new CreateGroupRequest(new string('g', 65), null, null), owner)).Code);
+        Assert.Equal("invalid-description", Assert.Throws<SecurityOperationException>(() =>
+            store.CreateGroup(new CreateGroupRequest("Group", new string('d', 501), null), owner)).Code);
+        Assert.Equal("invalid-name", Assert.Throws<SecurityOperationException>(() =>
+            store.CreateServiceAccount(new CreateServiceAccountRequest(new string('s', 65), null, null), owner)).Code);
+        Assert.Equal("invalid-description", Assert.Throws<SecurityOperationException>(() =>
+            store.CreateServiceAccount(new CreateServiceAccountRequest("bot", new string('d', 501), null), owner)).Code);
+        var account = store.CreateServiceAccount(new CreateServiceAccountRequest("bot", null, null), owner);
+        Assert.Equal("invalid-name", Assert.Throws<SecurityOperationException>(() =>
+            store.CreateServiceAccountToken(account.Id, new CreateServiceAccountTokenRequest(new string('t', 101), null), owner)).Code);
+        var group = store.CreateGroup(new CreateGroupRequest("Group", null, null), owner);
+        Assert.Equal("invalid-description", Assert.Throws<SecurityOperationException>(() =>
+            store.UpdateGroup(group.Id, new UpdateGroupRequest(null, new string('d', 501), null), owner)).Code);
     }
 
     private (AccessSecurityStore Store, string OwnerId) Bootstrapped()

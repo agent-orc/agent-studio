@@ -63,11 +63,12 @@ public sealed class IamAccessMiddlewareTests : IDisposable
 
         Assert.True((await Invoke("POST", "/api/projects/{projectName}/environments/promotions/approve",
             "/api/projects/alpha/environments/promotions/approve", approver)).Called);
+        // Outside approvals an Approver is read-only, like a viewer.
         var release = await Invoke("POST", "/api/projects/{projectName}/environments/releases",
             "/api/projects/alpha/environments/releases", approver);
-        Assert.Equal((403, "permission-denied"), (release.Status, release.Error));
+        Assert.Equal((403, "role-denied", false), (release.Status, release.Error, release.Called));
         var wiki = await Invoke("POST", "/api/projects/{projectName}/wiki/pages", "/api/projects/alpha/wiki/pages", approver);
-        Assert.Equal((403, "permission-denied"), (wiki.Status, wiki.Error));
+        Assert.Equal((403, "role-denied", false), (wiki.Status, wiki.Error, wiki.Called));
     }
 
     [Fact]
@@ -115,14 +116,25 @@ public sealed class IamAccessMiddlewareTests : IDisposable
 
         var write = await InvokeBearer("POST", "/api/projects/{projectName}/wiki/pages", "/api/projects/alpha/wiki/pages", token);
         Assert.True(write.Called);
-        Assert.Equal(account.Id, write.Context.Items["ClientId"]);
+        Assert.Equal("sa:" + account.Id, write.Context.Items["ClientId"]);
+        Assert.Equal("sa:" + account.Id, AccessSecurityMiddleware.ActorId(write.Context, "local-operator"));
         Assert.IsType<ServiceAccountPrincipal>(write.Context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem]);
-        Assert.Null(write.Context.Items[AccessSecurityMiddleware.HumanPrincipalItem]);
+        var synthetic = Assert.IsType<HumanPrincipal>(write.Context.Items[AccessSecurityMiddleware.HumanPrincipalItem]);
+        Assert.Equal(("sa:" + account.Id, StudioRoles.Operator), (synthetic.User.Id, synthetic.User.Role));
+        Assert.Equal(["alpha"], synthetic.User.Projects);
 
-        var collection = await InvokeBearer("GET", "/api/tasks/", "/api/tasks", token);
+        // The task collection filters per task for the projected principal;
+        // another unaddressed read needs a workspace binding.
+        var tasks = await InvokeBearer("GET", "/api/tasks/", "/api/tasks", token);
+        Assert.True(tasks.Called);
+        var collection = await InvokeBearer("GET", "/api/workspace/screenshots", "/api/workspace/screenshots", token);
         Assert.Equal((403, "permission-denied"), (collection.Status, collection.Error));
+        var audit = File.ReadAllLines(Path.Combine(_store.SecurityFolder, AccessSecurityStore.ServiceAccountAuditFileName));
+        Assert.Contains(audit, row => row.Contains($"\"actor\":\"sa:{account.Id}\"", StringComparison.Ordinal)
+            && row.Contains("\"status\":403", StringComparison.Ordinal));
+        Assert.All(audit, row => Assert.DoesNotContain(token, row, StringComparison.Ordinal));
         var session = await InvokeBearer("POST", "/api/auth/logout", "/api/auth/logout", token);
-        Assert.Equal((403, "human-session-required"), (session.Status, session.Error));
+        Assert.Equal((403, "token-route-denied"), (session.Status, session.Error));
         var runnerRoute = await InvokeBearer("POST", "/api/runner/claim", "/api/runner/claim", token);
         Assert.Equal((401, "runner-authentication-required"), (runnerRoute.Status, runnerRoute.Error));
         var settings = await InvokeBearer("PUT", "/api/projects/{projectName}/auto-commit", "/api/projects/alpha/auto-commit", token);
@@ -146,6 +158,107 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         var denied = await Invoke("POST", "/hubs/jobs/negotiate", "/hubs/jobs/negotiate", unbound);
         Assert.Equal((403, "permission-denied"), (denied.Status, denied.Error));
         Assert.True((await Invoke("POST", "/hubs/jobs/negotiate", "/hubs/jobs/negotiate", viewer)).Called);
+    }
+
+    [Fact]
+    public async Task Unaddressed_writes_need_a_workspace_binding_unless_the_handler_checks_each_project()
+    {
+        var scoped = Invite("scoped.dev",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha")),
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("beta")));
+        var workspace = Invite("workspace.dev", new IamGrantRequest(IamRoles.Developer, IamScope.Workspace));
+
+        var supervisor = await Invoke("POST", "/api/supervisor/pause", "/api/supervisor/pause", scoped);
+        Assert.Equal((403, "permission-denied", false), (supervisor.Status, supervisor.Error, supervisor.Called));
+        Assert.True((await Invoke("POST", "/api/supervisor/pause", "/api/supervisor/pause", workspace)).Called);
+
+        // Body-addressed routes reach their handler, which checks every
+        // affected project against the captured access (see IamHandlerAccessTests).
+        var create = await Invoke("POST", "/api/tasks", "/api/tasks", scoped);
+        Assert.True(create.Called);
+        var access = Assert.IsType<RequestAccess>(create.Context.Items[AccessSecurityMiddleware.RequestAccessItem]);
+        Assert.True(access.AllowsProject(IamPermissions.ProjectCardsWrite, "alpha"));
+        Assert.False(access.AllowsProject(IamPermissions.ProjectCardsWrite, "beta"));
+        Assert.True((await Invoke("POST", "/api/tasks/batch-move", "/api/tasks/batch-move", scoped)).Called);
+    }
+
+    [Fact]
+    public async Task Handlers_see_a_principal_projected_for_the_addressed_project()
+    {
+        var mixed = Invite("projected.user",
+            new IamGrantRequest(IamRoles.Contributor, IamScope.ForProject("beta")),
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha")));
+
+        var beta = await Invoke("GET", "/api/projects/{projectName}/snapshot", "/api/projects/beta/snapshot", mixed);
+        var betaUser = Assert.IsType<HumanPrincipal>(beta.Context.Items[AccessSecurityMiddleware.HumanPrincipalItem]).User;
+        Assert.Equal(StudioRoles.Contributor, betaUser.Role);
+        Assert.Equal(["beta", "alpha"], betaUser.Projects);
+        var alpha = await Invoke("GET", "/api/projects/{projectName}/snapshot", "/api/projects/alpha/snapshot", mixed);
+        Assert.Equal(StudioRoles.Operator,
+            Assert.IsType<HumanPrincipal>(alpha.Context.Items[AccessSecurityMiddleware.HumanPrincipalItem]).User.Role);
+        var runs = await Invoke("POST", "/api/projects/{projectName}/queue-health/refresh", "/api/projects/alpha/queue-health/refresh", mixed);
+        Assert.Equal(["alpha"], Assert.IsType<HumanPrincipal>(runs.Context.Items[AccessSecurityMiddleware.HumanPrincipalItem]).User.Projects);
+
+        // The persisted record keeps its downgrade-safe summary.
+        Assert.Equal(StudioRoles.Contributor, _store.ListUsers().Single(user => user.Id == mixed.UserId).Role);
+    }
+
+    [Fact]
+    public async Task The_task_server_proxy_declares_read_and_operate_and_forwards_a_binding_derived_role()
+    {
+        var developer = Invite("proxy.dev", new IamGrantRequest(IamRoles.Developer, IamScope.Workspace));
+        var admin = Invite("proxy.admin", new IamGrantRequest(IamRoles.Admin, IamScope.Workspace));
+        var owner = Login("first.owner", Password);
+
+        var read = await InvokeProxy("GET", developer);
+        Assert.True(read.Called);
+        Assert.Equal(StudioRoles.Viewer, AgentStudio.Host.TaskServerPlaneProxy.ActingRole(read.Context, _config));
+        var write = await InvokeProxy("POST", developer);
+        Assert.Equal((403, "permission-denied", false), (write.Status, write.Error, write.Called));
+        var operate = await InvokeProxy("POST", admin);
+        Assert.True(operate.Called);
+        Assert.Equal(StudioRoles.Operator, AgentStudio.Host.TaskServerPlaneProxy.ActingRole(operate.Context, _config));
+        Assert.Equal(StudioRoles.Owner, AgentStudio.Host.TaskServerPlaneProxy.ActingRole((await InvokeProxy("POST", owner)).Context, _config));
+    }
+
+    [Fact]
+    public async Task Studio_service_account_bearers_never_take_the_proxied_plane_skip()
+    {
+        var proxied = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+            ["Security:Profile"] = "networked",
+            ["TaskServer:BaseUrl"] = "http://127.0.0.1:5071",
+        }).Build();
+        var account = _store.CreateServiceAccount(new CreateServiceAccountRequest("proxy-bot", null,
+            [new IamGrantRequest(IamRoles.Admin, IamScope.Workspace)]), _ownerId);
+        var token = _store.CreateServiceAccountToken(account.Id, new CreateServiceAccountTokenRequest(null, null)).Secret;
+        var foreign = "tsk." + Guid.NewGuid().ToString("N");
+
+        var studio = await Run("GET", "/api/v1/{**path}", "/api/v1/management/status", Bearer(token), proxied, ProxyMetadata());
+        Assert.Equal((403, "token-route-denied", false), (studio.Status, studio.Error, studio.Called));
+        var upstream = await Run("GET", "/api/v1/{**path}", "/api/v1/management/status", Bearer(foreign), proxied, ProxyMetadata());
+        Assert.True(upstream.Called);
+    }
+
+    [Fact]
+    public async Task A_method_mismatch_keeps_its_405_endpoint()
+    {
+        var owner = Login("first.owner", Password);
+        var called = false;
+        var middleware = new AccessSecurityMiddleware(_ => { called = true; return Task.CompletedTask; }, _config, _store, clock: _clock);
+        var context = new DefaultHttpContext();
+        context.Request.Method = "PATCH";
+        context.Request.Path = "/api/projects/alpha/snapshot";
+        context.Request.Scheme = "https";
+        context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={owner.SessionToken}");
+        context.Request.Headers["X-CSRF-Token"] = new StringValues(owner.CsrfToken);
+        context.SetEndpoint(new Endpoint(_ => Task.CompletedTask, EndpointMetadataCollection.Empty, "405 HTTP Method Not Supported"));
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(called);
+        Assert.True(RoutePermissionCatalog.IsMethodRejection(context.GetEndpoint()!));
     }
 
     private sealed record SignedIn(string UserId, string SessionToken, string CsrfToken);
@@ -173,19 +286,36 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         });
 
     private Task<Outcome> InvokeBearer(string method, string pattern, string path, string token)
-        => Run(method, pattern, path, context => context.Request.Headers.Authorization = new StringValues("Bearer " + token));
+        => Run(method, pattern, path, Bearer(token));
 
-    private async Task<Outcome> Run(string method, string pattern, string path, Action<HttpContext> authenticate)
+    private Task<Outcome> InvokeProxy(string method, SignedIn user)
+        => Run(method, "/api/v1/{**path}", "/api/v1/runners", context =>
+        {
+            context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={user.SessionToken}");
+            context.Request.Headers["X-CSRF-Token"] = new StringValues(user.CsrfToken);
+        }, metadata: ProxyMetadata());
+
+    private static object[] ProxyMetadata()
+        => [AgentStudio.Host.TaskServerPlaneProxyEndpoint.Instance,
+            new MethodPermissionMetadata(IamPermissions.WorkspaceRead, IamPermissions.WorkspaceOperate)];
+
+    private static Action<HttpContext> Bearer(string token)
+        => context => context.Request.Headers.Authorization = new StringValues("Bearer " + token);
+
+    private async Task<Outcome> Run(
+        string method, string pattern, string path, Action<HttpContext> authenticate,
+        IConfiguration? configuration = null, object[]? metadata = null)
     {
         var called = false;
-        var middleware = new AccessSecurityMiddleware(_ => { called = true; return Task.CompletedTask; }, _config, _store, clock: _clock);
+        var middleware = new AccessSecurityMiddleware(_ => { called = true; return Task.CompletedTask; },
+            configuration ?? _config, _store, clock: _clock);
         var context = new DefaultHttpContext();
         context.Request.Method = method;
         context.Request.Path = path;
         context.Request.Scheme = "https";
         authenticate(context);
         context.SetEndpoint(new RouteEndpoint(_ => Task.CompletedTask, RoutePatternFactory.Parse(pattern), 0,
-            new EndpointMetadataCollection(new HttpMethodMetadata([method])), pattern));
+            new EndpointMetadataCollection([new HttpMethodMetadata([method]), .. metadata ?? []]), pattern));
         context.Response.Body = new MemoryStream();
         await middleware.InvokeAsync(context);
         return new Outcome(context, context.Response.StatusCode, ErrorCode(context), called);

@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -99,13 +101,93 @@ public sealed class IamEndpointTests : IDisposable
         var adminCsrf = await LoginAsync(adminClient, "workspace.admin", "admin pass phrase!!");
         await LoginAsync(viewerClient, "project.viewer", "viewer pass phrase!!");
 
-        Assert.Equal(HttpStatusCode.OK, (await adminClient.GetAsync("/api/auth/iam")).StatusCode);
+        // Access stays Owner-only: a migrated all-projects operator (Admin on
+        // the workspace) neither reads nor changes it.
+        Assert.Equal(HttpStatusCode.Forbidden, (await adminClient.GetAsync("/api/auth/iam")).StatusCode);
         var adminWrite = await SendRawAsync(adminClient, HttpMethod.Post, "/api/auth/iam/groups", adminCsrf, new { name = "Ops" });
         Assert.Equal(HttpStatusCode.Forbidden, adminWrite.StatusCode);
         var viewerRead = await viewerClient.GetAsync("/api/auth/iam");
         Assert.Equal(HttpStatusCode.Forbidden, viewerRead.StatusCode);
         Assert.Equal("permission-denied",
             (await viewerRead.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task In_the_local_profile_access_administration_still_needs_a_session()
+    {
+        using var factory = BuildFactory(SecurityProfiles.Local);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+
+        var overview = await client.GetAsync("/api/auth/iam");
+        Assert.Equal(HttpStatusCode.Unauthorized, overview.StatusCode);
+        Assert.Equal("authentication-required",
+            (await overview.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+        Assert.Equal(HttpStatusCode.Unauthorized,
+            (await client.PostAsJsonAsync("/api/auth/iam/groups", new { name = "Local" })).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_legacy_user_put_never_rewrites_binding_managed_access()
+    {
+        using var factory = BuildFactory();
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var ownerId = store.Bootstrap(new BootstrapRequest("first.owner", Password, null)).User.Id;
+        var developer = store.InviteUser(new InviteUserRequest("dev.user", "Dev", "", null,
+            [new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))]), ownerId).User;
+        using var owner = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = true });
+        var csrf = await LoginAsync(owner, "first.owner", Password);
+        var listed = (await owner.GetFromJsonAsync<JsonElement>("/api/auth/users")).EnumerateArray()
+            .Single(user => user.GetProperty("id").GetString() == developer.Id);
+
+        var rename = await SendRawAsync(owner, HttpMethod.Put, $"/api/auth/users/{developer.Id}", csrf, new
+        {
+            displayName = "Renamed Dev", role = listed.GetProperty("role").GetString(),
+            projects = listed.GetProperty("projects"), disabled = false,
+        });
+        Assert.Equal(HttpStatusCode.OK, rename.StatusCode);
+        var change = await SendRawAsync(owner, HttpMethod.Put, $"/api/auth/users/{developer.Id}", csrf, new
+        {
+            role = StudioRoles.Operator, projects = new[] { "alpha" },
+        });
+        Assert.Equal(HttpStatusCode.Conflict, change.StatusCode);
+        Assert.Equal("bindings-managed", (await change.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+
+        var binding = Assert.Single(store.ReadIamSnapshot().Bindings, candidate => candidate.PrincipalId == developer.Id);
+        Assert.Equal((IamRoles.Developer, "alpha"), (binding.Role, binding.Scope.Project));
+    }
+
+    [Fact]
+    public async Task Api_tokens_are_issued_as_service_accounts_and_listed_in_both_views()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.Zero));
+        using var factory = BuildFactory(clock: clock);
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        store.Bootstrap(new BootstrapRequest("first.owner", Password, null));
+        using var owner = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = true });
+        var csrf = await LoginAsync(owner, "first.owner", Password);
+
+        var created = await SendAsync<JsonElement>(owner, HttpMethod.Post, "/api/auth/api-tokens", csrf, new
+        {
+            name = "ci reader", role = StudioRoles.Viewer, projects = new[] { "alpha" },
+            expiresAt = clock.GetUtcNow().UtcDateTime.AddDays(7),
+        });
+        var tokenId = created.GetProperty("token").GetProperty("id").GetString();
+        Assert.StartsWith("api.", created.GetProperty("secret").GetString(), StringComparison.Ordinal);
+
+        var tokens = await owner.GetFromJsonAsync<JsonElement>("/api/auth/api-tokens");
+        Assert.Equal(tokenId, Assert.Single(tokens.EnumerateArray()).GetProperty("id").GetString());
+        var overview = await owner.GetFromJsonAsync<JsonElement>("/api/auth/iam");
+        var account = Assert.Single(overview.GetProperty("serviceAccounts").EnumerateArray());
+        Assert.Equal(ServiceAccountOrigins.ApiToken, account.GetProperty("origin").GetString());
+        Assert.Equal(tokenId, Assert.Single(account.GetProperty("tokens").EnumerateArray()).GetProperty("id").GetString());
+
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await SendRawAsync(owner, HttpMethod.Delete, $"/api/auth/api-tokens/{tokenId}", csrf, null)).StatusCode);
+        Assert.NotNull((await owner.GetFromJsonAsync<JsonElement>("/api/auth/api-tokens")).EnumerateArray().Single()
+            .GetProperty("revokedAt").GetString());
     }
 
     private static async Task<string> LoginAsync(HttpClient client, string username, string password)
@@ -130,15 +212,19 @@ public sealed class IamEndpointTests : IDisposable
         return await client.SendAsync(request);
     }
 
-    private WebApplicationFactory<Program> BuildFactory() => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+    private WebApplicationFactory<Program> BuildFactory(string profile = SecurityProfiles.Networked, TimeProvider? clock = null)
+        => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _workspace,
-            ["Security:Profile"] = "networked",
-            ["AllowedHosts"] = "studio.test",
+            ["Security:Profile"] = profile,
+            ["AllowedHosts"] = profile == SecurityProfiles.Networked ? "studio.test" : "*",
         }));
+        if (clock is not null)
+            builder.ConfigureServices(services => services.AddSingleton(provider => new AccessSecurityStore(
+                provider.GetRequiredService<IConfiguration>(), NullLogger<AccessSecurityStore>.Instance, clock)));
     });
 
     public void Dispose()

@@ -18,6 +18,13 @@ public sealed record PermissionTarget(
         => new(ProjectRouteScope.Addressed, [project], environment);
 }
 
+/// <summary>
+/// The legacy role and project list a handler sees for one request, and the
+/// role of this model it was derived from (<c>null</c> without a covering
+/// binding).
+/// </summary>
+public sealed record ProjectedAccess(string LegacyRole, List<string> Projects, string? Role);
+
 public sealed record PermissionDecision(bool Allowed, IReadOnlyList<RoleBinding> GrantingBindings, string? Reason)
 {
     public static PermissionDecision Allow(IReadOnlyList<RoleBinding> granting) => new(true, granting, null);
@@ -68,10 +75,15 @@ public static class PermissionEvaluator
                     covering.AddRange(forProject);
                 }
                 break;
+            case ProjectRouteScope.DeferredToHandler:
+                // The handler checks every affected project against the
+                // projected principal (see ProjectAccessAuthorization.AllowsTasks).
+                covering = granting;
+                break;
             default:
-                // Collection and body-addressed handlers filter or check per item
-                // for human principals only. A service account therefore needs
-                // the workspace scope on such routes.
+                // Collection handlers filter their payload for humans. A
+                // service account keeps the API-token rule: an unaddressed
+                // route needs the workspace scope.
                 covering = subject.Kind == IamPrincipalKind.ServiceAccount ? granting.Where(IsWorkspace).ToList() : granting;
                 if (covering.Count == 0) return PermissionDecision.Deny($"A service account needs '{permission}' on the workspace for this route.");
                 break;
@@ -122,9 +134,57 @@ public static class PermissionEvaluator
         _ => false,
     };
 
+    /// <summary>
+    /// The subject's bindings that grant <paramref name="permission"/>
+    /// somewhere, before the route's address narrows them.
+    /// </summary>
+    public static IReadOnlyList<RoleBinding> GrantingBindings(
+        string permission, IamSubject subject, IEnumerable<RoleBinding> bindings, string? environment)
+        => bindings.Where(binding => AppliesTo(binding, subject) && Grants(binding, permission, subject, environment)).ToList();
+
+    /// <summary>
+    /// The per-request legacy view of an allowed request (review item 2): the
+    /// role is the strongest role covering the addressed project(s), or for an
+    /// unaddressed route the strongest role among the bindings that grant the
+    /// route's permission; the projects are those where the route's permission
+    /// holds. Handler checks that still read <see cref="StudioUser.Role"/> and
+    /// <see cref="StudioUser.Projects"/> then never see more than the bindings
+    /// grant for this route.
+    /// </summary>
+    public static ProjectedAccess Project(
+        string permission,
+        IamSubject subject,
+        IEnumerable<RoleBinding> bindings,
+        PermissionTarget target,
+        Func<string, string, bool>? sameProject = null)
+    {
+        var own = bindings.Where(binding => AppliesTo(binding, subject) && IamRoles.Find(binding.Role) is not null).ToList();
+        if (own.Any(binding => binding.Role == IamRoles.Owner && IsWorkspace(binding)))
+            return new ProjectedAccess(StudioRoles.Owner, [], IamRoles.Owner);
+
+        var granting = GrantingBindings(permission, subject, own, target.Environment);
+        // A denied request still gets a role, so the read-only check sees
+        // the strongest role the principal holds rather than none.
+        var role = target.Scope switch
+        {
+            ProjectRouteScope.Addressed => StrongestRole(subject, own, target, sameProject),
+            ProjectRouteScope.WorkspaceWide => Strongest(granting.Where(IsWorkspace)) ?? Strongest(own),
+            _ => Strongest(granting) ?? Strongest(own),
+        };
+        List<string> projects = granting.Any(IsWorkspace)
+            ? [ProjectAccessAuthorization.AllProjectsGrant]
+            : granting.Select(binding => binding.Scope.Project).OfType<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return new ProjectedAccess(IamRoles.LegacyRole(role), projects, role);
+    }
+
     private static bool Grants(RoleBinding binding, string permission, IamSubject subject, string? environment)
     {
         if (!IamRoles.Grants(binding.Role, permission)) return false;
+        // A production approval is a human decision; no workload identity
+        // holds it, whatever role it is bound to (review item 4).
+        if (permission == IamPermissions.EnvironmentProductionDeployApprove
+            && subject.Kind == IamPrincipalKind.ServiceAccount) return false;
         // Write without read (Dossier IP-D8 A): a human resolves secret values
         // only through the Owner break-glass role.
         if (permission == IamPermissions.SecretsResolve && subject.Kind != IamPrincipalKind.ServiceAccount

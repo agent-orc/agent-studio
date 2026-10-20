@@ -71,6 +71,18 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("POST", "/api/auth/login", IamPermissions.Anonymous)]
     [InlineData("GET", "/healthz", IamPermissions.Anonymous)]
     [InlineData("GET", "/hubs/jobs", IamPermissions.WorkspaceRead)]
+    [InlineData("GET", "/api/auth/api-tokens", IamPermissions.AccessRead)]
+    [InlineData("POST", "/api/auth/api-tokens", IamPermissions.AccessManage)]
+    [InlineData("DELETE", "/api/auth/api-tokens/{id}", IamPermissions.AccessManage)]
+    [InlineData("GET", "/api/auth/runner-enrollments", IamPermissions.AccessRead)]
+    [InlineData("DELETE", "/api/auth/runner-enrollments/{id}", IamPermissions.AccessManage)]
+    [InlineData("GET", "/api/first-run/projects/{projectId}/repository", IamPermissions.WorkspaceAdminister)]
+    [InlineData("POST", "/api/first-run/git-setups", IamPermissions.WorkspaceAdminister)]
+    [InlineData("POST", "/api/pull-gates/claim", IamPermissions.RunnerService)]
+    [InlineData("PUT", "/api/pull-gates/runs/{runId}/artifacts/{name}", IamPermissions.RunnerService)]
+    [InlineData("GET", "/api/gate-artifacts/{runId}/{name}", IamPermissions.RunnerService)]
+    [InlineData("POST", "/api/tasks", IamPermissions.ProjectCardsWrite)]
+    [InlineData("POST", "/api/epics/{epicId}/sub-tasks", IamPermissions.ProjectCardsWrite)]
     public void Representative_routes_resolve_to_their_permission(string method, string pattern, string permission)
     {
         var resolved = RoutePermissionCatalog.Resolve(method,
@@ -87,6 +99,39 @@ public sealed class RoutePermissionInventoryTests : IDisposable
 
         Assert.Equal("production", approve?.Environment);
         Assert.Equal("environmentId", rollback?.EnvironmentRouteValue);
+    }
+
+    [Fact]
+    public void The_task_server_proxy_declares_read_and_operate_and_the_old_catch_all_is_gone()
+    {
+        using var factory = Factory(SecurityProfiles.Networked, "http://127.0.0.1:5071");
+        var proxy = Assert.Single(Routes(factory.Services), endpoint => endpoint.RoutePattern.RawText == "/api/v1/{**path}");
+
+        Assert.Equal(IamPermissions.WorkspaceRead, RoutePermissionCatalog.Resolve(proxy, "GET")?.Permission);
+        Assert.Equal(IamPermissions.WorkspaceOperate, RoutePermissionCatalog.Resolve(proxy, "POST")?.Permission);
+        Assert.Equal(IamPermissions.WorkspaceOperate, RoutePermissionCatalog.Resolve(proxy, "DELETE")?.Permission);
+        Assert.Null(RoutePermissionCatalog.Resolve("POST", "/api/v1/{}"));
+        Assert.Null(RoutePermissionCatalog.Resolve("GET", "/api/v1/{}"));
+    }
+
+    [Fact]
+    public void Only_handler_checked_unaddressed_writes_accept_project_bindings()
+    {
+        Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks")?.ProjectBindingsSuffice);
+        Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks/batch-move")?.ProjectBindingsSuffice);
+        Assert.True(RoutePermissionCatalog.Resolve("POST", "/api/tasks/reorder")?.ProjectBindingsSuffice);
+        Assert.False(RoutePermissionCatalog.Resolve("POST", "/api/supervisor/{}")?.ProjectBindingsSuffice);
+        Assert.False(RoutePermissionCatalog.Resolve("PUT", "/api/workspaces/{}/autonomy")?.ProjectBindingsSuffice);
+    }
+
+    [Fact]
+    public void Arbitrary_method_tokens_resolve_without_caching()
+    {
+        var endpoint = new RouteEndpoint(_ => Task.CompletedTask,
+            Microsoft.AspNetCore.Routing.Patterns.RoutePatternFactory.Parse("/api/tasks/{jobId}"), 0, Microsoft.AspNetCore.Http.EndpointMetadataCollection.Empty, null);
+
+        Assert.Null(RoutePermissionCatalog.Resolve(endpoint, "X-" + Guid.NewGuid().ToString("N")));
+        Assert.Equal(IamPermissions.ProjectRead, RoutePermissionCatalog.Resolve(endpoint, "get")?.Permission);
     }
 
     [Fact]

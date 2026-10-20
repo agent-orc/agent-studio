@@ -13,7 +13,14 @@ namespace AgentStudio.Security;
 public sealed record RequiredPermissionMetadata(
     string Permission,
     string? Environment = null,
-    string? EnvironmentRouteValue = null);
+    string? EnvironmentRouteValue = null,
+    bool ProjectBindingsSuffice = false);
+
+/// <summary>
+/// One route's permission split by method: <see cref="Read"/> for GET, HEAD,
+/// and OPTIONS, <see cref="Write"/> for every other method.
+/// </summary>
+public sealed record MethodPermissionMetadata(string Read, string Write);
 
 public static class RoutePermissionEndpointExtensions
 {
@@ -25,6 +32,15 @@ public static class RoutePermissionEndpointExtensions
         if (!IamPermissions.IsKnown(permission))
             throw new ArgumentException($"Unknown permission '{permission}'.", nameof(permission));
         return builder.WithMetadata(new RequiredPermissionMetadata(permission, environment, environmentRouteValue));
+    }
+
+    /// <summary>Declares a read and a write permission for a route that serves both.</summary>
+    public static TBuilder RequirePermissions<TBuilder>(this TBuilder builder, string read, string write)
+        where TBuilder : IEndpointConventionBuilder
+    {
+        if (!IamPermissions.IsKnown(read)) throw new ArgumentException($"Unknown permission '{read}'.", nameof(read));
+        if (!IamPermissions.IsKnown(write)) throw new ArgumentException($"Unknown permission '{write}'.", nameof(write));
+        return builder.WithMetadata(new MethodPermissionMetadata(read, write));
     }
 }
 
@@ -48,12 +64,36 @@ public static class RoutePermissionCatalog
     private sealed record Rule(string Methods, string[] Segments, RequiredPermissionMetadata Permission);
 
     private static readonly IReadOnlyList<Rule> Rules = Build();
+    private static readonly HashSet<string> CachedMethods = new(StringComparer.Ordinal)
+        { "GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE" };
     private static readonly ConcurrentDictionary<(Endpoint Endpoint, string Method), RequiredPermissionMetadata?> Cache = new();
 
+    /// <summary>
+    /// The endpoint's declared permission for a method. Only the standard
+    /// methods are cached, so arbitrary method tokens cannot grow the cache.
+    /// </summary>
     public static RequiredPermissionMetadata? Resolve(Endpoint endpoint, string method)
-        => Cache.GetOrAdd((endpoint, method.ToUpperInvariant()), key =>
-            key.Endpoint.Metadata.GetMetadata<RequiredPermissionMetadata>()
-            ?? (key.Endpoint is RouteEndpoint route ? Resolve(key.Method, route.RoutePattern) : null));
+    {
+        var normalized = method.ToUpperInvariant();
+        return CachedMethods.Contains(normalized)
+            ? Cache.GetOrAdd((endpoint, normalized), key => ResolveUncached(key.Endpoint, key.Method))
+            : ResolveUncached(endpoint, normalized);
+    }
+
+    /// <summary>
+    /// True for the endpoint routing selects when a path matches but its
+    /// method does not. It executes no handler and answers 405 itself.
+    /// </summary>
+    public static bool IsMethodRejection(Endpoint endpoint)
+        => endpoint is not RouteEndpoint
+           && string.Equals(endpoint.DisplayName, "405 HTTP Method Not Supported", StringComparison.Ordinal);
+
+    private static RequiredPermissionMetadata? ResolveUncached(Endpoint endpoint, string method)
+        => endpoint.Metadata.GetMetadata<RequiredPermissionMetadata>()
+           ?? (endpoint.Metadata.GetMetadata<MethodPermissionMetadata>() is { } split
+               ? new RequiredPermissionMetadata(MethodMatches("R", method) ? split.Read : split.Write)
+               : null)
+           ?? (endpoint is RouteEndpoint route ? Resolve(method, route.RoutePattern) : null);
 
     public static RequiredPermissionMetadata? Resolve(string method, RoutePattern pattern)
         => Resolve(method, Normalize(pattern));
@@ -111,6 +151,13 @@ public static class RoutePermissionCatalog
             foreach (var pattern in patterns)
                 rules.Add(new Rule(methods, Split(pattern), new RequiredPermissionMetadata(permission)));
         }
+        // An unaddressed write normally needs a workspace binding. These
+        // handlers check every project they touch, or touch none.
+        void AddProjectChecked(string methods, string permission, params string[] patterns)
+        {
+            foreach (var pattern in patterns)
+                rules.Add(new Rule(methods, Split(pattern), new RequiredPermissionMetadata(permission, ProjectBindingsSuffice: true)));
+        }
         void Under(string methods, string permission, string prefix, params string[] suffixes)
             => Add(methods, permission, [.. suffixes.Select(suffix => prefix + "/" + suffix)]);
         void Environment(string methods, string permission, string pattern, string? environment, string? routeValue = null)
@@ -124,15 +171,20 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.SelfSession, "/api/auth/session");
         Add("POST", IamPermissions.SelfSession, "/api/auth/logout", "/api/auth/change-password");
         Add("R", IamPermissions.RunnerService, "/api/auth/runner");
-        Add("R", IamPermissions.AccessRead, "/api/auth/users/**", "/api/auth/runners/**", "/api/auth/iam/**");
-        Add("W", IamPermissions.AccessManage,
-            "/api/auth/users/**", "/api/auth/invitations", "/api/auth/runners/**", "/api/auth/runner-enrollments",
+        Add("R", IamPermissions.AccessRead,
+            "/api/auth/users/**", "/api/auth/runners/**", "/api/auth/runner-enrollments/**", "/api/auth/api-tokens/**",
             "/api/auth/iam/**");
+        Add("W", IamPermissions.AccessManage,
+            "/api/auth/users/**", "/api/auth/invitations", "/api/auth/runners/**", "/api/auth/runner-enrollments/**",
+            "/api/auth/api-tokens/**", "/api/auth/iam/**");
+        // First-run setup writes Git credentials and probes repositories for
+        // the installation; the checklist is the Owner's.
+        Add("*", IamPermissions.WorkspaceAdminister, "/api/first-run/**");
 
         // --- Runner and engine service routes (credential scopes decide) ----
         Add("*", IamPermissions.RunnerService,
             "/api/v1/orchestration/**", "/api/v1/runners/**", "/api/v1/gates/**", "/api/v1/runs/**",
-            "/api/runner/artifacts/**", "/api/runner/lease/**");
+            "/api/runner/artifacts/**", "/api/runner/lease/**", "/api/pull-gates/**", "/api/gate-artifacts/**");
         Add("R", IamPermissions.ProjectRead, "/api/v1/reviews/attempts/{}");
         Add("W", IamPermissions.RunnerService, "/api/v1/reviews/attempts/**");
         Add("R", IamPermissions.WorkspaceRead, "/api/v1/protocol");
@@ -142,9 +194,8 @@ public static class RoutePermissionCatalog
             "/api/runner/orchestrator-decisions/**", "/api/runner/project-chat/claim", "/api/runner/project-chat/renew",
             "/api/runner/project-chat/complete", "/api/runner/epic-planning-prompt", "/api/runner/replay/events",
             "/api/clients/{}/runner-git-capability", "/api/deploy/jobs/**", "/api/deploy/gate-releases");
-        // A standalone Task Server authorizes its own versioned plane.
-        Add("R", IamPermissions.WorkspaceRead, "/api/v1/{}");
-        Add("W", IamPermissions.ProjectCardsWrite, "/api/v1/{}");
+        // The proxy to a standalone Task Server declares its own split
+        // (TaskServerPlaneProxy.MapTaskServerPlaneProxy).
         Add("*", IamPermissions.WorkspaceOperate, "/api/v1/management/**");
 
         // --- Environments and production approval --------------------------
@@ -193,8 +244,11 @@ public static class RoutePermissionCatalog
 
         // --- Cards ---------------------------------------------------------
         Add("POST", IamPermissions.ProjectRead, "/api/tasks/reference-status");
-        Add("POST", IamPermissions.ProjectCardsWrite, "/api/tasks", "/api/tasks/reorder", "/api/tasks/batch-move",
-            "/api/epics/{}/sub-tasks", "/api/title/generate", "/api/prompt/enhance");
+        // Creation, reorder, and batch-move check every affected project in
+        // the handler; title and prompt helpers touch no project.
+        AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/tasks", "/api/tasks/reorder", "/api/tasks/batch-move",
+            "/api/title/generate", "/api/prompt/enhance");
+        Add("POST", IamPermissions.ProjectCardsWrite, "/api/epics/{}/sub-tasks");
         Add("DELETE", IamPermissions.ProjectCardsWrite, "/api/tasks/{}");
         Under("W", IamPermissions.ProjectCardsWrite, "/api/tasks/{}",
             "title", "tags", "references", "waits-on", "files/{}", "state", "epic", "dossier", "task-type", "model",

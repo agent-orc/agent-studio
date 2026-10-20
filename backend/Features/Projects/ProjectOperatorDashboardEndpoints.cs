@@ -30,24 +30,21 @@ public static class ProjectOperatorDashboardEndpoints
         app.MapPost("/api/projects/{projectName}/environments/promotions/approve", (
             HttpContext context, string projectName, PromotionDecisionRequest request, ProjectEnvironmentService environments) =>
             environments.Decide(projectName, request.Artifact, true,
-                context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
-                    ? human.User.Id : "local-operator")
+                AccessSecurityMiddleware.ActorId(context, "local-operator"))
                 ? Results.Ok() : Results.Conflict(new { error = "Promotion is not pending." }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/projects/{projectName}/environments/promotions/reject", (
             HttpContext context, string projectName, PromotionDecisionRequest request, ProjectEnvironmentService environments) =>
             environments.Decide(projectName, request.Artifact, false,
-                context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
-                    ? human.User.Id : "local-operator")
+                AccessSecurityMiddleware.ActorId(context, "local-operator"))
                 ? Results.Ok() : Results.Conflict(new { error = "Promotion is not pending." }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/projects/{projectName}/environments/{environmentId}/rollback", (
             HttpContext context, string projectName, string environmentId, ProjectEnvironmentService environments) =>
             environments.Rollback(projectName, environmentId,
-                context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
-                    ? human.User.Id : "local-operator")
+                AccessSecurityMiddleware.ActorId(context, "local-operator"))
                 ? Results.Accepted() : Results.Conflict(new { error = "No previous artifact is available." }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 

@@ -70,11 +70,13 @@ public sealed partial class AccessSecurityStore
                 PasswordChangedAt = now
             };
             state.Users.Add(user);
-            state.RoleBindings.Add(NewBinding(IamPrincipalKind.User, user.Id,
-                new IamGrantRequest(IamRoles.Owner, IamScope.Workspace), IamBindingSources.Bootstrap, user.Id));
+            var binding = NewBinding(IamPrincipalKind.User, user.Id,
+                new IamGrantRequest(IamRoles.Owner, IamScope.Workspace), IamBindingSources.Bootstrap, user.Id);
+            state.RoleBindings.Add(binding);
             state.IamVersion = CurrentIamVersion;
             var created = CreateSessionLocked(state, user);
             SaveLocked(state);
+            AuditBindings(user.Id, "binding.add", [binding]);
             return (user, created.Token, created.Csrf);
         }
     }
@@ -177,88 +179,7 @@ public sealed partial class AccessSecurityStore
         lock (_gate) return StateLocked().Users.OrderBy(x => x.Username).ToList();
     }
 
-    public (StudioApiToken Token, string Secret) CreateApiToken(CreateApiTokenRequest request, string creatorId)
-    {
-        if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length > 100)
-            throw new SecurityOperationException(400, "invalid-name", "Token name must be 1 to 100 characters.");
-        if (request.Role is not StudioRoles.Operator and not StudioRoles.Viewer)
-            throw new SecurityOperationException(400, "invalid-role", "API tokens must use the operator or viewer role.");
-        var now = Now;
-        if (request.ExpiresAt <= now || request.ExpiresAt > now.AddDays(365))
-            throw new SecurityOperationException(400, "invalid-expiry", "Token expiry must be within the next 365 days.");
-        var projects = NormalizeProjects(request.Projects);
-        if (projects.Count == 0)
-            throw new SecurityOperationException(400, "project-required", "Choose at least one project or the all-projects grant.");
-        var id = Guid.NewGuid().ToString("N");
-        var secret = $"api.{id}.{PasswordSecretHasher.RandomToken()}";
-        var token = new StudioApiToken
-        {
-            Id = id, Name = request.Name.Trim(), Role = request.Role, Projects = projects,
-            SecretHash = PasswordSecretHasher.HashSecret(secret), CreatedBy = creatorId,
-            CreatedAt = now, ExpiresAt = request.ExpiresAt
-        };
-        lock (_gate) { var state = StateLocked(); state.ApiTokens.Add(token); SaveLocked(state); }
-        return (token, secret);
-    }
-
-    public IReadOnlyList<StudioApiToken> ListApiTokens()
-    {
-        lock (_gate) return StateLocked().ApiTokens.OrderBy(x => x.Name).ToList();
-    }
-
-    public void RevokeApiToken(string id)
-    {
-        lock (_gate)
-        {
-            var state = StateLocked();
-            var token = state.ApiTokens.FirstOrDefault(x => x.Id == id)
-                ?? throw new SecurityOperationException(404, "token-not-found", "API token not found.");
-            state.ApiTokens[state.ApiTokens.IndexOf(token)] = token with { RevokedAt = token.RevokedAt ?? Now };
-            SaveLocked(state);
-        }
-    }
-
-    public ApiTokenPrincipal? AuthenticateApiToken(string? bearer)
-    {
-        if (!TryTokenParts(bearer, "api", out var id)) return null;
-        lock (_gate)
-        {
-            var state = StateLocked();
-            var token = state.ApiTokens.FirstOrDefault(x => x.Id == id);
-            if (token is null || token.RevokedAt is not null || token.ExpiresAt <= Now
-                || !PasswordSecretHasher.VerifySecret(bearer!, token.SecretHash)) return null;
-            var creator = state.Users.FirstOrDefault(x => x.Id == token.CreatedBy && !x.Disabled);
-            if (creator is null) return null;
-            var now = Now;
-            // A token is a service identity: its own role and grants never inherit
-            // a later expansion of the creator's human account.
-            var user = creator with
-            {
-                Id = $"api:{token.Id}", Role = token.Role, Projects = token.Projects,
-                ProductionApprovalProjects = [], PasswordHash = string.Empty
-            };
-            state.ApiTokens[state.ApiTokens.IndexOf(token)] = token with { LastUsedAt = now };
-            SaveLocked(state);
-            return new ApiTokenPrincipal(token with { LastUsedAt = now }, user);
-        }
-    }
-
-    public void AppendApiTokenAudit(StudioApiToken token, string method, string path, int status)
-    {
-        lock (_gate)
-        {
-            Directory.CreateDirectory(SecurityFolder);
-            var file = Path.Combine(SecurityFolder, "api-token-audit.jsonl");
-            File.AppendAllText(file, JsonSerializer.Serialize(new
-            {
-                timestamp = Now, tokenId = token.Id, tokenName = token.Name, actor = $"api:{token.Id}",
-                token.CreatedBy, method, path, status
-            }) + Environment.NewLine);
-            RestrictPermissions(file);
-        }
-    }
-
-    public (StudioUser User, string TemporaryPassword) CreateUser(CreateUserRequest request)
+    public (StudioUser User, string TemporaryPassword) CreateUser(CreateUserRequest request, string? actingUserId = null)
     {
         ValidateUsername(request.Username);
         var grants = InitialGrants(request.Role, request.Projects, request.Bindings);
@@ -278,13 +199,14 @@ public sealed partial class AccessSecurityStore
                 MustChangePassword = true, CreatedAt = now, PasswordChangedAt = now
             };
             state.Users.Add(user);
-            user = AddUserGrantsLocked(state, user, grants);
+            (user, var bindings) = AddUserGrantsLocked(state, user, grants, actingUserId);
             SaveLocked(state);
+            AuditBindings(actingUserId, "binding.add", bindings);
             return (user, temporary);
         }
     }
 
-    public (StudioUser User, string Token, DateTime ExpiresAt) InviteUser(InviteUserRequest request)
+    public (StudioUser User, string Token, DateTime ExpiresAt) InviteUser(InviteUserRequest request, string? actingUserId = null)
     {
         ValidateUsername(request.Username);
         var grants = InitialGrants(request.Role, request.Projects, request.Bindings);
@@ -307,12 +229,13 @@ public sealed partial class AccessSecurityStore
             var token = $"inv.{id}.{PasswordSecretHasher.RandomToken()}";
             var expiresAt = now.AddHours(24);
             state.Users.Add(user);
-            user = AddUserGrantsLocked(state, user, grants);
+            (user, var bindings) = AddUserGrantsLocked(state, user, grants, actingUserId);
             state.Invitations.Add(new StudioInvitation
             {
                 Id = id, UserId = user.Id, TokenHash = PasswordSecretHasher.HashSecret(token), ExpiresAt = expiresAt
             });
             SaveLocked(state);
+            AuditBindings(actingUserId, "binding.add", bindings);
             return (user, token, expiresAt);
         }
     }
@@ -344,46 +267,49 @@ public sealed partial class AccessSecurityStore
         }
     }
 
+    /// <summary>
+    /// Renames, disables, or assigns a legacy role. Validation runs on a copy
+    /// and the change commits once: any refusal, last-owner protection
+    /// included, leaves the state untouched. Bindings change only when the
+    /// legacy role, projects, or approvals differ from the current summary.
+    /// </summary>
     public StudioUser UpdateUser(string id, UpdateUserRequest request, string actingUserId)
     {
         lock (_gate)
         {
-            var state = StateLocked();
-            var user = state.Users.FirstOrDefault(x => x.Id == id)
+            var next = Copy(StateLocked());
+            var user = next.Users.FirstOrDefault(x => x.Id == id)
                 ?? throw new SecurityOperationException(404, "user-not-found", "User not found.");
-            var role = request.Role ?? user.Role;
-            if (!StudioRoles.IsValid(role)) throw new SecurityOperationException(400, "invalid-role", "Role must be owner, operator, contributor, or viewer.");
             var disabled = request.Disabled ?? user.Disabled;
-            if (id == actingUserId && (disabled || role != StudioRoles.Owner))
+            if (id == actingUserId && disabled)
                 throw new SecurityOperationException(409, "last-owner-protection", "An owner cannot disable or demote their current account.");
-            if (user.Role == StudioRoles.Owner && (disabled || role != StudioRoles.Owner)
-                && state.Users.Count(x => x.Role == StudioRoles.Owner && !x.Disabled && x.Id != id) == 0)
-                throw new SecurityOperationException(409, "last-owner-protection", "At least one active owner is required.");
-            var memberships = request.Projects is null ? user.Projects : NormalizeProjects(request.Projects);
-            if (role == StudioRoles.Contributor && (memberships.Count == 0
-                || memberships.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal)))
-                throw new SecurityOperationException(400, "invalid-projects", "Product users need explicit assigned projects.");
-            var approvalProjects = role == StudioRoles.Contributor
-                ? (request.ProductionApprovalProjects is null ? user.ProductionApprovalProjects : NormalizeProjects(request.ProductionApprovalProjects))
-                : [];
-            if (approvalProjects.Any(project => project == ProjectAccessAuthorization.AllProjectsGrant
-                || !memberships.Contains(project, StringComparer.OrdinalIgnoreCase)))
-                throw new SecurityOperationException(400, "invalid-production-approval", "Production approval must name an assigned project.");
-            var updated = user with
+            var renamed = user with
             {
                 DisplayName = request.DisplayName is null ? user.DisplayName : request.DisplayName.Trim(),
-                Role = role, Projects = memberships, Disabled = disabled,
-                ProductionApprovalProjects = approvalProjects
+                Disabled = disabled,
             };
-            state.Users[state.Users.IndexOf(user)] = updated;
-            // A legacy role assignment replaces the user's direct bindings;
-            // group bindings stay. The summary is then re-derived from them.
+            var bindings = LegacyRoleBindings(next, user, request,
+                grant => NewBinding(IamPrincipalKind.User, id, grant, IamBindingSources.RoleAssignment, actingUserId));
+            var users = next.Users.Select(candidate => candidate.Id == id ? renamed : candidate).ToList();
+            var previous = next.RoleBindings.Where(binding => binding.PrincipalKind == IamPrincipalKind.User && binding.PrincipalId == id).ToList();
+            CommitIamLocked(next, users, bindings ?? next.RoleBindings.ToList(), next.Groups.ToList(), actingUserId);
+            if (disabled) next.Sessions.RemoveAll(x => x.UserId == id);
+            SaveLocked(next);
             if (request.Role is not null || request.Projects is not null || request.ProductionApprovalProjects is not null)
-                updated = ReplaceDirectGrantsLocked(state, updated,
-                    LegacyRoleMapping.Grants(role, memberships, approvalProjects), actingUserId);
-            if (disabled) state.Sessions.RemoveAll(x => x.UserId == id);
-            SaveLocked(state);
-            return updated;
+                AppendIamAudit(actingUserId, "user.legacy-role", "user", id, new
+                {
+                    request.Role, request.Projects, request.ProductionApprovalProjects,
+                    bindings = bindings is null ? "unchanged" : "replaced",
+                });
+            if (bindings is not null)
+            {
+                AuditBindings(actingUserId, "binding.remove", previous);
+                AuditBindings(actingUserId, "binding.add",
+                    next.RoleBindings.Where(binding => binding.PrincipalKind == IamPrincipalKind.User && binding.PrincipalId == id));
+            }
+            if (disabled != user.Disabled)
+                AppendIamAudit(actingUserId, disabled ? "user.disable" : "user.enable", "user", id, null);
+            return next.Users.First(candidate => candidate.Id == id);
         }
     }
 
@@ -655,10 +581,38 @@ public sealed partial class AccessSecurityStore
         if (_state is not null) return _state;
         Directory.CreateDirectory(SecurityFolder);
         RestrictDirectoryPermissions(SecurityFolder);
-        try { _state = File.Exists(StatePath) ? JsonSerializer.Deserialize<SecurityState>(File.ReadAllText(StatePath), Json) ?? new() : new(); }
+        var persisted = File.Exists(StatePath);
+        SecurityState loaded;
+        try { loaded = persisted ? JsonSerializer.Deserialize<SecurityState>(File.ReadAllText(StatePath), Json) ?? new() : new(); }
         catch (Exception ex) { throw new InvalidOperationException($"Security state at '{StatePath}' cannot be read safely.", ex); }
-        if (_state.IamVersion < CurrentIamVersion) MigrateToRoleBindingsLocked(_state);
-        return _state;
+        if (!NeedsIamMigration(loaded))
+        {
+            _state = loaded;
+            return _state;
+        }
+
+        // Migrate a copy. The live state is assigned only once the backup and
+        // the save succeeded, so a crash in between retries from the
+        // unchanged file on the next load.
+        var fromVersion = loaded.IamVersion;
+        var migrated = Copy(loaded);
+        MigrateToRoleBindings(migrated);
+        if (!persisted)
+        {
+            _state = migrated;
+            return _state;
+        }
+        var backup = WriteMigrationBackup(fromVersion);
+        SaveLocked(migrated);
+        AppendIamAudit(null, "migration", "state", $"v{fromVersion}-v{CurrentIamVersion}", new
+        {
+            users = migrated.Users.Count, bindings = migrated.RoleBindings.Count,
+            serviceAccounts = migrated.ServiceAccounts.Count, backup = Path.GetFileName(backup),
+        });
+        _logger.LogInformation(
+            "Migrated access state from IAM version {From} to {To}: {Users} users, {Bindings} bindings, {Accounts} service accounts; legacy copy at {Backup}",
+            fromVersion, CurrentIamVersion, migrated.Users.Count, migrated.RoleBindings.Count, migrated.ServiceAccounts.Count, backup);
+        return _state!;
     }
 
     private void SaveLocked(SecurityState state)

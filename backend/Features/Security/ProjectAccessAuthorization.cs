@@ -90,6 +90,35 @@ public static class ProjectAccessAuthorization
         return true;
     }
 
+    /// <summary>
+    /// Permission-aware form of the body-addressed guard: every affected
+    /// project must grant <paramref name="permission"/> through the principal's
+    /// role bindings (review item 1). Without a captured
+    /// <see cref="RequestAccess"/> (local profile) it falls back to the
+    /// projected membership list.
+    /// </summary>
+    public static bool AllowsTasks(
+        HttpContext context,
+        IEnumerable<string?> taskProjects,
+        string permission,
+        ProjectRegistry? registry = null)
+    {
+        if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is not RequestAccess access)
+            return AllowsTasks(context, taskProjects, registry);
+        foreach (var project in taskProjects)
+            if (!access.AllowsProject(permission, project)) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// True when the Product role's limits apply to the caller in
+    /// <paramref name="project"/>: its strongest role there is Contributor.
+    /// </summary>
+    public static bool IsProductRoleIn(HttpContext context, string? project)
+        => context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access
+            ? access.IsProductRoleIn(project)
+            : context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor };
+
     private static bool Matches(ProjectRecord project, string allowed)
         => string.Equals(project.Id, allowed, StringComparison.OrdinalIgnoreCase)
            || string.Equals(project.DisplayName, allowed, StringComparison.OrdinalIgnoreCase)

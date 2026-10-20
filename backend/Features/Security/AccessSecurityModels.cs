@@ -149,6 +149,11 @@ public sealed record SecurityState
     public List<StudioGroup> Groups { get; init; } = [];
     public List<RoleBinding> RoleBindings { get; init; } = [];
     public List<ServiceAccount> ServiceAccounts { get; init; } = [];
+    /// <summary>
+    /// API tokens as AGT-3186 stored them. Loading migrates them into
+    /// <see cref="ServiceAccounts"/> (same token id and secret hash), so the
+    /// list stays empty in a current state file.
+    /// </summary>
     public List<StudioApiToken> ApiTokens { get; init; } = [];
 }
 
@@ -175,7 +180,6 @@ public sealed record StudioApiToken
     public DateTime? RevokedAt { get; init; }
 }
 
-public sealed record ApiTokenPrincipal(StudioApiToken Token, StudioUser User);
 public sealed record CreateApiTokenRequest(string Name, string Role, IReadOnlyList<string>? Projects, DateTime ExpiresAt);
 public sealed record ApiTokenResponse(string Id, string Name, string Role, IReadOnlyList<string> Projects,
     string CreatedBy, DateTime CreatedAt, DateTime ExpiresAt, DateTime? LastUsedAt, DateTime? RevokedAt);
