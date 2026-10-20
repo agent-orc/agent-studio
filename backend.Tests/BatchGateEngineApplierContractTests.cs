@@ -100,7 +100,7 @@ public sealed partial class BatchGatePilotServiceTests
             Assert.Equal((false, true), (before.Verified, before.AwaitingDownstream));
             Assert.Equal([nameof(EngineApplierEffectKind.GateDispatch)], before.Missing);
             EngineGateDispatchReceipt.Record(factory.Services.GetRequiredService<TimelineLog>(),
-                CardFolder(arranged.TaskId), run.RunId);
+                CardFolder(arranged.TaskId), occurrence.Run.RunId);
         }
         foreach (var effect in owed)
             AssertApplied(factory, effect, occurrence, arranged, lane, action, handoff);
@@ -581,7 +581,9 @@ public sealed partial class BatchGatePilotServiceTests
     [Fact]
     public async Task Applier_probe_requires_the_per_task_gate_write_for_a_settled_defer_to_batch()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        // The moves stand in for the per-task gate and a person; the guarded
+        // delivery chain would refuse the card's unintegrated result.
+        using var factory = BuildFactory(authorityOnTestClock: true, configuration: UnguardedDeliveryChain);
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 8);
         var journal = new MonolithOrchestrationStore(Path.Combine(_workspace, "fallback-occurrences"),
