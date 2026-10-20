@@ -2075,6 +2075,18 @@
 // viewport fixed so wheel and scrollIntoView cannot move the entire settings page.
 .studio-editor__main:has(.ws-settings--inline) { overflow: hidden; }
 
+@media (max-width: 760px) {
+  .studio-body {
+    grid-template-columns: var(--studio-activitybar-w) minmax(0, 1fr) auto !important;
+    grid-template-rows: minmax(0, 10rem) minmax(0, 1fr);
+  }
+  app-studio-activity-bar { grid-column: 1; grid-row: 1 / 3; }
+  .studio-sidebar { grid-column: 2; grid-row: 1; }
+  .studio-editor { grid-column: 2; grid-row: 2; }
+  .studio--sidebar-hidden .studio-body { grid-template-rows: minmax(0, 1fr); }
+  .studio--sidebar-hidden .studio-editor { grid-row: 1; }
+}
+
 // The projected content wrapper from app.html. Without an explicit
 // height + min-height: 0 the dashboard inside it never gets a height
 // to compute % against, so dashboard `height: 100%` resolves to

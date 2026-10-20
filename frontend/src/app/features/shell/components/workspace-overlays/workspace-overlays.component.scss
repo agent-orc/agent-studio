@@ -217,10 +217,12 @@
 }
 
 @media (max-width: 760px) {
-  .ws-settings__body { grid-template-columns: 1fr; overflow: auto; }
+  .ws-settings__body,
+  .ws-settings--inline .ws-settings__body { grid-template-columns: minmax(0, 1fr); overflow: auto; }
   .ws-settings__rail {
     max-height: 18rem;
     border-right: 0;
     border-bottom: 1px solid var(--studio-border);
   }
+  .ws-settings--inline .ws-settings__rail { max-height: 8rem; }
 }
