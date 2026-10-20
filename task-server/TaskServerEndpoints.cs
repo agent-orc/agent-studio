@@ -312,11 +312,15 @@ public static class TaskServerEndpoints
             => await InvokeNullableAsync(() => store.GetTaskHistoryAsync(projectId, taskIdentity, after ?? 0, ct)));
         api.MapPost("/projects/{projectId}/tasks", async (
             HttpContext context, string projectId, CreateTaskRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.CreateTaskAsync(projectId, request, Actor(context), ct), StatusCodes.Status201Created))
+            => StudioProductSession.IsProduct(context) && !StudioProductSession.AllowsCreate(request.State)
+                ? StudioProductSession.Denied()
+                : await InvokeAsync(() => store.CreateTaskAsync(projectId, request, Actor(context), ct), StatusCodes.Status201Created))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         api.MapPut("/projects/{projectId}/tasks/{taskIdentity}", async (
             HttpContext context, string projectId, string taskIdentity, UpdateTaskRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeNullableAsync(() => store.UpdateTaskAsync(projectId, taskIdentity, request, Actor(context), ct)))
+            => await StudioProductSession.AllowsUpdateAsync(context, store, projectId, taskIdentity, request, ct)
+                ? await InvokeNullableAsync(() => store.UpdateTaskAsync(projectId, taskIdentity, request, Actor(context), ct))
+                : StudioProductSession.Denied())
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
         var runners = api.MapGroup("/runners")
