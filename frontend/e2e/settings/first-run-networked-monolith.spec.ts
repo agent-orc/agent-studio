@@ -3,23 +3,39 @@ import { join } from 'node:path';
 import { test, expect } from '../fixtures/dev-backend';
 
 const resultDir = process.env.JOB_RESULTS_DIR ?? 'test-results';
-const json = (body: unknown, status = 200) => ({
-  status, contentType: 'application/json', body: JSON.stringify(body),
-});
 
-test('networked monolith explains that the first-run Task Server plane is unavailable', async ({ page }) => {
-  await page.route('**/api/auth/status', route => route.fulfill(json({
-    profile: 'networked', bootstrapRequired: false, authenticated: true,
-    user: { id: 'owner', username: 'owner', displayName: 'Owner', role: 'owner',
-      projects: [], disabled: false, mustChangePassword: false },
-  })));
-  await page.route('**/api/v1/studio/auth/status', route => route.fulfill(json({
-    profile: 'networked', bootstrapRequired: false, authenticated: true,
-    user: { id: 'owner', username: 'owner', displayName: 'Owner', role: 'owner',
-      projects: [], disabled: false, mustChangePassword: false },
-  })));
-  await page.route('**/api/v1/installation', route => route.fulfill(json({ error: 'not-found' }, 404)));
-  await page.route('**/api/v1/projects', route => route.fulfill(json({ error: 'not-found' }, 404)));
+test('networked monolith explains that the first-run Task Server plane is unavailable', async ({ page, devBackend }) => {
+  expect(process.env.PW_E2E_PROFILE).toBe('networked-monolith');
+  const bootstrap = await page.request.post(`${devBackend.baseUrl}/api/auth/bootstrap`, {
+    headers: { 'X-Forwarded-Proto': 'https', 'Sec-Fetch-Site': 'same-origin' },
+    data: { username: 'first.owner', displayName: 'Owner',
+      password: 'correct horse battery staple!', bootstrapCode: 'e2e-owner-code' },
+  });
+  expect(bootstrap.ok(), `${bootstrap.status()}: ${await bootstrap.text()}`).toBeTruthy();
+  const sessionCookie = bootstrap.headers()['set-cookie']?.split(';', 1)[0];
+  expect(sessionCookie).toBeTruthy();
+
+  // Forward browser API calls through the test's loopback frontend proxy to the
+  // real networked monolith. X-Forwarded-Proto represents its TLS ingress.
+  await page.route('**/api/**', async route => {
+    const response = await route.fetch({ headers: {
+      ...route.request().headers(),
+      'X-Forwarded-Proto': 'https',
+      Cookie: sessionCookie!,
+    } });
+    await route.fulfill({ response });
+  });
+
+  const auth = await page.request.get(`${devBackend.baseUrl}/api/auth/status`, {
+    headers: { 'X-Forwarded-Proto': 'https', Cookie: sessionCookie! },
+  });
+  expect(auth.ok()).toBeTruthy();
+  expect((await auth.json() as { profile: string; authenticated: boolean }))
+    .toMatchObject({ profile: 'networked', authenticated: true });
+  const installation = await page.request.get(`${devBackend.baseUrl}/api/v1/installation`, {
+    headers: { 'X-Forwarded-Proto': 'https', Cookie: sessionCookie! },
+  });
+  expect(installation.status()).toBe(404);
 
   await page.goto('/#/workspace/settings/first-run');
   const unavailable = page.getByTestId('first-run-task-server-unavailable');

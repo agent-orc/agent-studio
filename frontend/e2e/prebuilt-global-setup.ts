@@ -17,6 +17,15 @@ export default async function globalSetup(): Promise<void> {
   }
   const response = await fetch(`${process.env.PW_BACKEND_URL}/healthz`);
   if (!response.ok) throw new Error(`Prebuilt backend health returned ${response.status}`);
+  if (process.env.PW_E2E_PROFILE === 'networked-monolith') {
+    const status = await fetch(`${process.env.PW_BACKEND_URL}/api/auth/status`, {
+      headers: { 'X-Forwarded-Proto': 'https' },
+    });
+    if (!status.ok || (await status.json() as { profile?: string }).profile !== 'networked') {
+      throw new Error('The networked monolith profile is unavailable.');
+    }
+    return;
+  }
   const pathsResponse = await fetch(`${process.env.PW_BACKEND_URL}/api/watch-paths`);
   if (!pathsResponse.ok) throw new Error(`Prebuilt backend watch paths returned ${pathsResponse.status}`);
   const paths = await pathsResponse.json() as { path?: string }[];

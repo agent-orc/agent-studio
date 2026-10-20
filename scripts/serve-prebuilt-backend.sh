@@ -43,6 +43,10 @@ export WatchPaths__0__RepositoryPath="${PW_E2E_CHECKOUT}"
 
 case "${PW_E2E_PROFILE:-standard}" in
   standard) ;;
+  networked-monolith)
+    export Security__Profile=networked
+    export Security__BootstrapCode=e2e-owner-code
+    ;;
   recovery)
     recovery_repo="${PW_E2E_WORKSPACE}/recovery-repository"
     mkdir -p "${recovery_repo}"

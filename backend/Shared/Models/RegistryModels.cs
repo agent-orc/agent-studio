@@ -221,7 +221,17 @@ public record ProjectsFile
     public int Version { get; init; } = 1;
     public int NextProjectIdSeq { get; init; } = 1;
     public List<ProjectRecord> Projects { get; init; } = [];
+    public List<ProjectRepositoryAuditEvent> RepositoryAudit { get; init; } = [];
 }
+
+public sealed record ProjectRepositoryAuditEvent(
+    DateTime Timestamp,
+    string ProjectId,
+    string ActorId,
+    string Actor,
+    string? PreviousRepositoryUrl,
+    string? RepositoryUrl,
+    string Action = "changed");
 
 /// <summary>
 /// Well-known constants for the F45 default workspace.

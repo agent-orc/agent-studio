@@ -99,11 +99,15 @@ that is already allowed to edit that project's checkout.
   plane is unavailable. `AccessSecurityRouteInventory` lists the owner-only
   route families, and its test fails for any mapped route there without the
   declaration. The local loopback profile is unchanged.
-- In the networked profile, changing or clearing a project's repository URL
-  requires the owner. Successful changes append the project, actor, previous
-  URL, new URL, and injected timestamp to
-  `<TaskRepository>/.security/project-repository-audit.jsonl`; the file uses
-  the security directory's owner-only permissions.
+- In the networked profile, every change to the repository URL selected for
+  remote pushes requires the owner, including edits, deletion, creation and
+  reordering through the generic project URL routes. Changes to a shadowed
+  repository entry also require the owner. Each changed repository entry must
+  pass repository URL validation. The project, actor, actual prior URL, new
+  URL, action and injected timestamp are persisted with the registry mutation
+  in `<TaskRepository>/.metadata/projects.json`. A settings rollback appends a
+  `rolled-back` reversal. A shadowed entry uses action
+  `repository-entry-changed`; a failed registry write changes neither state nor audit.
 - Owners mint short-lived one-time Runner enrollment codes. Enrollment reveals
   one service credential once. The server stores only credential hashes.
   Credentials carry explicit scopes, optional expiry, last-use time, and
@@ -162,8 +166,8 @@ Each authenticated API-token call appends its token id, creator, method, route,
 and response status to `<TaskRepository>/.security/api-token-audit.jsonl`.
 Token values and query strings are omitted from that audit.
 
-Networked project repository URL changes are recorded separately in
-`<TaskRepository>/.security/project-repository-audit.jsonl`.
+Networked project repository URL changes are recorded atomically with the
+project registry in `<TaskRepository>/.metadata/projects.json`.
 
 Known credential shapes and named authorization, cookie, and password fields
 are redacted from Runner log ingestion. Production exceptions omit stack

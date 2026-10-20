@@ -610,26 +610,6 @@ public sealed class AccessSecurityStore
         }
     }
 
-    public void AppendProjectRepositoryAudit(
-        string projectId, string actorId, string actor, string? previousRepositoryUrl, string? repositoryUrl)
-    {
-        lock (_gate)
-        {
-            Directory.CreateDirectory(SecurityFolder);
-            RestrictDirectoryPermissions(SecurityFolder);
-            var row = new ProjectRepositoryAuditEvent(
-                Now,
-                CredentialRedactor.Redact(projectId),
-                CredentialRedactor.Redact(actorId),
-                CredentialRedactor.Redact(actor),
-                CredentialRedactor.Redact(previousRepositoryUrl),
-                CredentialRedactor.Redact(repositoryUrl));
-            var path = Path.Combine(SecurityFolder, "project-repository-audit.jsonl");
-            File.AppendAllText(path, JsonSerializer.Serialize(row) + Environment.NewLine);
-            RestrictPermissions(path);
-        }
-    }
-
     private (RunnerCredential Credential, string Secret) NewRunnerCredential(string runnerId, IReadOnlyList<string> scopes, DateTime? expiresAt)
     {
         if (expiresAt <= Now) throw new SecurityOperationException(400, "invalid-expiry", "Credential expiry must be in the future.");
