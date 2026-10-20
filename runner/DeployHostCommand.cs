@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
@@ -15,7 +16,12 @@ public static class DeployHostCommand
     private sealed record Claim(string HostId);
     private sealed record Job(string Id, string Project, string EnvironmentId, string HostId,
         string Artifact, string Template, string Destination, string? HealthUrl,
-        string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken);
+        string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken)
+    {
+        public ProjectDeployStep[] SshSteps { get; init; } = [];
+        public ProjectVariableDefinition[] Variables { get; init; } = [];
+        public ProjectArtifactDefinition[] Artifacts { get; init; } = [];
+    }
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
         HttpClient? transport = null)
@@ -35,16 +41,50 @@ public static class DeployHostCommand
         if (job is null) return 0;
         var evidence = "deploy-step-failed";
         var healthy = false;
+        var stepResults = new List<object>();
         try
         {
             var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
-            if (job.Template == "container")
+            if (job.SshSteps.Length > 0)
+            {
+                var executor = new SshDeployExecutor();
+                for (var index = 0; index < job.SshSteps.Length; index++)
+                {
+                    var step = job.SshSteps[index];
+                    var name = $"deploy[{index}]:{step.Step}";
+                    try
+                    {
+                        var variables = await ResolveVariables(job, client, cancellationToken);
+                        var bundlePath = step.Step == "static-site"
+                            ? job.Artifacts.FirstOrDefault(item => item.Name == step.Artifact && item.Type == "static")?.Path
+                                ?? throw new InvalidDataException("Static artifact is missing from the release snapshot.")
+                            : null;
+                        await executor.ExecuteAsync(job.HostId, step, job.Artifact, args[3], variables,
+                            message => AppendLog(client, job, name, message, cancellationToken), cancellationToken,
+                            bundlePath);
+                        stepResults.Add(new { name, succeeded = true });
+                    }
+                    catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException
+                        or InvalidOperationException or HttpRequestException or System.ComponentModel.Win32Exception)
+                    {
+                        stepResults.Add(new { name, succeeded = false });
+                        await AppendLog(client, job, name, $"Step failed: {ex.GetType().Name}.", cancellationToken);
+                        throw;
+                    }
+                }
+            }
+            else if (job.Template == "container")
                 await DeployContainer(job, secretRoot, cancellationToken);
             else if (job.Template == "static")
                 await DeployStatic(job, args[3], cancellationToken);
             else throw new InvalidOperationException("Unknown template.");
             evidence = "health-http-failed";
-            healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
+            var healthUrl = job.SshSteps.LastOrDefault()?.HealthUrl ?? job.HealthUrl;
+            var healthTimeout = job.SshSteps.LastOrDefault()?.HealthTimeoutSeconds;
+            using var healthLimit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            healthLimit.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(healthTimeout ?? 60, 1, 900)));
+            try { healthy = healthUrl is null || await CheckHealth(healthUrl, healthLimit.Token); }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { healthy = false; }
             if (healthy) evidence = "health-ok";
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
@@ -54,9 +94,40 @@ public static class DeployHostCommand
         }
         using var report = await client.PostAsJsonAsync(
             $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/report",
-            new { job.LeaseToken, Healthy = healthy, Evidence = evidence }, cancellationToken);
+            new { job.LeaseToken, Healthy = healthy, Evidence = evidence, Steps = stepResults }, cancellationToken);
         report.EnsureSuccessStatusCode();
         return healthy ? 0 : 1;
+    }
+
+    private static async Task<Dictionary<string, string>> ResolveVariables(Job job, HttpClient client, CancellationToken ct)
+    {
+        var resolved = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var variable in job.Variables)
+        {
+            if (variable.Value is { } value) { resolved.Add(variable.Name, value); continue; }
+            if (variable.Secret is null) throw new InvalidDataException("Deploy variable has no source.");
+            var reference = $"secret://{job.Project}/{job.EnvironmentId}/{variable.Secret}";
+            using var response = await client.PostAsJsonAsync("api/runner/secrets/resolve", new
+            {
+                reference, purpose = "deploy", workload = new
+                {
+                    kind = "deploy-job", project = job.Project, jobId = job.Id, leaseToken = job.LeaseToken,
+                },
+            }, ct);
+            response.EnsureSuccessStatusCode();
+            using var body = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken: ct);
+            resolved.Add(variable.Name, body?.RootElement.GetProperty("value").GetString()
+                ?? throw new InvalidDataException("Secret provider returned no value."));
+        }
+        return resolved;
+    }
+
+    private static async Task AppendLog(HttpClient client, Job job, string step, string message, CancellationToken ct)
+    {
+        using var response = await client.PostAsJsonAsync(
+            $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/log",
+            new { job.LeaseToken, Step = step, Message = message }, ct);
+        response.EnsureSuccessStatusCode();
     }
 
     private static async Task DeployStatic(Job job, string artifactStore, CancellationToken ct)

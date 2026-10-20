@@ -79,6 +79,31 @@ public sealed class PipelineMigrationPolicyTests
     }
 
     [Fact]
+    public void Migrated_schema_two_declarations_execute_project_yml_and_refuse_divergence()
+    {
+        var yaml = Propose(SchemaOne, [Staging, Production]).ProposedYaml!;
+        var files = new[]
+        {
+            new EnvironmentDeclarationFile(Staging.Id, Staging, null),
+            new EnvironmentDeclarationFile(Production.Id, Production, null),
+        };
+
+        var effective = ProjectEnvironmentService.ApplyDefinition(files, yaml);
+
+        Assert.All(effective, file => Assert.Null(file.Error));
+        Assert.Equal("static-site", Assert.Single(effective[0].Declaration!.SshSteps).Step);
+        Assert.Equal(["MAIL_KEY"], effective[0].Declaration!.Variables.Select(item => item.Name));
+        Assert.False(effective[0].Declaration!.Protected);
+        Assert.True(effective[1].Declaration!.Protected);
+        Assert.Equal("staging", effective[1].Declaration!.Requires);
+
+        var changed = ProjectEnvironmentService.ApplyDefinition(
+            [files[0] with { Declaration = Staging with { Destination = "/srv/www/other" } }, files[1]], yaml);
+        Assert.Contains("diverges", changed[0].Error);
+        Assert.Null(changed[0].Declaration);
+    }
+
+    [Fact]
     public void Container_declaration_gets_a_compose_default_and_names_every_assumption()
     {
         var container = Production with { Template = "container", Destination = "18080" };
