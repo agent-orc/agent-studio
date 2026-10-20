@@ -119,12 +119,20 @@ export class ProviderAuthStatusService implements OnDestroy {
     );
   }
 
-  /** The one device sign-in API: the first-run checklist and the Access and Execution Hosts actions call it. */
-  startDeviceLogin(hostId: string, provider: DeviceLoginProvider): Observable<DeviceLoginStartResponse> {
+  /**
+   * The one device sign-in API: the first-run checklist and the Access and Execution Hosts actions call it.
+   * The target runner pins the sign-in to the badge's service identity, because the coding and the review
+   * runner of one host own separate CLI homes.
+   */
+  startDeviceLogin(
+    hostId: string,
+    provider: DeviceLoginProvider,
+    targetRunnerId?: string | null,
+  ): Observable<DeviceLoginStartResponse> {
     if (!this.http) throw new Error('Device sign-in requires the Studio HTTP client.');
     return this.http.post<DeviceLoginStartResponse>(
       '/api/v1/management/device-logins',
-      { hostId, provider },
+      { hostId, provider, targetRunnerId: targetRunnerId || null },
     );
   }
 
@@ -143,6 +151,12 @@ export class ProviderAuthStatusService implements OnDestroy {
       {},
       { headers: { 'X-Device-Login-Session': sessionKey } },
     );
+  }
+
+  /** Cancels a queued or running session for a surface that is going away; nobody waits for the answer. */
+  cancelActiveDeviceLogin(session: { handle: string; sessionKey: string; state: string } | null): void {
+    if (!session || (session.state !== 'queued' && session.state !== 'running')) return;
+    this.cancelDeviceLogin(session.handle, session.sessionKey).subscribe({ error: () => undefined });
   }
 
   startClaudeSignIn(

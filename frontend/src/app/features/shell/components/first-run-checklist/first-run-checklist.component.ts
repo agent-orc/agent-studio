@@ -144,6 +144,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
     if (this.poll) clearInterval(this.poll);
     if (this.loginPoll) clearInterval(this.loginPoll);
     if (this.gitPoll) clearInterval(this.gitPoll);
+    this.providers.cancelActiveDeviceLogin(this.deviceLogin());
   }
 
   reload(): void {
@@ -324,7 +325,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
     if (badge.provider !== 'codex' && badge.provider !== 'claude') return;
     if (!this.localProfile()) {
       this.deviceLoginError.set(null);
-      this.providers.startDeviceLogin(signInTarget(badge).hostId, badge.provider).subscribe({
+      this.providers.startDeviceLogin(signInTarget(badge).hostId, badge.provider, badge.runnerId).subscribe({
         next: session => {
           this.deviceLogin.set({ ...session, detail: null, hostName: badge.hostName, providerLabel: badge.providerLabel });
           this.codeCopyLabel.set('Copy code');

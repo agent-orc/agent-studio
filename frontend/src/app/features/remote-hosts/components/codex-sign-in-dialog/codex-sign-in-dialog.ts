@@ -81,7 +81,7 @@ export class CodexSignInDialogComponent implements OnDestroy {
     this.copyLabel.set('Copy code');
     this.phase.set('starting');
     this.detail.set(`Starting a host-owned Codex device sign-in on ${request.hostName}…`);
-    this.providerAuth.startDeviceLogin(request.hostId, 'codex').subscribe({
+    this.providerAuth.startDeviceLogin(request.hostId, 'codex', request.runnerId).subscribe({
       next: session => {
         this.session.set(session);
         this.detail.set('Waiting for the execution host to start Codex…');

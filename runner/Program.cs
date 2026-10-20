@@ -164,12 +164,18 @@ ProviderAuthProbe.Shared.UseLauncher(
     (fileName, arguments, ct) =>
     {
         var invocation = ProviderAuthProbe.LowPriorityInvocation(fileName, arguments);
-        var context = AuthProbeContext(RunnerCapabilityProbe.Provider(fileName));
+        var provider = RunnerCapabilityProbe.Provider(fileName);
+        var context = AuthProbeContext(provider);
+        var environment = context?.Environment.ToDictionary(kv => kv.Key, kv => (string?)kv.Value)
+            ?? new Dictionary<string, string?>();
+        // A device sign-in probes its unverified Claude token in this child only (AGT-3225).
+        if (ProviderAuthEnvironment.TryGetForCli(provider, out var authName, out var authValue))
+            environment[authName] = authValue;
         return ProcessRunner.RunAsync(
             invocation.FileName,
             invocation.Arguments,
             workingDirectory: context?.HomePath,
-            environment: context?.Environment.ToDictionary(kv => kv.Key, kv => (string?)kv.Value),
+            environment: environment,
             ct: ct);
     },
     Log);

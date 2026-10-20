@@ -5,6 +5,7 @@ namespace AgentStudio.TaskServer;
 /// <summary>
 /// The only device sign-in routes. The first-run checklist and the Access and Execution
 /// Hosts actions use the management group; every runner polls the runner group.
+/// A sign-in authorizes the host's provider credentials, so the management group is Owner-only.
 /// </summary>
 public static class DeviceLoginEndpoints
 {
@@ -17,24 +18,28 @@ public static class DeviceLoginEndpoints
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!await store.DeviceLoginHostExistsAsync(request.HostId, ct)) return Results.NotFound();
+            if (!string.IsNullOrWhiteSpace(request.TargetRunnerId)
+                && await store.ResolveDeviceLoginHostAsync(request.TargetRunnerId, ct) != request.HostId)
+                return Results.BadRequest(new ApiError("invalid-login",
+                    "The selected runner is not an active runner of this host."));
             try { return Results.Ok(sessions.Start(request.HostId, request.Provider,
-                TaskServerEndpoints.Actor(context))); }
+                TaskServerEndpoints.Actor(context), request.TargetRunnerId)); }
             catch (ArgumentException ex) { return Results.BadRequest(new ApiError("invalid-login", ex.Message)); }
             catch (InvalidOperationException ex) { return Results.Conflict(new ApiError("login-active", ex.Message)); }
-        }).RequireStudioRole(StudioUserRoles.Operator);
+        }).RequireStudioRole(StudioUserRoles.Owner);
         management.MapGet("/{handle}", (HttpContext context, string handle,
             DeviceLoginSessions sessions) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             var key = context.Request.Headers["X-Device-Login-Session"].ToString();
             return sessions.Get(handle, key) is { } session ? Results.Ok(session) : Results.NotFound();
-        }).RequireStudioRole(StudioUserRoles.Operator);
+        }).RequireStudioRole(StudioUserRoles.Owner);
         management.MapPost("/{handle}/cancel", async (HttpContext context, string handle,
             DeviceLoginSessions sessions, CancellationToken ct) =>
         {
             var key = context.Request.Headers["X-Device-Login-Session"].ToString();
             return await sessions.CancelAsync(handle, key, ct) ? Results.Ok() : Results.NotFound();
-        }).RequireStudioRole(StudioUserRoles.Operator);
+        }).RequireStudioRole(StudioUserRoles.Owner);
 
         var runner = app.MapGroup("/api/v1/runners/{runnerId}/device-login")
             .RequireTaskServerScope(TaskServerScopes.RunsClaim);
@@ -54,6 +59,9 @@ public static class DeviceLoginEndpoints
             var host = await store.ResolveDeviceLoginHostAsync(runnerId, ct);
             return host is null ? Results.NotFound() : Results.Ok(sessions.Claim(host, runnerId));
         });
+        runner.MapGet("/{handle}", (string runnerId, string handle, DeviceLoginSessions sessions)
+            => sessions.RunnerState(handle, runnerId) is { } state
+                ? Results.Ok(new DeviceLoginRunnerStateDto(state)) : Results.NotFound());
         runner.MapPost("/{handle}/instructions", (string runnerId, string handle,
             DeviceLoginInstructionsRequest request, DeviceLoginSessions sessions) =>
         {

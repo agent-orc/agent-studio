@@ -81,6 +81,41 @@ public sealed class DeviceLoginSessionsTests
         Assert.Null(completed?.VerificationUrl);
     }
 
+    [Fact]
+    public void Only_the_target_runner_of_a_shared_host_claims_the_sign_in()
+    {
+        var sessions = Sessions(Clock());
+        var login = sessions.Start("host-a", "codex", "owner", targetRunnerId: "review-runner");
+        Assert.Throws<InvalidOperationException>(() =>
+            sessions.Start("host-a", "codex", "owner", targetRunnerId: "coding-runner"));
+        Assert.Null(sessions.Claim("host-a", "coding-runner"));
+        Assert.Equal(login.Handle, sessions.Claim("host-a", "review-runner")?.Handle);
+        Assert.Null(sessions.Claim("host-a", "review-runner"));
+        var untargeted = sessions.Start("host-a", "claude", "owner");
+        Assert.Equal(untargeted.Handle, sessions.Claim("host-a", "coding-runner")?.Handle);
+    }
+
+    [Fact]
+    public async Task Claiming_runner_reads_back_only_its_session_state_and_sees_cancel_and_timeout()
+    {
+        var clock = Clock();
+        var sessions = Sessions(clock);
+        var cancelled = sessions.Start("host-a", "codex", "owner");
+        Assert.Null(sessions.RunnerState(cancelled.Handle, "runner-a"));
+        sessions.Claim("host-a", "runner-a");
+        Assert.Equal("running", sessions.RunnerState(cancelled.Handle, "runner-a"));
+        Assert.Null(sessions.RunnerState(cancelled.Handle, "runner-b"));
+        Assert.True(await sessions.CancelAsync(cancelled.Handle, cancelled.SessionKey!, default));
+        Assert.Equal("failed", sessions.RunnerState(cancelled.Handle, "runner-a"));
+
+        var expiring = sessions.Start("host-a", "claude", "owner");
+        sessions.Claim("host-a", "runner-a");
+        clock.Advance(TimeSpan.FromMinutes(16));
+        Assert.Equal("failed", sessions.RunnerState(expiring.Handle, "runner-a"));
+        clock.Advance(TimeSpan.FromMinutes(30));
+        Assert.Null(sessions.RunnerState(expiring.Handle, "runner-a"));
+    }
+
     [Theory]
     [InlineData("codex", "https://evil.example/device")]
     [InlineData("codex", "https://claude.ai/oauth/authorize")]

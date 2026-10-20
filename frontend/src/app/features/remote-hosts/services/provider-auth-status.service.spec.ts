@@ -1,5 +1,5 @@
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -21,6 +21,19 @@ describe('ProviderAuthStatusService', () => {
     });
     service = TestBed.inject(ProviderAuthStatusService);
     notifications = TestBed.inject(NotificationService);
+  });
+
+  it('pins a device sign-in to the target runner and cancels only an active session', () => {
+    const http = TestBed.inject(HttpTestingController);
+    service.startDeviceLogin('host-a', 'codex', 'review-a').subscribe();
+    expect(http.expectOne('/api/v1/management/device-logins').request.body)
+      .toEqual({ hostId: 'host-a', provider: 'codex', targetRunnerId: 'review-a' });
+    service.cancelActiveDeviceLogin({ handle: 'dlogin_done', sessionKey: 'key-done', state: 'completed' });
+    service.cancelActiveDeviceLogin(null);
+    service.cancelActiveDeviceLogin({ handle: 'dlogin_a', sessionKey: 'key-a', state: 'running' });
+    const cancel = http.expectOne('/api/v1/management/device-logins/dlogin_a/cancel');
+    expect(cancel.request.headers.get('X-Device-Login-Session')).toBe('key-a');
+    http.verify();
   });
 
   it('notifies only when a previously OK provider becomes unavailable', () => {

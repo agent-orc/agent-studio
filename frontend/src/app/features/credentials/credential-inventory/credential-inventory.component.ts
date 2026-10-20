@@ -54,7 +54,7 @@ export class CredentialInventoryComponent {
   signIn(item: CredentialInventoryItem): void {
     const badge = this.providerAuth.statuses().find(status =>
       status.provider === 'codex' && status.hostId === item.hostId);
-    this.codexSignIn.open({ hostId: item.hostId, runnerId: badge?.runnerId ?? item.hostId,
+    this.codexSignIn.open({ hostId: item.hostId, runnerId: badge?.runnerId ?? '',
       hostName: badge?.hostName ?? item.hostId, aliases: badge?.aliases ?? [item.hostId],
       baselineAdvertisedAt: badge?.advertisedAt ?? null });
   }

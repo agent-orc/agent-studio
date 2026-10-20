@@ -86,7 +86,7 @@ describe('CodexSignInDialogComponent', () => {
     fixture.detectChanges();
 
     const dialog = document.querySelector('[data-testid="codex-sign-in-dialog"]') as HTMLElement;
-    expect(providerAuth.startDeviceLogin).toHaveBeenCalledWith('host-01', 'codex');
+    expect(providerAuth.startDeviceLogin).toHaveBeenCalledWith('host-01', 'codex', 'runner-01');
     expect(dialog.querySelector('[data-testid="codex-sign-in-pending"]')).toBeTruthy();
     expect(dialog.querySelector<HTMLAnchorElement>('[data-testid="codex-sign-in-url"]')?.href)
       .toBe('https://auth.openai.com/codex/device');

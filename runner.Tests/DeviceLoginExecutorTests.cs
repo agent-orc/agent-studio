@@ -1,5 +1,6 @@
 using AgentRunner;
 using AgentStudio.TaskServer.Contracts;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.Extensions.Time.Testing;
@@ -176,6 +177,7 @@ public sealed class DeviceLoginExecutorTests
             File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             DeviceLoginInstructionsRequest? instructions = null;
             string? probedToken = null;
+            string? processTokenDuringProbe = null;
             Environment.SetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN", "previous-token");
 
             var rejected = await new DeviceLoginExecutor(cli, tokenFile, _ => Task.FromResult(false), provider: "claude")
@@ -187,7 +189,8 @@ public sealed class DeviceLoginExecutorTests
 
             var result = await new DeviceLoginExecutor(cli, tokenFile, _ =>
                 {
-                    probedToken = Environment.GetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN");
+                    probedToken = ProviderAuthEnvironment.ClaudeTokenForChild();
+                    processTokenDuringProbe = Environment.GetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN");
                     return Task.FromResult(true);
                 }, provider: "claude")
                 .RunAsync((message, _) => { instructions = message; return Task.CompletedTask; }, default);
@@ -195,6 +198,9 @@ public sealed class DeviceLoginExecutorTests
             Assert.Equal("https://claude.ai/oauth/authorize?client_id=studio", instructions?.VerificationUrl);
             Assert.Null(instructions?.UserCode);
             Assert.Equal(token, probedToken);
+            // Only the probe child saw the unverified token; the daemon switched after success.
+            Assert.Equal("previous-token", processTokenDuringProbe);
+            Assert.Equal(token, Environment.GetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN"));
             Assert.Equal(token, (await File.ReadAllTextAsync(tokenFile)).Trim());
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(tokenFile));
             Assert.DoesNotContain(token, result.Detail);
@@ -203,6 +209,167 @@ public sealed class DeviceLoginExecutorTests
                 .RunAsync((_, _) => Task.CompletedTask, default);
             Assert.Equal("failed", unchanged.Result);
             Assert.Contains("did not update", unchanged.Detail);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN", previous);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Studio_cancel_stops_a_parked_claude_login_and_accepts_no_token()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 8, 0, 0, TimeSpan.Zero));
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var previous = Environment.GetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN");
+        try
+        {
+            Environment.SetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN", "previous-token");
+            var token = "sk-ant-" + new string('z', 32);
+            var pidFile = Path.Combine(directory, "cli.pid");
+            var cli = ParkedCli(directory, pidFile, "https://claude.ai/oauth/authorize", token);
+            var server = new FakeDeviceLoginServer(clock, "claude");
+            using var http = server.Client();
+            using var client = new TaskServerClient(http, "runner-a", usesDurableTaskServer: true);
+            var logs = new List<string>();
+            using var stop = new CancellationTokenSource();
+            var run = new DeviceLoginPoller(client, line => { lock (logs) logs.Add(line); }, directory,
+                claudeBinary: cli, clock: clock).RunAsync(stop.Token);
+
+            await server.Instructions.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var pid = await ReadPidAsync(pidFile);
+            Assert.True(Alive(pid));
+            server.State = "failed"; // The operator cancelled in Studio.
+            clock.Advance(DeviceLoginPoller.PollInterval);
+
+            var completion = await server.Completion.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal("failed", completion.Result);
+            await WaitUntilAsync(() => !Alive(pid));
+            Assert.False(File.Exists(DeviceLoginExecutor.ClaudeTokenPath(directory)));
+            Assert.Equal("previous-token", Environment.GetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN"));
+            Assert.Contains(server.Paths, path => path.StartsWith("GET ", StringComparison.Ordinal)
+                && path.EndsWith("/device-login/dlogin_fixture", StringComparison.Ordinal));
+            lock (logs) Assert.DoesNotContain(logs, line => line.Contains(token, StringComparison.Ordinal));
+            stop.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN", previous);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Runner_shutdown_still_reports_the_stopped_sign_in()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 8, 0, 0, TimeSpan.Zero));
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var pidFile = Path.Combine(directory, "cli.pid");
+            var cli = ParkedCli(directory, pidFile, "https://auth.openai.com/codex/device",
+                new string('A', 4) + "-" + new string('B', 4));
+            var server = new FakeDeviceLoginServer(clock, "codex");
+            using var http = server.Client();
+            using var client = new TaskServerClient(http, "runner-a", usesDurableTaskServer: true);
+            using var stop = new CancellationTokenSource();
+            var run = new DeviceLoginPoller(client, _ => { }, directory, codexBinary: cli, clock: clock)
+                .RunAsync(stop.Token);
+
+            await server.Instructions.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var pid = await ReadPidAsync(pidFile);
+            stop.Cancel();
+
+            var completion = await server.Completion.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal("failed", completion.Result);
+            await WaitUntilAsync(() => !Alive(pid));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Publish_failure_stops_the_login_at_once()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 8, 0, 0, TimeSpan.Zero));
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var pidFile = Path.Combine(directory, "cli.pid");
+            var credential = Path.Combine(directory, "auth.json");
+            var cli = ParkedCli(directory, pidFile, "https://auth.openai.com/codex/device",
+                new string('A', 4) + "-" + new string('B', 4));
+            var result = await new DeviceLoginExecutor(cli, credential, _ => Task.FromResult(true), clock)
+                .RunAsync((_, _) => Task.FromException(new HttpRequestException("Task Server unavailable")), default)
+                .WaitAsync(TimeSpan.FromSeconds(10)); // The parked CLI would sleep for 30 s.
+            Assert.Equal("failed", result.Result);
+            Assert.Contains("could not be published", result.Detail);
+            Assert.False(Alive(await ReadPidAsync(pidFile)));
+            Assert.False(File.Exists(credential));
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Login_child_reads_a_closed_stdin_pipe_instead_of_the_daemon_stdin()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var code = new string('A', 4) + "-" + new string('B', 4);
+            var credential = Path.Combine(directory, "auth.json");
+            var cli = Path.Combine(directory, "fake-codex");
+            await File.WriteAllTextAsync(cli, "#!/bin/sh\n"
+                + "[ -p /dev/stdin ] || exit 7\n"
+                + "if read -r line; then exit 8; fi\n"
+                + $"printf '%s\\n' 'https://auth.openai.com/codex/device' '{code}'\nprintf fixture > '{credential}'\n");
+            File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var result = await new DeviceLoginExecutor(cli, credential, _ => Task.FromResult(true))
+                .RunAsync((_, _) => Task.CompletedTask, default).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal("completed", result.Result);
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Verified_token_file_wins_over_runner_env_and_only_the_source_is_logged()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "device-login-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var previous = Environment.GetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN");
+        try
+        {
+            var stored = "sk-ant-" + new string('f', 32);
+            var configured = "sk-ant-" + new string('e', 32);
+            var logs = new List<string>();
+            using var http = new HttpClient { BaseAddress = new Uri("https://task-server.test") };
+            using var client = new TaskServerClient(http, "runner-a", usesDurableTaskServer: true);
+            var poller = new DeviceLoginPoller(client, logs.Add, directory);
+            Directory.CreateDirectory(Path.GetDirectoryName(DeviceLoginExecutor.ClaudeTokenPath(directory))!);
+            await File.WriteAllTextAsync(DeviceLoginExecutor.ClaudeTokenPath(directory), stored + "\n");
+
+            Environment.SetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN", configured);
+            poller.RestoreClaudeToken();
+            Assert.Equal(stored, Environment.GetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN"));
+            Assert.Equal("device-login claude token source=provider-auth-file (overrides runner.env)", logs[^1]);
+
+            File.Delete(DeviceLoginExecutor.ClaudeTokenPath(directory));
+            Environment.SetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN", configured);
+            poller.RestoreClaudeToken();
+            Assert.Equal(configured, Environment.GetEnvironmentVariable("CLAUDE_CODE_OAUTH_TOKEN"));
+            Assert.Equal("device-login claude token source=runner-env", logs[^1]);
+            Assert.DoesNotContain(logs, line => line.Contains(stored, StringComparison.Ordinal)
+                || line.Contains(configured, StringComparison.Ordinal));
         }
         finally
         {
@@ -226,6 +393,68 @@ public sealed class DeviceLoginExecutorTests
         Assert.Null(DeviceLoginExecutor.DeviceCode("test-" + new string('x', 48)));
         var claudeToken = "sk-ant-" + new string('x', 32);
         Assert.Equal(claudeToken, DeviceLoginExecutor.ClaudeToken(claudeToken));
+    }
+
+    /// <summary>Prints the instructions, records its PID and parks like a CLI waiting for the browser.</summary>
+    private static string ParkedCli(string directory, string pidFile, string url, string secondLine)
+    {
+        var cli = Path.Combine(directory, "fake-parked-cli");
+        File.WriteAllText(cli, $"#!/bin/sh\necho $$ > '{pidFile}'\nprintf '%s\\n' '{url}' '{secondLine}'\nexec sleep 30\n");
+        File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return cli;
+    }
+
+    private static async Task<int> ReadPidAsync(string pidFile)
+    {
+        await WaitUntilAsync(() => File.Exists(pidFile) && File.ReadAllText(pidFile).Trim().Length > 0);
+        return int.Parse(File.ReadAllText(pidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        for (var attempt = 0; attempt < 100 && !condition(); attempt++) await Task.Delay(50);
+        Assert.True(condition());
+    }
+
+    private static bool Alive(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (ArgumentException) { return false; } // No such process.
+    }
+
+    /// <summary>The runner-bound device-login routes of one claimed session.</summary>
+    private sealed class FakeDeviceLoginServer(FakeTimeProvider clock, string provider)
+    {
+        private int _claims;
+        public volatile string State = "running";
+        public List<string> Paths { get; } = [];
+        public TaskCompletionSource<bool> Instructions { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<DeviceLoginCompletionRequest> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public HttpClient Client() => new(new Handler(RespondAsync)) { BaseAddress = new Uri("https://task-server.test") };
+
+        private async Task<HttpResponseMessage> RespondAsync(HttpRequestMessage request)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            lock (Paths) Paths.Add($"{request.Method} {path}");
+            if (path.EndsWith("/claim", StringComparison.Ordinal))
+                return Interlocked.Increment(ref _claims) == 1
+                    ? new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(
+                        new DeviceLoginClaimDto("dlogin_fixture", provider, clock.GetUtcNow().UtcDateTime.AddMinutes(15))) }
+                    : new HttpResponseMessage(HttpStatusCode.NotFound);
+            if (request.Method == HttpMethod.Get)
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                    { Content = JsonContent.Create(new DeviceLoginRunnerStateDto(State)) };
+            if (path.EndsWith("/instructions", StringComparison.Ordinal)) Instructions.TrySetResult(true);
+            if (path.EndsWith("/completion", StringComparison.Ordinal))
+                Completion.TrySetResult((await request.Content!.ReadFromJsonAsync<DeviceLoginCompletionRequest>())!);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
     }
 
     private sealed class Handler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) : HttpMessageHandler

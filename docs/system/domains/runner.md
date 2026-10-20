@@ -13,21 +13,35 @@ One device-login service serves the first-run checklist and the Access and
 Execution Hosts sign-in actions (AGT-3225 merged the AGT-3214 and AGT-3156
 paths). Both surfaces call `/api/v1/management/device-logins`; runners poll
 `/api/v1/runners/{runnerId}/device-login`. `DeviceLoginRouteTests` fails if a
-second device-login route appears. A start creates a 15-minute Codex or Claude
-login session for a registered host, one at a time per host and provider. Task
+second device-login route appears. Only an Owner may start, read or cancel a
+sign-in, because it authorizes the host's provider credentials. A start creates
+a 15-minute Codex or Claude login session for a registered host, one at a time
+per host and provider. The optional `targetRunnerId` pins it to one active
+runner of that host: the coding and the review identity of a host own separate
+CLI homes, so the first-run checklist and the Access and Execution Hosts actions
+pass the badge's runner, and only that runner can claim the session. Task
 Server holds the browser URL and one-time code only in memory. A random session
 key is returned solely to the initiating browser session and is required to
-read or cancel those instructions. A runner on that host claims the command
-through its outbound Task Server channel, holds a local provider login lock and
-starts `codex login --device-auth` or `claude setup-token` in its own service
-account through `DeviceLoginExecutor`, the only device-login launcher. It
-reports the URL and code without logging child output. Completion requires a
-changed credential file and a successful real provider probe: Codex must
-rewrite its `auth.json`; for Claude the runner probes with the new setup token
-and only then replaces its `provider-auth/claude-token` file, which it restores
-into `CLAUDE_CODE_OAUTH_TOKEN` at start. Terminal results are audited with
-actor, host, provider and outcome, without the code. Timeout and cancel clear
-the instructions. Each runner keeps its own native credential store; neither
+read or cancel those instructions. Closing the dialog or leaving the first-run
+checklist cancels a queued or running session. A runner on that host claims the
+command through its outbound Task Server channel, holds a local provider login
+lock and starts `codex login --device-auth` or `claude setup-token` in its own
+service account through `DeviceLoginExecutor`, the only device-login launcher.
+The child gets a closed stdin pipe. The runner reports the URL and code without
+logging child output. While the CLI runs, the runner reads the session state
+every 2 seconds (`GET /api/v1/runners/{runnerId}/device-login/{handle}`, state
+only). A Studio cancel, a Task Server timeout or a failed instruction publish
+stops the process tree, accepts no credential and reports `failed`; on runner
+shutdown the completion is sent with its own short timeout. Completion requires
+a changed credential file and a successful real provider probe: Codex must
+rewrite its `auth.json`; for Claude only the probe child sees the new setup
+token, and the runner replaces its `provider-auth/claude-token` file and its
+process-wide `CLAUDE_CODE_OAUTH_TOKEN` only after the probe succeeds. At start
+that file wins over a `CLAUDE_CODE_OAUTH_TOKEN` from `runner.env`, because it is
+written only after a verified sign-in; delete it to return to the `runner.env`
+token. The runner logs which source is active, never the value. Terminal
+results are audited with actor, host, provider and outcome, without the code.
+Timeout and cancel clear the instructions. Each runner keeps its own native credential store; neither
 Task Server nor Studio distributes ChatGPT login files.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`

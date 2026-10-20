@@ -1258,6 +1258,16 @@ public sealed class TaskServerClient : IDisposable
             $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/{Uri.EscapeDataString(handle)}/instructions",
             instructions, ct);
 
+    /// <summary>The session state only; null once the Task Server no longer knows the session.</summary>
+    public async Task<string?> DeviceLoginStateAsync(string handle, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/{Uri.EscapeDataString(handle)}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<Contract.DeviceLoginRunnerStateDto>(Json, ct))?.State;
+    }
+
     public async Task CompleteDeviceLoginAsync(string handle,
         Contract.DeviceLoginCompletionRequest completion, CancellationToken ct)
         => await PostJsonWithoutResponseAsync(

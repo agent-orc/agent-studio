@@ -25,6 +25,16 @@ test('networked first-run provider sign-in uses the shared device-login API', as
   await page.route('**/api/v1/installation', json({ installationId: 'install-a', ownerBootstrapped: true }));
   await page.route('**/api/v1/projects', json([]));
   await page.route('**/api/v1/management/links', json([]));
+  // A live studio socket keeps the offline guard from refusing the cancel POST on leave.
+  await page.route('**/hubs/v1/studio/negotiate**', json({
+    negotiateVersion: 1, connectionId: 'first-run', connectionToken: 'first-run',
+    availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+  }));
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
+    socket.onMessage(message => {
+      if (typeof message === 'string' && message.includes('"protocol"')) socket.send('{}\u001e');
+    });
+  });
   await page.route('**/api/v1/management/remote-hosts', json([{
     runnerId: 'coding-a', name: 'Coding host A', hostId: 'host-a', instanceId: 'i-1',
     runnerVersion: '0.9.5', protocolVersion: 1, status: 'active', registeredAt: now, lastSeenAt: now,
@@ -51,6 +61,11 @@ test('networked first-run provider sign-in uses the shared device-login API', as
       expiresAt: new Date(Date.now() + 900_000).toISOString(),
     })(route);
   });
+  const cancelKeys: (string | undefined)[] = [];
+  await page.route('**/api/v1/management/device-logins/*/cancel', route => {
+    cancelKeys.push(route.request().headers()['x-device-login-session']);
+    return route.fulfill({ status: 200 });
+  });
   let legacyCalls = 0;
   await page.route('**/api/v1/management/runner-device-logins**', route => {
     legacyCalls += 1;
@@ -63,11 +78,15 @@ test('networked first-run provider sign-in uses the shared device-login API', as
   await row.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.getByTestId('first-run-device-url')).toHaveAttribute('href', 'https://claude.ai/oauth/authorize');
   await expect(page.getByTestId('first-run-device-login')).toContainText('Claude on Coding host A: running');
-  expect(started).toEqual([{ hostId: 'host-a', provider: 'claude' }]);
+  expect(started).toEqual([{ hostId: 'host-a', provider: 'claude', targetRunnerId: 'coding-a' }]);
   expect(sessionKeys[0]).toBe('browser-session');
   expect(legacyCalls).toBe(0);
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
     await page.getByTestId('first-run-providers').screenshot({ path: join(shots, `first-run-device-login-${theme}--mocked.png`) });
   }
+  // Leaving the checklist cancels the running session with its key (AGT-3225 follow-up).
+  await page.getByRole('complementary', { name: 'Settings sections' }).getByRole('button', { name: 'Overview' }).click();
+  await expect(page.getByTestId('first-run-device-login')).toHaveCount(0);
+  await expect.poll(() => cancelKeys).toEqual(['browser-session']);
 });

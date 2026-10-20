@@ -33,7 +33,12 @@ public sealed class DeviceLoginSessions
         this.audit = audit;
     }
 
-    public DeviceLoginSessionDto Start(string hostId, string provider, string actor)
+    /// <summary>
+    /// Queues one sign-in per host and provider. The endpoint has already checked that a
+    /// non-empty <paramref name="targetRunnerId"/> is an active runner of the host.
+    /// </summary>
+    public DeviceLoginSessionDto Start(string hostId, string provider, string actor,
+        string? targetRunnerId = null)
     {
         if (string.IsNullOrWhiteSpace(hostId) || provider is not ("codex" or "claude"))
             throw new ArgumentException("A host and supported provider are required.");
@@ -46,7 +51,8 @@ public sealed class DeviceLoginSessions
             var session = new Session(
                 "dlogin_" + Guid.NewGuid().ToString("N"),
                 Convert.ToHexString(RandomNumberGenerator.GetBytes(32)), hostId, provider,
-                actor, clock.GetUtcNow().UtcDateTime.Add(Lifetime));
+                actor, clock.GetUtcNow().UtcDateTime.Add(Lifetime),
+                string.IsNullOrWhiteSpace(targetRunnerId) ? null : targetRunnerId);
             _sessions.Add(session.Handle, session);
             return View(session, includeCode: false) with { SessionKey = session.SessionKey };
         }
@@ -68,11 +74,26 @@ public sealed class DeviceLoginSessions
         lock (_gate)
         {
             ExpireLocked();
-            var session = _sessions.Values.FirstOrDefault(item => item.HostId == hostId && item.State == "queued");
+            var session = _sessions.Values.FirstOrDefault(item => item.HostId == hostId && item.State == "queued"
+                && (item.TargetRunnerId is null || item.TargetRunnerId == runnerId));
             if (session is null) return null;
             session.State = "running";
             session.RunnerId = runnerId;
             return new(session.Handle, session.Provider, session.ExpiresAt);
+        }
+    }
+
+    /// <summary>
+    /// The state the claiming runner polls while its CLI runs, so a cancel or timeout stops
+    /// the process. Null when the session is unknown or claimed by another runner.
+    /// </summary>
+    public string? RunnerState(string handle, string runnerId)
+    {
+        lock (_gate)
+        {
+            ExpireLocked();
+            return _sessions.TryGetValue(handle, out var session) && session.RunnerId == runnerId
+                ? session.State : null;
         }
     }
 
@@ -206,7 +227,7 @@ public sealed class DeviceLoginSessions
             HostId: session.HostId, Provider: session.Provider);
 
     private sealed class Session(string handle, string sessionKey, string hostId,
-        string provider, string actor, DateTime expiresAt)
+        string provider, string actor, DateTime expiresAt, string? targetRunnerId)
     {
         public string Handle { get; } = handle;
         public string SessionKey { get; } = sessionKey;
@@ -214,6 +235,7 @@ public sealed class DeviceLoginSessions
         public string Provider { get; } = provider;
         public string Actor { get; } = actor;
         public DateTime ExpiresAt { get; } = expiresAt;
+        public string? TargetRunnerId { get; } = targetRunnerId;
         public string State { get; set; } = "queued";
         public string? RunnerId { get; set; }
         public string? VerificationUrl { get; set; }

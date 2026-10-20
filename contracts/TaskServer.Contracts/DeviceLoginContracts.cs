@@ -1,6 +1,10 @@
 namespace AgentStudio.TaskServer.Contracts;
 
-public sealed record StartDeviceLoginRequest(string HostId, string Provider);
+/// <summary>
+/// <paramref name="TargetRunnerId"/> pins the sign-in to one active runner of the host, because the
+/// coding and the review identity on one host own separate CLI homes. Empty lets any runner claim it.
+/// </summary>
+public sealed record StartDeviceLoginRequest(string HostId, string Provider, string? TargetRunnerId = null);
 
 public sealed record DeviceLoginSessionDto(
     string Handle, string State, DateTime ExpiresAt, string? VerificationUrl = null,
@@ -13,3 +17,6 @@ public sealed record DeviceLoginClaimDto(string Handle, string Provider, DateTim
 public sealed record DeviceLoginInstructionsRequest(string VerificationUrl, string? UserCode);
 
 public sealed record DeviceLoginCompletionRequest(string Result, string Detail);
+
+/// <summary>What the claiming runner may read back: the session state only, never the code.</summary>
+public sealed record DeviceLoginRunnerStateDto(string State);
