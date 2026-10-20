@@ -201,7 +201,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3068 adds three rule mutations (Continue) and one host occurrence (Start),
         // and maps the engine decision-job (Start) and receipt (Continue) routes in
         // every profile.
-        Assert.Equal(125, routes.Count);
+        Assert.Equal(126, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -236,6 +236,11 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             Assert.Equal(admissionPath, route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
             Assert.Contains("POST", route.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
         }
+        var artifactRoute = Assert.Single(routes, route =>
+            route.RoutePattern.RawText == "/api/deploy/jobs/{project}/{jobId}/artifact");
+        Assert.Equal(ExecutionAdmissionPath.Claim,
+            artifactRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+        Assert.Contains("GET", artifactRoute.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
         var receiptRoute = Assert.Single(routes, route =>
             route.RoutePattern.RawText == "/api/v1/orchestration/runs/{runId}/decision-receipt");
         Assert.Equal(ExecutionAdmissionPath.Continue,
@@ -258,7 +263,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 9,
+                [ExecutionAdmissionPath.Claim] = 10,
                 [ExecutionAdmissionPath.Start] = 24,
                 [ExecutionAdmissionPath.Continue] = 29,
                 [ExecutionAdmissionPath.Review] = 9,
