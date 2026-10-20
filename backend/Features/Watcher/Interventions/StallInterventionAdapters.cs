@@ -478,7 +478,8 @@ public sealed class BatchGateInterventionControl(BatchGateStore store, BatchGate
 /// only the start of one of the card's attempts and never a result with work.
 /// </summary>
 public sealed class DeliveryContinuationControl(TaskScannerService scanner, AttemptAuthorityService authority,
-    TimeProvider time, Action? beforePin = null, LaneMutexRegistry? laneMutex = null) : IContinuationControl
+    TimeProvider time, Action? beforePin = null, LaneMutexRegistry? laneMutex = null,
+    Action? beforeClear = null) : IContinuationControl
 {
     public const string Reason = "rate-limit-last-delivery";
 
@@ -529,8 +530,8 @@ public sealed class DeliveryContinuationControl(TaskScannerService scanner, Atte
         var job = Job(card);
         var record = job is null ? null : ContinuationBaseStore.Read(job.FolderPath);
         if (job is null || record is null || record.Reason != Reason || record.AttemptId != interventionId) return false;
-        ContinuationBaseStore.Clear(job.FolderPath);
-        return true;
+        beforeClear?.Invoke();
+        return ContinuationBaseStore.TryClearWhen(job.FolderPath, record);
     }
 
     private StallRequeueCandidate Candidate(string card, TaskInfo job)

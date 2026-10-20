@@ -210,4 +210,22 @@ public static class ContinuationBaseStore
             SilentCatch.Note(exception, $"continuation base could not be cleared in {folderPath}");
         }
     }
+
+    /// <summary>Remove a base only if it is still the record selected for undo.</summary>
+    public static bool TryClearWhen(string folderPath, ContinuationBaseRecord expected)
+    {
+        lock (Sync)
+        try
+        {
+            if (Read(folderPath) != expected) return false;
+            File.Delete(Path.Combine(folderPath, FileName));
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            SilentCatch.Note(exception, $"continuation base could not be conditionally cleared in {folderPath}");
+            return false;
+        }
+    }
 }

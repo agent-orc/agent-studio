@@ -300,6 +300,24 @@ public sealed class StallInterventionAdapterTests : IDisposable
     }
 
     [Fact]
+    public void Requeue_undo_preserves_a_human_base_written_after_its_live_read()
+    {
+        var folder = WriteCard(TaskStates.Ready, "undo-race", "AGT-9012");
+        var authority = Authority();
+        Deliver(authority, "AGT-9012", reviewed: true);
+        _clock.Advance(TimeSpan.FromHours(1));
+        Fail(authority, "AGT-9012", "codex: rate limit exceeded (429 Too Many Requests)");
+        var human = new ContinuationBaseRecord("refs/heads/human-choice", new string('3', 40),
+            "human-choice", "operator", Now);
+        var control = new DeliveryContinuationControl(Scanner(), authority, _clock, beforeClear: () =>
+            Assert.True(ContinuationBaseStore.Save(folder, human)));
+
+        Assert.NotNull(control.PinLastDelivery("AGT-9012", "si-undo-race"));
+        Assert.False(control.Clear("AGT-9012", "si-undo-race"));
+        Assert.Equal(human, ContinuationBaseStore.Read(folder));
+    }
+
+    [Fact]
     public void Requeue_refuses_a_card_moved_out_of_ready_after_candidate_selection()
     {
         var folder = WriteCard(TaskStates.Ready, "rate-limited-lane-race", "AGT-9011");
