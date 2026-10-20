@@ -208,9 +208,15 @@ public sealed class TelemetryIntakeService
         using var buffer = new MemoryStream();
         var chunk = new byte[64 * 1024];
         int read;
-        while ((read = await stream.ReadAsync(chunk, cancellationToken)) > 0)
+        while (true)
         {
-            if (buffer.Length + read > _options.MaxRequestBytes) return null;
+            // Probe at most one byte beyond the limit. Reading a full chunk here
+            // would consume uncharged request bytes from a caller-owned stream.
+            var remaining = _options.MaxRequestBytes - (int)buffer.Length;
+            var readSize = remaining >= chunk.Length ? chunk.Length : remaining + 1;
+            read = await stream.ReadAsync(chunk.AsMemory(0, readSize), cancellationToken);
+            if (read == 0) break;
+            if (read > remaining) return null;
             buffer.Write(chunk, 0, read);
         }
         return buffer.ToArray();

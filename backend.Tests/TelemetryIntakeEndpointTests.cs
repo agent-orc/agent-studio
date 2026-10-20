@@ -109,6 +109,20 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Oversized_body_consumes_at_most_one_byte_past_the_limit()
+    {
+        const int limit = 2048;
+        var harness = await Start(new TelemetryOptions { MaxRequestBytes = limit });
+        var token = (await CreateToken(harness)).Secret;
+        using var body = new CountingStream(new byte[64 * 1024]);
+
+        var outcome = await Receive(harness, token, body);
+
+        Assert.Equal(413, outcome.StatusCode);
+        Assert.Equal(limit + 1, body.BytesRead);
+    }
+
+    [Fact]
     public async Task Success_reports_partial_success_in_the_request_encoding()
     {
         var harness = await Start();
@@ -595,6 +609,30 @@ public sealed class TelemetryIntakeEndpointTests : IAsyncDisposable
             _reading.TrySetResult();
             await _gate.Task.WaitAsync(cancellationToken);
             return await _content.ReadAsync(buffer, cancellationToken);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class CountingStream(byte[] content) : Stream
+    {
+        private readonly MemoryStream _content = new(content);
+        public int BytesRead { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var read = await _content.ReadAsync(buffer, cancellationToken);
+            BytesRead += read;
+            return read;
         }
 
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
