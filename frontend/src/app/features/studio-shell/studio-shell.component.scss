@@ -442,7 +442,7 @@
 
 @media (max-width: 600px) {
   .studio-body:has(> app-orchestrator-side-sheet.is-open) { grid-template-rows: minmax(0, 1fr); }
-  .studio-body:has(> app-orchestrator-side-sheet.is-open) > app-studio-activity-bar {
+  .studio-body:has(> app-orchestrator-side-sheet.is-open) > app-studio-activity-bar > .studio-activitybar {
     grid-column: 1;
     grid-row: 1;
   }

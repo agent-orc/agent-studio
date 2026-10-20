@@ -10,13 +10,27 @@ test('open orchestrator sheet fills the phone body with the sidebar present', as
     if (message.type() === 'error') errors.push(message.text());
   });
 
+  // These background probes target services outside the isolated E2E stack.
+  await page.route('**/update/status', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    headers: { 'access-control-allow-origin': '*' },
+    body: JSON.stringify({ phase: 'idle', isRunning: false, behindBy: 0 }),
+  }));
+  await page.route('**/api/v1/management/credential-inventory', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ generatedAt: '2026-10-20T00:00:00Z', items: [] }),
+  }));
+  await page.route('**/healthz', route => route.fulfill({ status: 200, body: 'Healthy' }));
+
   await page.goto('/');
   await expect(page.getByTestId('studio-sidebar')).toBeVisible();
   await page.getByTestId('orch-side-sheet-toggle').click();
 
   const sheetHost = page.locator('app-orchestrator-side-sheet');
   const sheet = page.getByTestId('orch-side-sheet');
-  const studio = page.getByTestId('app-root');
+  const body = page.getByTestId('studio-body');
   await expect(sheetHost).toHaveClass(/is-open/);
   await expect(sheet).toBeVisible();
   await expect(sheet.getByTestId('orch-context-badge')).toBeVisible();
@@ -24,11 +38,16 @@ test('open orchestrator sheet fills the phone body with the sidebar present', as
   await expect(sheet.locator('main')).toBeVisible();
 
   await expect.poll(async () => {
-    const body = await studio.boundingBox();
+    const bodyBox = await body.boundingBox();
     const host = await sheetHost.boundingBox();
-    if (!body || !host) return null;
-    return { left: Math.round(host.x - body.x), width: Math.round(host.width - body.width) };
-  }).toEqual({ left: 0, width: 0 });
+    if (!bodyBox || !host) return null;
+    return {
+      left: Math.round(host.x - bodyBox.x),
+      top: Math.round(host.y - bodyBox.y),
+      width: Math.round(host.width - bodyBox.width),
+      height: Math.round(host.height - bodyBox.height),
+    };
+  }).toEqual({ left: 0, top: 0, width: 0, height: 0 });
 
   const bounds = await sheet.evaluate(element => {
     const main = element.querySelector('main');
