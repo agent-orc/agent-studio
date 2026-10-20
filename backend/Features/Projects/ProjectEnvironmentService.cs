@@ -111,7 +111,7 @@ public sealed class ProjectEnvironmentService
         var root = _git.ResolveRepoRootForProject(project);
         if (root is null) return [];
         var directory = Path.Combine(root, "docs", "deployments", "environments");
-        var parsed = Directory.Exists(directory)
+        IReadOnlyList<EnvironmentDeclarationFile> parsed = Directory.Exists(directory)
             ? ParseDeclarationFiles(Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
                 .Select(file => (Path.GetFileName(file), File.ReadAllText(file))))
             : [];
