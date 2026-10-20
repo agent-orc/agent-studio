@@ -73,6 +73,20 @@ public sealed class EnvironmentStatusProjectionTests
     }
 
     [Fact]
+    public void PendingInterventionRemainsVisibleAfterANewerRunStarts()
+    {
+        var waiting = Run("older", R1, Staging, DeploymentStates.WaitingForIntervention, 1) with
+        { FailedStep = DeployStepNames.Health, InterventionExpiresAtUtc = T0.AddHours(2) };
+        var newer = Run("newer", R2, Staging, DeploymentStates.Running, 2);
+        var status = EnvironmentStatusProjection.Project([Staging], [R1, R2], [waiting, newer],
+            new Dictionary<string, string>())[0];
+
+        Assert.Equal("newer", status.CurrentDeployment?.Id);
+        Assert.Equal(("older", DeployStepNames.Health, T0.AddHours(2)),
+            (status.Intervention?.DeploymentId, status.Intervention?.FailedStep, status.Intervention?.ExpiresAtUtc));
+    }
+
+    [Fact]
     public void PreviousRelease_IsTheLatestOlderReleaseThatSucceeded()
     {
         var releases = new[] { R1, R2, R3 }.ToDictionary(item => item.Id);

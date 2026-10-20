@@ -25,7 +25,8 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
     string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0,
-    bool GuidedFailure = false, bool GuidedResolved = false, string? RetryStep = null);
+    bool GuidedFailure = false, bool GuidedResolved = false, string? RetryStep = null,
+    string? RetryOfJobId = null);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -336,7 +337,8 @@ public sealed class ProjectEnvironmentService
                 && item.EnvironmentId == target.Id);
             if (index < 0 || state.Jobs.Skip(index + 1).Any(item => item.EnvironmentId == target.Id)) return null;
             var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state,
-                actor: actor, retryStep: retryStep);
+                rollback: state.Jobs[index].IsRollback, actor: actor, retryStep: retryStep,
+                retryOfJobId: failedJobId);
             Save(project, state);
             return job;
         }
@@ -708,7 +710,7 @@ public sealed class ProjectEnvironmentService
         => declarations?.Any(item => item.Id == environmentId) == true;
 
     private DeployJob Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
-        bool rollback = false, string? actor = null, string? retryStep = null)
+        bool rollback = false, string? actor = null, string? retryStep = null, string? retryOfJobId = null)
     {
         var previous = state.History.Where(row => row.EnvironmentId == declaration.Id
             && (row.Item.Status is "healthy" or "rolled-back"))
@@ -718,7 +720,7 @@ public sealed class ProjectEnvironmentService
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
             IsRollback: rollback, RequestedBy: actor, GuidedFailure: declaration.GuidedFailure,
-            RetryStep: retryStep);
+            RetryStep: retryStep, RetryOfJobId: retryOfJobId);
         state.Jobs.Add(job);
         return job;
     }

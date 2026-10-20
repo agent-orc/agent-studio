@@ -74,7 +74,20 @@ describe('DeployEnvironmentCardComponent', () => {
       deploymentId: 'failed-run', failedStep: 'health', expiresAtUtc: null,
       decision: 'skip', decidedBy: 'local.owner',
     } });
-    expect(text('deploy-environment-intervention')).toBe('health: skip by local.owner.');
+    expect(text('deploy-environment-intervention')).toBe('health: skip by local.owner. Open run');
+  });
+
+  it('opens an older pending intervention while the last run is newer', async () => {
+    await render({ ...fullCards()[0], intervention: {
+      deploymentId: 'older-run', failedStep: 'health', expiresAtUtc: '2026-10-19T13:00:00Z',
+      decision: null, decidedBy: null,
+    } });
+    const events = emitted();
+
+    expect(text('deploy-environment-last-run')).toBe('Redeploy cancelled 5 min ago');
+    expect(text('deploy-environment-intervention')).toContain('Waiting for intervention');
+    button('deploy-environment-intervention')!.click();
+    expect(events.runs).toEqual(['older-run']);
   });
 
   it('without the deploy service: names the artifact, reads host health, and routes a promotion to the tools', async () => {

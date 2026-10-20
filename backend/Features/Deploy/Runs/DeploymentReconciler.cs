@@ -75,6 +75,28 @@ public static class DeploymentReconciler
         foreach (var job in input.Jobs.Where(item => !linked.Contains(item.Id)).OrderBy(item => item.CreatedAt))
         {
             if (!environments.TryGetValue(job.EnvironmentId, out var environment)) continue;
+            if (job.RetryOfJobId is { } priorId)
+            {
+                // A retry belongs to its original run even if its parent cannot
+                // currently be read. Never adopt it as an unrelated deployment.
+                if (runs.FirstOrDefault(item => item.JobId == priorId) is not { } retryRun) continue;
+                var index = runs.IndexOf(retryRun);
+                var step = retryRun.FailedStep ?? retryRun.DeployStep;
+                runs[index] = retryRun with
+                {
+                    State = DeploymentStates.Queued, JobId = job.Id,
+                    PriorJobIds = [.. retryRun.PriorJobIds, priorId], FailedStep = null, Evidence = null,
+                    StartedAtUtc = null, FinishedAtUtc = null, HostId = null, HostClaims = 0,
+                    InterventionDecision = "retry", InterventionDecidedBy = job.RequestedBy,
+                    InterventionExpiresAtUtc = null,
+                };
+                var detail = $"Retry of {step} queued by {job.RequestedBy}.";
+                log.Add(new(retryRun.Id, step, job.CreatedAt, detail));
+                audit.Add(new(job.CreatedAt, job.RequestedBy ?? LifecycleActor, "intervention-retry",
+                    retryRun.ReleaseId, retryRun.Id, retryRun.EnvironmentId, detail));
+                linked.Add(job.Id);
+                continue;
+            }
             // Jobs from before the release existed (pre-BD-1 history) stay unattributed.
             var release = ReleaseForArtifact(input.Releases.Select(item => item.Release), job.Artifact, job.CreatedAt);
             if (release is null) continue;
@@ -147,6 +169,7 @@ public static class DeploymentReconciler
             if (runs.Any(item => item.EnvironmentId == environment.Id && item.ReleaseId == release.Id
                     && (DeploymentStates.IsActive(item.State) || item.CreatedAtUtc >= promotion.StageHealthyAt)))
                 continue;
+            var target = record.Environments.FirstOrDefault(item => item.Id == environment.Id);
             var run = new DeploymentRecord
             {
                 Id = DeployIds.For($"{release.Id}|{environment.Id}|{promotion.StageHealthyAt.Ticks}"),
@@ -154,6 +177,8 @@ public static class DeploymentReconciler
                 Trigger = DeploymentTriggers.Deploy, DeployStep = StepFor(record, environment.Id), NeedsApproval = true,
                 RequestedBy = LifecycleActor, PromotionStageHealthyAtUtc = promotion.StageHealthyAt,
                 CreatedAtUtc = promotion.StageHealthyAt,
+                GuidedFailure = target?.GuidedFailure ?? false,
+                InterventionTimeoutMinutes = target?.InterventionTimeoutMinutes ?? 60,
             };
             runs.Add(run);
             log.Add(new(run.Id, DeployStepNames.Approval, run.CreatedAtUtc,
@@ -224,7 +249,7 @@ public static class DeploymentReconciler
                 if (!ReferenceEquals(updated, run)) runs[i] = updated;
                 continue;
             }
-            if (GuidedFailurePolicy.ShouldPause(run.GuidedFailure, state, job.IsRollback))
+            if (GuidedFailurePolicy.ShouldPause(run.GuidedFailure, state, run.Trigger))
             {
                 var at = job.FinishedAt ?? job.ClaimedAt ?? job.CreatedAt;
                 var step = job.Evidence == DeployEvidence.HealthFailed ? DeployStepNames.Health : run.DeployStep;

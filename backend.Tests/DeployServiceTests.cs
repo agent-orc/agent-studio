@@ -29,6 +29,7 @@ public sealed class DeployServiceTests : IDisposable
     private string _repo = "";
     private string _watch = "";
     private ProjectEnvironmentService? _environments;
+    private IConfiguration? _configuration;
 
     public void Dispose()
     {
@@ -149,6 +150,79 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(DeploymentStates.Succeeded, deploy.DeploymentById("demo", started.Value.Id)?.State);
         Assert.Contains(deploy.Log("demo", started.Value.Id, null)!.Lines,
             line => line.Message.Contains("Health check passed on retry", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GuidedFailure_AutomaticProductionApprovalUsesTheReleaseSnapshot()
+    {
+        var (deploy, environments, store) = Build(guidedProduction: true);
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        var waiting = Assert.Single(deploy.Deployments("demo", "production")!);
+        Assert.Equal(DeploymentStates.AwaitingApproval, waiting.State);
+        Assert.True(Assert.Single(store.ReadDeployments("demo"), item => item.Id == waiting.Id).GuidedFailure);
+        Assert.Equal(23, store.ReadDeployments("demo").Single(item => item.Id == waiting.Id).InterventionTimeoutMinutes);
+
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting.Id, Owner).Kind);
+        Report(deploy, environments, "prod-host", healthy: false);
+        var paused = deploy.DeploymentById("demo", waiting.Id)!;
+        Assert.Equal(DeploymentStates.WaitingForIntervention, paused.State);
+        Assert.Equal(_clock.GetUtcNow().UtcDateTime.AddMinutes(22), paused.InterventionExpiresAtUtc);
+    }
+
+    [Fact]
+    public void GuidedFailure_RetryJobSavedBeforeRun_RestartAttachesTheOriginalRun()
+    {
+        var (deploy, environments, store) = Build(guidedStage: true);
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: false);
+        var waiting = Assert.Single(deploy.Deployments("demo", "stage")!);
+        var failedJobId = Assert.Single(environments.Read("demo")!.Jobs).Id;
+        var target = store.ReadReleaseRecords("demo").Single(item => item.Release.Id == release.Id)
+            .Environments.Single(item => item.Id == "stage");
+        var retry = environments.QueueRetry("demo", target, Artifact('a'), Owner.Id, failedJobId, null)!;
+        Assert.Equal(failedJobId, retry.RetryOfJobId);
+        Assert.Single(store.ReadDeployments("demo"));
+        Assert.Equal(DeploymentStates.WaitingForIntervention, store.ReadDeployments("demo")[0].State);
+
+        var restarted = Reopen();
+        var attached = Assert.Single(restarted.Deployments("demo", "stage")!);
+        Assert.Equal((waiting.Id, retry.Id, DeploymentStates.Queued), (attached.Id,
+            store.ReadDeployments("demo")[0].JobId, attached.State));
+        Assert.Contains(restarted.Audit("demo")!, entry => entry.Action == "intervention-retry" && entry.Actor == Owner.Id);
+        Assert.Contains(restarted.Log("demo", waiting.Id, null)!.Lines,
+            line => line.Message.Contains("Retry of", StringComparison.Ordinal));
+        Report(restarted, environments, "stage-host", healthy: true);
+        Assert.Equal(DeploymentStates.Succeeded, Assert.Single(restarted.Deployments("demo", "stage")!).State);
+        Assert.Equal("pending", Assert.Single(environments.Read("demo")!.Promotions).Status);
+        Assert.Single(restarted.Deployments("demo", "stage")!);
+    }
+
+    [Fact]
+    public void GuidedFailure_ManualRollbackCanPauseAndRetryAsRollback()
+    {
+        var (deploy, environments, _) = Build(guidedProduction: true);
+        var first = CreateRelease(deploy, Artifact('a'), Head());
+        DeployThroughProduction(deploy, environments, first, Owner);
+        var second = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        DeployThroughProduction(deploy, environments, second, Owner);
+
+        var rollback = deploy.Rollback("demo", "production", approve: true, Owner);
+        Assert.Equal(DeployOutcomeKind.Ok, rollback.Kind);
+        var originalJob = environments.Read("demo")!.Jobs.Last(item => item.EnvironmentId == "production");
+        Assert.True(originalJob.IsRollback);
+        Report(deploy, environments, "prod-host", healthy: false);
+        Assert.Equal(DeploymentStates.WaitingForIntervention,
+            deploy.DeploymentById("demo", rollback.Value!.Id)?.State);
+        Assert.Equal(DeployOutcomeKind.Ok,
+            deploy.DecideIntervention("demo", rollback.Value.Id, new("retry"), Owner).Kind);
+        var retried = environments.Read("demo")!.Jobs.Last(item => item.EnvironmentId == "production");
+        Assert.True(retried.IsRollback);
+        Assert.Equal(originalJob.Id, retried.RetryOfJobId);
+        Report(deploy, environments, "prod-host", healthy: true);
+        var run = deploy.DeploymentById("demo", rollback.Value.Id)!;
+        Assert.Equal((DeploymentTriggers.Rollback, DeploymentStates.Succeeded), (run.Trigger, run.State));
+        Assert.Equal(first.Id, deploy.Status("demo")![1].CurrentRelease?.Id);
     }
 
     [Fact]
@@ -1108,7 +1182,7 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     private (DeployService Deploy, ProjectEnvironmentService Environments, DeployStore Store) Build(
-        bool guidedStage = false)
+        bool guidedStage = false, bool guidedProduction = false)
     {
         _repo = Path.Combine(_root, "repo");
         _watch = Path.Combine(_root, "workspace", "projects", "demo");
@@ -1126,7 +1200,7 @@ public sealed class DeployServiceTests : IDisposable
             healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
             guidedFailure = guidedStage,
         }));
-        WriteProduction(host: "prod-host", destination: "8082");
+        WriteProduction(host: "prod-host", destination: "8082", guidedFailure: guidedProduction);
         Commit("initial");
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -1135,6 +1209,7 @@ public sealed class DeployServiceTests : IDisposable
             ["WatchPaths:0:Name"] = "demo", ["WatchPaths:0:Path"] = _watch,
             ["WatchPaths:0:RootPath"] = _repo, ["WatchPaths:0:RepositoryPath"] = _repo,
         }).Build();
+        _configuration = config;
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
@@ -1146,13 +1221,26 @@ public sealed class DeployServiceTests : IDisposable
             environments, store);
     }
 
-    private void WriteProduction(string host, string destination)
+    private DeployService Reopen()
+    {
+        var config = _configuration!;
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        var environments = new ProjectEnvironmentService(config, scanner, git, settings, _clock);
+        return new DeployService(environments, new DeployStore(config), git, scanner, _clock,
+            NullLogger<DeployService>.Instance);
+    }
+
+    private void WriteProduction(string host, string destination, bool guidedFailure = false)
         => File.WriteAllText(Path.Combine(_repo, "docs", "deployments", "environments", "production.json"),
             JsonSerializer.Serialize(new
             {
                 id = "production", name = "Production", kind = "production", targetHostId = host,
                 address = "https://example", template = "container", destination,
                 healthUrl = "https://example/health", approval = "person", secretRefs = new[] { "DATABASE_URL" },
+                guidedFailure, interventionTimeoutMinutes = 23,
             }));
 
     private string Head() => Git("rev-parse", "HEAD").Trim();

@@ -3,8 +3,8 @@ namespace AgentStudio.Deploy;
 /// <summary>Pure transition checks shared by host reconciliation and operator decisions.</summary>
 public static class GuidedFailurePolicy
 {
-    public static bool ShouldPause(bool enabled, string jobState, bool isRollback)
-        => enabled && !isRollback && jobState == DeploymentStates.Failed;
+    public static bool ShouldPause(bool enabled, string jobState, string trigger)
+        => enabled && trigger != DeploymentTriggers.AutomaticRollback && jobState == DeploymentStates.Failed;
 
     public static string? RejectDecision(string state, string action, bool approver, string? reason)
     {

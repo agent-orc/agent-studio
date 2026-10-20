@@ -15,13 +15,14 @@ public sealed class DeploymentReconcilerTests
         "process", "variables", ["AGT-1"], T0, ReleaseSnapshot.DefaultChannel);
 
     [Theory]
-    [InlineData(true, "failed", false, true)]
-    [InlineData(false, "failed", false, false)]
-    [InlineData(true, "succeeded", false, false)]
-    [InlineData(true, "failed", true, false)]
-    public void GuidedFailurePolicy_PausesOnlyEnabledFailedNonRollbackJobs(
-        bool enabled, string state, bool rollback, bool expected)
-        => Assert.Equal(expected, GuidedFailurePolicy.ShouldPause(enabled, state, rollback));
+    [InlineData(true, "failed", DeploymentTriggers.Deploy, true)]
+    [InlineData(false, "failed", DeploymentTriggers.Deploy, false)]
+    [InlineData(true, "succeeded", DeploymentTriggers.Deploy, false)]
+    [InlineData(true, "failed", DeploymentTriggers.Rollback, true)]
+    [InlineData(true, "failed", DeploymentTriggers.AutomaticRollback, false)]
+    public void GuidedFailurePolicy_PausesFailedManualRunsButNotAutomaticRollback(
+        bool enabled, string state, string trigger, bool expected)
+        => Assert.Equal(expected, GuidedFailurePolicy.ShouldPause(enabled, state, trigger));
 
     [Fact]
     public void GuidedFailurePolicy_RequiresApproverAndSkipReason()
@@ -188,6 +189,18 @@ public sealed class DeploymentReconcilerTests
         Assert.Equal(DeploymentTriggers.AutomaticRollback, run.Trigger);
         Assert.False(run.NeedsApproval);
         Assert.DoesNotContain(run.Steps, step => step.Name == DeployStepNames.Approval);
+    }
+
+    [Fact]
+    public void AutomaticRollback_FailureDoesNotPauseEvenWhenItsJobCarriesGuidedFailure()
+    {
+        var rollback = Job("auto", "production", "failed", T0.AddMinutes(9)) with
+        {
+            IsRollback = true, RequestedBy = "automatic-rollback", GuidedFailure = true,
+            FinishedAt = T0.AddMinutes(10), Evidence = DeployEvidence.DeployFailed,
+        };
+        var run = Assert.Single(Reconcile([], [rollback]).Deployments);
+        Assert.Equal((DeploymentTriggers.AutomaticRollback, DeploymentStates.Failed), (run.Trigger, run.State));
     }
 
     [Fact]

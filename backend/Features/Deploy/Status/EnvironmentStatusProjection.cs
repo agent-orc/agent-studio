@@ -43,12 +43,14 @@ public static class EnvironmentStatusProjection
                 "failed" => EnvironmentHealth.Unhealthy,
                 _ => EnvironmentHealth.Unknown,
             } : EnvironmentHealth.Unknown;
-            var intervention = latest?.State == DeploymentStates.WaitingForIntervention
-                || latest?.InterventionDecision is not null ? latest
-                : latest?.Trigger == DeploymentTriggers.AutomaticRollback
-                    ? runs.Where(item => item.InterventionDecision is "abort" or "timeout")
-                        .OrderBy(item => item.CreatedAtUtc).ThenBy(item => item.Id, StringComparer.Ordinal)
-                        .LastOrDefault() : null;
+            var intervention = runs.Where(item => item.State == DeploymentStates.WaitingForIntervention)
+                .OrderBy(item => item.CreatedAtUtc).ThenBy(item => item.Id, StringComparer.Ordinal)
+                .LastOrDefault()
+                ?? (latest?.InterventionDecision is not null ? latest
+                    : latest?.Trigger == DeploymentTriggers.AutomaticRollback
+                        ? runs.Where(item => item.InterventionDecision is "abort" or "timeout")
+                            .OrderBy(item => item.CreatedAtUtc).ThenBy(item => item.Id, StringComparer.Ordinal)
+                            .LastOrDefault() : null);
             return new EnvironmentStatus(environment, current, latest, newer, cards, health,
                 intervention is null ? null : new(intervention.Id, intervention.FailedStep ?? "run",
                     intervention.InterventionExpiresAtUtc, intervention.InterventionDecision,

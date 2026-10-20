@@ -177,6 +177,31 @@ test.describe('Project Deploy area (mocked)', () => {
     expect(decisions).toEqual([{ action: 'skip', reason: 'Known optional check' }]);
   });
 
+  test('opens an older pending intervention while a newer run is the last run', async ({ page }) => {
+    const deployments = deployDeploymentsFixture().map(item => item.id === 'run-b-stage' ? {
+      ...item, state: 'waiting-for-intervention', finishedAtUtc: null, failedStep: 'health',
+      interventionExpiresAtUtc: new Date(DEPLOY_FIXTURE_NOW + 3_600_000).toISOString(),
+    } : item);
+    const status = deployStatusFixture();
+    status[0] = { ...status[0], intervention: { deploymentId: 'run-b-stage', failedStep: 'health',
+      expiresAtUtc: new Date(DEPLOY_FIXTURE_NOW + 3_600_000).toISOString(), decision: null, decidedBy: null } };
+    await openDeploy(page, fullMocks({ status, deployments }));
+
+    const staging = page.getByRole('article', { name: 'Staging' });
+    await expect(staging.getByTestId('deploy-environment-last-run')).toContainText('Redeploy cancelled');
+    await expect(staging.getByTestId('deploy-environment-intervention')).toContainText('Waiting for intervention');
+    await setTheme(page, 'light');
+    await capture(page, 'older-guided-card-light');
+    await setTheme(page, 'dark');
+    await capture(page, 'older-guided-card-dark');
+    await staging.getByTestId('deploy-environment-intervention').click();
+    await expect(page.getByTestId('deploy-run-drawer')).toContainText('Health check failed');
+    await setTheme(page, 'light');
+    await capture(page, 'older-guided-failure-light');
+    await setTheme(page, 'dark');
+    await capture(page, 'older-guided-failure-dark');
+  });
+
   test('works with partial data: AGT-3176 environments only, AGT-3201 and AGT-3221 routes missing', async ({ page }) => {
     await openDeploy(page, { environments: deployEnvironmentsFixture(), ...HOST_ONLY, pipelineDefinition: MISSING });
     const area = page.getByTestId('project-deploy-area');
