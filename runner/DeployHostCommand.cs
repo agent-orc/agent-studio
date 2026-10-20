@@ -335,8 +335,16 @@ public static class DeployHostCommand
                 using var response = await client.GetAsync(url, attempt.Token);
                 if (response.IsSuccessStatusCode) return true;
             }
-            catch (HttpRequestException) { /* A failed probe can recover before the configured deadline. */ }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { /* Retry a timed-out probe. */ }
+            catch (HttpRequestException)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), clock, ct);
+                continue;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), clock, ct);
+                continue;
+            }
             await Task.Delay(TimeSpan.FromSeconds(2), clock, ct);
         }
         return false;
