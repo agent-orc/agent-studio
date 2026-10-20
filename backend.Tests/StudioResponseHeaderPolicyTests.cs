@@ -19,13 +19,49 @@ public sealed class StudioResponseHeaderPolicyTests
 
         StudioResponseHeaderPolicy.Apply(headers);
 
-        Assert.Equal(StudioResponseHeaderPolicy.ContentSecurityPolicy, headers.ContentSecurityPolicy.ToString());
-        Assert.Contains("frame-ancestors 'self'", headers.ContentSecurityPolicy.ToString());
+        Assert.Equal(
+            "default-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'",
+            headers.ContentSecurityPolicy.ToString());
         Assert.Equal("SAMEORIGIN", headers.XFrameOptions.ToString());
         Assert.Equal("same-origin", headers["Cross-Origin-Opener-Policy"].ToString());
         Assert.Equal(StudioResponseHeaderPolicy.PermissionsPolicy, headers["Permissions-Policy"].ToString());
         Assert.Equal("same-origin", headers["Referrer-Policy"].ToString());
         Assert.Equal("nosniff", headers.XContentTypeOptions.ToString());
+    }
+
+    [Theory]
+    [InlineData("text/html")]
+    [InlineData("text/html; charset=utf-8")]
+    [InlineData("application/xhtml+xml")]
+    [InlineData("IMAGE/SVG+XML")]
+    [InlineData("text/xml; charset=utf-8")]
+    [InlineData("application/xml")]
+    public void Renderable_documents_without_own_policy_are_sandboxed_without_script(string contentType)
+    {
+        IHeaderDictionary headers = new HeaderDictionary { ["Content-Type"] = contentType };
+
+        StudioResponseHeaderPolicy.Apply(headers);
+
+        var policy = headers.ContentSecurityPolicy.ToString();
+        Assert.Equal(
+            "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'",
+            policy);
+        Assert.DoesNotContain("script-src", policy);
+        Assert.Equal("SAMEORIGIN", headers.XFrameOptions.ToString());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("application/json; charset=utf-8")]
+    [InlineData("text/plain")]
+    [InlineData("application/octet-stream")]
+    [InlineData("text/htmlx")]
+    [InlineData("image/png")]
+    public void Other_api_responses_get_the_no_content_policy(string? contentType)
+    {
+        Assert.Equal(StudioResponseHeaderPolicy.ApiContentSecurityPolicy,
+            StudioResponseHeaderPolicy.DefaultContentSecurityPolicy(contentType));
+        Assert.DoesNotContain("unsafe-inline", StudioResponseHeaderPolicy.ApiContentSecurityPolicy);
     }
 
     [Theory]
@@ -61,11 +97,12 @@ public sealed class StudioResponseHeaderPolicyTests
     }
 
     [Fact]
-    public void Frontend_shell_policy_matches_the_api_baseline()
+    public void Frontend_shell_policy_matches_the_named_shell_constant_and_stays_out_of_the_api()
     {
         var frontend = File.ReadAllText(Path.Combine(Stack, "Caddyfile.frontend"));
 
-        Assert.Contains($"Content-Security-Policy \"{StudioResponseHeaderPolicy.ContentSecurityPolicy}\"", frontend);
+        Assert.Contains($"Content-Security-Policy \"{StudioResponseHeaderPolicy.FrontendShellContentSecurityPolicy}\"", frontend);
+        Assert.Single(Regex.Matches(frontend, "Content-Security-Policy"));
         Assert.Contains($"Permissions-Policy \"{StudioResponseHeaderPolicy.PermissionsPolicy}\"", frontend);
         Assert.Contains("X-Frame-Options SAMEORIGIN", frontend);
         Assert.Contains("Cross-Origin-Opener-Policy same-origin", frontend);
@@ -121,7 +158,7 @@ public sealed class StudioResponseHeaderPolicyTests
     {
         var match = Regex.Match(
             compose,
-            $@"^  {service}:\n(?:(?!^  \S).*\n)*?\s+ipv4_address: (?<address>[0-9.]+)",
+            $@"^  {service}:\r?\n(?:(?!^  \S).*\r?\n)*?\s+ipv4_address: (?<address>[0-9.]+)",
             RegexOptions.Multiline);
         Assert.True(match.Success, $"compose.yaml names no address for {service}");
         return match.Groups["address"].Value;

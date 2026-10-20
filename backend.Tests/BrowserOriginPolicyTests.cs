@@ -33,10 +33,49 @@ public sealed class BrowserOriginPolicyTests
         string method, bool browserCredential, string? origin, string? secFetchSite, string? rejection)
     {
         var decision = BrowserOriginPolicy.Decide(
-            method, browserCredential, origin, secFetchSite, "https", new HostString("studio.test"));
+            method, browserCredential, eventStream: false, origin, secFetchSite, "https", new HostString("studio.test"));
 
         Assert.Equal(rejection is null, decision.Allowed);
         Assert.Equal(rejection, decision.Code);
+    }
+
+    [Theory]
+    [InlineData("GET", true, "https://other.studio.test", null, "origin-mismatch")]
+    [InlineData("GET", true, "null", null, "origin-mismatch")]
+    [InlineData("GET", true, null, "same-site", "cross-site-request")]
+    [InlineData("GET", true, "https://studio.test", "cross-site", "cross-site-request")]
+    [InlineData("POST", true, "https://other.studio.test", "same-origin", "origin-mismatch")]
+    [InlineData("GET", true, "https://studio.test", "same-origin", null)]
+    [InlineData("GET", true, "https://studio.test", null, null)]
+    [InlineData("GET", true, null, "same-origin", null)]
+    [InlineData("GET", true, null, null, null)]
+    [InlineData("POST", true, null, null, null)]
+    [InlineData("GET", false, "https://other.studio.test", "cross-site", null)]
+    public void Event_streams_with_a_browser_credential_need_same_origin_proof_on_every_method(
+        string method, bool browserCredential, string? origin, string? secFetchSite, string? rejection)
+    {
+        var decision = BrowserOriginPolicy.Decide(
+            method, browserCredential, eventStream: true, origin, secFetchSite, "https", new HostString("studio.test"));
+
+        Assert.Equal(rejection is null, decision.Allowed);
+        Assert.Equal(rejection, decision.Code);
+    }
+
+    [Theory]
+    [InlineData("/hubs/jobs", null, true)]
+    [InlineData("/HUBS/workbench", null, true)]
+    [InlineData("/hubs", null, true)]
+    [InlineData("/api/tasks", "websocket", true)]
+    [InlineData("/api/tasks", "WebSocket", true)]
+    [InlineData("/api/tasks", "h2c", false)]
+    [InlineData("/hubsx", null, false)]
+    [InlineData("/api/tasks", null, false)]
+    public void Hubs_and_websocket_upgrades_are_event_streams(string path, string? upgrade, bool expected)
+    {
+        IHeaderDictionary headers = new HeaderDictionary();
+        if (upgrade is not null) headers.Upgrade = upgrade;
+
+        Assert.Equal(expected, BrowserOriginPolicy.IsEventStream(path, headers));
     }
 
     [Theory]

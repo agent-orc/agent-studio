@@ -5,7 +5,10 @@
 #
 # Usage: update-cloudflare-ips.sh [--check]
 #   --check  Write nothing; exit 1 when the published ranges differ.
-# CLOUDFLARE_IPS_BASE_URL replaces https://www.cloudflare.com (tests, mirrors).
+# CLOUDFLARE_IPS_BASE_URL replaces https://www.cloudflare.com (tests, mirrors);
+# without it, curl may use and follow only HTTPS.
+# A range wider than IPv4 /12 or IPv6 /24 is refused: Cloudflare publishes
+# none, and a wide range would let arbitrary peers set CF-Connecting-IP.
 # After an update, run `docker compose restart edge`.
 set -euo pipefail
 
@@ -13,6 +16,10 @@ cd "$(dirname "$0")"
 target=cloudflare-ips.caddy
 base="${CLOUDFLARE_IPS_BASE_URL:-https://www.cloudflare.com}"
 check=false
+https_only=()
+if [ -z "${CLOUDFLARE_IPS_BASE_URL:-}" ]; then
+  https_only=(--proto '=https' --proto-redir '=https')
+fi
 case "${1:-}" in
   --check) check=true ;;
   '') ;;
@@ -25,13 +32,19 @@ trap 'rm -rf "$work"' EXIT
 # Reads one published list, one CIDR per line, and rejects anything else so a
 # changed or truncated response never becomes the edge's trust list.
 read_list() {
-  local name="$1" pattern="$2" count=0 line
-  curl --fail --silent --show-error --location --max-time 30 "$base/$name" > "$work/$name"
+  local name="$1" pattern="$2" shortest="$3" longest="$4" count=0 line prefix
+  curl ${https_only[@]+"${https_only[@]}"} --fail --silent --show-error --location --max-time 30 \
+    "$base/$name" > "$work/$name"
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     [ -z "$line" ] && continue
     if ! [[ "$line" =~ $pattern ]]; then
       echo "Unexpected entry in $base/$name: $line" >&2
+      exit 1
+    fi
+    prefix=$((10#${line##*/}))
+    if [ "$prefix" -lt "$shortest" ] || [ "$prefix" -gt "$longest" ]; then
+      echo "Refusing $line from $base/$name: prefix must be /$shortest to /$longest" >&2
       exit 1
     fi
     printf '%s\n' "$line" >> "$work/ranges"
@@ -44,8 +57,8 @@ read_list() {
 }
 
 : > "$work/ranges"
-read_list ips-v4 '^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$'
-read_list ips-v6 '^[0-9A-Fa-f:]+/[0-9]{1,3}$'
+read_list ips-v4 '^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])/[0-9]{1,2}$' 12 32
+read_list ips-v6 '^[0-9A-Fa-f:]+/[0-9]{1,3}$' 24 128
 
 current_ranges() {
   [ -f "$target" ] || return 0

@@ -55,3 +55,9 @@ STUDIO_CADDYFILE=./Caddyfile.$edge
 STUDIO_CLOUDFLARE_ALLOW_DIRECT=$allow_direct
 EOF
 printf 'Installer owner code: %s\nStore it until the first owner signs in. It is accepted once.\n' "$code"
+if [ "$edge" = cloudflare ]; then
+  echo 'Cloudflare mode: create an A record only (no AAAA) and set SSL/TLS mode Full (strict).'
+  if [ "$allow_direct" = false ]; then
+    echo 'Enable Authenticated Origin Pulls in the zone first: the edge refuses TLS without the origin-pull certificate.'
+  fi
+fi

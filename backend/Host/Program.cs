@@ -1319,7 +1319,14 @@ var projectScopedSignalRProfile = networkedSecurityProfile || publicDemoExecutio
 var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
     && app.Configuration.GetValue<bool>("ErrorHandling:IncludeExceptionDetails");
 
+// Loopback trust (first-owner bootstrap) is decided on the connection peer,
+// which forwarding replaces below (AGT-3230).
+app.UseConnectionPeerCapture();
 app.UseForwardedHeaders();
+// Directly after forwarding, so every later short-circuit (Task Server proxy
+// 404, rejections, exception handler) carries the framing and content policy
+// too (AGT-3230).
+if (networkedSecurityProfile) app.UseStudioResponseHeaders();
 // Before routing, so the versioned core-attach paths Angular calls reach the
 // same legacy handlers, guards, and security checks as before (AGT-2983).
 app.UseStudioV1LegacyRouteAlias(TaskServerPlaneProxy.IsConfigured(app.Configuration));
@@ -1352,9 +1359,6 @@ if (TaskServerPlaneProxy.IsConfigured(app.Configuration))
     });
 }
 if (networkedSecurityProfile || publicDemoExecutionProfile) app.UseHsts();
-// Before the exception handler and the access boundary, so rejections and
-// errors carry the framing and content policy too (AGT-3230).
-if (networkedSecurityProfile) app.UseStudioResponseHeaders();
 // Only the public-demo profile limits anything, so only it runs the rate
 // limiter. RateLimitingMiddleware starts two partitioned limiters, each with a
 // 100 ms heartbeat timer that nothing disposes. Under WebApplicationFactory

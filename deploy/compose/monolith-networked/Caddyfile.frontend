@@ -22,8 +22,9 @@
     }
 
     handle {
-        # Studio shell policy. API responses carry the same baseline from
-        # StudioResponseHeaderPolicy, except routes with their own policy.
+        # Studio shell policy (StudioResponseHeaderPolicy.FrontendShellContentSecurityPolicy).
+        # Only the shell gets it: API responses carry StudioResponseHeaderPolicy's
+        # stricter policies, which allow no inline script.
         header {
             Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self'; frame-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
             X-Frame-Options SAMEORIGIN

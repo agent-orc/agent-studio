@@ -1,4 +1,3 @@
-using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -41,7 +40,7 @@ public static class AccessSecurityEndpoints
         auth.MapPost("/login", (LoginRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
             Execute(() =>
             {
-                var key = $"{(request.Username ?? string.Empty).Trim().ToLowerInvariant()}|{context.Connection.RemoteIpAddress}";
+                var key = $"{(request.Username ?? string.Empty).Trim().ToLowerInvariant()}|{LoginThrottleKeys.Client(context.Connection.RemoteIpAddress)}";
                 var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken));
@@ -272,9 +271,10 @@ public static class AccessSecurityEndpoints
         return store.AuthenticateSession(token, touch);
     }
 
+    // Only a direct loopback connection may skip the installer code; a
+    // forwarded 127.0.0.1 comes from whoever controls the proxy header.
     private static bool RequiresBootstrapCode(HttpContext context, IConfiguration configuration)
-        => SecurityProfiles.IsNetworked(configuration)
-           && (context.Connection.RemoteIpAddress is not { } address || !IPAddress.IsLoopback(address));
+        => SecurityProfiles.IsNetworked(configuration) && !ConnectionPeer.IsDirectLoopback(context);
 
     private static bool MatchesBootstrapCode(string? candidate, IConfiguration configuration)
     {

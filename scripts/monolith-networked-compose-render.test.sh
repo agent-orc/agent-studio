@@ -80,6 +80,7 @@ for name, (caddyfile, allow_direct) in expected.items():
     edge_mounts = mounts(edge)
     assert edge_mounts['/etc/caddy/Caddyfile'].endswith('/' + caddyfile), (name, edge_mounts)
     assert edge_mounts['/etc/caddy/cloudflare-ips.caddy'].endswith('/cloudflare-ips.caddy'), (name, edge_mounts)
+    assert edge_mounts['/etc/caddy/cloudflare-origin-pull-ca.pem'].endswith('/cloudflare-origin-pull-ca.pem'), (name, edge_mounts)
     assert edge['environment']['STUDIO_CLOUDFLARE_ALLOW_DIRECT'] == allow_direct, (name, edge['environment'])
     assert edge['networks']['website']['ipv4_address'] == '172.30.83.2', edge['networks']
     frontend = rendered['services']['frontend']
@@ -92,18 +93,39 @@ print('Compose render passed for the public, Cloudflare and Cloudflare direct-ac
 PY
 
 # Adapting proves the Caddyfiles parse and shows what the edge trusts.
+# adapt <Caddyfile> [allow-direct] [output name]
 adapt() {
-  docker run --rm -e STUDIO_DOMAIN=studio.example.test -e STUDIO_CLOUDFLARE_ALLOW_DIRECT=false \
+  local output="${3:-$1}"
+  docker run --rm -e STUDIO_DOMAIN=studio.example.test -e STUDIO_CLOUDFLARE_ALLOW_DIRECT="${2:-false}" \
     -v "$stack/$1:/etc/caddy/Caddyfile:ro" \
     -v "$stack/cloudflare-ips.caddy:/etc/caddy/cloudflare-ips.caddy:ro" \
-    "$caddy_image" caddy adapt --config /etc/caddy/Caddyfile > "$work/$1.json" 2> "$work/$1.log" || {
-    cat "$work/$1.log" >&2
+    "$caddy_image" caddy adapt --config /etc/caddy/Caddyfile > "$work/$output.json" 2> "$work/$output.log" || {
+    cat "$work/$output.log" >&2
     exit 1
   }
 }
 for caddyfile in Caddyfile.public Caddyfile.private Caddyfile.cloudflare Caddyfile.frontend; do
   adapt "$caddyfile"
 done
+adapt Caddyfile.cloudflare true Caddyfile.cloudflare-direct
+if docker run --rm -e STUDIO_DOMAIN=studio.example.test -e STUDIO_CLOUDFLARE_ALLOW_DIRECT=yes \
+  -v "$stack/Caddyfile.cloudflare:/etc/caddy/Caddyfile:ro" \
+  -v "$stack/cloudflare-ips.caddy:/etc/caddy/cloudflare-ips.caddy:ro" \
+  "$caddy_image" caddy adapt --config /etc/caddy/Caddyfile > /dev/null 2>&1; then
+  echo 'Caddyfile.cloudflare accepted STUDIO_CLOUDFLARE_ALLOW_DIRECT=yes' >&2
+  exit 1
+fi
+# Validating provisions the TLS policy, so Caddy loads the shipped
+# origin-pull CA as the client certificate trust pool.
+docker run --rm -e STUDIO_DOMAIN=studio.example.test -e STUDIO_CLOUDFLARE_ALLOW_DIRECT=false \
+  -v "$stack/Caddyfile.cloudflare:/etc/caddy/Caddyfile:ro" \
+  -v "$stack/cloudflare-ips.caddy:/etc/caddy/cloudflare-ips.caddy:ro" \
+  -v "$stack/cloudflare-origin-pull-ca.pem:/etc/caddy/cloudflare-origin-pull-ca.pem:ro" \
+  "$caddy_image" caddy validate --config /etc/caddy/Caddyfile > "$work/validate.log" 2>&1 || {
+  cat "$work/validate.log" >&2
+  exit 1
+}
+openssl x509 -in "$stack/cloudflare-origin-pull-ca.pem" -noout -subject | grep -q 'CN *= *origin-pull.cloudflare.net'
 
 python3 - "$work" "$stack/cloudflare-ips.caddy" "$stack/Caddyfile.frontend" <<'PY'
 import ipaddress, json, os, re, sys
@@ -126,6 +148,24 @@ assert site['client_ip_headers'] == ['CF-Connecting-IP'], site.get('client_ip_he
 assert site.get('trusted_proxies_strict') == 1, site
 config = json.dumps(site)
 assert '{http.vars.trusted_proxy}' in config and '{env.STUDIO_CLOUDFLARE_ALLOW_DIRECT}' in config, config
+
+# Direct access off: a TLS connection for the Studio name needs Cloudflare's
+# origin-pull client certificate. Caddy appends a catch-all policy for other
+# SNI values; with client auth configured it enforces strict_sni_host, so a
+# Host header cannot reach the site through it (the edge test checks this).
+policies = site.get('tls_connection_policies', [])
+studio = [policy for policy in policies if 'studio.example.test' in policy.get('match', {}).get('sni', [])]
+assert len(studio) == 1, policies
+client_auth = studio[0].get('client_authentication')
+assert client_auth == {
+    'ca': {'provider': 'file', 'pem_files': ['/etc/caddy/cloudflare-origin-pull-ca.pem']},
+    'mode': 'require_and_verify',
+}, policies
+assert all(policy == {} for policy in policies if policy is not studio[0]), policies
+assert site.get('strict_sni_host') in (None, True), site.get('strict_sni_host')
+direct = next(server for server in adapted('Caddyfile.cloudflare-direct').values() if ':443' in server['listen'])
+assert not any(policy.get('client_authentication') for policy in direct.get('tls_connection_policies', [])), direct
+assert direct['trusted_proxies'] == site['trusted_proxies'], direct
 
 for name in ('Caddyfile.public', 'Caddyfile.private'):
     for server in adapted(name).values():
@@ -169,4 +209,44 @@ if bash "$work/ranges-stack/update-cloudflare-ips.sh" > /dev/null 2>&1; then
   exit 1
 fi
 cmp -s "$work/ranges-before" "$work/ranges-stack/cloudflare-ips.caddy"
-echo 'Cloudflare range update passed: unchanged lists keep the file, changes are detected, malformed lists are refused.'
+
+# A range wider than IPv4 /12 or IPv6 /24 would trust arbitrary peers.
+refuse_ranges() {
+  local label="$1" family="$2" entry="$3"
+  rm -rf "$work/wide-source"
+  mkdir -p "$work/wide-source"
+  sed -n 's/^[[:space:]]*\([0-9.]*\/[0-9]*\).*/\1/p' "$work/ranges-before" > "$work/wide-source/ips-v4"
+  sed -n 's/^[[:space:]]*\([0-9A-Fa-f]*:[0-9A-Fa-f:]*\/[0-9]*\).*/\1/p' "$work/ranges-before" > "$work/wide-source/ips-v6"
+  printf '%s\n' "$entry" >> "$work/wide-source/$family"
+  if CLOUDFLARE_IPS_BASE_URL="file://$work/wide-source" bash "$work/ranges-stack/update-cloudflare-ips.sh" > /dev/null 2> "$work/wide.log"; then
+    echo "update-cloudflare-ips.sh accepted $label $entry" >&2
+    exit 1
+  fi
+  grep -q "Refusing $entry" "$work/wide.log"
+  cmp -s "$work/ranges-before" "$work/ranges-stack/cloudflare-ips.caddy"
+}
+refuse_ranges 'the IPv4 catch-all' ips-v4 0.0.0.0/0
+refuse_ranges 'an IPv4 range wider than /12' ips-v4 10.0.0.0/11
+refuse_ranges 'the IPv6 catch-all' ips-v6 ::/0
+refuse_ranges 'an IPv6 range wider than /24' ips-v6 2400::/23
+
+# Without a test base URL, curl may use and follow only HTTPS.
+mkdir -p "$work/curl-bin"
+cat > "$work/curl-bin/curl" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$work/curl-args"
+exit 7
+STUB
+chmod +x "$work/curl-bin/curl"
+if env -u CLOUDFLARE_IPS_BASE_URL PATH="$work/curl-bin:$PATH" bash "$work/ranges-stack/update-cloudflare-ips.sh" --check > /dev/null 2>&1; then
+  echo 'update-cloudflare-ips.sh succeeded with a failing curl' >&2
+  exit 1
+fi
+tr '\n' ' ' < "$work/curl-args" | grep -q -- "--proto =https --proto-redir =https .* https://www.cloudflare.com/ips-v4"
+CLOUDFLARE_IPS_BASE_URL="file://$work/ranges-source" PATH="$work/curl-bin:$PATH" \
+  bash "$work/ranges-stack/update-cloudflare-ips.sh" --check > /dev/null 2>&1 || true
+if grep -q -- '--proto' "$work/curl-args"; then
+  echo 'update-cloudflare-ips.sh restricted protocols for a test base URL' >&2
+  exit 1
+fi
+echo 'Cloudflare range update passed: unchanged lists keep the file, changes are detected, malformed and over-wide lists are refused, HTTPS only by default.'

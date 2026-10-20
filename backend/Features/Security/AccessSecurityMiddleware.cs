@@ -100,7 +100,8 @@ public sealed class AccessSecurityMiddleware
             return;
         }
         if (context.Request.Headers.Origin == "null"
-            && path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
+            && (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)
+                || BrowserOriginPolicy.IsEventStream(path, context.Request.Headers)))
         {
             await Reject(context, 403, "opaque-origin-denied", "An opaque origin cannot access Studio APIs.");
             return;
@@ -123,13 +124,15 @@ public sealed class AccessSecurityMiddleware
 
         // A request that carries a Studio session cookie, or asks for one, must
         // prove it came from a Studio page. SameSite does not separate sibling
-        // hosts of the same site (AGT-3230).
+        // hosts of the same site, and a WebSocket upgrade to an event stream
+        // is a GET that carries the cookie too (AGT-3230).
         var browserCredential = context.Request.Cookies.ContainsKey(AccessSecurityStore.SessionCookieName)
                                 || context.Request.Cookies.ContainsKey(AccessSecurityStore.InsecureSessionCookieName)
                                 || BrowserOriginPolicy.IsBrowserSignIn(path);
         var origin = BrowserOriginPolicy.Decide(
             context.Request.Method,
             browserCredential,
+            BrowserOriginPolicy.IsEventStream(path, context.Request.Headers),
             context.Request.Headers.Origin.FirstOrDefault(),
             context.Request.Headers["Sec-Fetch-Site"].FirstOrDefault(),
             context.Request.Scheme,

@@ -2,18 +2,22 @@ namespace AgentStudio.Security;
 
 /// <summary>
 /// Hardening headers for every networked Studio response (AGT-3230). The
-/// Caddy frontend of the networked Compose stack sends the same values for the
-/// static shell; <c>StudioResponseHeaderPolicyTests</c> keeps both in step.
+/// Caddy frontend of the networked Compose stack sends the shell policy for the
+/// static Studio shell; <c>StudioResponseHeaderPolicyTests</c> keeps the shared
+/// values in step.
 /// </summary>
 public static class StudioResponseHeaderPolicy
 {
     /// <summary>
-    /// Baseline for the shell and API responses. <c>'unsafe-inline'</c> stays in
-    /// <c>script-src</c>: sandboxed <c>srcdoc</c> frames inherit this policy and
-    /// run the inline scripts of repository HTML on their opaque origin, and the
-    /// production index loads its stylesheet through an inline <c>onload</c>.
+    /// Policy of the static Studio shell. Only <c>Caddyfile.frontend</c> sends
+    /// it; the API never applies it, because <c>'unsafe-inline'</c> in
+    /// <c>script-src</c> would let stored HTML run on the Studio origin. It stays
+    /// here only for the parity test. The shell keeps <c>'unsafe-inline'</c>:
+    /// sandboxed <c>srcdoc</c> frames inherit this policy and run the inline
+    /// scripts of repository HTML on their opaque origin, and the production
+    /// index loads its stylesheet through an inline <c>onload</c>.
     /// </summary>
-    public const string ContentSecurityPolicy =
+    public const string FrontendShellContentSecurityPolicy =
         "default-src 'self'; " +
         "script-src 'self' 'unsafe-inline'; " +
         "style-src 'self' 'unsafe-inline'; " +
@@ -28,15 +32,39 @@ public static class StudioResponseHeaderPolicy
         "form-action 'self'; " +
         "frame-ancestors 'self'";
 
+    /// <summary>
+    /// API responses a browser can render as a document (agent-written task
+    /// files, wiki SVG assets). The sandbox gives them an opaque origin and no
+    /// script, so stored markup never runs as Studio.
+    /// </summary>
+    public const string DocumentContentSecurityPolicy =
+        "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'";
+
+    /// <summary>Every other API response (JSON, text, binary).</summary>
+    public const string ApiContentSecurityPolicy =
+        "default-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
+
+    private static readonly string[] DocumentMediaTypes =
+        ["text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml"];
+
     public const string PermissionsPolicy = "camera=(), microphone=(), geolocation=(), payment=(), usb=()";
     public const string StrictTransportSecurity = "max-age=31536000; includeSubDomains";
+
+    /// <summary>The policy for a response without its own, by media type.</summary>
+    public static string DefaultContentSecurityPolicy(string? contentType)
+    {
+        var mediaType = (contentType ?? string.Empty).Split(';', 2)[0].Trim();
+        return DocumentMediaTypes.Contains(mediaType, StringComparer.OrdinalIgnoreCase)
+            ? DocumentContentSecurityPolicy
+            : ApiContentSecurityPolicy;
+    }
 
     /// <summary>
     /// Adds the baseline without replacing a header the endpoint chose. A route
     /// with its own Content-Security-Policy (the URL preview proxy, task result
-    /// HTML) keeps it. When that policy sandboxes the document, X-Frame-Options
-    /// stays absent: the document has an opaque origin and Studio frames it, so
-    /// its own policy governs framing.
+    /// HTML, the recovery console) keeps it. When that policy sandboxes the
+    /// document, X-Frame-Options stays absent: the document has an opaque
+    /// origin and Studio frames it, so its own policy governs framing.
     /// </summary>
     public static void Apply(IHeaderDictionary headers)
     {
@@ -44,7 +72,7 @@ public static class StudioResponseHeaderPolicy
         var sandboxed = ownPolicy.Split(';', StringSplitOptions.TrimEntries)
             .Any(directive => directive.Equals("sandbox", StringComparison.OrdinalIgnoreCase)
                               || directive.StartsWith("sandbox ", StringComparison.OrdinalIgnoreCase));
-        SetDefault(headers, "Content-Security-Policy", ContentSecurityPolicy);
+        SetDefault(headers, "Content-Security-Policy", DefaultContentSecurityPolicy(headers.ContentType));
         if (!sandboxed) SetDefault(headers, "X-Frame-Options", "SAMEORIGIN");
         SetDefault(headers, "Cross-Origin-Opener-Policy", "same-origin");
         SetDefault(headers, "Permissions-Policy", PermissionsPolicy);
@@ -66,6 +94,10 @@ public sealed class StudioResponseHeadersMiddleware(RequestDelegate next)
         context.Response.OnStarting(() =>
         {
             StudioResponseHeaderPolicy.Apply(context.Response.Headers);
+            // UseHsts sets this before the endpoint runs; the exception handler
+            // clears it with the other headers of the failed response.
+            if (context.Request.IsHttps && string.IsNullOrEmpty(context.Response.Headers.StrictTransportSecurity))
+                context.Response.Headers.StrictTransportSecurity = StudioResponseHeaderPolicy.StrictTransportSecurity;
             return Task.CompletedTask;
         });
         return next(context);
