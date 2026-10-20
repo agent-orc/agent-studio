@@ -169,6 +169,11 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
     [Fact]
     public void Full_username_budget_gives_each_client_its_own_retry_wait()
     {
+        const string attacker = "192.0.2.2";
+        var newcomer = Enumerable.Range(3, 200)
+            .Select(i => "198.51.100." + i)
+            .First(client => LoginOverflowBudget.BucketIndex("owner|" + client)
+                != LoginOverflowBudget.BucketIndex("owner|" + attacker));
         var store = NewStore(new()
         {
             ["Security:LoginThrottle:MaxTrackedClients"] = "1",
@@ -182,15 +187,15 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
             store.Login("invented", "wrong", "192.0.2.1")).Status);
         store.Login("owner", Password, "192.0.2.5");
         Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
-            store.Login("owner", "wrong", "192.0.2.2")).Status);
+            store.Login("owner", "wrong", attacker)).Status);
 
         Assert.Equal("owner", store.Login("owner", Password, "192.0.2.5").User.Username);
         Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
-            store.Login("owner", Password, "192.0.2.3")).Status);
+            store.Login("owner", Password, newcomer)).Status);
         _clock.Advance(TimeSpan.FromSeconds(3));
         Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
-            store.Login("owner", "wrong", "192.0.2.2")).Status);
-        Assert.Equal("owner", store.Login("owner", Password, "192.0.2.3").User.Username);
+            store.Login("owner", "wrong", attacker)).Status);
+        Assert.Equal("owner", store.Login("owner", Password, newcomer).User.Username);
     }
 
     [Fact]

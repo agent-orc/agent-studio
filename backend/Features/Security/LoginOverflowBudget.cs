@@ -43,7 +43,7 @@ internal sealed class LoginOverflowBudget
     private ref Bucket GetBucket(string key)
         => ref _buckets[BucketIndex(key)];
 
-    private static int BucketIndex(string key)
+    internal static int BucketIndex(string key)
         => (int)((uint)StringComparer.Ordinal.GetHashCode(key) % BucketCount);
 
     private static void ResetExpiredWindow(ref Bucket bucket, DateTime now, TimeSpan window)
