@@ -99,8 +99,8 @@ public sealed class DeployHostCommandTests
                 address = $"http://127.0.0.1:{port}/", template = "container", destination = port.ToString(),
                 healthUrl = $"http://127.0.0.1:{port}/", containerPort = 80,
             }));
-            Git(repo, "add", ".");
-            Git(repo, "commit", "-m", "declare-environments");
+            Git(repo, "add", "docs/deployments/environments");
+            Git(repo, "commit", "-m", "declare environments");
             var commit = Git(repo, "rev-parse", "HEAD").Trim();
             var service = factory.Services.GetRequiredService<ProjectEnvironmentService>();
             WriteReleaseEvidence(root, project, image, commit);
