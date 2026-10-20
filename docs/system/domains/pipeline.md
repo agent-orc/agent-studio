@@ -2578,6 +2578,9 @@ A project may declare a `preview` environment under
 `docs/deployments/environments/` for its host, template, and preview-only
 secret references. Preview references must be disjoint from Staging and
 Production references. Preview jobs never inherit their secret references.
+The deploy queue rejects a preview host used by any project's current
+Production declaration. Host claims also refuse queued preview and removal
+jobs if that host later becomes a Production host.
 The card's `card-preview.json` sidecar records its delivery, job, address,
 screenshot, and seven-day idle expiry. Reconciliation queues removal after
 integration, archive rejection, or expiry. `Hosting:MaxEnvironments` is the

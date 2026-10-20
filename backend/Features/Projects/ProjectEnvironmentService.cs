@@ -348,6 +348,7 @@ public sealed class ProjectEnvironmentService
             throw new ArgumentException("Invalid preview job specification.", nameof(spec));
         lock (_gate)
         {
+            EnsurePreviewHostIsNotProduction(spec.HostId);
             var state = Load(spec.Project);
             var job = new DeployJob(Guid.NewGuid().ToString("N"), spec.Project,
                 "preview-" + spec.CardKey.ToLowerInvariant(), spec.HostId,
@@ -371,6 +372,7 @@ public sealed class ProjectEnvironmentService
     {
         lock (_gate)
         {
+            EnsurePreviewHostIsNotProduction(spec.HostId);
             var state = Load(spec.Project);
             var job = new DeployJob(Guid.NewGuid().ToString("N"), spec.Project,
                 "preview-" + spec.CardKey.ToLowerInvariant(), spec.HostId,
@@ -564,6 +566,7 @@ public sealed class ProjectEnvironmentService
     {
         lock (_gate)
         {
+            var productionHost = IsProductionHost(hostId);
             var root = StoreRoot();
             if (!Directory.Exists(root)) return null;
             var now = _clock.GetUtcNow().UtcDateTime;
@@ -580,7 +583,8 @@ public sealed class ProjectEnvironmentService
                 return null;
             foreach (var (project, state) in states)
             {
-                var job = state.Jobs.FirstOrDefault(item => item.HostId == hostId &&
+                var job = state.Jobs.FirstOrDefault(item => item.HostId == hostId
+                    && (!productionHost || item.Kind is not ("preview" or "preview-remove")) &&
                     (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration));
                 if (job is null) continue;
                 var claimed = job with
@@ -593,6 +597,26 @@ public sealed class ProjectEnvironmentService
             }
             return null;
         }
+    }
+
+    private void EnsurePreviewHostIsNotProduction(string hostId)
+    {
+        if (IsProductionHost(hostId))
+            throw new InvalidOperationException($"Host {hostId} is assigned to production and cannot run preview jobs.");
+    }
+
+    private bool IsProductionHost(string hostId)
+    {
+        foreach (var project in _scanner.GetWatchPaths())
+        {
+            var files = DeclarationFiles(project.Name);
+            if (files is null) continue;
+            if (files.Any(file => file.Error is not null)) return true;
+            if (files.Any(file => file.Declaration is { Kind: "production" } declaration
+                && string.Equals(declaration.TargetHostId, hostId, StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
+        return false;
     }
 
     /// <summary>A claimed job whose lease token matches and has not gone stale, for secret issuance.</summary>

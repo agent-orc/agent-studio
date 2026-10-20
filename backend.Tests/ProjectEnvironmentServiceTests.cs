@@ -97,6 +97,31 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void PreviewJobsCannotBeQueuedOrClaimedOnAProductionHost()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        PreviewJobSpec Spec(string host) => new("demo", "agt-3180", commit, host,
+            "https://agt-3180.demo.preview.internal", "static",
+            "/srv/agent-studio/previews/demo/agt-3180", ["npm run build"], [], 8080)
+        { SourceRepository = repo, SourceRef = commit, ArtifactPath = "dist" };
+
+        Assert.Throws<InvalidOperationException>(() => service.QueuePreview(Spec("prod-host")));
+        Assert.Throws<InvalidOperationException>(() => service.QueuePreviewRemoval(Spec("prod-host")));
+
+        var queued = service.QueuePreview(Spec("preview-host"));
+        var declaration = Path.Combine(repo, "docs", "deployments", "environments", "production.json");
+        using var production = JsonDocument.Parse(File.ReadAllText(declaration));
+        var values = production.RootElement.EnumerateObject()
+            .ToDictionary(property => property.Name, property => (object?)property.Value.Clone());
+        values["targetHostId"] = "preview-host";
+        File.WriteAllText(declaration, JsonSerializer.Serialize(values));
+
+        Assert.Null(service.Claim("preview-host"));
+        Assert.Equal("queued", service.PreviewJob("demo", queued.Id)!.Status);
+    }
+
+    [Fact]
     public void ProjectNameWithSpaces_PersistsAndReadsEnvironmentState()
     {
         var (service, repo, _) = Build(project: "Operator Demo");
