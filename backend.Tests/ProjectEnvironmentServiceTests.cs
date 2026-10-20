@@ -129,11 +129,16 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var reader = new BlockingReadStream(_clock);
         var engine = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"),
             Path.Combine(_root, "archives"), NullLogger<LocalHostedVolumeBackupEngine>.Instance,
-            path => Directory.Delete(path, recursive: true), _clock, _ => reader);
+            path => Directory.Delete(path, recursive: true), _clock,
+            path => Path.GetFileName(Path.GetDirectoryName(path)) == key.Volume
+                ? reader : new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true));
         var service = new HostedVolumeBackupService(config, environments, engine, _clock,
             NullLogger<HostedVolumeBackupService>.Instance);
         var backup = service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
         await reader.Entered;
+
+        var other = await service.BackupAsync(key.Project, key.Environment, "logs", "owner", CancellationToken.None);
+        Assert.Equal("logs", other.Volume.Volume);
 
         var schedule = service.SetScheduleAsync(key.Project, key.Environment, key.Volume, 8, "owner", CancellationToken.None);
         Assert.True(schedule.IsCompleted);
@@ -141,7 +146,8 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         _clock.Advance(LocalHostedVolumeBackupEngine.BackupTimeout);
         await Assert.ThrowsAsync<TimeoutException>(() => backup);
         var state = (await service.ReadAsync(key.Project, CancellationToken.None))!;
-        Assert.Contains("time limit", Assert.Single(state.Schedules).LastError);
+        Assert.Contains("time limit", state.Schedules.Single(item => item.Volume == key.Volume).LastError);
+        Assert.Single(state.Schedules.Single(item => item.Volume == "logs").Backups);
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "archives", "demo", "stage", "uploads")));
     }
 
@@ -511,7 +517,8 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
                 id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
                 address = "https://stage.example", template = "container", destination = "8081",
                 healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
-                data = new { volumes = new[] { new { name = "uploads", mountPath = "/app/uploads" } } },
+                data = new { volumes = new[] { new { name = "uploads", mountPath = "/app/uploads" },
+                    new { name = "logs", mountPath = "/app/logs" } } },
             }));
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -521,6 +528,9 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var path = Path.Combine(_root, "volumes", key.Project, key.Environment, key.Volume);
         Directory.CreateDirectory(path);
         File.WriteAllText(Path.Combine(path, "data.txt"), "initial");
+        var logs = Path.Combine(_root, "volumes", key.Project, key.Environment, "logs");
+        Directory.CreateDirectory(logs);
+        File.WriteAllText(Path.Combine(logs, "data.txt"), "other-volume");
         return (environments, config, key, path);
     }
 
