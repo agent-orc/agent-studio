@@ -208,6 +208,10 @@ describe('deploy area model', () => {
     it('shows the deployed release with failed health after a health-step skip', () => {
       const sources = deploySourcesFixture();
       sources.environments!.environments[0].deployedArtifact = ARTIFACT_B;
+      sources.environments!.environments[0].history.unshift({
+        at: '2026-10-19T11:50:00Z', status: 'failed', artifact: ARTIFACT_C,
+        previousArtifact: ARTIFACT_B, evidence: 'health-http-failed',
+      });
       sources.statuses![0].currentRelease = RELEASE_3;
       sources.statuses![0].health = 'unhealthy';
       sources.statuses![0].intervention = {
