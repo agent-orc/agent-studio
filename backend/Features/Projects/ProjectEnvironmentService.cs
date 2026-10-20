@@ -532,21 +532,10 @@ public sealed partial class ProjectEnvironmentService
     {
         var current = state.History.LastOrDefault(row => row.EnvironmentId == declaration.Id)?.Item.Artifact;
         var previous = state.History.LastOrDefault(row => row.EnvironmentId == declaration.Id
-            && row.Item.Status is "healthy" or "rolled-back" && row.Item.Artifact != current);
+            && (row.Item.Status is "healthy" or "rolled-back") && row.Item.Artifact != current);
         if (previous is null) return false;
         Queue(project, DeployedSpec(state, declaration, previous.Item.Artifact), previous.Item.Artifact, state,
             rollback: true, actor: actor);
-        return true;
-    }
-
-    private bool QueueRollback(string project, EnvironmentDeclaration declaration, State state, string actor)
-    {
-        var currentArtifact = state.History.LastOrDefault(row => row.EnvironmentId == declaration.Id)?.Item.Artifact;
-        var previous = state.History.LastOrDefault(row => row.EnvironmentId == declaration.Id
-            && (row.Item.Status is "healthy" or "rolled-back")
-            && row.Item.Artifact != currentArtifact);
-        if (previous is null) return false;
-        Queue(project, declaration, previous.Item.Artifact, state, rollback: true, actor: actor);
         return true;
     }
 
