@@ -74,7 +74,7 @@ public static class ProjectOperatorDashboardEndpoints
                 (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
                  || principal.RunnerId != request.HostId))
                 return Results.Forbid();
-            var job = environments.Claim(request.HostId);
+            var job = environments.Claim(request.HostId, requireVerifiedRelease: true);
             if (job is not null) deploy.SyncAfterHostCall(job.Project);
             return Results.Ok(job);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
@@ -82,7 +82,7 @@ public static class ProjectOperatorDashboardEndpoints
         app.MapPost("/api/deploy/jobs/{project}/{jobId}/report", (string project, string jobId,
             DeployReportRequest request, ProjectEnvironmentService environments, DeployService deploy) =>
         {
-            if (!environments.Report(project, jobId, request)) return Results.Conflict();
+            if (!environments.Report(project, jobId, request, requireVerifiedRelease: true)) return Results.Conflict();
             deploy.SyncAfterHostCall(project);
             return Results.Ok();
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
@@ -92,7 +92,7 @@ public static class ProjectOperatorDashboardEndpoints
             IConfiguration configuration) =>
         {
             var lease = context.Request.Headers["X-Deploy-Lease"].ToString();
-            var job = environments.FindClaimedJob(project, jobId, lease);
+            var job = environments.FindClaimedJob(project, jobId, lease, requireVerifiedRelease: true);
             if (job is null || SecurityProfiles.IsNetworked(configuration)
                 && (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
                     || principal.RunnerId != job.HostId))

@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using AgentStudio.Deploy;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
@@ -29,6 +30,73 @@ public sealed class DeployServiceTests : IDisposable
     private string _repo = "";
     private string _watch = "";
     private ProjectEnvironmentService? _environments;
+    private IConfiguration? _configuration;
+    private TaskScannerService? _scanner;
+    private GitService? _git;
+    private ProjectSettingsService? _settings;
+
+    [Fact]
+    public void QueuedJobAfterRestart_BindsItsRunAndRefusesAnUnlinkedDigest()
+    {
+        var (deploy, environments, store) = Build();
+        var commit = Head();
+        var release = CreateRelease(deploy, Artifact('a'), commit);
+        StripPersistedReleaseIds();
+        var restarted = RestartEnvironments();
+
+        var claimed = restarted.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.Equal(release.Id, claimed.ReleaseId);
+        Assert.Equal(release.Id, restarted.FindClaimedJob("demo", claimed.Id, claimed.LeaseToken!)!.ReleaseId);
+        Assert.Equal(release.Id, restarted.Read("demo")!.Jobs.Single().ReleaseId);
+
+        Assert.True(restarted.Report("demo", claimed.Id, new(claimed.LeaseToken!, false, "deploy-step-failed"),
+            requireVerifiedRelease: true));
+        deploy.SyncAfterHostCall("demo");
+        var retry = CreateRelease(deploy, Artifact('a'), commit);
+        Assert.Equal(release.Id, retry.Id);
+        StripPersistedReleaseIds();
+        var queued = environments.Read("demo")!.Jobs.Last(item => item.Status == "queued");
+        store.SaveDeployments("demo", store.ReadDeployments("demo").Where(item => item.JobId != queued.Id).ToArray());
+
+        restarted = RestartEnvironments();
+        Assert.Null(restarted.Claim("stage-host", requireVerifiedRelease: true));
+        var refused = restarted.Read("demo")!.Jobs.Single(item => item.Id == queued.Id);
+        Assert.Equal(("failed", "artifact-unverified"), (refused.Status, refused.Evidence));
+        Assert.Null(refused.LeaseToken);
+    }
+
+    [Fact]
+    public void AutomaticRollbackAfterRestart_BindsTheHealthySourceReleaseAndChecksProvenance()
+    {
+        var (deploy, environments, _) = Build();
+        var first = CreateRelease(deploy, Artifact('a'), Head());
+        var healthy = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.True(environments.Report("demo", healthy.Id, new(healthy.LeaseToken!, true, "health-ok"),
+            requireVerifiedRelease: true));
+        deploy.SyncAfterHostCall("demo");
+
+        var secondCommit = Commit("second");
+        CreateRelease(deploy, Artifact('b'), secondCommit);
+        var failed = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.True(environments.Report("demo", failed.Id, new(failed.LeaseToken!, false, "deploy-step-failed"),
+            requireVerifiedRelease: true));
+        // The queue has durably written the automatic rollback, but the run
+        // reconciler has not yet adopted it when the process restarts.
+        StripPersistedReleaseIds();
+        var restarted = RestartEnvironments();
+        var rollback = restarted.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.True(rollback.IsRollback);
+        Assert.Equal(first.Id, rollback.ReleaseId);
+        Assert.Equal(first.Id, restarted.FindClaimedJob("demo", rollback.Id, rollback.LeaseToken!)!.ReleaseId);
+
+        var provenanceFile = Directory.GetFiles(Path.Combine(_root, "workspace", "release-registry", "records"),
+            "*.json", SearchOption.AllDirectories).Single(file => file.Contains(first.CommitSha, StringComparison.Ordinal));
+        File.Delete(provenanceFile);
+        Assert.Null(restarted.FindClaimedJob("demo", rollback.Id, rollback.LeaseToken!));
+        Assert.False(restarted.Report("demo", rollback.Id, new(rollback.LeaseToken!, true, "health-ok"),
+            requireVerifiedRelease: true));
+        Assert.Equal("artifact-unverified", restarted.Read("demo")!.Jobs.Single(item => item.Id == rollback.Id).Evidence);
+    }
 
     public void Dispose()
     {
@@ -523,7 +591,7 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
-    public void RollbackRoute_OnTheFirstRelease_FallsBackToTheArtifactFromBeforeReleases()
+    public void RollbackRoute_OnTheFirstRelease_RefusesUnverifiedArtifactFromBeforeReleases()
     {
         var (deploy, environments, _) = Build();
         var a = Head();
@@ -545,11 +613,11 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(DeployOutcomeKind.Conflict, busy.Kind);
         Assert.Contains("Wait until", busy.Error);
         Assert.Null(environments.Claim("prod-host"));
-        var job = environments.Claim("new-host")!;
-        Assert.Equal((Artifact('a'), true, "8082"), (job.Artifact, job.IsRollback, job.Destination));
-        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
-        deploy.SyncAfterHostCall("demo");
-        Assert.Equal(EnvironmentHealth.Healthy, deploy.Status("demo")![1].Health);
+        Assert.Null(environments.Claim("new-host", requireVerifiedRelease: true));
+        var refused = environments.Read("demo")!.Jobs.Last(item => item.IsRollback);
+        Assert.Equal((Artifact('a'), "failed", "artifact-unverified"),
+            (refused.Artifact, refused.Status, refused.Evidence));
+        Assert.Null(refused.LeaseToken);
     }
 
     [Fact]
@@ -850,11 +918,13 @@ public sealed class DeployServiceTests : IDisposable
             "ffffffffffff.json"));
         var provenanceFile = Directory.GetFiles(Path.Combine(_root, "workspace", "release-registry", "records"),
             "*.json", SearchOption.AllDirectories).Single(file => file.Contains(commit, StringComparison.Ordinal));
+        var provenanceBytes = File.ReadAllBytes(provenanceFile);
         File.Delete(provenanceFile);
         using var unverifiedRequest = new HttpRequestMessage(HttpMethod.Get, artifactUrl);
         unverifiedRequest.Headers.Add("X-Deploy-Lease", stage.LeaseToken);
         using var unverified = await host.SendAsync(unverifiedRequest);
-        Assert.Equal(HttpStatusCode.Conflict, unverified.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, unverified.StatusCode);
+        File.WriteAllBytes(provenanceFile, provenanceBytes);
         Assert.True(hosts.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
         service.SyncAfterHostCall("demo");
         var production = Assert.Single(service.Deployments("demo", "production")!);
@@ -964,6 +1034,18 @@ public sealed class DeployServiceTests : IDisposable
 
     private static string Artifact(char fill) => "registry.example/app@sha256:" + new string(fill, 64);
 
+    private void StripPersistedReleaseIds()
+    {
+        var path = Path.Combine(_root, "workspace", "deployments", "demo.json");
+        var state = JsonNode.Parse(File.ReadAllText(path))!;
+        foreach (var job in state["jobs"]!.AsArray()) job!.AsObject().Remove("releaseId");
+        File.WriteAllText(path, state.ToJsonString());
+    }
+
+    private ProjectEnvironmentService RestartEnvironments()
+        => new(_configuration!, _scanner!, _git!, _settings!, _clock,
+            new ReleaseArtifactRegistry(_configuration!), new DeployStore(_configuration!));
+
     private void Card(string key, string sha, IReadOnlyList<string>? deliveryShas = null)
     {
         var folder = Path.Combine(_watch, "6-completed", key.ToLowerInvariant());
@@ -1031,6 +1113,7 @@ public sealed class DeployServiceTests : IDisposable
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        (_configuration, _scanner, _git, _settings) = (config, scanner, git, settings);
         var environments = new ProjectEnvironmentService(config, scanner, git, settings, _clock);
         var store = new DeployStore(config);
         _environments = environments;

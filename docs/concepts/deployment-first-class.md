@@ -71,6 +71,14 @@ extracting them. Registry provenance is not exposed through a public browser
 route. The installation must retain `release-registry/provenance.key` together
 with the registry in backups; losing the key makes stored provenance unverifiable.
 
+On restart, a queued job saved before release IDs were added can recover its
+release from a persisted deployment run linked by job ID. An automatic rollback
+also requires the failed job and its last healthy source job to identify the
+same release. A digest match alone never selects a release. The claim and
+artifact routes refuse jobs whose release or registry provenance cannot be
+verified. If provenance disappears during a lease, artifact access is denied;
+an unverified report fails the job.
+
 The host contract is `GET /api/deploy/jobs/{project}/{jobId}/artifact` with
 `Authorization: Bearer <runner.deploy token>` and
 `X-Deploy-Lease: <leaseToken from the claimed job>`. In networked profiles,

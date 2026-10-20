@@ -60,6 +60,7 @@ public sealed class ProjectEnvironmentService
     private readonly object _gate = new();
     private readonly IConfiguration _configuration;
     private readonly ReleaseArtifactRegistry _registry;
+    private readonly DeployStore _deployStore;
     private readonly TaskScannerService _scanner;
     private readonly GitService _git;
     private readonly ProjectSettingsService _settings;
@@ -67,10 +68,12 @@ public sealed class ProjectEnvironmentService
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public ProjectEnvironmentService(IConfiguration configuration, TaskScannerService scanner,
-        GitService git, ProjectSettingsService settings, TimeProvider clock, ReleaseArtifactRegistry? registry = null)
+        GitService git, ProjectSettingsService settings, TimeProvider clock, ReleaseArtifactRegistry? registry = null,
+        DeployStore? deployStore = null)
     {
         _configuration = configuration;
         _registry = registry ?? new ReleaseArtifactRegistry(configuration);
+        _deployStore = deployStore ?? new DeployStore(configuration);
         _scanner = scanner;
         _git = git;
         _settings = settings;
@@ -498,7 +501,7 @@ public sealed class ProjectEnvironmentService
     /// so the run log records each reclaim. Claims older than
     /// <see cref="HostLostAfter"/> fail as <c>host-lost</c> first.
     /// </summary>
-    public DeployJob? Claim(string hostId)
+    public DeployJob? Claim(string hostId, bool requireVerifiedRelease = false)
     {
         lock (_gate)
         {
@@ -510,7 +513,22 @@ public sealed class ProjectEnvironmentService
             {
                 var project = Uri.UnescapeDataString(Path.GetFileNameWithoutExtension(file));
                 var state = Load(project);
-                if (AdvanceQueue(state)) Save(project, state);
+                var changed = AdvanceQueue(state);
+                foreach (var job in state.Jobs.Where(item => item.Status is "queued" or "claimed").ToArray())
+                {
+                    var verified = VerifyRelease(project, job, state, requireVerifiedRelease);
+                    if (verified is null)
+                    {
+                        RefuseUnverified(state, job, now);
+                        changed = true;
+                    }
+                    else if (verified != job)
+                    {
+                        state.Jobs[state.Jobs.IndexOf(job)] = verified;
+                        changed = true;
+                    }
+                }
+                if (changed) Save(project, state);
                 states.Add((project, state));
             }
             if (states.Any(item => item.State.Jobs.Any(job =>
@@ -534,17 +552,53 @@ public sealed class ProjectEnvironmentService
     }
 
     /// <summary>A claimed job whose lease token matches and has not gone stale, for secret issuance.</summary>
-    public DeployJob? FindClaimedJob(string project, string jobId, string leaseToken)
+    public DeployJob? FindClaimedJob(string project, string jobId, string leaseToken,
+        bool requireVerifiedRelease = false)
     {
         if (string.IsNullOrWhiteSpace(project) || project is "." or ".." || project.IndexOfAny(['/', '\\', '\0']) >= 0)
             return null;
         lock (_gate)
         {
-            var job = Load(project).Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
+            var state = Load(project);
+            var job = state.Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
                 && item.LeaseToken is not null && CryptographicOperations.FixedTimeEquals(
                     System.Text.Encoding.UTF8.GetBytes(item.LeaseToken), System.Text.Encoding.UTF8.GetBytes(leaseToken)));
-            return job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration ? null : job;
+            if (job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration) return null;
+            var verified = VerifyRelease(project, job, state, requireVerifiedRelease);
+            if (verified is null) return null;
+            if (verified != job)
+            {
+                state.Jobs[state.Jobs.IndexOf(job)] = verified;
+                Save(project, state);
+            }
+            return verified;
         }
+    }
+
+    private DeployJob? VerifyRelease(string project, DeployJob job, State state, bool requireRelease)
+    {
+        try
+        {
+            var releases = _deployStore.ReadReleaseRecords(project);
+            if (releases.Count == 0 && job.ReleaseId is null && !requireRelease) return job;
+            return DeployJobReleaseBinding.Verify(project, job, state.Jobs, releases,
+                _deployStore.ReadDeployments(project), _registry);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
+            or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static void RefuseUnverified(State state, DeployJob job, DateTime now)
+    {
+        const string evidence = "artifact-unverified";
+        var failed = job with { Status = "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence };
+        state.Jobs[state.Jobs.IndexOf(job)] = failed;
+        state.History.Add(new(job.EnvironmentId, now,
+            new(now, "failed", job.Artifact, job.PreviousArtifact, evidence)));
+        ClosePromotionForResult(state, failed, success: false, now);
     }
 
     /// <summary>
@@ -552,7 +606,7 @@ public sealed class ProjectEnvironmentService
     /// changes on a reclaim and is cleared when the claim fails as
     /// <c>host-lost</c> or is aborted, so only the current claim reports.
     /// </summary>
-    public bool Report(string project, string jobId, DeployReportRequest report)
+    public bool Report(string project, string jobId, DeployReportRequest report, bool requireVerifiedRelease = false)
     {
         lock (_gate)
         {
@@ -564,6 +618,18 @@ public sealed class ProjectEnvironmentService
             {
                 if (advanced) Save(project, state);
                 return false;
+            }
+            var verified = VerifyRelease(project, job, state, requireVerifiedRelease);
+            if (verified is null)
+            {
+                RefuseUnverified(state, job, _clock.GetUtcNow().UtcDateTime);
+                Save(project, state);
+                return false;
+            }
+            if (verified != job)
+            {
+                state.Jobs[state.Jobs.IndexOf(job)] = verified;
+                job = verified;
             }
             var now = _clock.GetUtcNow().UtcDateTime;
             var success = report.Healthy;

@@ -114,7 +114,8 @@ public sealed class ReleaseArtifactRegistry
             return record is not null && record.Project == project && record.Commit == commit
                 && record.Artifact == artifact && record.Template == template && Verify(record) ? record : null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
+            or ArgumentException or InvalidDataException)
         {
             return null;
         }
