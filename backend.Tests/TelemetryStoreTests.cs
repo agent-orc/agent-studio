@@ -106,6 +106,27 @@ public sealed class TelemetryStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Committed_stage_replays_idempotently_after_a_crash_before_cleanup()
+    {
+        var options = new TelemetryOptions { StoreRoot = _root };
+        var store = Store(options);
+        var queue = new TelemetryIntakeQueue(options);
+        var now = Nanos(_clock.GetUtcNow());
+        var sample = Gauge("once", 7, now);
+        Assert.Equal(TelemetryEnqueueResult.Accepted, queue.TryEnqueue(new(_stage, [sample], [], 256)));
+        var stage = Assert.Single(Directory.EnumerateFiles(Path.Combine(_root, "pending"), "*.json"));
+        store.Write(_stage, [sample], [], _clock.GetUtcNow(), Path.GetFileNameWithoutExtension(stage));
+
+        var recovered = new TelemetryIntakeQueue(options);
+        var writer = new TelemetryWriter(recovered, Store(options), [], new CredentialTelemetryValueMasker(),
+            options, _clock, NullLogger<TelemetryWriter>.Instance);
+        Assert.Equal(1, await writer.DrainOnceAsync(CancellationToken.None));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(1d, Assert.Single(Assert.Single(Query(store, "once", 60).Series).Points).Count);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "pending"), "*.json"));
+    }
+
+    [Fact]
     public void Successive_cumulative_sum_exports_contribute_deltas_and_handle_resets()
     {
         var store = Store();

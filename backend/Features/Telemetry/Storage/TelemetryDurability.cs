@@ -46,7 +46,7 @@ internal static class TelemetryDurability
     private static extern int Fsync(int descriptor);
     [DllImport("libc", EntryPoint = "close", SetLastError = true)]
     private static extern int CloseDirectory(int descriptor);
-    [DllImport("kernel32.dll", EntryPoint = "MoveFileExW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "MoveFileExW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool MoveFileEx(string source, string destination, int flags);
 }
