@@ -141,11 +141,15 @@ public sealed class AccessSecurityStore
                     TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15)), MaxTrackedClients);
                 throw new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
             }
-            if (!_clientLoginAttempts.ContainsKey(clientKey) && _clientLoginAttempts.Count >= MaxTrackedClients
+            if (!_clientLoginAttempts.ContainsKey(clientKey)
+                && (_clientLoginAttempts.Count >= MaxTrackedClients
+                    || _overflowClientAttempts.HasActiveFailures(clientKey, now, LoginWindow))
                 && !_overflowClientAttempts.CanHash(clientKey, clientKey, now, LoginWindow,
                     _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10), overflowDelay))
                 throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again shortly.");
-            if (!_usernameLoginAttempts.ContainsKey(normalized) && _usernameLoginAttempts.Count >= MaxTrackedUsernames
+            if (!_usernameLoginAttempts.ContainsKey(normalized)
+                && (_usernameLoginAttempts.Count >= MaxTrackedUsernames
+                    || _overflowUsernameAttempts.HasActiveFailures(normalized, now, LoginWindow))
                 && (!_recentSuccessfulLogins.TryGetValue(loginKey!, out var overflowSuccessAt)
                     || now - overflowSuccessAt > RecentSuccessWindow)
                 && !_overflowUsernameAttempts.CanHash(normalized, loginKey!, now, LoginWindow,
@@ -200,11 +204,15 @@ public sealed class AccessSecurityStore
                 var now = Now;
                 if (current is null || current.Disabled || !ReferenceEquals(current, candidate) || !passwordMatches)
                 {
-                    var clientRecorded = RegisterLoginFailureLocked(_clientLoginAttempts, clientKey, now,
-                        _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10),
-                        TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15)), MaxTrackedClients);
-                    var usernameRecorded = RegisterLoginFailureLocked(_usernameLoginAttempts, normalized, now,
-                        _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20), null, MaxTrackedUsernames);
+                    var clientRecorded = !_clientLoginAttempts.ContainsKey(clientKey)
+                        && _overflowClientAttempts.HasActiveFailures(clientKey, now, LoginWindow)
+                        ? false : RegisterLoginFailureLocked(_clientLoginAttempts, clientKey, now,
+                            _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10),
+                            TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15)), MaxTrackedClients);
+                    var usernameRecorded = !_usernameLoginAttempts.ContainsKey(normalized)
+                        && _overflowUsernameAttempts.HasActiveFailures(normalized, now, LoginWindow)
+                        ? false : RegisterLoginFailureLocked(_usernameLoginAttempts, normalized, now,
+                            _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20), null, MaxTrackedUsernames);
                     if (!clientRecorded)
                         _overflowClientAttempts.RecordFailure(clientKey, clientKey, now, LoginWindow,
                             _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10), overflowDelay);

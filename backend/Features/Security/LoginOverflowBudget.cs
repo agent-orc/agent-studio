@@ -10,6 +10,13 @@ internal sealed class LoginOverflowBudget
     private readonly Bucket[] _buckets = new Bucket[BucketCount];
     private readonly DateTime[] _retryAt = new DateTime[BucketCount];
 
+    public bool HasActiveFailures(string key, DateTime now, TimeSpan window)
+    {
+        ref var bucket = ref GetBucket(key);
+        ResetExpiredWindow(ref bucket, now, window);
+        return bucket.Failures > 0;
+    }
+
     public bool CanHash(string key, string delayKey, DateTime now, TimeSpan window, int maxFailures, TimeSpan delay)
     {
         ref var bucket = ref GetBucket(key);
