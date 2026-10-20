@@ -2303,6 +2303,41 @@ public sealed partial class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Provider_fallback_claim_uses_accepted_route_when_primary_cli_is_unavailable()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var first = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var decision = ProviderRefusalDecision(first.Run!.RunId, "gpt-6-astra");
+        await store.CompleteRunAsync(first.Run.RunId, new CompleteRunRequest(
+            "runner-a", "instance-a", first.Lease!.LeaseId, first.Lease.Fence,
+            decision.Outcome.ToString(), IdempotencyKey: "fallback-prefilter-completion", Sequence: 1,
+            OutcomeDecision: decision,
+            SalvageBranch: "refs/heads/runner/salvage/fallback-prefilter",
+            SalvageCommitSha: new string('1', 40)), "runner-a", default);
+
+        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "runner-a", "instance-a", CapabilityProtocol.CurrentSchemaVersion,
+            DateTime.UtcNow, 300, 1,
+            [new AdvertisedCapabilityDto(CapabilityProtocol.CodingExecutor, "executor"),
+             new AdvertisedCapabilityDto(CapabilityProtocol.CliExecution("codex"), "cli-execution"),
+             new AdvertisedCapabilityDto(CapabilityProtocol.ProviderAuthentication("codex"), "provider-auth")]),
+            "runner-a", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a",
+            RequiredCapabilities: [CapabilityProtocol.CodingExecutor,
+                CapabilityProtocol.CliExecution("claude"),
+                CapabilityProtocol.ProviderAuthentication("claude")]), "test", default);
+
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal("gpt-5.6-sol", claim.ModelFallback?.To);
+        Assert.Contains(CapabilityProtocol.CliExecution("codex"), claim.RequiredCapabilities!);
+        Assert.DoesNotContain(CapabilityProtocol.CliExecution("claude"), claim.RequiredCapabilities!);
+    }
+
+    [Fact]
     public async Task Provider_rejection_without_declared_sibling_escalates_instead_of_retrying_same_model()
     {
         using var temp = new TempDirectory();

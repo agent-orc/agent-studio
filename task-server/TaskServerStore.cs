@@ -1335,12 +1335,23 @@ public sealed partial class TaskServerStore
                 transaction,
                 capabilityRunner.HostId,
                 ct);
+            // CLI requirements belong to the selected route. A provider refusal
+            // can leave the card Ready on a different accepted route while the
+            // runner's configured primary CLI is unavailable.
+            var requestedCapabilities = request.RequiredCapabilities ?? [];
+            var hasCliRequirement = requestedCapabilities.Any(key =>
+                key.StartsWith("cli-execution:", StringComparison.Ordinal));
+            IReadOnlyList<string> hostRequirements = hasCliRequirement
+                ? requestedCapabilities.Where(key =>
+                    !key.StartsWith("cli-execution:", StringComparison.Ordinal)
+                    && !key.StartsWith("provider-auth:", StringComparison.Ordinal)).ToArray()
+                : requestedCapabilities;
             var capabilityAdmission = await EvaluateCapabilityAdmissionAsync(
                 connection,
                 transaction,
                 request.RunnerId,
                 capabilityRunner.HostId,
-                request.RequiredCapabilities,
+                hostRequirements,
                 ct);
             var reportedMaxParallelism = request.EffectiveMaxParallelism is >= 1 and <= 256
                 ? request.EffectiveMaxParallelism
@@ -1509,6 +1520,7 @@ public sealed partial class TaskServerStore
             // at the first admissible task, so refused projects cost one
             // evaluation and one admission receipt rather than one per task.
             var verdicts = new List<ClaimPlacementVerdict>();
+            var candidateAdmissions = new Dictionary<string, CapabilityAdmission>(StringComparer.Ordinal);
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
                 ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
                 async projectId =>
@@ -1517,7 +1529,37 @@ public sealed partial class TaskServerStore
                     verdicts.Add(verdict);
                     return verdict;
                 },
-                verdict => verdict.Admission is not null);
+                verdict => verdict.Admission is not null,
+                async (candidate, verdict) =>
+                {
+                    // Legacy callers that supply no capability contract keep
+                    // the existing host admission behavior.
+                    if (request.RequiredCapabilities is not { Count: > 0 })
+                    {
+                        candidateAdmissions[candidate.TaskId] = verdict.Admission!;
+                        return true;
+                    }
+                    var fallback = await ReadProviderFallbackForClaimAsync(
+                        connection, transaction, candidate, ct);
+                    var continuation = await ReadNextContinuationAsync(
+                        connection, transaction, candidate.TaskId, ct);
+                    var fields = await ReadStudioFieldsAsync(
+                        connection, transaction, candidate.TaskId, ct);
+                    var cli = continuation is { Receipt.ExplicitSelection: true }
+                        ? continuation.CliType
+                        : fallback?.Fallback.CliType ?? fields?.CliType;
+                    IReadOnlyList<string> routeRequirements = string.IsNullOrWhiteSpace(cli)
+                        ? request.RequiredCapabilities ?? []
+                        : [CapabilityProtocol.CliExecution(cli), CapabilityProtocol.ProviderAuthentication(cli)];
+                    var required = verdict.Admission!.Required
+                        .Concat(routeRequirements)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray();
+                    var admission = await EvaluateCapabilityAdmissionAsync(
+                        connection, transaction, request.RunnerId, capabilityRunner.HostId, required, ct);
+                    if (admission.Eligible) candidateAdmissions[candidate.TaskId] = admission;
+                    return admission.Eligible;
+                });
             foreach (var verdict in verdicts.Where(verdict => verdict.Placement is not null))
                 await RecordProjectPlacementAdmissionAsync(
                     connection, transaction, verdict.ProjectId, request.RunnerId, verdict.Reason, ct);
@@ -1536,7 +1578,7 @@ public sealed partial class TaskServerStore
                     PlacementReason: placementReason);
                 return;
             }
-            capabilityAdmission = selected!.Admission!;
+            capabilityAdmission = candidateAdmissions[task.TaskId];
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
                 connection, transaction, task, ct);

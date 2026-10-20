@@ -613,6 +613,11 @@ Anthropic Opus 5 to Opus 4.8, and Anthropic Sonnet 5 to Sonnet 4.6. The
 continuation keeps the original thinking level and must still clear the card's
 correctness floor.
 
+For Task Server coding claims, host admission checks shared host requirements
+first. The task's selected CLI and provider authentication are checked after
+the accepted fallback or continuation route is resolved. A configured primary
+CLI that is unavailable cannot block an eligible sibling route.
+
 The first refusal uses a run-scoped `modelFallback` and leaves the card's model
 unchanged. A second refusal of the same configured model pins the card to the
 sibling and records that change. A missing sibling, a sibling below the floor,

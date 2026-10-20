@@ -247,12 +247,13 @@ internal static class ProjectPlacementSelection
 {
     /// <summary>
     /// Walks ready tasks in claim order, evaluates each project at most once and
-    /// stops reading at the first task whose project is admitted.
+    /// stops at the first task admitted by both its project and optional task check.
     /// </summary>
     public static async Task<(TaskDto? Task, TVerdict? Verdict)> SelectAsync<TVerdict>(
         IAsyncEnumerable<TaskDto> readyInClaimOrder,
         Func<string, Task<TVerdict>> evaluateProject,
-        Func<TVerdict, bool> admits)
+        Func<TVerdict, bool> admits,
+        Func<TaskDto, TVerdict, Task<bool>>? admitsTask = null)
         where TVerdict : class
     {
         var evaluated = new Dictionary<string, TVerdict>(StringComparer.Ordinal);
@@ -260,7 +261,7 @@ internal static class ProjectPlacementSelection
         {
             if (!evaluated.TryGetValue(candidate.ProjectId, out var verdict))
                 evaluated[candidate.ProjectId] = verdict = await evaluateProject(candidate.ProjectId);
-            if (admits(verdict))
+            if (admits(verdict) && (admitsTask is null || await admitsTask(candidate, verdict)))
                 return (candidate, verdict);
         }
         return (null, null);
