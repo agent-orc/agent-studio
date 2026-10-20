@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
-using System.Net.NetworkInformation;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -172,21 +171,6 @@ public sealed class DnsZoneAddressResolver : IZoneAddressResolver
 {
     public async Task<IReadOnlyList<IPAddress>> ResolveAsync(string host, CancellationToken ct)
         => (await Dns.GetHostAddressesAsync(host, AddressFamily.InterNetwork, ct)).ToArray();
-}
-
-public static class ZoneZeroTierNetworks
-{
-    /// <summary>Read live ZeroTier interface subnets on every render and apply.</summary>
-    public static IReadOnlyList<string> Detect()
-        => NetworkInterface.GetAllNetworkInterfaces()
-            .Where(network => network.Name.StartsWith("zt", StringComparison.OrdinalIgnoreCase)
-                              || network.Description.Contains("ZeroTier", StringComparison.OrdinalIgnoreCase))
-            .SelectMany(network => network.GetIPProperties().UnicastAddresses)
-            .Where(address => address.Address.AddressFamily == AddressFamily.InterNetwork)
-            .Select(address => ZonePolicyParser.NetworkOf(address.Address, address.PrefixLength))
-            .Distinct(StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal)
-            .ToList();
 }
 
 public sealed class ZonePolicyException(IReadOnlyList<string> errors)
@@ -457,6 +441,9 @@ public static class ZonePolicyParser
         {
             if (!probe.RequireControl && (zone.Kind != ZoneKinds.Run || !blocked))
                 errors.Add($"{label}: requireControl=false is only valid for a blocked run probe");
+            if (!probe.RequireControl && zone.Kind == ZoneKinds.Run && blocked
+                && probe.Host != "169.254.169.254")
+                errors.Add($"{label}: only metadata 169.254.169.254 may omit an outside-zone control");
             if (probe.Destination is null && probe.Host is null)
             {
                 errors.Add($"{label}: a probe names a destination, a host, or a host of a destination");
@@ -630,11 +617,8 @@ public static class ZonePolicyParser
             }
             foreach (var probe in probes.Where(probe => !probe.RequireControl && probe.Unresolved is null))
             {
-                if (!TryNormalizeCidr(probe.Address, out var probeCidr)
-                    || !TryParseCidr(probeCidr, out var probeStart, out var probeEnd)
-                    || !ZonePolicyRules.PrivateIpv4Ranges.Concat(zeroTierRanges).Any(range =>
-                        TryParseCidr(range, out var start, out var end) && start <= probeStart && probeEnd <= end))
-                    errors.Add($"zone {zone.Name}: probe {probe.Host} without a control must target a denied private or ZeroTier range");
+                if (probe.Address != "169.254.169.254")
+                    errors.Add($"zone {zone.Name}: only metadata 169.254.169.254 may omit an outside-zone control");
             }
             zones.Add(new ResolvedZone(zone.Name, zone.Kind, zone.Networks, allow, deny, probes,
                 zeroTierRanges.OrderBy(SortKey).ToList()));

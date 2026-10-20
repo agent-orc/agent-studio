@@ -68,7 +68,9 @@ public sealed class ZonePolicyRenderingTests
         var lines = rules.Iptables.Split('\n');
 
         Assert.Equal("-A AGENT-ZONE-FWD -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN",
-            lines.First(line => line.StartsWith("-A ", StringComparison.Ordinal)));
+            lines.Last(line => line.StartsWith("-A AGENT-ZONE-FWD ", StringComparison.Ordinal)));
+        Assert.Contains("-A AGENT-ZONE-FWD -o br-agent-work -m conntrack --ctstate RELATED,ESTABLISHED "
+                        + "--ctorigsrc 172.30.0.0/24 -m comment --comment \"work/agent-work: outbound replies\" -j RETURN", lines);
         Assert.Contains("-A AGENT-ZONE-FWD -o br-agent-work -m comment --comment \"work/agent-work: no inbound\" -j DROP", lines);
         foreach (var chain in new[] { "AGENT-ZONE-FWD", "AGENT-ZONE-IN" })
         {
@@ -242,6 +244,47 @@ public sealed class ZonePolicyRenderingTests
         Assert.Equal(ZoneProbeOutcome.TimedOut, firewall.Connect("br-run-default", container, 443));
         Assert.Equal(ZoneProbeOutcome.TimedOut, firewall.Connect("br-run-default", System.Net.IPAddress.Parse("172.17.0.2"), 8080));
         Assert.Equal(ZoneProbeOutcome.Connected, firewall.Connect("br-run-default", System.Net.IPAddress.Parse("203.0.113.40"), 443));
+    }
+
+    [Fact]
+    public async Task Established_run_connections_are_denied_after_a_private_allowance_is_revoked()
+    {
+        var json = Policy();
+        json["zones"]![1]!["networks"]![0]!["privateAllow"] = JsonNode.Parse(
+            """[{"cidr":"192.168.50.10/32","reason":"managed database"}]""");
+        var allowed = ZonePolicyRules.Render(await ZonePolicyTestFiles.ResolveAsync(json.ToJsonString()));
+        var privateAddress = System.Net.IPAddress.Parse("192.168.50.10");
+        Assert.Equal(ZoneProbeOutcome.Connected,
+            new FakeZoneFirewall(allowed.Networks, allowed.Iptables).Connect("br-run-default", privateAddress, 5432, established: true));
+
+        json["zones"]![1]!["networks"]![0]!["privateAllow"] = new JsonArray();
+        var revoked = ZonePolicyRules.Render(await ZonePolicyTestFiles.ResolveAsync(json.ToJsonString()));
+        var firewall = new FakeZoneFirewall(revoked.Networks, revoked.Iptables);
+        foreach (var address in new[] { privateAddress, System.Net.IPAddress.Parse("169.254.169.254"),
+                     System.Net.IPAddress.Parse("198.51.100.7"), System.Net.IPAddress.Parse("192.0.2.80") })
+            Assert.Equal(ZoneProbeOutcome.Rejected,
+                firewall.Connect("br-run-default", address, 5432, established: true));
+        Assert.Equal(ZoneProbeOutcome.Connected,
+            firewall.Connect("br-run-default", System.Net.IPAddress.Parse("203.0.113.40"), 443, established: true));
+        Assert.Equal(ZoneProbeOutcome.Connected,
+            firewall.Connect("br-agent-work", System.Net.IPAddress.Parse("203.0.113.40"), 443,
+                established: true, translated: System.Net.IPAddress.Parse("172.30.0.2"),
+                originalSource: System.Net.IPAddress.Parse("172.30.0.2")));
+        Assert.Equal(ZoneProbeOutcome.TimedOut,
+            firewall.Connect("br-run-default", System.Net.IPAddress.Parse("203.0.113.40"), 443,
+                established: true, translated: System.Net.IPAddress.Parse("172.30.0.2"),
+                originalSource: System.Net.IPAddress.Parse("172.31.0.2")));
+    }
+
+    [Fact]
+    public void Zerotier_routes_include_a_managed_peer_outside_a_32_interface_address()
+    {
+        const string routes = "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n"
+            + "ztabc 050071CB 00000000 0001 0 0 0 FFFFFFFF 0 0 0\n"
+            + "ztabc 000071CB 00000000 0001 0 0 0 00FFFFFF 0 0 0\n"
+            + "eth0 0000A8C0 00000000 0001 0 0 0 0000FFFF 0 0 0\n";
+        Assert.Equal(["203.113.0.0/24", "203.113.0.5/32", "203.113.0.9/32"],
+            ZoneZeroTierNetworks.RangesFor([(System.Net.IPAddress.Parse("203.113.0.9"), 32)], routes, "ztabc"));
     }
 
     [Fact]
@@ -454,7 +497,7 @@ public sealed class ZonePolicyRenderingTests
         { "$.zones[1].networks[0].subnet", "\"172.30.0.128/25\"", "overlaps agent-work" },
         { "$.zones[1].networks[0].subnet", "\"172.31.0.1/24\"", "is not an IPv4 CIDR" },
         { "$.zones[1].networks[0].subnet", "\"172.31.0.0/024\"", "subnet '172.31.0.0/024' is not in canonical form; write 172.31.0.0/24" },
-        { "$.version", "\"2026-10-20.3\\n-A INPUT -j ACCEPT\"", "version 2026-10-20.3\\n-A INPUT -j ACCEPT must match ^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$" },
+        { "$.version", "\"2026-10-20.5\\n-A INPUT -j ACCEPT\"", "version 2026-10-20.5\\n-A INPUT -j ACCEPT must match ^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$" },
         { "$.version", "\"2026-10-20\\\" x\"", "version 2026-10-20\\\" x must match" },
         { "$.version", "\".hidden\"", "version .hidden must match" },
         // $ would accept a trailing line break; the patterns end in \z.
@@ -471,6 +514,7 @@ public sealed class ZonePolicyRenderingTests
         { "$.zones[1].networks[0].bridge", "\"br-agent-work\"", "must be a unique interface name" },
         { "$.zones[0].verify.blocked", "[]", "at least one reachable and one blocked probe" },
         { "$.zones[1].verify.reachable[0].requireControl", "false", "requireControl=false is only valid for a blocked run probe" },
+        { "$.zones[1].verify.blocked[3].requireControl", "false", "only metadata 169.254.169.254 may omit an outside-zone control" },
         { "$.zones[1].verify.blocked", "[{ \"destination\": \"secret-store\" }]", "needs a port because the destination has none" },
         { "$.zones[0].kind", "\"build\"", "kind must be 'work' or 'run'" },
         { "$.destinations.git-hosts.protocols", "[\"icmp\"]", "protocols must be tcp or udp" },
@@ -565,7 +609,7 @@ public sealed class ZonePolicyRenderingTests
             """{"host":"8.8.8.8","port":443,"requireControl":false}"""));
         var probeError = await Assert.ThrowsAsync<ZonePolicyException>(() =>
             ZonePolicyTestFiles.ResolveAsync(json.ToJsonString()));
-        Assert.Contains(probeError.Errors, error => error.Contains("without a control must target a denied private or ZeroTier range", StringComparison.Ordinal));
+        Assert.Contains(probeError.Errors, error => error.Contains("only metadata 169.254.169.254 may omit an outside-zone control", StringComparison.Ordinal));
     }
 
     [Fact]

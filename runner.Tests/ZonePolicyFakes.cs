@@ -146,7 +146,8 @@ internal sealed class FakeZoneFirewall
 
     /// <param name="translated">Where Docker's port forwarding sends the
     /// connection (DNAT before FORWARD), or null.</param>
-    public ZoneProbeOutcome Connect(string fromBridge, IPAddress address, int port, IPAddress? translated = null)
+    public ZoneProbeOutcome Connect(string fromBridge, IPAddress address, int port, IPAddress? translated = null,
+        bool established = false, IPAddress? originalSource = null)
     {
         if (_rules.Count == 0) return ZoneProbeOutcome.Connected;
         var original = ToUInt(address);
@@ -156,7 +157,8 @@ internal sealed class FakeZoneFirewall
         var chain = toHost ? ZonePolicyRules.InputChain : ZonePolicyRules.ForwardChain;
         foreach (var (ruleChain, tokens) in _rules.Where(rule => rule.Chain == chain))
         {
-            if (!Matches(tokens, fromBridge, toHost ? null : outInterface, raw, original, port)) continue;
+            if (!Matches(tokens, fromBridge, toHost ? null : outInterface, raw, original, port, established,
+                    originalSource is null ? 0 : ToUInt(originalSource))) continue;
             var target = tokens[tokens.IndexOf("-j") + 1];
             return target switch
             {
@@ -169,15 +171,15 @@ internal sealed class FakeZoneFirewall
         return ZoneProbeOutcome.Connected;
     }
 
-    private bool Matches(List<string> tokens, string inInterface, string? outInterface, uint address, uint original, int port)
+    private bool Matches(List<string> tokens, string inInterface, string? outInterface, uint address, uint original,
+        int port, bool established, uint originalSource)
     {
         for (var index = 0; index < tokens.Count; index++)
         {
             switch (tokens[index])
             {
                 case "--ctstate":
-                    // Every probe is a NEW connection.
-                    if (!tokens[++index].Split(',').Contains("NEW")) return false;
+                    if (!tokens[++index].Split(',').Contains(established ? "ESTABLISHED" : "NEW")) return false;
                     break;
                 case "-i":
                     if (tokens[++index] != inInterface) return false;
@@ -194,6 +196,9 @@ internal sealed class FakeZoneFirewall
                     break;
                 case "--ctorigdst":
                     if (!InCidr(tokens[++index], original)) return false;
+                    break;
+                case "--ctorigsrc":
+                    if (!InCidr(tokens[++index], originalSource)) return false;
                     break;
                 case "--match-set":
                     var set = tokens[++index];
@@ -307,6 +312,16 @@ internal sealed class FakeZoneNetwork(
             : networks.Single(item => item.Name == network).Bridge;
         var outcome = new FakeZoneFirewall(networks, loadedRules(), sets).Connect(bridge, target, port);
         return Task.FromResult(new ZoneProbeObservation(outcome, outcome.ToString()));
+    }
+
+    public async Task<ZoneProbeObservation> ConnectWithLocalDenyAsync(
+        string network, string address, int port, CancellationToken ct)
+    {
+        var observation = await ConnectAsync(network, null, address, port, ct);
+        var bridge = networks.Single(item => item.Name == network).Bridge;
+        var hit = IPAddress.TryParse(address, out var target)
+                  && new FakeZoneFirewall(networks, loadedRules(), sets).Connect(bridge, target, port) == ZoneProbeOutcome.Rejected;
+        return observation with { LocalDenyObserved = hit };
     }
 
     public Task<IReadOnlyList<string>> PublishedPortsAsync(string network, CancellationToken ct)

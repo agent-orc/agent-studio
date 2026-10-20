@@ -1,4 +1,4 @@
-# Rendered by agent-host zone-policy from policy 2026-10-20.4 (sha256:<policy-sha256>).
+# Rendered by agent-host zone-policy from policy 2026-10-20.5 (sha256:<policy-sha256>).
 # Load with ip6tables-restore --noflush; only the AGENT-ZONE-* chains are replaced.
 *filter
 :AGENT-ZONE-FWD - [0:0]

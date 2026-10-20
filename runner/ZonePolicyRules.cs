@@ -105,11 +105,7 @@ public static class ZonePolicyRules
 
     public static ZoneRuleSet Render(ResolvedZonePolicy policy)
     {
-        var rules = new List<string>
-        {
-            $"-A {ForwardChain} -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN",
-            $"-A {InputChain} -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN",
-        };
+        var rules = new List<string>();
         var rules6 = new List<string>();
         var allNetworks = policy.Zones.SelectMany(zone => zone.Networks).ToList();
         var networks = new List<ZoneNetworkSpec>();
@@ -133,6 +129,10 @@ public static class ZonePolicyRules
                     network.Tenant, InterContainer: zone.Kind == ZoneKinds.Run));
             }
         }
+        // Run-zone denials must also see established packets. Replies entering
+        // a work bridge are returned in RenderWork before its inbound drop.
+        rules.Add($"-A {ForwardChain} -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN");
+        rules.Add($"-A {InputChain} -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN");
 
         var iptables = Payload(policy, "iptables-restore", rules);
         var ip6tables = Payload(policy, "ip6tables-restore", rules6);
@@ -182,6 +182,9 @@ public static class ZonePolicyRules
         // No inbound: a published port or another container cannot open a
         // connection into the work bridge. Replies to outbound connections
         // already returned at the conntrack rule above.
+        rules.Add($"-A {ForwardChain} -o {network.Bridge} -m conntrack --ctstate RELATED,ESTABLISHED "
+                  + $"--ctorigsrc {network.Subnet} "
+                  + $"-m comment --comment \"{scope}: outbound replies\" -j RETURN");
         rules.Add($"-A {ForwardChain} -o {network.Bridge} -m comment --comment \"{scope}: no inbound\" -j DROP");
         // Containers resolve through the zone resolver on the bridge gateway;
         // its answers are what fills the allowed sets.

@@ -1,11 +1,10 @@
-# Rendered by agent-host zone-policy from policy 2026-10-20.4 (sha256:<policy-sha256>).
+# Rendered by agent-host zone-policy from policy 2026-10-20.5 (sha256:<policy-sha256>).
 # Load with iptables-restore --noflush; only the AGENT-ZONE-* chains are replaced.
 *filter
 :AGENT-ZONE-FWD - [0:0]
 :AGENT-ZONE-IN - [0:0]
--A AGENT-ZONE-FWD -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
--A AGENT-ZONE-IN -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
 # zone work (work) network agent-work bridge br-agent-work subnet 172.30.0.0/24
+-A AGENT-ZONE-FWD -o br-agent-work -m conntrack --ctstate RELATED,ESTABLISHED --ctorigsrc 172.30.0.0/24 -m comment --comment "work/agent-work: outbound replies" -j RETURN
 -A AGENT-ZONE-FWD -o br-agent-work -m comment --comment "work/agent-work: no inbound" -j DROP
 -A AGENT-ZONE-IN -i br-agent-work -d 172.30.0.1/32 -p udp --dport 53 -m comment --comment "work/agent-work: zone resolver" -j RETURN
 -A AGENT-ZONE-IN -i br-agent-work -d 172.30.0.1/32 -p tcp --dport 53 -m comment --comment "work/agent-work: zone resolver" -j RETURN
@@ -46,4 +45,6 @@
 -A AGENT-ZONE-IN -i br-run-default -d 172.31.0.1/32 -p udp --dport 53 -m comment --comment "run/agent-run-default: host dns" -j RETURN
 -A AGENT-ZONE-IN -i br-run-default -d 172.31.0.1/32 -p tcp --dport 53 -m comment --comment "run/agent-run-default: host dns" -j RETURN
 -A AGENT-ZONE-IN -i br-run-default -m comment --comment "run/agent-run-default: no host services" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+-A AGENT-ZONE-IN -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
 COMMIT

@@ -122,12 +122,16 @@ rejected on both the original and translated destination address, so Docker
 DNAT cannot bypass the deny. The fixed IPv4 ranges are `10/8`, `172.16/12`,
 `192.168/16`, `169.254/16`, `100.64/10` and `127/8`. All IPv6 on zone
 bridges, including `fe80::/10` and IPv4-mapped addresses, is dropped by the
-IPv6 chains.
+IPv6 chains. Run-zone denials precede the established-connection return, so
+removing a private allowance also closes an existing connection on the next
+packet. The work bridge returns replies to its own outbound connections
+before applying its inbound drop.
 
-Every apply also reads IPv4 subnets from the host's `zt*` or ZeroTier-named
-interfaces. `egress.zeroTierRanges` adds the optional
+Every apply also reads IPv4 subnets and kernel routes through the host's `zt*`
+or ZeroTier-named interfaces. This covers a `/32` interface address with a
+separate managed route to a peer. `egress.zeroTierRanges` adds the optional
 `AGENT_ZONE_ZEROTIER_RANGES` list. The resolved ranges appear in the rules
-digest; changing an interface subnet requires reapply, which the 15-minute
+digest; changing an interface subnet or route requires reapply, which the 15-minute
 timer does. An exception goes on the tenant's network only, as
 `privateAllow: [{"cidr":"192.168.50.10/32","reason":"managed database"}]`.
 The CIDR must be canonical and within a denied private or ZeroTier range,
@@ -276,7 +280,8 @@ could create or hold the file, and with `fs.protected_regular` (the Ubuntu
 default) root could no longer open a file another user created. The script
 refuses a lock file that is a symbolic link or belongs to another user. Dry
 runs, a plain `--verify` and `--render` take no lock, so a non-root dry run
-never blocks a later root apply. For each zone
+never blocks a later root apply. Run verification as root: the metadata check
+reads `iptables-save -c` counters before and after its probe. For each zone
 network, one throw-away container (`bash:5.2` pinned by digest, label
 `org.agent-studio.zone-probe=true`) opens each probe connection with bash's
 `/dev/tcp` under `timeout`. On a work network the container uses the zone
@@ -290,13 +295,17 @@ resolver (`--dns <gateway>`), as the work containers do:
   zone's `icmp-admin-prohibited` reject) or a timeout (a drop). "Connection
   refused" is a reset from the real destination. Nothing blocked that
   connection, so the check fails, like any other connect error.
-- Run-zone metadata (`169.254.169.254:80`), `AGENT_ZONE_LAN_PROBE:443`
-  and `AGENT_ZONE_ZEROTIER_PEER:443` probes require an explicit reject. They
-  do not require an outside-zone control because those targets may not answer
-  on every host. The public `example.com:443` reachable probe is the positive
-  egress control. Set LAN and peer values to addresses inside the denied
-  ranges; keep the peer address in `AGENT_ZONE_ZEROTIER_RANGES` if its
-  interface mask does not cover it.
+- Run-zone metadata (`169.254.169.254:80`) requires an explicit reject and a
+  packet-counter increase on a matching local `AGENT-ZONE-FWD` deny rule.
+  This proves the zone firewall handled the packet even if the metadata
+  address has no route. It is the only probe allowed without an outside-zone
+  control.
+- `AGENT_ZONE_LAN_PROBE:443` and `AGENT_ZONE_ZEROTIER_PEER:443` must answer
+  from the outside-zone control network, with a connection or a reset. Set
+  them to reachable addresses inside the denied ranges. Keep the peer address
+  in `AGENT_ZONE_ZEROTIER_RANGES` if neither its interface prefix nor a
+  managed route covers it. The public `example.com:443` reachable probe is
+  the positive public-egress control.
 - A **control** probe runs once per blocked target from
   `verification.controlNetwork` (Docker's default `bridge`, outside every
   zone). It passes when the target answers there, with a connection or a
@@ -425,4 +434,4 @@ step 3). The first apply recreates everything.
 - Hosts on the allowlist reflect the CLIs in use. Gemini CLI's Google sign-in
   uses `cloudcode-pa.googleapis.com`, and GitHub release downloads redirect to
   `release-assets.githubusercontent.com`; both are listed since policy
-  `2026-10-20.4`.
+  `2026-10-20.5`.
