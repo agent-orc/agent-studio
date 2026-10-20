@@ -396,6 +396,52 @@ public sealed class AccessSecurityTests : IDisposable
         Assert.Equal(429, throttled.Status);
     }
 
+    [Fact]
+    public void Saturated_client_throttle_still_spends_the_existing_username_budget()
+    {
+        var (store, _, clock) = NewStore(new Dictionary<string, string?>
+        {
+            ["Security:LoginThrottle:MaxTrackedClients"] = "1",
+            ["Security:LoginThrottle:UsernameMaxFailures"] = "2",
+            ["Security:LoginThrottle:UsernameDelaySeconds"] = "5"
+        });
+        const string password = "correct horse battery staple!";
+        store.Bootstrap(new BootstrapRequest("first.owner", password, null));
+
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("unknown.user", "wrong password", "client|one")).Status);
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("first.owner", "wrong password", "client|two")).Status);
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("FIRST.OWNER", "wrong password", "client|three")).Status);
+
+        // Rotating client keys spend the account budget while the client table is
+        // full. A new client then waits for the short delay instead of a lockout.
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("first.owner", password, "client|four")).Status);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        Assert.Equal("first.owner", store.Login("first.owner", password, "client|four").User.Username);
+    }
+
+    [Fact]
+    public void Saturated_client_throttle_does_not_track_guessed_usernames()
+    {
+        var (store, _, _) = NewStore(new Dictionary<string, string?>
+        {
+            ["Security:LoginThrottle:MaxTrackedClients"] = "1",
+            ["Security:LoginThrottle:MaxTrackedUsernames"] = "1"
+        });
+        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("unknown.user", "wrong password", "client|one")).Status);
+
+        for (var index = 0; index < 10; index++)
+            Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+                store.Login($"guessed.user.{index}", "wrong password", $"client|{index + 2}")).Status);
+
+        Assert.Equal((1, 1, 0, 0), store.LoginStateCounts);
+    }
+
     [Theory]
     [InlineData("Authorization: Bearer rnr.abc.abcdefghijklmnopqrstuvwxyz012345")]
     [InlineData("password=super-secret")]
