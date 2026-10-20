@@ -349,35 +349,29 @@ test.describe('Project Deploy area (mocked)', () => {
 });
 
 test('Project Secrets shows missing references, binds Production after approval, and keeps values write-only', async ({ page }) => {
-  const slug = projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  await openDeploy(page, fullMocks());
   let bound = false;
   await page.route('**/api/secrets', route => route.fulfill({ json: {
     store: 'builtin', keySource: 'key-file', canWriteWorkspace: true, secrets: [], unreadable: [],
-  } }));
-  await page.route('**/api/projects/*/environments', route => route.fulfill({ json: {
-    project: projectName, environments: [
-      { declaration: { id: 'stage' } }, { declaration: { id: 'production' } },
-    ], promotions: [], jobs: [], failureCards: [],
   } }));
   await page.route(/\/api\/projects\/[^/]+\/secret-bindings\/[^/]+(?:\/[^/]+)?$/, async route => {
     const url = new URL(route.request().url());
     const environment = url.pathname.split('/')[5];
     if (route.request().method() === 'PUT') {
       const body = route.request().postDataJSON() as { reference: string; approve: boolean };
-      expect(body).toEqual({ reference: `secret://${projectName}/production/DATABASE_URL`, approve: true });
+      expect(body).toEqual({ reference: `secret://${PROJECT}/production/DATABASE_URL`, approve: true });
       bound = true;
       await route.fulfill({ json: { name: 'DATABASE_URL', reference: body.reference, approvedBy: 'owner' } });
       return;
     }
-    const reference = `secret://${projectName}/production/DATABASE_URL`;
+    const reference = `secret://${PROJECT}/production/DATABASE_URL`;
     await route.fulfill({ json: {
-      project: projectName, environment, ready: environment !== 'production' || bound,
+      project: PROJECT, environment, ready: environment !== 'production' || bound,
       bindings: bound ? [{ name: 'DATABASE_URL', reference, approvedBy: 'owner' }] : [],
       missing: environment === 'production' && !bound
-        ? [{ name: 'DATABASE_URL', reference, scope: `${projectName}/production`, reason: 'not-bound' }] : [],
+        ? [{ name: 'DATABASE_URL', reference, scope: `${PROJECT}/production`, reason: 'not-bound' }] : [],
     } });
   });
-  await page.goto(`/#/projects/${slug}/deploy`);
   await page.getByTestId('deploy-tab-secrets').click();
   const secrets = page.getByTestId('project-secrets-page');
   await expect(secrets).toBeVisible();
@@ -389,6 +383,6 @@ test('Project Secrets shows missing references, binds Production after approval,
   await expect(secrets.getByTestId('project-secrets-preflight')).toContainText('Ready for deploy');
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await page.screenshot({ path: path.join(results, `deploy-secrets-${theme}.png`) });
+    await capture(page, `deploy-secrets-${theme}`);
   }
 });
