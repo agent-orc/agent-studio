@@ -19,7 +19,8 @@ public static class SecretEndpoints
     public static void MapSecretEndpoints(this WebApplication app)
     {
         app.MapGet("/api/secrets", (HttpContext context, ISecretProvider secrets, ISecretStore store,
-            IKeyEncryptionKeySource keys, AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry,
+            IKeyEncryptionKeySource keys, SecretStoreSettings providerSettings, RoutedSecretStore routed,
+            AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry,
             CancellationToken ct) => Run(async () =>
         {
             var caller = Caller.From(context, security, configuration, registry);
@@ -32,7 +33,9 @@ public static class SecretEndpoints
                 .Where(item => caller.CanSee(SecretScope.TryParse(item.Scope, out var claimed) ? claimed : SecretScope.Workspace))
                 .Select(UnreadableSecretResponse.From).ToList();
             return Results.Ok(new SecretOverviewResponse(store.StoreId, keys.Describe(),
-                caller.CanWrite(SecretScope.Workspace).Allowed, visible, unreadable));
+                caller.CanWrite(SecretScope.Workspace).Allowed, visible, unreadable,
+                providerSettings.All().Where(item => caller.CanSee(SecretScope.Parse(item.Scope))).ToList(),
+                (await routed.HealthAsync(ct)).Where(item => caller.CanSee(SecretScope.Parse(item.Scope))).ToList()));
         }));
 
         app.MapGet("/api/secrets/audit", (string? scope, int? limit, HttpContext context, ISecretProvider secrets,
@@ -46,6 +49,36 @@ public static class SecretEndpoints
                 .Where(entry => SecretScope.TryParse(entry.Scope, out var entryScope) && caller.CanSee(entryScope))
                 .ToList();
             return Results.Ok(new SecretAuditResponse(entries));
+        }));
+
+        app.MapPost("/api/secrets/provider", (SecretStoreAssignment assignment, HttpContext context,
+            SecretStoreSettings providerSettings, SecretAuditLog audit, TimeProvider clock,
+            AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry) => Run(async () =>
+        {
+            var scope = SecretScope.Parse(assignment.Scope);
+            var caller = Caller.From(context, security, configuration, registry);
+            SecretActor actor;
+            try { actor = caller.RequireWrite(scope, context); }
+            catch (SecretAccessDeniedException ex)
+            {
+                audit.Append(new SecretAuditEntry { At = clock.GetUtcNow().UtcDateTime, Action = "select-provider",
+                    Actor = caller.Actor.ToString(), Scope = scope.Key, Reference = SecretReference.Prefix + scope.Key + "/",
+                    Outcome = "denied:" + ex.Code });
+                throw;
+            }
+            try
+            {
+                providerSettings.Set(assignment);
+                audit.Append(new SecretAuditEntry { At = clock.GetUtcNow().UtcDateTime, Action = "select-provider",
+                    Actor = actor.ToString(), Scope = scope.Key, Reference = SecretReference.Prefix + scope.Key + "/", Outcome = "ok" });
+                return Results.Ok(providerSettings.For(scope));
+            }
+            catch
+            {
+                audit.Append(new SecretAuditEntry { At = clock.GetUtcNow().UtcDateTime, Action = "select-provider",
+                    Actor = actor.ToString(), Scope = scope.Key, Reference = SecretReference.Prefix + scope.Key + "/", Outcome = "failed" });
+                throw;
+            }
         }));
 
         MapScope(app.MapGroup("/api/secrets/workspace"), _ => SecretScope.Workspace);
@@ -212,6 +245,7 @@ public static class SecretEndpoints
         catch (SecretAccessDeniedException ex) { return Error(StatusCodes.Status403Forbidden, ex.Code, ex.Message); }
         catch (CallerUnauthenticatedException ex) { return Error(StatusCodes.Status401Unauthorized, "authentication-required", ex.Message); }
         catch (SecretValidationException ex) { return Error(StatusCodes.Status400BadRequest, ex.Code, ex.Message); }
+        catch (SecretProviderUnavailableException ex) { return Error(StatusCodes.Status503ServiceUnavailable, "secret-provider-unavailable", ex.Message); }
         catch (SecretKeyUnavailableException ex) { return Error(StatusCodes.Status503ServiceUnavailable, "secret-key-unavailable", ex.Message); }
         catch (SecretIntegrityException) { return Error(StatusCodes.Status500InternalServerError, "secret-integrity-failed", "A stored secret failed its integrity check."); }
     }

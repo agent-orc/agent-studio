@@ -31,6 +31,7 @@ function setup(role: 'owner' | 'viewer' = 'owner') {
     add: vi.fn(() => of(secret('workspace', 'NEW_KEY'))),
     rotate: vi.fn(() => of(secret('workspace', 'MAIL_KEY'))),
     revoke: vi.fn(() => of(secret('workspace', 'MAIL_KEY'))),
+    selectProvider: vi.fn(assignment => of(assignment)),
   };
   const auth = { status: signal<AuthStatus | null>({ profile: 'networked', bootstrapRequired: false, authenticated: true,
     user: { id: 'u', username: 'u', displayName: 'U', role, projects: [], disabled: false, mustChangePassword: false } as never }) };
@@ -103,6 +104,24 @@ describe('SecretsPanelComponent', () => {
     expect(warning.textContent).toContain('secret://memowikis/API_TOKEN');
     expect(warning.textContent).toContain('b2');
     expect(element.querySelectorAll('[data-testid="secrets-row"]')).toHaveLength(1);
+  });
+
+  it('shows selected provider health and sends a scope-specific assignment', () => {
+    const { fixture, service, element } = setup();
+    service.overview.update(current => current && { ...current,
+      providers: [{ scope: 'memowikis', provider: 'vault', address: 'https://vault.example',
+        mount: 'secret', credential: 'env:VAULT_TOKEN', ttlSeconds: 30 }],
+      health: [{ scope: 'memowikis', provider: 'vault', state: 'unavailable', reason: 'Check configuration.' }],
+    });
+    fixture.componentInstance.selectProject('memowikis');
+    fixture.detectChanges();
+    expect(element.querySelector('[data-testid="secrets-provider"]')?.textContent).toContain('unavailable');
+    fixture.componentInstance.editProvider();
+    fixture.componentInstance.providerTtl.set(60);
+    fixture.componentInstance.saveProvider();
+    expect(service.selectProvider).toHaveBeenCalledWith(expect.objectContaining({
+      scope: 'memowikis', provider: 'vault', ttlSeconds: 60, credential: 'env:VAULT_TOKEN',
+    }));
   });
 
   it('shows metadata without write controls to a viewer', () => {

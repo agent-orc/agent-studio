@@ -1,3 +1,10 @@
+# AGT-3249 secret store adapters status
+
+- Result SHA: pending platform-owned delivery commit. The active worktree started at `c3abc43c46b11a31e4bba4d50046b7cca0ff9429`; that base SHA does not include this work. Changed-file SHA-256 (all 16 changed implementation and documentation files, excluding this status): `911b8e363e272da6a5f13b8ee679e5dd33f143f81f4e952ca927a8216d8b3dda`.
+- Implemented option: IP-D7 A, built-in encrypted store by default with exact-scope Vault/OpenBao KV v2 and 1Password Connect adapters. OIDC sign-in remains with AGT-3228.
+- Adapter credentials resolve from a built-in workspace secret or environment variable. The settings file stores references and provider coordinates only. A failed assigned scope does not fall back. The Secrets page shows provider reachability.
+- Verification: `dotnet build agent-taskboard.sln --no-restore -m:2 -nodeReuse:false -p:UseSharedCompilation=false -v:q` and `npm --prefix frontend run build` passed. The focused backend filter `FullyQualifiedName~ExternalSecretStoreTests|FullyQualifiedName~SecretEndpointTests|FullyQualifiedName~SecretProviderTests|FullyQualifiedName~TestClockGuardTests|FullyQualifiedName~FeatureFolderBoundaryTests` passed 34 tests. The `FullyQualifiedName~.Architecture.|Category=Guard` filter passed 98 backend tests and matched no tests in the runner and task-server test projects. The two focused Secrets Angular specs passed 10 tests. `npm --prefix frontend run lint` passed, including the component-size check. `npm --prefix frontend run e2e -- e2e/settings/secrets.spec.ts` passed 3 Chromium tests, with light and dark screenshots in the task results directory. `git diff --check` passed.
+
 # AGT-3231 zone network policy status
 
 - Result SHA: the platform's delivery commit of this working tree on base `9ce339492868f8a3bc9325c013ffab8978fa7602` (this run does not commit; see the commit-push doctrine). Changed-file SHA-256: `e136fc706f6d0c04aacff547621d9f8ad6f4272509d54527f30b0470a59d2e34`.

@@ -55,6 +55,27 @@ describe('SecretsService', () => {
     http.verify();
   });
 
+  it('saves a scope assignment without a credential value and refreshes health', () => {
+    const service = TestBed.inject(SecretsService);
+    const http = TestBed.inject(HttpTestingController);
+    service.load();
+    http.expectOne('/api/secrets').flush({ store: 'builtin', keySource: 'key-file', canWriteWorkspace: true,
+      secrets: [], unreadable: [] });
+    const assignment = { scope: 'memowikis', provider: 'vault' as const, address: 'https://vault.example',
+      mount: 'secret', credential: 'env:VAULT_TOKEN', ttlSeconds: 30 };
+    service.selectProvider(assignment).subscribe();
+    const request = http.expectOne('/api/secrets/provider');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual(assignment);
+    request.flush(assignment);
+    http.expectOne('/api/secrets').flush({ store: 'scoped', keySource: 'key-file', canWriteWorkspace: true,
+      secrets: [], unreadable: [], providers: [assignment],
+      health: [{ scope: 'memowikis', provider: 'vault', state: 'unavailable', reason: 'Check configuration.' }] });
+    expect(service.overview()?.providers?.[0]).toEqual(assignment);
+    expect(service.overview()?.health?.[0].state).toBe('unavailable');
+    http.verify();
+  });
+
   it('surfaces the server message when a write is refused', () => {
     const service = TestBed.inject(SecretsService);
     const http = TestBed.inject(HttpTestingController);

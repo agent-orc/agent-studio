@@ -42,12 +42,26 @@ export interface UnreadableSecret {
   reason: string;
 }
 
+export interface SecretStoreAssignment {
+  scope: string;
+  provider: 'builtin' | 'vault' | 'onepassword';
+  address?: string | null;
+  mount?: string | null;
+  vault?: string | null;
+  credential?: string | null;
+  ttlSeconds: number;
+}
+
+export interface SecretStoreHealth { scope: string; provider: string; state: string; reason: string | null; }
+
 export interface SecretOverview {
   store: string;
   keySource: string;
   canWriteWorkspace: boolean;
   secrets: readonly SecretMetadata[];
   unreadable: readonly UnreadableSecret[];
+  providers?: readonly SecretStoreAssignment[];
+  health?: readonly SecretStoreHealth[];
 }
 
 /** `workspace`, `<project>` or `<project>/<environment>`. */
@@ -101,6 +115,23 @@ export class SecretsService {
     ).pipe(
       map(response => response.environments.map(item => item.declaration.id)),
       catchError(() => of([] as readonly string[])),
+    );
+  }
+
+  selectProvider(assignment: SecretStoreAssignment): Observable<SecretStoreAssignment> {
+    this.error.set(null);
+    return this.http!.post<SecretStoreAssignment>('/api/secrets/provider', assignment).pipe(
+      map(saved => {
+        const current = this.overview();
+        if (current) this.overview.set({ ...current,
+          providers: [...(current.providers ?? []).filter(item => item.scope !== saved.scope), saved] });
+        this.load();
+        return saved;
+      }),
+      catchError((error: unknown) => {
+        this.error.set(messageOf(error));
+        throw error;
+      }),
     );
   }
 

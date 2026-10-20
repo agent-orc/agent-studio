@@ -3,8 +3,9 @@ import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import type { Observable } from 'rxjs';
 import { AuthSessionState } from '../../../services/auth.service';
+import { PendingButtonDirective } from '../../../components/async-feedback';
 import type { WatchPathEntry } from '../../../models/task.model';
-import { SecretsService, type SecretMetadata, type SecretScopeKey } from '../secrets.service';
+import { SecretsService, type SecretMetadata, type SecretScopeKey, type SecretStoreAssignment } from '../secrets.service';
 
 /**
  * Secrets section of the Access area in Settings. People pick a scope
@@ -15,7 +16,7 @@ import { SecretsService, type SecretMetadata, type SecretScopeKey } from '../sec
 @Component({
   selector: 'app-secrets-panel',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, PendingButtonDirective],
   templateUrl: './secrets-panel.component.html',
   styleUrl: './secrets-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -34,6 +35,13 @@ export class SecretsPanelComponent {
   readonly rotating = signal<string | null>(null);
   readonly rotateValue = signal('');
   readonly busy = signal(false);
+  readonly editingProvider = signal(false);
+  readonly providerKind = signal<SecretStoreAssignment['provider']>('builtin');
+  readonly providerAddress = signal('');
+  readonly providerMount = signal('secret');
+  readonly providerVault = signal('');
+  readonly providerCredential = signal('');
+  readonly providerTtl = signal(30);
 
   readonly projectNames = computed(() =>
     [...new Set(this.projects().map(entry => entry.name))].sort((a, b) => a.localeCompare(b)));
@@ -59,6 +67,12 @@ export class SecretsPanelComponent {
     return this.scope() !== 'workspace' || (this.service.overview()?.canWriteWorkspace ?? false);
   });
 
+  readonly provider = computed<SecretStoreAssignment>(() =>
+    this.service.overview()?.providers?.find(item => item.scope.toLowerCase() === this.scope().toLowerCase())
+    ?? { scope: this.scope(), provider: 'builtin', ttlSeconds: 30 });
+  readonly health = computed(() => this.service.overview()?.health?.find(item =>
+    item.scope.toLowerCase() === this.scope().toLowerCase()));
+
   readonly nameExists = computed(() => this.rows().some(row => row.name === this.newName().trim()));
 
   /** Items the store could not open, across every scope: a store-health warning, not a scope row. */
@@ -67,12 +81,37 @@ export class SecretsPanelComponent {
   constructor() { this.service.load(); }
 
   selectProject(project: string): void {
+    this.editingProvider.set(false);
     this.project.set(project);
     this.environment.set('');
     this.environmentOptions.set([]);
     if (!project) return;
     this.service.environments(project).pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(options => this.environmentOptions.set(options));
+  }
+
+  editProvider(): void {
+    const assignment = this.provider();
+    this.providerKind.set(assignment.provider);
+    this.providerAddress.set(assignment.address ?? '');
+    this.providerMount.set(assignment.mount ?? 'secret');
+    this.providerVault.set(assignment.vault ?? '');
+    this.providerCredential.set(assignment.credential ?? '');
+    this.providerTtl.set(assignment.ttlSeconds);
+    this.editingProvider.set(true);
+  }
+
+  saveProvider(): void {
+    if (this.busy()) return;
+    this.busy.set(true);
+    this.service.selectProvider({
+      scope: this.scope(), provider: this.providerKind(), address: this.providerAddress().trim(),
+      mount: this.providerMount().trim(), vault: this.providerVault().trim(),
+      credential: this.providerCredential().trim(), ttlSeconds: this.providerTtl(),
+    }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => { this.editingProvider.set(false); this.busy.set(false); },
+      error: () => this.busy.set(false),
+    });
   }
 
   add(): void {

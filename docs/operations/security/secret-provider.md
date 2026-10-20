@@ -4,14 +4,52 @@ The secret provider implements Dossier
 [integrierte-plattform](../integrierte-plattform/index.html) §9, sections 7.2
 to 7.4, as card IP-6 (AGT-3222). Every part of the platform uses one interface,
 `ISecretProvider` (`backend/Features/Secrets/`). A storage adapter,
-`ISecretStore`, sits behind it. This card ships the built-in store. Adapters
-for Vault or OpenBao, cloud secret managers and 1Password implement
-`ISecretStore` in IP-9, without changes to callers.
+`ISecretStore`, sits behind it. The built-in store is the default. IP-9 (AGT-3249) adds Vault or OpenBao KV v2 and 1Password Connect adapters behind the same `ISecretStore` seam. Cloud secret managers remain future work.
 
 Recorded options: IP-D7 A (built-in store plus adapters) and IP-D8 A (write
 without read). The operator had not recorded a decision, so the Dossier
 recommendation applies. This card has no reveal operation. A later card may add
 reveal with its own permission, a reason and an audit entry.
+
+## External stores (IP-9)
+
+Implemented option: IP-D7 A, the built-in encrypted store by default with per-scope
+adapters. An owner or authorized operator selects `builtin`, `vault`, or
+`onepassword` for an exact workspace, project, or environment scope in Secrets
+settings. Assignments live in owner-only
+`<TaskRepository>/.security/secrets/providers.json`. They contain an HTTPS
+address, KV v2 mount or 1Password vault ID, credential source, and cache TTL,
+not a credential value. HTTP is accepted only on loopback for local testing.
+The credential source is `env:NAME` or a built-in workspace
+`secret://workspace/NAME` reference. Credential resolution bypasses the scope
+router to avoid a dependency loop. Seed built-in credentials before routing the
+workspace to an external store, or use an environment variable. Never place
+adapter credentials in a repository.
+
+A scope with no assignment uses the built-in store. An assigned scope does not
+fall back on failure, including during inherited reference resolution. The
+Secrets overview reports reachability for each assignment and marks failed
+listings as unreadable for that scope. Reads cache values for 1 to 300 seconds,
+according to the assignment, and local writes and revocations invalidate the
+cache. The usual provider audits every attempted operation and registers issued
+values for log scrubbing. External last-used metadata is held for the current
+backend process; the append-only local audit remains the durable use record.
+Errors from external HTTP services omit response bodies, which can contain secrets.
+
+Vault and OpenBao use [KV v2 data and metadata APIs](https://developer.hashicorp.com/vault/api-docs/secret/kv/kv-v2).
+KV version numbers are the `@version` numbers. Put and rotate write with a
+compare-and-set version; put also deletes earlier active versions. Revoke uses
+KV v2 soft deletion and delete removes metadata and all versions. The configured
+token needs data read/write and metadata list/read/delete permissions. The health check lists the selected
+scope and accepts an empty scope as reachable.
+
+1Password uses the [Connect API](https://developer.1password.com/docs/connect/api-reference/)
+with a service-account-backed Connect server and its bearer token. The item
+version is the current `@version`; Connect does not expose historical item
+values, so older pinned versions cannot resolve. Put creates or updates the
+item, rotate updates it, and delete removes it. Version revocation returns
+`provider-operation-unsupported`. The configured token needs access to the
+chosen vault. The health check reads that vault through Connect.
 
 ## References and scopes
 
@@ -37,7 +75,7 @@ secret.
 | Operation | Effect |
 |---|---|
 | Put | Creates version 1, or replaces the secret: a new version is created and every earlier version is revoked at once. |
-| Rotate | Adds a new current version. Earlier versions stay resolvable by `@version` until they are revoked. |
+| Rotate | Adds a new current version. Earlier versions stay resolvable by `@version` in the built-in store and Vault until they are revoked. 1Password Connect exposes only the current item version. |
 | Revoke | Revokes one version, or every active version, and deletes the sealed file of each revoked version. New resolutions fail at once. |
 | Delete | Removes the metadata and every sealed version. |
 | List | Metadata only: name, scope, versions, created, rotated, last used, and who. An item that fails its key or integrity check is listed as unreadable; the others still list. |
@@ -251,7 +289,6 @@ and operators can add, rotate and revoke there. Viewers see metadata only.
 
 ## Not in this card
 
-- External store adapters (IP-9).
 - Delivery of values into deploy steps (IP-7).
 - Migrating the Task Server credential registry metadata into this store.
   That registry records custody of host credentials, not values.

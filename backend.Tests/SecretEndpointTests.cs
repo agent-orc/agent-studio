@@ -45,6 +45,7 @@ public sealed class SecretEndpointTests : IDisposable
     [
         "GET /api/secrets",
         "GET /api/secrets/audit",
+        "POST /api/secrets/provider",
         .. ScopeRoutes("/api/secrets/workspace"),
         .. ScopeRoutes("/api/projects/{project}/secrets"),
         .. ScopeRoutes("/api/projects/{project}/environments/{environment}/secrets"),
@@ -101,6 +102,8 @@ public sealed class SecretEndpointTests : IDisposable
         }
         await Expect(HttpStatusCode.OK, "GET", "/api/secrets", "/api/secrets");
         await Expect(HttpStatusCode.OK, "GET", "/api/secrets/audit", "/api/secrets/audit");
+        await Expect(HttpStatusCode.OK, "POST", "/api/secrets/provider", "/api/secrets/provider",
+            new { scope = Project, provider = "builtin", ttlSeconds = 30 });
 
         var resolve = await Send(client, "POST", SecretEndpoints.ResolvePath, Resolve($"secret://{Project}/MAIL_KEY"), owner);
         Assert.Equal(HttpStatusCode.Unauthorized, resolve.Status);
@@ -113,6 +116,34 @@ public sealed class SecretEndpointTests : IDisposable
             Assert.All(values, value => Assert.DoesNotContain(value, response.Body, StringComparison.Ordinal));
             if (pattern is not null) exercised.Add($"{method} {pattern}");
         }
+    }
+
+    [Fact]
+    public async Task Provider_assignment_is_scoped_audited_and_never_accepts_a_literal_credential()
+    {
+        using var factory = Networked();
+        using var client = Client(factory);
+        var owner = Owner(factory);
+        var invalidCredential = NewValue();
+        var bad = await Send(client, "POST", "/api/secrets/provider", new
+        {
+            scope = Project, provider = "vault", address = "https://vault.example", mount = "secret",
+            credential = invalidCredential, ttlSeconds = 30
+        }, owner);
+        Assert.Equal(HttpStatusCode.BadRequest, bad.Status);
+        var saved = await Send(client, "POST", "/api/secrets/provider", new
+        {
+            scope = Project, provider = "vault", address = "https://vault.example", mount = "secret",
+            credential = "env:TEST_VAULT_TOKEN", ttlSeconds = 30
+        }, owner);
+        Assert.Equal(HttpStatusCode.OK, saved.Status);
+        var overview = await Send(client, "GET", "/api/secrets", null, owner);
+        using var json = JsonDocument.Parse(overview.Body);
+        Assert.Equal("unavailable", json.RootElement.GetProperty("health")[0].GetProperty("state").GetString());
+        Assert.Equal(Project, json.RootElement.GetProperty("providers")[0].GetProperty("scope").GetString());
+        var audit = await Send(client, "GET", "/api/secrets/audit", null, owner);
+        Assert.Contains("select-provider", audit.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain(invalidCredential, audit.Body, StringComparison.Ordinal);
     }
 
     [Fact]

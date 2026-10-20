@@ -47,7 +47,9 @@ public sealed record SecretOverviewResponse(
     string KeySource,
     bool CanWriteWorkspace,
     IReadOnlyList<SecretMetadataResponse> Secrets,
-    IReadOnlyList<UnreadableSecretResponse> Unreadable);
+    IReadOnlyList<UnreadableSecretResponse> Unreadable,
+    IReadOnlyList<SecretStoreAssignment>? Providers = null,
+    IReadOnlyList<SecretStoreHealth>? Health = null);
 
 /// <summary>A stored item that failed its key or integrity check. Scope and name are unverified claims.</summary>
 public sealed record UnreadableSecretResponse(string Id, string? Scope, string? Name, string Problem, string Reason)

@@ -81,12 +81,21 @@ async function stub(page: Page, unreadable: readonly object[] = []) {
     { declaration: { id: 'stage' } }, { declaration: { id: 'production' } },
   ], promotions: [], jobs: [], failureCards: [] }));
   const fake = fakeSecrets();
+  const providers: { scope: string; provider: string; address?: string; mount?: string; vault?: string;
+    credential?: string; ttlSeconds: number }[] = [];
+  await page.route('**/api/secrets/provider', route => {
+    const assignment = route.request().postDataJSON() as typeof providers[number];
+    providers.push(assignment);
+    return json(assignment)(route);
+  });
   await page.route('**/api/secrets', route => json({ store: 'builtin', keySource: 'key-file', canWriteWorkspace: true,
-    secrets: fake.secrets.map(fake.view), unreadable })(route));
+    secrets: fake.secrets.map(fake.view), unreadable, providers,
+    health: providers.map(item => ({ scope: item.scope, provider: item.provider,
+      state: item.provider === 'builtin' ? 'ready' : 'unavailable', reason: 'Check configuration.' })) })(route));
   await page.route('**/api/secrets/workspace**', fake.handle);
   await page.route('**/api/projects/memowikis/**/secrets**', fake.handle);
   await page.route('**/api/projects/memowikis/secrets**', fake.handle);
-  return fake;
+  return { ...fake, providers };
 }
 
 test('Secrets section adds, rotates and revokes without ever showing a value', async ({ page }) => {
@@ -151,4 +160,29 @@ test('Secrets section warns about items the configured key cannot open and still
     await setTheme(page, theme);
     await page.screenshot({ path: join(shots, `secrets-unreadable-${theme}--mocked.png`) });
   }
+});
+
+
+test('Secrets section configures a provider per scope and shows reachability in both themes', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const fake = await stub(page);
+  await page.goto('/#/workspace/settings/secrets', { waitUntil: 'domcontentloaded' });
+  await page.getByTestId('secrets-scope-project').selectOption('memowikis');
+  await page.getByTestId('secrets-provider-edit').click();
+  const form = page.getByTestId('secrets-provider-form');
+  await form.getByLabel('Store').selectOption('vault');
+  await form.getByLabel('Address').fill('https://vault.example');
+  await form.getByLabel('KV v2 mount').fill('secret');
+  await form.getByLabel('Credential source').fill('env:VAULT_TOKEN');
+  await form.getByLabel('Cache TTL (seconds)').fill('45');
+  await form.getByRole('button', { name: 'Save provider' }).click();
+  await expect(page.getByTestId('secrets-provider')).toContainText('vault · unavailable');
+  expect(fake.providers).toEqual([expect.objectContaining({ scope: 'memowikis', provider: 'vault', ttlSeconds: 45 })]);
+  for (const theme of ['dark', 'light'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(shots, `secrets-provider-${theme}--mocked.png`) });
+  }
+  await page.getByTestId('secrets-scope-project').selectOption('');
+  await expect(page.getByTestId('secrets-provider')).toContainText('workspace: builtin');
 });
