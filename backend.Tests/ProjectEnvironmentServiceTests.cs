@@ -88,6 +88,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
                 composeFile: /srv/apps/stage/compose.yml
                 service: app
                 healthUrl: https://stage.example/health
+                healthTimeoutSeconds: 60
                 environments: [staging]
               - step: container
                 artifact: app
@@ -95,6 +96,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
                 composeFile: /srv/apps/prod/compose.yml
                 service: app
                 healthUrl: https://example/health
+                healthTimeoutSeconds: 60
                 environments: [production]
             variables:
               - name: LOG_LEVEL

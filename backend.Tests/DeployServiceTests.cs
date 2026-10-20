@@ -394,12 +394,14 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
-    public void ReportAfterTheLease_IsAcceptedWhileTheClaimStands()
+    public void ReportAfterFiveMinutes_IsAcceptedWhenTheClaimIsRenewed()
     {
         var (deploy, environments, _) = Build();
         CreateRelease(deploy, Artifact('a'), Head());
         var job = environments.Claim("stage-host")!;
-        _clock.Advance(TimeSpan.FromMinutes(8));
+        _clock.Advance(TimeSpan.FromMinutes(4));
+        Assert.True(environments.Renew("demo", job.Id, job.LeaseToken!));
+        _clock.Advance(TimeSpan.FromMinutes(4));
         Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
         deploy.SyncAfterHostCall("demo");
         Assert.Equal(DeploymentStates.Succeeded, deploy.Deployments("demo", "stage")!.Single().State);

@@ -172,7 +172,10 @@ public sealed class ProjectEnvironmentService
         {
             var name = environment.Name;
             var kind = name == "staging" ? "stage" : name;
-            var file = files.FirstOrDefault(item => item.EnvironmentId == kind);
+            // Older declarations may name the staging file and id "staging" while
+            // the deploy queue uses "stage". Migration must recognize that file.
+            var file = files.FirstOrDefault(item => item.EnvironmentId == kind
+                || item.Declaration?.Kind == kind);
             var phase = definition.StandardLifecycle.FirstOrDefault(item => item.Phase == name);
             var steps = definition.Deploy.Where(item => (item.Step is "static-site" or "container")
                 && (item.Environments.Count == 0 || item.Environments.Contains(name, StringComparer.Ordinal))).ToArray();

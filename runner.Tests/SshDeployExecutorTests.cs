@@ -85,9 +85,9 @@ public sealed class SshDeployExecutorTests
             File.Move(archive, Path.Combine(root, digest));
             var calls = new List<string>();
             var copyAttempts = 0;
-            var executor = new SshDeployExecutor((file, _, input, _) =>
+            var executor = new SshDeployExecutor((file, args, input, _) =>
             {
-                calls.Add(file + ":" + input);
+                calls.Add(file + ":" + input + ":" + string.Join(' ', args));
                 return Task.FromResult(new ProcessResult(file == "scp" && copyAttempts++ == 0 ? 1 : 0, "", ""));
             });
             var step = Step("static-site") with { Directory = "/srv/www/site" };
