@@ -53,6 +53,7 @@ test('card environments and Staging-only board filter show the same deployment s
     await setTheme(page, theme);
     await board.screenshot({ path: path.join(results, `agt-3202-card-environments-${theme}.png`) });
   }
+  await page.getByTestId('board-environment-filter').selectOption('all');
   productionLive = true;
   await page.clock.fastForward(30_000);
   await expect(selectedCard.getByTestId('card-environment-production')).toContainText('Production · live · 2.0');
