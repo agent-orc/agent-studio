@@ -1,3 +1,9 @@
+## AGT-3227 verified telemetry result, 20 October 2026
+
+- Result implementation SHA: `f291b05b3856a26f65cf9755235880154a883654`; this verification entry is a separate status commit on top. The result descends from reviewed delivery `3a3604ac7`, salvage `993d9c31`, and fetched `origin/develop` at `7c36d3540`. `git merge origin/develop` reported already up to date; both required ancestry checks passed. No rebase or squash was used.
+- Implemented Dossier IP-D14 option A, the built-in SQLite store. The follow-up preserves cumulative sum temporality and monotonicity for delta and reset calculation, separates series by unit, kind and temporality while migrating legacy rows, and stages accepted batches durably before HTTP 200 for restart recovery and retry after write failure.
+- Verification on this result: `dotnet build agent-taskboard.sln --no-restore -m:2 -nodeReuse:false -p:UseSharedCompilation=false -v:q` passed with zero errors. The backend filter `FullyQualifiedName~TelemetryStoreTests|FullyQualifiedName~TelemetryPolicyTests|FullyQualifiedName~TelemetryOtlpDecodingTests|FullyQualifiedName~TelemetryIntakeEndpointTests|FullyQualifiedName~TelemetryIngestTokenTests` passed 135 tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests and matched no tests in the other seven .NET test projects. `npm --prefix frontend run lint` passed. Logs are in `/home/agent/runner-work/tasks/AGT-3227/results`.
+
 ## AGT-3227 telemetry deep-review follow-up, 20 October 2026
 
 - Result implementation SHA: `bbec8e06dda73ceddc07ac5c9feceec666ae1dff`; this status entry is a separate commit on top. The branch descends from reviewed delivery `3a3604ac7`, salvage `993d9c31`, and fetched `origin/develop` at `7c36d3540`. Both required ancestry checks passed. No rebase or squash was used.
