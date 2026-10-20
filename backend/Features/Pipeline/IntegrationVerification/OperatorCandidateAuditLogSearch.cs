@@ -52,7 +52,9 @@ internal static class OperatorCandidateAuditLogSearch
         try
         {
             // TimelineLog writes UTF-8 with a preamble when the file is new.
-            var json = row.StartsWith([0xEF, 0xBB, 0xBF]) ? row[3..] : row;
+            var hasPreamble = row.Length >= 3
+                && row[0] == 0xEF && row[1] == 0xBB && row[2] == 0xBF;
+            var json = hasPreamble ? row[3..] : row;
             var entry = JsonSerializer.Deserialize<TimelineEvent>(json, ReadOptions);
             return entry?.Kind == TimelineEventKinds.IntegrationVerificationRecorded
                 && entry.Details?.GetValueOrDefault("recordId") == Encoding.UTF8.GetString(id);
