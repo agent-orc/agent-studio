@@ -258,7 +258,7 @@ public static class AccessSecurityEndpoints
         return principal;
     }
 
-    private static HumanPrincipal? FindHuman(HttpContext context, AccessSecurityStore store, bool touch = true)
+    internal static HumanPrincipal? FindHuman(HttpContext context, AccessSecurityStore store, bool touch = true)
     {
         if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal principal)
             return principal;
