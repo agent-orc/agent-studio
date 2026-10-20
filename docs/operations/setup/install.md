@@ -74,8 +74,79 @@ the same release. Compare the SHA-256 value for the executable:
 .\agent-studio-setup.exe
 ```
 
-The default UI is [http://127.0.0.1:4011](http://127.0.0.1:4011). The stack
-includes one runner container. A one-shot bootstrap creates principal tokens
+An unsigned setup executable may trigger Windows SmartScreen. After checking
+its SHA-256 against `SHA256SUMS`, choose **More info**, then **Run anyway**.
+Signed builds use the release workflow's optional certificate secret.
+
+### Windows native installation
+
+The Windows default uses no Docker. Setup checks the Windows version, Git for
+Windows, 20 GiB of free space, and loopback ports 4011, 5031 and 5071. It
+offers repair on a re-run and preserves the task database unless `uninstall
+--purge` is used. The verified win-x64 archive contains Task Server, Engine,
+the Studio backend, the Studio browser bundle and a local Runner. Boot-time
+Scheduled Tasks run without a login and launch their child processes hidden.
+
+Open [http://127.0.0.1:4011](http://127.0.0.1:4011) after setup. On a new
+guided installation, setup prints the owner bootstrap code once. An unattended
+run leaves it only in the protected file. Its copy under
+`%ProgramData%\AgentOrchestrator\owner-bootstrap.code` has an owner, SYSTEM and
+Administrators ACL; enter it on the first owner sign-up. The one-time code is
+armed by Task Server and cannot be replaced by re-running setup.
+
+The wizard detects Codex and Claude and offers an npm installation and login
+for the account that owns the Runner task. An unattended answer file that
+selects a missing provider installs the pinned Node.js Windows x64 package
+from nodejs.org when node or npm is missing, verifies its SHA-256 against the
+release manifest, and then installs the provider CLI through npm. When a provider or GitHub access is
+selected, setup asks for that Windows account's password through a hidden
+prompt so Task Scheduler can start the Runner at boot with the user's
+credential profile.
+The password is sent to Task Scheduler through setup stdin and is not written
+to the manifest. `providerCli: "skip"` leaves a visible login step before
+coding. GitHub access choices are Git Credential
+Manager, a protected fine-grained token file, or an SSH deploy key for a
+specified project. Setup reads the current user's existing Git Credential
+Manager entry without an interactive prompt and copies its secret into an
+ACL-restricted credential file for the boot-time Runner task. A supplied token
+is handled the same way. The manifest records only the choice. Deploy-key
+setup prints the public key and lets a guided user add it to the GitHub
+repository before checking access. The guided check can be retried or deferred;
+an unattended install leaves the access check for a later guided repair with
+the same deploy-key answer file. Each SSH project remote receives its own
+key and a matching Git URL rewrite, so re-running setup for another project
+keeps the earlier project's key.
+
+For CI, supply the same decisions through an answer file:
+
+```json
+{
+  "target": "native",
+  "releaseDirectory": "C:\\release-assets",
+  "installDirectory": "C:\\ProgramData\\AgentStudio",
+  "providerCli": "skip",
+  "gitAccess": "skip"
+}
+```
+
+`gitAccess: "token"` also needs `gitTokenFile`, an existing ACL-restricted
+file; `gitAccess: "deploy-key"` needs `gitRemote` in GitHub SSH form. No
+token value belongs in the answer file. For unattended native setup, add
+`runnerPasswordFile`, an existing ACL-restricted one-line file, whenever
+`providerCli` or `gitAccess` is not `skip`. Native setup writes the decisions to
+`installation.json`. `update`, `rollback` and `uninstall` reuse the recorded
+installation; `uninstall --purge` also removes data and credentials.
+
+For a native Windows install, `installation.json` has a `Decisions` object.
+Its `providerCli` and `gitAccess` values record the selected options;
+`gitRemote` records the repository URL or an empty string. After a deploy-key
+install, `gitProjects` is a JSON array of repository URLs whose keys are in
+the protected configuration directory. The object contains no passwords,
+tokens, private keys, or token-file paths. A repair or update preserves these
+choices unless the operator supplies new ones.
+
+For Docker, the default UI is [http://127.0.0.1:4011](http://127.0.0.1:4011).
+That stack includes one runner container. A one-shot bootstrap creates principal tokens
 in a persistent Docker volume with mode `0600`. The installer writes its
 versioned Compose bundles, `.env`, and state to
 `~/.local/share/agent-studio` on Linux or `%LOCALAPPDATA%\AgentStudio` on
@@ -337,7 +408,9 @@ services as start-up scheduled tasks, using the primary-profile settings:
 | --- | --- | --- |
 | Task Server (mode Normal) | `AgentOrchestrator-TaskServer` | `http://127.0.0.1:5071/readyz` |
 | Orchestrator Engine | `AgentOrchestrator-Engine` | none |
-| Studio connector | `AgentOrchestrator-StudioConnector` | `http://127.0.0.1:5031/healthz` |
+| Studio backend | `AgentOrchestrator-StudioBackend` | `http://127.0.0.1:5031/healthz` |
+| Studio UI and API edge | `AgentOrchestrator-StudioConnector` | `http://127.0.0.1:4011/healthz` |
+| Local runner | `AgentOrchestrator-Runner` | registers with Task Server |
 
 Where the installer writes:
 - Binaries go to `C:\AgentOrchestrator\release-<version>`, with a `current`
@@ -347,17 +420,19 @@ Where the installer writes:
   as that account), SYSTEM, and Administrators.
 - Installer state and task data go to `C:\ProgramData\AgentStudio`.
 
-The installer waits for both endpoints before it reports success.
+The installer waits for Task Server, the backend, and the UI edge, then checks
+the board through the edge. The edge forwards versioned task routes to the
+standalone Task Server, which owns the single SQLite task store. The backend
+uses its Task Server proxy profile and keeps legacy task routes closed.
 
 `update`, `rollback`, and `uninstall` work the same way as for Docker. An update
 stops the tasks, activates the new release, and keeps configuration and data.
 Rollback re-activates the previous staged release. `uninstall` removes the tasks
 and binaries but keeps configuration and task data; `--purge` removes those too.
 
-The win-x64 release does not yet contain the Studio web UI host or a runner.
-The native Windows profile therefore provides the Task Server, Engine, and
-connector APIs. The browser UI with a runner on a single Windows machine
-requires the Docker path.
+The win-x64 release contains the Studio browser UI and the local runner. Native
+Windows setup installs all five tasks and opens Studio at
+`http://127.0.0.1:4011/` without Docker.
 
 On Linux, `sudo ./agent-studio-setup --target native` runs the systemd
 single-machine profile. It installs the Task Server, Engine, an agent host, and

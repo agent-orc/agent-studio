@@ -23,6 +23,7 @@ $quotedEnvFile = '"{0}"' -f ($EnvFile -replace '"', '""')
 $arguments = @(
     '-NoProfile',
     '-NonInteractive',
+    '-WindowStyle', 'Hidden',
     '-ExecutionPolicy', 'Bypass',
     '-File', $quotedStartScript,
     '-InstallRoot', $quotedInstallRoot,
