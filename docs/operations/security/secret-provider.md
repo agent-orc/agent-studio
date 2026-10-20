@@ -105,6 +105,18 @@ also needs an interactive Owner or project production approver with
 `approve: true`; the binding records that approval. This is the single
 permission seam for AGT-3228 to replace with scope roles.
 
+Bindings are persisted under
+`<TaskRepository>/.security/secret-bindings/<key>.json`, separate from the
+provider's sealed values. `<key>` is the lowercase hexadecimal SHA-256 of
+the project ID, one LF byte, and the environment ID encoded as UTF-8, using
+the IDs passed to the binding service. Each file is a JSON array of
+`{ name, reference, boundBy, boundAt, approvedBy }` records. A rebind replaces
+the record with the same name. The service writes a temporary file in the
+same directory, sets mode 600 on Unix, and atomically replaces the file.
+Missing files mean no bindings. Back up this metadata with `TaskRepository`;
+restoring it alone does not restore the secret values or their key. No value,
+lease token, or resolved version is stored in a binding.
+
 The claim response gives the host only references and preflight problems.
 The host fails a job with missing references before touching its artifact.
 For a container job it resolves each bound reference over the authenticated
@@ -114,6 +126,15 @@ passes that file to Docker, and removes it in `finally`. Values never enter
 the job record, release, image, control-plane deploy log or host error text.
 The existing production deployment approval remains required before the
 Production job is queued. Rotation takes effect on the next deploy.
+
+`agent-host deploy-poll` takes `<server-url> <host-id> <token-file>
+<artifact-store>`. The artifact store remains the fourth argument for static
+deployments. For compatibility, the command also accepts a fifth positional
+argument formerly used as a local secret-store path, but ignores it. Container
+deployments obtain values from `POST /api/runner/secrets/resolve` on the run
+host using the claimed job's lease; a local secret directory is no longer a
+source of deploy values. A claim with missing references reports
+`secret-reference-missing` without resolving values or starting the deploy.
 
 ## Built-in store
 
@@ -285,7 +306,6 @@ and operators can add, rotate and revoke there. Viewers see metadata only.
 ## Not in this card
 
 - External store adapters (IP-9).
-- Delivery of values into deploy steps (IP-7).
 - Migrating the Task Server credential registry metadata into this store.
   That registry records custody of host credentials, not values.
 - An OS key store (DPAPI, Keychain, Secret Service) as a KEK source. It can be
