@@ -13,12 +13,17 @@ public static class ProjectOperatorDashboardEndpoints
 
         // BD-1: a green integration build becomes an immutable release and
         // starts the automatic Staging phase of the standard lifecycle.
-        app.MapPost("/api/deploy/gate-releases", (GateArtifactRequest request,
+        app.MapPost("/api/deploy/gate-releases", (HttpContext context, GateArtifactRequest request,
             ProjectEnvironmentService environments, DeployService deploy) =>
-            environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit)
+        {
+            if (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal builder
+                || !builder.Scopes.Contains(RunnerScopes.Release))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit, builder.RunnerId)
                 ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate"),
                     "Gate artifact or environment declarations are invalid.")
-                : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." }))
+                : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." });
+        })
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapGet("/api/projects/{projectName}/environments", (string projectName,
@@ -81,6 +86,33 @@ public static class ProjectOperatorDashboardEndpoints
             deploy.SyncAfterHostCall(project);
             return Results.Ok();
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
+        app.MapGet("/api/deploy/jobs/{project}/{jobId}/artifact", (HttpContext context, string project, string jobId,
+            ProjectEnvironmentService environments, DeployStore releases, ReleaseArtifactRegistry registry,
+            IConfiguration configuration) =>
+        {
+            var lease = context.Request.Headers["X-Deploy-Lease"].ToString();
+            var job = environments.FindClaimedJob(project, jobId, lease);
+            if (job is null || SecurityProfiles.IsNetworked(configuration)
+                && (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
+                    || principal.RunnerId != job.HostId))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            var record = releases.ReadReleaseRecords(project).LastOrDefault(item =>
+                item.Release.ArtifactDigests.Contains(job.Artifact, StringComparer.Ordinal)
+                && item.Release.CreatedAtUtc <= job.CreatedAt
+                && item.Environments.Any(environment => environment.Id == job.EnvironmentId
+                    && environment.Template == job.Template));
+            if (record is null) return Results.Conflict(new { error = "The deploy job has no release." });
+            var provenance = registry.Verified(project, record.Release.CommitSha, job.Artifact, job.Template);
+            if (provenance is null) return Results.Conflict(new { error = "Artifact provenance is unverified." });
+            if (context.Request.Query.ContainsKey("content"))
+            {
+                var path = registry.VerifiedBlob(provenance);
+                return path is null ? Results.Conflict(new { error = "Artifact content is unavailable." })
+                    : Results.File(path, "application/octet-stream");
+            }
+            return Results.Ok(provenance);
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         app.MapGet("/api/projects/{projectName}/throughput", (
             string projectName,

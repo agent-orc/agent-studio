@@ -782,6 +782,34 @@ public sealed class DeployServiceTests : IDisposable
         var hosts = factory.Services.GetRequiredService<ProjectEnvironmentService>();
         var service = factory.Services.GetRequiredService<DeployService>();
         var stage = hosts.Claim("stage-host")!;
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var enrollment = security.CreateEnrollment(new RunnerEnrollmentRequest("deploy-host",
+            [RunnerScopes.Deploy], null, null));
+        var credential = security.EnrollRunner(enrollment.Code);
+        using var host = factory.CreateClient();
+        host.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", credential.Secret);
+        var artifactUrl = $"/api/deploy/jobs/demo/{stage.Id}/artifact";
+        using var withoutLease = await host.GetAsync(artifactUrl);
+        Assert.Equal(HttpStatusCode.Forbidden, withoutLease.StatusCode);
+        using var artifactRequest = new HttpRequestMessage(HttpMethod.Get, artifactUrl);
+        artifactRequest.Headers.Add("X-Deploy-Lease", stage.LeaseToken);
+        using var verified = await host.SendAsync(artifactRequest);
+        Assert.Equal(HttpStatusCode.OK, verified.StatusCode);
+        using (var provenance = JsonDocument.Parse(await verified.Content.ReadAsStringAsync()))
+        {
+            Assert.Equal("demo", provenance.RootElement.GetProperty("project").GetString());
+            Assert.Equal(commit, provenance.RootElement.GetProperty("commit").GetString());
+            Assert.Equal("release/test-gate", provenance.RootElement.GetProperty("gateRunId").GetString());
+            Assert.Equal("container", provenance.RootElement.GetProperty("template").GetString());
+        }
+        var provenanceFile = Directory.GetFiles(Path.Combine(_root, "workspace", "release-registry", "records"),
+            "*.json", SearchOption.AllDirectories).Single(file => file.Contains(commit, StringComparison.Ordinal));
+        File.Delete(provenanceFile);
+        using var unverifiedRequest = new HttpRequestMessage(HttpMethod.Get, artifactUrl);
+        unverifiedRequest.Headers.Add("X-Deploy-Lease", stage.LeaseToken);
+        using var unverified = await host.SendAsync(unverifiedRequest);
+        Assert.Equal(HttpStatusCode.Conflict, unverified.StatusCode);
         Assert.True(hosts.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
         service.SyncAfterHostCall("demo");
         var production = Assert.Single(service.Deployments("demo", "production")!);
@@ -858,7 +886,7 @@ public sealed class DeployServiceTests : IDisposable
         File.WriteAllText(Path.Combine(directory, "full-gate.log"), "PROMOTION_FULL_GATE=passed\n");
         File.WriteAllText(Path.Combine(directory, "promotion-record.json"), JsonSerializer.Serialize(new
         {
-            status = "promoted", gate = "passed", candidateSha = commit, atomicPush = true,
+            status = "promoted", gate = "passed", gateRunId = "release/test-gate", candidateSha = commit, atomicPush = true,
             releasePackage = new { status = "written", sha256 = digest },
         }));
         File.WriteAllText(Path.Combine(directory, "deploy-artifact.json"), JsonSerializer.Serialize(new
