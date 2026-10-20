@@ -20,7 +20,7 @@ public sealed class ProjectIntegrationViewServiceTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_temp, recursive: true); } catch { }
+        if (Directory.Exists(_temp)) Directory.Delete(_temp, recursive: true);
     }
 
     [Fact]
@@ -351,12 +351,13 @@ public sealed class ProjectIntegrationViewServiceTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
-        process.WaitForExit(15_000);
+        process.WaitForExit();
         return (output, error, process.ExitCode);
     }
 }

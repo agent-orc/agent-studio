@@ -209,7 +209,7 @@ public sealed class ProjectRepositoryProvisioningTests
                 workspaceId = DefaultWorkspace.Id,
                 createRepository = Request(),
             }, requestCancellation.Token);
-            await provisioner.DeletionCompleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await provisioner.DeletionCompleted.Task;
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => post);
 
             Assert.Equal(1, handler.Deletes);
