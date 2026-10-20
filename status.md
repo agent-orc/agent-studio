@@ -1,3 +1,10 @@
+## AGT-3225 Claude candidate CAR request follow-up, 20 October 2026
+
+- Result implementation SHA: `5608946b28e4d2463fde00a129ae1b311ab3a21d`. The earlier deliveries remain ancestors. After `git fetch origin develop`, `git merge origin/develop` was already up to date; `git merge-base --is-ancestor origin/develop HEAD` passes.
+- Implemented option: retain the merged device-login service and make the candidate token win over the CAR clean-context and cache environment when launching the dedicated real request. A new test drives a fake Claude sign-in through `DeviceLoginExecutor`, `ProviderAuthProbe`, and the CAR spawn seam. It asserts one request child received the candidate before credential acceptance. No real provider login was started.
+- Verification: solution build passed with 0 errors; runner focused classes passed 136 tests; Task Server device-login, principal-authentication and architecture classes passed 36; backend connector profiles passed 45. The Architecture/Guard filter passed in all eight .NET test projects (98 backend, 2 Task Server, six projects with no matches). Four focused Angular spec files passed 29 tests. `npm --prefix frontend run lint` passed, including component-size checks. The first-run Playwright spec passed 1 test; light and dark screenshots are in the task results directory.
+- No domain documentation update was needed for this boundary-order fix. The previously recorded Claude pasted-code and authorize-host issues remain open; no code-return channel was built.
+
 ## AGT-3225 operator follow-up, 20 October 2026
 
 - Result implementation SHA: `e52bec7cae521f310d22ed234778418ded8bf02c`, on merge `54b0725bf` of `origin/develop` into the earlier delivery. The earlier `6457e2455` and `a8fc2017b` deliveries remain ancestors. The fetched develop head `7c36d3540` is an ancestor of this result; no rebase or squash was used.
