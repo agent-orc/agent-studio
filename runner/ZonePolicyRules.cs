@@ -90,6 +90,9 @@ public static class ZonePolicyRules
 
     /// <summary>The kernel's ipset name limit (32 bytes with the terminator).</summary>
     public const int MaxIpSetNameLength = 31;
+
+    /// <summary>The zone resolver's own pid file, apart from a distribution dnsmasq's.</summary>
+    public const string ResolverPidFile = "/run/agent-zone-dns.pid";
     private const string Reject = "-j REJECT --reject-with icmp-admin-prohibited";
 
     public static string IpSetName(string destination) => IpSetPrefix + destination;
@@ -256,11 +259,16 @@ public static class ZonePolicyRules
 
     /// <summary>
     /// The zone resolver's dnsmasq configuration: it listens on the work
-    /// bridges only, forwards to the upstreams, and adds every IPv4 answer for
-    /// an allowed name (and its subdomains) to that destination's ipset. The
-    /// set's own timeout keeps an address allowed after its TTL ran out, so a
-    /// container that reuses an older answer still connects; re-resolving
-    /// refreshes the entry.
+    /// bridges only and forwards only the allowed names (and their
+    /// subdomains), one <c>server=/name/upstream</c> line per name and
+    /// upstream. There is no general <c>server=</c> line, so any other name
+    /// gets REFUSED and the resolver is no DNS channel out of the work zone.
+    /// Every IPv4 answer for an allowed name lands in that destination's ipset.
+    /// The set's own timeout keeps an address allowed after its TTL ran out, so
+    /// a container that reuses an older answer still connects. dnsmasq adds to
+    /// the set only on an upstream reply, not on a cache hit, so its cache
+    /// keeps an answer for at most half the set timeout: an address served
+    /// from the cache was added less than half a timeout ago.
     /// </summary>
     private static string? RenderResolverConfig(ResolvedZonePolicy policy, IReadOnlyList<ZoneNetworkSpec> networks)
     {
@@ -283,11 +291,19 @@ public static class ZonePolicyRules
         text.Append("port=53\nbind-dynamic\nexcept-interface=lo\n");
         foreach (var network in work) text.Append("interface=").Append(network.Bridge).Append('\n');
         text.Append("no-resolv\nno-hosts\n");
-        foreach (var upstream in resolver.Upstreams) text.Append("server=").Append(upstream).Append('\n');
+        text.Append("pid-file=").Append(ResolverPidFile).Append('\n');
+        text.Append("max-cache-ttl=").Append(MaxCacheTtl(resolver.SetTimeoutSeconds)).Append('\n');
         foreach (var (name, sets) in setsByName)
+        {
+            foreach (var upstream in resolver.Upstreams)
+                text.Append("server=/").Append(name).Append('/').Append(upstream).Append('\n');
             text.Append("ipset=/").Append(name).Append('/').Append(string.Join(',', sets)).Append('\n');
+        }
         return text.ToString();
     }
+
+    /// <summary>The longest time dnsmasq may answer from its cache: half the set timeout.</summary>
+    public static int MaxCacheTtl(int setTimeoutSeconds) => setTimeoutSeconds / 2;
 
     /// <summary>The <c>docker network create</c> arguments for a zone network.</summary>
     public static IReadOnlyList<string> NetworkCreateArguments(ZoneNetworkSpec network)
@@ -326,18 +342,22 @@ public static class ZonePolicyRules
             plan.Append(step++).Append(". ensure ipset ").Append(set.Name).Append(" (allowed ").Append(set.Destination)
                 .Append(", entries expire ").Append(set.TimeoutSeconds).Append("s after the last answer)\n")
                 .Append("   when missing: ipset ").Append(string.Join(' ', set.CreateArguments)).Append('\n');
+        // The rules load before the resolver starts: until it answers, the
+        // sets stay empty and every named destination is denied.
+        foreach (var (family, count) in new[] { (Ipv4, rules.RuleCount), (Ipv6, rules.Rule6Count) })
+        {
+            plan.Append(step++).Append(". ").Append(Iptables(family)).Append("-restore --noflush: replace ")
+                .Append(ForwardChain).Append(" and ").Append(InputChain).Append(" with ").Append(count)
+                .Append(family == Ipv4 ? " rules\n" : " rules that drop zone-bridge traffic (skipped on a kernel without IPv6)\n");
+            foreach (var jump in rules.Jumps.Where(jump => jump.Family == family))
+                plan.Append(step++).Append(". ensure ").Append(jump.Chain).Append(" jumps to ").Append(jump.Target)
+                    .Append(" (").Append(jump.Executable).Append(" -I ").Append(jump.Chain).Append(" 1 -j ").Append(jump.Target)
+                    .Append(jump.FallbackChain is { } fallback ? $"; {fallback} when {jump.Chain} does not exist" : string.Empty)
+                    .Append(")\n");
+        }
         if (rules.ResolverConfig is not null)
             plan.Append(step++).Append(". write the zone resolver configuration and (re)start ")
                 .Append(ZonePolicyApplier.ResolverUnit).Append(" when it changed or is not running\n");
-        plan.Append(step++).Append(". iptables-restore --noflush: replace ").Append(ForwardChain).Append(" and ")
-            .Append(InputChain).Append(" with ").Append(rules.RuleCount).Append(" rules\n");
-        plan.Append(step++).Append(". ip6tables-restore --noflush: replace ").Append(ForwardChain).Append(" and ")
-            .Append(InputChain).Append(" with ").Append(rules.Rule6Count).Append(" rules that drop zone-bridge traffic\n");
-        foreach (var jump in rules.Jumps)
-            plan.Append(step++).Append(". ensure ").Append(jump.Chain).Append(" jumps to ").Append(jump.Target)
-                .Append(" (").Append(jump.Executable).Append(" -I ").Append(jump.Chain).Append(" 1 -j ").Append(jump.Target)
-                .Append(jump.FallbackChain is { } fallback ? $"; {fallback} when {jump.Chain} does not exist" : string.Empty)
-                .Append(")\n");
         plan.Append(step).Append(". verify with probe containers, then record the applied state\n");
         return plan.ToString();
     }

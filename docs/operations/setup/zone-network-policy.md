@@ -32,12 +32,19 @@ containers resolve:
   listens on the bridge gateway of every work network. Work containers use it
   as their only resolver (`--dns 172.30.0.1`). The work zone may not reach any
   other resolver.
+- The zone resolver forwards only the allowed names and their subdomains, one
+  `server=/<name>/<upstream>` line per name and upstream. It has no general
+  `server=` line, so every other name gets `REFUSED`. The resolver is no DNS
+  channel out of the work zone.
 - For each allowed destination with host names, apply creates the ipset
   `agent-zone-<destination>` (`hash:ip`, `timeout 86400`). dnsmasq adds every
   IPv4 answer for one of those names, or for a subdomain of one, to that set
   before it answers the container. Each new answer refreshes the entry's
   timeout. An address that nobody resolved for `resolver.setTimeoutSeconds`
-  expires.
+  expires. dnsmasq adds to a set only on an upstream reply, not on a cache
+  hit. So the configuration sets `max-cache-ttl` to half the set timeout
+  (43200 s): an address served from the cache was added less than half a
+  timeout ago. dnsmasq writes its own pid file, `/run/agent-zone-dns.pid`.
 - The work rules match a named destination with
   `-m set --match-set agent-zone-<destination> dst` and its ports. IPv4
   addresses and CIDRs in the policy stay literal `-d` rules.
@@ -72,13 +79,18 @@ Validation enforces the Dossier's fixed boundaries. A work zone cannot allow a
 `secret-store` destination. Every run network names its own tenant. Subnets
 and bridge names must not overlap. Each zone needs at least one reachable and
 one blocked probe. Addresses are IPv4 only, because the zone networks are
-created with `--ipv6=false`; an existing zone network with IPv6 enabled is a
-conflict. Zone, network, tenant and destination names must match
-`^[a-z0-9][a-z0-9-]{0,47}$`, because they appear verbatim in the rule
-comments. An allowed destination's name is at most 20 characters, so its ipset
-name fits the kernel's 31-character limit. Host entries are IPv4 addresses,
-canonical CIDRs (rendered as `addr/prefix`) or DNS names. The probe image must
-be pinned by digest.
+created with `--ipv6=false`; an existing zone network with IPv6 enabled, or
+with another subnet or gateway, is a conflict. Subnets must be written in
+canonical form (`172.30.0.0/24`, not `172.30.0.0/024`). Zone, network, tenant
+and destination names must match `^[a-z0-9][a-z0-9-]{0,47}$`, because they
+appear verbatim in the rule comments. The policy `version` must match
+`^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$`, because it appears verbatim in the header
+lines of both payloads and of the resolver configuration; a line break there
+would add lines to the `iptables-restore --noflush` input. An allowed
+destination's name is at most 20 characters, so its ipset name fits the
+kernel's 31-character limit. Host entries are IPv4 addresses, canonical CIDRs
+(rendered as `addr/prefix`) or DNS names. The probe image must be pinned by
+digest and must not start with `-`.
 
 ### Rules
 
@@ -109,7 +121,26 @@ An IPv6 payload, loaded with `ip6tables-restore --noflush`, declares the same
 two chains and drops every packet on a zone bridge, in and out. Its
 `AGENT-ZONE-FWD` hangs off the IPv6 `DOCKER-USER`, or off `FORWARD` when
 Docker runs without ip6tables support and that chain does not exist. Its
-`AGENT-ZONE-IN` hangs off the IPv6 `INPUT`.
+`AGENT-ZONE-IN` hangs off the IPv6 `INPUT`. On a kernel without IPv6 (no
+`/proc/net/if_inet6`, or `ip6tables` reports that the address family or the
+filter table is not supported), apply reports the IPv6 payload and its jumps
+as `skipped`. There is no IPv6 traffic to drop on such a host.
+
+### Apply order
+
+Apply works in this order: Docker networks, ipsets, the IPv4 payload and its
+jumps, the IPv6 payload and its jumps, then the zone resolver. The rules are
+in place before the resolver starts. Until it answers, the sets are empty and
+every named destination is denied. A resolver that fails to start fails the
+apply, and the failure is recorded, but the rules stay loaded. A network or
+ipset conflict stops the apply before any rule loads.
+
+A name is resolved on the host only for a run-zone denial and for a blocked
+probe. If a denied name does not resolve, apply still loads every other rule,
+but that denial is missing. The verification then records the state as failed
+(`setup deny <destination> expected resolved, observed unresolved`). If a
+blocked probe's host does not resolve, that blocked check fails during the
+verification. Neither stops the rules from loading.
 
 The golden files in `runner.Tests/Fixtures/zone-policy/` show the full IPv4
 and IPv6 rules, the resolver configuration and the plan for the checked-in
@@ -155,17 +186,17 @@ policy.
      /usr/local/libexec/agent-apply-zone-policy
    ```
 
-   It prints the numbered plan, the full rules and the resolver
-   configuration, and one line per step: `unchanged`, `would-create`,
-   `would-write`, `would-start`, `would-apply` (the rules passed
-   `iptables-restore --test`) or `would-insert`. Run without root, the
-   ipset and rule checks read `unchecked`. On a fresh host the IPv4 rule check
-   also reads `unchecked`, because the kernel checks set matches only against
-   existing sets. A `conflict` means a zone network or ipset already exists
-   with other settings. The script never recreates such a network under
-   running containers. Detach the containers and remove the network, or
-   change the policy. For an ipset, roll back (see below), run
-   `ipset destroy <set>`, and apply again.
+   It prints the numbered plan, the full rules and the resolver configuration,
+   and one line per step: `unchanged`, `would-create`, `would-write`,
+   `would-start`, `would-apply` (the rules passed `iptables-restore --test`)
+   or `would-insert`. Run without root, the ipset and rule checks read
+   `unchecked`. On a fresh host the IPv4 rule check also reads `unchecked`,
+   because the kernel checks set matches only against existing sets. On a
+   kernel without IPv6, the IPv6 steps read `skipped`. A `conflict` means a
+   zone network or ipset already exists with other settings. The script never
+   recreates such a network under running containers. Detach the containers
+   and remove the network, or change the policy. For an ipset, roll back (see
+   below), run `ipset destroy <set>`, and apply again.
 
 3. Apply, then enable the service for boot and the timer:
 
@@ -176,8 +207,15 @@ policy.
    ```
 
    The rules and ipsets do not survive a reboot. The enabled service applies
-   them again at boot, after Docker. Containers that Docker restarts on its
-   own run without the zone rules for those few seconds.
+   them again at boot. It starts after `docker.service` and
+   `network-online.target`. Containers that Docker restarts on its own run
+   without the zone rules until the IPv4 payload and its jumps are loaded.
+   That window covers the wait for `network-online.target` (up to about two
+   minutes with `systemd-networkd-wait-online`) plus the network and ipset
+   steps. It is not just a few seconds. The resolver starts last, so a work
+   container cannot resolve anything until then. If DNS is not up yet at boot,
+   a denied name may not resolve: the other rules still load, the state reads
+   failed, and the timer's next run within 15 minutes completes it.
 
 4. Attach the work containers. For the Compose agent hosts:
 
@@ -199,8 +237,12 @@ policy.
 ## Verification
 
 `--execute` ends with the verification. `--verify` repeats it at any time, and
-`--verify --record` also updates the recorded result. For each zone network,
-one throw-away container (`bash:5.2` pinned by digest, label
+`--verify --record` also updates the recorded result. Apply, verify and remove
+hold an exclusive `flock` on `/run/lock/agent-zone-policy.lock` (set
+`ZONE_POLICY_LOCK` to change it), so the timer's apply and an operator's run
+never interleave. A second run waits up to 600 seconds
+(`ZONE_POLICY_LOCK_WAIT`) and then gives up with exit code 2. For each zone
+network, one throw-away container (`bash:5.2` pinned by digest, label
 `org.agent-studio.zone-probe=true`) opens each probe connection with bash's
 `/dev/tcp` under `timeout`. On a work network the container uses the zone
 resolver (`--dns <gateway>`), as the work containers do:
@@ -220,11 +262,14 @@ resolver (`--dns <gateway>`), as the work containers do:
   block proves nothing, and the check fails.
 - **No inbound** passes when no container on a work network publishes a port.
 - A probe container that cannot start, or a name that does not resolve, is
-  inconclusive. It fails the verification.
+  inconclusive. It fails the verification. In a work network, a name the zone
+  resolver refuses (one the work zone does not allow) also reads
+  `unresolved`.
 
-Exit codes: `0` passed, `1` verification failed, `2` usage, policy or apply
-error. Under `--execute`, a failed apply or verification is recorded, and so
-is a policy, environment or name resolution error. The daemons then report
+Exit codes: `0` passed, `1` verification failed, `2` usage, policy, name
+resolution or apply error. Under `--execute`, a failed apply or verification is
+recorded. So is a policy, environment or name resolution error, and any other
+error, such as an unreadable file. The daemons then report
 `zone-policy` as `unavailable`, and the host reads as degraded. If the rendered
 rules differ from the applied ones because the policy or a denied address
 changed, `--verify --record` refuses and asks for `--execute`.
@@ -250,7 +295,8 @@ The record does not count, and the status is `unavailable`, when:
   because a reboot dropped the rules and ipsets;
 - the last verification is older than twice the timer interval (30 minutes),
   because the timer stopped;
-- `zone-policy remove --execute` removed the rules;
+- `zone-policy remove --execute` removed the rules, or stopped partway (the
+  detail names the failed step);
 - the record is unreadable or from the first cut (schema 1, without a boot id).
 
 The capability is informational and never a claim requirement. A daemon
@@ -283,7 +329,12 @@ unless `--execute` is given, and a second run changes nothing:
    the IPv6 `FORWARD` fallback), then the `AGENT-ZONE-FWD` and
    `AGENT-ZONE-IN` chains of both families. It also marks the applied state as
    removed, so the daemons report `zone-policy` as `unavailable`. Unset
-   `RUNNER_ZONE_POLICY_STATE` to stop reporting it.
+   `RUNNER_ZONE_POLICY_STATE` to stop reporting it. If a step fails, the
+   state is marked as an incomplete removal with the failed step. The daemons
+   report `unavailable`, because some rules may be gone already. Fix the
+   cause and run `--remove --execute` again. It skips what is gone and
+   completes the removal. On a kernel without IPv6, the IPv6 steps read
+   `skipped`.
 
 3. Docker networks, ipsets and the zone resolver stay, because work
    containers may still use them (`--dns 172.30.0.1`). Once the containers
@@ -310,5 +361,26 @@ step 3). The first apply recreates everything.
 - Run-zone inbound (TLS proxy, domains) and app-declared egress belong to the
   run-zone host agent (IP-1, AGT-3229). This cut only guarantees the denials.
 - A name the work zone allows also allows its subdomains (dnsmasq's `ipset=`
-  semantics). A container that connects to a resolved address without asking
-  the zone resolver first is rejected. That is intended.
+  and `server=` semantics). A container that connects to a resolved address
+  without asking the zone resolver first is rejected. That is intended.
+- The allowlist works on layer 4: it matches addresses and ports, not TLS
+  server names or HTTP hosts. Sites that share a CDN address cannot be told
+  apart. Once an allowed name resolves to a shared address (Fastly,
+  Cloudflare, Google front ends), every other site on that address is
+  reachable from the work zone on the allowed ports until the set entry
+  expires.
+- The same holds for the run-zone denials. A control plane fronted by
+  Cloudflare or another shared CDN resolves to addresses that serve many
+  unrelated sites. Denying them blocks those sites for the apps, and it is no
+  boundary: the control plane may answer on other CDN addresses. List the
+  control plane's literal addresses (its origin or a private address) in
+  `AGENT_ZONE_CONTROL_PLANE_HOSTS` instead of a CDN name.
+- A host `INPUT` firewall such as ufw must accept UDP and TCP port 53 from
+  `br-agent-work` to the work gateway, for example
+  `sudo ufw allow in on br-agent-work to 172.30.0.1 port 53`. `AGENT-ZONE-IN`
+  only returns that traffic to `INPUT`; a later default deny there would
+  still drop it, and work containers could not resolve any name.
+- Hosts on the allowlist reflect the CLIs in use. Gemini CLI's Google sign-in
+  uses `cloudcode-pa.googleapis.com`, and GitHub release downloads redirect to
+  `release-assets.githubusercontent.com`; both are listed since policy
+  `2026-10-20.3`.

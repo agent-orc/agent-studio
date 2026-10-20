@@ -49,6 +49,7 @@ public sealed class ZonePolicyRemover(IZoneHost host)
             if (!check.Succeeded)
             {
                 if (ZonePolicyApplier.IsPermissionOrNoTool(check)) return ZonePolicyApplier.Unchecked(name, check, execute);
+                if (executable == "ip6tables" && ZonePolicyApplier.IsIpv6Unsupported(check)) return new ZoneApplyStep(name, "skipped", "the kernel has no IPv6");
                 // No such rule, or no such parent chain (the IPv6 DOCKER-USER
                 // without Docker's ip6tables support): nothing to delete.
                 return removed == 0 ? new ZoneApplyStep(name, "unchanged") : new ZoneApplyStep(name, "deleted", Copies(removed));
@@ -70,7 +71,9 @@ public sealed class ZonePolicyRemover(IZoneHost host)
         if (!exists.Succeeded)
             return ZonePolicyApplier.IsPermissionOrNoTool(exists)
                 ? ZonePolicyApplier.Unchecked(name, exists, execute)
-                : new ZoneApplyStep(name, "unchanged", "not present");
+                : executable == "ip6tables" && ZonePolicyApplier.IsIpv6Unsupported(exists)
+                    ? new ZoneApplyStep(name, "skipped", "the kernel has no IPv6")
+                    : new ZoneApplyStep(name, "unchanged", "not present");
         if (!execute) return new ZoneApplyStep(name, "would-delete");
         foreach (var args in new string[][] { ["-F", chain], ["-X", chain] })
         {

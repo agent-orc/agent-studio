@@ -11,7 +11,7 @@
 // IPv4 addresses and CIDRs stay literal rules.
 {
   "schemaVersion": 1,
-  "version": "2026-10-20.2",
+  "version": "2026-10-20.3",
   "resolver": {
     "upstreams": ["${AGENT_ZONE_DNS_RESOLVERS}"],
     "setTimeoutSeconds": 86400
@@ -42,7 +42,7 @@
     },
     "package-registries": {
       "class": "egress",
-      "description": "npm, NuGet, PyPI, .NET SDK and container image sources",
+      "description": "npm, NuGet, PyPI, .NET SDK, container image and GitHub release asset sources",
       "hosts": [
         "registry.npmjs.org",
         "api.nuget.org",
@@ -51,7 +51,8 @@
         "files.pythonhosted.org",
         "builds.dotnet.microsoft.com",
         "ghcr.io",
-        "pkg-containers.githubusercontent.com"
+        "pkg-containers.githubusercontent.com",
+        "release-assets.githubusercontent.com"
       ],
       "ports": [443]
     },
@@ -67,6 +68,7 @@
         "auth.openai.com",
         "chatgpt.com",
         "generativelanguage.googleapis.com",
+        "cloudcode-pa.googleapis.com",
         "oauth2.googleapis.com"
       ],
       "ports": [443]

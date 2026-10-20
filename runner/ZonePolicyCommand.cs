@@ -120,6 +120,11 @@ public static class ZonePolicyCommand
         {
             problems.AddRange(exception.Errors);
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // An unreadable policy or env file, or a resolver error other than "not found".
+            problems.Add($"the policy could not be loaded: {exception.GetType().Name}: {exception.Message}");
+        }
         if (problems.Count > 0)
         {
             foreach (var item in problems) error.WriteLine($"error: {item}");
@@ -127,13 +132,18 @@ public static class ZonePolicyCommand
             {
                 // The rules on the host no longer follow the policy file, so
                 // the daemons must stop reporting the older, verified state.
-                RecordConfigurationFailure(statePath, document, problems, clock, bootId);
+                RecordFailure(statePath, document, "policy", "invalid", problems[0], clock, bootId);
                 error.WriteLine($"error: recorded as unverified in {statePath}.");
             }
             return 2;
         }
         var resolved = policy!;
         var rules = ZonePolicyRules.Render(resolved);
+        // A denied name that does not resolve leaves its denial out; every
+        // other rule still loads, and the verification records the problem.
+        var unresolved = resolved.Problems ?? [];
+        foreach (var problem in unresolved)
+            error.WriteLine($"error: {problem.Detail}; its denial is missing from the rules");
 
         switch (verb)
         {
@@ -157,36 +167,50 @@ public static class ZonePolicyCommand
                 var execute = flags.Contains("--execute");
                 output.Write(ZonePolicyRules.RenderPlan(rules));
                 if (!execute) WritePayloads(output, rules);
-                var report = await new ZonePolicyApplier(host,
-                    options.GetValueOrDefault("--resolver-config", ZonePolicyApplier.DefaultResolverConfigPath))
-                    .ApplyAsync(rules, execute, ct);
-                foreach (var step in report.Steps)
-                    output.WriteLine($"  [{step.Status}] {step.Name}{(step.Detail is null ? string.Empty : $": {step.Detail}")}");
+                var applier = new ZonePolicyApplier(host,
+                    options.GetValueOrDefault("--resolver-config", ZonePolicyApplier.DefaultResolverConfigPath));
                 if (!execute)
                 {
-                    output.WriteLine(report.Succeeded
-                        ? "dry run: nothing changed; rerun with --execute to apply and verify."
-                        : "dry run: the plan cannot be applied as it stands.");
-                    return report.Succeeded ? 0 : 2;
+                    var plan = await applier.ApplyAsync(rules, execute: false, ct);
+                    WriteSteps(output, plan);
+                    output.WriteLine(!plan.Succeeded
+                        ? "dry run: the plan cannot be applied as it stands."
+                        : unresolved.Count > 0
+                            ? "dry run: nothing changed; --execute would load the other rules and record the state as failed."
+                            : "dry run: nothing changed; rerun with --execute to apply and verify.");
+                    return plan.Succeeded && unresolved.Count == 0 ? 0 : 2;
                 }
-                if (!report.Succeeded)
+                try
                 {
-                    // Record the failure so the daemons stop reporting an older,
-                    // verified state as current.
-                    var failed = report.Steps.First(step => step.Failed);
-                    var verification = new ZoneVerificationReport(false, clock.GetUtcNow(),
-                        [new ZoneCheck("*", "*", "setup", failed.Name, "applied", failed.Status, Passed: false, failed.Detail)]);
-                    ZonePolicyStateStore.Write(statePath,
-                        ZonePolicyStateStore.Create(rules, resolved, clock.GetUtcNow(), verification, bootId));
-                    error.WriteLine($"error: apply failed at {failed.Name}; recorded as unverified in {statePath}.");
+                    var report = await applier.ApplyAsync(rules, execute: true, ct);
+                    WriteSteps(output, report);
+                    if (!report.Succeeded)
+                    {
+                        // Record the failure so the daemons stop reporting an older,
+                        // verified state as current.
+                        var failed = report.Steps.First(step => step.Failed);
+                        var verification = new ZoneVerificationReport(false, clock.GetUtcNow(),
+                            [new ZoneCheck("*", "*", "setup", failed.Name, "applied", failed.Status, Passed: false, failed.Detail)]);
+                        ZonePolicyStateStore.Write(statePath,
+                            ZonePolicyStateStore.Create(rules, resolved, clock.GetUtcNow(), verification, bootId));
+                        error.WriteLine($"error: apply failed at {failed.Name}; recorded as unverified in {statePath}.");
+                        return 2;
+                    }
+                    var appliedAt = clock.GetUtcNow();
+                    var verified = await new ZonePolicyVerifier(probeFactory(resolved.Verification), clock).VerifyAsync(resolved, ct);
+                    WriteChecks(output, verified);
+                    ZonePolicyStateStore.Write(statePath, ZonePolicyStateStore.Create(rules, resolved, appliedAt, verified, bootId));
+                    output.WriteLine($"recorded {statePath}");
+                    return unresolved.Count > 0 ? 2 : verified.Passed ? 0 : 1;
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    error.WriteLine($"error: apply failed: {exception.GetType().Name}: {exception.Message}");
+                    RecordFailure(statePath, document, "apply", "error", $"{exception.GetType().Name}: {exception.Message}",
+                        clock, bootId);
+                    error.WriteLine($"error: recorded as unverified in {statePath}.");
                     return 2;
                 }
-                var appliedAt = clock.GetUtcNow();
-                var verified = await new ZonePolicyVerifier(probeFactory(resolved.Verification), clock).VerifyAsync(resolved, ct);
-                WriteChecks(output, verified);
-                ZonePolicyStateStore.Write(statePath, ZonePolicyStateStore.Create(rules, resolved, appliedAt, verified, bootId));
-                output.WriteLine($"recorded {statePath}");
-                return verified.Passed ? 0 : 1;
             }
 
             default:
@@ -222,8 +246,7 @@ public static class ZonePolicyCommand
         CancellationToken ct)
     {
         var report = await new ZonePolicyRemover(host).RemoveAsync(execute, ct);
-        foreach (var step in report.Steps)
-            output.WriteLine($"  [{step.Status}] {step.Name}{(step.Detail is null ? string.Empty : $": {step.Detail}")}");
+        WriteSteps(output, report);
         if (!execute)
         {
             output.WriteLine(report.Succeeded
@@ -231,16 +254,29 @@ public static class ZonePolicyCommand
                 : "dry run: the zone rules cannot be removed as they stand.");
             return report.Succeeded ? 0 : 2;
         }
+        var state = ZonePolicyStateStore.TryRead(statePath)?.State;
         if (!report.Succeeded)
         {
-            error.WriteLine($"error: remove failed at {report.Steps.First(step => step.Failed).Name}.");
+            var failed = report.Steps.First(step => step.Failed);
+            error.WriteLine($"error: remove failed at {failed.Name}.");
+            // Some jumps or chains may be gone already, so the recorded
+            // verification no longer describes the host.
+            if (state is not null)
+            {
+                ZonePolicyStateStore.Write(statePath, state with
+                {
+                    RemovedAt = clock.GetUtcNow(),
+                    RemovalProblem = $"failed at {failed.Name}" + (failed.Detail is null ? string.Empty : $": {failed.Detail}"),
+                });
+                error.WriteLine($"error: recorded the incomplete removal in {statePath}.");
+            }
             return 2;
         }
         // A daemon must not keep reporting a policy that no longer exists.
-        // An existing removal keeps its time, so a second remove writes nothing.
-        if (ZonePolicyStateStore.TryRead(statePath)?.State is { RemovedAt: null } state)
+        // A complete removal keeps its time, so a second remove writes nothing.
+        if (state is not null && (state.RemovedAt is null || state.RemovalProblem is not null))
         {
-            ZonePolicyStateStore.Write(statePath, state with { RemovedAt = clock.GetUtcNow() });
+            ZonePolicyStateStore.Write(statePath, state with { RemovedAt = clock.GetUtcNow(), RemovalProblem = null });
             output.WriteLine($"recorded the removal in {statePath}");
         }
         output.WriteLine("zone rules removed; Docker networks, ipsets and the zone resolver stay (see the rollback runbook).");
@@ -248,11 +284,13 @@ public static class ZonePolicyCommand
     }
 
     /// <summary>
-    /// A policy or environment error under <c>apply --execute</c> becomes a
-    /// failed verification in the state, keeping what is known of the policy.
+    /// A policy, environment or unexpected error under <c>apply --execute</c>
+    /// becomes a failed verification in the state, keeping what is known of
+    /// the policy.
     /// </summary>
-    private static void RecordConfigurationFailure(
-        string statePath, ZonePolicyDocument? document, IReadOnlyList<string> problems, TimeProvider clock, string? bootId)
+    private static void RecordFailure(
+        string statePath, ZonePolicyDocument? document, string target, string observed, string detail,
+        TimeProvider clock, string? bootId)
     {
         var previous = ZonePolicyStateStore.TryRead(statePath)?.State;
         var now = clock.GetUtcNow();
@@ -261,9 +299,15 @@ public static class ZonePolicyCommand
                     ?? previous?.Zones.ToList() ?? [];
         var version = document?.Version is { Length: > 0 } documented ? documented : previous?.PolicyVersion ?? "unknown";
         var verification = new ZoneVerificationReport(false, now,
-            [new ZoneCheck("*", "*", "setup", "policy", "valid", "invalid", Passed: false, problems[0])]);
+            [new ZoneCheck("*", "*", "setup", target, target == "policy" ? "valid" : "applied", observed, Passed: false, detail)]);
         ZonePolicyStateStore.Write(statePath, new ZonePolicyState(ZonePolicyStateStore.SchemaVersion, version,
             previous?.PolicySha256 ?? string.Empty, previous?.RulesSha256 ?? string.Empty, now, zones, verification, bootId));
+    }
+
+    private static void WriteSteps(TextWriter output, ZoneApplyReport report)
+    {
+        foreach (var step in report.Steps)
+            output.WriteLine($"  [{step.Status}] {step.Name}{(step.Detail is null ? string.Empty : $": {step.Detail}")}");
     }
 
     private static void WritePayloads(TextWriter output, ZoneRuleSet rules)
@@ -353,6 +397,9 @@ public static class ZonePolicyCapability
             return Unavailable(null, null, readError ?? "zone policy state is unreadable");
         var zone = state.Zones.FirstOrDefault(item => item.Kind == zoneKind);
         var verifiedAt = Timestamp(state.Verification.CheckedAt);
+        if (state is { RemovedAt: { } partly, RemovalProblem: { } problem })
+            return Unavailable(state, zone, $"a removal of the zone rules stopped partway at {Timestamp(partly)} ({problem}); "
+                                            + "rerun zone-policy remove --execute or apply --execute");
         if (state.RemovedAt is { } removedAt)
             return Unavailable(state, zone, $"the zone rules were removed at {Timestamp(removedAt)}");
         if (hostBootId is null)

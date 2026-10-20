@@ -25,13 +25,16 @@ public sealed record ZoneVerificationReport(bool Passed, DateTimeOffset CheckedA
 /// control from a network outside the zones shows that each blocked target
 /// answers when nothing blocks it, so a dead destination cannot pass for a
 /// block. A probe that could not run proves nothing and fails the verification
-/// instead of passing it.
+/// instead of passing it, and so do a blocked probe host and a denied name
+/// that did not resolve at apply time.
 /// </summary>
 public sealed class ZonePolicyVerifier(IZoneNetworkProbe probe, TimeProvider clock)
 {
     public async Task<ZoneVerificationReport> VerifyAsync(ResolvedZonePolicy policy, CancellationToken ct)
     {
-        var checks = new List<ZoneCheck>();
+        // A denied name that did not resolve has no rule: nothing proves the denial.
+        var checks = (policy.Problems ?? []).Select(problem => new ZoneCheck("*", "*", "setup",
+            $"deny {problem.Destination}", "resolved", "unresolved", Passed: false, problem.Detail)).ToList();
         var controls = new Dictionary<(string Address, int Port), ZoneProbeObservation>();
         try
         {
@@ -54,13 +57,19 @@ public sealed class ZonePolicyVerifier(IZoneNetworkProbe probe, TimeProvider clo
                     checks.Add(await NoInboundAsync(zone, network, ct));
                 foreach (var target in zone.Probes)
                 {
+                    if (target.Unresolved is { } unresolved)
+                    {
+                        checks.Add(new ZoneCheck(zone.Name, network.Name, target.Expectation, Endpoint(target),
+                            target.Expectation, Observed(ZoneProbeOutcome.Unresolved), Passed: false, unresolved));
+                        continue;
+                    }
                     var observation = await probe.ConnectAsync(network.Name, dns, target.Address, target.Port, ct);
                     checks.Add(new ZoneCheck(zone.Name, network.Name, target.Expectation, Endpoint(target),
                         target.Expectation, Observed(observation.Outcome),
                         Satisfies(target.Expectation, observation.Outcome), observation.Detail));
                 }
             }
-            foreach (var target in zone.Probes.Where(target => target.Expectation == ZoneProbeExpectations.Blocked)
+            foreach (var target in zone.Probes.Where(target => target is { Expectation: ZoneProbeExpectations.Blocked, Unresolved: null })
                          .DistinctBy(target => (target.Address, target.Port)))
             {
                 if (!controls.TryGetValue((target.Address, target.Port), out var control))
@@ -142,6 +151,7 @@ public sealed record ZonePolicyStateZone(string Name, string Kind, IReadOnlyList
 /// and ipsets do not survive a reboot, so a record from an earlier boot proves
 /// nothing.</param>
 /// <param name="RemovedAt">Set by <c>zone-policy remove --execute</c>.</param>
+/// <param name="RemovalProblem">Why that removal stopped partway; null once it completed.</param>
 public sealed record ZonePolicyState(
     int SchemaVersion,
     string PolicyVersion,
@@ -151,7 +161,8 @@ public sealed record ZonePolicyState(
     IReadOnlyList<ZonePolicyStateZone> Zones,
     ZoneVerificationReport Verification,
     string? BootId = null,
-    DateTimeOffset? RemovedAt = null);
+    DateTimeOffset? RemovedAt = null,
+    string? RemovalProblem = null);
 
 public static class ZonePolicyStateStore
 {
@@ -228,7 +239,8 @@ public static class ZonePolicyStateStore
 
 /// <param name="Status">One of unchanged, would-create, created, valid, would-apply,
 /// applied, would-insert, inserted, would-write, written, would-start, started,
-/// would-restart, restarted, would-delete, deleted, unchecked, conflict, failed.</param>
+/// would-restart, restarted, would-delete, deleted, unchecked, skipped (IPv6 on a
+/// kernel without it), conflict, failed.</param>
 public sealed record ZoneApplyStep(string Name, string Status, string? Detail = null)
 {
     public bool Failed => Status is "conflict" or "failed";
@@ -240,19 +252,24 @@ public sealed record ZoneApplyReport(bool Executed, IReadOnlyList<ZoneApplyStep>
 }
 
 /// <summary>
-/// Brings a host to a rendered rule set. Every step first reads the current
-/// state, so a second run with the same rules changes nothing. Without
-/// <c>execute</c> it only reads and validates (<c>iptables-restore --test</c>).
-/// A zone network that exists with different settings is a conflict: it is
-/// never recreated under running containers, and no rule is loaded.
+/// Brings a host to a rendered rule set in the order networks, ipsets, IPv4
+/// rules and jumps, IPv6 rules and jumps, zone resolver. Every step first
+/// reads the current state, so a second run with the same rules changes
+/// nothing. Without <c>execute</c> it only reads and validates
+/// (<c>iptables-restore --test</c>). A zone network that exists with different
+/// settings is a conflict: it is never recreated under running containers,
+/// and no rule is loaded.
 /// </summary>
 public sealed class ZonePolicyApplier(IZoneHost host, string resolverConfigPath = ZonePolicyApplier.DefaultResolverConfigPath)
 {
     public const string ResolverUnit = "agent-zone-dns.service";
     public const string DefaultResolverConfigPath = "/var/lib/agent-studio/zone-policy/dnsmasq.conf";
 
+    /// <summary>Present only on a kernel with IPv6.</summary>
+    public const string Ipv6InterfacesPath = "/proc/net/if_inet6";
+
     private const string NetworkFormat =
-        "{{.Driver}}|{{range .IPAM.Config}}{{.Subnet}},{{end}}|"
+        "{{.Driver}}|{{range .IPAM.Config}}{{.Subnet}},{{end}}|{{range .IPAM.Config}}{{.Gateway}},{{end}}|"
         + "{{index .Options \"com.docker.network.bridge.name\"}}|"
         + "{{index .Options \"com.docker.network.bridge.enable_icc\"}}|{{.EnableIPv6}}";
 
@@ -278,39 +295,68 @@ public sealed class ZonePolicyApplier(IZoneHost host, string resolverConfigPath 
         var setsPending = steps.Any(step => step.Name.StartsWith("ipset ", StringComparison.Ordinal)
                                             && step.Status is "would-create" or "unchecked");
 
-        if (rules.ResolverConfig is { } config)
-        {
-            steps.AddRange(await EnsureResolverAsync(config, execute, ct));
-            if (steps.Any(step => step.Failed)) return new ZoneApplyReport(execute, steps);
-        }
-
-        foreach (var (family, payload, count) in new[] { (ZonePolicyRules.Ipv4, rules.Iptables, rules.RuleCount),
-                     (ZonePolicyRules.Ipv6, rules.Ip6tables, rules.Rule6Count) })
-        {
-            var loader = $"{ZonePolicyRules.Iptables(family)}-restore";
-            var restore = await host.RunAsync(loader, execute ? ["--noflush"] : ["--test", "--noflush"], payload, ct);
-            var restoreName = $"{loader} {ZonePolicyRules.ForwardChain} {ZonePolicyRules.InputChain}";
-            if (execute)
-            {
-                steps.Add(restore.Succeeded
-                    ? new ZoneApplyStep(restoreName, "applied", $"{count} rules")
-                    : new ZoneApplyStep(restoreName, "failed", FirstLine(restore.Error, $"exit {restore.ExitCode}")));
-                if (!restore.Succeeded) return new ZoneApplyReport(execute, steps);
-            }
-            else if (restore.Succeeded)
-                steps.Add(new ZoneApplyStep(restoreName, "would-apply", $"{count} rules pass {loader} --test"));
-            else if (setsPending && family == ZonePolicyRules.Ipv4 && !IsPermissionOrNoTool(restore))
-                // The kernel checks a set match against existing sets only.
-                steps.Add(new ZoneApplyStep(restoreName, "unchecked",
-                    $"the ipsets do not exist yet: {FirstLine(restore.Error, $"exit {restore.ExitCode}")}"));
-            else
-                steps.Add(Unchecked(restoreName, restore));
-        }
-
-        foreach (var jump in rules.Jumps)
+        // Fail closed: the rules and their jumps are in place before the
+        // resolver starts. Until it answers, the sets are empty and every
+        // named destination is denied, so a resolver that fails to start
+        // fails the apply without opening anything.
+        var ipv4 = await RestoreAsync(ZonePolicyRules.Ipv4, rules.Iptables, rules.RuleCount, execute, setsPending, ct);
+        steps.Add(ipv4);
+        if (ipv4.Failed) return new ZoneApplyReport(execute, steps);
+        foreach (var jump in rules.Jumps.Where(jump => jump.Family == ZonePolicyRules.Ipv4))
             steps.Add(await EnsureJumpAsync(jump, execute, ct));
+
+        var ipv6Jumps = rules.Jumps.Where(jump => jump.Family == ZonePolicyRules.Ipv6).ToList();
+        var ipv6 = host.PathExists(Ipv6InterfacesPath)
+            ? await RestoreAsync(ZonePolicyRules.Ipv6, rules.Ip6tables, rules.Rule6Count, execute, setsPending, ct)
+            : new ZoneApplyStep(RestoreName(ZonePolicyRules.Ipv6), "skipped", $"the kernel has no IPv6 ({Ipv6InterfacesPath} is missing)");
+        steps.Add(ipv6);
+        if (ipv6.Status == "skipped")
+            steps.AddRange(ipv6Jumps.Select(jump => new ZoneApplyStep(JumpName(jump, jump.Chain), "skipped", "the kernel has no IPv6")));
+        else if (!ipv6.Failed)
+            foreach (var jump in ipv6Jumps)
+                steps.Add(await EnsureJumpAsync(jump, execute, ct));
+
+        if (rules.ResolverConfig is { } config)
+            steps.AddRange(await EnsureResolverAsync(config, execute, ct));
         return new ZoneApplyReport(execute, steps);
     }
+
+    private static string RestoreName(string family)
+        => $"{ZonePolicyRules.Iptables(family)}-restore {ZonePolicyRules.ForwardChain} {ZonePolicyRules.InputChain}";
+
+    private static string JumpName(ZoneChainJump jump, string chain) => $"{jump.Executable} {chain} -j {jump.Target}";
+
+    private async Task<ZoneApplyStep> RestoreAsync(
+        string family, string payload, int count, bool execute, bool setsPending, CancellationToken ct)
+    {
+        var loader = $"{ZonePolicyRules.Iptables(family)}-restore";
+        var name = RestoreName(family);
+        var restore = await host.RunAsync(loader, execute ? ["--noflush"] : ["--test", "--noflush"], payload, ct);
+        if (family == ZonePolicyRules.Ipv6 && IsIpv6Unsupported(restore))
+            return new ZoneApplyStep(name, "skipped", $"the kernel has no IPv6 filter table: {FirstLine(restore.Error, $"exit {restore.ExitCode}")}");
+        if (execute)
+            return restore.Succeeded
+                ? new ZoneApplyStep(name, "applied", $"{count} rules")
+                : new ZoneApplyStep(name, "failed", FirstLine(restore.Error, $"exit {restore.ExitCode}"));
+        if (restore.Succeeded)
+            return new ZoneApplyStep(name, "would-apply", $"{count} rules pass {loader} --test");
+        if (setsPending && family == ZonePolicyRules.Ipv4 && !IsPermissionOrNoTool(restore))
+            // The kernel checks a set match against existing sets only.
+            return new ZoneApplyStep(name, "unchecked",
+                $"the ipsets do not exist yet: {FirstLine(restore.Error, $"exit {restore.ExitCode}")}");
+        return Unchecked(name, restore);
+    }
+
+    /// <summary>
+    /// ip6tables on a kernel built or booted without IPv6: the address family
+    /// or the filter table is not there.
+    /// </summary>
+    internal static bool IsIpv6Unsupported(ZoneCommandResult result)
+        => !result.Succeeded
+           && (result.Error.Contains("Address family not supported", StringComparison.OrdinalIgnoreCase)
+               || result.Error.Contains("Protocol not supported", StringComparison.OrdinalIgnoreCase)
+               || result.Error.Contains("Table does not exist", StringComparison.OrdinalIgnoreCase)
+               || result.Error.Contains("can't initialize ip6tables table", StringComparison.OrdinalIgnoreCase));
 
     private async Task<ZoneApplyStep> EnsureJumpAsync(ZoneChainJump jump, bool execute, CancellationToken ct)
     {
@@ -319,10 +365,10 @@ public sealed class ZonePolicyApplier(IZoneHost host, string resolverConfigPath 
         {
             var exists = await host.RunAsync(jump.Executable, ["-S", chain], null, ct);
             if (!exists.Succeeded && IsPermissionOrNoTool(exists))
-                return Unchecked($"{jump.Executable} {chain} -j {jump.Target}", exists, execute);
+                return Unchecked(JumpName(jump, chain), exists, execute);
             if (!exists.Succeeded) chain = fallback;
         }
-        var name = $"{jump.Executable} {chain} -j {jump.Target}";
+        var name = JumpName(jump, chain);
         var check = await host.RunAsync(jump.Executable, ["-C", chain, "-j", jump.Target], null, ct);
         if (check.Succeeded) return new ZoneApplyStep(name, "unchanged");
         if (IsPermissionOrNoTool(check)) return Unchecked(name, check, execute);
@@ -386,7 +432,15 @@ public sealed class ZonePolicyApplier(IZoneHost host, string resolverConfigPath 
         else if (!execute) steps.Add(new ZoneApplyStep(configName, "would-write"));
         else
         {
-            WriteAtomically(resolverConfigPath, config);
+            try
+            {
+                WriteAtomically(resolverConfigPath, config);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                steps.Add(new ZoneApplyStep(configName, "failed", exception.Message));
+                return steps;
+            }
             steps.Add(new ZoneApplyStep(configName, "written"));
         }
 
@@ -451,18 +505,23 @@ public sealed class ZonePolicyApplier(IZoneHost host, string resolverConfigPath 
     internal static string? NetworkConflict(ZoneNetworkSpec network, string inspected)
     {
         var parts = inspected.Split('|');
-        if (parts.Length != 5) return $"unexpected inspect output '{inspected}'";
+        if (parts.Length != 6) return $"unexpected inspect output '{inspected}'";
         if (parts[0] != "bridge") return $"driver is {parts[0]}, not bridge";
         var subnets = parts[1].Split(',', StringSplitOptions.RemoveEmptyEntries);
         if (subnets is not [var subnet] || subnet != network.Subnet)
             return $"subnet is {(subnets.Length == 0 ? "unset" : string.Join(' ', subnets))}, not {network.Subnet}";
-        if (parts[2] != network.Bridge) return $"bridge is {Shown(parts[2])}, not {network.Bridge}";
+        // The resolver listens on, and the rules open port 53 of, the gateway.
+        var gateway = ZonePolicyParser.GatewayOf(network.Subnet);
+        var gateways = parts[2].Split(',', StringSplitOptions.RemoveEmptyEntries);
+        if (gateways is not [var actualGateway] || actualGateway != gateway)
+            return $"gateway is {(gateways.Length == 0 ? "unset" : string.Join(' ', gateways))}, not {gateway}";
+        if (parts[3] != network.Bridge) return $"bridge is {Shown(parts[3])}, not {network.Bridge}";
         var icc = network.InterContainer ? "true" : "false";
         // Docker leaves the option unset for its default (enabled).
-        var actualIcc = parts[3] is "" or "<no value>" ? "true" : parts[3];
+        var actualIcc = parts[4] is "" or "<no value>" ? "true" : parts[4];
         if (actualIcc != icc) return $"inter-container traffic is {actualIcc}, not {icc}";
         // The zone rules and the resolver cover IPv4 only.
-        if (parts[4] != "false") return $"IPv6 is {(parts[4] == "true" ? "enabled" : Shown(parts[4]))}, not disabled";
+        if (parts[5] != "false") return $"IPv6 is {(parts[5] == "true" ? "enabled" : Shown(parts[5]))}, not disabled";
         return null;
     }
 

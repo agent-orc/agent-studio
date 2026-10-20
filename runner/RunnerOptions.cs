@@ -348,14 +348,23 @@ public sealed class RunnerOptions
     /// </summary>
     public bool HoldAdmission { get; init; }
 
+    /// <summary>
+    /// The environment <see cref="Env"/> reads instead of the process
+    /// environment while <see cref="Parse(string[], Func{string, string?})"/> runs.
+    /// </summary>
+    private static readonly AsyncLocal<Func<string, string?>?> InjectedEnvironment = new();
+
+    private static string? Variable(string name)
+        => InjectedEnvironment.Value is { } environment ? environment(name) : Environment.GetEnvironmentVariable(name);
+
     public static string Env(string name, string fallback = "")
     {
-        if (Environment.GetEnvironmentVariable(name) is { Length: > 0 } value)
+        if (Variable(name) is { Length: > 0 } value)
             return value;
 
         const string bootstrapPrefix = "RUNNER_";
         if (name.StartsWith(bootstrapPrefix, StringComparison.Ordinal)
-            && Environment.GetEnvironmentVariable($"AGENT_HOST_{name[bootstrapPrefix.Length..]}") is { Length: > 0 } alias)
+            && Variable($"AGENT_HOST_{name[bootstrapPrefix.Length..]}") is { Length: > 0 } alias)
             return alias;
 
         return fallback;
@@ -387,7 +396,7 @@ public sealed class RunnerOptions
 
     public static double EnvDouble(string name, double fallback)
         => double.TryParse(
-               Environment.GetEnvironmentVariable(name),
+               Variable(name),
                NumberStyles.Float,
                CultureInfo.InvariantCulture,
                out var value)
@@ -400,6 +409,25 @@ public sealed class RunnerOptions
     /// <c>--flag</c> command-line overrides. The single positional argument (if any)
     /// is the task key. Returns the parsed task key alongside the options.
     /// </summary>
+    /// <summary>
+    /// <see cref="Parse(string[])"/> against <paramref name="environment"/>
+    /// instead of the process environment, so a test sees no host variable.
+    /// </summary>
+    public static (RunnerOptions Options, string? TaskKey, bool Once, bool Help) Parse(
+        string[] args, Func<string, string?> environment)
+    {
+        var previous = InjectedEnvironment.Value;
+        InjectedEnvironment.Value = environment;
+        try
+        {
+            return Parse(args);
+        }
+        finally
+        {
+            InjectedEnvironment.Value = previous;
+        }
+    }
+
     public static (RunnerOptions Options, string? TaskKey, bool Once, bool Help) Parse(string[] args)
     {
         var overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

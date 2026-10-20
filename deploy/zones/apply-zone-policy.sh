@@ -18,6 +18,9 @@
 # (override with --policy or ZONE_POLICY_FILE). AGENT_ZONES=work limits a work
 # host to its zone. The agent-host binary is AGENT_HOST_BIN, else the
 # installed /opt/agent-host/current/agent-host, else agent-host on PATH.
+# apply, verify and remove hold an exclusive flock on ZONE_POLICY_LOCK
+# (default /run/lock/agent-zone-policy.lock), so the timer's apply and an
+# operator's run never interleave; the lock is released when agent-host exits.
 # See docs/operations/setup/zone-network-policy.md.
 set -eu
 
@@ -74,6 +77,16 @@ if [ "$verb" != remove ] && [ "$has_policy" = false ]; then
 fi
 if [ "$verb" != remove ] && [ "$has_zones" = false ] && [ -n "${AGENT_ZONES:-}" ]; then
     set -- --zones "$AGENT_ZONES" "$@"
+fi
+
+if [ "$verb" != render ]; then
+    lock=${ZONE_POLICY_LOCK:-/run/lock/agent-zone-policy.lock}
+    command -v flock >/dev/null 2>&1 || die "flock not found; install util-linux."
+    ( : >>"$lock" ) 2>/dev/null || die "cannot open the lock file $lock; set ZONE_POLICY_LOCK."
+    # fd 9 stays open across exec, so agent-host holds the lock until it exits.
+    exec 9>>"$lock"
+    flock -w "${ZONE_POLICY_LOCK_WAIT:-600}" 9 \
+        || die "another zone-policy run holds $lock; waited ${ZONE_POLICY_LOCK_WAIT:-600}s."
 fi
 
 exec "$agent_host" zone-policy "$verb" "$@"

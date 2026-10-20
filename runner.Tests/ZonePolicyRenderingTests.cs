@@ -233,7 +233,18 @@ public sealed class ZonePolicyRenderingTests
         Assert.DoesNotContain("interface=br-run-default", lines);
         Assert.Contains("except-interface=lo", lines);
         Assert.Contains("bind-dynamic", lines);
-        Assert.Equal(["server=192.0.2.53", "server=192.0.2.54"], lines.Where(line => line.StartsWith("server=", StringComparison.Ordinal)));
+        Assert.Contains("pid-file=/run/agent-zone-dns.pid", lines);
+        // dnsmasq fills a set only on an upstream reply, so its cache holds an
+        // answer for at most half the set timeout.
+        Assert.Contains("max-cache-ttl=43200", lines);
+        // Only the allowed names are forwarded, each to every upstream; no general server= line.
+        var servers = lines.Where(line => line.StartsWith("server=", StringComparison.Ordinal)).ToList();
+        Assert.All(servers, line => Assert.StartsWith("server=/", line));
+        Assert.Contains("server=/github.com/192.0.2.53", servers);
+        Assert.Contains("server=/github.com/192.0.2.54", servers);
+        var names = lines.Where(line => line.StartsWith("ipset=/", StringComparison.Ordinal)).Select(line => line.Split('/')[1]).ToList();
+        Assert.Equal(names.SelectMany(name => new[] { $"server=/{name}/192.0.2.53", $"server=/{name}/192.0.2.54" }).Order(StringComparer.Ordinal),
+            servers.Order(StringComparer.Ordinal));
         Assert.Contains("ipset=/github.com/agent-zone-git-hosts", lines);
         Assert.Contains("ipset=/registry.npmjs.org/agent-zone-package-registries", lines);
         Assert.Contains("ipset=/api.anthropic.com/agent-zone-model-providers", lines);
@@ -242,6 +253,49 @@ public sealed class ZonePolicyRenderingTests
         Assert.Null(runOnly.Resolver);
         Assert.Null(ZonePolicyRules.Render(runOnly).ResolverConfig);
         Assert.Empty(ZonePolicyRules.Render(runOnly).IpSets);
+    }
+
+    [Fact]
+    public async Task The_zone_resolver_refuses_a_name_the_work_zone_does_not_allow_without_forwarding_it()
+    {
+        var resolver = new FakeZoneResolver();
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 9, 30, 0, TimeSpan.Zero));
+        var rules = ZonePolicyRules.Render(await ZonePolicyTestFiles.ResolveAsync(ZonePolicyTestFiles.CheckedInPolicy, resolver));
+        var sets = new FakeIpSets(clock);
+        foreach (var set in rules.IpSets) sets.Create(set.Name, set.TimeoutSeconds);
+        var dnsmasq = new FakeZoneDnsmasq(rules.ResolverConfig!, resolver, sets);
+        resolver.Queries.Clear();
+
+        // An unlisted name, a lookalike and a data channel through a TXT-style label are all REFUSED.
+        foreach (var name in new[] { "example.com", "notgithub.com", "c2VjcmV0.attacker.example" })
+        {
+            var refused = Assert.Throws<System.Net.Sockets.SocketException>(() => dnsmasq.Resolve(name));
+            Assert.Equal(System.Net.Sockets.SocketError.NoRecovery, refused.SocketErrorCode);
+        }
+        Assert.Empty(resolver.Queries);
+
+        // An allowed name and its subdomain go upstream and fill the set.
+        dnsmasq.Resolve("github.com");
+        dnsmasq.Resolve("eu.api.github.com");
+        Assert.Equal(["github.com", "eu.api.github.com"], resolver.Queries);
+        Assert.True(sets.Contains("agent-zone-git-hosts", resolver.Resolve("github.com")[0]));
+
+        // A general server= line, as the first cut rendered it, would forward everything.
+        var open = new FakeZoneDnsmasq(rules.ResolverConfig! + "server=192.0.2.53\n", resolver, sets);
+        open.Resolve("example.com");
+        Assert.Contains("example.com", resolver.Queries);
+    }
+
+    [Fact]
+    public async Task The_cache_ttl_follows_the_set_timeout()
+    {
+        var json = Policy();
+        json["resolver"]!["setTimeoutSeconds"] = 3601;
+
+        var rules = ZonePolicyRules.Render(await ZonePolicyTestFiles.ResolveAsync(json.ToJsonString()));
+
+        Assert.Contains("\nmax-cache-ttl=1800\n", rules.ResolverConfig);
+        Assert.All(rules.IpSets, set => Assert.Equal(3601, set.TimeoutSeconds));
     }
 
     [Fact]
@@ -293,10 +347,35 @@ public sealed class ZonePolicyRenderingTests
         Assert.Contains(error.Errors, item => item.Contains("resolver: upstream '2001:db8::53' is not an IPv4 address", StringComparison.Ordinal));
         Assert.Contains(error.Errors, item => item.Contains("resolver: upstream '192.0.2.0/24' is not an IPv4 address", StringComparison.Ordinal));
         Assert.Contains(error.Errors, item => item.Contains("'2001:db8::80' is not an IPv4 address", StringComparison.Ordinal));
-        Assert.Contains(error.Errors, item => item.Contains("'task-server.example.internal' does not resolve", StringComparison.Ordinal));
+        // A name that does not resolve is no configuration error (see below).
+        Assert.DoesNotContain(error.Errors, item => item.Contains("task-server.example.internal", StringComparison.Ordinal));
         Assert.DoesNotContain(error.Errors, item => item.Contains("registry.npmjs.org", StringComparison.Ordinal));
         Assert.Contains(error.Errors, item => item.Contains("'10.20.0.1/16' is not a canonical IPv4 CIDR", StringComparison.Ordinal));
         Assert.Contains(error.Errors, item => item.Contains("'vault\\\"evil' is neither an IPv4 address nor a DNS name", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Names_that_do_not_resolve_leave_out_their_denial_or_probe_but_keep_every_other_rule()
+    {
+        var resolver = new FakeZoneResolver();
+        resolver.Missing.Add("task-server.example.internal");
+        resolver.Missing.Add("example.com");
+
+        var policy = await ZonePolicyTestFiles.ResolveAsync(ZonePolicyTestFiles.CheckedInPolicy, resolver);
+        var rules = ZonePolicyRules.Render(policy);
+
+        var problem = Assert.Single(policy.Problems!);
+        Assert.Equal("control-plane", problem.Destination);
+        Assert.Equal("destination control-plane: 'task-server.example.internal' does not resolve (HostNotFound)", problem.Detail);
+        Assert.DoesNotContain("deny control-plane", rules.Iptables);
+        Assert.Contains("-A AGENT-ZONE-FWD -i br-run-default -m conntrack --ctorigdst 192.0.2.80/32 ", rules.Iptables);
+        Assert.Contains("ipset=/task-server.example.internal/agent-zone-control-plane\n", rules.ResolverConfig);
+        var work = policy.Zones.Single(zone => zone.Name == "work");
+        var unresolved = Assert.Single(work.Probes, probe => probe.Unresolved is not null);
+        Assert.Equal(("example.com", "example.com", 80), (unresolved.Host, unresolved.Address, unresolved.Port));
+        Assert.Equal("zone work: blocked probe host 'example.com' does not resolve (HostNotFound)", unresolved.Unresolved);
+        Assert.Empty(policy.Zones.Single(zone => zone.Name == "run").Probes
+            .Where(probe => probe is { Expectation: ZoneProbeExpectations.Blocked, Host: "control-plane" }));
     }
 
     [Theory]
@@ -328,6 +407,12 @@ public sealed class ZonePolicyRenderingTests
         { "$.zones[1].networks[0].tenant", "null", "run network agent-run-default must name its tenant" },
         { "$.zones[1].networks[0].subnet", "\"172.30.0.128/25\"", "overlaps agent-work" },
         { "$.zones[1].networks[0].subnet", "\"172.31.0.1/24\"", "is not an IPv4 CIDR" },
+        { "$.zones[1].networks[0].subnet", "\"172.31.0.0/024\"", "subnet '172.31.0.0/024' is not in canonical form; write 172.31.0.0/24" },
+        { "$.version", "\"2026-10-20.3\\n-A INPUT -j ACCEPT\"", "version 2026-10-20.3\\n-A INPUT -j ACCEPT must match ^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$" },
+        { "$.version", "\"2026-10-20\\\" x\"", "version 2026-10-20\\\" x must match" },
+        { "$.version", "\".hidden\"", "version .hidden must match" },
+        { "$.verification.probeImage", "\"-v/:/host@sha256:a54fb4422b18f05dd3107c36f39d67b26334fda7ec89f4126052b45e228e2f15\"",
+            "verification.probeImage must not start with '-'" },
         { "$.zones[1].networks[0].bridge", "\"br-agent-run-default\"", "at most 15 characters" },
         { "$.zones[1].networks[0].bridge", "\"br-agent-work\"", "must be a unique interface name" },
         { "$.zones[0].verify.blocked", "[]", "at least one reachable and one blocked probe" },

@@ -78,16 +78,21 @@ public sealed class ZonePolicyCapabilityTests : IDisposable
             item => item.Key == CapabilityProtocol.ZonePolicy);
     }
 
-    [Fact]
-    public void Only_an_explicit_state_path_opts_a_daemon_in()
+    [Theory]
+    [InlineData(null, null, "")]
+    [InlineData("/var/lib/agent-studio/zone-policy/applied.json", null, "/var/lib/agent-studio/zone-policy/applied.json")]
+    [InlineData(null, "/srv/zone/applied.json", "/srv/zone/applied.json")]
+    public void Only_an_explicit_state_path_opts_a_daemon_in(string? runnerVariable, string? hostVariable, string expected)
     {
-        if (Environment.GetEnvironmentVariable("RUNNER_ZONE_POLICY_STATE") is { Length: > 0 }
-            || Environment.GetEnvironmentVariable("AGENT_HOST_ZONE_POLICY_STATE") is { Length: > 0 })
-            return;
+        var environment = new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["RUNNER_ZONE_POLICY_STATE"] = runnerVariable,
+            ["AGENT_HOST_ZONE_POLICY_STATE"] = hostVariable,
+        };
 
-        var (options, _, _, _) = RunnerOptions.Parse(["AGT-3231"]);
+        var (options, _, _, _) = RunnerOptions.Parse(["AGT-3231"], name => environment.GetValueOrDefault(name));
 
-        Assert.Equal("", options.ZonePolicyStatePath);
+        Assert.Equal(expected, options.ZonePolicyStatePath);
     }
 
     [Fact]
@@ -136,6 +141,21 @@ public sealed class ZonePolicyCapabilityTests : IDisposable
 
         Assert.Equal("unavailable", capability.Status);
         Assert.Equal("the zone rules were removed at 2026-10-20T09:31:00Z", capability.Detail);
+    }
+
+    [Fact]
+    public void A_removal_that_stopped_partway_reports_unavailable()
+    {
+        var capability = Describe(State() with
+        {
+            RemovedAt = VerifiedAt.AddMinutes(1),
+            RemovalProblem = "failed at iptables chain AGENT-ZONE-IN: Device or resource busy",
+        });
+
+        Assert.Equal("unavailable", capability.Status);
+        Assert.Equal("a removal of the zone rules stopped partway at 2026-10-20T09:31:00Z "
+                     + "(failed at iptables chain AGENT-ZONE-IN: Device or resource busy); "
+                     + "rerun zone-policy remove --execute or apply --execute", capability.Detail);
     }
 
     [Fact]

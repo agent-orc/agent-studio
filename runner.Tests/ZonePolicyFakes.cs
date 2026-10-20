@@ -17,12 +17,14 @@ internal sealed class FakeZoneResolver : IZoneAddressResolver
     public Dictionary<string, string[]> Overrides { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, Queue<string[]>> Rotating { get; } = new(StringComparer.Ordinal);
     public HashSet<string> Missing { get; } = new(StringComparer.Ordinal);
+    public List<string> Queries { get; } = [];
 
     public Task<IReadOnlyList<IPAddress>> ResolveAsync(string host, CancellationToken ct)
         => Task.FromResult(Resolve(host));
 
     public IReadOnlyList<IPAddress> Resolve(string host)
     {
+        Queries.Add(host);
         if (Missing.Contains(host)) throw new SocketException((int)SocketError.HostNotFound);
         if (Rotating.TryGetValue(host, out var answers) && answers.Count > 0)
             return answers.Dequeue().Select(IPAddress.Parse).ToList();
@@ -60,12 +62,17 @@ internal sealed class FakeIpSets(TimeProvider clock)
 
 /// <summary>
 /// The zone resolver as dnsmasq runs it from the rendered configuration:
-/// forward to the upstream, then add every IPv4 answer for a configured name
-/// or one of its subdomains to that name's ipsets before answering.
+/// forward a name only when a <c>server=/domain/upstream</c> line covers it
+/// (otherwise answer REFUSED, here a <see cref="SocketException"/> with
+/// <see cref="SocketError.NoRecovery"/>), then add every IPv4 answer for a
+/// configured name or one of its subdomains to that name's ipsets before
+/// answering. A general <c>server=</c> line would forward every name.
 /// </summary>
 internal sealed class FakeZoneDnsmasq
 {
     private readonly List<(string Domain, string[] Sets)> _ipsets = [];
+    private readonly HashSet<string> _forwarded = new(StringComparer.Ordinal);
+    private readonly bool _forwardsAll;
     private readonly FakeZoneResolver _upstream;
     private readonly FakeIpSets _sets;
 
@@ -73,18 +80,30 @@ internal sealed class FakeZoneDnsmasq
     {
         _upstream = upstream;
         _sets = sets;
-        foreach (var line in config.Split('\n').Where(line => line.StartsWith("ipset=/", StringComparison.Ordinal)))
+        foreach (var line in config.Split('\n'))
         {
-            var parts = line["ipset=/".Length..].Split('/');
-            _ipsets.Add((parts[0], parts[1].Split(',')));
+            if (line.StartsWith("ipset=/", StringComparison.Ordinal))
+            {
+                var parts = line["ipset=/".Length..].Split('/');
+                _ipsets.Add((parts[0], parts[1].Split(',')));
+            }
+            else if (line.StartsWith("server=/", StringComparison.Ordinal))
+                _forwarded.Add(line["server=/".Length..].Split('/')[0]);
+            else if (line.StartsWith("server=", StringComparison.Ordinal))
+                _forwardsAll = true;
         }
     }
 
+    private static bool Covers(string domain, string name)
+        => name == domain || name.EndsWith("." + domain, StringComparison.Ordinal);
+
     public IReadOnlyList<IPAddress> Resolve(string name)
     {
+        if (!_forwardsAll && !_forwarded.Any(domain => Covers(domain, name)))
+            throw new SocketException((int)SocketError.NoRecovery);
         var answers = _upstream.Resolve(name);
         var sets = _ipsets
-            .Where(item => name == item.Domain || name.EndsWith("." + item.Domain, StringComparison.Ordinal))
+            .Where(item => Covers(item.Domain, name))
             .OrderByDescending(item => item.Domain.Length)
             .Select(item => item.Sets)
             .FirstOrDefault();
@@ -304,6 +323,13 @@ internal sealed class FakeZoneHost(TimeProvider? clock = null) : IZoneHost
     public bool DockerUp { get; set; } = true;
     public bool Root { get; set; } = true;
     public bool Ip6DockerUser { get; set; } = true;
+
+    /// <summary>False for a kernel without IPv6: no /proc/net/if_inet6.</summary>
+    public bool Ipv6Kernel { get; set; } = true;
+
+    /// <summary>ip6tables reports that the IPv6 filter table is not there.</summary>
+    public bool Ip6TablesUnsupported { get; set; }
+    public bool ResolverStartFails { get; set; }
     public Dictionary<string, string> Networks { get; } = new(StringComparer.Ordinal);
     public HashSet<string> Jumps { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, string> Loaded { get; } = new(StringComparer.Ordinal);
@@ -311,6 +337,9 @@ internal sealed class FakeZoneHost(TimeProvider? clock = null) : IZoneHost
     public bool ResolverActive { get; set; }
     public int ResolverStarts { get; private set; }
     public List<string> Commands { get; } = [];
+
+    /// <summary>Commands that fail with "simulated failure".</summary>
+    public HashSet<string> Failing { get; } = new(StringComparer.Ordinal);
     private readonly HashSet<string> _deleted = new(StringComparer.Ordinal);
 
     /// <summary>The loaded IPv4 payload, or null without the zone chains.</summary>
@@ -337,8 +366,12 @@ internal sealed class FakeZoneHost(TimeProvider? clock = null) : IZoneHost
     {
         var command = $"{executable} {string.Join(' ', args)}";
         Commands.Add(command);
-        return Task.FromResult(Answer(executable, args, standardInput));
+        return Task.FromResult(Failing.Contains(command)
+            ? new ZoneCommandResult(1, "", "simulated failure")
+            : Answer(executable, args, standardInput));
     }
+
+    public bool PathExists(string path) => path != ZonePolicyApplier.Ipv6InterfacesPath || Ipv6Kernel;
 
     private ZoneCommandResult Answer(string executable, IReadOnlyList<string> args, string? standardInput)
     {
@@ -360,11 +393,16 @@ internal sealed class FakeZoneHost(TimeProvider? clock = null) : IZoneHost
             return args switch
             {
                 ["is-active", "--quiet", _] => new ZoneCommandResult(ResolverActive ? 0 : 3, "", ""),
+                ["start" or "restart", _] when Root && ResolverStartFails => new ZoneCommandResult(1, "",
+                    "Job for agent-zone-dns.service failed because the control process exited with error code."),
                 ["start" or "restart", _] when Root => Start(),
                 _ => new ZoneCommandResult(1, "", "Failed to start agent-zone-dns.service: Access denied"),
             };
         }
         if (!Root) return new ZoneCommandResult(4, "", $"{executable} v1.8.10 (nf_tables): Permission denied (you must be root)");
+        if (executable.StartsWith("ip6tables", StringComparison.Ordinal) && (Ip6TablesUnsupported || !Ipv6Kernel))
+            return new ZoneCommandResult(3, "", $"{executable} v1.8.10 (legacy): can't initialize ip6tables table `filter': "
+                                                + "Address family not supported by protocol");
         if (executable == "ipset")
         {
             return args switch
@@ -437,7 +475,8 @@ internal sealed class FakeZoneHost(TimeProvider? clock = null) : IZoneHost
     {
         string Option(string prefix) => args.First(arg => arg.StartsWith(prefix, StringComparison.Ordinal))[prefix.Length..];
         var subnet = args[args.ToList().IndexOf("--subnet") + 1];
-        Networks[args[^1]] = $"bridge|{subnet},|{Option("com.docker.network.bridge.name=")}|"
+        var gateway = args[args.ToList().IndexOf("--gateway") + 1];
+        Networks[args[^1]] = $"bridge|{subnet},|{gateway},|{Option("com.docker.network.bridge.name=")}|"
                              + Option("com.docker.network.bridge.enable_icc=") + "|"
                              + (args.Contains("--ipv6=false") ? "false" : "true");
         return new ZoneCommandResult(0, "network-id\n", "");

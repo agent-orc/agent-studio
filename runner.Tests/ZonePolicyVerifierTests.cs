@@ -97,7 +97,8 @@ public sealed class ZonePolicyVerifierTests
 
         var github = Assert.Single(report.Checks, check => check.Target == "github.com:443");
         Assert.False(github.Passed);
-        Assert.Equal("rejected", github.Observed);
+        // The zone resolver no longer forwards the name, so it does not even resolve.
+        Assert.Equal("unresolved", github.Observed);
         Assert.False(report.Passed);
     }
 
@@ -123,11 +124,11 @@ public sealed class ZonePolicyVerifierTests
         Assert.Equal(ZoneProbeOutcome.Connected, firewall.Connect("br-agent-work", second, 443));
         Assert.Equal(ZoneProbeOutcome.Rejected, firewall.Connect("br-agent-work", first, 80));
         Assert.Equal(ZoneProbeOutcome.Rejected, firewall.Connect("br-agent-work", System.Net.IPAddress.Parse("203.0.113.30"), 443));
-        // An answer for a subdomain lands in the same set; a lookalike does not.
+        // An answer for a subdomain lands in the same set; a lookalike is refused.
         resolver.Overrides["eu.api.github.com"] = ["203.0.113.40"];
         resolver.Overrides["notgithub.com"] = ["203.0.113.50"];
         dnsmasq.Resolve("eu.api.github.com");
-        dnsmasq.Resolve("notgithub.com");
+        Assert.Throws<System.Net.Sockets.SocketException>(() => dnsmasq.Resolve("notgithub.com"));
         Assert.Equal(ZoneProbeOutcome.Connected, firewall.Connect("br-agent-work", System.Net.IPAddress.Parse("203.0.113.40"), 443));
         Assert.Equal(ZoneProbeOutcome.Rejected, firewall.Connect("br-agent-work", System.Net.IPAddress.Parse("203.0.113.50"), 443));
 
@@ -184,6 +185,41 @@ public sealed class ZonePolicyVerifierTests
         Assert.Equal("setup", setup.Kind);
         Assert.False(report.Passed);
         Assert.Empty(network.Connections);
+    }
+
+    [Fact]
+    public async Task Unresolved_names_fail_their_checks_without_a_probe()
+    {
+        var resolver = new FakeZoneResolver();
+        resolver.Missing.Add("example.com");
+        resolver.Missing.Add("task-server.example.internal");
+        var policy = await ZonePolicyTestFiles.ResolveAsync(ZonePolicyTestFiles.CheckedInPolicy, resolver);
+        var network = Network(ZonePolicyRules.Render(policy), resolver);
+
+        var report = await new ZonePolicyVerifier(network, _clock).VerifyAsync(policy, CancellationToken.None);
+
+        Assert.False(report.Passed);
+        // The denial without a rule comes first, so the capability names it.
+        var setup = report.Checks[0];
+        Assert.Equal(("setup", "deny control-plane", "resolved", "unresolved", false),
+            (setup.Kind, setup.Target, setup.Expected, setup.Observed, setup.Passed));
+        var blocked = Assert.Single(report.Checks, check => check is { Kind: "blocked", Target: "example.com:80" });
+        Assert.Equal("unresolved", blocked.Observed);
+        Assert.False(blocked.Passed);
+        Assert.DoesNotContain(network.Connections, connection => connection.Port == 80);
+        Assert.DoesNotContain(report.Checks, check => check is { Kind: "control", Target: "example.com:80" });
+    }
+
+    [Fact]
+    public async Task A_name_the_zone_resolver_refuses_is_unresolved_in_the_work_zone()
+    {
+        var (_, rules, resolver) = await CheckedInAsync();
+        var network = Network(rules, resolver);
+
+        var observation = await network.ConnectAsync("agent-work", "172.30.0.1", "example.com", 443, CancellationToken.None);
+
+        Assert.Equal(ZoneProbeOutcome.Unresolved, observation.Outcome);
+        Assert.False(ZonePolicyVerifier.Satisfies(ZoneProbeExpectations.Reachable, observation.Outcome));
     }
 
     [Fact]
@@ -307,5 +343,7 @@ public sealed class ZonePolicyVerifierTests
                 ? new ZoneCommandResult(0, "review-1\t\ngate-1\t0.0.0.0:9000->9000/tcp\n", "")
                 : new ZoneCommandResult(0, "", ""));
         }
+
+        public bool PathExists(string path) => true;
     }
 }

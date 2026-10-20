@@ -8,11 +8,14 @@ public sealed record ZoneCommandResult(int ExitCode, string Output, string Error
     public bool Succeeded => ExitCode == 0;
 }
 
-/// <summary>The only way zone-policy code touches the host: docker and iptables commands.</summary>
+/// <summary>The only way zone-policy code touches the host: docker and iptables commands, and kernel files.</summary>
 public interface IZoneHost
 {
     Task<ZoneCommandResult> RunAsync(
         string executable, IReadOnlyList<string> args, string? standardInput, CancellationToken ct);
+
+    /// <summary>Whether a host path such as <c>/proc/net/if_inet6</c> exists.</summary>
+    bool PathExists(string path);
 }
 
 /// <summary>Runs host commands as child processes with a bounded wait.</summary>
@@ -26,6 +29,8 @@ public sealed class ProcessZoneHost(TimeSpan timeout) : IZoneHost
     /// is negative so it never reads as a probe's own connect timeout.
     /// </summary>
     public const int Overran = -1;
+
+    public bool PathExists(string path) => File.Exists(path) || Directory.Exists(path);
 
     public async Task<ZoneCommandResult> RunAsync(
         string executable, IReadOnlyList<string> args, string? standardInput, CancellationToken ct)
