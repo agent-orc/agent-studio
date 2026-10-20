@@ -156,7 +156,7 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
         Assert.Equal(project, audit.ProjectId);
         Assert.Equal(owner.User.Id, audit.ActorId);
         Assert.Equal(owner.User.Username, audit.Actor);
-        Assert.Equal(previousRepositoryUrl ?? string.Empty, audit.PreviousRepositoryUrl);
+        Assert.Equal(previousRepositoryUrl, audit.PreviousRepositoryUrl);
         Assert.Equal("https://github.com/example/repo.git", audit.RepositoryUrl);
         Assert.Equal(_clock.GetUtcNow().UtcDateTime, audit.Timestamp);
 
