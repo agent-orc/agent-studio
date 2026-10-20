@@ -49,8 +49,7 @@ public static class RemoteDispatchEligibility
                && !references.EvaluateWaitsOn(task).Blocked;
     }
 
-    public static bool IsReadOnlyRefused(TaskInfo task, bool runnerReadOnly) =>
-        runnerReadOnly && !TaskKinds.IsEpic(task.Kind);
+    public static bool IsReadOnlyRefused(TaskInfo task, bool runnerReadOnly) => runnerReadOnly;
 
     public static bool IsClaimableReady(
         TaskInfo task,

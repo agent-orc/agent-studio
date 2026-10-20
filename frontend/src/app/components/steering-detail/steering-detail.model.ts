@@ -1,6 +1,6 @@
 /**
  * Central model + projection for one orchestrator *steering step* (ASS-784 /
- * ASS-771 / Epic ASS-776).
+ * ASS-771 / ASS-776).
  *
  * A steering step is a single completion-loop decision the orchestrator drove:
  * it re-issued the run, escalated to a human, accepted the work, or handed the

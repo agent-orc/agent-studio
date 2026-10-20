@@ -7,7 +7,7 @@ namespace AgentStudio.Tests;
 /// <summary>
 /// ASS-1732 "always-worktree" invariant as pure logic (<see cref="WorktreeRunPolicy"/>):
 /// every coding run is isolated in a task worktree - fresh pickup, reissue, resume,
-/// or crash-recovery alike - while read-only (planning / research) and epic-planning
+/// or crash-recovery alike - while read-only (planning / research)
 /// runs may run in the shared main checkout. The guard refuses a coding run that
 /// resolved to the main checkout, and the resume gate forbids reusing a CLI session
 /// born in a different working directory.
@@ -62,21 +62,18 @@ public sealed class WorktreeRunPolicyTests
     [InlineData(null)]          // unknown/empty -> coerced to coding
     [InlineData("something-else")]
     public void RequiresWorktree_CodingModes_True(string? mode)
-        => Assert.True(WorktreeRunPolicy.RequiresWorktree(mode, isEpicPlanningRun: false));
+        => Assert.True(WorktreeRunPolicy.RequiresWorktree(mode));
 
     [Theory]
     [InlineData(TaskModes.Planning)]
     [InlineData(TaskModes.Research)]
     public void RequiresWorktree_ReadOnlyModes_False(string mode)
-        => Assert.False(WorktreeRunPolicy.RequiresWorktree(mode, isEpicPlanningRun: false));
+        => Assert.False(WorktreeRunPolicy.RequiresWorktree(mode));
 
     [Fact]
     public void RequiresWorktree_ConceptMode_True()
-        => Assert.True(WorktreeRunPolicy.RequiresWorktree(TaskModes.Concept, isEpicPlanningRun: false));
+        => Assert.True(WorktreeRunPolicy.RequiresWorktree(TaskModes.Concept));
 
-    [Fact]
-    public void RequiresWorktree_EpicPlanningRun_False_EvenForCodingMode()
-        => Assert.False(WorktreeRunPolicy.RequiresWorktree(TaskModes.Coding, isEpicPlanningRun: true));
 
     // --- IsMainCheckoutViolation -------------------------------------------
 

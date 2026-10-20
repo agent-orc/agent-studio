@@ -170,7 +170,7 @@ public class PhaseAwareWatchdogTests
     [Fact]
     public void TurnFinishedPhases_HardReap_KillAt600s()
     {
-        // ASS-757 / Epic ASS-776: a process that emits its terminal turn
+        // ASS-757 / ASS-776: a process that emits its terminal turn
         // frame (TurnCompleted / TurnFailed) but never exits used to pin the
         // coding seat forever under the old 9999/9999s budget. These phases
         // now carry a bounded hard-reap budget (120s, 600s): an early

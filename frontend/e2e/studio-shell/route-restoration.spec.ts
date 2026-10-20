@@ -7,8 +7,6 @@ const PROJECT = 'Route Project';
 const PROJECT_SLUG = 'route-project';
 const TASK_REFERENCE = 'AGT-2291';
 const TASK_ID = 'route-restoration-task';
-const EPIC_REFERENCE = 'AGT-2200';
-const EPIC_ID = 'route-restoration-epic';
 const WATCH_PATH = '/tmp/route-project';
 const TASK_KEY = `${WATCH_PATH}::${TASK_ID}`;
 const WORKBENCH_KEY = 'ROU-W4';
@@ -54,21 +52,6 @@ const TASK_DETAIL = {
   log: [],
   summaryState: null,
   reviewEvidence: [],
-};
-
-const EPIC_DETAIL = {
-  ...TASK_DETAIL,
-  info: {
-    ...TASK_DETAIL.info,
-    id: EPIC_ID,
-    key: EPIC_REFERENCE,
-    displayKey: EPIC_REFERENCE,
-    taskKey: `${WATCH_PATH}::${EPIC_ID}`,
-    title: 'Route restoration epic',
-    kind: 'epic',
-    state: '1-backlog',
-    folderPath: `${WATCH_PATH}/1-backlog/${EPIC_ID}`,
-  },
 };
 
 function evidencePath(testInfo: TestInfo, name: string): string {
@@ -162,22 +145,6 @@ async function stubRouteData(page: Page): Promise<void> {
     }
     if (url.pathname === '/api/tasks/archive') return json({ items: [], total: 0 });
     if (url.pathname === '/api/v1/studio/board') return json(EMPTY_GROUPED);
-    if (url.pathname === '/api/epics') return json([]);
-    if (url.pathname === '/api/epics/completed/count') return json({ count: 0 });
-    if (url.pathname === `/api/epics/${EPIC_ID}`) {
-      return json({
-        id: EPIC_ID,
-        title: 'Route restoration epic',
-        projectName: PROJECT,
-        watchPath: WATCH_PATH,
-        state: '1-backlog',
-        subTaskTotal: 0,
-        completed: 0,
-        inProgress: 0,
-        open: 0,
-        subTasks: [],
-      });
-    }
     if (url.pathname === '/api/v1/studio/runner/status') return json({ projects: {} });
     if (url.pathname === '/api/pipeline/accepted-integration-alert') {
       return json({ active: false, items: [], generatedAtUtc: '2026-07-24T10:00:00Z' });
@@ -186,9 +153,6 @@ async function stubRouteData(page: Page): Promise<void> {
     const detailTaskId = /^\/api\/v1\/projects\/[^/]+\/tasks\/([^/]+)$/.exec(url.pathname)?.[1];
     if (detailTaskId === TASK_REFERENCE || detailTaskId === TASK_ID) {
       return json(TASK_DETAIL);
-    }
-    if (detailTaskId === EPIC_REFERENCE || detailTaskId === EPIC_ID) {
-      return json(EPIC_DETAIL);
     }
     if (url.pathname === '/api/tasks') return json([]);
     if (url.pathname.endsWith('/wiki/tree')) {
@@ -654,39 +618,7 @@ test.describe('Studio route restoration', () => {
     await expect(tabList.getByRole('tab')).toHaveCount(2);
     await expect(page.getByTestId('project-wiki-viewer-path')).toContainText('concepts/routing.md');
     await tabList.screenshot({ path: evidencePath(testInfo, 'wiki-tab-strip-after-middle-click.png') });
-  });
-
-  test('legacy Epics routes open the Dossier overview and survive reload', async ({ page }) => {
-    await page.goto('/#/epics', { waitUntil: 'commit' });
-    await expect(page.getByTestId('workbench-overview')).toBeVisible();
-    await expect(page.getByTestId('epic-overview-screen')).toHaveCount(0);
-    await expect.poll(() => new URL(page.url()).hash).toBe('#/workbenches');
-    await page.reload({ waitUntil: 'commit' });
-    await expect(page.getByTestId('workbench-overview')).toBeVisible();
-
-    await page.goto(`/#/projects/${PROJECT_SLUG}/epics`, { waitUntil: 'commit' });
-    await expect(page.getByTestId('workbench-overview')).toBeVisible();
-    await expect(page.getByTestId('workbench-overview-scope')).toHaveText(PROJECT);
-    await expect(page.getByTestId('epic-overview-screen')).toHaveCount(0);
-    await expect.poll(() => new URL(page.url()).hash).toBe(`#/projects/${PROJECT_SLUG}/workbenches`);
-    await expect(page.locator(`[data-testid="studio-tab-workbenches:${PROJECT}"]`)).toHaveCount(1);
-    await page.reload({ waitUntil: 'commit' });
-    await expect(page.getByTestId('workbench-overview-scope')).toHaveText(PROJECT);
-  });
-
-  test('Epic detail route restores the public reference and survives reload', async ({ page }) => {
-    await page.goto(`/#/epics/${EPIC_REFERENCE}`, { waitUntil: 'commit' });
-
-    await expect(page.getByTestId('epic-rollup-pane')).toBeVisible();
-    await expect(page.getByTestId('epic-title-text')).toContainText('Route restoration epic');
-    await expect.poll(() => new URL(page.url()).hash).toBe('#/epics/AGT-2200');
-
-    await page.reload({ waitUntil: 'commit' });
-    await expect(page.getByTestId('epic-rollup-pane')).toBeVisible();
-    await expect(page.getByTestId('error-dialog')).toHaveCount(0);
-  });
-
-  test('Workspace Settings uses one canonical route, mirrors section changes, and survives reload', async ({ page }, testInfo) => {
+  });  test('Workspace Settings uses one canonical route, mirrors section changes, and survives reload', async ({ page }, testInfo) => {
     await page.goto('/#/workspace/settings/task-server', { waitUntil: 'commit' });
 
     await expect(page.getByTestId('workspace-settings-inline')).toBeVisible();

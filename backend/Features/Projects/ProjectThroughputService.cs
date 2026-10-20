@@ -85,7 +85,6 @@ public sealed class ProjectThroughputService
 
         foreach (var task in tasks)
         {
-            if (string.Equals(task.Kind, TaskKinds.Epic, StringComparison.OrdinalIgnoreCase)) continue;
             if (!string.Equals(task.State, TaskStates.Completed, StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(task.State, TaskStates.Archive, StringComparison.OrdinalIgnoreCase))
                 continue;

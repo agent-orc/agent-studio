@@ -480,7 +480,6 @@ public static class CliEndpoints
         foreach (var settings in projectSettings.GetAll().Values)
         {
             Add(settings.OrchestratorModel, settings.OrchestratorThinkingLevel, null);
-            Add(settings.EpicPlanningModel, settings.EpicPlanningThinkingLevel, null);
             if (settings.PipelineSteps is not null)
                 foreach (var step in settings.PipelineSteps.Values)
                     Add(step.Model, step.ThinkingLevel, step.CliType);

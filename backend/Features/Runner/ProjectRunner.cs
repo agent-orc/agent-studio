@@ -2515,7 +2515,7 @@ public class ProjectRunner
         {
             var info = _scanner.FindJob(jobId, Entry.Path);
             if (info == null) return RunOutcome.Reject(new RunRejection(RunRejectReason.TaskNotFound, "Job not found"));
-            if (WorktreeRunPolicy.RequiresWorktree(info.Mode, EpicRunPolicy.IsPlanningRun(info.Kind, intent))
+            if (WorktreeRunPolicy.RequiresWorktree(info.Mode)
                 && _localCodingAdmission?.AllowsLocalCoding != true)
                 return RunOutcome.Reject(new RunRejection(
                     RunRejectReason.RemoteExecutionRequired,
@@ -2751,13 +2751,6 @@ public class ProjectRunner
 
             info = ApplyAutoModelMigration(info);
 
-            // Way 3 (non-deterministic half): an epic card runs a planning /
-            // decomposition step instead of a coding run. We keep the normal
-            // start lifecycle and only swap the prompt template (the agent
-            // authors a sub-task list) and, optionally, the planning model.
-            // A user continue on an epic is the user steering the plan, not a
-            // fresh decomposition, so it is left on the normal path.
-            var isEpicPlanningRun = EpicRunPolicy.IsPlanningRun(info.Kind, intent);
             ModelQualificationDecision? qualification = null;
             if (_modelQualification != null)
             {
@@ -2768,24 +2761,11 @@ public class ProjectRunner
             }
             var runModel = route?.Model ?? qualification?.SelectedModel ?? info.Model;
             var runThinkingLevel = route?.ThinkingLevel ?? qualification?.SelectedThinkingLevel ?? info.ThinkingLevel;
-            if (isEpicPlanningRun)
-            {
-                plan = plan with { PromptTemplate = RuntimePromptService.EpicDecomposition, PromptOverride = null };
-                var projectSettings = _projectSettings.Get(ProjectName);
-                var planningModel = projectSettings.EpicPlanningModel;
-                if (!string.IsNullOrWhiteSpace(planningModel)) runModel = planningModel;
-                if (projectSettings.EpicPlanningThinkingLevel is not null)
-                    runThinkingLevel = projectSettings.EpicPlanningThinkingLevel;
-                _logger.LogInformation(
-                    "[taskboard] epic {JobId} -> planning/decomposition run (model={Model}, thinkingLevel={ThinkingLevel})",
-                    jobId, runModel ?? "<task-default>", runThinkingLevel ?? "<model-default>");
-            }
-
             // Resolve prompt-shaping pre-steps before acquiring the pickup lock
             // or the in-memory run claim. The enrichment report is the durable
             // admission record for the exact prompt that will be dispatched.
             ReissueOpenItemsPreCheck.PreCheckDecision? reissueOpenItems = null;
-            if (!isEpicPlanningRun && string.IsNullOrWhiteSpace(followupPrompt))
+            if (string.IsNullOrWhiteSpace(followupPrompt))
             {
                 reissueOpenItems = EvaluateReissueOpenItems(info);
                 if (reissueOpenItems.Intervenes)
@@ -2929,11 +2909,11 @@ public class ProjectRunner
             // resume/reissue REUSES the existing task/<id> worktree+branch
             // (PrepareOrReuse) so the run continues where it left off instead of
             // opening a second independent landing. Read-only modes
-            // (planning/research) and epic planning runs write nothing, so they
+            // (planning/research) write nothing, so they
             // legitimately run in-place. A mutating run without an authoritative
             // Git repository is rejected: task storage / a local folder is never
             // a safe fallback checkout.
-            var requiresWorktree = WorktreeRunPolicy.RequiresWorktree(info.Mode, isEpicPlanningRun);
+            var requiresWorktree = WorktreeRunPolicy.RequiresWorktree(info.Mode);
             var repositoryRoot = requiresWorktree ? _git.ResolveRepositoryRoot(Entry) : null;
             if (requiresWorktree && string.IsNullOrWhiteSpace(repositoryRoot))
             {
@@ -6780,8 +6760,7 @@ public class ProjectRunner
                     if (LocalStopRequested(jobId)) return;
                     var handled = await TryRunAbortReviewAsync(
                         activeInfo, jobId, jobKey, cliType, execution, action,
-                        liveOutputSnapshot, commitsDuringRun, headShaAfter, usage,
-                        EpicRunPolicy.IsPlanningRun(activeInfo.Kind, intentSnapshot));
+                        liveOutputSnapshot, commitsDuringRun, headShaAfter, usage);
                     if (handled) return;
                 }
 
@@ -6978,31 +6957,10 @@ public class ProjectRunner
                 return;
             }
 
-            // Way 3 (non-deterministic half): an epic's planning run just
-            // finished successfully. Parse the authored plan and create the
-            // sub-tasks under the epic BEFORE the epic moves to review, so a
-            // crash mid-finalisation cannot strand a successful plan with no
-            // sub-tasks. A continue on an epic is steering, not decomposition,
-            // so it does not trigger this (mirrors RunCliAsync's gate).
-            // A planning run carries no Result-SHA, so its completion lane is
-            // never 4-auto-review (EpicRunPolicy.PlanningCompletionLane).
-            string? epicPlanningLane = null;
-            if (movedToReview
-                && activeInfo != null
-                && EpicRunPolicy.IsPlanningRun(activeInfo.Kind, intentSnapshot))
-            {
-                if (LocalStopRequested(jobId)) return;
-                var finalized = DecomposeEpicAndCreateSubTasks(
-                    activeInfo,
-                    liveOutputSnapshot.Select(l => l.Text).ToList(),
-                    planSnapshot?.EventInputSessionId);
-                epicPlanningLane = EpicRunPolicy.PlanningCompletionLane(finalized.Valid);
-            }
-
             if (movedToReview)
             {
                 if (LocalStopRequested(jobId)) return;
-                var completionLane = epicPlanningLane ?? TaskStates.AutoReview;
+                var completionLane = TaskStates.AutoReview;
                 if (activeInfo != null)
                 {
                     // Result finalization is an awaited post-core gate. A
@@ -7021,8 +6979,7 @@ public class ProjectRunner
                 // Cleared after a successful move (no point keeping a marker
                 // in 4-auto-review). See ADR-0020 + ADR-0025 (post-CLI lane
                 // is 4-auto-review now; the orchestrator decides whether to
-                // promote to 5-human-review). An Epic planning run is the one
-                // exception and names its own lane.
+                // promote to 5-human-review).
                 if (activeInfo != null)
                 {
                     CompletionMarker.Write(activeInfo.FolderPath, new CompletionMarker
@@ -7050,7 +7007,7 @@ public class ProjectRunner
                     moveOutcome = await _transitions.MoveAsync(
                         jobId, completionLane, Entry.Path, CancellationToken.None,
                         transitionCause: CompletionLaneChangeCause(completionLane),
-                        transitionDetail: epicPlanningLane is null ? outcome.Kind.ToString() : "epic-planning");
+                        transitionDetail: outcome.Kind.ToString());
                 }
                 finally
                 {
@@ -7316,8 +7273,7 @@ public class ProjectRunner
 
     /// <summary>
     /// Ledger cause of a core-run completion move. A run that lands in a review
-    /// lane is a delivery hand-off; an epic planning run that produced no valid
-    /// plan returns to Backlog, which is the runner handing the task back.
+    /// lane is a delivery hand-off; another lane is a runner requeue.
     /// </summary>
     internal static string CompletionLaneChangeCause(string completionLane)
         => completionLane is TaskStates.AutoReview or TaskStates.HumanReview
@@ -7659,24 +7615,6 @@ public class ProjectRunner
         => _localAuthorityTaskKeys.TryGetValue(jobId, out var authorityTaskKey)
            && _localRunClaims?.StopRequested(authorityTaskKey) == true;
 
-    /// <summary>
-    /// Way 3 (non-deterministic half): turn the output of an epic's planning /
-    /// decomposition run into sub-tasks under the epic. The parser is pure
-    /// (<see cref="EpicDecompositionParser"/>); creation goes through the same
-    /// <see cref="EpicSubTaskFactory"/> path as the deterministic
-    /// <c>POST /api/epics/{id}/sub-tasks</c> endpoint, so the sub-tasks land
-    /// with <see cref="TaskInfo.EpicId"/> set and round-trip through the
-    /// scanner identically. The target lane is the project's
-    /// <see cref="ProjectSettings.EpicSubTasksToReady"/> choice (default
-    /// 0-backlog for triage). Emits the "Epic decomposition" timeline step
-    /// either way so the operator sees the outcome.
-    /// </summary>
-    private EpicDecompositionFinalization DecomposeEpicAndCreateSubTasks(
-        TaskInfo epic, IReadOnlyList<string> outputLines, string? runId)
-        => EpicDecompositionLifecycle.Finalize(
-            epic, outputLines, runId, _projectSettings, _mutations, _scanner,
-            _states, _timeline, _chatLog, _logger);
-
     private static bool ShouldRouteIssueToEscalated(RunIssueKind issueKind)
         => issueKind is RunIssueKind.PermissionBlocked
                      or RunIssueKind.WatchdogTimeout
@@ -7969,8 +7907,7 @@ public class ProjectRunner
         List<CliOutputLine> liveOutputSnapshot,
         int commitsDuringRun,
         string? headShaAfter,
-        SessionUsage? usage,
-        bool isPlanningRun)
+        SessionUsage? usage)
     {
         var review = _postAbortReview;
         if (review == null) return false;
@@ -8099,13 +8036,7 @@ public class ProjectRunner
 
             case PostAbortAction.AcceptAndContinue:
                 _abortReviewRerunsUsed.TryRemove(jobId, out _);
-                // This exit never decomposes, so an accepted planning run holds
-                // no validated plan and no Result-SHA. Accepting it into the
-                // code-review lane is the TE-8 dead end; it returns to Backlog
-                // instead, exactly as an empty plan does.
-                var acceptLane = isPlanningRun
-                    ? EpicRunPolicy.PlanningCompletionLane(decompositionValid: false)
-                    : TaskStates.AutoReview;
+                var acceptLane = TaskStates.AutoReview;
                 CompletionMarker.Write(activeInfo.FolderPath, new CompletionMarker
                 {
                     TargetState = acceptLane,
@@ -8998,11 +8929,7 @@ public class ProjectRunner
         => AgentTypes.IsAutoPickupEligible(job.Agent)
            && !job.Fixture
            && !job.WaitingForEngineDecision
-           // Epics are containers, not work items: their sub-tasks flow through
-           // the pipeline, the epic card never code-executes. Skip it hard so it
-           // can never be loaded into a slot, even if it has come to rest in a
-           // pickup lane (old data / stray move).
-           && !IsUnpickableEpic(job)
+           && !IsUnpickableDecision(job)
            // Hard safety net for the human-decision-needed marker:
            // never auto-run such a card even if the 2-ready->5e-escalated
            // relocation sweep failed to move it. Running it just NOOP-burns
@@ -9089,22 +9016,10 @@ public class ProjectRunner
     }
 
     /// <summary>
-    /// True when a card must never be auto-picked because it is an epic
-    /// container rather than a runnable work item. Logs once per skip so an
-    /// epic that has leaked into a work lane surfaces as a visible anomaly
-    /// instead of a silent zombie. Manual decomposition (an operator starting
-    /// the epic's planning run) routes through the start endpoint, not this
-    /// auto-pickup gate, so it is unaffected.
+    /// True when a decision card must never be auto-picked as runnable work.
     /// </summary>
-    private bool IsUnpickableEpic(TaskInfo job)
+    private bool IsUnpickableDecision(TaskInfo job)
     {
-        if (TaskKinds.IsEpic(job.Kind))
-        {
-            _logger.LogWarning(
-                "[taskboard] skipping epic card {Job} on {Project} in pickup lane {State}: epics are containers, not pickable work items",
-                job.Id, ProjectName, job.State);
-            return true;
-        }
         // AGT-2795: a decision card is a decision request the operator resolves;
         // it is never code-executed and must never be auto-picked into a run.
         if (TaskKinds.IsDecision(job.Kind))
@@ -9185,9 +9100,7 @@ public class ProjectRunner
         if (!AgentTypes.IsAutoPickupEligible(candidate.Info.Agent))
             return null;
 
-        // Epics are containers, not work items - never resume one into a slot
-        // even if it has come to rest in 3-progress (old data / stray move).
-        if (IsUnpickableEpic(candidate.Info))
+        if (IsUnpickableDecision(candidate.Info))
             return null;
 
         // Rapid-crash backoff: a progress folder that just crashed fast is
@@ -10723,7 +10636,6 @@ public class ProjectRunner
         => AgentTypes.IsAutoPickupEligible(job.Agent)
            && !job.Fixture
            && !job.WaitingForEngineDecision
-           && !TaskKinds.IsEpic(job.Kind)
            && !TaskKinds.IsDecision(job.Kind)
            && !TaskSlugs.IsHumanDecisionNeeded(job.Id)
            && IsPickupAllowed(job, intakeEnabled)
