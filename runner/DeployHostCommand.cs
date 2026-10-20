@@ -322,6 +322,13 @@ public static class DeployHostCommand
     {
         using var owned = transport is null ? new HttpClient() : null;
         var client = transport ?? owned!;
+        var loggedFailure = false;
+        void LogFirstFailure(string reason)
+        {
+            if (loggedFailure) return;
+            Console.Error.WriteLine($"Deploy health probe attempt failed: {reason}.");
+            loggedFailure = true;
+        }
         while (!ct.IsCancellationRequested)
         {
             try
@@ -330,9 +337,10 @@ public static class DeployHostCommand
                 attempt.CancelAfter(TimeSpan.FromSeconds(10));
                 using var response = await client.GetAsync(url, attempt.Token);
                 if (response.IsSuccessStatusCode) return true;
+                LogFirstFailure($"HTTP {(int)response.StatusCode}");
             }
-            catch (HttpRequestException) { /* A failed probe can recover before the configured deadline. */ }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { /* Retry a timed-out probe. */ }
+            catch (HttpRequestException ex) { LogFirstFailure(ex.GetType().Name); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { LogFirstFailure("request timed out"); }
             await Task.Delay(TimeSpan.FromSeconds(2), clock, ct);
         }
         return false;
