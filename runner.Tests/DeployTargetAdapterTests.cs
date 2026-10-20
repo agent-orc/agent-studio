@@ -217,7 +217,7 @@ public sealed class DeployTargetAdapterTests
     }
 
     [Fact]
-    public async Task Kubernetes_HelmRendersPinnedImageBeforeUpgrade()
+    public async Task Kubernetes_HelmAppliesOnlyTheVerifiedRender()
     {
         var (path, package) = Package("chart/Chart.yaml", "name: web\n");
         try
@@ -232,8 +232,16 @@ public sealed class DeployTargetAdapterTests
                 + "spec:\n  template:\n    spec:\n      containers:\n      - image: " + Image + "\n",
                 DryRunOutput = DeploymentObject(Image) };
             await Executor(new FakeSecrets(), calls).DeployAsync(request, CancellationToken.None);
-            Assert.Equal(new[] { "helm", "kubectl", "helm" }, calls.Calls.Select(call => call.Executable));
-            Assert.Contains("--atomic", calls.Calls[2].Arguments);
+            Assert.Equal(new[] { "helm", "kubectl", "kubectl", "kubectl" },
+                calls.Calls.Select(call => call.Executable));
+            Assert.Contains("template", calls.Calls[0].Arguments);
+            Assert.Contains("--dry-run=client", calls.Calls[1].Arguments);
+            Assert.Contains("apply", calls.Calls[2].Arguments);
+            Assert.Contains("rollout", calls.Calls[3].Arguments);
+            Assert.Equal(calls.VerifiedManifestContents, calls.ManifestContents);
+            Assert.Contains(Image, calls.ManifestContents);
+            Assert.DoesNotContain(calls.Calls, call => call.Executable == "helm"
+                && call.Arguments.Contains("upgrade"));
         }
         finally { File.Delete(path); }
     }
@@ -513,6 +521,7 @@ public sealed class DeployTargetAdapterTests
         public string DryRunOutput { get; init; } = DeploymentObject(Image);
         public string? CredentialJson { get; private set; }
         public string? ManifestContents { get; private set; }
+        public string? VerifiedManifestContents { get; private set; }
         public List<(string Executable, IReadOnlyList<string> Arguments,
             IReadOnlyDictionary<string, string>? Environment)> Calls { get; } = [];
 
@@ -524,6 +533,9 @@ public sealed class DeployTargetAdapterTests
                 CredentialJson = File.ReadAllText(arguments.Last());
             if (executable == "kubectl" && arguments.Contains("apply") && !arguments.Contains("--dry-run=client"))
                 ManifestContents = File.ReadAllText(arguments.Last());
+            if (executable == "kubectl" && arguments.Contains("--dry-run=client"))
+                VerifiedManifestContents = File.Exists(arguments.Last())
+                    ? File.ReadAllText(arguments.Last()) : null;
             return Task.FromResult(new DeployCommandResult(0,
                 executable == "kubectl" && arguments.Contains("--dry-run=client") ? DryRunOutput : Output));
         }
