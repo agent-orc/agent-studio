@@ -71,8 +71,12 @@ stays the only executor; releases and runs describe and steer it.
   only while it is the newest release; an older one answers 409 and moves back
   only through rollback. A rebuild of the newest commit and a commit unrelated in
   history stay allowed. Creation order is therefore commit order for every
-  release the lifecycle compares. A declaration snapshot that git cannot read
-  completely also answers 409; invalid input keeps answering 400.
+  release the lifecycle compares. The ancestry check fails closed: when git
+  cannot answer it (an error, a timeout or an exhausted process budget), the
+  release answers 409. The promotion script logs a 409 for a superseded
+  release and continues; any other refusal stops it with exit code 9. A
+  declaration snapshot that git cannot read completely also answers 409;
+  invalid input, including a malformed committed declaration, answers 400.
 - **Declaration snapshot.** The release file also stores the environment
   declarations (`docs/deployments/environments/*.json`) as committed at the
   release commit. Every deploy job of the release, redeploy and rollback
@@ -121,9 +125,12 @@ stays the only executor; releases and runs describe and steer it.
   Both follow the same approval rule. When the environment's first release has
   no older release to return to, the AGT-3176 rollback route falls back to the
   artifact history (the artifact deployed before releases existed), only while
-  the environment is idle. That artifact has no release, so EnvironmentStatus
-  keeps naming the last release run as current; health follows the host
-  history.
+  the environment is idle and only when the history target belongs to no
+  release. Any other route rollback without an older release (for example
+  after a lifecycle rollback to the oldest release) answers 409 "no previous
+  release to roll back to" and queues nothing. The pre-release artifact has no
+  release, so EnvironmentStatus keeps naming the last release run as current;
+  health follows the host history.
 - **Cancel, abort and lost hosts.** Cancel stops a queued or waiting run. Cancel
   on a running run aborts it: the host's lease is revoked, so its late report is
   refused, and the environment records the interrupted deploy as failed. Abort

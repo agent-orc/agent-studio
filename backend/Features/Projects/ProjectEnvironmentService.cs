@@ -393,7 +393,13 @@ public sealed class ProjectEnvironmentService
         }
     }
 
-    public bool Rollback(string project, string environmentId, string actor)
+    /// <summary>
+    /// Queues a rollback to the last healthy artifact in the environment's
+    /// history that differs from the current one. BD-1 passes
+    /// <paramref name="acceptTarget"/> so the history rollback never redeploys
+    /// an artifact that belongs to a release; the lifecycle owns those.
+    /// </summary>
+    public bool Rollback(string project, string environmentId, string actor, Func<string, bool>? acceptTarget = null)
     {
         lock (_gate)
         {
@@ -404,7 +410,7 @@ public sealed class ProjectEnvironmentService
             var previous = state.History.LastOrDefault(row => row.EnvironmentId == environmentId
                 && (row.Item.Status is "healthy" or "rolled-back")
                 && row.Item.Artifact != currentArtifact);
-            if (previous is null) return false;
+            if (previous is null || acceptTarget?.Invoke(previous.Item.Artifact) == false) return false;
             Queue(project, DeployedSpec(state, declaration, previous.Item.Artifact), previous.Item.Artifact, state,
                 rollback: true, actor: actor);
             Save(project, state);

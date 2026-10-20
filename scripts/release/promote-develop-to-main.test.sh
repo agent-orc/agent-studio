@@ -440,6 +440,43 @@ grep -Fq "\"artifact\":\"release-package@sha256:$auto_digest\",\"sourceSha256\":
 grep -Fq '"gate":"passed"' "$auto_root/releases/$auto_sha/promotion-record.json"
 printf '%s\n' 'gate-built artifact queued to stage passed'
 
+# A 409 for a superseded release comes after main is pushed: the driver logs
+# it and continues instead of exiting 9.
+superseded_operator=$(make_fixture package-superseded pass)
+superseded_root="$test_root/package-superseded"
+superseded_curl_bin="$superseded_root/fake-curl-bin"
+mkdir -p "$superseded_curl_bin"
+printf '%s\n' test-gate-credential > "$superseded_root/deploy.token"
+cat > "$superseded_curl_bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+set -eu
+out=
+url=
+while (($#)); do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    http*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+if [[ "$url" == */api/deploy/gate-releases ]]; then
+  printf '%s\n' '{"error":"Commit 1234567 is an ancestor of commit 89abcde of the newest release 3."}' > "$out"
+  printf 409
+else
+  printf '{}\n' > "$out"
+  printf 200
+fi
+FAKE
+chmod +x "$superseded_curl_bin/curl"
+superseded_output=$(FAKE_DOTNET_LOG="$superseded_root/dotnet.log" \
+  PATH="$superseded_curl_bin:$fake_dotnet_bin:$PATH" \
+  "$superseded_operator/scripts/release/promote-develop-to-main.sh" --execute \
+  --tag release/test-package-superseded --evidence-dir "$superseded_root/evidence" \
+  --release-dir "$superseded_root/releases" --deploy-artifact-store "$superseded_root/artifact-store" \
+  --deploy-token-file "$superseded_root/deploy.token" --project Demo 2>&1)
+grep -Fq 'superseded by a newer release (HTTP 409)' <<<"$superseded_output"
+printf '%s\n' 'superseded release 409 continues passed'
+
 # The image handoff builds from the gated checkout and uses the build output
 # digest. A caller-supplied image reference is only a destination tag.
 image_operator=$(make_fixture image-auto pass)

@@ -529,6 +529,72 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void RollbackRoute_AfterALifecycleRollbackToTheOldestRelease_IsAConflict_AndQueuesNothing()
+    {
+        var (deploy, environments, _) = Build();
+        var r1 = CreateRelease(deploy, Artifact('a'), Head());
+        DeployThroughProduction(deploy, environments, r1, Owner);
+        var r2 = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        DeployThroughProduction(deploy, environments, r2, Owner);
+        var rollback = deploy.Rollback("demo", "production", approve: true, Owner);
+        Assert.Equal((r1.Id, DeploymentStates.Queued), (rollback.Value!.ReleaseId, rollback.Value.State));
+        Report(deploy, environments, "prod-host", healthy: true);
+        var runs = deploy.Deployments("demo", "production")!.Count;
+
+        // The artifact history would pick r2's artifact, the release just left.
+        var refused = deploy.RollbackEnvironment("demo", "production", Owner);
+        Assert.Equal(DeployOutcomeKind.Conflict, refused.Kind);
+        Assert.Contains("no previous release to roll back to", refused.Error);
+        Assert.Null(environments.Claim("prod-host"));
+        Assert.Equal(runs, deploy.Deployments("demo", "production")!.Count);
+        var production = deploy.Status("demo")!.Single(item => item.Environment.Id == "production");
+        Assert.Equal((r1.Id, r2.Id), (production.CurrentRelease?.Id, production.NewerRelease?.Id));
+    }
+
+    [Fact]
+    public void Release_WhenGitCannotCompareItWithTheNewestRelease_IsRefused()
+    {
+        var (deploy, environments, store) = Build();
+        var b = Commit("second");
+        var r1 = CreateRelease(deploy, Artifact('a'), b);
+        Report(deploy, environments, "stage-host", healthy: true);
+        // An unrelated commit becomes the integration tip; the newest release's
+        // commit object is then lost, so merge-base fails instead of answering.
+        Git("checkout", "--orphan", "rewritten");
+        var c = Commit("unrelated");
+        Git("branch", "-f", "develop", c);
+        DeleteLooseObject(b);
+
+        WriteReleaseEvidence(Artifact('c'), c);
+        Assert.True(environments.RegisterGateArtifact("demo", Artifact('c'), c));
+        var refused = deploy.CreateRelease("demo", Artifact('c'), c, "release-gate");
+        Assert.Equal(DeployOutcomeKind.Conflict, refused.Kind);
+        Assert.Contains("Git could not compare", refused.Error);
+        Assert.Equal([r1.Id], store.ReadReleases("demo").Select(item => item.Id));
+        Assert.Null(environments.Claim("stage-host"));
+    }
+
+    [Theory]
+    [InlineData("""{"name":"Production","kind":"production"}""")]
+    [InlineData("""{"id":"production","name":"Production","kind":"production","targetHostId":"prod-host","template":"container","destination":"8082","healthUrl":"https://example/health","secretRefs":"DATABASE_URL"}""")]
+    [InlineData("""{"id":"production","name":"Production","kind":"production","targetHostId":"prod-host","template":"container","destination":"8082","healthUrl":"https://example/health","approval":7}""")]
+    public void Release_WithAMalformedCommittedDeclaration_IsInvalid(string production)
+    {
+        var (deploy, environments, store) = Build();
+        File.WriteAllText(Path.Combine(_repo, "docs", "deployments", "environments", "production.json"), production);
+        var malformed = Commit("malformed");
+        // The working tree has moved on; only the committed snapshot is malformed.
+        WriteProduction(host: "prod-host", destination: "8082");
+
+        WriteReleaseEvidence(Artifact('a'), malformed);
+        Assert.True(environments.RegisterGateArtifact("demo", Artifact('a'), malformed));
+        var refused = deploy.CreateRelease("demo", Artifact('a'), malformed, "release-gate");
+        Assert.Equal(DeployOutcomeKind.Invalid, refused.Kind);
+        Assert.Contains("are invalid", refused.Error);
+        Assert.Empty(store.ReadReleases("demo"));
+    }
+
+    [Fact]
     public void Release_WithAnUnreadableDeclaration_IsRefused_AndNoPartialSnapshotIsStored()
     {
         var (deploy, environments, store) = Build();
@@ -545,8 +611,7 @@ public sealed class DeployServiceTests : IDisposable
             template = "container", destination = "8083", approval = "person",
         }));
         var broken = Commit("other-environment");
-        var blob = Git("rev-parse", $"{broken}:docs/deployments/environments/other.json").Trim();
-        File.Delete(Path.Combine(_repo, ".git", "objects", blob[..2], blob[2..]));
+        DeleteLooseObject(Git("rev-parse", $"{broken}:docs/deployments/environments/other.json").Trim());
 
         WriteReleaseEvidence(Artifact('b'), broken);
         Assert.True(environments.RegisterGateArtifact("demo", Artifact('b'), broken));
@@ -806,6 +871,14 @@ public sealed class DeployServiceTests : IDisposable
             }));
 
     private string Head() => Git("rev-parse", "HEAD").Trim();
+
+    // Git for Windows writes loose objects read-only, so File.Delete alone throws there.
+    private void DeleteLooseObject(string sha)
+    {
+        var path = Path.Combine(_repo, ".git", "objects", sha[..2], sha[2..]);
+        File.SetAttributes(path, FileAttributes.Normal);
+        File.Delete(path);
+    }
 
     private string Commit(string name)
     {

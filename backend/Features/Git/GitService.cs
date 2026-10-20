@@ -8176,6 +8176,22 @@ public partial class GitService
     }
 
     /// <summary>
+    /// BD-1: whether <paramref name="ancestor"/> is an ancestor of
+    /// <paramref name="descendant"/>, or null when git cannot answer. Unlike
+    /// <see cref="IsAncestor"/>, only exit code 1 of
+    /// <c>merge-base --is-ancestor</c> reads as "not an ancestor"; an unknown
+    /// commit, a git error, a timeout or an exhausted process budget is null,
+    /// so a release order check can refuse instead of failing open.
+    /// </summary>
+    public bool? TryIsAncestor(string repoRoot, string ancestor, string descendant)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return null;
+        if (!IsLikelyBranchName(ancestor) || !IsLikelyBranchName(descendant)) return null;
+        var (_, _, code) = RunGitArgs(repoRoot, "merge-base", "--is-ancestor", ancestor, descendant);
+        return code switch { 0 => true, 1 => false, _ => null };
+    }
+
+    /// <summary>
     /// BD-1: repository-relative paths of the files (blobs) directly inside
     /// <paramref name="directory"/> at <paramref name="sha"/>. A release reads
     /// its environment declarations this way, at the release commit. The

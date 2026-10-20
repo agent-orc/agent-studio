@@ -78,7 +78,8 @@ public sealed class DeployService
         {
             declarations = _environments.DeclarationsAtCommit(project, commit);
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException
+                                       or FormatException)
         {
             return DeployOutcome<Release>.Invalid(
                 $"The environment declarations at commit {ShortSha(commit)} are invalid: {ex.Message}");
@@ -143,7 +144,10 @@ public sealed class DeployService
     /// <summary>
     /// Why a release of <paramref name="commit"/> may not start Staging after
     /// <paramref name="newest"/>, or null. A rebuild of the newest commit and
-    /// a commit unrelated in history stay allowed.
+    /// a commit unrelated in history stay allowed. The check fails closed: when
+    /// git cannot answer the ancestry, the release is refused. The two
+    /// "newest release" refusals are the superseded-release answer that
+    /// scripts/release/promote-develop-to-main.sh logs and continues on.
     /// </summary>
     private string? OrderRejection(string? repo, Release? newest, string id, string commit, bool known)
     {
@@ -151,9 +155,15 @@ public sealed class DeployService
         if (known)
             return $"The release of commit {ShortSha(commit)} is older than the newest release {newest.Version}. "
                    + "Staging runs only the newest release; use rollback to move back.";
-        if (newest.CommitSha == commit || repo is null || !_git.IsAncestor(repo, commit, newest.CommitSha)) return null;
-        return $"Commit {ShortSha(commit)} is an ancestor of commit {ShortSha(newest.CommitSha)} of the newest release "
-               + $"{newest.Version}. A release never moves back in history; use rollback.";
+        if (newest.CommitSha == commit || repo is null) return null;
+        return _git.TryIsAncestor(repo, commit, newest.CommitSha) switch
+        {
+            false => null,
+            true => $"Commit {ShortSha(commit)} is an ancestor of commit {ShortSha(newest.CommitSha)} of the newest release "
+                    + $"{newest.Version}. A release never moves back in history; use rollback.",
+            null => $"Git could not compare commit {ShortSha(commit)} with commit {ShortSha(newest.CommitSha)} "
+                    + $"of release {newest.Version}. Retry once the repository is readable.",
+        };
     }
 
     public IReadOnlyList<Release>? Releases(string project)
@@ -416,9 +426,12 @@ public sealed class DeployService
     /// <summary>
     /// The AGT-3176 rollback route: a rollback run through the lifecycle when
     /// the environment has a release to roll back to, the artifact history
-    /// otherwise. The history covers the environment's first release, whose
-    /// predecessor is an artifact from before releases existed; that
-    /// rollback has no release, so it runs only while the environment is idle.
+    /// otherwise. The history covers only the environment's first release,
+    /// whose predecessor is an artifact from before releases existed: a
+    /// history target that belongs to any release is refused, so the route
+    /// never redeploys a release (for example the one a lifecycle rollback
+    /// just left) without the lifecycle decision. That rollback has no
+    /// release, so it runs only while the environment is idle.
     /// </summary>
     public DeployOutcome<Deployment?> RollbackEnvironment(string project, string environmentId, DeployActor actor)
     {
@@ -436,8 +449,16 @@ public sealed class DeployService
             }
             if (HostBusy(snapshot, environmentId))
                 return DeployOutcome<Deployment?>.Conflict("Wait until the active deployment has finished.");
-            if (!_environments.Rollback(project, environmentId, actor.Id))
-                return DeployOutcome<Deployment?>.Conflict("No previous artifact is available.");
+            var releaseTarget = false;
+            bool AcceptTarget(string artifact)
+            {
+                releaseTarget = snapshot.Releases.Any(item => item.ArtifactDigests.Contains(artifact, StringComparer.Ordinal));
+                return !releaseTarget;
+            }
+            if (!_environments.Rollback(project, environmentId, actor.Id, AcceptTarget))
+                return DeployOutcome<Deployment?>.Conflict(releaseTarget
+                    ? $"{environment?.Name ?? environmentId} has no previous release to roll back to."
+                    : "No previous artifact is available.");
             SyncLocked(project);
             return DeployOutcome<Deployment?>.Ok(null);
         }
