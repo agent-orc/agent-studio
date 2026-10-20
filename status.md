@@ -202,9 +202,9 @@
 
 ## AGT-3207 atomic admission and restart fence follow-up, 20 October 2026
 
-- Result implementation SHA: `477757313fc50f27213b549f521143df9c59c294`. This is a fix commit on top of delivery `813e39a4f`; `origin/develop` was fetched and merged without conflicts, and is an ancestor of the result.
+- Result implementation SHA: `477757313fc50f27213b549f521143df9c59c294`. This is a fix commit on top of delivery `813e39a4f`; `origin/develop` was fetched and merged. The final merge preserved both entries in the `status.md` conflict, and `origin/develop` is an ancestor of the result.
 - Implemented option: lower and restore admission with atomic compare-and-set; preserve a person's intervening capacity edit, and escalate a write whose effect is not observed. The review attempt authority fences new claims on a drained host throughout an Operations Server restart attempt. The Operations Agent durably records a restart attempt before Docker; after a result spool failure it reports an unknown outcome without recreating the service. An allowlist with null compose fields offers no restart and does not stop the agent.
-- Verification: focused backend intervention filter passed 102 tests; `ServiceRestartTests` passed 11 tests; backend architecture/guard filter passed 98 tests; `npm --prefix frontend run lint` passed. The changed backend and Operations Server test projects built. The remaining test-project guard checks are recorded in the task results directory.
+- Verification: focused backend intervention filter passed 102 tests; `ServiceRestartTests` passed 11 tests; backend architecture/guard filter passed 98 tests. The guard filter found no matching tests in the other seven .NET test projects. `npm --prefix frontend run lint` passed. The changed backend and Operations Server test projects built. `git diff --check` passed.
 ## AGT-3068 documentation-impact recovery, 20 October 2026
 
 - Result worktree base SHA: `a601e2be4a9798f530bc7163214f1e9341c26af7`; the platform delivery commit will carry this status update. `origin/develop` is an ancestor of the worktree.
