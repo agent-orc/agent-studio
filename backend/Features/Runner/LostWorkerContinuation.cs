@@ -183,8 +183,8 @@ public static class ContinuationBaseStore
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            // A stale base is bounded by its own verification: the runner starts
-            // from the integration branch when the ref no longer resolves.
+            // A stale base is bounded by its own verification: the runner
+            // refuses preparation when the ref no longer resolves.
             SilentCatch.Note(exception, $"continuation base could not be cleared in {folderPath}");
         }
     }

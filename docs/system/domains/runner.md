@@ -1649,6 +1649,16 @@ unreported claim expires with its lease and is queued again.
   delivery. A failed salvage-fence push is not eligible for this retry: the
   runner retains the worktree and keeps the existing `worktree-blocked`
   escalation.
+- A timeout or interrupted attempt with a published salvage records its exact
+  ref and SHA as the next claim's continuation base. The runner verifies that
+  ref, starts on the salvage, and merges the current integration head when it
+  advanced independently. A missing or moved ref fails preparation; the runner
+  never substitutes the integration head for the saved work. The worktree's
+  post-merge HEAD is the result envelope base. If the completion fence still
+  disproves base ancestry, the retained result ref and SHA become the next
+  continuation base and the card returns to Ready with a prompt and status note
+  naming both the refused base and result commits. Other disproved deliveries
+  retain the unverified-delivery escalation path (AGT-3257).
 - The July Marathon envelope repair restored best-effort emission of the trio,
   and the AGT-2250 delivery probe showed that valid envelopes could reach Review.
   It did not make the trio a teardown precondition: a legacy immutable-result-ref

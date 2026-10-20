@@ -1634,6 +1634,7 @@ public static class LeaseEndpoints
                 hasArtifactManifestDigest: IsSha256(req.ArtifactManifestDigest));
             var responseOutcome = reportedOutcome;
             string? unverifiedDelivery = null;
+            var fenceAncestryRefused = false;
             if (envelopeDecision.ShouldPersist)
             {
                 resultEnvelope = new AgentStudio.TaskServer.Contracts.ImmutableResultEnvelope(
@@ -1943,9 +1944,14 @@ public static class LeaseEndpoints
                     unverifiedDelivery =
                         $"Delivery not verified against the target repository: {attributionWarning} "
                         + "No completion stamp was written (AGT-2220).";
-                    targetState = TaskStates.Escalated;
-                    mutations.AddJobTag(
-                        task.Id, OutOfBandStampPolicy.UnverifiedDeliveryTag, task.WatchPath);
+                    fenceAncestryRefused = MonolithTransitionAdapter.DeliveryFenceRefusal(
+                        new DeliveryFenceRefusalFacts(deliveryRange.IsDisproved, deliveryRange.Warning,
+                            req.BaseSha, resultSha, deliveryBranch))
+                        == DeliveryFenceRefusalAction.RequeueOnResult;
+                    targetState = fenceAncestryRefused ? TaskStates.Ready : TaskStates.Escalated;
+                    if (!fenceAncestryRefused)
+                        mutations.AddJobTag(
+                            task.Id, OutOfBandStampPolicy.UnverifiedDeliveryTag, task.WatchPath);
                 }
             }
 
@@ -2221,6 +2227,35 @@ public static class LeaseEndpoints
                     CredentialRedactor.Redact(req.SalvageRecoveryBranch ?? req.SalvageBranch),
                     CredentialRedactor.Redact(req.SalvageRecoveryCommitSha ?? req.SalvageCommitSha),
                     CredentialRedactor.Redact(req.SalvageRecoveryBranchUrl ?? req.SalvageBranchUrl));
+                artifactCommits.TryCommitArtifactUpload(
+                    null, task.Id, task.FolderPath, ["status.md", "prompt.md"]);
+            }
+            if (fenceAncestryRefused)
+            {
+                var retainedRef = deliveryBranch!.StartsWith("refs/heads/", StringComparison.Ordinal)
+                    ? deliveryBranch
+                    : $"refs/heads/{deliveryBranch}";
+                var baseRecord = RemoteFenceRefusalContinuation.Base(
+                    retainedRef, resultSha!, attemptId, DateTime.UtcNow);
+                if (!ContinuationBaseStore.Save(task.FolderPath, baseRecord))
+                    return Results.Conflict(new RemoteRunCompletionResponse(
+                        req.TaskKey, responseOutcome, task.State,
+                        "The refused result could not be saved as the continuation base.",
+                        RunAttemptId: attemptId));
+                RemoteFenceRefusalContinuation.AppendNote(
+                    task.FolderPath, attemptId, req.BaseSha!, resultSha!, retainedRef);
+                var continuationInstruction = RemoteFenceRefusalContinuation.Message(
+                    req.BaseSha!, resultSha!) + $" Continue from {retainedRef} at {resultSha}.";
+                if (mutations.SavePendingIntent(task.Id, ContinueModes.Steer,
+                        continuationInstruction,
+                        reason: RemoteFenceRefusalContinuation.Reason,
+                        activeJobId: null,
+                        watchPath: task.WatchPath) is null)
+                    return Results.Conflict(new RemoteRunCompletionResponse(
+                        req.TaskKey, responseOutcome, task.State,
+                        "The refused result could not be queued as a continuation.",
+                        RunAttemptId: attemptId));
+                mutations.SetContextModeOnFolder(task.FolderPath, CliContextModes.Clean);
                 artifactCommits.TryCommitArtifactUpload(
                     null, task.Id, task.FolderPath, ["status.md", "prompt.md"]);
             }
@@ -2753,7 +2788,8 @@ public static class LeaseEndpoints
             var pendingCodingOccurrence = priorCodingOccurrence is not null
                 && priorCodingOccurrence.Status is ("pending" or "leased" or "applying")
                 && orchestration.GetOccurrence(priorCodingOccurrence.RunId)?.Shadow == false;
-            if ((codingMode is (OrchestrationExecutionMode.Engine or OrchestrationExecutionMode.Shadow)
+            if (!fenceAncestryRefused
+                && (codingMode is (OrchestrationExecutionMode.Engine or OrchestrationExecutionMode.Shadow)
                     || pendingCodingOccurrence)
                 && !string.Equals(task.State, targetState, StringComparison.OrdinalIgnoreCase))
             {
@@ -2840,7 +2876,9 @@ public static class LeaseEndpoints
             {
                 var move = await transitions.MoveAsync(
                     task.Id, targetState, task.WatchPath, ct,
-                    cause: operatorStopped
+                    cause: fenceAncestryRefused
+                        ? $"remote-delivery-fence-continuation:{source}"
+                        : operatorStopped
                         ? $"remote-operator-stop:{source}"
                         : deliveryFailure is null
                             ? $"remote-runner-completion:{source}"
@@ -2851,10 +2889,12 @@ public static class LeaseEndpoints
                     // one is requeued for another delivery round by the runner, and
                     // an operator stop returns the card without claiming either.
                     transitionCause: deliveryFailure is null && !operatorStopped
-                        && outcome != "mechanicalfallback"
+                        && outcome != "mechanicalfallback" && !fenceAncestryRefused
                         ? LaneChangeCauses.Delivered
                         : LaneChangeCauses.RunnerRequeue,
-                    transitionDetail: operatorStopped
+                    transitionDetail: fenceAncestryRefused
+                        ? RemoteFenceRefusalContinuation.Reason
+                        : operatorStopped
                         ? "operator-stop"
                         : deliveryFailure is null
                             ? outcome
@@ -2889,6 +2929,17 @@ public static class LeaseEndpoints
                         task.PendingIntent.Mode,
                         position);
                 }
+            }
+            if (fenceAncestryRefused)
+            {
+                var ready = scanner.FindJob(task.Id, task.WatchPath) ?? task;
+                states.PromoteToReadyTop(ready.Id, ready.WatchPath,
+                    transitionCause: LaneChangeCauses.RunnerRequeue,
+                    transitionDetail: RemoteFenceRefusalContinuation.Reason);
+                return Results.Ok(new RemoteRunCompletionResponse(
+                    req.TaskKey, responseOutcome, TaskStates.Ready,
+                    RemoteFenceRefusalContinuation.Message(req.BaseSha!, resultSha!),
+                    RunAttemptId: attemptId));
             }
             if (outcome == "mechanicalfallback"
                 && !string.IsNullOrWhiteSpace(req.ImmutableResultRef)

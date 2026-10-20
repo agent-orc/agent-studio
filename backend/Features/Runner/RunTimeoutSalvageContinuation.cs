@@ -17,10 +17,7 @@ namespace AgentStudio.Runner;
 /// null when the previous round left none.
 /// </param>
 /// <param name="StartsFromSalvage">
-/// Whether the next round's worktree is prepared on the salvage commit instead
-/// of the integration branch. Timeouts keep their AGT-2861 behaviour and start
-/// on the integration branch, because their agent is alive to fetch the ref
-/// itself; a lost worker's round starts on the rescued work.
+/// Whether the next round's worktree is prepared on the salvage commit.
 /// </param>
 public sealed record RunContinuationCause(
     string Reason,
@@ -36,7 +33,8 @@ public sealed record RunContinuationCause(
             RunTimeoutSalvageContinuationPolicy.ContinuationReason,
             "remote-run-timeout-continuation",
             $"hit the run timeout{ReportedOutcome(reportedReason)}",
-            "timeout");
+            "timeout",
+            StartsFromSalvage: true);
 
     /// <summary>AGT-2870: the detached worker died before it recorded a result.</summary>
     public static RunContinuationCause WorkerLost(string? reportedReason, string? crashLine)
@@ -174,19 +172,24 @@ public sealed class RunTimeoutContinuationService
         // left on the host.
         _mutations.SetContextModeOnFolder(task.FolderPath, CliContextModes.Clean);
 
-        // A round whose previous agent is gone cannot fetch the salvage itself,
-        // so the claim hands the ref to the runner and the next worktree is
-        // prepared on the rescued commit.
+        // Every salvaged round starts on the rescued commit. Asking a new agent
+        // to fetch it after preparation loses the delivery fence ancestry.
         if (cause.StartsFromSalvage)
         {
-            ContinuationBaseStore.Save(task.FolderPath, new ContinuationBaseRecord(
+            if (!ContinuationBaseStore.Save(task.FolderPath, new ContinuationBaseRecord(
                 salvage.Branch.StartsWith("refs/heads/", StringComparison.Ordinal)
                     ? salvage.Branch
                     : $"refs/heads/{salvage.Branch}",
                 salvage.CommitSha,
                 cause.Reason,
                 attemptId,
-                DateTime.UtcNow));
+                DateTime.UtcNow)))
+            {
+                _mutations.DiscardPendingIntent(task.FolderPath);
+                _mutations.RestorePromptOnFolder(task.FolderPath, previousPrompt);
+                _mutations.RestoreContextModeOnFolder(task.FolderPath, previousContextMode);
+                return Failed("The salvage base could not be saved for the next claim.");
+            }
         }
 
         var move = await _transitions.MoveAsync(
@@ -201,6 +204,8 @@ public sealed class RunTimeoutContinuationService
             transitionDetail: cause.Reason);
         if (move.Status != MoveJobStatus.Success)
         {
+            if (cause.StartsFromSalvage)
+                ContinuationBaseStore.Clear(task.FolderPath);
             _mutations.DiscardPendingIntent(task.FolderPath);
             if (!_mutations.RestorePromptOnFolder(task.FolderPath, previousPrompt))
             {
@@ -280,8 +285,8 @@ public sealed class RunTimeoutContinuationService
             + $"Your previous round {cause.Describe()}; the worktree was salvaged as "
             + $"'{salvage.Branch}' at {salvage.CommitSha}. The work exists, it only lacks its finishing round. "
             + evidence
-            + $"Fetch '{salvage.Branch}', continue from {salvage.CommitSha}, and finish: rebase onto the current "
-            + "integration branch, resolve every conflict conservatively without dropping the salvaged changes, "
+            + $"The runner starts this worktree from {salvage.CommitSha} and merges the current integration head. "
+            + "Continue the preserved changes, resolve any remaining conflict conservatively, "
             + "build, run the tests that cover the touched code, write results/status.md, and deliver. "
             + $"Budget your time: this is the last automatic round, so a second {cause.RepeatNoun} parks the card for an operator.";
     }

@@ -171,6 +171,10 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
         Assert.Contains(SalvageSha, prompt);
         Assert.Contains("run timeout", prompt);
         Assert.Contains("results/status.md", prompt);
+        var baseRecord = ContinuationBaseStore.Read(queued.FolderPath);
+        Assert.NotNull(baseRecord);
+        Assert.Equal($"refs/heads/{SalvageBranch}", baseRecord.Ref);
+        Assert.Equal(SalvageSha, baseRecord.CommitSha);
 
         // Same model as the timed-out round, clean context.
         Assert.Equal("claude", queued.CliType);

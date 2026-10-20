@@ -1,6 +1,8 @@
 using AgentRunner;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
+using AgentStudio.Runner;
+using AgentStudio.OrchestrationDecisions;
 using Xunit;
 
 namespace AgentRunner.Tests;
@@ -846,22 +848,55 @@ public sealed class GitWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task A_salvage_base_that_moved_keeps_todays_start_on_the_integration_branch()
+    public async Task A_salvage_base_that_moved_refuses_to_drop_previous_work()
     {
         await SeedOriginAsync();
         var (resultRef, reviewedSha) = await PublishReviewedResultAsync("salvaged.txt", "salvage");
         await PublishRemoteCommitAsync(resultRef["refs/heads/".Length..], "moved.txt", "moved", "move the ref");
-        var mainTip = (await GitAsync(_origin, "rev-parse", "refs/heads/main")).StdOut;
-
         var continuation = CreateWorkspace(
             sourceRunAttemptId: "run_next",
             fencingToken: 2,
             continuationBaseRef: resultRef,
             continuationBaseSha: reviewedSha,
             continuationBaseReason: "lost-worker-with-salvage");
-        await continuation.PrepareAsync(CancellationToken.None);
+        var failure = await Assert.ThrowsAsync<ContinuationBaseUnavailableException>(
+            () => continuation.PrepareAsync(CancellationToken.None));
+        Assert.Equal(ContinuationBaseUnavailableException.Moved, failure.ReasonCode);
+        Assert.Equal(reviewedSha, failure.ExpectedSha);
+        Assert.False(Directory.Exists(continuation.RepoPath));
+    }
 
-        Assert.Equal(mainTip, (await GitAsync(continuation.RepoPath, "rev-parse", "HEAD")).StdOut);
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Agt3245_next_attempt_merges_salvage_and_develop_before_delivery()
+    {
+        await SeedOriginAsync();
+        await GitAsync(_origin, "branch", "develop", "main");
+        const string salvageBranch = "agent-studio/salvage/runner-test/AGT-3245/previous/fence-1/salvage";
+        await GitAsync(_origin, "branch", salvageBranch, "develop");
+        var salvageSha = await PublishRemoteCommitAsync(
+            salvageBranch, "earlier-work.txt", "saved work", "wip(runner): salvage before teardown - outcome Unknown");
+        var developSha = await PublishRemoteCommitAsync(
+            "develop", "develop-work.txt", "current develop", "advance develop");
+
+        var next = CreateWorkspace(sourceRunAttemptId: "run_next", fencingToken: 2,
+            continuationBaseRef: $"refs/heads/{salvageBranch}",
+            continuationBaseSha: salvageSha,
+            continuationBaseReason: RunTimeoutSalvageContinuationPolicy.ContinuationReason,
+            baseBranch: "develop");
+        await next.PrepareAsync(CancellationToken.None);
+
+        Assert.Equal("saved work", await File.ReadAllTextAsync(Path.Combine(next.RepoPath, "earlier-work.txt")));
+        Assert.Equal("current develop", await File.ReadAllTextAsync(Path.Combine(next.RepoPath, "develop-work.txt")));
+        Assert.True((await RunGitAsync(next.RepoPath, "merge-base", "--is-ancestor", salvageSha, "HEAD")).Success);
+        Assert.True((await RunGitAsync(next.RepoPath, "merge-base", "--is-ancestor", developSha, "HEAD")).Success);
+        Assert.Equal((await GitAsync(next.RepoPath, "rev-parse", "HEAD")).StdOut, next.BaseSha);
+
+        await CommitFileAsync(next.RepoPath, "result.txt", "finished", "finish earlier work");
+        var result = await next.TeardownAsync("Done", "run_next", CancellationToken.None);
+        Assert.True((await RunGitAsync(_origin, "merge-base", "--is-ancestor", salvageSha, result.ResultSha!)).Success);
+        Assert.True((await RunGitAsync(_origin, "merge-base", "--is-ancestor", next.BaseSha!, result.ResultSha!)).Success);
+        Assert.NotNull(result.ImmutableResultRef);
     }
 
     [Fact]
@@ -998,7 +1033,8 @@ public sealed class GitWorkspaceTests : IDisposable
         long? fencingToken = null,
         string? continuationBaseRef = null,
         string? continuationBaseSha = null,
-        string? continuationBaseReason = null)
+        string? continuationBaseReason = null,
+        string baseBranch = "main")
         => new(new RunnerOptions
         {
             ServerUrl = "http://localhost",
@@ -1009,7 +1045,7 @@ public sealed class GitWorkspaceTests : IDisposable
             GitRemote = _origin,
             WorkDir = _workDir,
             StateDir = Path.Combine(_workDir, ".runner-state"),
-            BaseBranch = "main",
+            BaseBranch = baseBranch,
             ClaudeCliBin = "test",
         },
             "AGT-2147",

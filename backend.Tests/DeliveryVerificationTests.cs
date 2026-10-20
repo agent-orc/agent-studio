@@ -202,6 +202,40 @@ public sealed class DeliveryVerificationTests
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    public void InspectRemoteDeliveryCommitRange_ResultDescendingFromSalvage_PassesFence()
+    {
+        WithRemoteFixture((git, repo, fixture) =>
+        {
+            // The first delivery commit stands for the previous attempt's
+            // salvage; the next attempt's result contains it in its ancestry.
+            var range = git.InspectRemoteDeliveryCommitRange(
+                repo, DeliveryBranch, fixture.Tip, "refs/heads/develop", fixture.First);
+
+            Assert.True(range.Success, range.Warning);
+            Assert.Equal(DeliveryVerificationStatus.Verified, range.Verification);
+            Assert.Equal(fixture.First, range.MergeBaseSha);
+            Assert.Equal(fixture.Tip, range.TipSha);
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void InspectRemoteDeliveryCommitRange_Agt3245DivergentSalvage_RejectsFence()
+    {
+        WithRemoteFixture((git, repo, fixture) =>
+        {
+            var salvageSha = DivergentSha(repo, fixture);
+            var range = git.InspectRemoteDeliveryCommitRange(
+                repo, DeliveryBranch, fixture.Tip, "refs/heads/develop", salvageSha);
+
+            Assert.False(range.Success);
+            Assert.True(range.IsDisproved);
+            Assert.Contains("is not an ancestor of result", range.Warning);
+        });
+    }
+
+    [Fact]
     public void InspectRemoteDeliveryCommitRange_MissingRepository_IsNotDisproved()
     {
         var git = NewGitService(Path.GetTempPath());
@@ -464,7 +498,8 @@ public sealed class DeliveryVerificationTests
 
     private static void TryDelete(string path)
     {
-        try { Directory.Delete(path, recursive: true); } catch { }
+        try { Directory.Delete(path, recursive: true); }
+        catch (Exception ex) { AgentStudio.Diagnostics.SilentCatch.Note(ex, "delivery verification fixture cleanup"); }
     }
 
     private static string RunGit(string cwd, string arguments)
@@ -477,6 +512,7 @@ public sealed class DeliveryVerificationTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         })!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
