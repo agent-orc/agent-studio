@@ -194,6 +194,30 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
     }
 
     [Fact]
+    public void Overflow_budget_expires_failures_and_enforces_retry()
+    {
+        var budget = new LoginOverflowBudget();
+        var window = TimeSpan.FromMinutes(1);
+        var delay = TimeSpan.FromSeconds(3);
+        var now = _clock.GetUtcNow().UtcDateTime;
+        budget.RecordFailure("client", "client", now, window, 2, delay);
+        budget.RecordFailure("client", "client", now, window, 2, delay);
+        Assert.False(budget.CanHash("client", "client", now, window, 2, delay));
+
+        _clock.Advance(delay);
+        now = _clock.GetUtcNow().UtcDateTime;
+        Assert.True(budget.CanHash("client", "client", now, window, 2, delay));
+        budget.RecordFailure("client", "client", now, window, 2, delay);
+        Assert.False(budget.CanHash("client", "client", now, window, 2, delay));
+
+        _clock.Advance(TimeSpan.FromMinutes(2));
+        now = _clock.GetUtcNow().UtcDateTime;
+        Assert.True(budget.CanHash("client", "client", now, window, 2, delay));
+        budget.RecordFailure("client", "client", now, window, 2, delay);
+        Assert.True(budget.CanHash("client", "client", now, window, 2, delay));
+    }
+
+    [Fact]
     public void Expired_failure_budgets_release_capacity_but_active_lockouts_remain()
     {
         var store = NewStore(new()
