@@ -2455,6 +2455,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
         var gateOccurrenceKey = buildGateResult is null ? null
             : $"gate-result:{current.Id}:{buildGateResult.GateRunId ?? _attemptAuthority?.GetTaskProjection(current.Key ?? current.TaskKey).CurrentRunAttempt?.AttemptId}:{buildGateResult.ExpectedSha}:{buildGateResult.Verdict}";
+        if (gateMode == OrchestrationExecutionMode.Engine && gateOccurrenceKey is not null
+            && _orchestration?.GetByIdempotencyKey(gateOccurrenceKey) is { } priorGate
+            && _orchestration.GetOccurrence(priorGate.RunId)?.Shadow == true)
+            gateOccurrenceKey += ":engine";
         if (buildGateResult is { Verdict: BuildTestGateVerdict.Ok or BuildTestGateVerdict.Warn
             or BuildTestGateVerdict.Fail }
             && gateMode is OrchestrationExecutionMode.Engine or OrchestrationExecutionMode.Shadow)
@@ -2488,6 +2492,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 current.State, source?.AttemptId ?? current.Id,
                 source?.LastFence ?? 0, source?.AuthorityEpoch ?? 0,
                 profile: "GateResult", shadow: gateMode == OrchestrationExecutionMode.Shadow);
+            if (gateMode == OrchestrationExecutionMode.Engine
+                && _orchestration.GetOccurrence(occurrence.RunId)?.Shadow == true)
+                throw new InvalidOperationException("The engine gate occurrence is shadow-only.");
             if (gateMode == OrchestrationExecutionMode.Engine
                 && occurrence.Status is ("pending" or "leased" or "applying"))
             {

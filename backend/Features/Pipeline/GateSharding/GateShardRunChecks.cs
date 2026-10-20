@@ -9,6 +9,9 @@ public static class GateShardDetails
     /// <summary>The shard process wrote no TRX report, so nothing proves which tests ran.</summary>
     public const string NoTestReport = "no-test-report";
 
+    /// <summary>The TRX does not prove that a nonempty shard ran and passed its tests.</summary>
+    public const string UnverifiedTestReport = "unverified-test-report";
+
     /// <summary>The TRX report holds classes the shard's filter should not have selected.</summary>
     public const string ShardFilterNotApplied = "shard filter not applied";
 

@@ -351,7 +351,7 @@ occur. It is not a claim about tunnel transfer time.
   waiting, with machine-lock gate queueing remaining a distinct waiting state.
 - Project Explorer entries follow Board, Dossiers, Deploy, Operations, Wiki,
   Deck (NV-D1 option A). Deploy hosts the BD-3 Deploy area (Overview,
-  Releases, Pipeline, the existing deployment tools) plus a Run steps view with
+  Releases, Pipeline, History, the existing deployment tools) plus a Run steps view with
   the run pipeline panel; old `pipeline` routes open Run steps. Operations reads
   `GET /api/projects/<project>/environments` and shows the recorded health of
   each declared environment, plus the existing Product Runtime observability
@@ -361,7 +361,25 @@ occur. It is not a claim about tunnel transfer time.
   token summary, supervisor and meta-cycle sections, and analysis reports.
   Legacy `observability` sections open Operations. The board groups cards by
   Dossier. Task detail and board surfaces no longer expose parent-card rollups
-  or assignment controls. The old parent routes are retired.
+  or assignment controls. Legacy `#/epics` and `#/projects/<project>/epics`
+  routes and restored Epics tabs open the Dossiers overview tab and rewrite to
+  its URL; the parent-card data, routes, and API behavior are retired.
+- The Deploy overview reads declared environments from AGT-3176 and status,
+  releases, deploy runs, and step logs from `/api/projects/<project>/deploy`.
+  Release and run lists request `/releases/page` and `/deployments/page` with
+  `offset` and `limit`; responses contain `items`, `offset`, `limit`, and the
+  filtered `total`. The server caps each page at 50 items, and the UI requests
+  25. Run pages also accept `environmentId`, `state`, and `sinceUtc`, so history
+  filters apply before paging. The unpaged routes remain for existing clients.
+  Each source has its own loading or error state, so a failed deploy route
+  leaves declared environment cards visible. A route 404 without an error body
+  means the route is unavailable; a 404 with `{ error }` is shown as a server
+  error. Card health reads `/api/projects/<project>/environments/health`, and
+  Pipeline reuses the parsed diagram from `/pipeline-definition`, including
+  validation issues when the file is invalid. Production approvals and running
+  aborts require confirmation; the server remains the authority for refusals.
+  At phone widths the shell hides its Explorer sidebar so the Deploy cards use
+  the editor width while the activity bar stays available.
 - `frontend/src/app/features/task-detail/`: task detail shell, protocol pane,
   prompt pane, git pane, timeline, pipeline overview, and command surfaces.
   Ordinary task selection reads the bounded `/core` projection first and paints
