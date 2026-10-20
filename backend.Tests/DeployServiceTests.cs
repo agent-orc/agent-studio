@@ -91,6 +91,33 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void GuidedFailure_HealthSkipKeepsReleaseCurrentAndPreviousReleaseAsRollbackTarget()
+    {
+        var (deploy, environments, _) = Build(guidedStage: true);
+        var first = CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        var second = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        Report(deploy, environments, "stage-host", healthy: false, evidence: DeployEvidence.HealthFailed);
+        var waiting = deploy.Deployments("demo", "stage")!.First(item => item.ReleaseId == second.Id);
+        Assert.Equal((DeploymentStates.WaitingForIntervention, DeployStepNames.Health),
+            (waiting.State, waiting.FailedStep));
+
+        Assert.Equal(DeployOutcomeKind.Ok,
+            deploy.DecideIntervention("demo", waiting.Id, new("skip", "Health endpoint is optional"), Owner).Kind);
+        Assert.Null(environments.Claim("stage-host"));
+        var stage = deploy.Status("demo")!.Single(item => item.Environment.Id == "stage");
+        Assert.Equal(second.Id, stage.CurrentRelease?.Id);
+        Assert.Equal(EnvironmentHealth.Unhealthy, stage.Health);
+        Assert.Equal((waiting.Id, "skip", Owner.Id), (stage.Intervention?.DeploymentId,
+            stage.Intervention?.Decision, stage.Intervention?.DecidedBy));
+
+        var rollback = deploy.Rollback("demo", "stage", approve: true, Owner);
+        Assert.Equal(DeployOutcomeKind.Ok, rollback.Kind);
+        Assert.Equal(first.Id, rollback.Value?.ReleaseId);
+        Assert.Equal(Artifact('a'), environments.Claim("stage-host")?.Artifact);
+    }
+
+    [Fact]
     public void GuidedFailure_AbortResumesTheExistingRollbackRule()
     {
         var (deploy, environments, _) = Build(guidedStage: true);
