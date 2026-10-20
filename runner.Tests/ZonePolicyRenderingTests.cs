@@ -374,8 +374,8 @@ public sealed class ZonePolicyRenderingTests
         var unresolved = Assert.Single(work.Probes, probe => probe.Unresolved is not null);
         Assert.Equal(("example.com", "example.com", 80), (unresolved.Host, unresolved.Address, unresolved.Port));
         Assert.Equal("zone work: blocked probe host 'example.com' does not resolve (HostNotFound)", unresolved.Unresolved);
-        Assert.Empty(policy.Zones.Single(zone => zone.Name == "run").Probes
-            .Where(probe => probe is { Expectation: ZoneProbeExpectations.Blocked, Host: "control-plane" }));
+        Assert.DoesNotContain(policy.Zones.Single(zone => zone.Name == "run").Probes,
+            probe => probe is { Expectation: ZoneProbeExpectations.Blocked, Host: "control-plane" });
     }
 
     [Theory]
