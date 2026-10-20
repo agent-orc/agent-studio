@@ -56,11 +56,12 @@ stays the only executor; releases and runs describe and steer it.
 - **Release.** A green gate release (`POST /api/deploy/gate-releases`, or the
   operator route `POST /api/projects/{project}/environments/releases`) records an
   immutable release: version `yyyy.MM.dd.N`, commit, artifact digests, a process
-  version (hash of the project.yml schema 2 artifacts, standard lifecycle and
-  deploy steps at the release commit plus the environment declarations), a
-  variables version (hash of the project.yml schema 2 `variables` section at the
-  release commit, where a secret counts only by name, and of the secret
-  reference names per environment), the
+  version (hash of the project.yml schema 2 artifacts, standard lifecycle,
+  deploy steps and tenants at the release commit plus the environment
+  declarations), a variables version (hash of the project.yml schema 2
+  `variables` section and tenant declarations at the release commit, including
+  tenant and tenant-tag scopes, where a secret counts only by name, and of the
+  secret reference names per environment), the
   cards it adds, and channel `default`. Each release is one write-once file under
   `<TaskRepository>/deployments/projects/<project>/releases/`, written as a
   flushed temporary file and moved into place without overwrite. The same
@@ -105,6 +106,15 @@ stays the only executor; releases and runs describe and steer it.
   Studio session in every profile; on the local profile a mutation counts the
   session only with its CSRF token. A caller without a session, such as a coding
   agent on the local API, is `local-operator` and never approves.
+- **Tenant lifecycle.** A project.yml schema 2 tenant has a unique name, optional
+  tags and a nonempty list of participating environments. Production
+  participation requires Staging. An explicit tenant deploy uses the tenant
+  declarations and variables captured in that release. Staging success,
+  current release, approval, redeploy and rollback are evaluated for that
+  tenant. Runs without a tenant keep the project-level lifecycle, including the
+  automatic Staging run after integration. The host deploy queue remains shared
+  by tenants of an environment, so another queued or running run can block a
+  tenant's request or approval.
 - **One environment, one direction.** A request or an approval is refused while
   another run is queued or running in the environment. The automatic Staging
   run after integration does not ask the lifecycle: it queues behind the runs
@@ -153,14 +163,33 @@ stays the only executor; releases and runs describe and steer it.
 - **Audit.** Every release, request, approval, rejection, cancellation and host
   transition appends an entry to `audit.jsonl` next to the runs.
 
-Routes, under `/api/projects/{project}/deploy`: `GET environments`, `status`
-(one EnvironmentStatus per environment), `releases`, `releases/{id}`,
-`deployments[?environmentId=]`, `deployments/{id}`, `deployments/{id}/log[?step=]`
-and `audit`; `POST releases/{id}/deployments` (`{environmentId, approve}`),
-`deployments/{id}/approve`, `deployments/{id}/reject`, `deployments/{id}/cancel`,
-`environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve}`).
-`GET /api/deploy/matrix` returns the workspace dashboard rows, filtered to the
-caller's projects.
+### Tenant deployment API contract (AGT-3261)
+
+Routes below use `/api/projects/{projectName}/deploy` as their base. JSON uses
+camel-case names. A tenant name is the exact, case-sensitive name declared in
+project.yml schema 2. Omitting `tenant` on a mutation selects the project-level
+run; omitting it on a read retains the project-level response or unfiltered
+history shown below.
+
+| Route | Tenant contract |
+|---|---|
+| `GET /tenants` | Returns the project's current valid tenant definitions as `{name, tags, environments}[]`; if the current project.yml is unavailable or invalid, uses the newest release snapshot. Unknown project returns 404. |
+| `GET /status?tenant={name}` | Returns one `EnvironmentStatus` per environment in which that tenant participates. Each status has `tenant`, `environment`, `currentRelease`, `currentDeployment`, `newerRelease`, `cardsSinceLastDeploy` and `health`. With no tenant query, returns project-level statuses with `tenant: null`. An unknown tenant returns 404. |
+| `GET /deployments?environmentId={id}&tenant={name}` | Returns runs matching both optional filters, newest first. An unknown tenant yields an empty list. `GET /deployments/page` adds optional `state`, `sinceUtc`, `offset` and `limit` filters and returns `{items, offset, limit, total}` for the filtered set. Limit is clamped to 1 through 50. |
+| `GET /deployments/{id}` and `GET /deployments/{id}/log?step={name}` | The deployment has a nullable `tenant` field. The log response has `{deploymentId, tenant, lines}`; `step` filters lines only. A missing deployment returns 404. |
+| `POST /releases/{id}/deployments` | Body `{environmentId, approve, tenant?}` selects a tenant for that release. The tenant must participate in the target environment in the release snapshot; invalid participation returns 400. Production needs successful Staging for the same release and tenant, then Owner or Maintainer approval. A queued or waiting response is a `Deployment` with its `tenant`. |
+| `POST /deployments/{id}/approve`, `/reject` and `/cancel` | Address the run by id and use its stored tenant. Approval reevaluates that tenant's lifecycle facts and returns the updated `Deployment`, including `tenant`. |
+| `POST /environments/{id}/redeploy` and `POST /environments/{id}/rollback` | Optional body `{approve, tenant?}` selects that tenant's current or previous successful release. The resulting run carries the tenant. Approval and shared host occupancy rules still apply. |
+
+`GET /releases`, `/releases/page`, `/releases/{id}`, `/environments` and
+`/audit` retain their existing project-level responses. A release detail's
+deployment list can include runs from several tenants. `GET /api/deploy/matrix`
+returns `{environmentKinds, projects}`. Each project row retains `statuses`
+for project-level cells and adds `tenantStatuses`, with an `EnvironmentStatus`
+per participating tenant and environment. Optional `?tenant={name}` keeps only
+matching `tenantStatuses` and drops rows without one; project access filtering
+still applies. The workspace dashboard uses these statuses to show each
+tenant's current release, deployment age, state and health.
 
 The deploy host uses a credential with only `runner.deploy`; its service
 identity must match `targetHostId`. In the managed host record, the deploy
