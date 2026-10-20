@@ -24,6 +24,31 @@ internal static class TaskJsonFile
 
     internal static object SyncRoot(string jobDir) => WriteLocks.GetOrAdd(jobDir, static _ => new object());
 
+    /// <summary>Restore selected fields while retaining concurrently appended card evidence.</summary>
+    internal static void RestoreFieldsFromSnapshot(string jobDir, string snapshot,
+        params string[] fieldNames)
+    {
+        lock (SyncRoot(jobDir))
+        {
+            var path = Path.Combine(jobDir, "task.json");
+            var before = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(snapshot, ReadOpts)
+                ?? throw new JsonException("Decision migration snapshot is invalid.");
+            var current = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(path), ReadOpts)
+                ?? throw new JsonException("Decision migration card is invalid.");
+            var fields = fieldNames.ToHashSet(StringComparer.Ordinal);
+            var restored = new Dictionary<string, object>();
+            foreach (var entry in current)
+            {
+                if (!fields.Contains(entry.Key)) restored[entry.Key] = entry.Value;
+                else if (before.TryGetValue(entry.Key, out var original)) restored[entry.Key] = original;
+            }
+            foreach (var field in fields)
+                if (!restored.ContainsKey(field) && before.TryGetValue(field, out var original))
+                    restored[field] = original;
+            Write(path, restored);
+        }
+    }
+
     /// <summary>
     /// Reads <c>task.json</c>, replaces or adds a single top-level field, writes
     /// back preserving the existing field order.

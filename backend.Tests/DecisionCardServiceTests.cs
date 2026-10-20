@@ -99,6 +99,65 @@ public class DecisionCardServiceTests : IDisposable
     }
 
     [Fact]
+    public void ProseMigration_RollbackPreservesIntegrationRecordAppendedAfterSnapshot()
+    {
+        var writer = new AfterWriteJsonFileWriter();
+        var h = Build(writer);
+        const string id = "rollback-record";
+        var source = Path.Combine(_watchPath, TaskStates.Escalated, id);
+        Directory.CreateDirectory(source);
+        File.WriteAllText(Path.Combine(source, "task.json"), JsonSerializer.Serialize(new
+        {
+            id, key = id, title = "Operator decision needed", state = TaskStates.Escalated,
+            kind = TaskKinds.Task, order = 1, agent = "codex", cliType = "codex", taskType = "feature",
+        }));
+        File.WriteAllText(Path.Combine(source, "prompt.md"), "## Decision needed (operator)");
+        h.Scanner.InvalidateCache();
+        var before = h.Scanner.FindJob(id, _watchPath)!;
+        var jsonPath = Path.Combine(before.FolderPath, "task.json");
+        var target = Path.Combine(_watchPath, TaskStates.Preparation, Path.GetFileName(before.FolderPath));
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        File.WriteAllText(target, "blocks legacy lane move");
+        writer.AfterWrite = path =>
+        {
+            if (path != jsonPath) return;
+            writer.AfterWrite = null;
+            Assert.True(h.Mutations.AppendIntegrationRecordOnFolder(before.FolderPath,
+                new TaskIntegrationRecord
+                {
+                    Id = "batch-gate-concurrent", Classification = IntegrationRecordClasses.IntegratedVerified,
+                    IntegrationBranch = "develop", IntegrationSha = new string('a', 40),
+                    RecordedAtUtc = new DateTime(2026, 10, 20, 12, 0, 0, DateTimeKind.Utc),
+                }).Appended);
+        };
+
+        var outcome = h.Mutations.MigrateJobToDecision(id, SampleContent(), h.States, _watchPath);
+
+        Assert.False(outcome.Success);
+        var after = h.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(TaskStates.Escalated, after.State);
+        Assert.Equal(TaskKinds.Task, after.Kind);
+        Assert.Single(after.IntegrationRecords, record => record.Id == "batch-gate-concurrent");
+    }
+
+    private sealed class AfterWriteJsonFileWriter : IAtomicJsonFileWriter
+    {
+        private readonly AtomicJsonFileWriter _inner = new();
+        public Action<string>? AfterWrite { get; set; }
+        public void Write(string path, string content)
+        {
+            _inner.Write(path, content);
+            AfterWrite?.Invoke(path);
+        }
+
+        public void ReplaceExisting(string path, string content)
+        {
+            _inner.ReplaceExisting(path, content);
+            AfterWrite?.Invoke(path);
+        }
+    }
+
+    [Fact]
     public void ProseMigration_EscalatedFlatCard_WritesKindAndLaneTogether()
     {
         var writer = new ControllableAtomicJsonFileWriter();

@@ -29,7 +29,7 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
     {
         var repository = Path.Combine(_root, "repository");
         var remote = Path.Combine(_root, "origin.git");
-        var watchPath = Path.Combine(_root, "tasks");
+        var watchPath = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(repository);
         Directory.CreateDirectory(watchPath);
         Git(_root, "init", "--bare", "-q", remote);
@@ -121,7 +121,21 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         Git(repository, "commit", "-q", "-m", "later card");
         Git(repository, "push", "-q", "origin", "develop");
 
+        Git(repository, "checkout", "-q", "-b", "late-attribution", ancestor);
+        Git(repository, "cherry-pick", delivery);
+        Git(repository, "commit", "-q", "--amend", "-m", "late attribution of the same patch");
+        var lateAttribution = Git(repository, "rev-parse", "HEAD");
+        Git(repository, "checkout", "-q", "develop");
+        var cardFolder = Path.Combine(watchPath, "5-human-review", "AGT-3166");
+        TaskJsonFile.UpdateFieldOrThrow(cardFolder, "commits", new[]
+        {
+            new { sha = lateAttribution, shortSha = lateAttribution[..7], message = "late attribution",
+                runAttemptId = "attempt-1", resultSha = delivery, deliveryGeneration = 1,
+                filesChanged = 1, files = new[] { "delivered.txt" } },
+        });
+
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.InvalidateCache();
         var mappedCard = scanner.FindJob("AGT-3166", watchPath)!;
         var status = factory.Services.GetRequiredService<TaskIntegrationStatusService>()
             .BuildLookup([mappedCard])[mappedCard.TaskKey];
@@ -132,6 +146,25 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         using (var reconciled = JsonDocument.Parse(File.ReadAllText(Path.Combine(mappedCard.FolderPath, "task.json"))))
             Assert.Equal(CommitIntegrationRules.IntegratedByContent, reconciled.RootElement.GetProperty("commits")[0]
                 .GetProperty("integrationRule").GetString());
+
+        TaskJsonFile.UpdateFieldOrThrow(cardFolder, "commits", new[]
+        {
+            new { sha = missing, shortSha = missing[..7], message = "unrelated late attribution",
+                runAttemptId = "attempt-1", resultSha = delivery, deliveryGeneration = 1,
+                filesChanged = 1, files = new[] { "missing.txt" } },
+        });
+        scanner.InvalidateCache();
+        var unrelated = scanner.FindJob("AGT-3166", watchPath)!;
+        Assert.NotEqual(IntegrationStatuses.Integrated,
+            factory.Services.GetRequiredService<TaskIntegrationStatusService>()
+                .BuildLookup([unrelated])[unrelated.TaskKey].Status);
+        TaskJsonFile.UpdateFieldOrThrow(cardFolder, "commits", new[]
+        {
+            new { sha = lateAttribution, shortSha = lateAttribution[..7], message = "late attribution",
+                runAttemptId = "attempt-1", resultSha = delivery, deliveryGeneration = 1,
+                filesChanged = 1, files = new[] { "delivered.txt" } },
+        });
+        scanner.InvalidateCache();
 
         using var repeated = await client.PostAsJsonAsync(path, summary with { Cards = ["AGT-3166"] });
         repeated.EnsureSuccessStatusCode();
@@ -145,7 +178,6 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         using var conflict = JsonDocument.Parse(await changed.Content.ReadAsStringAsync());
         Assert.False(conflict.RootElement.GetProperty("results")[0].GetProperty("recorded").GetBoolean());
 
-        var cardFolder = Path.Combine(watchPath, "5-human-review", "AGT-3166");
         using var task = JsonDocument.Parse(File.ReadAllText(Path.Combine(cardFolder, "task.json")));
         var record = Assert.Single(task.RootElement.GetProperty("integrationRecords").EnumerateArray());
         Assert.Equal(candidate, record.GetProperty("integrationSha").GetString());
@@ -155,6 +187,12 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
             .RemoveIntegrationRecordOnFolder(cardFolder, record.GetProperty("id").GetString()!));
         var timeline = factory.Services.GetRequiredService<TimelineLog>().ReadAll(cardFolder);
         Assert.Single(timeline, item => item.Details?.GetValueOrDefault("recordId") == record.GetProperty("id").GetString());
+        File.Delete(Path.Combine(cardFolder, "logs", "timeline.jsonl"));
+        var auditRepair = factory.Services.GetRequiredService<OperatorCandidateAuditRepair>();
+        auditRepair.RepairAll();
+        auditRepair.RepairAll();
+        Assert.Single(factory.Services.GetRequiredService<TimelineLog>().ReadAll(cardFolder),
+            item => item.Kind == TimelineEventKinds.IntegrationVerificationRecorded);
 
         var titleUpdates = Task.Run(() =>
         {
@@ -185,6 +223,21 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         }
         Assert.Single(factory.Services.GetRequiredService<TimelineLog>().ReadAll(concurrentFolder),
             item => item.Kind == TimelineEventKinds.IntegrationVerificationRecorded);
+
+        File.Delete(Path.Combine(concurrentFolder, "logs", "timeline.jsonl"));
+        scanner.InvalidateCache();
+        Assert.Equal(concurrentFolder, scanner.FindJob("AGT-3190", watchPath)?.FolderPath);
+        Directory.CreateDirectory(Path.Combine(watchPath, TaskStates.Escalated));
+        var laneMove = Task.Run(() => factory.Services.GetRequiredService<TaskStateMachine>()
+            .MoveJob("AGT-3190", TaskStates.Escalated, watchPath));
+        var concurrentRepair = Task.Run(() => auditRepair.RepairAll());
+        Assert.Equal(MoveJobStatus.Success, (await laneMove).Status);
+        await concurrentRepair;
+        auditRepair.RepairAll();
+        var movedFolder = scanner.FindJob("AGT-3190", watchPath)!.FolderPath;
+        Assert.Single(factory.Services.GetRequiredService<TimelineLog>().ReadAll(movedFolder),
+            item => item.Kind == TimelineEventKinds.IntegrationVerificationRecorded);
+        Assert.False(Directory.Exists(concurrentFolder));
 
         ReviewSubjectStore.Write(cardFolder, new ReviewSubjectRecord
         {

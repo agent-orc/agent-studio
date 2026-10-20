@@ -26,7 +26,8 @@ public static class OperatorCandidateVerificationEndpoints
         app.MapPost("/api/projects/{project}/operator-candidate-verifications", (
             HttpContext context, string project, RecordOperatorCandidateRequest request,
             ProjectRegistry projects, ProjectSettingsService settings, TaskScannerService scanner,
-            TaskMutationService mutations, GitService git, TimelineLog timeline, TimeProvider clock) =>
+            TaskMutationService mutations, GitService git, OperatorCandidateAuditRepair audit,
+            LaneMutexRegistry lanes, TimeProvider clock) =>
         {
             // The local profile has no human identity. A run or coding-agent token
             // cannot create verification evidence, even if it can call other APIs.
@@ -65,6 +66,10 @@ public static class OperatorCandidateVerificationEndpoints
             var results = new List<OperatorCandidateCardResult>();
             foreach (var address in request.Cards.Distinct(StringComparer.OrdinalIgnoreCase))
             {
+                // Legacy lane folders move under this project mutex. Keep the
+                // record and its audit event in the same folder across a move.
+                using var lane = lanes.Acquire(registered.StorageLocation, Timeout.InfiniteTimeSpan);
+                scanner.InvalidateCache();
                 var resolution = TaskIntegrationRecordAddressResolver.Resolve(scanner, address, registered.StorageLocation);
                 if (resolution.Ambiguous)
                 {
@@ -118,23 +123,7 @@ public static class OperatorCandidateVerificationEndpoints
                     write = mutations.AppendIntegrationRecordOnFolder(card.FolderPath, record);
                     if (write.Succeeded && !write.Conflict)
                     {
-                        var hasAudit = timeline.ReadAll(card.FolderPath).Any(item =>
-                            item.Kind == TimelineEventKinds.IntegrationVerificationRecorded
-                            && item.Details?.GetValueOrDefault("recordId") == record.Id);
-                        if (!hasAudit && !timeline.Append(card.FolderPath, new TimelineEvent
-                            {
-                                Ts = now,
-                                Kind = TimelineEventKinds.IntegrationVerificationRecorded,
-                                Actor = record.Actor!,
-                                Summary = record.Evidence,
-                                Details = new Dictionary<string, string>
-                                {
-                                    ["state"] = IntegrationVerificationStates.Verified,
-                                    ["sha"] = sha,
-                                    ["evidence"] = "operator-candidate",
-                                    ["recordId"] = record.Id,
-                                },
-                            }))
+                        if (!audit.EnsureAudit(card.FolderPath, record))
                         {
                             results.Add(new(address, false, "The record was persisted but its audit event failed; retry this post."));
                             continue;

@@ -151,9 +151,12 @@ card's reviewed delivery is an ancestor or patch-equivalent. It returns a
 reason for each refused card. Successful card records and their timeline
 audit events are append-only; reposting identical evidence is a no-op. A
 changed summary for the same candidate and delivery is refused, including
-when two posts race. Patch-equivalent records carry the review attempt and
-attributed commits so the board and reconciliation recognize the current
-delivery while the published branch retains the verified candidate.
+when two posts race. Patch-equivalent records bind the reviewed result and
+attempt. The board and reconciliation check later commit attribution against
+the recorded candidate tree, so a late attribution does not change the
+immutable receipt. A missing timeline audit event is repaired from the
+receipt when Studio restarts; lane moves and audit repair share the project
+lane mutex.
 
 ### Detached launch
 

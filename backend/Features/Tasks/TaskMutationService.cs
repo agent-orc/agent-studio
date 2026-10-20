@@ -962,8 +962,7 @@ public class TaskMutationService
            && existing.VerificationStartedAtUtc == proposed.VerificationStartedAtUtc
            && existing.VerificationEndedAtUtc == proposed.VerificationEndedAtUtc
            && existing.Evidence == proposed.Evidence
-           && existing.VerificationSuites.SequenceEqual(proposed.VerificationSuites)
-           && existing.CommitShas.SequenceEqual(proposed.CommitShas);
+           && existing.VerificationSuites.SequenceEqual(proposed.VerificationSuites);
 
     /// <summary>Removes evidence staged for an operator move that was refused.</summary>
     public bool RemoveIntegrationRecordOnFolder(string folderPath, string recordId)
@@ -1301,7 +1300,8 @@ public class TaskMutationService
             return (true, null);
         try
         {
-            new AtomicJsonFileWriter().ReplaceExisting(jsonPath, originalJson);
+            TaskJsonFile.RestoreFieldsFromSnapshot(info.FolderPath, originalJson,
+                "kind", "decision", "noBranchExpected", "requiresIntegration");
             _scanner.InvalidateCache();
             _scanner.PublishCoreFromFolder(info.FolderPath, info.WatchPath, info.ProjectName, info.State);
             return (false, $"Decision migration failed; the original lane and card were restored: {moved.Message ?? moved.Status.ToString()}.");
