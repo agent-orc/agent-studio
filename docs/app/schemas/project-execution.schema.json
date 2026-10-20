@@ -255,7 +255,7 @@
                 "const": "static"
               },
               "path": {
-                "$ref": "#/$defs/relativePath"
+                "$ref": "#/$defs/artifactPath"
               }
             }
           },
@@ -275,11 +275,11 @@
                 "const": "container"
               },
               "dockerfile": {
-                "$ref": "#/$defs/relativePath"
+                "$ref": "#/$defs/artifactPath"
               },
               "path": {
-                "description": "Optional build context.",
-                "$ref": "#/$defs/relativePath"
+                "description": "Optional build context; '.' is the repository root.",
+                "$ref": "#/$defs/artifactPath"
               },
               "image": {
                 "description": "Registry repository without tag or digest.",
@@ -323,7 +323,8 @@
                   "const": "staging"
                 },
                 "protected": {
-                  "type": "boolean",
+                  "description": "P1 Staging deploys automatically after integration and cannot be protected.",
+                  "const": false,
                   "default": false
                 }
               }
@@ -437,7 +438,7 @@
             "type": "string"
           },
           "target": {
-            "description": "Registered SSH host id for static-site and container; never credentials.",
+            "description": "Deploy host id for static-site and container, registered for the step's environments by docs/deployments/environments; never credentials.",
             "type": "string"
           },
           "branch": {
@@ -792,9 +793,14 @@
       "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
     },
     "remotePath": {
-      "description": "Absolute POSIX path on the SSH target, without traversal or whitespace.",
+      "description": "Absolute path on the SSH target below /srv: segments of letters, digits, '.', '_' and '-' that do not start with '-', with no empty, '.' or '..' segment.",
       "type": "string",
-      "pattern": "^/(?!.*(?:^|/)\\.\\.(?:/|$))[^\\s]+$"
+      "pattern": "^/srv(?:/(?!\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*)+$"
+    },
+    "artifactPath": {
+      "description": "Repository-relative artifact path with the remotePath segment alphabet; '.' alone is the repository root.",
+      "type": "string",
+      "pattern": "^(?:\\.|(?!\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*(?:/(?!\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*)*)$"
     },
     "environmentScope": {
       "description": "Environments the entry applies to; omitted means every environment.",

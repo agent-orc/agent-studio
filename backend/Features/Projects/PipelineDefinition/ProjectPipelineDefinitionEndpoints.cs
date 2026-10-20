@@ -1,11 +1,16 @@
+using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Projects;
 
 /// <summary>
 /// The project.yml pipeline under <c>/api/projects/{projectName}/pipeline-definition</c>:
 /// the parsed diagram with issues (line and path), validation of edited text,
 /// the schema 2 migration dry run, and its confirmation. Only the confirmation
-/// writes, through the managed repository mutation. None of these routes start
-/// an agent, so they carry no execution admission metadata.
+/// writes: one managed repository commit that is pushed like a pipeline post
+/// step, so it is classified as <see cref="ExecutionAdmissionPath.PostStep"/> and
+/// the public-demo profile refuses it by route identity. The reads and the
+/// validation write nothing and stay unclassified.
 /// </summary>
 public static class ProjectPipelineDefinitionEndpoints
 {
@@ -27,7 +32,8 @@ public static class ProjectPipelineDefinitionEndpoints
         app.MapPost("/api/projects/{projectName}/pipeline-definition/migration", (
             string projectName,
             ConfirmPipelineMigrationRequest? body,
-            ProjectPipelineDefinitionService definitions) => ToResult(definitions.Confirm(projectName, body)));
+            ProjectPipelineDefinitionService definitions) => ToResult(definitions.Confirm(projectName, body)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
     }
 
     private static IResult ToResult<T>(PipelineDefinitionResult<T> result) => result.ErrorCode switch

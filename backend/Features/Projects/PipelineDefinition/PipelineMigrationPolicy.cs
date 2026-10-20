@@ -124,12 +124,7 @@ public static partial class PipelineMigrationPolicy
         var targets = new List<DeployTarget>();
         foreach (var declaration in declarations)
         {
-            var environment = declaration.Kind switch
-            {
-                "stage" => "staging",
-                "production" => "production",
-                _ => null,
-            };
+            var environment = EnvironmentFor(declaration.Kind);
             if (environment is null)
             {
                 notes.Add($"Environment declaration '{declaration.Id}' has kind '{declaration.Kind}'; P1 deploys only Staging and Production, so it is not migrated.");
@@ -141,6 +136,14 @@ public static partial class PipelineMigrationPolicy
             .ThenBy(target => target.Declaration.Id, StringComparer.Ordinal)
             .ToList();
     }
+
+    /// <summary>The P1 environment an AGT-3176 declaration kind deploys, or null for kinds P1 does not deploy.</summary>
+    public static string? EnvironmentFor(string kind) => kind switch
+    {
+        "stage" => "staging",
+        "production" => "production",
+        _ => null,
+    };
 
     private static List<ProposedArtifact> Artifacts(List<DeployTarget> targets, PipelineMigrationFacts facts, List<string> notes)
     {

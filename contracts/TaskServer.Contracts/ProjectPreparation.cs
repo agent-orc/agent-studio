@@ -315,7 +315,9 @@ public static partial class ProjectDefinitionReader
         }
     }
 
-    public static ProjectDefinitionReadResult Parse(string yaml, string? workspace = null)
+    /// <param name="hosts">Registered deploy hosts; null checks only the shape of deploy targets.</param>
+    public static ProjectDefinitionReadResult Parse(string yaml, string? workspace = null,
+        ProjectDeployHostRegistry? hosts = null)
     {
         var issues = new List<ProjectDefinitionIssue>();
         if (string.IsNullOrWhiteSpace(yaml))
@@ -369,7 +371,7 @@ public static partial class ProjectDefinitionReader
         {
             Deployment = ParseDeployment(lines, issues),
         };
-        issues.AddRange(ProjectDefinitionValidator.Validate(definition, workspace));
+        issues.AddRange(ProjectDefinitionValidator.Validate(definition, workspace, hosts));
         issues = LocateIssues(lines, issues);
         var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(yaml)))
             .ToLowerInvariant();
@@ -812,9 +814,11 @@ public static partial class ProjectDefinitionReader
 
 public static partial class ProjectDefinitionValidator
 {
+    /// <param name="hosts">Registered deploy hosts; null checks only the shape of deploy targets.</param>
     public static IReadOnlyList<ProjectDefinitionIssue> Validate(
         ProjectExecutionDefinition definition,
-        string? workspace = null)
+        string? workspace = null,
+        ProjectDeployHostRegistry? hosts = null)
     {
         var issues = new List<ProjectDefinitionIssue>();
         if (definition.SchemaVersion is not (1 or 2))
@@ -924,7 +928,7 @@ public static partial class ProjectDefinitionValidator
             }
         }
         if (definition.Deployment is { } deployment)
-            issues.AddRange(ValidateDeployment(deployment));
+            issues.AddRange(ValidateDeployment(deployment, hosts));
         return issues;
     }
 

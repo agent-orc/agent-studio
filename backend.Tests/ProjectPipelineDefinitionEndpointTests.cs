@@ -4,9 +4,13 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Projects;
 using AgentStudio.Registry;
+using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http.Metadata;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -134,6 +138,73 @@ public sealed class ProjectPipelineDefinitionEndpointTests : IAsyncLifetime
         Assert.Equal("environments", order.GetProperty("path").GetString());
         Assert.Equal(Array.IndexOf(yaml.Split('\n'), "environments:") + 1, order.GetProperty("line").GetInt32());
         Assert.Equal(SchemaOne, File.ReadAllText(DefinitionFile));
+    }
+
+    [Fact]
+    public async Task Validate_checks_deploy_targets_against_the_hosts_the_declarations_register()
+    {
+        var yaml = SchemaOne.Replace("schemaVersion: 1", "schemaVersion: 2", StringComparison.Ordinal) + "\n" + """
+            project:
+              id: website
+            artifacts:
+              - name: site
+                type: static
+                path: dist
+            deploy:
+              - step: static-site
+                artifact: site
+                target: other-vm
+                directory: /srv/www/site
+                healthUrl: https://example.test/
+                healthTimeoutSeconds: 60
+            """;
+
+        using var response = await _client!.PostAsJsonAsync("/api/projects/Website/pipeline-definition/validate", new { yaml });
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        var issue = Assert.Single(body.RootElement.GetProperty("issues").EnumerateArray());
+        Assert.Equal("deploy-target-unregistered", issue.GetProperty("code").GetString());
+        Assert.Equal("deploy[0].target", issue.GetProperty("path").GetString());
+        Assert.Equal(Array.IndexOf(yaml.Split('\n'), "    target: other-vm") + 1, issue.GetProperty("line").GetInt32());
+        Assert.Contains("staging: web-vm", issue.GetProperty("message").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Only_the_confirm_route_is_classified_for_the_public_demo_lock()
+    {
+        var classified = ((IEndpointRouteBuilder)_app!).DataSources.SelectMany(source => source.Endpoints)
+            .OfType<RouteEndpoint>()
+            .Where(endpoint => endpoint.RoutePattern.RawText!.Contains("pipeline-definition", StringComparison.Ordinal))
+            .Select(endpoint => (
+                Method: endpoint.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods.Single(),
+                endpoint.RoutePattern.RawText,
+                Path: endpoint.Metadata.GetMetadata<ExecutionRouteMetadata>()?.Path,
+                Expected: endpoint.Metadata.GetMetadata<PublicDemoExecutionExpectationMetadata>()?.ExpectedCode))
+            .Where(route => route.Path is not null)
+            .ToArray();
+
+        var route = Assert.Single(classified);
+        Assert.Equal(("POST", "/api/projects/{projectName}/pipeline-definition/migration"), (route.Method, route.RawText));
+        Assert.Equal((ExecutionAdmissionPath.PostStep, ExecutionAdmissionPolicy.ExecutionDisabledCode), (route.Path, route.Expected));
+    }
+
+    [Fact]
+    public async Task Confirm_after_a_committed_change_to_project_yml_is_refused_as_stale()
+    {
+        using var dryRun = await GetJson("/api/projects/Website/pipeline-definition/migration");
+        var changed = SchemaOne.Replace("lint: []", "lint: [npm run lint]", StringComparison.Ordinal);
+        File.WriteAllText(DefinitionFile, changed);
+        Git("commit", "-q", "-am", "edit lint");
+
+        using var response = await _client!.PostAsJsonAsync("/api/projects/Website/pipeline-definition/migration", new
+        {
+            baseSha256 = dryRun.RootElement.GetProperty("baseSha256").GetString(),
+            proposalSha256 = dryRun.RootElement.GetProperty("proposalSha256").GetString(),
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(changed, File.ReadAllText(DefinitionFile));
+        Assert.Equal("2", Git("rev-list", "--count", "HEAD"));
     }
 
     [Fact]

