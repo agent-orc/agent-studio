@@ -11,6 +11,9 @@ namespace AgentStudio.Pipeline;
 /// </summary>
 public static class RemoteGateWorker
 {
+    internal static readonly TimeSpan HeartbeatTimeout = TimeSpan.FromSeconds(35);
+    internal static readonly TimeSpan HeartbeatPollInterval = TimeSpan.FromSeconds(2);
+
     public static async Task<int> RunAsync(string requestPath,
         Action<string>? progress = null, CancellationToken shutdown = default)
     {
@@ -34,6 +37,7 @@ public static class RemoteGateWorker
         var bundle = Path.Combine(directory, "source.bundle");
         var artifactDirectory = Path.Combine(directory, "artifacts");
         Directory.CreateDirectory(artifactDirectory);
+        var slotHeld = 0;
         var request = invocation.Request with
         {
             RepositoryPath = repository,
@@ -45,7 +49,10 @@ public static class RemoteGateWorker
             OnMachineGateSlotWaiting = (busy, total) =>
                 Report($"REMOTE_GATE_WAITING {invocation.RunId} {busy}/{total}"),
             OnMachineGateSlotAcquired = (slot, total) =>
-                Report($"REMOTE_GATE_SLOT {invocation.RunId} {slot}/{total}"),
+            {
+                Interlocked.Exchange(ref slotHeld, 1);
+                Report($"REMOTE_GATE_SLOT {invocation.RunId} {slot}/{total}");
+            },
             OnMachineGateAcquired = () => Report("REMOTE_GATE_ACQUIRED " + invocation.RunId),
             GateSlots = invocation.GateSlots,
         };
@@ -70,10 +77,12 @@ public static class RemoteGateWorker
             Interlocked.Exchange(ref shutdownRequested, 1);
             lifetime.Cancel();
         });
-        var watch = WatchCancellationAsync(directory, lifetime, cancelWatcher.Token);
+        var watch = WatchCancellationAsync(directory, invocation.InstallationId, lifetime, cancelWatcher.Token,
+            TimeProvider.System);
         using var logging = LoggerFactory.Create(builder => builder.AddSimpleConsole());
         var logger = logging.CreateLogger<RemoteGateWorkerLog>();
         BuildTestGateResult result;
+        var sessionLost = false;
         var cleanupFailed = false;
         try
         {
@@ -134,8 +143,10 @@ public static class RemoteGateWorker
         }
         finally
         {
+            if (Volatile.Read(ref slotHeld) != 0 && lifetime.IsCancellationRequested)
+                Report($"REMOTE_GATE_SLOT {invocation.RunId} release");
             cancelWatcher.Cancel();
-            await watch;
+            sessionLost = await watch;
             try
             {
                 if (Directory.Exists(repository)) Directory.Delete(repository, recursive: true);
@@ -160,6 +171,14 @@ public static class RemoteGateWorker
         var responsePath = Path.Combine(directory, "response.json");
         await File.WriteAllTextAsync(responsePath + ".tmp", JsonSerializer.Serialize(response, RemoteBuildTestGateRunner.Json));
         File.Move(responsePath + ".tmp", responsePath, overwrite: true);
+        if (sessionLost)
+        {
+            try { Directory.Delete(directory, recursive: true); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine("Remote gate session-loss cleanup failed: " + exception.Message);
+            }
+        }
         return 0;
     }
 
@@ -174,6 +193,8 @@ public static class RemoteGateWorker
     {
         if (invocation.Version != 1 || invocation.RunId != directoryName
             || !Regex.IsMatch(invocation.RunId, "^[0-9a-f]{32}$")
+            || (invocation.InstallationId.Length > 0
+                && !Regex.IsMatch(invocation.InstallationId, "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"))
             || !Regex.IsMatch(invocation.BundleSha256, "^[0-9a-f]{64}$")
             || invocation.Request is null || !invocation.Request.RequireExactSubject
             || !RemoteBuildTestGateRunner.ValidSha(invocation.Request.ExpectedSha)
@@ -203,24 +224,47 @@ public static class RemoteGateWorker
     internal static bool IsOversubscribed(int slots, int processors, int hostCores)
         => (long)slots * processors > hostCores;
 
-    private static async Task WatchCancellationAsync(string directory,
-        CancellationTokenSource execution, CancellationToken ct)
+    internal static bool IsHeartbeatStale(DateTimeOffset now, DateTimeOffset lastWriteUtc)
+        => now - lastWriteUtc > HeartbeatTimeout;
+
+    internal static async Task<bool> WatchCancellationAsync(string directory, string installationId,
+        CancellationTokenSource execution, CancellationToken ct, TimeProvider time)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        using var timer = new PeriodicTimer(HeartbeatPollInterval, time);
         try
         {
             while (await timer.WaitForNextTickAsync(ct))
             {
-                if (!File.Exists(Path.Combine(directory, "cancel"))) continue;
-                execution.Cancel();
-                return;
+                if (installationId.Length > 0)
+                {
+                    var heartbeat = Path.Combine(directory, "heartbeat");
+                    if (!File.Exists(heartbeat))
+                    {
+                        execution.Cancel();
+                        return true;
+                    }
+                    DateTimeOffset lastWrite;
+                    try { lastWrite = new DateTimeOffset(File.GetLastWriteTimeUtc(heartbeat), TimeSpan.Zero); }
+                    catch (IOException) { execution.Cancel(); return true; }
+                    if (IsHeartbeatStale(time.GetUtcNow(), lastWrite))
+                    {
+                        execution.Cancel();
+                        return true;
+                    }
+                }
+                if (File.Exists(Path.Combine(directory, "cancel")))
+                {
+                    execution.Cancel();
+                    return false;
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // The owner stops this watcher after gate cleanup.
-            return;
+            return false;
         }
+        return false;
     }
 
     private sealed class RemoteGateWorkerLog { }

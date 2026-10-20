@@ -88,6 +88,30 @@ stopping token. A cancelled emergency gate while the host is running leaves the
 card in Auto Review and returns a retryable report error; only host shutdown
 is recorded as `Gate cancelled: shutdown`.
 
+### SSH remote gate worker recovery
+
+`RemoteGateTransport` writes a durable record for each dispatched SSH worker
+under local application data. The record includes the run id, host, remote
+root, start time, persistent installation id, and owning Studio process
+identity (PID and process start time). The id comes from `RemoteGate:InstallationId`,
+the configured connectivity manifest, or a generated id in a directory scoped
+to the Studio installation path under local application data. Startup and the
+one-minute recovery sweep touch the worker's `cancel` marker only after the
+owning process is gone. Recovery is scoped to
+the installation id and recorded host/root; the primary and every configured
+SSH shard host are swept. A different Studio installation sharing a gate host
+is left alone. The record is removed after the remote run
+directory is removed under the worker lock and confirmed gone. A run that never
+started is removed by the same recovery path.
+
+The transport refreshes a per-run heartbeat every ten seconds. The worker
+cancels gate execution when that heartbeat is absent or older than 35 seconds,
+then releases its worker lock; recovery removes its remote directory after the
+lock becomes available. On session loss the worker removes its own directory.
+Cancelled workers report `REMOTE_GATE_SLOT <runId> release`, and recovery logs
+the typed `remote gate run orphaned and cancelled` event with the run id, host,
+and age. It also appends the event to the project's activity feed.
+
 ## Exact-SHA gate verdict cache
 
 `BuildTestGateRunner` reuses a deterministic terminal verdict only for an exact
