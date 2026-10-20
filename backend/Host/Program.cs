@@ -345,6 +345,12 @@ if (!underTestHost)
 
 builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
+builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
+builder.Services.AddSingleton<ISecretStore, BuiltInSecretStore>();
+builder.Services.AddSingleton<SecretAuditLog>();
+builder.Services.AddSingleton<SecretValueScrubber>();
+builder.Services.AddSingleton<ISecretProvider, SecretProvider>();
+builder.Services.AddSingleton<ISecretWorkloadLeases, SecretWorkloadLeases>();
 builder.Services.AddSingleton<ManagementService>();
 builder.Services.AddSingleton<IProviderAuthProvisioner, SshProviderAuthProvisioner>();
 builder.Services.AddSingleton<IRunnerLinkProcessLauncher, RunnerLinkProcessLauncher>();
@@ -517,6 +523,24 @@ builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+builder.Services.AddSingleton<ProjectPipelineDefinitionService>();
+// IP-14: environment health checks run here, in the control plane, not on the app host.
+builder.Services.AddHttpClient(NetworkHealthCheckProbe.HttpClientName, client =>
+{
+    // The probe applies the per-check timeout on the injected clock.
+    client.Timeout = Timeout.InfiniteTimeSpan;
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("AgentStudio-HealthCheck/1.0");
+}).ConfigurePrimaryHttpMessageHandler(services =>
+    // Refuses loopback, link-local, metadata and (without the environment's opt-in) private addresses.
+    services.GetRequiredService<HealthCheckConnector>().CreateHandler());
+builder.Services.AddSingleton(_ => new HealthCheckConnector());
+builder.Services.AddSingleton<IHealthCheckProbe, NetworkHealthCheckProbe>();
+builder.Services.AddSingleton<HealthCheckStore>();
+builder.Services.AddSingleton<HealthAlerts>();
+builder.Services.AddSingleton<EnvironmentHealthService>();
+// Test hosts never probe the addresses their fixture declarations name.
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<EnvironmentHealthWorker>();
 builder.Services.AddSingleton<ProjectDeploymentCompiler>();
 builder.Services.AddSingleton<TestRunStore>();
 builder.Services.AddSingleton<TestRunService>();
@@ -1282,6 +1306,10 @@ hostTimeline.Checkpoint("entryToBuild");
 var app = builder.Build();
 hostTimeline.Checkpoint("build");
 hostTimeline.Attach(app.Services);
+// Capture the secrets key-encryption key now, before any hosted service starts
+// a child process: the source removes the variable from the process
+// environment so CLI runs, build gates and project processes never inherit it.
+app.Services.GetRequiredService<IKeyEncryptionKeySource>();
 
 if (connectorProfile)
 {

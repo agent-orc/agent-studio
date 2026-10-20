@@ -27,6 +27,12 @@ interface PersistedState {
   activeKey: string | null;
 }
 
+/** A persisted tab of the retired Epics overview restores as the Dossiers overview of the same scope. */
+function migrateRetiredEpicsTab(tab: StudioTab): StudioTab {
+  const legacy = tab as { kind?: string; projectName?: string | null };
+  return legacy?.kind === 'epics' ? { kind: 'workbenches', projectName: legacy.projectName ?? null } : tab;
+}
+
 /**
  * Owns the open-editor-tab list and the active tab for the studio shell.
  *
@@ -323,7 +329,6 @@ export class StudioTabStateService {
     const before = this._tabs();
     const after = before.filter(t => {
       if (t.kind === 'board' && t.projectName !== ALL_PROJECTS) return validNames.has(t.projectName);
-      if (t.kind === 'epics' && t.projectName !== null) return validNames.has(t.projectName);
       if (t.kind === 'hub') return validNames.has(t.projectName);
       if (t.kind === 'workbenches' && t.projectName !== null) return validNames.has(t.projectName);
       if (t.kind === 'workbench') return validNames.has(t.projectName);
@@ -345,8 +350,6 @@ export class StudioTabStateService {
     const rename = (tab: StudioTab): StudioTab => {
       switch (tab.kind) {
         case 'board':
-          return tab.projectName === previousName ? { ...tab, projectName: currentName } : tab;
-        case 'epics':
           return tab.projectName === previousName ? { ...tab, projectName: currentName } : tab;
         case 'hub':
           return tab.projectName === previousName ? { ...tab, projectName: currentName } : tab;
@@ -400,17 +403,20 @@ export class StudioTabStateService {
       // studioTabKey. This is also the migration for persisted Backlog Triage
       // tabs from builds that still exposed that feature.
       this.restoredRetiredChatHistory = parsed.tabs.some(t => (t as { kind?: string })?.kind === 'chat-history');
-      const safeTabs = parsed.tabs.filter(t => {
+      const safeTabs = parsed.tabs.map(migrateRetiredEpicsTab).filter(t => {
         try { return typeof studioTabKey(t) === 'string'; }
         catch { return false; }
       });
       this._tabs.set(this.dedupe(safeTabs.map(t => this.normalizeTab(t))));
       // Only restore the active key if it points at a surviving tab.
       const normalizedTabs = this._tabs();
-      const validKey = normalizedTabs.some(t => studioTabKey(t) === parsed.activeKey);
+      const activeKey = parsed.activeKey?.startsWith('epics:')
+        ? `workbenches:${parsed.activeKey.slice('epics:'.length)}`
+        : parsed.activeKey;
+      const validKey = normalizedTabs.some(t => studioTabKey(t) === activeKey);
       this._activeKey.set(
         validKey
-          ? parsed.activeKey
+          ? activeKey
           : (normalizedTabs.length ? studioTabKey(normalizedTabs[normalizedTabs.length - 1]) : null),
       );
       return true;
@@ -440,8 +446,6 @@ export class StudioTabStateService {
         return { kind: 'board', projectName: tab.projectName };
       case 'feed':
         return { kind: 'feed' };
-      case 'epics':
-        return { kind: 'epics', projectName: tab.projectName };
       case 'epic':
         return {
           kind: 'epic',

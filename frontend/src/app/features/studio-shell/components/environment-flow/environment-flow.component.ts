@@ -6,6 +6,7 @@ import type { RemoteHost } from '../../../remote-hosts/models/remote-host.model'
 import { freshHostTelemetry } from '../../../remote-hosts/models/running-truth';
 import type { WatcherCase } from '../../../watcher/models/watcher.model';
 import { minutes, type EnvironmentFlowSnapshot } from './environment-flow.model';
+import { EnvironmentHealthOverviewComponent } from '../../../environment-health';
 
 interface DecisionReceipt {
   receiptId: string; taskId: string | null; chosenAction: string; callStatus: string; endedAt: string;
@@ -14,6 +15,7 @@ interface DecisionReceipt {
 @Component({
   selector: 'app-environment-flow',
   standalone: true,
+  imports: [EnvironmentHealthOverviewComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './environment-flow.component.html',
   styleUrl: './environment-flow.component.scss',

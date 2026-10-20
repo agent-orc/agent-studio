@@ -23,4 +23,11 @@ describe('ProjectOverlaysComponent (smoke)', () => {
     expect(hasCustomPanel.call({} as ProjectOverlaysComponent, 'audits')).toBe(false);
     expect(hasCustomPanel.call({} as ProjectOverlaysComponent, 'steering')).toBe(true);
   });
+
+  it('routes the Deploy, Operations, and Agent activity rails to real panels, including retired names', () => {
+    const hasCustomPanel = ProjectOverlaysComponent.prototype.hasCustomPanel;
+    for (const rail of ['deploy', 'pipeline', 'operations', 'observability', 'agent-activity'] as const) {
+      expect(hasCustomPanel.call({} as ProjectOverlaysComponent, rail), rail).toBe(true);
+    }
+  });
 });

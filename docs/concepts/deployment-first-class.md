@@ -44,6 +44,8 @@ Every production release needs a person in Studio (BD-1). The declaration value
 production on its own. An approval expires after 24 hours.
 Failed production health queues the previously healthy artifact for rollback
 and leaves a failure card with the bounded health evidence in Studio.
+After the deploy, the control plane keeps probing each environment from outside
+its host; see [environment health checks](../operations/environment-health-checks.md).
 
 ### Releases, standard lifecycle and deploy runs (BD-1)
 

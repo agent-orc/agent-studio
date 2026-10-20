@@ -21,10 +21,10 @@ export type StudioRoute =
   /** Retired Chat History tab; the app redirects it to the sidebar Chats panel. */
   | { kind: 'chat-history' }
   | { kind: 'hub'; projectSlug: string; section: string; page: string | null; folder: string | null }
-  | { kind: 'workbenches'; projectSlug: string | null }
+  /** `legacy` marks a retired Epics URL that the app rewrites to the Dossiers URL. */
+  | { kind: 'workbenches'; projectSlug: string | null; legacy?: true }
   | { kind: 'workbench'; projectSlug: string; workbenchId: string }
   | { kind: 'task'; reference: string; tab: TaskDetailRouteTab; inspector: TaskInspectorRouteTab }
-  | { kind: 'epics'; projectSlug: string | null }
   | { kind: 'epic'; reference: string }
   | { kind: 'workspace-settings'; section: string; detail: string | null }
   | { kind: 'deployment-dashboard' };
@@ -54,7 +54,7 @@ export function parseStudioRoute(hash: string): StudioRoute | null {
     return { kind: 'chat-history' };
   }
   if (segments.length === 1 && segments[0] === 'epics') {
-    return { kind: 'epics', projectSlug: null };
+    return { kind: 'workbenches', projectSlug: null, legacy: true };
   }
   if (segments.length === 1 && segments[0] === 'workbenches') {
     return { kind: 'workbenches', projectSlug: null };
@@ -93,7 +93,7 @@ export function parseStudioRoute(hash: string): StudioRoute | null {
     return { kind: 'board', projectSlug };
   }
   if (segments.length === 3 && segments[2] === 'epics') {
-    return { kind: 'epics', projectSlug };
+    return { kind: 'workbenches', projectSlug, legacy: true };
   }
   if (segments.length === 3 && segments[2] === 'workbenches') {
     return { kind: 'workbenches', projectSlug };
@@ -137,10 +137,6 @@ export function studioRouteForTab(
         : '/workbenches';
     case 'task':
       return publicTaskReference ? `/tasks/${encodeURIComponent(publicTaskReference)}` : null;
-    case 'epics':
-      return tab.projectName
-        ? `/projects/${studioProjectSlug(tab.projectName)}/epics`
-        : '/epics';
     case 'epic':
       return `/epics/${encodeURIComponent(publicTaskReference || tab.epicKey)}`;
     case 'workspace-settings':

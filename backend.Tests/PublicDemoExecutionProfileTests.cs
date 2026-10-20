@@ -196,7 +196,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // artifact digest and queues stage, so public demo must deny it.
         // AGT-3201 (BD-1) added deploy runs: deploy a release, redeploy and
         // rollback on Start; approve, reject and cancel a run on Continue.
-        Assert.Equal(118, routes.Count);
+        // AGT-3221 added the project.yml schema 2 migration confirm on PostStep:
+        // it commits and pushes project.yml through the managed repository write.
+        Assert.Equal(119, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -216,6 +218,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/approve", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/reject", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/cancel", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/pipeline-definition/migration", ExecutionAdmissionPath.PostStep),
             ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue),
             ("/api/orchestration/decision-receipts/{receiptId}/operator-intent", ExecutionAdmissionPath.Continue),
             ("/api/tasks/{jobId}/preview-feedback", ExecutionAdmissionPath.Continue)
@@ -248,7 +251,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 28,
-                [ExecutionAdmissionPath.PostStep] = 16,
+                [ExecutionAdmissionPath.PostStep] = 17,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));
