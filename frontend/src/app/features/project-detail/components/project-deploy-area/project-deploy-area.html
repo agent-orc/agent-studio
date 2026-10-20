@@ -9,7 +9,6 @@
     <button type="button" data-testid="deploy-tab-pipeline" [attr.aria-current]="view() === 'pipeline' ? 'page' : null" (click)="show('pipeline')">Pipeline</button>
     <button type="button" data-testid="deploy-tab-steps" [attr.aria-current]="view() === 'steps' ? 'page' : null" (click)="show('steps')">Run steps</button>
     <button type="button" disabled title="Planned for P2">Variables · P2</button>
-    <button type="button" disabled title="Planned for P2">Runbooks · P2</button>
     <button type="button" data-testid="deploy-tab-operations" [attr.aria-current]="view() === 'operations' ? 'page' : null" (click)="show('operations')">Operations</button>
   </nav>
   @if (snapshot(); as data) {
