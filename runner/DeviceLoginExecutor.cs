@@ -41,6 +41,11 @@ public sealed partial class DeviceLoginExecutor(
     public static string ClaudeTokenPath(string stateDir)
         => Path.Combine(stateDir, "provider-auth", "claude-token");
 
+    internal static string CodexCredentialPath() => Path.Combine(
+        Environment.GetEnvironmentVariable("CODEX_HOME")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex"),
+        "auth.json");
+
     public async Task<DeviceLoginCompletionRequest> RunAsync(
         Func<DeviceLoginInstructionsRequest, CancellationToken, Task> publish,
         CancellationToken cancellationToken)
@@ -49,12 +54,11 @@ public sealed partial class DeviceLoginExecutor(
             return new("failed", "Unsupported device-login provider.");
         var claude = provider == "claude";
         var label = claude ? "Claude" : "Codex";
-        var store = credentialFile ?? (claude ? null : Path.Combine(
-            Environment.GetEnvironmentVariable("CODEX_HOME")
-                ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex"),
-            "auth.json"));
+        var store = credentialFile ?? (claude ? null : CodexCredentialPath());
         if (store is null) return new("failed", "No Claude credential file is configured for this runner.");
-        byte[]? previousDigest = null;
+        byte[]? previousCredential = null;
+        var snapshotReady = false;
+        var accepted = false;
         var startedAt = _clock.GetUtcNow();
         using var limit = new CancellationTokenSource(TimeSpan.FromMinutes(15), _clock);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, limit.Token);
@@ -117,8 +121,9 @@ public sealed partial class DeviceLoginExecutor(
         }
         try
         {
-            previousDigest = File.Exists(store)
-                ? SHA256.HashData(await File.ReadAllBytesAsync(store, deadline.Token)) : null;
+            previousCredential = File.Exists(store)
+                ? await File.ReadAllBytesAsync(store, deadline.Token) : null;
+            snapshotReady = true;
             if (!process.Start()) return new("failed", $"The {label} process could not start.");
             started = true;
             process.StandardInput.Close();
@@ -131,18 +136,23 @@ public sealed partial class DeviceLoginExecutor(
             if (sent) await published.Task.WaitAsync(deadline.Token);
             if (process.ExitCode != 0 || !sent)
                 return new("failed", $"{label} device sign-in failed before verification.");
-            if (claude) return await AcceptClaudeTokenAsync(store, previousDigest, token, deadline.Token);
+            if (claude) return await AcceptClaudeTokenAsync(store,
+                previousCredential is null ? null : SHA256.HashData(previousCredential), token, deadline.Token);
             if (!File.Exists(store))
                 return new("failed", "Codex did not create a credential in this runner's CLI home.");
             var newDigest = SHA256.HashData(await File.ReadAllBytesAsync(store, deadline.Token));
-            if (previousDigest is not null && previousDigest.SequenceEqual(newDigest))
+            if (previousCredential is not null && SHA256.HashData(previousCredential).SequenceEqual(newDigest))
                 return new("failed", "Codex did not update this runner's credential.");
             var verified = probe is not null
                 ? await probe(deadline.Token)
                 : await ProbeAsync(binary, startedAt, deadline.Token);
-            return verified
-                ? new("completed", "Codex login and a real provider request succeeded.")
-                : new("failed", "Codex login completed, but the provider probe did not succeed.");
+            if (!verified) return new("failed", "Codex login completed, but the provider probe did not succeed.");
+            deadline.Token.ThrowIfCancellationRequested();
+            if (sessionRunning is not null && !await sessionRunning(deadline.Token))
+                return new("failed", "The device sign-in session ended before credential acceptance.");
+            deadline.Token.ThrowIfCancellationRequested();
+            accepted = true;
+            return new("completed", "Codex login and a real provider request succeeded.");
         }
         catch (Exception ex)
         {
@@ -166,6 +176,22 @@ public sealed partial class DeviceLoginExecutor(
             }
             await deadline.CancelAsync();
             await pending;
+            if (!claude && snapshotReady && !accepted)
+                await RestoreCredentialAsync(store, previousCredential);
+        }
+    }
+
+    internal static async Task RestoreCredentialAsync(string path, byte[]? previous)
+    {
+        if (previous is null)
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+        else
+        {
+            var current = File.Exists(path) ? await File.ReadAllBytesAsync(path) : null;
+            if (current is null || !previous.SequenceEqual(current))
+                await WriteCredentialAsync(path, previous, CancellationToken.None);
         }
     }
 
@@ -307,8 +333,10 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
         using (hostLock)
         {
             var claudeFile = DeviceLoginExecutor.ClaudeTokenPath(stateDir);
-            var previousClaudeFile = claim.Provider == "claude" && File.Exists(claudeFile)
-                ? await File.ReadAllBytesAsync(claudeFile, ct) : null;
+            var credentialFile = claim.Provider == "claude" ? claudeFile
+                : claim.Provider == "codex" ? DeviceLoginExecutor.CodexCredentialPath() : null;
+            var previousCredential = credentialFile is not null && File.Exists(credentialFile)
+                ? await File.ReadAllBytesAsync(credentialFile, ct) : null;
             var previousClaudeToken = claim.Provider == "claude"
                 ? Environment.GetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken) : null;
             var remaining = claim.ExpiresAt - _clock.GetUtcNow().UtcDateTime;
@@ -318,7 +346,9 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
             var watch = WatchAsync(claim.Handle, session);
             var executor = claim.Provider switch
             {
-                "codex" => new DeviceLoginExecutor(codexBinary, clock: _clock, log: log),
+                "codex" => new DeviceLoginExecutor(codexBinary, clock: _clock,
+                    sessionRunning: async token => await client.DeviceLoginStateAsync(claim.Handle, token) == "running",
+                    log: log),
                 "claude" => new DeviceLoginExecutor(claudeBinary,
                     claudeFile, clock: _clock, provider: "claude",
                     authProbe: authProbe,
@@ -349,12 +379,12 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
             try { accepted = await CompleteAsync(claim.Handle, result); }
             finally
             {
-                if (claim.Provider == "claude" && result.Result == "completed" && !accepted)
+                if (credentialFile is not null && result.Result == "completed" && !accepted)
                 {
-                    if (previousClaudeFile is null) File.Delete(claudeFile);
-                    else await File.WriteAllBytesAsync(claudeFile, previousClaudeFile);
-                    Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, previousClaudeToken);
-                    log("device-login Claude credential restored after completion rejection");
+                    await DeviceLoginExecutor.RestoreCredentialAsync(credentialFile, previousCredential);
+                    if (claim.Provider == "claude")
+                        Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, previousClaudeToken);
+                    log($"device-login {claim.Provider} credential restored after completion rejection");
                 }
             }
             log($"device-login provider={claim.Provider} result={result.Result}");
@@ -402,10 +432,25 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
             await client.CompleteDeviceLoginAsync(handle, result, timeout.Token);
             return true;
         }
-        catch (TaskServerException ex) when (ex.StatusCode == 409)
+        catch (Exception ex) when (ex is not OperationCanceledException || timeout.IsCancellationRequested)
         {
-            log("device-login completion ignored: the session already ended on the Task Server");
-            return false;
+            log($"device-login completion response uncertain: {ex.GetType().Name}");
+            using var reconciliation = new CancellationTokenSource(CompletionTimeout, _clock);
+            try
+            {
+                var state = await client.DeviceLoginStateAsync(handle, reconciliation.Token);
+                if (state == result.Result) return true;
+                if (state is "failed" or "completed") return false;
+                if (ex is TaskServerException { StatusCode: 409 }) return false;
+            }
+            catch (Exception readError)
+            {
+                log($"device-login completion state read failed: {readError.GetType().Name}");
+            }
+            // A lost response may follow a committed transition. Keep the verified credential
+            // while the server outcome is unknown instead of restoring a stale one.
+            log("device-login completion remains uncertain; retaining verified credential");
+            return true;
         }
     }
 

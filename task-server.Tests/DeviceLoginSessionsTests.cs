@@ -7,6 +7,28 @@ namespace TaskServer.Tests;
 public sealed class DeviceLoginSessionsTests
 {
     [Fact]
+    public async Task Completed_transition_is_idempotent_and_audit_failure_is_retried_separately()
+    {
+        var calls = 0;
+        var sessions = new DeviceLoginSessions(Clock(), (_, _, _) =>
+        {
+            if (++calls == 1) throw new IOException("Audit store unavailable.");
+            return Task.CompletedTask;
+        });
+        var login = sessions.Start("host-a", "claude", "owner");
+        sessions.Claim("host-a", "runner-a");
+        var completion = new DeviceLoginCompletionRequest("completed", "Probe succeeded.");
+
+        Assert.True(await sessions.CompleteAsync(login.Handle, "runner-a", completion, default));
+        Assert.Equal("completed", sessions.RunnerState(login.Handle, "runner-a"));
+        Assert.True(await sessions.CompleteAsync(login.Handle, "runner-a", completion, default));
+        Assert.False(await sessions.CompleteAsync(login.Handle, "runner-a",
+            new DeviceLoginCompletionRequest("failed", "Different result."), default));
+        await sessions.SweepAsync(default);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
     public async Task One_host_provider_login_claims_once_and_hides_code_from_other_sessions()
     {
         var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 16, 12, 0, 0, TimeSpan.Zero));

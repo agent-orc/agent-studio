@@ -129,18 +129,31 @@ public sealed class DeviceLoginSessions
         DeviceLoginCompletionRequest request, CancellationToken ct)
     {
         Session session;
+        var changed = false;
         lock (_gate)
         {
             ExpireLocked();
             if (!_sessions.TryGetValue(handle, out session!) || session.RunnerId != runnerId
-                || session.State != "running" || request.Result is not ("completed" or "failed")) return false;
+                || request.Result is not ("completed" or "failed")) return false;
+            if (session.State == request.Result && session.Detail == request.Detail) return true;
+            if (session.State != "running") return false;
             session.State = request.Result;
             session.Detail = request.Detail;
             session.UserCode = null;
             session.VerificationUrl = null;
             _pendingAudits.Enqueue((session, request.Result));
+            changed = true;
         }
-        await SweepAsync(ct);
+        if (changed)
+        {
+            try { await SweepAsync(ct); }
+            catch (Exception ex)
+            {
+                // The background sweep retries queued audit work. Its failure cannot revoke
+                // an already accepted completion or make the runner restore that credential.
+                System.Diagnostics.Trace.TraceWarning("Device login audit deferred: {0}", ex.GetType().Name);
+            }
+        }
         return true;
     }
 
