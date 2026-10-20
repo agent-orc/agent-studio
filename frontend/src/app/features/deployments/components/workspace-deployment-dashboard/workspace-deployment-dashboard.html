@@ -41,6 +41,7 @@
                       <strong>Release {{ status.currentRelease?.version ?? 'None' }}</strong>
                       <span class="deployment-dashboard__state">{{ stateLabel(status.currentDeployment?.state) }}</span>
                     </span>
+                    @if (status.currentRelease ?? status.newerRelease; as release) { <span class="deployment-dashboard__marker">Channel {{ release.channel }}</span> }
                     <span class="deployment-dashboard__cell-detail">
                       <span>{{ age(status) }}</span>
                       <span class="deployment-dashboard__health" [attr.data-health]="status.health">{{ status.health }}</span>

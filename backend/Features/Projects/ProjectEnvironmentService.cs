@@ -37,9 +37,11 @@ public sealed record ProjectEnvironmentsResponse(string Project, IReadOnlyList<P
 
 public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string? Evidence);
 public sealed record DeployClaimRequest(string HostId);
-public sealed record ReleaseArtifactRequest(string Artifact, string Commit);
+public sealed record ReleaseArtifactRequest(string Artifact, string Commit, string? PreRelease = null,
+    string? Branch = null, string? Channel = null);
 public sealed record PromotionDecisionRequest(string Artifact);
-public sealed record GateArtifactRequest(string Project, string Artifact, string Commit);
+public sealed record GateArtifactRequest(string Project, string Artifact, string Commit, string? PreRelease = null,
+    string? Branch = null);
 
 /// <summary>Repository declarations and a separate, durable host-deploy queue.</summary>
 public sealed class ProjectEnvironmentService

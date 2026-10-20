@@ -102,4 +102,7 @@ public sealed record DeploymentRequest(string EnvironmentId, bool Approve = fals
 public sealed record EnvironmentActionRequest(bool Approve = false);
 
 /// <summary>Who asks, and whether they hold the Owner or Maintainer approval for the project.</summary>
-public sealed record DeployActor(string Id, bool IsApprover);
+public sealed record DeployActor(string Id, bool IsApprover)
+{
+    public string ApprovalRole { get; init; } = "Owner";
+}

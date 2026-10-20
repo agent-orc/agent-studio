@@ -135,10 +135,13 @@ public static class DeploymentReconciler
                 .LastOrDefault();
             if (record is null) continue;
             var release = record.Release;
+            var approvalRoles = record.Lifecycle.FirstOrDefault(phase => phase.Phase == EnvironmentKinds.Production)?.Approval;
+            IReadOnlyList<string> effectiveRoles = approvalRoles is { Count: > 0 } ? approvalRoles : ["Owner", "Maintainer"];
             // Any run for this release here since staging turned healthy answers
             // the promotion already, including a cancelled one.
             if (runs.Any(item => item.EnvironmentId == environment.Id && item.ReleaseId == release.Id
-                    && (DeploymentStates.IsActive(item.State) || item.CreatedAtUtc >= promotion.StageHealthyAt)))
+                    && (DeploymentStates.IsActive(item.State) || item.State == DeploymentStates.Succeeded
+                        || item.CreatedAtUtc >= promotion.StageHealthyAt)))
                 continue;
             var run = new DeploymentRecord
             {
@@ -150,7 +153,7 @@ public static class DeploymentReconciler
             };
             runs.Add(run);
             log.Add(new(run.Id, DeployStepNames.Approval, run.CreatedAtUtc,
-                $"Staging succeeded. Waiting for approval by {StandardLifecyclePolicy.ApprovalRoles}"
+                $"Staging succeeded. Waiting for approval by {string.Join(" or ", effectiveRoles)}"
                 + (promotion.ExpiresAt is { } expires ? $" until {expires:yyyy-MM-dd HH:mm} UTC." : ".")));
             audit.Add(new(run.CreatedAtUtc, LifecycleActor, "approval-requested", release.Id, run.Id, environment.Id,
                 $"Release {release.Version} awaits approval for {environment.Name}."));

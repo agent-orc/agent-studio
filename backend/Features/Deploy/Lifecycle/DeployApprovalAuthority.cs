@@ -18,7 +18,10 @@ public static class DeployApprovalAuthority
         if (user is null) return new(LocalOperator, false);
         var approver = !user.Disabled && !user.MustChangePassword && (user.Role == StudioRoles.Owner
             || user.ProductionApprovalProjects.Any(grant => string.Equals(grant, project, StringComparison.OrdinalIgnoreCase)));
-        return new(user.Id, approver);
+        return new(user.Id, approver)
+        {
+            ApprovalRole = user.Role == StudioRoles.Owner ? "Owner" : "Maintainer",
+        };
     }
 
     /// <summary>

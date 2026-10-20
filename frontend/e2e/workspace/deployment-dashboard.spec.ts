@@ -44,6 +44,7 @@ test('workspace deployment matrix filters and opens project deployment in both t
   await expect(dashboard.getByRole('columnheader')).toHaveCount(3);
   await expect(dashboard.getByRole('row')).toHaveCount(3);
   await expect(dashboard.getByText('Sample data until deployment API is available')).toBeVisible();
+  await expect(dashboard.getByText('Channel default').first()).toBeVisible();
   for (const theme of ['dark', 'light'] as const) {
     await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
     const shot = path.join(resultsDir, `agt-3200-deployment-dashboard-${theme}.png`);

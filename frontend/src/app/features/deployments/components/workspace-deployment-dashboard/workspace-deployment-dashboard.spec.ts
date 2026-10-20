@@ -29,6 +29,7 @@ describe('WorkspaceDeploymentDashboardComponent', () => {
     await fixture.whenStable();
     const root = fixture.nativeElement as HTMLElement;
     expect(root.textContent).toContain('Release 2026.10.16.3');
+    expect(root.textContent).toContain('Channel default');
     expect(root.textContent).toContain('Newer release');
     expect(root.textContent).toContain('Awaiting approval');
     expect(root.textContent).toContain('1h ago');

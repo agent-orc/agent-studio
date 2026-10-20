@@ -116,7 +116,7 @@ public sealed class DeployStore
 
     private ReleaseRecord ReadRelease(string path)
         => JsonSerializer.Deserialize<ReleaseRecord>(File.ReadAllText(path), _json) is { Release: not null } record
-            ? record with { Environments = record.Environments ?? [] }
+            ? record with { Environments = record.Environments ?? [], Lifecycle = record.Lifecycle ?? [] }
             : throw new JsonException($"Release file {Path.GetFileName(path)} has no release.");
 
     private string WriteFlushed<T>(string path, T value)

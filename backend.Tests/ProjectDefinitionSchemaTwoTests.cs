@@ -78,6 +78,71 @@ public sealed class ProjectDefinitionSchemaTwoTests
 
     private static string Valid => Head + Pipeline;
 
+    private const string Channels = """
+
+        channels:
+          - name: default
+            lifecycle: standard
+            default: true
+          - name: hotfix
+            lifecycle: hotfix
+            versionRules:
+              preRelease: hotfix
+              branch: release/*
+        """;
+
+    [Fact]
+    public void Channels_parse_named_lifecycle_and_variable_scope_precedence()
+    {
+        var yaml = Valid[..Valid.IndexOf("variables:", StringComparison.Ordinal)]
+            .Replace("deploy:\n", "  hotfix:\n    - phase: staging\n      automatic: true\n"
+                + "    - phase: production\n      approval: [Owner]\ndeploy:\n", StringComparison.Ordinal)
+            + Channels + "\n" + """
+        variables:
+          - name: COLOR
+            value: base
+          - name: COLOR
+            value: hotfix
+            channels: [hotfix]
+          - name: COLOR
+            value: hotfix-stage
+            environments: [staging]
+            channels: [hotfix]
+        """;
+        var result = ProjectDefinitionReader.Parse(yaml);
+        Assert.True(result.IsValid, Describe(result));
+        var deployment = result.Definition!.Deployment!;
+        Assert.Equal("hotfix", deployment.Channels[1].Name);
+        Assert.Null(deployment.Lifecycles["hotfix"][1].Requires);
+        Assert.Equal("hotfix-stage", ProjectVariableScope.Resolve(deployment.Variables, "COLOR", "staging", "hotfix")?.Value);
+        Assert.Equal("base", ProjectVariableScope.Resolve(deployment.Variables, "COLOR", "staging", "default")?.Value);
+        Assert.Equal("base", ProjectVariableScope.Resolve(deployment.Variables, "COLOR", "production", "default")?.Value);
+    }
+
+    [Fact]
+    public void Channel_validation_rejects_missing_default_and_unknown_lifecycle()
+    {
+        var result = ProjectDefinitionReader.Parse(Valid + Channels.Replace("default: true", "default: false", StringComparison.Ordinal)
+            .Replace("lifecycle: hotfix", "lifecycle: missing", StringComparison.Ordinal));
+        Assert.Contains(result.Issues, issue => issue.Code == "channel-default-required");
+        Assert.Contains(result.Issues, issue => issue.Code == "channel-lifecycle-unknown");
+    }
+
+    [Fact]
+    public void Named_lifecycle_without_standard_is_refused()
+    {
+        var result = ProjectDefinitionReader.Parse(Head + """
+
+            lifecycles:
+              hotfix:
+                - phase: staging
+                  automatic: true
+                - phase: production
+                  approval: [Owner]
+            """);
+        Assert.Contains(result.Issues, issue => issue.Code == "standard-lifecycle-invalid");
+    }
+
     [Fact]
     public void Parses_artifacts_protected_environments_ssh_steps_and_scoped_variables()
     {
@@ -389,7 +454,8 @@ public sealed class ProjectDefinitionSchemaTwoTests
     [InlineData("    secret: DATABASE_URL\n", "    secret: \"postgres://db/app\"\n", "variable-secret-name-invalid")]
     [InlineData("    secret: DATABASE_URL\n", "    secret: DATABASE_URL\n    value: x\n", "variable-source-invalid")]
     [InlineData("    secret: DATABASE_URL\n    environments: [production]", "    secret: DATABASE_URL\n    environments: [preview]", "variable-environment-unknown")]
-    [InlineData("  - name: DATABASE_URL\n", "  - name: LOG_LEVEL\n", "variable-duplicate")]
+    [InlineData("  - name: DATABASE_URL\n    secret: DATABASE_URL\n    environments: [production]",
+        "  - name: LOG_LEVEL\n    value: debug", "variable-duplicate")]
     public void Variable_rules_name_the_offending_entry(string before, string after, string code)
     {
         var result = ProjectDefinitionReader.Parse(Replace(Valid, before, after));
@@ -491,6 +557,13 @@ public sealed class ProjectDefinitionSchemaTwoTests
                 .Select(item => item.GetProperty("properties").GetProperty("type").GetProperty("const").GetString()));
         Assert.Equal(ProjectDeploymentVocabulary.VariableKeys,
             properties.GetProperty("variables").GetProperty("items").GetProperty("properties").EnumerateObject().Select(item => item.Name));
+        Assert.Equal(ProjectDeploymentVocabulary.ChannelKeys,
+            properties.GetProperty("channels").GetProperty("items").GetProperty("properties").EnumerateObject().Select(item => item.Name));
+        var channelRules = properties.GetProperty("channels").GetProperty("items").GetProperty("properties")
+            .GetProperty("versionRules").GetProperty("properties");
+        Assert.Equal(["preRelease", "branch"], channelRules.EnumerateObject().Select(item => item.Name));
+        Assert.True(properties.GetProperty("lifecycles").GetProperty("patternProperties")
+            .EnumerateObject().Any(item => item.Name.Contains("standard", StringComparison.Ordinal)));
     }
 
     [Fact]

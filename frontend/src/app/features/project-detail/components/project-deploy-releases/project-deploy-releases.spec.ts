@@ -53,6 +53,7 @@ describe('ProjectDeployReleasesComponent', () => {
     expect(rows).toEqual([`deploy-release-${'c'.repeat(16)}`, `deploy-release-${'b'.repeat(16)}`, `deploy-release-${'a'.repeat(16)}`]);
     expect(byTestId('deploy-release-detail')?.textContent).toContain('Release 2026.10.19.2');
     expect(byTestId('deploy-release-detail')?.textContent).toContain('WEB-35');
+    expect(byTestId(`deploy-release-${'c'.repeat(16)}`)?.textContent).toContain('default');
     expect(byTestId('deploy-release-live-in')?.textContent?.trim()).toBe('Staging');
     expect(byTestId(`deploy-release-${'c'.repeat(16)}`)?.getAttribute('aria-current')).toBe('true');
   });

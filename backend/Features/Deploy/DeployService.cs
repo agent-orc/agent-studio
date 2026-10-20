@@ -70,7 +70,8 @@ public sealed class DeployService
     /// ancestry check repeats under the lock only when another release was
     /// created meanwhile.
     /// </summary>
-    public DeployOutcome<Release> CreateRelease(string project, string artifact, string commit, string actor)
+    public DeployOutcome<Release> CreateRelease(string project, string artifact, string commit, string actor,
+        ReleaseChannelFacts? channelFacts = null, bool isApprover = false)
     {
         const string invalid = "Artifact, commit, or stage and production declarations are invalid.";
         if (_environments.Declarations(project) is null) return DeployOutcome<Release>.NotFound($"Unknown project '{project}'.");
@@ -101,7 +102,28 @@ public sealed class DeployService
         if (OrderRejection(repo, newestSeen, id, commit, known) is { } orderRejection)
             return DeployOutcome<Release>.Conflict(orderRejection.Error, orderRejection.Reason);
         var integrated = known || repo is null ? [] : IntegratedCards(project);
-        var definition = known || repo is null ? null : ReadDefinition(repo, commit);
+        var readChannelRules = !known || channelFacts?.PreRelease is not null || channelFacts?.Branch is not null;
+        var (definition, definitionError) = !readChannelRules || repo is null
+            ? (null, null) : ReadDefinition(repo, commit);
+        if (definitionError is not null)
+            return DeployOutcome<Release>.Invalid($"project.yml at commit {ShortSha(commit)} is invalid: {definitionError}");
+        if (known && channelFacts?.Override is not null && !isApprover)
+            return DeployOutcome<Release>.Forbidden(
+                $"Channel override requires an Owner or project approver; release already belongs to channel '{existing.First(item => item.Release.Id == id).Release.Channel}'.");
+        if (known && channelFacts?.Override is { } existingOverride
+            && existing.First(item => item.Release.Id == id).Release.Channel != existingOverride)
+            return DeployOutcome<Release>.Conflict($"Release already belongs to channel '{existing.First(item => item.Release.Id == id).Release.Channel}'.");
+        var channelChoice = !readChannelRules ? new ReleaseChannelChoice(null, null)
+            : ReleaseChannelPolicy.Choose(definition, channelFacts ?? new(null, null, null), isApprover);
+        if (channelChoice.Error is { } channelError)
+            return channelChoice.Forbidden ? DeployOutcome<Release>.Forbidden(channelError)
+                : DeployOutcome<Release>.Invalid(channelError);
+        if (known && readChannelRules && (channelChoice.Channel?.Name ?? ReleaseSnapshot.DefaultChannel)
+            != existing.First(item => item.Release.Id == id).Release.Channel)
+            return DeployOutcome<Release>.Conflict(
+                $"Release already belongs to channel '{existing.First(item => item.Release.Id == id).Release.Channel}'; "
+                + $"supplied facts select '{channelChoice.Channel?.Name ?? ReleaseSnapshot.DefaultChannel}' "
+                + $"by {ReleaseChannelPolicy.Rule(channelChoice.Channel ?? new ProjectChannelDefinition("default", "standard", null, null, true))}.");
 
         lock (_gate)
         {
@@ -112,12 +134,12 @@ public sealed class DeployService
                 return DeployOutcome<Release>.Conflict(raced.Error, raced.Reason);
             var now = _clock.GetUtcNow().UtcDateTime;
             var (record, created) = FindOrCreateRelease(project, id, commit, [artifact], declarations, definition,
-                repo, integrated, now);
+                channelChoice.Channel, repo, integrated, now);
             var release = record.Release;
             var audit = new List<DeployAuditEntry>();
             if (created)
                 audit.Add(new(now, actor, "release-created", release.Id, null, null,
-                    $"Release {release.Version} for commit {ShortSha(commit)} with {release.CardKeys.Count} card(s)."));
+                    $"Release {release.Version} in channel {release.Channel} for commit {ShortSha(commit)} with {release.CardKeys.Count} card(s)."));
             var job = _environments.QueueReleaseJob(project, artifact, commit, record.Environments);
             if (job is null)
             {
@@ -352,7 +374,8 @@ public sealed class DeployService
         {
             var found = FindRun(project, deploymentId, out var snapshot, out var run, out var record);
             if (found is not null) return found;
-            var rejection = StandardLifecyclePolicy.ApprovalRejection(run!.State, actor);
+            var rejection = StandardLifecyclePolicy.ApprovalRejection(run!.State, actor,
+                ApprovalRoles(record!, run.EnvironmentId, snapshot!));
             if (rejection is not null) return Refuse(run.State, rejection);
             var release = record!.Release;
             var environment = snapshot!.Environments.FirstOrDefault(item => item.Id == run.EnvironmentId);
@@ -361,7 +384,7 @@ public sealed class DeployService
             var target = record.Environments.FirstOrDefault(item => item.Id == environment.Id);
             if (target is null) return MissingSnapshot(release, environment);
             var intent = StandardLifecyclePolicy.IntentFor(run.Trigger);
-            var decision = StandardLifecyclePolicy.Decide(Facts(project, snapshot, release, environment, intent,
+            var decision = StandardLifecyclePolicy.Decide(Facts(project, snapshot, record, environment, intent,
                 approve: true, actor, excludeRunId: run.Id));
             if (decision.Outcome == LifecycleOutcome.Reject) return Rejected(decision);
 
@@ -396,7 +419,8 @@ public sealed class DeployService
         {
             var found = FindRun(project, deploymentId, out var snapshot, out var run, out var record);
             if (found is not null) return found;
-            var rejection = StandardLifecyclePolicy.ApprovalRejection(run!.State, actor);
+            var rejection = StandardLifecyclePolicy.ApprovalRejection(run!.State, actor,
+                ApprovalRoles(record!, run.EnvironmentId, snapshot!));
             return rejection is not null
                 ? Refuse(run.State, rejection)
                 : Close(project, run, actor, rejected: true, ClosesPromotion(snapshot!, run, record!.Release));
@@ -528,7 +552,7 @@ public sealed class DeployService
         var release = record.Release;
         var target = record.Environments.FirstOrDefault(item => item.Id == environment.Id);
         if (target is null) return MissingSnapshot(release, environment);
-        var decision = StandardLifecyclePolicy.Decide(Facts(project, snapshot, release, environment, intent, approve,
+        var decision = StandardLifecyclePolicy.Decide(Facts(project, snapshot, record, environment, intent, approve,
             actor, excludeRunId: null));
         if (decision.Outcome == LifecycleOutcome.Reject) return Rejected(decision);
 
@@ -551,7 +575,7 @@ public sealed class DeployService
         var log = new List<DeploymentLogEntry>();
         if (job is null)
             log.Add(new(run.Id, DeployStepNames.Approval, now,
-                $"Requested by {actor.Id}. Waiting for approval by {StandardLifecyclePolicy.ApprovalRoles}."));
+                $"Requested by {actor.Id}. Waiting for approval by {string.Join(" or ", ApprovalRoles(record, environment.Id, snapshot))}."));
         else if (decision.ApprovedBy is not null)
             log.Add(new(run.Id, DeployStepNames.Approval, now, $"Approved by {decision.ApprovedBy}."));
         if (job is not null)
@@ -577,19 +601,32 @@ public sealed class DeployService
     }
 
     /// <summary>The lifecycle facts for one release in one environment, without the run being approved.</summary>
-    private static LifecycleRequest Facts(string project, Snapshot snapshot, Release release, DeployEnvironment environment,
+    private static LifecycleRequest Facts(string project, Snapshot snapshot, ReleaseRecord record, DeployEnvironment environment,
         DeployIntent intent, bool approve, DeployActor actor, string? excludeRunId)
     {
+        var release = record.Release;
         var deployments = snapshot.Deployments(project).Where(item => item.Id != excludeRunId).ToArray();
         var here = deployments.Where(item => item.EnvironmentId == environment.Id).ToArray();
         var previous = snapshot.Environments.Where(item => item.Order < environment.Order)
             .OrderBy(item => item.Order).LastOrDefault();
-        return new(intent, environment, actor, approve,
+        return new LifecycleRequest(intent, environment, actor, approve,
             previous is null || EnvironmentStatusProjection.SucceededIn(deployments, release.Id, previous.Id),
             EnvironmentStatusProjection.Position(release, EnvironmentStatusProjection.CurrentRelease(here, snapshot.ReleaseById)),
             EnvironmentStatusProjection.PreviousRelease(here, snapshot.ReleaseById)?.Id == release.Id,
             here.Any(item => item.ReleaseId == release.Id && DeploymentStates.IsActive(item.State)),
-            here.Any(item => item.State is DeploymentStates.Queued or DeploymentStates.Running));
+            here.Any(item => item.State is DeploymentStates.Queued or DeploymentStates.Running))
+        {
+            RequiresPreviousEnvironment = record.Lifecycle.Count == 0
+                || record.Lifecycle.FirstOrDefault(phase => phase.Phase == environment.Kind)?.Requires is not null,
+            AllowedApprovalRoles = ApprovalRoles(record, environment.Id, snapshot),
+        };
+    }
+
+    private static IReadOnlyList<string> ApprovalRoles(ReleaseRecord record, string environmentId, Snapshot snapshot)
+    {
+        var environment = snapshot.Environments.FirstOrDefault(item => item.Id == environmentId);
+        return record.Lifecycle.FirstOrDefault(phase => phase.Phase == environment?.Kind)?.Approval is { Count: > 0 } roles
+            ? roles : ["Owner", "Maintainer"];
     }
 
     /// <summary>
@@ -716,7 +753,8 @@ public sealed class DeployService
 
     private (ReleaseRecord Release, bool Created) FindOrCreateRelease(string project, string id, string commit,
         IReadOnlyList<string> artifacts, IReadOnlyList<EnvironmentDeclaration> declarations,
-        ProjectDeploymentDefinition? definition, string? repo, IReadOnlyList<IntegratedCard> integrated, DateTime now)
+        ProjectDeploymentDefinition? definition, ProjectChannelDefinition? channel,
+        string? repo, IReadOnlyList<IntegratedCard> integrated, DateTime now)
     {
         var existing = _store.ReadReleaseRecords(project);
         if (existing.FirstOrDefault(item => item.Release.Id == id) is { } known) return (known, false);
@@ -724,13 +762,22 @@ public sealed class DeployService
         var release = new Release(id, project, ReleaseSnapshot.NextVersion(existing.Select(item => item.Release), now),
             commit, artifacts, ReleaseSnapshot.ProcessVersion(definition, declarations),
             ReleaseSnapshot.VariablesVersion(definition, declarations),
-            repo is null ? [] : CardKeys(repo, commit, previous?.CommitSha, integrated), now, ReleaseSnapshot.DefaultChannel);
-        return _store.AppendRelease(project, new(release, declarations));
+            repo is null ? [] : CardKeys(repo, commit, previous?.CommitSha, integrated), now,
+            channel?.Name ?? ReleaseSnapshot.DefaultChannel);
+        var lifecycle = channel is null || channel.Lifecycle == "standard"
+            ? definition?.StandardLifecycle ?? []
+            : definition?.Lifecycles.GetValueOrDefault(channel.Lifecycle) ?? [];
+        return _store.AppendRelease(project, new ReleaseRecord(release, declarations) { Lifecycle = lifecycle });
     }
 
-    private ProjectDeploymentDefinition? ReadDefinition(string repo, string commit)
-        => _git.GetFileAtCommit(repo, commit, ProjectPreparationPaths.Definition) is { } yaml
-            ? ProjectDefinitionReader.Parse(yaml).Definition?.Deployment : null;
+    private (ProjectDeploymentDefinition? Definition, string? Error) ReadDefinition(string repo, string commit)
+    {
+        if (_git.GetFileAtCommit(repo, commit, ProjectPreparationPaths.Definition) is not { } yaml)
+            return (null, null);
+        var read = ProjectDefinitionReader.Parse(yaml);
+        return read.IsValid ? (read.Definition?.Deployment, null)
+            : (null, string.Join("; ", read.Issues.Take(3).Select(issue => $"{issue.Path}: {issue.Message}")));
+    }
 
     private sealed record IntegratedCard(string Key, IReadOnlyList<string> Shas);
 

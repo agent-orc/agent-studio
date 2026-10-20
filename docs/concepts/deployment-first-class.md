@@ -61,7 +61,11 @@ stays the only executor; releases and runs describe and steer it.
   variables version (hash of the project.yml schema 2 `variables` section at the
   release commit, where a secret counts only by name, and of the secret
   reference names per environment), the
-  cards it adds, and channel `default`. Each release is one write-once file under
+  cards it adds, and one channel chosen from the committed `project.yml` rules
+  (or implicit `default` for older definitions). The operator release route
+  accepts an explicit channel override from an Owner or project approver.
+  `preRelease` and `branch` facts on release creation select matching rules;
+  the channel and its lifecycle are frozen with the release. Each release is one write-once file under
   `<TaskRepository>/deployments/projects/<project>/releases/`, written as a
   flushed temporary file and moved into place without overwrite. The same
   project, commit and artifacts always resolve to the same release. Cards are

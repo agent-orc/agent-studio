@@ -51,6 +51,23 @@ public sealed class StandardLifecyclePolicyTests
     }
 
     [Fact]
+    public void ChannelLifecycleCanSkipStagingPrerequisiteButRestrictApprovalRole()
+    {
+        var request = Request(DeployIntent.Deploy, Production,
+            new DeployActor("maintainer", true) { ApprovalRole = "Maintainer" }, true,
+            previousSucceeded: false) with
+        {
+            RequiresPreviousEnvironment = false,
+            AllowedApprovalRoles = ["Owner"],
+        };
+        var refused = StandardLifecyclePolicy.Decide(request);
+        Assert.True(refused.Forbidden);
+        Assert.Contains("Owner", refused.Reason);
+        Assert.Equal(LifecycleOutcome.Queue,
+            StandardLifecyclePolicy.Decide(request with { Actor = Owner }).Outcome);
+    }
+
+    [Fact]
     public void NonApprover_CannotApproveProductionInOneStep()
     {
         var decision = StandardLifecyclePolicy.Decide(Request(DeployIntent.Deploy, Production, Operator, true,

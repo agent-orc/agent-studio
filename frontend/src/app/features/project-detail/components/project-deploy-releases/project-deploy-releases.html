@@ -24,6 +24,7 @@
                 <button type="button" class="releases__row" [attr.aria-current]="selected()?.id === release.id ? 'true' : null"
                         [attr.data-testid]="'deploy-release-' + release.id" (click)="select(release.id)">
                   <strong>{{ release.version }}</strong>
+                  <span class="releases__muted">{{ release.channel }}</span>
                   <span class="releases__numeric">{{ age(release.createdAtUtc) }}</span>
                   <span class="releases__muted">{{ release.cardKeys.length }} {{ release.cardKeys.length === 1 ? 'card' : 'cards' }} · {{ shortSha(release.commitSha) }}</span>
                 </button>

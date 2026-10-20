@@ -2534,7 +2534,7 @@ new fact even when its operator-facing summary is unchanged.
 
 `.agent-studio/project.yml` schema 1 remains valid for preparation and verification.
 Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,
-`environments`, `lifecycles.standard`, `deploy`, and `variables`. Existing
+`environments`, `lifecycles`, `channels`, `deploy`, and `variables`. Existing
 `commands` and `testSuites` remain the execution source until the pipeline
 engine is extended.
 Each release hashes these sections at its commit into its process and
@@ -2558,6 +2558,14 @@ in
   and the standard lifecycle.
 - `lifecycles.standard`: Staging is automatic after integration; Production
   requires successful Staging and approval by Owner or Maintainer.
+- `channels` optionally assigns releases to a named lifecycle. Exactly one
+  channel has `default: true` and no rules. Other channels use `versionRules`
+  with `preRelease` and/or `branch` (a `*` wildcard); both rules must match
+  when both are present. The default is used when no named rule matches.
+  Named lifecycles keep automatic Staging and protected Production; they may
+  omit Production's Staging prerequisite and narrow its approval roles.
+  Release creation snapshots the chosen
+  lifecycle. An explicit channel override requires an Owner or project approver.
 - `deploy` steps in P1 (AGT-3221) are configuration only. Nothing executes
   them yet; the SSH executor follows in a later card. `static-site` describes
   copying a static artifact to a `directory` on an SSH `target`. `container`
@@ -2580,7 +2588,10 @@ in
   `start-container` (configuration placeholder), `run`, `health`, and
   `approval` stay valid.
 - `variables` hold either a plain `value` or a `secret` name for the secret
-  provider, optionally scoped to `environments`. A plain value is refused as
+  provider, optionally scoped to `environments` and `channels`. Values within
+  one scope kind are alternatives; kinds combine. The value with the most
+  specific matching scope wins, and overlapping values at equal specificity
+  are refused. A plain value is refused as
   `secret-value-inline` in two cases. The first is a sensitive name: its last
   segment (split at `_` and camelCase) is in a curated list (`PASSWORD`,
   `PASSWD`, `PASS`, `PWD`, `PASSPHRASE`, `SECRET`, `TOKEN`, `KEY`, `APIKEY`,
@@ -2598,7 +2609,7 @@ definition path and, when the path resolves, the 1-based `line` in project.yml.
 The editor contract is
 [`project-execution.schema.json`](../../app/schemas/project-execution.schema.json);
 `ProjectDefinitionSchemaTwoTests` keeps its step kinds, step keys, artifact types,
-variable keys, and its remote path, compose suffix, artifact path, identifier,
+variable and channel keys, and its remote path, compose suffix, artifact path, identifier,
 and secret name patterns equal to `ProjectDeploymentVocabulary`.
 
 `/api/projects/{projectName}/pipeline-definition` serves the parsed diagram

@@ -22,6 +22,29 @@ namespace AgentStudio.Tests;
 
 public sealed class DeployServiceTests : IDisposable
 {
+    private const string ChannelConfig = """
+        lifecycles:
+          standard:
+            - phase: staging
+              automatic: true
+            - phase: production
+              approval: [Owner, Maintainer]
+              requires: staging
+          hotfix:
+            - phase: staging
+              automatic: true
+            - phase: production
+              approval: [Owner]
+        channels:
+          - name: default
+            lifecycle: standard
+            default: true
+          - name: hotfix
+            lifecycle: hotfix
+            versionRules:
+              preRelease: hotfix
+              branch: release/*
+        """;
     private readonly string _root = Path.Combine(Path.GetTempPath(), "deploy-bd1-test-" + Guid.NewGuid().ToString("N"));
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 16, 12, 0, 0, TimeSpan.Zero));
     private static readonly DeployActor Owner = new("owner", true);
@@ -715,9 +738,45 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void SelectedChannelLifecycleIsSnapshottedAndGovernsPromotion()
+    {
+        var (deploy, environments, store) = Build();
+        WriteProjectYml(ChannelConfig);
+        var commit = Commit("channels");
+        var artifact = Artifact('a');
+        WriteReleaseEvidence(artifact, commit);
+        Assert.True(_environments!.RegisterGateArtifact("demo", artifact, commit));
+        var release = deploy.CreateRelease("demo", artifact, commit, "release-gate",
+            new("hotfix", "release/2.1", null)).Value!;
+        Assert.Equal("hotfix", release.Channel);
+        Assert.Null(Assert.Single(store.ReadReleaseRecords("demo")).Lifecycle[1].Requires);
+        Report(deploy, environments, "stage-host", healthy: false);
+        var refused = deploy.CreateRelease("demo", artifact, commit, "release-gate",
+            new(null, "main", "default"), isApprover: false);
+        Assert.Equal(DeployOutcomeKind.Forbidden, refused.Kind);
+        var mismatched = deploy.CreateRelease("demo", artifact, commit, "owner",
+            new(null, "main", "default"), isApprover: true);
+        Assert.Equal(DeployOutcomeKind.Conflict, mismatched.Kind);
+        Assert.Contains("hotfix", mismatched.Error);
+        var changedFacts = deploy.CreateRelease("demo", artifact, commit, "release-gate",
+            new(null, "main", null));
+        Assert.Equal(DeployOutcomeKind.Conflict, changedFacts.Kind);
+        Assert.Contains("default fallback rule", changedFacts.Error);
+
+        var production = deploy.RequestDeployment("demo", release.Id, new("production"), Owner);
+        Assert.Equal(DeployOutcomeKind.Ok, production.Kind);
+        Assert.Equal(DeploymentStates.AwaitingApproval, production.Value!.State);
+        Assert.Equal(DeployOutcomeKind.Forbidden, deploy.Approve("demo", production.Value.Id,
+            new DeployActor("maintainer", true) { ApprovalRole = "Maintainer" }).Kind);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", production.Value.Id, Owner).Kind);
+    }
+
+    [Fact]
     public async Task Routes_ServeTheSharedContract()
     {
         Build();
+        WriteProjectYml(ChannelConfig);
+        Commit("channel-config");
         var older = Head();
         var commit = Commit("second");
         WriteReleaseEvidence(Artifact('a'), commit);
@@ -753,7 +812,7 @@ public sealed class DeployServiceTests : IDisposable
             .RegisterGateArtifact("demo", Artifact('a'), commit));
 
         using var created = await client.PostAsJsonAsync("/api/projects/demo/environments/releases",
-            new ReleaseArtifactRequest(Artifact('a'), commit));
+            new ReleaseArtifactRequest(Artifact('a'), commit, "hotfix", "release/2.1"));
         Assert.Equal(HttpStatusCode.Accepted, created.StatusCode);
         var releaseId = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetString();
         // An ancestor commit after a newer release is a conflict with the stored releases.
@@ -792,6 +851,7 @@ public sealed class DeployServiceTests : IDisposable
         foreach (var name in new[] { "id", "projectId", "version", "commitSha", "artifactDigests", "processVersion",
                      "variablesVersion", "cardKeys", "createdAtUtc", "channel" })
             Assert.True(release.RootElement.GetProperty("release").TryGetProperty(name, out _), name);
+        Assert.Equal("hotfix", release.RootElement.GetProperty("release").GetProperty("channel").GetString());
 
         var deploymentId = run.GetProperty("id").GetString();
         using var approve = await client.PostAsync($"/api/projects/demo/deploy/deployments/{deploymentId}/approve", null);

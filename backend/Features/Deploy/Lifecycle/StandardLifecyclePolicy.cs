@@ -20,7 +20,11 @@ public sealed record LifecycleRequest(
     ReleasePosition Position,
     bool IsRollbackTarget,
     bool OtherActiveRunForRelease,
-    bool OtherRunOnHost);
+    bool OtherRunOnHost)
+{
+    public bool RequiresPreviousEnvironment { get; init; } = true;
+    public IReadOnlyList<string> AllowedApprovalRoles { get; init; } = ["Owner", "Maintainer"];
+}
 
 /// <param name="Forbidden">The rejection is about the actor's approval role, not the environment's state.</param>
 public sealed record LifecycleDecision(LifecycleOutcome Outcome, string? ApprovedBy, string? Reason, bool Forbidden = false)
@@ -72,8 +76,8 @@ public static class StandardLifecyclePolicy
             {
                 ReleasePosition.Current => $"The release is already current in {environment.Name}. Use redeploy.",
                 ReleasePosition.Older => $"The release is older than the current release in {environment.Name}. Use rollback.",
-                _ => environment.Order > 0 && !request.ReleaseSucceededInPreviousEnvironment
-                    ? $"{environment.Name} requires a successful deployment of this release to the previous environment."
+                _ => environment.Order > 0 && request.RequiresPreviousEnvironment && !request.ReleaseSucceededInPreviousEnvironment
+                    ? $"{environment.Name} requires a successful deployment of this release to the previous environment under its channel lifecycle."
                     : null,
             },
             DeployIntent.Redeploy => request.Position == ReleasePosition.Current
@@ -87,17 +91,21 @@ public static class StandardLifecyclePolicy
             return new(LifecycleOutcome.Queue, null, null);
         if (!request.ApproveNow)
             return new(LifecycleOutcome.AwaitApproval, null, null);
-        return request.Actor.IsApprover
+        return request.Actor.IsApprover && request.AllowedApprovalRoles.Contains(request.Actor.ApprovalRole, StringComparer.Ordinal)
             ? new(LifecycleOutcome.Queue, request.Actor.Id, null)
-            : new(LifecycleOutcome.Reject, null, $"{environment.Name} approval requires the {ApprovalRoles} role.", true);
+            : new(LifecycleOutcome.Reject, null,
+                $"{environment.Name} approval in this channel requires {string.Join(" or ", request.AllowedApprovalRoles)}.", true);
     }
 
     /// <summary>Approve or reject a deployment that waits for approval.</summary>
-    public static string? ApprovalRejection(string deploymentState, DeployActor actor)
+    public static string? ApprovalRejection(string deploymentState, DeployActor actor,
+        IReadOnlyList<string>? allowedRoles = null)
     {
         if (deploymentState != DeploymentStates.AwaitingApproval)
             return "The deployment is not awaiting approval.";
-        return actor.IsApprover ? null : $"Approval requires the {ApprovalRoles} role.";
+        var roles = allowedRoles ?? ["Owner", "Maintainer"];
+        return actor.IsApprover && roles.Contains(actor.ApprovalRole, StringComparer.Ordinal)
+            ? null : $"Approval in this channel requires {string.Join(" or ", roles)}.";
     }
 
     /// <summary>
