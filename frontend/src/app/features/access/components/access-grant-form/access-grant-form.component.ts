@@ -29,6 +29,13 @@ export class AccessGrantFormComponent {
   readonly project = signal('');
   readonly environment = signal('production');
 
+  /** Environment scopes name the environment kind of the project's declarations, never an environment id. */
+  readonly environments: readonly { key: string; label: string }[] = [
+    { key: 'production', label: 'Production' },
+    { key: 'stage', label: 'Stage' },
+    { key: 'other', label: 'Other' },
+  ];
+
   readonly scopeKinds: readonly { kind: IamScopeKind; label: string }[] = [
     { kind: 'workspace', label: 'Workspace' },
     { kind: 'project', label: 'Project' },

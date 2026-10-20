@@ -1,6 +1,6 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Injectable, computed, inject, signal } from '@angular/core';
-import { firstValueFrom, type Observable } from 'rxjs';
+import { Injectable, computed, inject, signal, type WritableSignal } from '@angular/core';
+import { firstValueFrom, forkJoin, type Observable } from 'rxjs';
 import type {
   AccessGroup,
   AccessOverview,
@@ -30,6 +30,10 @@ export class AccessService {
   readonly state = signal<'idle' | 'loading' | 'ready' | 'denied' | 'error'>('idle');
   readonly busy = signal(false);
   readonly error = signal<string | null>(null);
+  /** Set when the project list failed to load; project and environment scopes then have no choices. */
+  readonly projectsError = signal<string | null>(null);
+  /** Set when runner enrollments or enrolled runners failed to load. */
+  readonly runnersError = signal<string | null>(null);
   readonly pendingInvitations = computed(() => {
     const overview = this.overview();
     if (!overview) return new Set<string>();
@@ -40,11 +44,15 @@ export class AccessService {
     this.state.set('loading');
     this.error.set(null);
     try {
-      const [overview, projects, enrollments, runners] = await Promise.all([
+      const [overview, projects, [enrollments, runners]] = await Promise.all([
         firstValueFrom(this.http.get<AccessOverview>(IAM)),
-        firstValueFrom(this.http.get<AccessProject[]>('/api/projects')).catch(() => [] as AccessProject[]),
-        firstValueFrom(this.http.get<RunnerEnrollment[]>('/api/auth/runner-enrollments')).catch(() => [] as RunnerEnrollment[]),
-        firstValueFrom(this.http.get<EnrolledRunner[]>('/api/auth/runners')).catch(() => [] as EnrolledRunner[]),
+        this.secondary(this.http.get<AccessProject[]>('/api/projects'), this.projectsError,
+          'Projects could not be loaded, so project and environment scopes cannot be chosen.', [] as AccessProject[]),
+        this.secondary(forkJoin([
+          this.http.get<RunnerEnrollment[]>('/api/auth/runner-enrollments'),
+          this.http.get<EnrolledRunner[]>('/api/auth/runners'),
+        ]), this.runnersError, 'Runner enrollments and runners could not be loaded.',
+        [[], []] as [RunnerEnrollment[], EnrolledRunner[]]),
       ]);
       this.overview.set(overview);
       this.projects.set(projects.map(project => ({ id: project.id, displayName: project.displayName })));
@@ -128,6 +136,22 @@ export class AccessService {
 
   revokeRunner(id: string): Promise<unknown> {
     return this.mutate(this.http.delete(`/api/auth/runners/${encodeURIComponent(id)}`));
+  }
+
+  /**
+   * Loads a list the area can show without: on failure the list is empty and
+   * its error signal names the failure, so the section shows an error state
+   * instead of an empty table.
+   */
+  private async secondary<T>(request: Observable<T>, error: WritableSignal<string | null>, fallback: string, empty: T): Promise<T> {
+    try {
+      const value = await firstValueFrom(request);
+      error.set(null);
+      return value;
+    } catch (failure: unknown) {
+      error.set(message(failure, fallback));
+      return empty;
+    }
   }
 
   /** Runs one mutation, reloads the overview on success, and keeps the server's message on failure. */

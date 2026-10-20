@@ -36,12 +36,33 @@ describe('AccessService', () => {
     expect(service.runners().map(runner => runner.id)).toEqual(['runner_1']);
   });
 
+  it('shows an error state when the runner or project lists fail instead of an empty list', async () => {
+    const loading = service.load();
+    http.expectOne('/api/auth/iam').flush(accessOverview());
+    http.expectOne('/api/projects').flush({ error: 'unavailable' }, { status: 503, statusText: 'Service Unavailable' });
+    http.expectOne('/api/auth/runner-enrollments').flush([]);
+    http.expectOne('/api/auth/runners').flush(
+      { error: 'permission-denied', message: 'Enrolled runners are unavailable.' }, { status: 403, statusText: 'Forbidden' });
+    await loading;
+    expect(service.state()).toBe('ready');
+    expect(service.runnersError()).toBe('Enrolled runners are unavailable.');
+    expect(service.projectsError()).toBe('Projects could not be loaded, so project and environment scopes cannot be chosen.');
+    expect(service.runners()).toEqual([]);
+
+    const reloading = service.load();
+    await flushLoad();
+    await reloading;
+    expect(service.runnersError()).toBeNull();
+    expect(service.projectsError()).toBeNull();
+  });
+
   it('reports a denied overview without an error dump', async () => {
     const loading = service.load();
     http.expectOne('/api/auth/iam').flush({ error: 'permission-denied' }, { status: 403, statusText: 'Forbidden' });
     http.expectOne('/api/projects').flush([]);
     http.expectOne('/api/auth/runner-enrollments').flush({ error: 'permission-denied' }, { status: 403, statusText: 'Forbidden' });
-    http.expectOne('/api/auth/runners').flush([]);
+    // The runner lists load together; the refused enrollment list cancels the other.
+    expect(http.expectOne('/api/auth/runners').cancelled).toBe(true);
     await loading;
     expect(service.state()).toBe('denied');
     expect(service.error()).toBe('Your account cannot view access settings.');

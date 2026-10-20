@@ -1,4 +1,5 @@
 <div class="runners" data-testid="access-runners">
+  @if (access.runnersError(); as message) { <p class="access-error" role="alert" data-testid="access-runners-error">{{ message }}</p> }
   @if (code(); as value) {
     <div class="runners__issued" data-testid="access-enrollment-code" role="status">
       <p>Copy this enrollment code now. It is shown once and works for a single runner.</p>

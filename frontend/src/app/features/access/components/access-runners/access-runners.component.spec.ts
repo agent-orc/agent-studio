@@ -42,6 +42,15 @@ describe('AccessRunnersComponent', () => {
     expect(runner).toContain('Active');
   });
 
+  it('shows an error state when the runner lists could not be loaded', () => {
+    access.runners.set([]);
+    access.runnersError.set('Runner enrollments and runners could not be loaded.');
+    const fixture = TestBed.createComponent(AccessRunnersComponent);
+    fixture.detectChanges();
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelector('[data-testid="access-runners-error"]')?.textContent).toContain('could not be loaded');
+  });
+
   it('creates an engine enrollment code and shows it once', async () => {
     const fixture = TestBed.createComponent(AccessRunnersComponent);
     fixture.detectChanges();

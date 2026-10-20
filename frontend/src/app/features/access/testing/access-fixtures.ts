@@ -53,6 +53,8 @@ export function fakeAccessService(overview: AccessOverview | null = accessOvervi
     state,
     busy: signal(false),
     error: signal<string | null>(null),
+    projectsError: signal<string | null>(null),
+    runnersError: signal<string | null>(null),
     pendingInvitations: computed(() => new Set((overviewSignal()?.invitations ?? []).filter(item => !item.used).map(item => item.userId))),
     load: vi.fn(() => Promise.resolve()),
     invite: vi.fn(() => Promise.resolve({ user: { username: 'new.user' }, signInLink: '/?invite=inv.abc', expiresAt: '2026-10-21T09:00:00Z' })),

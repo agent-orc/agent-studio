@@ -8,6 +8,7 @@
   </header>
 
   @if (access.error(); as message) { <p class="access-error" role="alert" data-testid="access-error">{{ message }}</p> }
+  @if (access.projectsError(); as message) { <p class="access-error" role="alert" data-testid="access-projects-error">{{ message }}</p> }
 
   @if (overview(); as data) {
     <p class="access__summary access-numeric" data-testid="access-summary">

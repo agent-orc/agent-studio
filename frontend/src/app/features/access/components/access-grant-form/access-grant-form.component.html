@@ -18,7 +18,11 @@
   }
   @if (scopeKind() === 'environment') {
     <label>Environment
-      <input data-testid="access-grant-environment" [value]="environment()" (input)="environment.set($any($event.target).value)" />
+      <select data-testid="access-grant-environment" (change)="environment.set($any($event.target).value)">
+        @for (item of environments; track item.key) {
+          <option [value]="item.key" [selected]="item.key === environment()">{{ item.label }}</option>
+        }
+      </select>
     </label>
   }
   <label>Role
