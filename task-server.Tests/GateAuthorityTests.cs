@@ -308,7 +308,10 @@ public sealed class GateAuthorityTests
         var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
             clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new RejectQuota());
         await guarded.InitializeAsync();
+        await guarded.StartWorkspaceQuotaRefreshesAsync("test");
+        await guarded.WorkspaceQuotaRefreshesIdle();
         var claim = await guarded.ClaimGateAsync(new GateClaimRequest("gate-a", "instance-a"), "gate-a", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
         Assert.Equal("empty", claim.Status);
         Assert.Contains("quota", claim.Message!, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(GateStates.Queued, (await guarded.GetGateStatusAsync(subject.Subject.SubjectId, default))!.Phase);
@@ -332,7 +335,10 @@ public sealed class GateAuthorityTests
         var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
             clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new UnreachableQuota());
         await guarded.InitializeAsync();
+        await guarded.StartWorkspaceQuotaRefreshesAsync("test");
+        await guarded.WorkspaceQuotaRefreshesIdle();
         var claim = await guarded.ClaimGateAsync(new GateClaimRequest("gate-a", "instance-a"), "gate-a", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
         Assert.Equal("claimed", claim.Status);
         Assert.Contains("unavailable", claim.Message!, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(WorkspaceQuotaAdmissionStates.Unreachable, guarded.Status().QuotaAdmission);

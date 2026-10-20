@@ -199,15 +199,7 @@ public sealed partial class TaskServerStore
     {
         RequireAdmission();
         GateClaimResponse? response = null;
-        if (request.AvailableGateSlots > 0)
-            await RefreshWorkspaceQuotaAsync("""
-                SELECT DISTINCT p.name
-                  FROM gate_attempts a
-                  JOIN gate_subjects s ON s.id = a.subject_id
-                  JOIN tasks t ON t.id = s.task_id
-                  JOIN projects p ON p.id = t.project_id
-                 WHERE a.state = 'queued';
-                """, actorId, ct);
+        if (request.AvailableGateSlots > 0) await StartWorkspaceQuotaRefreshAsync(QuotaClaimKind.Gate, actorId, ct);
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             await ReconcileGateTimeoutsAsync(connection, transaction, ct);
@@ -240,25 +232,23 @@ public sealed partial class TaskServerStore
                 response = new GateClaimResponse("empty", Message: "Gate host slot is occupied.");
                 return;
             }
-            var candidates = new List<(string AttemptId, GateSubject Subject, int Number)>();
+            var candidates = new List<(string AttemptId, GateSubject Subject, int Number, string? ProjectName)>();
             string? quotaReason = null;
             await using (var command = Command(connection, """
-                SELECT a.id, s.subject_json, a.attempt_number
+                SELECT a.id, s.subject_json, a.attempt_number, p.name
                   FROM gate_attempts a JOIN gate_subjects s ON s.id = a.subject_id
+                  LEFT JOIN tasks t ON t.id = s.task_id
+                  LEFT JOIN projects p ON p.id = t.project_id
                  WHERE a.state = 'queued' ORDER BY a.created_at LIMIT 32;
                 """, transaction))
             await using (var reader = await command.ExecuteReaderAsync(ct))
                 while (await reader.ReadAsync(ct))
-                    candidates.Add((reader.GetString(0), JsonSerializer.Deserialize<GateSubject>(reader.GetString(1), GateJson)!, reader.GetInt32(2)));
+                    candidates.Add((reader.GetString(0), JsonSerializer.Deserialize<GateSubject>(reader.GetString(1), GateJson)!,
+                        reader.GetInt32(2), reader.IsDBNull(3) ? null : reader.GetString(3)));
             foreach (var candidate in candidates)
             {
-                var projectName = await ScalarAsync(connection,
-                    "SELECT p.name FROM tasks t JOIN projects p ON p.id = t.project_id "
-                    + "WHERE t.id = $task OR t.task_key = upper($task) LIMIT 1;",
-                    ct, transaction, ("$task", candidate.Subject.TaskId)) as string;
-                var quota = projectName is null
-                    ? new WorkspaceQuotaVerdict(false, "Gate project could not be resolved for quota admission.")
-                    : CachedWorkspaceQuota(projectName);
+                var projectName = candidate.ProjectName;
+                var quota = CachedWorkspaceQuota(projectName, "Gate card " + candidate.Subject.TaskId);
                 if (!quota.Allowed)
                 {
                     quotaReason = quota.Message ?? "Workspace quota reached.";
@@ -316,7 +306,7 @@ public sealed partial class TaskServerStore
                     ("$deadline", Iso(deadline)), ("$attempt", candidate.AttemptId));
                 await AuditAsync(connection, transaction, actorId, "gate.claimed", "gate-attempt",
                     candidate.AttemptId, JsonSerializer.Serialize(new { fence, hostId }), ct);
-                var quotaCardNotice = ConsumeQuotaCardNotice(projectName!);
+                var quotaCardNotice = ConsumeQuotaCardNotice(projectName);
                 if (quotaCardNotice is not null)
                     await AppendLifecycleEventAsync(connection, transaction, candidate.Subject.SourceRunId,
                         candidate.Subject.TaskId, 0, "quota.meter-unavailable", new { message = quotaCardNotice }, ct);

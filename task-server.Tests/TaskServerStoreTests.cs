@@ -24,7 +24,11 @@ public sealed partial class TaskServerStoreTests
         var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
             clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new RejectCodingQuota());
         await guarded.InitializeAsync();
+        // The startup warm-up fills the verdict cache; claims read only the cache.
+        await guarded.StartWorkspaceQuotaRefreshesAsync("test");
+        await guarded.WorkspaceQuotaRefreshesIdle();
         var refused = await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
         Assert.Equal("empty", refused.Status);
         Assert.Contains("quota", refused.PlacementReason!, StringComparison.OrdinalIgnoreCase);
         var resumed = Store(temp.Path, clock);
@@ -76,19 +80,24 @@ public sealed partial class TaskServerStoreTests
         var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
             clock, new ApplicationResultFinalizationSummaryGenerator(), events, null, meter);
         await guarded.InitializeAsync();
+        await guarded.StartWorkspaceQuotaRefreshesAsync("test");
+        await guarded.WorkspaceQuotaRefreshesIdle();
 
         var claim = await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
         Assert.Equal("claimed", claim.Status);
+        Assert.Contains("unknown", claim.Message!, StringComparison.Ordinal);
         Assert.Equal(["Project"], meter.Asked);
         Assert.Single(events.Published, evt => evt.Kind == "quota.meter-unavailable");
         Assert.Single((await guarded.GetTaskTimelineAsync(project.ProjectId, task.TaskId, default)).Entries,
             entry => entry.EventKind == "quota.meter-unavailable");
         Assert.Equal(WorkspaceQuotaAdmissionStates.Unreachable, guarded.Status().QuotaAdmission);
 
-        // Still down after the TTL: asked again, no second event.
+        // Still down after the TTL: asked again in the background, no second event.
         await seed.CreateTaskAsync(project.ProjectId, new CreateTaskRequest("Next", "More work", "2-ready"), "test", default);
         clock.Advance(TimeSpan.FromSeconds(31));
         await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
         Assert.Equal(2, meter.Asked.Count);
         Assert.Single(events.Published, evt => evt.Kind == "quota.meter-unavailable");
 
@@ -96,7 +105,9 @@ public sealed partial class TaskServerStoreTests
         meter.Verdict = new WorkspaceQuotaVerdict(true, null);
         clock.Advance(TimeSpan.FromSeconds(31));
         await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
         await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
         Assert.Equal(3, meter.Asked.Count);
         Assert.Single(events.Published, evt => evt.Kind == "quota.meter-recovered");
         Assert.Equal(WorkspaceQuotaAdmissionStates.On, guarded.Status().QuotaAdmission);
@@ -116,14 +127,19 @@ public sealed partial class TaskServerStoreTests
             clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, meter);
         await guarded.InitializeAsync();
 
-        var claim = guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        // The claim starts the verdict refresh and completes while the meter is still answering.
+        var claim = await guarded.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default)
+            .WaitAsync(TimeSpan.FromSeconds(30));
         await meter.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        // A write on the same store finishes while the meter is still answering.
+        Assert.Equal("claimed", claim.Status);
+        Assert.Null(claim.Message);
+        // A write on the same store also finishes while the meter is blocked.
         await guarded.RegisterRunnerAsync("runner-b", Runner("instance-b"), "test", default)
             .WaitAsync(TimeSpan.FromSeconds(30));
-        Assert.False(claim.IsCompleted);
+        var refresh = guarded.WorkspaceQuotaRefreshesIdle();
+        Assert.False(refresh.IsCompleted);
         meter.Release.SetResult(new WorkspaceQuotaVerdict(true, null));
-        Assert.Equal("claimed", (await claim.WaitAsync(TimeSpan.FromSeconds(30))).Status);
+        await refresh.WaitAsync(TimeSpan.FromSeconds(30));
     }
 
     private sealed class SwitchableQuota(WorkspaceQuotaVerdict verdict) : IWorkspaceQuotaAdmission

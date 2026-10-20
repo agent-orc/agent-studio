@@ -201,6 +201,9 @@ await store.InitializeAsync(app.Lifetime.ApplicationStopping);
 if (store.QuotaAdmissionState == WorkspaceQuotaAdmissionStates.Off)
     app.Logger.LogWarning(
         "quota-admission off: TaskServer:QuotaAdmissionBaseUrl is not configured; coding, review and gate claims are not metered.");
+else
+    // Warm the verdict cache in the background so the first claims after a start find verdicts.
+    await store.StartWorkspaceQuotaRefreshesAsync("task-server", app.Lifetime.ApplicationStopping);
 var bootstrap = app.Services.GetRequiredService<TaskServerBootstrapOptions>();
 if (bootstrap.RequiresAuthentication)
 {

@@ -277,14 +277,7 @@ public sealed partial class TaskServerStore
         ReviewClaimResponse? response = null;
         // Every unclaimable attempt, not only the ones the response names.
         IReadOnlyList<ReviewUnclaimableAttemptDto> unclaimableToLog = [];
-        await RefreshWorkspaceQuotaAsync("""
-            SELECT DISTINCT p.name
-              FROM review_attempts a
-              JOIN tasks t ON t.id = a.task_id
-              JOIN projects p ON p.id = t.project_id
-             WHERE (a.status IN ('queued', 'process-unknown') OR (a.status = 'leased' AND a.expires_at <= $now))
-               AND t.state = '4-auto-review';
-            """, actorId, ct, ("$now", Iso(UtcNow)));
+        if (request.AvailableSlots > 0) await StartWorkspaceQuotaRefreshAsync(QuotaClaimKind.Review, actorId, ct);
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var executor = await WithProvenRepositoryReadAsync(
@@ -400,12 +393,12 @@ public sealed partial class TaskServerStore
                 var scannedRows = await ScanCandidatesAsync(offset);
                 foreach (var candidate in candidates)
                 {
-                    var quotaProjectName = await ScalarAsync(connection,
-                        "SELECT p.name FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = $task LIMIT 1;",
-                        ct, transaction, ("$task", candidate.Attempt.TaskId)) as string;
-                    var quota = quotaProjectName is null
-                        ? new WorkspaceQuotaVerdict(false, "Review project could not be resolved for quota admission.")
-                        : CachedWorkspaceQuota(quotaProjectName);
+                    var quotaProjectName = QuotaAdmissionOn
+                        ? await ScalarAsync(connection,
+                            "SELECT p.name FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = $task LIMIT 1;",
+                            ct, transaction, ("$task", candidate.Attempt.TaskId)) as string
+                        : null;
+                    var quota = CachedWorkspaceQuota(quotaProjectName, "Review card " + candidate.Attempt.TaskId);
                     if (!quota.Allowed)
                     {
                         capabilityBlock = quota.Message ?? "Workspace quota reached.";

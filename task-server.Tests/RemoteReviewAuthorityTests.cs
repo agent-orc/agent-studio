@@ -36,8 +36,11 @@ public sealed partial class RemoteReviewAuthorityTests
         var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
             clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new RejectReviewQuota());
         await guarded.InitializeAsync();
+        await guarded.StartWorkspaceQuotaRefreshesAsync("test");
+        await guarded.WorkspaceQuotaRefreshesIdle();
         var claim = await guarded.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
         Assert.Equal("empty", claim.Status);
         Assert.Contains("quota", claim.Message!, StringComparison.OrdinalIgnoreCase);
         var resumed = Store(temp.Path, clock);
@@ -64,8 +67,11 @@ public sealed partial class RemoteReviewAuthorityTests
         var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
             clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new UnreachableReviewQuota());
         await guarded.InitializeAsync();
+        await guarded.StartWorkspaceQuotaRefreshesAsync("test");
+        await guarded.WorkspaceQuotaRefreshesIdle();
         var claim = await guarded.ClaimReviewAsync(
             new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
         Assert.Equal("claimed", claim.Status);
         Assert.Contains("unavailable", claim.Message!, StringComparison.OrdinalIgnoreCase);
     }
