@@ -524,7 +524,11 @@ public sealed class ProjectEnvironmentService
                 foreach (var job in state.Jobs.Where(item => item.HostId == hostId &&
                     (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration)).ToArray())
                 {
-                    var verification = VerifyRelease(project, job, state, requireVerifiedRelease);
+                    // The queue filename is normalized; provenance keeps the
+                    // project's original case. Never use the filename as its identity.
+                    var verification = string.Equals(job.Project, project, StringComparison.OrdinalIgnoreCase)
+                        ? VerifyRelease(job.Project, job, state, requireVerifiedRelease)
+                        : new ReleaseVerification(null);
                     if (verification.Retryable) continue;
                     if (verification.Job is not { } verified)
                     {

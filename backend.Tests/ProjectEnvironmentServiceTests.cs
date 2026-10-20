@@ -231,17 +231,18 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     [Fact]
     public async Task GateReleaseRoute_LocalProfileAuthenticatesOnlyTheReleaseCredential()
     {
-        var (_, repo, watch) = Build();
+        const string project = "Operator Demo";
+        var (_, repo, watch) = Build(project: project);
         Git(repo, "add", ".");
         Git(repo, "commit", "-m", "declarations");
         var commit = Git(repo, "rev-parse", "HEAD").Trim();
-        WriteReleaseEvidence("demo", _artifact, commit);
+        WriteReleaseEvidence(project, _artifact, commit);
         await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
             builder.UseSetting("TaskRepository", Path.Combine(_root, "workspace"));
             builder.UseSetting("Deploy:ReleaseEvidenceRoot", Path.Combine(_root, "release-evidence"));
-            builder.UseSetting("WatchPaths:0:Name", "demo");
+            builder.UseSetting("WatchPaths:0:Name", project);
             builder.UseSetting("WatchPaths:0:Path", watch);
             builder.UseSetting("WatchPaths:0:RootPath", repo);
             builder.UseSetting("WatchPaths:0:RepositoryPath", repo);
@@ -256,7 +257,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var security = factory.Services.GetRequiredService<AccessSecurityStore>();
-        var request = new GateArtifactRequest("demo", _artifact, commit);
+        var request = new GateArtifactRequest(project, _artifact, commit);
         Assert.Equal(HttpStatusCode.Forbidden,
             (await client.PostAsJsonAsync("/api/deploy/gate-releases", request)).StatusCode);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "invalid-credential");
@@ -273,8 +274,10 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         using var accepted = await client.PostAsJsonAsync("/api/deploy/gate-releases", request);
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
         var registered = factory.Services.GetRequiredService<ReleaseArtifactRegistry>()
-            .Verified("demo", commit, _artifact, "container");
+            .Verified(project, commit, _artifact, "container");
         Assert.Equal(builder.Runner.Id, registered?.BuilderIdentity);
+        Assert.Equal(project, factory.Services.GetRequiredService<ProjectEnvironmentService>()
+            .Claim("stage-host", requireVerifiedRelease: true)?.Project);
     }
 
     [Fact]
