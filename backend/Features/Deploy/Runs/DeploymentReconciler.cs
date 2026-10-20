@@ -86,6 +86,7 @@ public static class DeploymentReconciler
                 {
                     State = DeploymentStates.Queued, JobId = job.Id,
                     PriorJobIds = [.. retryRun.PriorJobIds, priorId], FailedStep = null, Evidence = null,
+                    RetryStep = job.RetryStep,
                     StartedAtUtc = null, FinishedAtUtc = null, HostId = null, HostClaims = 0,
                     InterventionDecision = "retry", InterventionDecidedBy = job.RequestedBy,
                     InterventionExpiresAtUtc = null,
@@ -228,6 +229,7 @@ public static class DeploymentReconciler
             var environmentName = environments.TryGetValue(run.EnvironmentId, out var environment)
                 ? environment.Name : run.EnvironmentId;
             var updated = run;
+            if (job.RetryStep != run.RetryStep) updated = updated with { RetryStep = job.RetryStep };
             if (state != DeploymentStates.Cancelled && run.StartedAtUtc is null && job.ClaimedAt is { } claimedAt)
             {
                 updated = updated with { StartedAtUtc = claimedAt, HostId = job.HostId, HostClaims = job.Claims };

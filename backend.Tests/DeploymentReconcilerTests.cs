@@ -97,6 +97,48 @@ public sealed class DeploymentReconcilerTests
     }
 
     [Fact]
+    public void HealthRetry_KeepsTheCompletedDeployStepAcrossRestartClaimAndReport()
+    {
+        var failed = Job("job-1", "stage", "failed", T0) with
+        {
+            GuidedFailure = true, ClaimedAt = T0.AddMinutes(1), FinishedAt = T0.AddMinutes(2),
+            Evidence = DeployEvidence.HealthFailed,
+        };
+        var waiting = Reconcile([], [failed]);
+        var original = Assert.Single(waiting.Deployments);
+        Assert.Equal(DeploymentStates.WaitingForIntervention, original.State);
+        Assert.Equal(DeploymentStates.Succeeded, original.Steps[0].State);
+
+        // The retry job has reached the store, but the run update has not.
+        var retry = Job("job-2", "stage", "queued", T0.AddMinutes(3)) with
+        {
+            RequestedBy = "owner", RetryOfJobId = failed.Id, RetryStep = DeployStepNames.Health,
+        };
+        var attached = Reconcile(waiting.Deployments, [failed, retry]);
+        var queued = Assert.Single(attached.Deployments);
+        Assert.Equal((original.Id, retry.Id, DeployStepNames.Health), (queued.Id, queued.JobId, queued.RetryStep));
+        Assert.Equal((DeploymentStates.Succeeded, DeploymentStepStates.Pending),
+            (queued.Steps[0].State, queued.Steps[1].State));
+        Assert.Equal(original.Steps[0].StartedAtUtc, queued.Steps[0].StartedAtUtc);
+
+        var claimed = retry with { Status = "claimed", ClaimedAt = T0.AddMinutes(4) };
+        var running = Assert.Single(Reconcile(attached.Deployments, [failed, claimed]).Deployments);
+        Assert.Equal((DeploymentStates.Succeeded, DeploymentStepStates.Pending),
+            (running.Steps[0].State, running.Steps[1].State));
+        Assert.Equal(original.Steps[0].StartedAtUtc, running.Steps[0].StartedAtUtc);
+
+        var healthy = claimed with
+        {
+            Status = "healthy", FinishedAt = T0.AddMinutes(5), Evidence = DeployEvidence.HealthOk,
+        };
+        var complete = Assert.Single(Reconcile([running], [failed, healthy]).Deployments);
+        Assert.Equal((DeploymentStates.Succeeded, DeploymentStates.Succeeded),
+            (complete.Steps[0].State, complete.Steps[1].State));
+        Assert.Equal(original.Steps[0].StartedAtUtc, complete.Steps[0].StartedAtUtc);
+        Assert.Equal(T0.AddMinutes(5), complete.Steps[1].FinishedAtUtc);
+    }
+
+    [Fact]
     public void SecondPassOverItsOwnOutput_ChangesNothing()
     {
         var job = Job("job-1", "stage", "healthy", T0) with

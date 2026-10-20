@@ -467,6 +467,7 @@ public sealed class DeployService
                     "The failed step cannot be retried after another job entered this environment.");
                 updated = updated with { State = DeploymentStates.Queued, JobId = job.Id,
                     PriorJobIds = [.. run.PriorJobIds, run.JobId!], FailedStep = null, Evidence = null,
+                    RetryStep = job.RetryStep,
                     StartedAtUtc = null, FinishedAtUtc = null, HostId = null, HostClaims = 0 };
             }
             else if (request.Action == "skip")

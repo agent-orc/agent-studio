@@ -37,6 +37,8 @@ public sealed record DeploymentRecord
     public int InterventionTimeoutMinutes { get; init; } = 60;
     public DateTime? InterventionExpiresAtUtc { get; init; }
     public string? FailedStep { get; init; }
+    /// <summary>The step executed by the current retry job, if this run is retrying.</summary>
+    public string? RetryStep { get; init; }
     public string? InterventionDecidedBy { get; init; }
     public string? InterventionDecision { get; init; }
     public List<DeploymentStepRecord> Steps { get; init; } = [];
@@ -90,8 +92,13 @@ public static class DeploymentStepPlan
         }
 
         var healthFailed = run.Evidence == DeployEvidence.HealthFailed;
+        var healthRetry = run.RetryStep == DeployStepNames.Health;
+        var completedDeploy = healthRetry
+            ? run.Steps.FirstOrDefault(step => step.Name == run.DeployStep && step.State == DeploymentStates.Succeeded)
+            : null;
         var deployState = run.State switch
         {
+            _ when healthRetry => DeploymentStates.Succeeded,
             DeploymentStates.Running => DeploymentStates.Running,
             DeploymentStates.Succeeded when run.InterventionDecision == "skip" && !healthFailed => DeploymentStepStates.Skipped,
             DeploymentStates.Succeeded => DeploymentStates.Succeeded,
@@ -101,7 +108,9 @@ public static class DeploymentStepPlan
             _ => DeploymentStepStates.Pending,
         };
         var finished = DeploymentStates.IsFinished(run.State) && run.StartedAtUtc is not null;
-        steps.Add(new(run.DeployStep, deployState, run.StartedAtUtc, finished ? run.FinishedAtUtc : null));
+        steps.Add(new(run.DeployStep, deployState,
+            completedDeploy is not null ? completedDeploy.StartedAtUtc : run.StartedAtUtc,
+            completedDeploy is not null ? completedDeploy.FinishedAtUtc : finished ? run.FinishedAtUtc : null));
 
         var healthState = run.State switch
         {

@@ -143,11 +143,19 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Null(environments.Claim("prod-host"));
         Assert.Equal(DeployOutcomeKind.Ok,
             deploy.DecideIntervention("demo", started.Value.Id, new("retry"), Owner).Kind);
+        var queued = deploy.DeploymentById("demo", started.Value.Id)!;
+        Assert.Equal((DeploymentStates.Succeeded, DeploymentStepStates.Pending),
+            (queued.Steps[1].State, queued.Steps[2].State));
         var retry = environments.Claim("prod-host")!;
         Assert.Equal(DeployStepNames.Health, retry.RetryStep);
+        deploy.SyncAfterHostCall("demo");
+        var running = deploy.DeploymentById("demo", started.Value.Id)!;
+        Assert.Equal(DeploymentStates.Succeeded, running.Steps[1].State);
         Assert.True(environments.Report("demo", retry.Id, new(retry.LeaseToken!, true, DeployEvidence.HealthOk)));
         deploy.SyncAfterHostCall("demo");
-        Assert.Equal(DeploymentStates.Succeeded, deploy.DeploymentById("demo", started.Value.Id)?.State);
+        var complete = deploy.DeploymentById("demo", started.Value.Id)!;
+        Assert.Equal((DeploymentStates.Succeeded, DeploymentStates.Succeeded, DeploymentStates.Succeeded),
+            (complete.State, complete.Steps[1].State, complete.Steps[2].State));
         Assert.Contains(deploy.Log("demo", started.Value.Id, null)!.Lines,
             line => line.Message.Contains("Health check passed on retry", StringComparison.Ordinal));
     }
