@@ -59,8 +59,13 @@ that is already allowed to edit that project's checkout.
 - The first successful HTTPS bootstrap creates the sole initial owner and then
   closes permanently.
 - Human passwords are stored as versioned salted PBKDF2-SHA512 hashes with
-  600,000 iterations. Login is throttled. Password resets create a temporary
-  password, revoke existing sessions, and force a change at the next login.
+  600,000 iterations. Login failures are limited per client key (5 failures,
+  then a 15-minute lockout) and per existing username across client keys
+  (20 failures per 15 minutes). The client-key table holds at most 4,096 keys;
+  when full, a failed login from a new key returns 429 and still counts against
+  the existing username's budget. The settings are under
+  `Security:LoginThrottle`. Password resets create a temporary password,
+  revoke existing sessions, and force a change at the next login.
 - Human sessions use a random opaque token stored only as a SHA-256 hash on the
   server. The cookie is `Secure`, `HttpOnly`, `SameSite=Strict`, host-only, and
   has idle plus absolute expiry. Browser mutations require the matching CSRF
@@ -89,6 +94,13 @@ that is already allowed to edit that project's checkout.
   Preview comments are appended to the card timeline through
   `POST /api/tasks/{jobId}/preview-comments`, with the authenticated user as
   actor and the preview ID as the reference.
+- A mapped route can declare a minimum role (`StudioRoleRequirement`), which
+  the networked profile enforces for sessions and API tokens. Every local
+  first-run route (`/api/first-run/...`: Git setup and repository probe, read
+  and write) requires the owner, matching the Task Server runner Git setup
+  routes; others get `403 owner-required`. `AccessSecurityRouteInventory`
+  lists the owner-only route families, and its test fails for any route there
+  without the declaration. The local loopback profile is unchanged.
 - Owners mint short-lived one-time Runner enrollment codes. Enrollment reveals
   one service credential once. The server stores only credential hashes.
   Credentials carry explicit scopes, optional expiry, last-use time, and

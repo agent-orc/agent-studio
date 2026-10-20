@@ -156,6 +156,24 @@ public static class MonolithTransitionAdapter
     public static string DecisionReceiptPolicyReceiptId(string occurrenceId, string groundsDigest)
         => DecisionReceiptPolicy.ReceiptId(occurrenceId, groundsDigest);
 
+    public static IReadOnlyList<GroundsAlternativeV1> DecisionRulePolicyApply(IReadOnlyList<DecisionRuleV1> rules, string trigger, string profile, IReadOnlyList<GroundsFactV1> facts, IReadOnlyList<GroundsAlternativeV1> alternatives, DateTime observedAt)
+        => DecisionRulePolicy.Apply(rules, trigger, profile, facts, alternatives, observedAt);
+
+    public static DecisionRuleReplaySignals DecisionRulePolicyReplay(IReadOnlyList<DecisionRuleV1> rules, OrchestratorDecisionReceiptV1 receipt)
+        => DecisionRulePolicy.Replay(rules, receipt);
+
+    public static IReadOnlyList<GroundsFactV1> DecisionRulePolicySignals(IReadOnlyList<DecisionRuleV1> rules, string trigger, IReadOnlyList<GroundsFactV1> facts, string policyVersion, DateTime observedAt)
+        => DecisionRulePolicy.Signals(rules, trigger, facts, policyVersion, observedAt);
+
+    public static DecisionRuleValidation DecisionRulePolicyValidate(IReadOnlyList<DecisionRuleV1> rules, bool projectOverlay, DecisionRuleModelCatalogue models)
+        => DecisionRulePolicy.Validate(rules, projectOverlay, models);
+
+    public static string? DecisionRulePolicyCardAlternativeRefusal(IReadOnlyList<DecisionRuleV1> rules)
+        => DecisionRulePolicy.CardAlternativeRefusal(rules);
+
+    public static string? DecisionRulePolicyModelRefusal(string model, DecisionRuleModelCatalogue models)
+        => DecisionRulePolicy.ModelRefusal(model, models);
+
     public static string? GateEnvironmentRetryPolicyOperatorReplayRefusal(GateEnvironmentRetryFacts facts)
         => GateEnvironmentRetryPolicy.OperatorReplayRefusal(facts);
 

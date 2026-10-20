@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AgentStudio.Diagnostics;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
@@ -72,7 +73,11 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_workspace, recursive: true); } catch { /* best-effort */ }
+        try { Directory.Delete(_workspace, recursive: true); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "BatchGatePilotServiceTests: temporary workspace cleanup failed");
+        }
     }
 
     [Fact]
@@ -267,8 +272,8 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             transitionCause: LaneChangeCauses.ReviewVerdict, transitionDetail: "batch-gate-passed");
         Assert.Equal(MoveJobStatus.Success, moved.Status);
 
-        factory.Services.GetServices<IHostedService>()
-            .OfType<MonolithOrchestrationRecoveryService>().Single().RecoverShadowOutcomes();
+        factory.Services.GetRequiredService<MonolithOrchestrationRecoveryService>()
+            .RecoverShadowOutcomes();
 
         Assert.Equal("Continue", orchestration.GetOccurrence(shadow.RunId)!.MonolithReceipt!.Action);
         var profile = rollout.GetProfiles().Single(item => item.Profile == "GateResult");
@@ -374,7 +379,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     [Fact]
     public void Look_ahead_plan_holds_a_lone_card_only_for_a_deferred_review()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 2);
         SeedMember(factory, "DOC-IDLE-WAITING", "docs/waiting.md");
@@ -583,7 +588,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     [Trait("Category", "MachineBound")]
     public void Snapshot_sends_a_card_without_a_computable_diff_to_the_per_task_gate()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 2);
         SeedMember(factory, "DOC-MISSING-RESULT", "docs/missing.md");
@@ -863,7 +868,8 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             SeedMember(factory, "DOC-ASYNC-1", "docs/async-1.md");
             SeedMember(factory, "DOC-ASYNC-2", "docs/async-2.md");
             await pilot.TickAsync(CancellationToken.None);
-            await WaitForAsync(() => _gate.BatchRuns == 1);
+            await _gate.FirstBatchStarted;
+            Assert.Equal(1, _gate.BatchRuns);
 
             SeedMember(factory, "DOC-ASYNC-3", "docs/async-3.md");
             SeedMember(factory, "DOC-ASYNC-4", "docs/async-4.md");
@@ -1042,7 +1048,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     public async Task Acceptance_repairs_an_unintegrated_fallback_marker_when_delivery_is_published(
         bool patchEquivalent)
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         using var http = factory.CreateClient();
         http.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         EnableBatchGate(factory, closeSize: 4);
@@ -1158,7 +1164,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         // AGT-3139: the delivery reconciler recomputes the integration status.
         // Read by ancestry alone, it returned the released card to Auto Review
         // and treated the accepted card's integrated-delivery claim as stale.
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         using var http = factory.CreateClient();
         http.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         EnableBatchGate(factory, closeSize: 1);
@@ -1224,7 +1230,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     [Fact]
     public async Task Acceptance_with_uncontained_fallback_marker_returns_typed_conflict()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         using var http = factory.CreateClient();
         http.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         EnableBatchGate(factory, closeSize: 4);
@@ -1278,10 +1284,14 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         try
         {
             await pilot.TickAsync(CancellationToken.None);
-            await WaitForAsync(() => store.ListManifests().Any(manifest =>
-                store.LatestState(manifest.BatchId).Phase == BatchPhase.Published));
-            await WaitForAsync(() => _gate.FallbackRuns == 1);
-            await WaitForAsync(() => Directory.Exists(Path.Combine(_watchPath,
+            // The batch flight publishes and releases the admitted member; the
+            // ejected member's fallback stays parked on the gate.
+            await pilot.WaitForFlightsAsync(includeFallbacks: false, CancellationToken.None);
+            await _gate.FirstFallbackStarted;
+            Assert.Contains(store.ListManifests(), manifest =>
+                store.LatestState(manifest.BatchId).Phase == BatchPhase.Published);
+            Assert.Equal(1, _gate.FallbackRuns);
+            Assert.True(Directory.Exists(Path.Combine(_watchPath,
                 TaskStates.HumanReview, admitted.Key)));
             await pilot.TickAsync(CancellationToken.None);
             AssertLane(admitted.Key, TaskStates.HumanReview);
@@ -2164,7 +2174,8 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         // the client retries the same settled report.
         var first = pilot.RunEmergencyFallbackAsync(task, passed.ReviewAttempt!, source,
             _clock, CancellationToken.None);
-        await WaitForAsync(() => _gate.FallbackRuns == 1);
+        await _gate.FirstFallbackStarted;
+        Assert.Equal(1, _gate.FallbackRuns);
         var retry = pilot.RunEmergencyFallbackAsync(task, passed.ReviewAttempt!, source,
             _clock, CancellationToken.None);
         release.SetResult();
@@ -2208,7 +2219,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             Assert.False(enqueue.IsCompleted);
         }
 
-        var pending = await enqueue.WaitAsync(TimeSpan.FromSeconds(10));
+        var pending = await enqueue.WaitAsync(HangGuard);
         Assert.Equal(member.ReviewAttemptId, pending.ReviewAttemptId);
         Assert.Equal(member.ReviewAttemptId, Ownership(member.Key)?.ReviewAttemptId);
         AssertLane(member.Key, TaskStates.AutoReview);
@@ -2410,7 +2421,8 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var flight = factory.Services.GetRequiredService<BatchGatePilotService>()
             .RunEmergencyFallbackAsync(task, review, authority.GetRun(member.RunAttemptId)!,
                 _clock, CancellationToken.None);
-        await WaitForAsync(() => _gate.FallbackRuns == 1);
+        await _gate.FirstFallbackStarted;
+        Assert.Equal(1, _gate.FallbackRuns);
 
         Supersede(authority, member.Key);
         if (reportedCancellation)
@@ -2559,7 +2571,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     [Trait("Category", "MachineBound")]
     public void Snapshot_excludes_pending_continuations_before_reading_the_delivery_diff()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 2);
         var waiting = SeedMember(factory, "DOC-INTENT-WAITING", "docs/waiting.md");
@@ -2584,7 +2596,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     [InlineData(true)]
     public void Snapshot_excludes_a_superseded_review_subject(bool settledReview)
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 2);
         var member = SeedMember(factory, "DOC-SUBJECT", "docs/subject.md",
@@ -2605,7 +2617,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     [Trait("Category", "MachineBound")]
     public void Snapshot_excludes_the_old_delivery_when_a_continuation_is_queued_in_progress()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 2);
         var member = SeedMember(factory, "DOC-PROGRESS", "docs/progress.md");
@@ -2635,7 +2647,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     public void Formed_batch_removal_replans_survivors_or_dissolves_below_minimum(
         int size, bool supersededReview)
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: size);
         var members = Enumerable.Range(0, size).Select(index =>
@@ -2667,7 +2679,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     {
         BatchGateManifest manifest;
         SeededMember[] members;
-        using (var factory = BuildFactory(authorityOnTestClock: true))
+        using (var factory = BuildFactory())
         {
             _ = factory.CreateClient();
             EnableBatchGate(factory, closeSize: 3);
@@ -2693,7 +2705,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             Assert.Contains(store.ListRecoverableManifests(), item => item.BatchId == manifest.BatchId);
         }
 
-        using var restarted = BuildFactory(authorityOnTestClock: true);
+        using var restarted = BuildFactory();
         _ = restarted.CreateClient();
         restarted.Services.GetRequiredService<BatchGatePilotService>().ReconcileFormedBatches();
 
@@ -2712,7 +2724,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     [InlineData(true)]
     public void Running_batch_is_untouched_by_eligibility_reconciliation(bool supersededReview)
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 2);
         var member = SeedMember(factory, "DOC-RUNNING-A", "docs/running-a.md");
@@ -2735,7 +2747,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     [Trait("Category", "MachineBound")]
     public async Task Tick_replans_a_formed_batch_before_starting_its_gate()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 3);
         var removed = SeedMember(factory, "DOC-TICK-REMOVE", "docs/remove.md");
@@ -2811,7 +2823,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     [Trait("Category", "MachineBound")]
     public void New_delivery_returns_to_planning_after_its_review_passes()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 2);
         var old = SeedMember(factory, "DOC-RETURN", "docs/old.md");
@@ -2952,7 +2964,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             + $"[ -e '{ready}' ] && exit 0\n"
             + $"touch '{ready}'\n"
             + "i=0\n"
-            + $"while [ ! -e '{go}' ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done\n"
+            + $"while [ ! -e '{go}' ] && [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done\n"
             + "exit 0\n");
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite
@@ -3098,12 +3110,18 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         return state;
     }
 
+    // Bounds a hang only. Every wait below completes on an explicit signal or
+    // on durable state the awaited step writes, never on elapsed time.
+    private static readonly TimeSpan HangGuard = TimeSpan.FromMinutes(2);
+
+    // Polls durable state that only an unobservable step writes: the parked
+    // Git hook or the fire-and-forget re-plan of the settings endpoint.
     private static async Task WaitForAsync(Func<bool> condition)
     {
         var elapsed = Stopwatch.StartNew();
         while (!condition())
         {
-            Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(30),
+            Assert.True(elapsed.Elapsed < HangGuard,
                 "The pilot did not reach the awaited phase.");
             await Task.Delay(50);
         }
@@ -3163,10 +3181,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             lease.AuthorityEpoch);
     }
 
-    // The host registers the attempt authority on the wall clock. A test that
-    // follows review CreatedAt into upcoming ETAs needs it on the test clock,
-    // or every ETA lies outside the look-ahead window of the fixed clock.
-    private WebApplicationFactory<Program> BuildFactory(bool authorityOnTestClock = false,
+    private WebApplicationFactory<Program> BuildFactory(
         IReadOnlyDictionary<string, string?>? configuration = null, Action<IServiceCollection>? testServices = null)
     {
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
@@ -3199,30 +3214,18 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
                 services.AddSingleton<ILoggerProvider>(_errors);
                 services.RemoveAll<IBuildTestGateRunner>();
                 services.AddSingleton<IBuildTestGateRunner>(_gate);
-                if (authorityOnTestClock)
-                {
-                    services.RemoveAll<AttemptAuthorityService>();
-                    services.AddSingleton(sp => new AttemptAuthorityService(
-                        sp.GetRequiredService<IConfiguration>(),
-                        sp.GetRequiredService<ILogger<AttemptAuthorityService>>(),
-                        () => _clock.UtcDateTime));
-                }
-                var tick = services.Single(descriptor =>
-                    descriptor.ServiceType == typeof(IHostedService)
-                    && descriptor.ImplementationType == typeof(BatchGatePilotHostedService));
-                services.Remove(tick);
-                // AGT-3141: the delivery-chain reconciler runs on a 30-second
-                // wall-clock timer and moves seeded Human Review cards whose
-                // delivery is not on develop yet back to Auto Review. Under a
-                // loaded full suite it fired mid-test, so tests own that order too.
-                var reconciler = services.Single(descriptor =>
-                    descriptor.ServiceType == typeof(IHostedService)
-                    && descriptor.ImplementationFactory?.Method.ReturnType == typeof(DeliveryChainReconciler));
-                services.Remove(reconciler);
-                // AGT-3218: the applier canary checks on a wall-clock timer; tests drive CheckOnce.
-                services.Remove(services.Single(descriptor =>
-                    descriptor.ServiceType == typeof(IHostedService)
-                    && descriptor.ImplementationType == typeof(EngineApplierCanaryService)));
+                services.RemoveAll<AttemptAuthorityService>();
+                services.AddSingleton(sp => new AttemptAuthorityService(
+                    sp.GetRequiredService<IConfiguration>(),
+                    sp.GetRequiredService<ILogger<AttemptAuthorityService>>(),
+                    () => _clock.UtcDateTime));
+                // State transitions in this fixture are driven explicitly.
+                // Keep only the queue consumer needed by report requests; the
+                // periodic host loops can otherwise resume a seeded review or
+                // move its lane between the tick and the assertion.
+                services.RemoveAll<IHostedService>();
+                services.AddHostedService<RemoteReviewEvidenceProjectionWorker>();
+                services.AddSingleton<MonolithOrchestrationRecoveryService>();
             });
             if (testServices is not null) builder.ConfigureTestServices(testServices);
         });
@@ -3292,9 +3295,17 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         private int _batchRuns;
         private int _baseRuns;
         private int _fallbackRuns;
+        private readonly TaskCompletionSource _batchStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _fallbackStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int BatchRuns => Volatile.Read(ref _batchRuns);
         public int BaseRuns => Volatile.Read(ref _baseRuns);
         public int FallbackRuns => Volatile.Read(ref _fallbackRuns);
+        /// <summary>Completes when the first batch suite starts.</summary>
+        public Task FirstBatchStarted => _batchStarted.Task.WaitAsync(HangGuard);
+        /// <summary>Completes when the first per-task gate starts.</summary>
+        public Task FirstFallbackStarted => _fallbackStarted.Task.WaitAsync(HangGuard);
 
         public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
             IReadOnlyList<string>? changedFiles, BuildProfile? profile, PostStepMode mode,
@@ -3303,6 +3314,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
             if (request.GateId == "batch-gate")
             {
                 Interlocked.Increment(ref _batchRuns);
+                _batchStarted.TrySetResult();
                 return BatchAsync?.Invoke(request, ct) ?? Task.FromResult(Batch(request));
             }
             if (request.GateId == "batch-base")
@@ -3311,6 +3323,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
                 return Task.FromResult(Base(request));
             }
             Interlocked.Increment(ref _fallbackRuns);
+            _fallbackStarted.TrySetResult();
             return FallbackAsync?.Invoke(request, ct) ?? Task.FromResult(Fallback(request));
         }
     }

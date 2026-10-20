@@ -1,0 +1,128 @@
+<section class="rules" data-testid="decision-rules-panel">
+  <header class="rules__head">
+    <div>
+      <h3>Decision rules</h3>
+      <p>Draft workspace signals and project overlays. Authority floors remain fixed.</p>
+    </div>
+    <button type="button" (click)="refresh()">Refresh</button>
+  </header>
+  @if (error(); as message) { <p role="alert">{{ message }}</p> }
+  <div class="rules__scope">
+    <label>Workspace
+      <select [value]="workspaceId()" (change)="selectWorkspace($any($event.target).value)">
+        @for (workspace of workspaces(); track workspace.id) {
+          <option [value]="workspace.id">{{ workspace.displayName }}</option>
+        }
+      </select>
+    </label>
+    <label>Scope
+      <select [value]="projectId()" (change)="selectProject($any($event.target).value)">
+        <option value="">Workspace rules</option>
+        @for (project of selectedProjects(); track project.id) {
+          <option [value]="project.id">{{ project.displayName }}</option>
+        }
+      </select>
+    </label>
+  </div>
+  <p>Active version: <code>{{ view()?.activeVersionId ?? 'platform defaults' }}</code></p>
+  @if (view()?.degraded) {
+    <p role="alert" data-testid="decision-rules-degraded">Some stored rule records were unreadable and are quarantined:
+      {{ view()?.quarantined?.join(', ') }}. Review the active version before activating another.</p>
+  }
+  <details class="rules__floors">
+    <summary>Authority floors</summary>
+    @for (floor of view()?.hardFloors ?? []; track floor.id) {
+      <p><code>{{ floor.id }}</code> · {{ floor.scope }} · {{ floor.value }} ·
+        {{ floor.source }} · {{ floor.owner }} · {{ floor.version }}</p>
+    }
+  </details>
+  @if (projectId()) {
+    <p>Project rules are overlays. Host-wide decisions use workspace rules.</p>
+    @for (rule of inherited(); track rule.id) {
+      <p>Inherited <code>{{ rule.id }}</code>: {{ rule.trigger }} · {{ rule.factId }} ·
+        {{ rule.model ?? 'configured model' }} ·
+        effective {{ isOverridden(rule.id) ? 'project override' : 'workspace' }}</p>
+    }
+  }
+  @for (rule of rules(); track $index; let index = $index) {
+    <div class="rules__row">
+      <label>Rule id <input [value]="rule.id" (input)="updateRule(index, 'id', $any($event.target).value)" /></label>
+      <label>Trigger
+        <select [value]="rule.trigger" (change)="updateRule(index, 'trigger', $any($event.target).value)">
+          @for (trigger of triggers; track trigger) { <option [value]="trigger">{{ trigger }}</option> }
+        </select>
+      </label>
+      <label>Fact id <input [value]="rule.factId" (input)="updateRule(index, 'factId', $any($event.target).value)" /></label>
+      <label>Warning threshold <input [value]="rule.warningThreshold ?? ''" (input)="updateRule(index, 'warningThreshold', $any($event.target).value)" /></label>
+      <label>Actions <input [value]="rule.candidateActions.join(', ')" (input)="updateRule(index, 'candidateActions', $any($event.target).value)" /></label>
+      <label>Autonomy
+        <select [value]="rule.autonomyClass" (change)="updateRule(index, 'autonomyClass', $any($event.target).value)">
+          <option>A0</option><option>A1</option><option>A2</option><option>A3</option>
+        </select>
+      </label>
+      <label>Model <input [value]="rule.model ?? ''" (input)="updateRule(index, 'model', $any($event.target).value)" /></label>
+      <label>Missing data
+        <select [value]="rule.missingDataBehavior" (change)="updateRule(index, 'missingDataBehavior', $any($event.target).value)">
+          <option>ask</option><option>hold</option><option>signal</option>
+        </select>
+      </label>
+      <label>Freshness minutes <input type="number" min="1" max="1440" [value]="rule.freshnessMinutes" (input)="updateRule(index, 'freshnessMinutes', $any($event.target).value)" /></label>
+      <button type="button" (click)="removeRule(index)">Remove</button>
+    </div>
+  }
+  <div class="rules__actions">
+    <button type="button" (click)="addRule()">Add rule</button>
+    <label>Operator reason <input [value]="reason()" (input)="reason.set($any($event.target).value)" /></label>
+    <button type="button" [disabled]="!reason().trim() || busy()" (click)="draft()">Save draft</button>
+    @if (draftId(); as id) {
+      <button type="button" (click)="dryRun(id)">Dry run draft</button>
+      <button type="button" [disabled]="!reason().trim() || busy()" (click)="activate(id)">Activate draft</button>
+    }
+  </div>
+  @if (replay(); as result) {
+    <section class="rules__replay" data-testid="decision-rules-dry-run">
+      <h4>Dry run: {{ result.replayed }} recent occurrences</h4>
+      <p>Replayed model choices are counterfactual. Observed outcomes do not prove a new prompt's result.</p>
+      @for (conflict of result.floorConflicts; track conflict) { <p role="alert">{{ conflict }}</p> }
+      @for (row of result.occurrences; track row.receiptId) {
+        <p><code>{{ row.occurrenceId }}</code> · {{ row.oldSignals.join(', ') || 'no old signal' }} →
+          {{ row.newSignals.join(', ') || 'no new signal' }} · candidates
+          {{ row.oldCandidates.join(', ') || 'none' }} → {{ row.newCandidates.join(', ') || 'none' }} ·
+          {{ row.observedOutcome }}@if (row.missingEvidence) { · missing evidence }</p>
+      }
+    </section>
+  }
+  @if (view()?.versions?.length) {
+    <h4>Version history</h4>
+    <ul class="rules__versions">
+      @for (version of view()!.versions; track version.versionId) {
+        <li><code>{{ version.versionId }}</code> · {{ version.actor }} · {{ version.reason }} ·
+          {{ version.diff || 'no changed rules' }}
+          <button type="button" (click)="dryRun(version.versionId)">Dry run</button>
+          @if (version.versionId !== view()?.activeVersionId) {
+            <button type="button" [disabled]="!reason().trim() || busy()"
+                    (click)="rollback(version.versionId)">Roll back to this version</button>
+          }
+        </li>
+      }
+    </ul>
+  }
+  <section class="rules__history" data-testid="decision-rules-host-history">
+    <h4>Host decision history</h4>
+    @if (historyError(); as message) {
+      <p role="alert" data-testid="decision-rules-history-error">{{ message }}</p>
+    }
+    @if (spend(); as total) {
+      <p>Workspace: {{ total.occurrences }} occurrences · {{ total.inputTokens }} input /
+        {{ total.outputTokens }} output tokens · ${{ total.pricedUsd.toFixed(4) }} priced
+        @if (total.unknownPriceCalls) { · {{ total.unknownPriceCalls }} unknown price }
+      </p>
+    }
+    @for (item of hostHistory(); track item.receiptId) {
+      <p><strong>{{ item.hostId }}</strong> · {{ item.profile }} · {{ item.chosenAction || 'observe' }} ·
+        {{ item.model ?? 'model unavailable' }} · {{ item.inputTokens }} input /
+        {{ item.outputTokens }} output tokens ·
+        <a [href]="item.evidenceRef" target="_blank" rel="noopener">Receipt</a></p>
+    } @empty { <p>No card-free host occurrence recorded yet.</p> }
+  </section>
+</section>

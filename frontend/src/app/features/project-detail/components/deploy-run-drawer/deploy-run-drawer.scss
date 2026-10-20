@@ -1,0 +1,61 @@
+@use '../project-deploy-area/deploy-shared' as deploy;
+
+:host { display: block; min-width: 0; height: 100%; }
+
+.run-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-3);
+
+  h3 { margin: 0; color: var(--studio-fg-strong); font-size: 0.95rem; }
+}
+
+.run-drawer__outcome { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-spacing-2); margin: 0; }
+.run-drawer__badge { @include deploy.tone-badge; }
+.run-drawer__facts { @include deploy.fact-list; }
+.run-drawer__muted { @include deploy.muted; }
+.run-drawer__numeric { @include deploy.numeric; }
+
+.run-drawer__steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  > li { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: var(--studio-spacing-2); align-items: start; }
+  > li > .run-drawer__badge { justify-self: start; }
+  > li > div { display: flex; flex-direction: column; gap: var(--studio-spacing-1); min-width: 0; }
+}
+
+.run-drawer__log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--studio-fg);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+
+  time { @include deploy.muted; margin-right: var(--studio-spacing-1); }
+}
+
+.run-drawer__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+
+  button { @include deploy.button; }
+  button:disabled { cursor: progress; opacity: 0.7; }
+}
+
+.run-drawer__error {
+  margin: 0;
+  padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--studio-error) 12%, var(--studio-surface));
+  color: var(--studio-fg);
+}

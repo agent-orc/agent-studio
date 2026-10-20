@@ -519,4 +519,12 @@ public static class TimelineEventKinds
     /// the applier canary reads it as the durable gate dispatch.
     /// </summary>
     public const string EngineGateDispatched = "engine_gate_dispatched";
+
+    /// <summary>
+    /// IP-14: an environment health incident or certificate warning that owns
+    /// this card changed (reopened, recovered, certificate closer to expiry).
+    /// Details carry <c>incidentId</c> or <c>certificateNotAfter</c>,
+    /// <c>environmentId</c>, <c>checkId</c> and <c>change</c>.
+    /// </summary>
+    public const string EnvironmentHealthUpdated = "environment_health_updated";
 }

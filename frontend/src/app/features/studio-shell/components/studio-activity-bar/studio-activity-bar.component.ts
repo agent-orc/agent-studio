@@ -30,11 +30,7 @@ export class StudioActivityBarComponent {
   readonly activeKey = input.required<StudioActivityItemKey | null>();
   /** Per-item badge counts. Items with count > 0 show a small badge on the icon. */
   readonly badgeCounts = input<Readonly<Record<string, number>>>({});
-  /** Whether any epics exist. The Epics button is hidden when false. */
-  readonly hasEpics = input<boolean>(false);
   readonly panelToggle = output<StudioActivityPanelKey | 'settings' | 'chats'>();
-  /** Fires when the user clicks the Epics button (shown only when epics exist). */
-  readonly openEpicsRequest = output<void>();
   readonly openWorkbenchesRequest = output<void>();
 
   badgeLabel(item: StudioActivityBarItem, count: number): string {

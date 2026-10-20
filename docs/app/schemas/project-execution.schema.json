@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-taskboard.local/schemas/project-execution.schema.json",
   "title": "Repository project execution definition",
-  "description": "Repository-owned project.yml schema 1 or 2. Schema 2 adds project metadata and the P1 deployment definition.",
+  "description": "Repository-owned project.yml schema 1 or 2. Schema 2 adds project metadata and the P1 deployment definition: artifacts, ordered environments with protection, the standard lifecycle, deploy steps, and environment-scoped variables that name secrets without values.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -235,6 +235,7 @@
       }
     },
     "artifacts": {
+      "description": "What the gate produces and keeps. A static artifact is a site bundle directory; a container artifact is an image built from a dockerfile.",
       "type": "array",
       "items": {
         "oneOf": [
@@ -248,14 +249,13 @@
             ],
             "properties": {
               "name": {
-                "type": "string",
-                "minLength": 1
+                "$ref": "#/$defs/identifier"
               },
               "type": {
                 "const": "static"
               },
               "path": {
-                "$ref": "#/$defs/relativePath"
+                "$ref": "#/$defs/artifactPath"
               }
             }
           },
@@ -269,14 +269,22 @@
             ],
             "properties": {
               "name": {
-                "type": "string",
-                "minLength": 1
+                "$ref": "#/$defs/identifier"
               },
               "type": {
                 "const": "container"
               },
               "dockerfile": {
-                "$ref": "#/$defs/relativePath"
+                "$ref": "#/$defs/artifactPath"
+              },
+              "path": {
+                "description": "Optional build context; '.' is the repository root.",
+                "$ref": "#/$defs/artifactPath"
+              },
+              "image": {
+                "description": "Registry repository without tag or digest.",
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]*(?::[0-9]{1,5})?(?:/[a-z0-9][a-z0-9._-]*)+$"
               }
             }
           }
@@ -284,17 +292,62 @@
       }
     },
     "environments": {
-      "type": "array",
-      "prefixItems": [
+      "description": "Ordered deployment environments. Defaults to staging, then protected production, when omitted. The shorthand list protects production.",
+      "oneOf": [
         {
-          "const": "staging"
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "staging"
+            },
+            {
+              "const": "production"
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2
         },
         {
-          "const": "production"
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name"
+              ],
+              "properties": {
+                "name": {
+                  "const": "staging"
+                },
+                "protected": {
+                  "description": "P1 Staging deploys automatically after integration and cannot be protected.",
+                  "const": false,
+                  "default": false
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name"
+              ],
+              "properties": {
+                "name": {
+                  "const": "production"
+                },
+                "protected": {
+                  "const": true,
+                  "default": true
+                }
+              }
+            }
+          ]
         }
-      ],
-      "minItems": 2,
-      "maxItems": 2
+      ]
     },
     "lifecycles": {
       "type": "object",
@@ -357,7 +410,8 @@
           "minItems": 2,
           "maxItems": 2
         }
-      }
+      },
+      "description": "Defaults to the standard lifecycle when omitted: staging automatically after integration, production after staging with an Owner or Maintainer approval."
     },
     "deploy": {
       "type": "array",
@@ -371,6 +425,8 @@
         "properties": {
           "step": {
             "enum": [
+              "static-site",
+              "container",
               "publish-static",
               "start-container",
               "run",
@@ -382,6 +438,7 @@
             "type": "string"
           },
           "target": {
+            "description": "Deploy host id for static-site and container, registered for the step's environments by docs/deployments/environments; never credentials.",
             "type": "string"
           },
           "branch": {
@@ -404,16 +461,137 @@
             }
           },
           "environments": {
-            "type": "array",
-            "items": {
-              "enum": [
-                "staging",
-                "production"
-              ]
-            }
+            "$ref": "#/$defs/environmentScope"
+          },
+          "directory": {
+            "$ref": "#/$defs/remotePath"
+          },
+          "composeFile": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/remotePath"
+              },
+              {
+                "pattern": "\\.ya?ml$"
+              }
+            ]
+          },
+          "service": {
+            "$ref": "#/$defs/identifier"
+          },
+          "healthUrl": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://[^/@\\s]+(?:/|$)"
+          },
+          "healthTimeoutSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 900
           }
         },
         "allOf": [
+          {
+            "if": {
+              "properties": {
+                "step": {
+                  "const": "static-site"
+                }
+              }
+            },
+            "then": {
+              "allOf": [
+                {
+                  "required": [
+                    "artifact",
+                    "target",
+                    "directory",
+                    "healthUrl",
+                    "healthTimeoutSeconds"
+                  ]
+                },
+                {
+                  "propertyNames": {
+                    "enum": [
+                      "step",
+                      "artifact",
+                      "target",
+                      "directory",
+                      "healthUrl",
+                      "healthTimeoutSeconds",
+                      "environments"
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "step": {
+                  "const": "container"
+                }
+              }
+            },
+            "then": {
+              "allOf": [
+                {
+                  "required": [
+                    "artifact",
+                    "target",
+                    "composeFile",
+                    "service",
+                    "healthUrl",
+                    "healthTimeoutSeconds"
+                  ]
+                },
+                {
+                  "propertyNames": {
+                    "enum": [
+                      "step",
+                      "artifact",
+                      "target",
+                      "composeFile",
+                      "service",
+                      "healthUrl",
+                      "healthTimeoutSeconds",
+                      "environments"
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "step": {
+                  "enum": [
+                    "publish-static",
+                    "start-container",
+                    "run",
+                    "health",
+                    "approval"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "propertyNames": {
+                "enum": [
+                  "step",
+                  "artifact",
+                  "target",
+                  "branch",
+                  "run",
+                  "health",
+                  "approval",
+                  "environments"
+                ]
+              }
+            }
+          },
           {
             "if": {
               "properties": {
@@ -486,6 +664,46 @@
                 "approval"
               ]
             }
+          }
+        ]
+      },
+      "description": "Deploy steps. static-site copies a static bundle to a directory over SSH; container pulls and restarts a compose service over SSH. Both need a health check URL and timeout."
+    },
+    "variables": {
+      "description": "Deploy variables. A value is plain configuration; a secret names a secret-provider entry and never holds its value.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "value": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"
+          },
+          "environments": {
+            "$ref": "#/$defs/environmentScope"
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "value"
+            ]
+          },
+          {
+            "required": [
+              "secret"
+            ]
           }
         ]
       }
@@ -569,6 +787,50 @@
           }
         }
       ]
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "remotePath": {
+      "description": "Absolute path on the SSH target below /srv: segments of letters, digits, '.', '_' and '-' that do not start with '-', with no empty, '.' or '..' segment.",
+      "type": "string",
+      "pattern": "^/srv(?:/(?!\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*)+$"
+    },
+    "artifactPath": {
+      "description": "Repository-relative artifact path with the remotePath segment alphabet; '.' alone is the repository root.",
+      "type": "string",
+      "pattern": "^(?:\\.|(?!\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*(?:/(?!\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*)*)$"
+    },
+    "environmentScope": {
+      "description": "Environments the entry applies to; omitted means every environment.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "staging",
+          "production"
+        ]
+      }
+    },
+    "healthCheck": {
+      "type": "object",
+      "required": [
+        "healthUrl",
+        "healthTimeoutSeconds"
+      ],
+      "properties": {
+        "healthUrl": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://[^/@\\s]+(?:/|$)"
+        },
+        "healthTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 900
+        }
+      }
     }
   },
   "allOf": [
@@ -617,6 +879,11 @@
               "required": [
                 "deploy"
               ]
+            },
+            {
+              "required": [
+                "variables"
+              ]
             }
           ]
         }
@@ -627,24 +894,7 @@
         ],
         "dependentRequired": {
           "artifacts": [
-            "environments",
-            "lifecycles",
             "deploy"
-          ],
-          "environments": [
-            "artifacts",
-            "lifecycles",
-            "deploy"
-          ],
-          "lifecycles": [
-            "artifacts",
-            "environments",
-            "deploy"
-          ],
-          "deploy": [
-            "artifacts",
-            "environments",
-            "lifecycles"
           ]
         }
       }

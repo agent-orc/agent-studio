@@ -67,7 +67,7 @@ public sealed class ProjectDeploymentDefinitionTests
         Assert.True(result.IsValid, string.Join("; ", result.Issues.Select(issue => issue.Message)));
         var deployment = Assert.IsType<ProjectDeploymentDefinition>(result.Definition!.Deployment);
         Assert.Equal(new[] { "static", "container" }, deployment.Artifacts.Select(artifact => artifact.Type));
-        Assert.Equal(new[] { "staging", "production" }, deployment.Environments);
+        Assert.Equal(new[] { "staging", "production" }, deployment.Environments.Select(environment => environment.Name));
         Assert.Equal(new[] { "publish-static", "start-container", "run", "health", "approval" },
             deployment.Deploy.Select(step => step.Step));
         Assert.Equal("deploy/website", deployment.Deploy[0].Branch);

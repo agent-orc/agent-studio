@@ -130,6 +130,7 @@
     <Using Include="AgentStudio.Review" />
     <Using Include="AgentStudio.Runner" />
     <Using Include="AgentStudio.Runtime" />
+    <Using Include="AgentStudio.Secrets" />
     <Using Include="AgentStudio.Security" />
     <Using Include="AgentStudio.Shared" />
     <Using Include="AgentStudio.State" />

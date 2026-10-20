@@ -201,7 +201,7 @@ public sealed partial class BatchGatePilotServiceTests
     {
         // The guarded delivery chain would refuse the park of the fixture's
         // unintegrated result, as for the other Human Review contract cases.
-        using var factory = BuildFactory(authorityOnTestClock: true, configuration: UnguardedDeliveryChain,
+        using var factory = BuildFactory(configuration: UnguardedDeliveryChain,
             testServices: ConflictingIntegration);
         var (occurrence, arranged, _, lane, owed) = await ApplyContractCaseAsync(factory, "ReviewReport",
             nameof(TransitionAction.AcceptAndIntegrate), BudgetSpentVariant, SeedEarlierRound);
@@ -286,7 +286,7 @@ public sealed partial class BatchGatePilotServiceTests
     }
 
     private WebApplicationFactory<Program> ContractFactory(string action, string variant)
-        => BuildFactory(authorityOnTestClock: true,
+        => BuildFactory(
             configuration: action == nameof(TransitionAction.HumanReview) || variant == "batch-hold"
                 ? UnguardedDeliveryChain : null,
             testServices: variant == AgentRoundVariant ? ConflictingIntegration : null);
@@ -364,7 +364,7 @@ public sealed partial class BatchGatePilotServiceTests
     [Fact]
     public async Task Applier_canary_rolls_review_report_back_when_defer_to_batch_skips_its_admission()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true, configuration: OneMatchThreshold);
+        using var factory = BuildFactory(configuration: OneMatchThreshold);
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 8);
         var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
@@ -410,7 +410,7 @@ public sealed partial class BatchGatePilotServiceTests
     [Fact]
     public async Task Applier_canary_passes_review_report_after_three_applied_engine_decisions()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true, configuration: OneMatchThreshold);
+        using var factory = BuildFactory(configuration: OneMatchThreshold);
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 8);
         var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
@@ -445,7 +445,7 @@ public sealed partial class BatchGatePilotServiceTests
     [Fact]
     public async Task Applier_canary_waits_for_an_applier_that_has_not_completed()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true, configuration: OneMatchThreshold);
+        using var factory = BuildFactory(configuration: OneMatchThreshold);
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 8);
         var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
@@ -485,7 +485,7 @@ public sealed partial class BatchGatePilotServiceTests
     public async Task Applier_canary_does_not_count_a_decision_whose_card_another_writer_moved(string actor,
         string lane, string cause)
     {
-        using var factory = BuildFactory(authorityOnTestClock: true, configuration: OneMatchThreshold);
+        using var factory = BuildFactory(configuration: OneMatchThreshold);
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 8);
         var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
@@ -527,7 +527,7 @@ public sealed partial class BatchGatePilotServiceTests
     [Fact]
     public async Task Applier_canary_isolates_a_failing_probe_alerts_and_does_not_count_it()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true, configuration: OneMatchThreshold);
+        using var factory = BuildFactory(configuration: OneMatchThreshold);
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 8);
         var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
@@ -572,7 +572,7 @@ public sealed partial class BatchGatePilotServiceTests
     [Fact]
     public async Task Applier_canary_waits_for_an_integration_in_flight_and_does_not_count_it_at_the_deadline()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true, configuration: OneMatchThreshold);
+        using var factory = BuildFactory(configuration: OneMatchThreshold);
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 8);
         var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
@@ -616,7 +616,7 @@ public sealed partial class BatchGatePilotServiceTests
     [Fact]
     public async Task Applier_canary_gives_an_integration_that_ended_near_the_deadline_one_effect_window()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true, configuration: OneMatchThreshold);
+        using var factory = BuildFactory(configuration: OneMatchThreshold);
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 8);
         var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
@@ -663,7 +663,7 @@ public sealed partial class BatchGatePilotServiceTests
     [Fact]
     public async Task Applier_canary_leaves_downtime_out_and_waits_for_a_recovery_pass_after_a_start()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true, configuration: OneMatchThreshold);
+        using var factory = BuildFactory(configuration: OneMatchThreshold);
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 8);
         var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
@@ -697,7 +697,7 @@ public sealed partial class BatchGatePilotServiceTests
     [Fact]
     public void Applier_probe_waits_for_a_card_missing_from_the_snapshot()
     {
-        using var factory = BuildFactory(authorityOnTestClock: true);
+        using var factory = BuildFactory();
         _ = factory.CreateClient();
         var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
         var run = orchestration.Create(ProjectName, "DOC-GONE", Contract.OrchestrationStage.ReviewDecision,
@@ -724,7 +724,7 @@ public sealed partial class BatchGatePilotServiceTests
     {
         // The moves stand in for the per-task gate and a person; the guarded
         // delivery chain would refuse the card's unintegrated result.
-        using var factory = BuildFactory(authorityOnTestClock: true, configuration: UnguardedDeliveryChain);
+        using var factory = BuildFactory(configuration: UnguardedDeliveryChain);
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 8);
         var journal = new MonolithOrchestrationStore(Path.Combine(_workspace, "fallback-occurrences"),
