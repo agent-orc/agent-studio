@@ -2,6 +2,8 @@
 
 namespace AgentStudio.Registry;
 
+internal sealed class ProjectUrlStopException : Exception { }
+
 /// <summary>
 /// F45a — read-only surface for the workspace + project registries.
 /// Lists workspaces with their embedded projects, returns project
@@ -596,21 +598,27 @@ public static class RegistryEndpoints
         });
 
         app.MapDelete(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls/{urlId}",
-            (string projId, string urlId, ProjectRegistry projects, ProjectUrlProcessService procs, ClientIdentityStore clients,
+            (string projId, string urlId, ProjectRegistry projects, IProjectUrlProcessStopper procs, ClientIdentityStore clients,
                 HttpContext context) =>
         {
             try
             {
-                // A removed URL must not leave an owned process without a UI
-                // surface from which an operator can stop it.
+                // The registry checks URL existence and repository authority before
+                // stopping the process, then persists the removal under its lock.
                 var actor = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User;
-                var updated = projects.RemoveUrl(projId, urlId, actor);
-                procs.Stop(projId, urlId);
+                var updated = projects.RemoveUrl(projId, urlId, actor, () =>
+                {
+                    var stopped = procs.Stop(projId, urlId);
+                    if (stopped is not null && stopped.State is not
+                        (ProjectUrlProcessStates.Stopped or ProjectUrlProcessStates.Exited))
+                        throw new ProjectUrlStopException();
+                });
                 clients.InvalidateRunnerProjectPreflights(projId);
                 return Results.Ok(updated);
             }
             catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
             catch (UnauthorizedAccessException) { return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden); }
+            catch (ProjectUrlStopException) { return Results.Problem("Could not stop the process for this URL. Stop it and retry before removing the URL."); }
         });
 
         app.MapPost(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls/reorder",

@@ -68,6 +68,11 @@ public sealed record ProjectUrlDiagnostic
     public DateTimeOffset CheckedAt { get; init; } = DateTimeOffset.UtcNow;
 }
 
+public interface IProjectUrlProcessStopper
+{
+    ProjectUrlProcessSnapshot? Stop(string projectId, string urlId);
+}
+
 /// <summary>
 /// Owns the dev-server processes launched for project URLs. Sessions remain
 /// observable after the initiating request finishes, can be stopped explicitly,
@@ -81,7 +86,7 @@ public sealed record ProjectUrlDiagnostic
 /// validation whose evidence (exit code, output tails) is redacted before it
 /// leaves the host.</para>
 /// </summary>
-public sealed class ProjectUrlProcessService : IDisposable
+public sealed class ProjectUrlProcessService : IProjectUrlProcessStopper, IDisposable
 {
     private const int MaxOutputLines = 1000;
     internal const int OutputTailLimit = 8_192;

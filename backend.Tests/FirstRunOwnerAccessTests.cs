@@ -241,6 +241,57 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
     }
 
     [Fact]
+    public async Task Networked_url_delete_keeps_control_and_audit_when_process_stop_fails()
+    {
+        var stopper = new ControlledUrlStopper(_clock);
+        using var factory = BuildFactory(SecurityProfiles.Networked, stopper: stopper);
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var owner = store.Bootstrap(new BootstrapRequest("first.owner", Password, "Owner"));
+        var oper = Invite(store, "site.operator", StudioRoles.Operator);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+
+        async Task<HttpResponseMessage> Send(HttpMethod method, string path, object? body,
+            (StudioUser User, string SessionToken, string CsrfToken) caller)
+        {
+            using var request = new HttpRequestMessage(method, path);
+            if (body is not null) request.Content = JsonContent.Create(body);
+            Session(request, caller.SessionToken, caller.CsrfToken);
+            return await client.SendAsync(request);
+        }
+
+        using var created = await Send(HttpMethod.Post, "/api/projects",
+            new { displayName = "Stop Guard", workspaceId = "ws-default" }, owner);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var project = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var path = $"/api/projects/{project}/urls";
+        using var added = await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = "https://example.test/repo.git" }, owner);
+        Assert.Equal(HttpStatusCode.OK, added.StatusCode);
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var urlId = Assert.Single(registry.FindById(project)!.Urls).Id;
+        var auditCount = registry.RepositoryAudit().Count;
+
+        using var rejected = await Send(HttpMethod.Delete, path + "/" + urlId, null, oper);
+        Assert.Equal(HttpStatusCode.Forbidden, rejected.StatusCode);
+        Assert.Equal(0, stopper.Calls);
+
+        using var failed = await Send(HttpMethod.Delete, path + "/" + urlId, null, owner);
+        Assert.Equal(HttpStatusCode.InternalServerError, failed.StatusCode);
+        Assert.Contains("Could not stop the process", await failed.Content.ReadAsStringAsync());
+        Assert.Equal(1, stopper.Calls);
+        Assert.Single(registry.FindById(project)!.Urls);
+        Assert.Equal(auditCount, registry.RepositoryAudit().Count);
+
+        stopper.State = ProjectUrlProcessStates.Stopped;
+        using var removed = await Send(HttpMethod.Delete, path + "/" + urlId, null, owner);
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+        Assert.Equal(2, stopper.Calls);
+        Assert.Empty(registry.FindById(project)!.Urls);
+        Assert.Equal(auditCount + 1, registry.RepositoryAudit().Count);
+    }
+
+    [Fact]
     public async Task Networked_repository_audit_tracks_settings_rollback_and_failed_compensation()
     {
         var writer = new ControllableAtomicJsonFileWriter();
@@ -324,12 +375,15 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
     private static void Bearer(HttpRequestMessage request, string secret)
         => request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secret);
 
-    private WebApplicationFactory<Program> BuildFactory(string profile, IAtomicJsonFileWriter? writer = null) => new TestHostFactory().WithWebHostBuilder(builder =>
+    private WebApplicationFactory<Program> BuildFactory(string profile, IAtomicJsonFileWriter? writer = null,
+        IProjectUrlProcessStopper? stopper = null) => new TestHostFactory().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
         builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(_clock));
         if (writer is not null)
             builder.ConfigureTestServices(services => services.AddSingleton(writer));
+        if (stopper is not null)
+            builder.ConfigureTestServices(services => services.AddSingleton(stopper));
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _workspace,
@@ -338,6 +392,19 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
             ["AllowedHosts"] = profile == SecurityProfiles.Networked ? "studio.test" : "*",
         }));
     });
+
+    private sealed class ControlledUrlStopper(FakeTimeProvider clock) : IProjectUrlProcessStopper
+    {
+        public string State { get; set; } = ProjectUrlProcessStates.Failed;
+        public int Calls { get; private set; }
+
+        public ProjectUrlProcessSnapshot Stop(string projectId, string urlId)
+        {
+            Calls++;
+            return new ProjectUrlProcessSnapshot(projectId, urlId, "preview", "/tmp", State,
+                1234, clock.GetUtcNow(), null, null, []);
+        }
+    }
 
     public void Dispose()
     {

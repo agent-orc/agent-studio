@@ -881,13 +881,14 @@ public sealed class ProjectRegistry
     }
 
     /// <summary>Remove a URL by id. Throws when the project or url id is unknown.</summary>
-    public ProjectRecord RemoveUrl(string id, string urlId, StudioUser? actor = null)
+    public ProjectRecord RemoveUrl(string id, string urlId, StudioUser? actor = null,
+        Action? beforePersist = null)
     {
         return MutateLocked(id, p =>
         {
             var idx = IndexOfUrl(p.Urls, urlId);
             return p with { Urls = [.. p.Urls.Where((_, i) => i != idx)] };
-        }, "url-removed", actor);
+        }, "url-removed", actor, beforePersist);
     }
 
     /// <summary>
@@ -1022,7 +1023,7 @@ public sealed class ProjectRegistry
     }
 
     private ProjectRecord MutateLocked(string id, Func<ProjectRecord, ProjectRecord> update, string op,
-        StudioUser? actor = null)
+        StudioUser? actor = null, Action? beforePersist = null)
     {
         EnsureLoaded();
         lock (_gate)
@@ -1034,14 +1035,14 @@ public sealed class ProjectRegistry
             var updated = update(current);
             var next = _state.Projects.ToList();
             next[idx] = updated;
-            ReplaceProjectAndAuditLocked(current, updated, next, actor);
+            ReplaceProjectAndAuditLocked(current, updated, next, actor, beforePersist);
             _logger.LogInformation("project-registry-{Op} id={Id}", op, id);
             return updated;
         }
     }
 
     private void ReplaceProjectAndAuditLocked(ProjectRecord previous, ProjectRecord updated,
-        List<ProjectRecord> projects, StudioUser? actor)
+        List<ProjectRecord> projects, StudioUser? actor, Action? beforePersist = null)
     {
         var selected = updated.Urls.FirstOrDefault(url =>
             string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase)
@@ -1052,6 +1053,7 @@ public sealed class ProjectRegistry
         var after = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(updated);
         if (string.Equals(before, after, StringComparison.Ordinal))
         {
+            beforePersist?.Invoke();
             ReplaceStateAndPersistLocked(_state with { Projects = projects });
             return;
         }
@@ -1062,6 +1064,7 @@ public sealed class ProjectRegistry
         if (_networked)
             audit.Add(new ProjectRepositoryAuditEvent(_clock.GetUtcNow().UtcDateTime,
                 previous.Id, actor!.Id, actor.Username, before, after));
+        beforePersist?.Invoke();
         ReplaceStateAndPersistLocked(_state with { Projects = projects, RepositoryAudit = audit });
     }
 
