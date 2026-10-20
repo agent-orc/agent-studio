@@ -13,6 +13,7 @@ public sealed class KubernetesDeployAdapter(IDeploySecretResolver secrets, IDepl
             throw new InvalidDataException("Kubernetes target needs a start-container step.");
         var ns = DeployTargetValidation.Identifier(request.Target.Namespace);
         var image = DeployTargetValidation.Image(request.Artifact);
+        var resource = DeployTargetValidation.Identifier(request.Target.ImageResource);
         if (request.PackagePath is null || request.PackageArtifact is null)
             throw new InvalidDataException("Kubernetes needs a manifest or chart package in the release snapshot.");
         using var temp = new DeployTempDirectory();
@@ -25,16 +26,17 @@ public sealed class KubernetesDeployAdapter(IDeploySecretResolver secrets, IDepl
             release = DeployTargetValidation.Identifier(release);
             var rendered = await commands.RunAsync("helm", ["--kubeconfig", kubeconfig, "--namespace", ns,
                 "template", release, content, "--set-string", "image.ref=" + image], null, ct);
-            if (!rendered.Output.Split('\n').Any(line => line.Trim().StartsWith("image:", StringComparison.Ordinal)
-                && line.Trim().Split(':', 2)[1].Trim().Trim('"', '\'') == image))
-                throw new InvalidDataException("Helm chart did not render the release image.");
+            if (rendered.Output.Contains("__AGENT_STUDIO_IMAGE__", StringComparison.Ordinal))
+                throw new InvalidDataException("Helm chart left an image placeholder unresolved.");
+            var renderedPath = Path.Combine(temp.Path, "rendered.yaml");
+            await File.WriteAllTextAsync(renderedPath, rendered.Output, ct);
+            await KubernetesManifestVerifier.VerifyAsync(commands, kubeconfig, ns, renderedPath, resource, image, ct);
             await commands.RunAsync("helm", ["--kubeconfig", kubeconfig, "--namespace", ns,
                 "upgrade", "--install", release, content, "--set-string", "image.ref=" + image,
                 "--atomic", "--wait"], null, ct);
             return;
         }
 
-        var resource = DeployTargetValidation.Identifier(request.Target.ImageResource);
         var manifestFiles = Directory.Exists(content)
             ? Directory.EnumerateFiles(content, "*", SearchOption.AllDirectories)
                 .Where(file => file.EndsWith(".yaml", StringComparison.Ordinal)
@@ -52,6 +54,7 @@ public sealed class KubernetesDeployAdapter(IDeploySecretResolver secrets, IDepl
             replaced++;
         }
         if (replaced == 0) throw new InvalidDataException("Manifest did not reference the release image.");
+        await KubernetesManifestVerifier.VerifyAsync(commands, kubeconfig, ns, content, resource, image, ct);
         await commands.RunAsync("kubectl", ["--kubeconfig", kubeconfig, "--namespace", ns,
             "apply", "-f", content], null, ct);
         await commands.RunAsync("kubectl", ["--kubeconfig", kubeconfig, "--namespace", ns,

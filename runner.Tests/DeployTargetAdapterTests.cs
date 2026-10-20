@@ -1,4 +1,5 @@
 using System.Formats.Tar;
+using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -12,6 +13,10 @@ public sealed class DeployTargetAdapterTests
 {
     private const string Image = "registry.example.test/team/web@sha256:"
         + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private static readonly IReadOnlyDictionary<string, string> ImageBinding = new Dictionary<string, string>
+    {
+        ["web"] = Image,
+    };
 
     [Fact]
     public async Task SnapshotRefusal_PrecedesCredentialResolutionAndCommands()
@@ -23,6 +28,24 @@ public sealed class DeployTargetAdapterTests
 
         await Assert.ThrowsAsync<InvalidDataException>(() => executor.DeployAsync(request, CancellationToken.None));
 
+        Assert.Empty(secrets.References);
+        Assert.Empty(commands.Calls);
+    }
+
+    [Fact]
+    public async Task StepArtifact_RejectsAnotherArtifactInTheSameSnapshot()
+    {
+        var other = "registry.example.test/team/other@sha256:" + new string('b', 64);
+        var secrets = new FakeSecrets();
+        var commands = new FakeCommands();
+        var request = Container("ssh-docker") with
+        {
+            Artifact = other,
+            ReleaseArtifacts = [Image, other],
+        };
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            Executor(secrets, commands).DeployAsync(request, CancellationToken.None));
         Assert.Empty(secrets.References);
         Assert.Empty(commands.Calls);
     }
@@ -97,6 +120,7 @@ public sealed class DeployTargetAdapterTests
         try
         {
             var request = new DeployTargetRequest("demo", "staging", reference, [reference],
+                new Dictionary<string, string> { ["web"] = reference },
                 Step("static-site") with { Directory = "/srv/www/demo" },
                 new DeployTarget("ssh-docker", "web-vm", "secret://demo/staging/SSH_KEY",
                     Host: "web.example.test", User: "deploy",
@@ -120,6 +144,7 @@ public sealed class DeployTargetAdapterTests
             await File.AppendAllTextAsync(path, "tampered", CancellationToken.None);
             var secrets = new FakeSecrets();
             var request = new DeployTargetRequest("demo", "staging", reference, [reference],
+                new Dictionary<string, string> { ["web"] = reference },
                 Step("static-site") with { Directory = "/srv/www/demo" },
                 new DeployTarget("ssh-docker", "web-vm", "secret://demo/staging/SSH_KEY",
                     Host: "web.example.test", User: "deploy",
@@ -146,9 +171,10 @@ public sealed class DeployTargetAdapterTests
             };
             var calls = new FakeCommands();
             await Executor(new FakeSecrets(), calls).DeployAsync(request, CancellationToken.None);
-            Assert.Equal(2, calls.Calls.Count);
-            Assert.Contains("apply", calls.Calls[0].Arguments);
-            Assert.Contains("rollout", calls.Calls[1].Arguments);
+            Assert.Equal(3, calls.Calls.Count);
+            Assert.Contains("--dry-run=client", calls.Calls[0].Arguments);
+            Assert.Contains("apply", calls.Calls[1].Arguments);
+            Assert.Contains("rollout", calls.Calls[2].Arguments);
             Assert.All(calls.Calls, call => Assert.Contains("staging", call.Arguments));
             Assert.Contains(Image, calls.ManifestContents);
             Assert.DoesNotContain("__AGENT_STUDIO_IMAGE__", calls.ManifestContents);
@@ -165,14 +191,15 @@ public sealed class DeployTargetAdapterTests
             var request = Container("kubernetes") with
             {
                 Target = new DeployTarget("kubernetes", "web-vm", "secret://demo/staging/KUBECONFIG",
-                    Namespace: "staging", ManifestPath: "chart", HelmRelease: "web"),
+                    Namespace: "staging", ManifestPath: "chart", HelmRelease: "web", ImageResource: "web"),
                 ReleaseArtifacts = [Image, package], PackagePath = path, PackageArtifact = package,
             };
-            var calls = new FakeCommands { Output = "image: " + Image + "\n" };
+            var calls = new FakeCommands { Output = "kind: Deployment\nmetadata:\n  name: web\n"
+                + "spec:\n  template:\n    spec:\n      containers:\n      - image: " + Image + "\n",
+                DryRunOutput = DeploymentObject(Image) };
             await Executor(new FakeSecrets(), calls).DeployAsync(request, CancellationToken.None);
-            Assert.Equal(new[] { "template", "upgrade" }, calls.Calls.Select(call => call.Arguments
-                .First(argument => argument is "template" or "upgrade")));
-            Assert.Contains("--atomic", calls.Calls[1].Arguments);
+            Assert.Equal(new[] { "helm", "kubectl", "helm" }, calls.Calls.Select(call => call.Executable));
+            Assert.Contains("--atomic", calls.Calls[2].Arguments);
         }
         finally { File.Delete(path); }
     }
@@ -195,6 +222,169 @@ public sealed class DeployTargetAdapterTests
             Assert.Empty(calls.Calls);
         }
         finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData("registry.example.test/team/other@sha256:", "staging")]
+    [InlineData("registry.example.test/team/other@sha256:", "production")]
+    public async Task Kubernetes_RejectsUnrelatedImageOrWrongNamespace(string otherPrefix, string ns)
+    {
+        var (path, package) = Package("deploy/app.yaml",
+            "kind: Deployment\nmetadata:\n  name: web\n  namespace: " + ns
+            + "\nspec:\n  template:\n    spec:\n      containers:\n      - image: registry.example.test/team/other@sha256:"
+            + new string('b', 64) + "\n---\nkind: ConfigMap\nmetadata:\n  name: decoy\ndata:\n  image: __AGENT_STUDIO_IMAGE__\n");
+        try
+        {
+            var request = Container("kubernetes") with
+            {
+                Target = new DeployTarget("kubernetes", "web-vm", "secret://demo/staging/KUBECONFIG",
+                    Namespace: "staging", ManifestPath: "deploy/app.yaml", ImageResource: "web"),
+                ReleaseArtifacts = [Image, package], PackagePath = path, PackageArtifact = package,
+            };
+            var calls = new FakeCommands
+            {
+                DryRunOutput = DeploymentObject(otherPrefix + new string('b', 64), ns, secondImage: Image),
+            };
+
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Executor(new FakeSecrets(), calls).DeployAsync(request, CancellationToken.None));
+            Assert.Single(calls.Calls);
+            Assert.Contains("--dry-run=client", calls.Calls[0].Arguments);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Kubernetes_HelmRejectsUnrelatedImageLineAndUnresolvedPlaceholder()
+    {
+        var (path, package) = Package("chart/Chart.yaml", "name: web\n");
+        try
+        {
+            var request = Container("kubernetes") with
+            {
+                Target = new DeployTarget("kubernetes", "web-vm", "secret://demo/staging/KUBECONFIG",
+                    Namespace: "staging", ManifestPath: "chart", HelmRelease: "web", ImageResource: "web"),
+                ReleaseArtifacts = [Image, package], PackagePath = path, PackageArtifact = package,
+            };
+            var wrongImage = "registry.example.test/team/other@sha256:" + new string('b', 64);
+            var commands = new FakeCommands
+            {
+                Output = "kind: Deployment\nmetadata:\n  name: web\n---\nkind: ConfigMap\ndata:\n  image: " + Image,
+                DryRunOutput = DeploymentObject(wrongImage),
+            };
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Executor(new FakeSecrets(), commands).DeployAsync(request, CancellationToken.None));
+            Assert.Equal(2, commands.Calls.Count);
+
+            var unresolved = new FakeCommands { Output = "image: " + Image + "\nother: __AGENT_STUDIO_IMAGE__" };
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Executor(new FakeSecrets(), unresolved).DeployAsync(request, CancellationToken.None));
+            Assert.Single(unresolved.Calls);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task SshStatic_RejectsWindowsDriveQualifiedTarPath()
+    {
+        var (path, reference) = Package("C:\\outside\\index.html", "verified");
+        try
+        {
+            var secrets = new FakeSecrets();
+            var request = new DeployTargetRequest("demo", "staging", reference, [reference],
+                new Dictionary<string, string> { ["web"] = reference },
+                Step("static-site") with { Directory = "/srv/www/demo" },
+                new DeployTarget("ssh-docker", "web-vm", "secret://demo/staging/SSH_KEY",
+                    Host: "web.example.test", User: "deploy",
+                    KnownHostsSecret: "secret://demo/staging/SSH_HOSTS"), path);
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Executor(secrets, new FakeCommands()).DeployAsync(request, CancellationToken.None));
+            Assert.Empty(secrets.References);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task SshStatic_RejectsArchiveAboveSizeLimit()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            await using (var file = File.OpenWrite(path)) file.SetLength(VerifiedPackage.MaxArchiveBytes + 1);
+            using var archive = File.OpenRead(path);
+            var digest = Convert.ToHexString(SHA256.HashData(archive)).ToLowerInvariant();
+            var reference = "package@sha256:" + digest;
+            var secrets = new FakeSecrets();
+            var request = new DeployTargetRequest("demo", "staging", reference, [reference],
+                new Dictionary<string, string> { ["web"] = reference },
+                Step("static-site") with { Directory = "/srv/www/demo" },
+                new DeployTarget("ssh-docker", "web-vm", "secret://demo/staging/SSH_KEY",
+                    Host: "web.example.test", User: "deploy",
+                    KnownHostsSecret: "secret://demo/staging/SSH_HOSTS"), path);
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Executor(secrets, new FakeCommands()).DeployAsync(request, CancellationToken.None));
+            Assert.Empty(secrets.References);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task SshStatic_RejectsOversizedExpandedArchive()
+    {
+        var payloadPath = Path.GetTempFileName();
+        var packagePath = Path.GetTempFileName();
+        try
+        {
+            using (var payload = File.OpenWrite(payloadPath))
+                payload.SetLength(VerifiedPackage.MaxExtractedBytes + 1);
+            using (var package = File.Create(packagePath))
+            using (var gzip = new GZipStream(package, CompressionLevel.Fastest))
+            using (var writer = new TarWriter(gzip))
+            using (var payload = File.OpenRead(payloadPath))
+                writer.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, "index.html")
+                {
+                    DataStream = payload,
+                });
+            using var packageForHash = File.OpenRead(packagePath);
+            var digest = Convert.ToHexString(SHA256.HashData(packageForHash)).ToLowerInvariant();
+            var reference = "release-package@sha256:" + digest;
+            var secrets = new FakeSecrets();
+            var request = new DeployTargetRequest("demo", "staging", reference, [reference],
+                new Dictionary<string, string> { ["web"] = reference },
+                Step("static-site") with { Directory = "/srv/www/demo" },
+                new DeployTarget("ssh-docker", "web-vm", "secret://demo/staging/SSH_KEY",
+                    Host: "web.example.test", User: "deploy",
+                    KnownHostsSecret: "secret://demo/staging/SSH_HOSTS"), packagePath);
+
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Executor(secrets, new FakeCommands()).DeployAsync(request, CancellationToken.None));
+            Assert.Empty(secrets.References);
+        }
+        finally
+        {
+            File.Delete(payloadPath);
+            File.Delete(packagePath);
+        }
+    }
+
+    [Fact]
+    public async Task CommandOutput_RejectsOversizedInput()
+    {
+        using var output = new StringReader(new string('x', DeployCommandRunner.MaxCapturedOutputChars + 1));
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            DeployCommandRunner.ReadBoundedAsync(output, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CommandRunner_StopsProcessWithOversizedOutput()
+    {
+        var executable = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh";
+        string[] arguments = OperatingSystem.IsWindows()
+            ? ["/c", "for /L %i in (1,1,120000) do @echo abcdefghijklmno"]
+            : ["-c", "head -c 1048577 /dev/zero"];
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            new DeployCommandRunner().RunAsync(executable, arguments, null, CancellationToken.None));
     }
 
     [Fact]
@@ -230,7 +420,7 @@ public sealed class DeployTargetAdapterTests
         ]);
 
     private static DeployTargetRequest Container(string kind)
-        => new("demo", "staging", Image, [Image],
+        => new("demo", "staging", Image, [Image], ImageBinding,
             kind == "ssh-docker"
                 ? Step("container") with { ComposeFile = "/srv/apps/web/compose.yml", Service = "web" }
                 : Step("start-container"),
@@ -243,6 +433,19 @@ public sealed class DeployTargetAdapterTests
 
     private static string Compose(string image)
         => "{\"services\":{\"web\":{\"image\":\"" + image + "\"}}}";
+
+    private static string DeploymentObject(string image, string ns = "staging", string name = "web",
+        string? secondImage = null)
+        => JsonSerializer.Serialize(new
+        {
+            kind = "List",
+            items = new[] { new { kind = "Deployment", metadata = new { name, @namespace = ns },
+                spec = new { template = new { spec = new
+                {
+                    containers = secondImage is null ? new[] { new { image } }
+                        : new[] { new { image }, new { image = secondImage } },
+                } } } } },
+        });
 
     private static (string Path, string Reference) Package(string name, string content)
     {
@@ -273,6 +476,7 @@ public sealed class DeployTargetAdapterTests
     private sealed class FakeCommands : IDeployCommandRunner
     {
         public string Output { get; init; } = "";
+        public string DryRunOutput { get; init; } = DeploymentObject(Image);
         public string? CredentialJson { get; private set; }
         public string? ManifestContents { get; private set; }
         public List<(string Executable, IReadOnlyList<string> Arguments,
@@ -284,9 +488,10 @@ public sealed class DeployTargetAdapterTests
             Calls.Add((executable, arguments.ToArray(), environment));
             if (executable == "gcloud" && arguments.Contains("--cred-file"))
                 CredentialJson = File.ReadAllText(arguments.Last());
-            if (executable == "kubectl" && arguments.Contains("apply"))
+            if (executable == "kubectl" && arguments.Contains("apply") && !arguments.Contains("--dry-run=client"))
                 ManifestContents = File.ReadAllText(arguments.Last());
-            return Task.FromResult(new DeployCommandResult(0, Output));
+            return Task.FromResult(new DeployCommandResult(0,
+                executable == "kubectl" && arguments.Contains("--dry-run=client") ? DryRunOutput : Output));
         }
     }
 

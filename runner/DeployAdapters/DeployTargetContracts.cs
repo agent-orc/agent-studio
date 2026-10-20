@@ -21,6 +21,7 @@ public sealed record DeployTarget(
 /// </summary>
 public sealed record DeployTargetRequest(
     string Project, string Environment, string Artifact, IReadOnlyList<string> ReleaseArtifacts,
+    IReadOnlyDictionary<string, string> ReleaseArtifactsByName,
     ProjectDeployStep Step, DeployTarget Target, string? PackagePath = null, string? PackageArtifact = null);
 
 public interface IDeployTargetAdapter
@@ -53,6 +54,9 @@ public static partial class DeployArtifactVerifier
             throw new InvalidDataException("Step cannot be deployed to an operator target.");
         if (string.IsNullOrWhiteSpace(request.Step.Artifact))
             throw new InvalidDataException("Deploy step does not name an artifact.");
+        if (!request.ReleaseArtifactsByName.TryGetValue(request.Step.Artifact, out var stepArtifact)
+            || !string.Equals(stepArtifact, request.Artifact, StringComparison.Ordinal))
+            throw new InvalidDataException("Deploy step artifact does not match its release snapshot digest.");
         if (request.Step.Environments.Count > 0
             && !request.Step.Environments.Contains(request.Environment, StringComparer.Ordinal))
             throw new InvalidDataException("Deploy step is not scoped to this environment.");
@@ -79,6 +83,8 @@ public static partial class DeployArtifactVerifier
             digest = packageMatch.Groups[1].Value;
         }
         await using var stream = File.OpenRead(request.PackagePath);
+        if (stream.Length > VerifiedPackage.MaxArchiveBytes)
+            throw new InvalidDataException("Release package exceeds the archive limit.");
         var actual = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).ToLowerInvariant();
         if (actual != digest) throw new InvalidDataException("Release package digest does not match the snapshot.");
     }
@@ -103,6 +109,8 @@ public interface IDeployCommandRunner
 
 public sealed class DeployCommandRunner : IDeployCommandRunner
 {
+    internal const int MaxCapturedOutputChars = 1024 * 1024;
+
     public async Task<DeployCommandResult> RunAsync(string executable, IReadOnlyList<string> arguments,
         IReadOnlyDictionary<string, string>? environment, CancellationToken ct)
     {
@@ -121,18 +129,40 @@ public sealed class DeployCommandRunner : IDeployCommandRunner
             foreach (var (name, value) in environment) start.Environment[name] = value;
         using var process = System.Diagnostics.Process.Start(start)
             ?? throw new InvalidOperationException("Deploy command could not start.");
-        var output = process.StandardOutput.ReadToEndAsync(ct);
-        var error = process.StandardError.ReadToEndAsync(ct);
-        try { await process.WaitForExitAsync(ct); }
-        catch (OperationCanceledException)
+        var output = ReadBoundedAsync(process.StandardOutput, ct);
+        var error = ReadBoundedAsync(process.StandardError, ct);
+        try
+        {
+            var pending = new List<Task> { output, error, process.WaitForExitAsync(ct) };
+            while (pending.Count > 0)
+            {
+                var completed = await Task.WhenAny(pending);
+                await completed;
+                pending.Remove(completed);
+            }
+        }
+        catch
         {
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync(CancellationToken.None);
             throw;
         }
-        await Task.WhenAll(output, error);
         if (process.ExitCode != 0) throw new InvalidOperationException($"Deploy command {executable} failed.");
         return new(process.ExitCode, output.Result);
+    }
+
+    internal static async Task<string> ReadBoundedAsync(TextReader reader, CancellationToken ct)
+    {
+        var result = new StringBuilder();
+        var buffer = new char[8192];
+        int read;
+        while ((read = await reader.ReadAsync(buffer.AsMemory(), ct)) != 0)
+        {
+            if (result.Length > MaxCapturedOutputChars - read)
+                throw new InvalidDataException("Deploy command output exceeded the capture limit.");
+            result.Append(buffer, 0, read);
+        }
+        return result.ToString();
     }
 }
 

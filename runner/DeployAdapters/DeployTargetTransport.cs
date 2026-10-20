@@ -26,6 +26,10 @@ public sealed class DeployWorkloadSecretResolver(
 
 internal static class VerifiedPackage
 {
+    internal const long MaxArchiveBytes = 64 * 1024 * 1024;
+    internal const long MaxExtractedBytes = 128 * 1024 * 1024;
+    internal const int MaxEntries = 4096;
+
     public static async Task<string> ExtractAsync(DeployTargetRequest request, DeployTempDirectory temp, CancellationToken ct)
     {
         await DeployArtifactVerifier.VerifyPackageAsync(request, ct);
@@ -35,19 +39,43 @@ internal static class VerifiedPackage
         using var gzip = (request.PackageArtifact ?? request.Artifact).StartsWith("release-package@sha256:", StringComparison.Ordinal)
             ? new GZipStream(archive, CompressionMode.Decompress, leaveOpen: true) : null;
         using var reader = new TarReader((Stream?)gzip ?? archive);
+        long extractedBytes = 0;
+        var entries = 0;
         while (await reader.GetNextEntryAsync(cancellationToken: ct) is { } entry)
         {
+            if (++entries > MaxEntries)
+                throw new InvalidDataException("Release package contains too many entries.");
             var relative = entry.Name.Replace('\\', '/').TrimEnd('/');
             if (string.IsNullOrEmpty(relative) || relative.StartsWith('/')
+                || Path.IsPathRooted(relative)
+                || (relative.Length >= 2 && char.IsAsciiLetter(relative[0]) && relative[1] == ':')
                 || relative.Split('/').Any(segment => segment is "" or "." or ".."))
                 throw new InvalidDataException("Release package contains an unsafe path.");
-            var path = Path.Combine(outputRoot, relative);
+            var path = Path.GetFullPath(Path.Combine(outputRoot, relative));
+            var withinRoot = Path.GetRelativePath(outputRoot, path);
+            if (withinRoot == "." || withinRoot == ".."
+                || withinRoot.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                || Path.IsPathRooted(withinRoot))
+                throw new InvalidDataException("Release package contains an unsafe path.");
             if (entry.EntryType == TarEntryType.Directory) Directory.CreateDirectory(path);
             else if (entry.EntryType is TarEntryType.RegularFile or TarEntryType.V7RegularFile)
             {
+                if (entry.Length < 0 || entry.Length > MaxExtractedBytes - extractedBytes)
+                    throw new InvalidDataException("Release package exceeds the extraction limit.");
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 await using var output = File.Create(path);
-                if (entry.DataStream is not null) await entry.DataStream.CopyToAsync(output, ct);
+                if (entry.DataStream is not null)
+                {
+                    var buffer = new byte[81920];
+                    int read;
+                    while ((read = await entry.DataStream.ReadAsync(buffer, ct)) != 0)
+                    {
+                        if (read > MaxExtractedBytes - extractedBytes)
+                            throw new InvalidDataException("Release package exceeds the extraction limit.");
+                        extractedBytes += read;
+                        await output.WriteAsync(buffer.AsMemory(0, read), ct);
+                    }
+                }
             }
             else throw new InvalidDataException("Release package contains an unsupported entry.");
         }

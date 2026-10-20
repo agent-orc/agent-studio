@@ -2132,8 +2132,11 @@ compose errors or image digests for arbitrary containers.
 The runner's DeployTargetExecutor is the call seam for the deploy executor
 (AGT-3233). Its input pairs one schema 2 ProjectDeployStep and an artifact
 from the immutable release snapshot with an operator-owned DeployTarget.
-The artifact must be present in the snapshot and pinned by SHA-256. A local
-release package is hashed again before extraction. Target credentials are
+The artifact must be present in the snapshot, bound to the step's artifact
+name by the release's name-to-digest mapping, and pinned by SHA-256. A local
+release package is hashed again before extraction. Archives have size, entry,
+and expanded-byte limits; extraction rejects paths outside its private root.
+Command output is bounded before it reaches the adapter. Target credentials are
 secret-provider references in operator inventory, not values in project.yml.
 The claimed deploy job must declare those secret names; the runner resolves
 them through /api/runner/secrets/resolve with the job lease and a
@@ -2145,7 +2148,7 @@ Adapters currently supplied by runner/DeployAdapters/:
 | Target kind | Required operator fields | Deployment |
 |---|---|---|
 | ssh-docker | host, user, SSH identity and known-hosts secret references | A schema 2 static-site step copies a verified tar bundle into /srv/.../.releases/<digest> and switches current; a container step requires an existing compose file whose selected service resolves to the release's pinned image, then pulls and starts it. |
-| kubernetes | namespace, kubeconfig secret, package artifact and a manifest path | A schema 2 start-container step applies YAML from the verified package only after replacing __AGENT_STUDIO_IMAGE__; kubectl rollout status observes the named Deployment. A Helm target instead supplies helmRelease; the chart must render the release image through image.ref, and upgrade uses --atomic --wait. |
+| kubernetes | namespace, kubeconfig secret, package artifact, manifest path and imageResource Deployment name | A schema 2 start-container step replaces __AGENT_STUDIO_IMAGE__, parses the objects with a client dry run, and checks every container in the named Deployment uses the release image and every object targets the namespace before apply. A Helm target supplies helmRelease and imageResource; its rendered objects receive the same validation before upgrade with --atomic --wait. |
 | cloud-run | Google project, region, service, workload pool project number, pool, provider, impersonated service account and a short-lived OIDC subject-token secret | A schema 2 start-container step uses an isolated CLOUDSDK_CONFIG with Workload Identity Federation and deploys the pinned image without a stored cloud key. |
 
 SSH requires strict host-key checking. Temporary identity, known-hosts,
