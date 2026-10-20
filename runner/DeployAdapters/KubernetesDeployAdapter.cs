@@ -31,9 +31,12 @@ public sealed class KubernetesDeployAdapter(IDeploySecretResolver secrets, IDepl
             var renderedPath = Path.Combine(temp.Path, "rendered.yaml");
             await File.WriteAllTextAsync(renderedPath, rendered.Output, ct);
             await KubernetesManifestVerifier.VerifyAsync(commands, kubeconfig, ns, renderedPath, resource, image, ct);
-            await commands.RunAsync("helm", ["--kubeconfig", kubeconfig, "--namespace", ns,
-                "upgrade", "--install", release, content, "--set-string", "image.ref=" + image,
-                "--atomic", "--wait"], null, ct);
+            // Apply the rendered file itself. A second Helm render during upgrade could
+            // produce different objects from the ones checked above.
+            await commands.RunAsync("kubectl", ["--kubeconfig", kubeconfig, "--namespace", ns,
+                "apply", "-f", renderedPath], null, ct);
+            await commands.RunAsync("kubectl", ["--kubeconfig", kubeconfig, "--namespace", ns,
+                "rollout", "status", "deployment/" + resource, "--timeout=300s"], null, ct);
             return;
         }
 

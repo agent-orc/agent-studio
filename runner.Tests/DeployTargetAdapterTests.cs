@@ -217,7 +217,7 @@ public sealed class DeployTargetAdapterTests
     }
 
     [Fact]
-    public async Task Kubernetes_HelmRendersPinnedImageBeforeUpgrade()
+    public async Task Kubernetes_HelmAppliesTheValidatedRender()
     {
         var (path, package) = Package("chart/Chart.yaml", "name: web\n");
         try
@@ -232,8 +232,11 @@ public sealed class DeployTargetAdapterTests
                 + "spec:\n  template:\n    spec:\n      containers:\n      - image: " + Image + "\n",
                 DryRunOutput = DeploymentObject(Image) };
             await Executor(new FakeSecrets(), calls).DeployAsync(request, CancellationToken.None);
-            Assert.Equal(new[] { "helm", "kubectl", "helm" }, calls.Calls.Select(call => call.Executable));
-            Assert.Contains("--atomic", calls.Calls[2].Arguments);
+            Assert.Equal(new[] { "helm", "kubectl", "kubectl", "kubectl" },
+                calls.Calls.Select(call => call.Executable));
+            Assert.Equal(calls.Calls[1].Arguments.Last(), calls.Calls[2].Arguments.Last());
+            Assert.Equal(calls.Output, calls.ManifestContents);
+            Assert.Contains("rollout", calls.Calls[3].Arguments);
         }
         finally { File.Delete(path); }
     }
