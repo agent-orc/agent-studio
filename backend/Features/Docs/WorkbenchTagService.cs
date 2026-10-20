@@ -82,8 +82,8 @@ public sealed class WorkbenchTagService
                 $"workbench-tags-{id}",
                 $"chore(workbench): set tags for {id}",
                 [snapshot.DescriptorRelPath],
-                () => _writer.Write(snapshot.DescriptorPath, snapshot.Descriptor.ToJsonString(
-                    new JsonSerializerOptions { WriteIndented = true })));
+                () => _writer.Write(snapshot.DescriptorPath, RepositoryTextLayout.IndentedJsonFor(
+                    snapshot.DescriptorPath, snapshot.Descriptor)));
             if (!mutation.Success)
                 return Failure(id, $"The Dossier tags could not be persisted: {mutation.Error}", "write-failed");
             return new(true, null, null, id, [.. validation.TagIds], mutation.CommitSha ?? snapshot.Revision);

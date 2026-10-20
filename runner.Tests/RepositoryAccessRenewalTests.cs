@@ -6,15 +6,15 @@ namespace AgentRunner.Tests;
 public sealed class RepositoryAccessRenewalTests
 {
     [Fact]
-    public void Candidate_key_rewrites_only_the_exact_registered_https_origin()
+    public void Candidate_key_selects_ssh_transport_for_the_exact_proof_operation()
     {
         const string origin = "https://github.com/example/private-workspace.git";
         var environment = PlatformRepositoryGitProof.CandidateGitEnvironment(
             origin, "/protected/fixture-key");
 
-        Assert.Equal(origin, environment["GIT_CONFIG_VALUE_0"]);
-        Assert.Equal("url.git@github.com:example/private-workspace.git.insteadOf",
-            environment["GIT_CONFIG_KEY_0"]);
+        Assert.DoesNotContain("GIT_CONFIG_KEY_0", environment.Keys);
+        Assert.Equal("git@github.com:example/private-workspace.git",
+            PlatformRepositoryGitProof.GitRepositoryUrl(origin, "/protected/fixture-key"));
         Assert.Contains("IdentitiesOnly=yes", environment["GIT_SSH_COMMAND"]);
         Assert.Contains("IdentityAgent=none", environment["GIT_SSH_COMMAND"]);
     }

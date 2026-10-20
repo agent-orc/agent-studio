@@ -106,6 +106,12 @@
         @case ('appearance') {
           <app-appearance-settings />
         }
+        @case ('access') {
+          <app-access-settings />
+        }
+        @case ('first-run') {
+          <app-first-run-checklist (openProjectSettings)="openProjectSettings.emit($event)" />
+        }
         @case ('updates') {
           <app-updates-settings />
         }

@@ -17,14 +17,14 @@ namespace AgentStudio.Tests;
 public sealed class ConnectorProfileTests(ConnectorProfileFixture shared) : IClassFixture<ConnectorProfileFixture>
 {
     [Fact]
-    public void Inventory_is_the_approved_110_local_and_347_proxy_surface()
+    public void Inventory_is_the_approved_110_local_and_357_proxy_surface()
     {
         var inventory = ConnectorRouteInventory.Load();
 
         Assert.Equal(ConnectorRouteInventory.ExpectedInventorySha256, inventory.SourceChecksum);
-        Assert.Equal(457, inventory.Operations.Count);
+        Assert.Equal(467, inventory.Operations.Count);
         Assert.Equal(110, inventory.DevSeatOperations.Count);
-        Assert.Equal(347, inventory.TaskServerOperations.Count);
+        Assert.Equal(357, inventory.TaskServerOperations.Count);
         var hub = Assert.Single(inventory.TaskServerOperations, operation => operation.Method == "WS");
         Assert.Equal("/hubs/v1/studio", hub.Path);
     }
@@ -81,7 +81,7 @@ public sealed class ConnectorProfileTests(ConnectorProfileFixture shared) : ICla
 
         Assert.All(endpoints, endpoint => Assert.NotEmpty(
             endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>()));
-        Assert.Equal(457, metadata.Length);
+        Assert.Equal(467, metadata.Length);
         Assert.Equal(110, endpoints
             .SelectMany(endpoint => endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>())
             .Where(item => item.Classification == ConnectorRouteInventory.DevSeatClassification)
@@ -145,7 +145,7 @@ public sealed class ConnectorProfileTests(ConnectorProfileFixture shared) : ICla
         }
 
         Assert.True(failures.Count == 0, "Task Server routes not forwarded:\n" + string.Join('\n', failures));
-        Assert.Equal(347, forwarded);
+        Assert.Equal(357, forwarded);
     }
 
     [Fact]

@@ -7,6 +7,7 @@ public sealed class AccessSecurityMiddleware
 {
     public const string HumanPrincipalItem = "AccessSecurity.HumanPrincipal";
     public const string RunnerPrincipalItem = "AccessSecurity.RunnerPrincipal";
+    public const string ApiTokenPrincipalItem = "AccessSecurity.ApiTokenPrincipal";
     public const string AttributionClientIdItem = "AccessSecurity.AttributionClientId";
 
     private readonly RequestDelegate _next;
@@ -17,6 +18,7 @@ public sealed class AccessSecurityMiddleware
     private readonly AgentStudio.Registry.ProjectRegistry? _projects;
     private readonly TimelineLog? _timeline;
     private readonly TimeProvider _clock;
+    private readonly AgentStudio.Registry.ProjectUrlPreviewAccess _previewAccess;
 
     public AccessSecurityMiddleware(
         RequestDelegate next,
@@ -26,7 +28,8 @@ public sealed class AccessSecurityMiddleware
         RunLeaseService? leases = null,
         AgentStudio.Registry.ProjectRegistry? projects = null,
         TimelineLog? timeline = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        AgentStudio.Registry.ProjectUrlPreviewAccess? previewAccess = null)
     {
         _next = next;
         _configuration = configuration;
@@ -36,6 +39,7 @@ public sealed class AccessSecurityMiddleware
         _projects = projects;
         _timeline = timeline;
         _clock = clock ?? TimeProvider.System;
+        _previewAccess = previewAccess ?? new AgentStudio.Registry.ProjectUrlPreviewAccess(TimeProvider.System);
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -84,14 +88,31 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
+        // Module fetches from a CSP-sandboxed document have an opaque origin
+        // and omit Studio's SameSite session cookie. The URL capability grants
+        // only a GET under the registered preview asset route.
+        if (_previewAccess.AllowsAssetRequest(context.Request))
+        {
+            await _next(context);
+            return;
+        }
+        if (context.Request.Headers.Origin == "null"
+            && path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
+        {
+            await Reject(context, 403, "opaque-origin-denied", "An opaque origin cannot access Studio APIs.");
+            return;
+        }
+
         // A service bearer presented to the proxied versioned plane belongs to
         // the standalone Task Server. Do not interpret it against the monolith's
         // credential store; the upstream remains fail-closed and authoritative.
         // The skip holds only when routing selected the proxy endpoint and the
         // Authorization header is one well-formed bearer; any other shape falls
         // through to local authentication.
+        var presentedBearer = ReadBearer(context.Request.Headers.Authorization.FirstOrDefault());
         if (IsProxiedTaskServerPlane(context, path)
-            && IsWellFormedBearer(context.Request.Headers.Authorization))
+            && IsWellFormedBearer(context.Request.Headers.Authorization)
+            && presentedBearer?.StartsWith("api.", StringComparison.Ordinal) != true)
         {
             await _next(context);
             return;
@@ -103,8 +124,9 @@ public sealed class AccessSecurityMiddleware
         var human = _store.AuthenticateSession(
             context.Request.Cookies[AccessSecurityStore.SessionCookieName]
             ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName]);
-        var bearer = ReadBearer(context.Request.Headers.Authorization.FirstOrDefault());
+        var bearer = presentedBearer;
         var runner = _store.AuthenticateRunner(bearer);
+        var apiToken = human is null ? _store.AuthenticateApiToken(bearer) : null;
         if (human is not null)
         {
             context.Items[HumanPrincipalItem] = human;
@@ -119,18 +141,28 @@ public sealed class AccessSecurityMiddleware
         if (IsOpenAuth(path))
         {
             await _next(context);
+            if (apiToken is not null)
+                _store.AppendApiTokenAudit(apiToken.Token, context.Request.Method, path, context.Response.StatusCode);
             return;
         }
 
         if (path.Equals("/api/clients/register", StringComparison.OrdinalIgnoreCase))
         {
             await Reject(context, 404, "registration-disabled", "Open client registration is disabled in the networked profile.");
+            if (apiToken is not null)
+                _store.AppendApiTokenAudit(apiToken.Token, context.Request.Method, path, context.Response.StatusCode);
             return;
         }
 
         if (path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase))
         {
-            if (human is null) { await Reject(context, 401, "authentication-required", "An authenticated Studio session is required for event streams."); return; }
+            if (human is null)
+            {
+                await Reject(context, 401, "authentication-required", "An authenticated Studio session is required for event streams.");
+                if (apiToken is not null)
+                    _store.AppendApiTokenAudit(apiToken.Token, context.Request.Method, path, context.Response.StatusCode);
+                return;
+            }
             if (human.User.MustChangePassword) { await Reject(context, 403, "password-change-required", "Change the temporary password before continuing."); return; }
             await _next(context);
             return;
@@ -178,7 +210,13 @@ public sealed class AccessSecurityMiddleware
             && (human is null || !(IsHumanSessionRead(context.Request.Method, path)
                 || originalPath is not null && IsHumanSessionRead(context.Request.Method, NormalizePath(originalPath)))))
         {
-            if (runner is null) { await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required."); return; }
+            if (runner is null)
+            {
+                await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required.");
+                if (apiToken is not null)
+                    _store.AppendApiTokenAudit(apiToken.Token, context.Request.Method, path, context.Response.StatusCode);
+                return;
+            }
             if (!runner.Scopes.Contains(requiredRunnerScope)) { await Reject(context, 403, "runner-scope-denied", $"Runner credential lacks '{requiredRunnerScope}'."); return; }
             if (path.StartsWith("/api/v1/runners/", StringComparison.OrdinalIgnoreCase)
                 && !path["/api/v1/runners/".Length..].Split('/')[0].Equals(runner.RunnerId, StringComparison.Ordinal))
@@ -199,6 +237,72 @@ public sealed class AccessSecurityMiddleware
         if (runner is not null && IsRunnerSelfRead(context.Request.Method, path, runner.RunnerId))
         {
             await _next(context);
+            return;
+        }
+
+        if (apiToken is not null)
+        {
+            context.Items[ApiTokenPrincipalItem] = apiToken;
+            context.Items["ClientId"] = $"api:{apiToken.Token.Id}";
+            var faulted = false;
+            try
+            {
+                if (path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase))
+                {
+                    await Reject(context, 403, "token-route-denied", "API tokens cannot call access administration or Task Server routes.");
+                    return;
+                }
+                if (apiToken.User.Role == StudioRoles.Viewer
+                    && !HttpMethods.IsGet(context.Request.Method)
+                    && !HttpMethods.IsHead(context.Request.Method)
+                    && !HttpMethods.IsOptions(context.Request.Method)
+                    && !IsReadOnlyPost(context.Request.Method, path))
+                {
+                    await Reject(context, 403, "role-denied", "Viewer role is read-only.");
+                    return;
+                }
+                if (!TokenWriteRouteAllowed(context.Request, path))
+                {
+                    await Reject(context, 403, "project-scope-denied", "A project-scoped token cannot mutate installation-wide settings.");
+                    return;
+                }
+                var declaredScope = context.GetEndpoint()?.Metadata.GetMetadata<ApiTokenRouteScope>()?.Scope
+                    ?? ProjectRouteScope.WorkspaceWide;
+                if (declaredScope is not (ProjectRouteScope.Addressed or ProjectRouteScope.DeferredToHandler)
+                    && !apiToken.Token.Projects.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal))
+                {
+                    await Reject(context, 403, "project-scope-denied", "This token requires a workspace scope for this route.");
+                    return;
+                }
+                if (!ProjectAllowed(apiToken.User, context.Request, path))
+                {
+                    await Reject(context, 403, "project-scope-denied", "This token is not scoped to the requested project.");
+                    return;
+                }
+                // Collection handlers already filter by HumanPrincipalItem. A
+                // synthetic session lets the same project checks use the token's
+                // fixed role and grants, without granting a browser session.
+                var synthetic = new StudioSession
+                {
+                    Id = $"api:{apiToken.Token.Id}", UserId = apiToken.User.Id,
+                    TokenHash = string.Empty, CsrfHash = string.Empty,
+                    CreatedAt = apiToken.Token.CreatedAt, LastSeenAt = apiToken.Token.LastUsedAt ?? apiToken.Token.CreatedAt,
+                    ExpiresAt = apiToken.Token.ExpiresAt, AbsoluteExpiresAt = apiToken.Token.ExpiresAt
+                };
+                context.Items[HumanPrincipalItem] = new HumanPrincipal(apiToken.User, synthetic);
+                await _next(context);
+            }
+            catch
+            {
+                faulted = true;
+                throw;
+            }
+            finally
+            {
+                _store.AppendApiTokenAudit(apiToken.Token, context.Request.Method, path,
+                    faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode);
+            }
             return;
         }
 
@@ -224,7 +328,8 @@ public sealed class AccessSecurityMiddleware
         if (path.StartsWith("/api/auth/users", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/invitations", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/runners", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/auth/runner-enrollments", StringComparison.OrdinalIgnoreCase))
+            || path.StartsWith("/api/auth/runner-enrollments", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/auth/api-tokens", StringComparison.OrdinalIgnoreCase))
         {
             if (human.User.Role != StudioRoles.Owner) { await Reject(context, 403, "owner-required", "Owner role is required."); return; }
         }
@@ -292,6 +397,11 @@ public sealed class AccessSecurityMiddleware
             return RunnerScopes.Release;
         if (HttpMethods.IsPost(method) && path.StartsWith("/api/deploy/jobs/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Deploy;
+        if (path.StartsWith("/api/pull-gates/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Gate;
+        if (HttpMethods.IsGet(method)
+            && path.StartsWith("/api/gate-artifacts/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Artifacts;
         if (path.StartsWith("/api/v1/orchestration/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Orchestration;
         // Keep the versioned client surface explicit. A service credential must
@@ -490,6 +600,19 @@ public sealed class AccessSecurityMiddleware
             project => ProjectAccessAuthorization.Allows(user, project, _projects));
     }
 
+    private bool TokenWriteRouteAllowed(HttpRequest request, string path)
+    {
+        if (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)
+            || HttpMethods.IsOptions(request.Method) || IsReadOnlyPost(request.Method, path))
+            return true;
+        var route = ResolveRouteAddress(request, path);
+        // The task creation handler validates its body project before writing.
+        // Deferred task handlers validate every affected task. An unaddressed
+        // installation mutation has no project to authorize against.
+        return route.Scope is ProjectRouteScope.Addressed or ProjectRouteScope.DeferredToHandler
+               || (HttpMethods.IsPost(request.Method) && path.Equals("/api/tasks", StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>
     /// Derives the project(s) a request addresses from its route or addressed
     /// task. <c>?project=</c> is read here only where the query is itself the
@@ -497,6 +620,11 @@ public sealed class AccessSecurityMiddleware
     /// </summary>
     private ProjectRouteAddress ResolveRouteAddress(HttpRequest request, string path)
     {
+        if (path.Equals("/api/workspace/tokens/timeline", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api/workspace/tokens/timeline/cached", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api/workspace/tokens/expensive-jobs", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api/workspace/tokens/expensive-jobs/cached", StringComparison.OrdinalIgnoreCase))
+            return ProjectRouteAddress.WorkspaceWide;
         if (path.StartsWith("/api/runner/global", StringComparison.OrdinalIgnoreCase))
             return ProjectRouteAddress.WorkspaceWide;
         if (path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)

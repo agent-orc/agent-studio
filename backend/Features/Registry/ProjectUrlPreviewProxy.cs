@@ -10,6 +10,7 @@ public static class ProjectUrlPreviewProxy
     private const int RewriteLimitBytes = 2 * 1024 * 1024;
     private static readonly Regex BaseTag = new(@"<base\b[^>]*>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex RootAttribute = new(@"(?<head>\b(?:src|href|action)\s*=\s*['""])(?<path>/(?!/)[^'""]*)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex RootModuleSpecifier = new(@"(?<head>\bfrom\s*['""]|\bimport\s*(?:\(\s*)?['""])(?<path>/(?!/)[^'""]*)", RegexOptions.Compiled);
 
     public static string RewriteHtml(string html, string prefix)
     {
@@ -24,6 +25,10 @@ public static class ProjectUrlPreviewProxy
         }
         return html;
     }
+
+    public static string RewriteModuleImports(string script, string prefix)
+        => RootModuleSpecifier.Replace(script, match => match.Groups["head"].Value
+            + prefix + match.Groups["path"].Value.TrimStart('/'));
 
     public static Uri? Target(ProjectRecord? project, string urlId, string? path, string? query)
     {
@@ -45,11 +50,20 @@ public static class ProjectUrlPreviewProxy
 
     public static async Task<IResult> HandleAsync(
         string projId, string urlId, string? path, HttpContext context,
-        ProjectRegistry projects, IHttpClientFactory clients)
+        ProjectRegistry projects, IHttpClientFactory clients, ProjectUrlPreviewAccess access)
     {
         var project = projects.FindById(projId);
         if (project is null) return Results.NotFound();
-        var target = Target(project, urlId, path, context.Request.QueryString.Value);
+        var assetPath = path;
+        var isAsset = path?.StartsWith("_asset/", StringComparison.Ordinal) == true;
+        if (isAsset)
+        {
+            var segments = path!.Split('/', 3);
+            if (segments.Length < 3 || !access.Allows(segments[1], projId, urlId))
+                return Results.NotFound();
+            assetPath = segments[2];
+        }
+        var target = Target(project, urlId, assetPath, context.Request.QueryString.Value);
         if (target is null) return Results.NotFound();
         // The response can also be opened as a top-level document. Keep its
         // origin opaque there, independently of the iframe's sandbox attribute.
@@ -72,15 +86,30 @@ public static class ProjectUrlPreviewProxy
                     && resolved.AbsolutePath != registered.AbsolutePath)
                     return Results.StatusCode(StatusCodes.Status502BadGateway);
                 var suffix = resolved.AbsolutePath[registered.AbsolutePath.TrimEnd('/').Length..].TrimStart('/');
-                return Results.Redirect($"/api/projects/{Uri.EscapeDataString(projId)}/urls/{Uri.EscapeDataString(urlId)}/preview/{suffix}{resolved.Query}", permanent: response.StatusCode == HttpStatusCode.MovedPermanently);
+                var route = isAsset
+                    ? $"/api/projects/{Uri.EscapeDataString(projId)}/urls/{Uri.EscapeDataString(urlId)}/preview/_asset/{path!.Split('/', 3)[1]}/"
+                    : $"/api/projects/{Uri.EscapeDataString(projId)}/urls/{Uri.EscapeDataString(urlId)}/preview/";
+                return Results.Redirect($"{route}{suffix}{resolved.Query}", permanent: response.StatusCode == HttpStatusCode.MovedPermanently);
             }
 
             context.Response.StatusCode = (int)response.StatusCode;
             context.Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers.XContentTypeOptions = "nosniff";
-            var prefix = $"/api/projects/{Uri.EscapeDataString(projId)}/urls/{Uri.EscapeDataString(urlId)}/preview/";
-            if (context.Response.ContentType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
+            context.Response.Headers["Referrer-Policy"] = "no-referrer";
+            // Only capability-bearing asset responses opt in to anonymous
+            // opaque-origin module reads. Never opt Studio API responses in.
+            if (isAsset && context.Request.Headers.Origin == "null")
+            {
+                context.Response.Headers.AccessControlAllowOrigin = "null";
+                context.Response.Headers.Vary = "Origin";
+            }
+            var token = isAsset ? path!.Split('/', 3)[1] : access.Issue(projId, urlId);
+            var prefix = $"/api/projects/{Uri.EscapeDataString(projId)}/urls/{Uri.EscapeDataString(urlId)}/preview/_asset/{token}/";
+            var htmlContent = context.Response.ContentType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase);
+            var scriptContent = context.Response.ContentType.StartsWith("text/javascript", StringComparison.OrdinalIgnoreCase)
+                || context.Response.ContentType.StartsWith("application/javascript", StringComparison.OrdinalIgnoreCase);
+            if (htmlContent || scriptContent)
             {
                 await using var upstream = await response.Content.ReadAsStreamAsync(context.RequestAborted);
                 using var buffer = new MemoryStream();
@@ -93,8 +122,10 @@ public static class ProjectUrlPreviewProxy
                 }
                 if (buffer.Length <= RewriteLimitBytes)
                 {
-                    var html = Encoding.UTF8.GetString(buffer.ToArray());
-                    await context.Response.WriteAsync(RewriteHtml(html, prefix), context.RequestAborted);
+                    var source = Encoding.UTF8.GetString(buffer.ToArray());
+                    await context.Response.WriteAsync(htmlContent
+                        ? RewriteHtml(source, prefix)
+                        : RewriteModuleImports(source, prefix), context.RequestAborted);
                 }
                 else
                 {

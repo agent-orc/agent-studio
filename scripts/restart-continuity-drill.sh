@@ -26,6 +26,9 @@ update="${UPDATE_URL%/}"
 started_epoch="$(date +%s)"
 
 headers=(-H "X-Client-Id: ${CLIENT_ID}")
+if [[ -n "${AGENT_STUDIO_API_TOKEN:-}" ]]; then
+  headers+=(-H "Authorization: Bearer ${AGENT_STUDIO_API_TOKEN}")
+fi
 update_headers=(-H 'Content-Type: application/json')
 if [[ -n "${UPDATE_TOKEN:-}" ]]; then
   update_headers+=(-H "X-Update-Token: ${UPDATE_TOKEN}")

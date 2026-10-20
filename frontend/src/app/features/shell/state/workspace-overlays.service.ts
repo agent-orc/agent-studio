@@ -26,7 +26,9 @@ import { ledgerScopeFromHash, type UsageLedgerScope } from '../../usage-cockpit'
  */
 export type WorkspaceSettingsSection =
   | 'overview'
+  | 'first-run'
   | 'appearance'
+  | 'access'
   | 'updates'
   | 'workspaces'
   | 'task-server'
@@ -222,12 +224,14 @@ export class WorkspaceOverlaysService {
       case '/workspace/settings/prompts':
       case '/workspace/prompts': return 'prompts';
       case '/workspace/settings/retention': return 'retention';
+      case '/workspace/settings/access': return 'access';
       case '/workspace/settings/appearance': return 'appearance';
       case '/workspace/settings/updates': return 'updates';
       case '/workspace/settings/workspaces': return 'workspaces';
       case '/workspace/settings/task-server': return 'task-server';
       case '/workspace/settings/credentials': return 'credentials';
       case '/workspace/settings/secrets': return 'secrets';
+      case '/workspace/settings/first-run': return 'first-run';
       case '/workspace/settings/environment':
       case '/workspace/settings/execution-hosts':
       case '/workspace/settings/remote-hosts': return 'remote-hosts';
@@ -262,12 +266,14 @@ export class WorkspaceOverlaysService {
       case 'cli-paths': return '/workspace/settings/cli-paths';
       case 'prompts': return '/workspace/settings/prompts';
       case 'retention': return '/workspace/settings/retention';
+      case 'access': return '/workspace/settings/access';
       case 'appearance': return '/workspace/settings/appearance';
       case 'updates': return '/workspace/settings/updates';
       case 'workspaces': return '/workspace/settings/workspaces';
       case 'task-server': return '/workspace/settings/task-server';
       case 'credentials': return '/workspace/settings/credentials';
       case 'secrets': return '/workspace/settings/secrets';
+      case 'first-run': return '/workspace/settings/first-run';
       case 'remote-hosts': return '/workspace/settings/environment';
       case 'orchestrator': return '/workspace/settings/orchestrator';
       case 'working-memory': return '/workspace/settings/working-memory';
@@ -282,12 +288,14 @@ export class WorkspaceOverlaysService {
     '/workspace/settings/cli-paths',
     '/workspace/settings/prompts',
     '/workspace/settings/retention',
+    '/workspace/settings/access',
     '/workspace/settings/appearance',
     '/workspace/settings/updates',
     '/workspace/settings/workspaces',
     '/workspace/settings/task-server',
     '/workspace/settings/credentials',
     '/workspace/settings/secrets',
+    '/workspace/settings/first-run',
     '/workspace/settings/execution-hosts',
     '/workspace/settings/environment',
     '/workspace/settings/remote-hosts',
