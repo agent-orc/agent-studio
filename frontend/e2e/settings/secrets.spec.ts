@@ -81,6 +81,20 @@ async function stub(page: Page, unreadable: readonly object[] = []) {
     { declaration: { id: 'stage' } }, { declaration: { id: 'production' } },
   ], promotions: [], jobs: [], failureCards: [] }));
   const fake = fakeSecrets();
+  const adapters = new Map<string, object>();
+  await page.route('**/api/secrets/adapter?*', route => {
+    const scope = new URL(route.request().url()).searchParams.get('scope') ?? 'workspace';
+    const configuration = adapters.get(scope) ?? null;
+    return json({ scope, configuration, health: { scope, kind: configuration ? 'vault' : 'builtin',
+      healthy: !configuration, message: configuration ? 'Credential unavailable.' : 'Built-in store selected.',
+      cacheTtlSeconds: configuration ? 30 : 0 } })(route);
+  });
+  await page.route('**/api/secrets/adapter', route => {
+    const request = route.request().postDataJSON() as { scope: string; configuration: object };
+    adapters.set(request.scope, request.configuration);
+    return json({ scope: request.scope, configuration: request.configuration,
+      health: { scope: request.scope, kind: 'vault', healthy: false, message: 'Credential unavailable.', cacheTtlSeconds: 30 } })(route);
+  });
   await page.route('**/api/secrets', route => json({ store: 'builtin', keySource: 'key-file', canWriteWorkspace: true,
     secrets: fake.secrets.map(fake.view), unreadable })(route));
   await page.route('**/api/secrets/workspace**', fake.handle);
@@ -88,6 +102,24 @@ async function stub(page: Page, unreadable: readonly object[] = []) {
   await page.route('**/api/projects/memowikis/secrets**', fake.handle);
   return fake;
 }
+
+test('Secrets scope adapter reports reachability and saves a scope choice', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await stub(page);
+  await page.goto('/#/workspace/settings/secrets', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('secrets-adapter-health')).toContainText('Reachable');
+  await page.getByTestId('secrets-adapter-kind').selectOption('vault');
+  await page.getByLabel('Address').fill('https://vault.example');
+  await page.getByLabel('Credential environment variable').fill('VAULT_TOKEN');
+  await page.getByTestId('secrets-adapter-save').click();
+  await expect(page.getByTestId('secrets-adapter-health')).toContainText('Unavailable');
+  await page.getByTestId('secrets-scope-project').selectOption('memowikis');
+  await expect(page.getByTestId('secrets-adapter-health')).toContainText('Built-in store selected.');
+  for (const theme of ['dark', 'light'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(shots, `secrets-adapter-${theme}--mocked.png`) });
+  }
+});
 
 test('Secrets section adds, rotates and revokes without ever showing a value', async ({ page }) => {
   mkdirSync(shots, { recursive: true });

@@ -249,9 +249,36 @@ The Secrets section is under Settings → Global → Secrets, next to Credential
 (workspace, project, or project environment) with versions and metadata. Owners
 and operators can add, rotate and revoke there. Viewers see metadata only.
 
+The selected scope also has a store selector and reachability check. The
+implemented Dossier choice for IP-9 is **A: built-in encrypted store by default,
+with optional adapters**. Selection is exact per workspace, project, or
+environment scope. A deeper scope can select another store without changing
+its parent's choice. Reference resolution still searches the declared scope,
+then its parents, in that order. An unavailable adapter stops access to its
+scope; it never falls through to another store for the same scope.
+
+Adapter settings are kept in the owner-only
+`.security/secrets/adapters.json`, outside project repositories. They contain
+only the backend address, KV v2 mount or 1Password vault, credential environment
+variable name, and cache TTL. Configure a Vault/OpenBao token in that
+environment variable, or a 1Password service-account token and the official
+`op` CLI on the backend host. Values enter `op` through standard input, never
+command arguments. KV v2 paths use `agent-studio/<scope>/<name>` under the
+configured mount. Both adapters keep encrypted metadata in the installation;
+values stay in the selected external backend. Workload reads cache values for
+0 to 300 seconds and invalidate the cache on writes and revocation.
+
+Vault/OpenBao versions map to KV v2 version numbers and support put, rotate,
+destroy-version revocation, and delete. 1Password versions map to item version
+numbers. Its service-account CLI can update the current item (put or rotate)
+and delete it; it cannot resolve an older version or revoke an individual item
+version. Those operations return explicit unsupported errors. The Secrets page
+shows the selected adapter's reachability and its error without exposing the
+credential or a secret value.
+
 ## Not in this card
 
-- External store adapters (IP-9).
+- OIDC sign-in (the remaining part of IP-9, after the identity model).
 - Delivery of values into deploy steps (IP-7).
 - Migrating the Task Server credential registry metadata into this store.
   That registry records custody of host credentials, not values.

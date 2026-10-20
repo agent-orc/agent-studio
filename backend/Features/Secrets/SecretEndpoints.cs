@@ -48,6 +48,40 @@ public static class SecretEndpoints
             return Results.Ok(new SecretAuditResponse(entries));
         }));
 
+        app.MapGet("/api/secrets/adapter", (string scope, HttpContext context, SecretAdapterSettings settings,
+            ScopedSecretStore store, AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry,
+            CancellationToken ct) => Run(async () =>
+        {
+            var selected = SecretScope.Parse(scope);
+            Caller.From(context, security, configuration, registry).RequireSee(selected);
+            return Results.Ok(new { scope = selected.Key, configuration = settings.For(selected),
+                health = await store.StatusAsync(selected, ct) });
+        }));
+
+        app.MapPut("/api/secrets/adapter", (SetSecretAdapterRequest request, HttpContext context,
+            SecretAdapterSettings settings, ScopedSecretStore store, SecretAuditLog audit, TimeProvider clock,
+            AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry,
+            CancellationToken ct) => Run(async () =>
+        {
+            var selected = SecretScope.Parse(request.Scope);
+            var caller = Caller.From(context, security, configuration, registry);
+            caller.RequireConfigure(selected);
+            if (request.Configuration is null)
+                throw new SecretValidationException("adapter-config-invalid", "A store selection is required.");
+            SecretAdapterSettings.Validate(request.Configuration);
+            var current = settings.For(selected);
+            if ((current is not null || request.Configuration.Kind != BuiltInSecretStore.Id)
+                && current != request.Configuration
+                && (await store.ListAsync(ct)).Records.Any(item => item.ParsedScope == selected))
+                throw new SecretValidationException("adapter-scope-not-empty", "Delete this scope's secrets before changing its store.");
+            settings.Set(selected, request.Configuration);
+            audit.Append(new SecretAuditEntry { At = clock.GetUtcNow().UtcDateTime, Action = "configure-adapter",
+                Actor = caller.Actor.ToString(), Scope = selected.Key, Reference = "secret://" + selected.Key + "/",
+                Outcome = "ok" });
+            return Results.Ok(new { scope = selected.Key, configuration = settings.For(selected),
+                health = await store.StatusAsync(selected, ct) });
+        }));
+
         MapScope(app.MapGroup("/api/secrets/workspace"), _ => SecretScope.Workspace);
         MapScope(app.MapGroup("/api/projects/{project}/secrets"),
             route => SecretScope.ForProject(Route(route, "project")));
@@ -269,6 +303,13 @@ public static class SecretEndpoints
 
         public SecretAccessDecision CanWrite(SecretScope scope)
             => SecretManagementPolicy.CanWrite(Role, Unrestricted, scope, scope.Project is not null && Member(scope.Project));
+
+        public void RequireConfigure(SecretScope scope)
+        {
+            RequireSee(scope);
+            if (Role is not (StudioRoles.Owner or StudioRoles.Operator))
+                throw new SecretAccessDeniedException("adapter-config-denied", "Only an owner or operator may configure secret adapters.");
+        }
 
         /// <summary>A refused write never reaches the provider, so it is audited here.</summary>
         public SecretActor RequireWrite(SecretScope scope, HttpContext context, string? name = null, int? version = null)

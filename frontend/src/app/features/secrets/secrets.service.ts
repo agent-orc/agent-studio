@@ -50,6 +50,21 @@ export interface SecretOverview {
   unreadable: readonly UnreadableSecret[];
 }
 
+export interface SecretAdapterConfig {
+  kind: 'builtin' | 'vault' | 'openbao' | '1password';
+  address: string | null;
+  mount: string | null;
+  vault: string | null;
+  credentialEnvironment: string;
+  cacheTtlSeconds: number;
+}
+
+export interface SecretAdapterSelection {
+  scope: string;
+  configuration: SecretAdapterConfig | null;
+  health: { scope: string; kind: string; healthy: boolean; message: string; cacheTtlSeconds: number };
+}
+
 /** `workspace`, `<project>` or `<project>/<environment>`. */
 export type SecretScopeKey = string;
 
@@ -73,6 +88,26 @@ export class SecretsService {
   readonly overview = signal<SecretOverview | null>(null);
   readonly state = signal<'idle' | 'loading' | 'ready' | 'unavailable'>('idle');
   readonly error = signal<string | null>(null);
+  readonly adapter = signal<SecretAdapterSelection | null>(null);
+  readonly adapterError = signal<string | null>(null);
+
+  loadAdapter(scope: SecretScopeKey): void {
+    if (!this.http) return;
+    this.adapter.set(null);
+    this.adapterError.set(null);
+    this.http.get<SecretAdapterSelection>(`/api/secrets/adapter?scope=${encodeURIComponent(scope)}`).subscribe({
+      next: selection => { if (selection.scope === scope) this.adapter.set(selection); },
+      error: (error: unknown) => this.adapterError.set(messageOf(error)),
+    });
+  }
+
+  setAdapter(scope: SecretScopeKey, configuration: SecretAdapterConfig): Observable<SecretAdapterSelection> {
+    this.adapterError.set(null);
+    return this.http!.put<SecretAdapterSelection>('/api/secrets/adapter', { scope, configuration }).pipe(
+      map(selection => { this.adapter.set(selection); return selection; }),
+      catchError((error: unknown) => { this.adapterError.set(messageOf(error)); throw error; }),
+    );
+  }
 
   load(): void {
     if (!this.http) {

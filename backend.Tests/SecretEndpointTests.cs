@@ -44,7 +44,9 @@ public sealed class SecretEndpointTests : IDisposable
     private static readonly string[] HumanRoutes =
     [
         "GET /api/secrets",
+        "GET /api/secrets/adapter",
         "GET /api/secrets/audit",
+        "PUT /api/secrets/adapter",
         .. ScopeRoutes("/api/secrets/workspace"),
         .. ScopeRoutes("/api/projects/{project}/secrets"),
         .. ScopeRoutes("/api/projects/{project}/environments/{environment}/secrets"),
@@ -100,6 +102,9 @@ public sealed class SecretEndpointTests : IDisposable
             await Expect(HttpStatusCode.Created, "POST", prefix, null, new { name = "MAIL_KEY", value = second });
         }
         await Expect(HttpStatusCode.OK, "GET", "/api/secrets", "/api/secrets");
+        await Expect(HttpStatusCode.OK, "GET", "/api/secrets/adapter?scope=workspace", "/api/secrets/adapter");
+        await Expect(HttpStatusCode.OK, "PUT", "/api/secrets/adapter", "/api/secrets/adapter",
+            new { scope = "workspace", configuration = new SecretAdapterConfig("builtin", null, null, null, "") });
         await Expect(HttpStatusCode.OK, "GET", "/api/secrets/audit", "/api/secrets/audit");
 
         var resolve = await Send(client, "POST", SecretEndpoints.ResolvePath, Resolve($"secret://{Project}/MAIL_KEY"), owner);

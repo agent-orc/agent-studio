@@ -1,10 +1,10 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import type { Observable } from 'rxjs';
 import { AuthSessionState } from '../../../services/auth.service';
 import type { WatchPathEntry } from '../../../models/task.model';
-import { SecretsService, type SecretMetadata, type SecretScopeKey } from '../secrets.service';
+import { SecretsService, type SecretAdapterConfig, type SecretMetadata, type SecretScopeKey } from '../secrets.service';
 
 /**
  * Secrets section of the Access area in Settings. People pick a scope
@@ -34,6 +34,13 @@ export class SecretsPanelComponent {
   readonly rotating = signal<string | null>(null);
   readonly rotateValue = signal('');
   readonly busy = signal(false);
+  readonly adapterKind = signal<SecretAdapterConfig['kind']>('builtin');
+  readonly adapterAddress = signal('');
+  readonly adapterMount = signal('secret');
+  readonly adapterVault = signal('');
+  readonly adapterCredentialEnvironment = signal('');
+  readonly adapterTtl = signal(30);
+  readonly adapterBusy = signal(false);
 
   readonly projectNames = computed(() =>
     [...new Set(this.projects().map(entry => entry.name))].sort((a, b) => a.localeCompare(b)));
@@ -58,13 +65,45 @@ export class SecretsPanelComponent {
     if (role === 'viewer' || role === 'contributor') return false;
     return this.scope() !== 'workspace' || (this.service.overview()?.canWriteWorkspace ?? false);
   });
+  readonly canConfigureAdapter = computed(() => {
+    const role = this.auth?.status()?.user?.role;
+    return !role || role === 'owner' || role === 'operator';
+  });
 
   readonly nameExists = computed(() => this.rows().some(row => row.name === this.newName().trim()));
 
   /** Items the store could not open, across every scope: a store-health warning, not a scope row. */
   readonly unreadable = computed(() => this.service.overview()?.unreadable ?? []);
 
-  constructor() { this.service.load(); }
+  constructor() {
+    this.service.load();
+    effect(() => this.service.loadAdapter(this.scope()));
+    effect(() => {
+      const selection = this.service.adapter();
+      if (!selection || selection.scope !== this.scope()) return;
+      const config = selection.configuration;
+      this.adapterKind.set(config?.kind ?? 'builtin');
+      this.adapterAddress.set(config?.address ?? '');
+      this.adapterMount.set(config?.mount ?? 'secret');
+      this.adapterVault.set(config?.vault ?? '');
+      this.adapterCredentialEnvironment.set(config?.credentialEnvironment ?? '');
+      this.adapterTtl.set(config?.cacheTtlSeconds ?? 30);
+    });
+  }
+
+  saveAdapter(): void {
+    if (this.adapterBusy()) return;
+    const configuration: SecretAdapterConfig = {
+      kind: this.adapterKind(), address: this.adapterAddress().trim() || null,
+      mount: this.adapterMount().trim() || null, vault: this.adapterVault().trim() || null,
+      credentialEnvironment: this.adapterCredentialEnvironment().trim(), cacheTtlSeconds: this.adapterTtl(),
+    };
+    this.adapterBusy.set(true);
+    this.service.setAdapter(this.scope(), configuration).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => { this.adapterBusy.set(false); this.service.load(); },
+      error: () => this.adapterBusy.set(false),
+    });
+  }
 
   selectProject(project: string): void {
     this.project.set(project);

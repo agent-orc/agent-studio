@@ -347,7 +347,11 @@ if (!underTestHost)
 builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
 builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
-builder.Services.AddSingleton<ISecretStore, BuiltInSecretStore>();
+builder.Services.AddSingleton<BuiltInSecretStore>();
+builder.Services.AddSingleton<SecretAdapterSettings>();
+builder.Services.AddHttpClient("secret-adapters", client => client.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddSingleton<ScopedSecretStore>();
+builder.Services.AddSingleton<ISecretStore>(sp => sp.GetRequiredService<ScopedSecretStore>());
 builder.Services.AddSingleton<SecretAuditLog>();
 builder.Services.AddSingleton<SecretValueScrubber>();
 builder.Services.AddSingleton<ISecretProvider, SecretProvider>();

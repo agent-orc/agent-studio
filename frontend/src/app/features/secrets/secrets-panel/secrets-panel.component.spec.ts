@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 import { AuthSessionState, type AuthStatus } from '../../../services/auth.service';
-import { SecretsService, type SecretMetadata, type SecretOverview } from '../secrets.service';
+import { SecretsService, type SecretAdapterSelection, type SecretMetadata, type SecretOverview } from '../secrets.service';
 import { SecretsPanelComponent } from './secrets-panel.component';
 
 function secret(scope: string, name: string, status: 'active' | 'revoked' = 'active'): SecretMetadata {
@@ -27,6 +27,11 @@ function setup(role: 'owner' | 'viewer' = 'owner') {
   });
   const service = {
     overview, state: signal('ready'), error: signal<string | null>(null), load: vi.fn(),
+    adapter: signal<SecretAdapterSelection | null>({ scope: 'workspace', configuration: null,
+      health: { scope: 'workspace', kind: 'builtin', healthy: true, message: 'Built-in store selected.', cacheTtlSeconds: 0 } }),
+    adapterError: signal<string | null>(null), loadAdapter: vi.fn(),
+    setAdapter: vi.fn(() => of({ scope: 'workspace', configuration: null,
+      health: { scope: 'workspace', kind: 'builtin', healthy: true, message: 'Built-in store selected.', cacheTtlSeconds: 0 } })),
     environments: vi.fn(() => of(['stage', 'prod'])),
     add: vi.fn(() => of(secret('workspace', 'NEW_KEY'))),
     rotate: vi.fn(() => of(secret('workspace', 'MAIL_KEY'))),
@@ -110,5 +115,20 @@ describe('SecretsPanelComponent', () => {
     expect(element.querySelector('[data-testid="secrets-add"]')).toBeNull();
     expect(element.querySelector('[data-testid="secrets-rotate"]')).toBeNull();
     expect(element.querySelectorAll('[data-testid="secrets-row"]')).toHaveLength(1);
+  });
+
+  it('shows adapter health and saves selection without a credential value', () => {
+    const { fixture, service, element } = setup();
+    expect(element.querySelector('[data-testid="secrets-adapter-health"]')?.textContent).toContain('Reachable');
+    fixture.componentInstance.adapterKind.set('vault');
+    fixture.componentInstance.adapterAddress.set('https://vault.example');
+    fixture.componentInstance.adapterMount.set('secret');
+    fixture.componentInstance.adapterCredentialEnvironment.set('VAULT_TOKEN');
+    fixture.componentInstance.saveAdapter();
+    expect(service.setAdapter).toHaveBeenCalledWith('workspace', {
+      kind: 'vault', address: 'https://vault.example', mount: 'secret', vault: null,
+      credentialEnvironment: 'VAULT_TOKEN', cacheTtlSeconds: 30,
+    });
+    expect(element.innerHTML).not.toContain('test-token');
   });
 });
