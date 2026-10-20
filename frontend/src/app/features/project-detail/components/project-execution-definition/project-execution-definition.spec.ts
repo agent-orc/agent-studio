@@ -42,6 +42,11 @@ describe('ProjectExecutionDefinitionComponent', () => {
       override: null,
       source: 'subject-commit',
     });
+    // The Pipeline section renders right after Execution and reads the same project.yml.
+    http.expectOne('/api/projects/Quality%20Studio/pipeline-definition').flush({
+      project: 'Quality Studio', path: '.agent-studio/project.yml', exists: true, schemaVersion: 1,
+      valid: true, issues: [], definitionSha256: null, diagram: null, migrationAvailable: false,
+    });
     await fixture.whenStable();
     fixture.detectChanges();
 

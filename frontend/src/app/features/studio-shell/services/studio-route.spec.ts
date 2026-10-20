@@ -59,12 +59,14 @@ describe('Studio route contract', () => {
       inspector: 'activity',
     });
     expect(parseStudioRoute('#/projects/agent-studio/epics')).toEqual({
-      kind: 'epics',
+      kind: 'workbenches',
       projectSlug: 'agent-studio',
+      legacy: true,
     });
     expect(parseStudioRoute('#/epics')).toEqual({
-      kind: 'epics',
+      kind: 'workbenches',
       projectSlug: null,
+      legacy: true,
     });
     expect(parseStudioRoute('#/epics/AGT-2200')).toEqual({
       kind: 'epic',
@@ -96,8 +98,6 @@ describe('Studio route contract', () => {
       [{ kind: 'workbenches', projectName: null }, null, '/workbenches'],
       [{ kind: 'workbenches', projectName: 'Agent Studio' }, null, '/projects/agent-studio/workbenches'],
       [{ kind: 'task', taskKey: 'private::task' }, 'AGT-2291', '/tasks/AGT-2291'],
-      [{ kind: 'epics', projectName: null }, null, '/epics'],
-      [{ kind: 'epics', projectName: 'Agent Studio' }, null, '/projects/agent-studio/epics'],
       [{ kind: 'epic', epicKey: 'private::epic' }, 'AGT-2200', '/epics/AGT-2200'],
     ];
     for (const [tab, reference, expected] of cases) {

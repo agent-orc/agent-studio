@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Collections.Concurrent;
+using AgentStudio.Security;
 
 namespace AgentStudio.Registry;
 
@@ -180,6 +181,7 @@ public static class LocalFirstRunRepositoryEndpoints
 {
     public static void MapLocalFirstRunRepositoryEndpoints(this WebApplication app)
     {
+        // Reads the installation's Git credential state: Owner only when networked.
         app.MapGet("/api/first-run/projects/{projectId}/repository", async (
             string projectId, ProjectRegistry projects, AgentStudio.Projects.ProjectSettingsService settings,
             LocalFirstRunRepositoryProbe probe, LocalFirstRunGitSetup setup, CancellationToken ct) =>
@@ -193,6 +195,6 @@ public static class LocalFirstRunRepositoryEndpoints
                 settings.Get(project.DisplayName).IntegrationBranch ?? "main", ct,
                 keyPath: keyPath, credentialConfig: credentialConfig) is { } status
                 ? Results.Ok(status) : Results.NotFound();
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
     }
 }

@@ -6,12 +6,11 @@ import { api } from '../helpers/api';
 /**
  * Project Product Runtime Observability panel: surfaces the structured
  * runtime stream emitted by the built software. Distinct from the Agent
- * Message Bus panel (which lives at /observability) — this surface is at
- * /product-runtime and is fixture-backed so it can paint every section
+ * Message Bus panel. This surface lives under Operations and is fixture-backed so it can paint every section
  * without waiting on a live producer.
  *
  * Coverage:
- *   1. Rail entry routes to the custom panel; empty or live state shows.
+ *   1. Operations routes to the custom panel; empty or live state shows.
  *   2. Loading the fixture paints counters, recent events, error groups,
  *      latency summary, counters table, domain timeline, malformed-line
  *      warnings.
@@ -47,15 +46,15 @@ function slugFor(name: string): string {
 }
 
 async function openRuntimePanel(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto(`/#/projects/${slugFor(projectName)}/product-runtime`);
-  await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 10_000 });
+  await page.goto(`/#/projects/${slugFor(projectName)}/operations`);
+  await expect(page.getByTestId('project-operations-area')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId('project-product-runtime-panel')).toBeVisible({ timeout: 10_000 });
 }
 
-test('rail entry opens the product runtime panel and shows empty state when no events', async ({ page }) => {
+test('Operations opens the product runtime panel and shows empty state when no events', async ({ page }) => {
   await openRuntimePanel(page);
 
-  await expect(page.getByTestId('project-shell-rail-product-runtime')).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId('project-shell-rail-observability')).toHaveCount(0);
   await expect(page.getByTestId('product-runtime-source')).toBeVisible();
 
   // Empty state OR populated state is acceptable depending on whether

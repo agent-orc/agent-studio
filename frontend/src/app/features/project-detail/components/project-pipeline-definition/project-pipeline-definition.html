@@ -1,0 +1,97 @@
+<section class="pipeline" aria-labelledby="pipeline-definition-title" data-testid="project-pipeline-definition">
+  <header class="pipeline__head">
+    <div>
+      <h3 id="pipeline-definition-title">Pipeline</h3>
+      <p>The deploy pipeline from <code>.agent-studio/project.yml</code>: gate, artifacts, then Staging and Production.</p>
+    </div>
+    @if (definition()?.migrationAvailable && !migration()) {
+      <button type="button"
+              class="pipeline__button pipeline__button--quiet"
+              data-testid="pipeline-migration-preview"
+              [appPendingButton]="previewing()"
+              pendingLabel="Preparing preview"
+              (click)="previewMigration()">Preview schema 2 migration</button>
+    }
+  </header>
+
+  @if (loading()) {
+    <p class="pipeline__muted">Loading pipeline definition…</p>
+  } @else if (definition(); as current) {
+    <div class="pipeline__summary">
+      <span class="pipeline__status" data-testid="pipeline-validation-status" [attr.data-valid]="current.valid">
+        {{ current.valid ? 'Valid' : current.issues.length + (current.issues.length === 1 ? ' issue' : ' issues') }}
+      </span>
+      @if (current.schemaVersion) {
+        <span data-testid="pipeline-schema-version">Schema {{ current.schemaVersion }}</span>
+      }
+      @if (current.definitionSha256) { <code>{{ current.definitionSha256.slice(0, 12) }}</code> }
+    </div>
+
+    @if (current.diagram; as diagram) {
+      <app-project-pipeline-diagram [diagram]="diagram" [issues]="current.issues" />
+    } @else if (!current.exists) {
+      <p class="pipeline__muted">No <code>.agent-studio/project.yml</code> is present in the checkout.</p>
+    }
+
+    @if (current.issues.length > 0) {
+      <ul class="pipeline__issues" data-testid="pipeline-validation-issues" aria-label="Validation issues">
+        @for (issue of current.issues; track issueKey(issue)) {
+          <li>
+            <span class="pipeline__line">{{ issue.line ? 'Line ' + issue.line : 'No line' }}</span>
+            <code>{{ issue.path }}</code>
+            <span>{{ issue.message }}</span>
+          </li>
+        }
+      </ul>
+    }
+  }
+
+  @if (migration(); as preview) {
+    <section class="pipeline__migration" aria-labelledby="pipeline-migration-title" data-testid="pipeline-migration">
+      <h4 id="pipeline-migration-title">Schema 2 proposal (dry run, nothing is written yet)</h4>
+      @if (preview.available) {
+        @if (preview.notes.length > 0) {
+          <ul class="pipeline__notes" data-testid="pipeline-migration-notes">
+            @for (note of preview.notes; track note) { <li>{{ note }}</li> }
+          </ul>
+        }
+        @if (preview.diagram; as proposed) {
+          <app-project-pipeline-diagram [diagram]="proposed" [issues]="preview.issues" />
+        }
+        @if (!preview.valid) {
+          <ul class="pipeline__issues" data-testid="pipeline-migration-issues" aria-label="Proposal issues">
+            @for (issue of preview.issues; track issueKey(issue)) {
+              <li>
+                <span class="pipeline__line">{{ issue.line ? 'Line ' + issue.line : 'No line' }}</span>
+                <code>{{ issue.path }}</code>
+                <span>{{ issue.message }}</span>
+              </li>
+            }
+          </ul>
+        }
+        <details class="pipeline__details">
+          <summary>Proposed project.yml</summary>
+          <pre data-testid="pipeline-migration-yaml"><code>{{ preview.proposedYaml }}</code></pre>
+        </details>
+        <div class="pipeline__actions">
+          <button type="button"
+                  class="pipeline__button"
+                  data-testid="pipeline-migration-confirm"
+                  [disabled]="!preview.valid"
+                  [appPendingButton]="confirming()"
+                  pendingLabel="Writing project.yml"
+                  (click)="confirmMigration()">Write schema 2 to project.yml</button>
+          <button type="button"
+                  class="pipeline__button pipeline__button--quiet"
+                  data-testid="pipeline-migration-discard"
+                  (click)="discardMigration()">Discard preview</button>
+        </div>
+      } @else {
+        <p class="pipeline__muted">{{ preview.notes.length > 0 ? preview.notes[0] : 'No migration is available.' }}</p>
+      }
+    </section>
+  }
+
+  @if (message()) { <p class="pipeline__message" role="status">{{ message() }}</p> }
+  @if (error()) { <p class="pipeline__error" role="alert">{{ error() }}</p> }
+</section>

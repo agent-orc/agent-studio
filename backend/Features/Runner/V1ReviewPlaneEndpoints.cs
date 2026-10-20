@@ -736,6 +736,7 @@ public static class V1ReviewPlaneEndpoints
             AgentStudio.Review.ReviewProjectionService projections,
             MonolithOrchestrationStore orchestration,
             ReviewInputDecisionGateway reviewInputDecisions,
+            TimeProvider time,
             IConfiguration configuration,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
@@ -753,6 +754,7 @@ public static class V1ReviewPlaneEndpoints
                     request.Fence,
                     request.AuthorityEpoch,
                     request.IdempotencyKey,
+                    time.GetUtcNow().UtcDateTime,
                     out var current,
                     out var error))
                 return error!;
@@ -2910,6 +2912,7 @@ public static class V1ReviewPlaneEndpoints
         long fence,
         long authorityEpoch,
         string idempotencyKey,
+        DateTime nowUtc,
         out ReviewAttemptDto? review,
         out IResult? error)
     {
@@ -2946,7 +2949,7 @@ public static class V1ReviewPlaneEndpoints
             return false;
         }
 
-        if (!isSettlementReplay && lease.ExpiresAt <= DateTime.UtcNow)
+        if (!isSettlementReplay && lease.ExpiresAt <= nowUtc)
         {
             error = ReportLeaseExpired("ReviewAttempt report authority expired.");
             return false;

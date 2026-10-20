@@ -15,6 +15,13 @@ seconds while visible. The view joins the archive-inclusive
 open Watcher cases, and AI Operator decision receipts. Host, queue, and lane
 markers resolve a case's affected card IDs against the current board. A missing
 host metric or unlinked receipt reads as unavailable, never as a healthy zero.
+Each host card also shows the zone network policy the host enforces, from its
+`zone-policy` capability (AGT-3231). It reads as zone and policy version with the
+verification time, as `Verification failed` with the first failed check, as
+`Not verified` with the reason for a record that no longer counts (an earlier
+boot, a stopped timer, a removal), or as `Not reported` for a host without an
+applied policy; see
+[Zone network policy on Docker hosts](../../operations/setup/zone-network-policy.md).
 
 The flow endpoint counts distinct cards entering delivery, human review, and
 completion during the current UTC day; integration uses `integration_succeeded`
@@ -24,6 +31,13 @@ distinct cards with a completed build/test step and the batch gate uses members
 in verified publications. Gate waiting comes from the active auto-review gate
 queue, and batch gate waiting from its pending store. Deployment card counts
 have no global attribution source yet, so that value remains unavailable.
+
+The view also lists application health for every declared environment from
+`GET /api/environment/health`: status, uptime over 24 hours, 7 days and
+30 days, p50 and p95 latency, and the start of an open incident. The project
+Deploy area's Operations tab shows the same data per environment and check,
+including certificate expiry
+([environment health checks](../../operations/environment-health-checks.md)).
 
 ## Workspace deployment dashboard
 
@@ -133,7 +147,7 @@ responses hide the feature and back off to a five-minute retry while visible.
 
 The active Studio surface is described by one canonical hash path. Board and
 project scope, Hub rail, Wiki page or folder, Dossier id, public task key and
-active detail tabs, Epics scope, and Settings section restore from that route.
+active detail tabs, Deploy and Operations, and Settings section restore from that route.
 The top-level query string is no longer an application routing surface. Legacy
 `task`, `job`, and `watchPath` query parameters remain read-only migration
 inputs and canonicalize after resolution.
@@ -335,24 +349,22 @@ occur. It is not a claim about tunnel transfer time.
   auto-review status snapshot into a compact current-step or elapsed-wait
   indicator; the lane header reconciles those visible cards as active versus
   waiting, with machine-lock gate queueing remaining a distinct waiting state.
-- `frontend/src/app/features/board/components/epic-overview-screen/`: the
-  read-only Epics overview (`#/epics`, studio tab `epics:<project|__all__>`).
-  Its main list is the active list, without a redundant Active section header.
-  Completed history is collapsed by default and shows the lightweight
-  `GET /api/epics/completed/count` result in its header; full completed rollups
-  are fetched from `GET /api/epics?status=completed` only on first expansion.
-  A rollup counts as Completed only when `subTaskTotal > 0` and every child is
-  done. Archived zero-member cleanup epics are hidden, while completed epics
-  with historical children stay visible as quiet, dated history. Each card
-  shows an `x / y done` count, a done/in-progress/open progress bar, and expands
-  (`epic-overview-expand`) to child rows carrying lane status and a project
-  colour dot (`epic-overview-open-sub` / `epic-overview-sub-project`). The
-  screen only navigates (it emits `openTask`); epic assignment stays on the
-  board (create dialog + card context menu).
-  `EpicCreateDialogComponent` requires a title and goal description before it
-  posts. Contract locked by `e2e/board/epic-overview-history.spec.ts` (mocked
-  routes, both themes) and `e2e/board/epic-overview-screen.spec.ts` (real
-  backend seed + navigate).
+- Project Explorer entries follow Board, Dossiers, Deploy, Operations, Wiki,
+  Deck (NV-D1 option A). Deploy hosts the BD-3 Deploy area (Overview,
+  Releases, Pipeline, the existing deployment tools) plus a Run steps view with
+  the run pipeline panel; old `pipeline` routes open Run steps. Operations reads
+  `GET /api/projects/<project>/environments` and shows the recorded health of
+  each declared environment, plus the existing Product Runtime observability
+  panel; without environments it invites setup in Deploy. The Deck rail
+  excludes Deploy, Deployment, Pipeline, and Observability. Agent-work panels
+  stay in the Deck as the Insight rail Agent activity: the message bus panel,
+  token summary, supervisor and meta-cycle sections, and analysis reports.
+  Legacy `observability` sections open Operations. The Epic overview and Epic
+  grouping controls are retired from navigation (the board groups by Dossier
+  instead). Legacy `#/epics` and `#/projects/<project>/epics` routes and
+  restored Epics tabs open the Dossiers overview tab and rewrite to its URL;
+  legacy Epic data and API behavior remain until the separate data-removal
+  card.
 - `frontend/src/app/features/task-detail/`: task detail shell, protocol pane,
   prompt pane, git pane, timeline, pipeline overview, and command surfaces.
   Ordinary task selection reads the bounded `/core` projection first and paints
@@ -895,12 +907,6 @@ header chip, and Result header agree on word and resolved colour, both themes).
 - Before adding visual variants, check the style guide and update it if a new
   pattern is truly needed.
 - Use stable `data-testid` hooks for Playwright selectors.
-- The Epics overview keeps completed and archived epics visible as history
-  instead of dropping them once finished; history renders quietly with no acute
-  status signals (R4), and each epic's progress counts are the sum of that
-  epic's visible children (R3). The only rollups withheld from the overview are
-  empty archived cleanup epics (zero members). See the epic domain contract in
-  [docs/system/domains/tasks.md](./tasks.md#epic-lifecycle).
 - Workspace-level CLI administration is not a separate sheet. Model and
   environment management, completion contracts, sessions, usage caps, and
   token spend belong to Workspace Settings under CLI Management.

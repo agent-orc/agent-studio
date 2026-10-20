@@ -39,7 +39,6 @@ export function resolveTaskTabScope(origin: StudioTab | null): TaskTabScope | un
     case 'feed':
     case 'deployment-dashboard':
       return { kind: 'all-projects' };
-    case 'epics':
     case 'workbenches':
       return origin.projectName === null
         ? { kind: 'all-projects' }

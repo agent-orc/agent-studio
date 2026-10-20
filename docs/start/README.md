@@ -183,6 +183,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Wiki hosting options and recommendation (full networked Studio vs read-only service vs static export; AGT-2276) | [concepts/wiki-hosting-options-2026-07.html](../concepts/wiki-hosting-options-2026-07.html) |
 | Deployment as a first-class citizen (Deployment page, scenario templates, prompt-defined dynamic UI over CLI tasks; DEP-1..5) | [concept](../concepts/deployment-first-class.md) · [interactive mockup](../concepts/mockups/deployment-first-class.html) |
 | Project environment declaration schema | [schemas/project-environment.schema.json](../app/schemas/project-environment.schema.json) |
+| Environment health checks from the control plane: declared and derived checks, uptime and latency, incidents as Activity entries and cards, 30-day raw and hourly retention (IP-14) | [operations/environment-health-checks.md](../operations/environment-health-checks.md) |
 | Release semantics (integration vs acceptance vs release vs stable freeze; transparent watering-can model) | [concept](../concepts/release-semantics.md) |
 | Project Overview operator dashboard (metrics, Visual Evidence Queue, Project URLs, deployment summary, Wiki entry) | [mockup contract](../concepts/project-overview-dashboard/README.md) · [interactive mockup](../concepts/project-overview-dashboard/ui.html) |
 | Studio route restoration (Board, Hub, Wiki pages, Dossiers, Task tabs, Epics, Settings) | [concept and route map](../concepts/studio-route-restoration.md) · [ownership diagram](../concepts/studio-route-restoration-diagram.html) |
@@ -207,6 +208,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Task Server legacy migration, signed cutover evidence, retention, archive, restore, and full backup operator commands | [legacy migration](../operations/setup/task-server.md#legacy-single-writer-migration) · [retention and archive](../operations/setup/task-server.md#retention-against-the-sqlite-store) |
 | Installation recovery set: versioned manifest, off-host copy, empty-target restore, host fencing, resume gate, and measured drill (I07) | [operations/setup/installation-recovery.md](../operations/setup/installation-recovery.md) |
 | Standalone remote runner / agent host daemon (Linux) | [operations/setup/linux-runner-host.md](../operations/setup/linux-runner-host.md) |
+| Zone network policy on Docker hosts: work-zone egress allowlist through resolver-filled ipsets, no inbound, run-zone denials, IPv6 drop, apply, verify and rollback script, `zone-policy` capability (AGT-3231, IP-2) | [operations/setup/zone-network-policy.md](../operations/setup/zone-network-policy.md) |
 | Workstation runner-host profile (Windows roots, tools, preview evidence, same Task Server authority) | [operations/setup/workstation-runner-host.md](../operations/setup/workstation-runner-host.md) |
 | Guided multi-machine setup (Control Plane, join token, Agent Hosts) | [operations/setup/multi-machine.md](../operations/setup/multi-machine.md) |
 | Website onboarding source copy (Demo, Single Machine, Multi Machine) | [operations/setup/website-onboarding-template.md](../operations/setup/website-onboarding-template.md) |
@@ -223,6 +225,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Single-host Task Server rehearsal handoff: daily health, backup verification, update, rollback, and maintenance-window checklist | [operations/setup/single-host-task-server.md](../operations/setup/single-host-task-server.md) |
 | Windows Task Server fallback runbook (Phase B slice B4: install, warm standby, sub-15-minute switch drill both directions; AGT-2735) | [operations/setup/windows-fallback-runbook.md](../operations/setup/windows-fallback-runbook.md) |
 | Hosted Wiki publication (published revision, freshness SLO, credentials, atomic promotion, typed failures, rollback drill) | [operations/setup/hosted-wiki-publication.md](../operations/setup/hosted-wiki-publication.md) |
+| Secret provider: `secret://` references, scopes, versions, rotation, revocation, write without read, built-in envelope-encrypted store, key custody, audit and log scrubbing (IP-6) | [operations/security/secret-provider.md](../operations/security/secret-provider.md) |
 | Common problems | [common-problems/README.md](../operations/common-problems/README.md) |
 | Background polling leaves an open HTTP request at `verify()` | [system/common-problems/open-http-request-at-verify-from-chat-polling/](../system/common-problems/open-http-request-at-verify-from-chat-polling/) |
 | Background chat polling test measure | [system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md](../system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md) |

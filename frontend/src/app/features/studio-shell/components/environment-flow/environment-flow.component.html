@@ -43,6 +43,7 @@
         </div>
       </section>
     } @else { <p role="status">Loading card flow…</p> }
+    <app-environment-health-overview />
     <section aria-labelledby="environment-hosts-title"><h2 id="environment-hosts-title">Hosts <small>{{ hosts().length }}</small></h2>
       <div class="environment-flow__hosts">
         @for (host of hosts(); track host.id) {
@@ -54,6 +55,11 @@
             <div class="environment-flow__host-detail"><strong>Provider auth</strong>
               @for (provider of auth(host); track provider.name) { <span>{{ provider.name }}: {{ provider.status }}</span> }
               @if (!auth(host).length) { <span>Unavailable</span> }
+            </div>
+            @let zone = zonePolicy(host);
+            <div class="environment-flow__host-detail" data-testid="environment-host-zone-policy" [attr.data-zone-policy-state]="zone.state"><strong>Zone policy</strong>
+              <span>{{ zone.label }}</span>
+              @if (zone.detail) { <span>{{ zone.detail }}</span> }
             </div>
             <div class="environment-flow__host-detail"><strong>Running attempts</strong>
               @for (task of running(host); track task.id) { <span>{{ task.taskKey || task.id }} · {{ age(task) }}</span> }
