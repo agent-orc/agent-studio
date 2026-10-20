@@ -21,9 +21,9 @@ import { test, expect } from '../fixtures/dev-backend';
  *   - a #/workspace/settings/execution-hosts deep-link opens the section.
  */
 
-const SHOT_DIR = process.env.OVERLAY_SHOT_DIR ?? '../results/remote-hosts';
+const SHOT_DIR = process.env.OVERLAY_SHOT_DIR
+  ?? (process.env.JOB_RESULTS_DIR ? join(process.env.JOB_RESULTS_DIR, 'remote-hosts') : '../results/remote-hosts');
 const EVIDENCE_PHASE = process.env.EVIDENCE_PHASE ?? 'after';
-const EVIDENCE_VIEWPORT_WIDTH = Number(process.env.EVIDENCE_VIEWPORT_WIDTH ?? 1600);
 
 function settingsHome(page: Page) {
   return page.locator(
@@ -305,7 +305,7 @@ test.describe('Execution Hosts settings section', () => {
       await page.goto('/');
       await page.waitForLoadState('domcontentloaded');
     }
-    await page.waitForTimeout(400);
+    await expect(page.getByTestId('status-bar-settings')).toBeVisible();
     await dismissDevErrorDialog(page);
   });
 
@@ -586,16 +586,20 @@ test.describe('Execution Hosts settings section', () => {
       .getByTestId('remote-host-disclosure')).toHaveAttribute('aria-expanded', 'true');
   });
 
-  test('captures the compact host table in light and dark themes', async ({ page, devBackend: _devBackend }) => {
-    void _devBackend;
+  test('captures the compact host table in light and dark themes', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-10-20T09:00:00Z') });
     await stubGroupedHostApis(page);
-    await page.setViewportSize({ width: EVIDENCE_VIEWPORT_WIDTH, height: 950 });
+    await page.setViewportSize({ width: 1440, height: 950 });
     await page.goto('/#/workspace/settings/execution-hosts');
     await expect(page.getByTestId('remote-hosts-table')).toBeVisible();
-    await setTheme(page, 'light');
-    await page.screenshot({ path: join(SHOT_DIR, `execution-hosts-${EVIDENCE_PHASE}-light--mocked.png`), fullPage: false });
-    await setTheme(page, 'dark');
-    await page.screenshot({ path: join(SHOT_DIR, `execution-hosts-${EVIDENCE_PHASE}-dark--mocked.png`), fullPage: false });
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 950 });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.screenshot({ path: join(SHOT_DIR, `execution-hosts-${width}-${EVIDENCE_PHASE}-${theme}--mocked.png`), fullPage: true });
+      }
+    }
   });
 
   test('groups roles by physical machine, preserves role capacity, release, and retired filtering', async ({ page, devBackend: _devBackend }) => {
