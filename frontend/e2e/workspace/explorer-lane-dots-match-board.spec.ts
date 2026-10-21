@@ -35,11 +35,6 @@ function grouped() {
   };
 }
 
-const VISIBLE_BOARD_CARDS = 4;
-
-/** Swapped per test before `installRoutes` reads it. */
-let feed: () => ReturnType<typeof grouped> = grouped;
-
 async function installRoutes(page: Page): Promise<void> {
   const project = {
     id: 'PROJ-TE', displayName: PROJECT, shortCode: 'TE', workspaceId: 'ws-te',
@@ -54,9 +49,9 @@ async function installRoutes(page: Page): Promise<void> {
     if (url.includes('/api/v1/studio/auth/status')) {
       return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
-    if (url.includes('/api/v1/studio/board')) return json(feed());
+    if (url.includes('/api/v1/studio/board')) return json(grouped());
     if (url.includes('/api/tasks/archive')) return json({ items: [], total: 0, offset: 0, limit: 50 });
-    if (/\/api\/(?:tasks|jobs)(\?|$)/.test(url)) return json(Object.values(feed()).flat());
+    if (/\/api\/(?:tasks|jobs)(\?|$)/.test(url)) return json(Object.values(grouped()).flat());
     if (url.includes('/api/watch-paths')) {
       return json([{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH }]);
     }
@@ -89,12 +84,12 @@ async function boot(page: Page, metricView: 'numbers' | 'dots'): Promise<void> {
   await expect(page.getByTestId('studio-sidebar')).toBeVisible({ timeout: 15_000 });
 }
 
-test.beforeEach(() => { feed = grouped; });
-
 function rgbToHex(value: string): string {
   const parts = value.match(/\d+(\.\d+)?/g)?.slice(0, 3).map(Number) ?? [];
   return parts.map(n => Math.round(n).toString(16).padStart(2, '0')).join('');
-}test('the human-review dot reads in the Review hue, never Delivered green, in both themes', async ({ page }) => {
+}
+
+test('the human-review dot reads in the Review hue, never Delivered green, in both themes', async ({ page }) => {
   fs.mkdirSync(resultsDir, { recursive: true });
   await boot(page, 'dots');
 

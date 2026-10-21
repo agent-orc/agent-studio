@@ -3197,15 +3197,14 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("medium", codexInvocation.ThinkingLevel);
     }
 
-    [Theory]
-    [InlineData(TaskKinds.Task)]
+    [Fact]
     // This exercises the production endpoint against persisted lease timestamps
-    // and real host time. The class-level MachineBound trait keeps both theory
-    // case out of the card gate; the pure boundary decisions remain covered by
+    // and real host time. The class-level MachineBound trait keeps this test
+    // out of the card gate; the pure boundary decisions remain covered by
     // RemoteRunRequeuePolicyTests in the deterministic gate suite.
-    public async Task Remote_claim_requeues_only_after_grace_and_runner_confirms_inactive(string kind)
+    public async Task Remote_claim_requeues_only_after_grace_and_runner_confirms_inactive()
     {
-        SeedTask(TaskStates.Ready, TaskKey, "Restart recovery", "Prompt.", kind: kind);
+        SeedTask(TaskStates.Ready, TaskKey, "Restart recovery", "Prompt.");
         // Start with a grace so wide that no host can walk out of it. The endpoint
         // re-reads the value from IConfiguration on every claim, so the test can
         // narrow it later instead of racing the wall clock: with a 1s grace the
@@ -3248,7 +3247,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
 
         Assert.Equal(RClaimStatus.Claimed, recovered.Status);
         Assert.Equal(TaskKey, recovered.JobId);
-        Assert.Equal(kind, recovered.TaskKind);
+        Assert.Equal(TaskKinds.Task, recovered.TaskKind);
         Assert.True(recovered.Lease!.FencingToken > first.Lease.FencingToken);
         var projection = await http.GetFromJsonAsync<AttemptAuthorityProjection>(
             $"/api/attempts/tasks/{first.TaskKey}", ApiJson, CancellationToken.None);
