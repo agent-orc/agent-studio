@@ -12,6 +12,7 @@ import { TaskService } from '../../../../services/task.service';
 import type { ProjectExpensiveJob, ProjectExpensiveJobsResponse, ProjectJobTokenDetail, ProjectPipelineCostTimeline, ProjectTokenCategory, ProjectTokenDataFreshness, ProjectTokenHeatmap, ProjectTokenHeatmapJob, ProjectTokenUsageSummary } from '../../../../features/project-token-usage';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { ProjectPipelineCostTrendComponent } from '../project-pipeline-cost-trend/project-pipeline-cost-trend.component';
+import { TokenAnalysisViewComponent } from '../../../token-analysis';
 interface CardSpec {
   testid: string;
   label: string;
@@ -48,7 +49,7 @@ interface TimelineBucket {
 @Component({
   selector: 'app-project-token-usage-panel',
   standalone: true,
-  imports: [TooltipDirective, ProjectPipelineCostTrendComponent],
+  imports: [TooltipDirective, ProjectPipelineCostTrendComponent, TokenAnalysisViewComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-token-usage-panel.component.html',
   styleUrl: './project-token-usage-panel.component.scss',

@@ -1,0 +1,136 @@
+@use '../../../../../styles/mixins' as m;
+
+// Chart series: categorical identity in fixed order, read by every chart of
+// the view (AGT-3267). The validated eight-hue set (adjacent CVD dE >= 8),
+// stepped per theme; a ninth series folds into --studio-series-other. Scoped
+// to the lazily loaded view so the shell bundle does not carry it.
+:host {
+  display: block;
+  min-width: 0;
+  --studio-series-1: #3987e5;
+  --studio-series-2: #d95926;
+  --studio-series-3: #199e70;
+  --studio-series-4: #c98500;
+  --studio-series-5: #d55181;
+  --studio-series-6: #008300;
+  --studio-series-7: #9085e9;
+  --studio-series-8: #e66767;
+  --studio-series-other: #8a8a86;
+}
+
+:host-context([data-studio-theme='light']) {
+  --studio-series-1: #2a78d6;
+  --studio-series-2: #eb6834;
+  --studio-series-3: #1baf7a;
+  --studio-series-4: #eda100;
+  --studio-series-5: #e87ba4;
+  --studio-series-6: #008300;
+  --studio-series-7: #6250d6;
+  --studio-series-8: #e34948;
+  --studio-series-other: #8f8e89;
+}
+
+.tav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-3);
+  min-width: 0;
+}
+
+.tav__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--studio-spacing-3);
+
+  h2 { margin: var(--studio-spacing-1) 0; color: var(--studio-fg-strong); font-size: 1.1rem; }
+  p { margin: 0; color: var(--studio-fg-dim); font-size: 0.78rem; }
+}
+
+.tav__eyebrow { @include m.type-label; }
+
+.tav__button {
+  flex: 0 0 auto;
+  padding: var(--studio-spacing-1) var(--studio-spacing-3);
+  border: 1px solid var(--studio-border);
+  border-radius: 6px;
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.tav__button:hover:not(:disabled) { background: var(--studio-bg-hover); }
+.tav__button:disabled { cursor: default; opacity: 0.6; }
+.tav__button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
+
+.tav__state {
+  @include m.deck-panel;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  color: var(--studio-fg-dim);
+  font-size: 0.8rem;
+
+  strong { color: var(--studio-fg-strong); }
+}
+
+.tav__state--error { @include m.deck-panel-attention; }
+
+.tav__notice {
+  @include m.deck-panel;
+  @include m.deck-panel-muted;
+  margin: 0;
+  color: var(--studio-fg-dim);
+  font-size: 0.76rem;
+}
+
+.tav__stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--studio-spacing-2);
+  margin: 0;
+
+  div { @include m.deck-panel; }
+  dt { color: var(--studio-fg-muted); font-size: 0.7rem; }
+
+  dd {
+    margin: var(--studio-spacing-1) 0 0;
+    color: var(--studio-fg-strong);
+    font-size: 1.05rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+}
+
+// Two chart columns only where the view itself is wide; the settings page
+// leaves it about 720 px even on a 1280 px screen.
+.tav { container-type: inline-size; }
+
+.tav__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--studio-spacing-3);
+}
+
+@container (min-width: 1100px) {
+  .tav__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Project scope sits under the project Token usage panel. */
+.tav[data-scope='project'] {
+  padding: var(--studio-spacing-4);
+  border-top: 1px solid var(--studio-border);
+}
+
+.tav__wide { grid-column: 1 / -1; }
+.tav__time { display: flex; flex-direction: column; gap: var(--studio-spacing-2); }
+.tav__note { margin: 0; color: var(--studio-fg-muted); font-size: 0.7rem; }
+
+@media (max-width: 600px) {
+  .tav__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tav__head { flex-direction: column; }
+}

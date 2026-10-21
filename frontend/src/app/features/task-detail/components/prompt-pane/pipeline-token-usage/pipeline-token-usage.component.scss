@@ -348,3 +348,10 @@
     display: none;
   }
 }
+
+.ptu__analysis {
+  align-self: flex-start;
+  margin-top: var(--studio-spacing-2);
+  color: var(--studio-tooltip-link);
+  font-size: 0.74rem;
+}

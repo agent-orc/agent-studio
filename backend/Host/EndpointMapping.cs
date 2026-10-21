@@ -103,6 +103,7 @@ public static class EndpointMapping
         app.MapDesignSurfaceEndpoints();
         app.MapProjectTokenUsageEndpoints();
         app.MapUsageCockpitEndpoints();
+        app.MapTokenAnalysisEndpoints();
         app.MapPipelineHealthEndpoints();
         app.MapGateEconomicsEndpoints();
         app.MapOperatorSweepEndpoints();

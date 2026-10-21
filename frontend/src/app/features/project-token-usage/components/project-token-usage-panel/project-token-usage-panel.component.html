@@ -230,4 +230,8 @@
     <p class="tup__disclaimer">{{ d }}</p>
   }
 </section>
-  
+
+<!-- Card-centric token analysis for this project (AGT-3267); owned here so the shell hosts stay small. -->
+@defer {
+  <app-token-analysis-view [fixedProject]="projectName()" />
+}

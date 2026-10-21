@@ -895,6 +895,7 @@ builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchIntegrationRes
         1, 24 * 60))));
 builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();
+builder.Services.AddSingleton<AgentStudio.Tokens.TokenAnalysisService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,
     AgentStudio.Pipeline.RemoteRequiredLintScssRunner>();
 builder.Services.AddHttpClient<AgentStudio.Pipeline.IQualityStudioAnalysisCore,

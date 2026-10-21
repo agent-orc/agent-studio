@@ -147,5 +147,9 @@
         }
       </div>
     }
+    @if (analysisProject() && analysisJobId()) {
+      <a class="ptu__analysis" data-testid="pipeline-token-usage-analysis-link"
+         [href]="analysisHref()">Where did this card spend its tokens?</a>
+    }
   </section>
 }

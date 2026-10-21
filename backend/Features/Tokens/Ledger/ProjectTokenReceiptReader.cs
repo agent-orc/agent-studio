@@ -208,6 +208,7 @@ public sealed class ProjectTokenReceiptReader
                     OutputTokens = SafeInt(call.OutputTokens),
                     CacheReadTokens = SafeInt(call.CacheReadTokens),
                     CacheCreationTokens = SafeInt(call.CacheCreationTokens),
+                    ReasoningTokens = call.ReasoningTokens is { } reasoning ? SafeInt(reasoning) : null,
                     ThinkingLevel = call.ThinkingLevel,
                     CliType = call.CliType,
                     Host = call.Host,
