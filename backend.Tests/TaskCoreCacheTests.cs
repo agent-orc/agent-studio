@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -66,14 +67,37 @@ public sealed class TaskCoreCacheTests : IDisposable
     public async Task SafetyTtl_DoesNotStartARequestThreadScan()
     {
         var task = MakeTask("AGT-3", "2-ready");
-        var scans = 0;
-        var cache = Cache(() => { Interlocked.Increment(ref scans); return [task]; }, 1);
+        var time = new FakeTimeProvider();
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var calls = 0;
+        var completed = 0;
+        var cache = Cache(() =>
+        {
+            // The TTL rescan holds here until the test has observed the lookup.
+            if (Interlocked.Increment(ref calls) > 1)
+            {
+                entered.Set();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
+            }
+            Interlocked.Increment(ref completed);
+            return [task];
+        }, 1, time);
         cache.GetSnapshot();
-        await Task.Delay(1100);
+        time.Advance(TimeSpan.FromSeconds(2));
+
         var lookup = cache.GetCore(task.Id, _root);
         Assert.NotNull(lookup.Record);
         Assert.True(lookup.Warming);
-        Assert.Equal(1, scans);
+        Assert.Equal(1, Volatile.Read(ref completed));
+
+        // The expired lookup queued exactly one background rescan.
+        Assert.True(await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5))));
+        Assert.True(cache.GetCore(task.Id, _root).Warming);
+        release.Set();
+        await cache.RefreshInFlight!.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(cache.GetCore(task.Id, _root).Warming);
+        Assert.Equal(2, Volatile.Read(ref calls));
     }
 
     [Fact]
@@ -265,13 +289,13 @@ public sealed class TaskCoreCacheTests : IDisposable
         Assert.Equal(expected, TaskCoreRecord.Limit(value, maxBytes));
     }
 
-    private TaskIndexCache Cache(Func<List<TaskInfo>> scan, int ttlSeconds = 3600)
+    private TaskIndexCache Cache(Func<List<TaskInfo>> scan, int ttlSeconds = 3600, TimeProvider? time = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         { ["TaskIndexCache:SafetyTtlSeconds"] = ttlSeconds.ToString() }).Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
-        return new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config, scan);
+        return new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config, scan, timeProvider: time);
     }
 
     private TaskInfo MakeTask(string id, string state)
