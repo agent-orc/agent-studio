@@ -50,6 +50,8 @@ public sealed class TaskCoreEndpointTests : IDisposable
         var index = factory.Services.GetRequiredService<TaskIndexCache>();
         var other = index.GetDetailFacts("AGT-other", Jobs).Info!;
         index.Invalidate();
+        // A real mutation writes task.json before it publishes; a rescan then adopts the same facts.
+        Assert.True(TaskJsonFile.UpdateField(other.FolderPath, "title", "Other changed", NullLogger.Instance));
         index.PublishCore(other with { Title = "Other changed" });
 
         using var detail = await client.GetAsync($"/api/tasks/AGT-target?project={project.Id}");
@@ -61,6 +63,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Assert.Equal("AGT-target", body.RootElement.GetProperty("info").GetProperty("id").GetString());
 
         var target = index.GetDetailFacts("AGT-target", Jobs).Info!;
+        Assert.True(TaskJsonFile.UpdateField(target.FolderPath, "title", "Target changed", NullLogger.Instance));
         index.PublishCore(target with { Title = "Target changed" });
         using var after = await client.GetAsync($"/api/tasks/AGT-target?project={project.Id}");
         after.EnsureSuccessStatusCode();
