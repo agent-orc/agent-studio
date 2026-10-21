@@ -121,6 +121,57 @@ public sealed class DeployHostCommandTests
         }
     }
 
+    [Fact]
+    public async Task Stop_job_takes_the_static_site_down_before_it_reports_the_stop()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "deploy-host-stop-" + Guid.NewGuid().ToString("N"));
+        var destination = Path.Combine(root, "site");
+        var release = Path.Combine(destination, new string('a', 64));
+        Directory.CreateDirectory(release);
+        Directory.CreateSymbolicLink(Path.Combine(destination, "current"), release);
+        var tokenFile = Path.Combine(root, "token");
+        await File.WriteAllTextAsync(tokenFile, "host-token");
+        var handler = new StopHostHandler(new
+        {
+            id = "stop-1", project = "demo", environmentId = "stage", hostId = "stage-host",
+            artifact = "site@sha256:" + new string('a', 64), template = ProjectEnvironmentService.StopTemplatePrefix + "static",
+            destination, healthUrl = (string?)null, secretRefs = Array.Empty<string>(), containerPort = 0,
+            previousArtifact = (string?)null, status = "claimed", leaseToken = "lease-1",
+        });
+        try
+        {
+            using var client = new HttpClient(handler);
+            var result = await DeployHostCommand.RunAsync(["https://studio.test", "stage-host", tokenFile, root],
+                CancellationToken.None, client);
+
+            Assert.Equal(0, result);
+            Assert.False(Path.Exists(Path.Combine(destination, "current")));
+            Assert.True(Directory.Exists(release));
+            var report = Assert.IsType<JsonElement>(handler.Report);
+            Assert.True(report.GetProperty("healthy").GetBoolean());
+            Assert.Equal("stop-ok", report.GetProperty("evidence").GetString());
+            Assert.Equal("lease-1", report.GetProperty("leaseToken").GetString());
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    private sealed class StopHostHandler(object job) : HttpMessageHandler
+    {
+        public JsonElement? Report { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/claim", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(job) };
+            Report = await request.Content!.ReadFromJsonAsync<JsonElement>(cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+    }
+
     private static void WriteReleaseEvidence(string root, string project, string artifact, string commit)
     {
         var directory = Path.Combine(root, "release-evidence", commit);

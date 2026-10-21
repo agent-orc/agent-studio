@@ -65,14 +65,21 @@ Declared environments (`docs/deployments/environments/*.json`) take a slot on
 their first deploy. A release, an approved promotion, and a rollback are
 admitted with a hosting slot when the target environment is not running yet;
 a refusal answers `409` with the reason. A deploy job claim reserves the slot
-atomically; a refused job stays queued for the next claim. A healthy report
-marks the environment running, a failed first deploy returns the slot, and
-`POST /api/projects/{project}/environments/{environmentId}/stop` records an
-operator-confirmed stop and frees the slot. The minute reconciliation frees the
-slot of a removed declaration and the slot a claimed deploy job reserved when
-its five-minute lease expired without a report; a later claim of that job
-reserves it again. Reading the environments changes no slot. A timed promotion
-that quota refuses stays pending.
+atomically; a refused job stays queued for the next claim. The host's report
+settles the reservation: a healthy report marks the environment running and
+keeps the slot, a failed first deploy returns it.
+`POST /api/projects/{project}/environments/{environmentId}/stop` answers `202`
+with a stop job for the environment's host (template `stop:<template>`). The
+environment keeps running and keeps its slot until that host, authenticated as
+on every deploy claim, claims the job and reports the stop done; a failed,
+aborted, or lost stop changes nothing. A host without stop support refuses the
+unknown template. Stop jobs are never refused by quota. The minute
+reconciliation frees the slot of a removed declaration and the slot of an
+unsettled claim: one whose five-minute lease expired without a report, or that
+was aborted or lost. A later claim of that job reserves it again. Reading the
+environments changes no slot. A timed promotion that quota refuses stays
+pending. Saving the limit form with every field blank stores no limit, so
+admission stays a strict no-op.
 
 Status is derived from tokens and core-hours: `warning` at 80% and `blocked`
 at 100%. Full hosting slots are a separate `hosting-full` state that refuses

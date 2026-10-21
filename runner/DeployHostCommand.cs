@@ -12,6 +12,7 @@ namespace AgentRunner;
 /// <summary>Host-local executor for claimable deploy jobs. No agent CLI is involved.</summary>
 public static class DeployHostCommand
 {
+    private const string StopPrefix = "stop:";
     private sealed record Claim(string HostId);
     private sealed record Job(string Id, string Project, string EnvironmentId, string HostId,
         string Artifact, string Template, string Destination, string? HealthUrl,
@@ -38,14 +39,23 @@ public static class DeployHostCommand
         try
         {
             var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
-            if (job.Template == "container")
-                await DeployContainer(job, secretRoot, cancellationToken);
-            else if (job.Template == "static")
-                await DeployStatic(job, args[3], cancellationToken);
-            else throw new InvalidOperationException("Unknown template.");
-            evidence = "health-http-failed";
-            healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
-            if (healthy) evidence = "health-ok";
+            if (job.Template.StartsWith(StopPrefix, StringComparison.Ordinal))
+            {
+                // A stop job is acknowledged only after the environment is actually down.
+                await StopEnvironment(job, cancellationToken);
+                (healthy, evidence) = (true, "stop-ok");
+            }
+            else
+            {
+                if (job.Template == "container")
+                    await DeployContainer(job, secretRoot, cancellationToken);
+                else if (job.Template == "static")
+                    await DeployStatic(job, args[3], cancellationToken);
+                else throw new InvalidOperationException("Unknown template.");
+                evidence = "health-http-failed";
+                healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
+                if (healthy) evidence = "health-ok";
+            }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
             or HttpRequestException or System.ComponentModel.Win32Exception)
@@ -57,6 +67,30 @@ public static class DeployHostCommand
             new { job.LeaseToken, Healthy = healthy, Evidence = evidence }, cancellationToken);
         report.EnsureSuccessStatusCode();
         return healthy ? 0 : 1;
+    }
+
+    private static async Task StopEnvironment(Job job, CancellationToken ct)
+    {
+        var template = job.Template[StopPrefix.Length..];
+        if (template == "container")
+            await Command("docker", ["rm", "-f", ContainerName(job)], ct);
+        else if (template == "static")
+        {
+            if (!Path.IsPathFullyQualified(job.Destination) || job.Destination.Contains("..", StringComparison.Ordinal))
+                throw new InvalidOperationException("Invalid destination.");
+            // DeployStatic serves the site through the "current" link; removing it takes the site down.
+            if (Directory.Exists(job.Destination)) File.Delete(Path.Combine(job.Destination, "current"));
+        }
+        else throw new InvalidOperationException("Unknown template.");
+    }
+
+    private static string ContainerName(Job job)
+    {
+        var projectName = job.Project.Length <= 64
+            && job.Project.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')
+            ? job.Project
+            : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(job.Project)))[..16].ToLowerInvariant();
+        return "deploy-" + projectName + "-" + job.EnvironmentId;
     }
 
     private static async Task DeployStatic(Job job, string artifactStore, CancellationToken ct)
@@ -116,11 +150,7 @@ public static class DeployHostCommand
     {
         if (!int.TryParse(job.Destination, out var port) || port is < 1 or > 65535)
             throw new InvalidOperationException("Invalid proxy port.");
-        var projectName = job.Project.Length <= 64
-            && job.Project.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')
-            ? job.Project
-            : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(job.Project)))[..16].ToLowerInvariant();
-        var name = "deploy-" + projectName + "-" + job.EnvironmentId;
+        var name = ContainerName(job);
         var envFile = Path.Combine(Path.GetTempPath(), "deploy-env-" + Guid.NewGuid().ToString("N"));
         try
         {
