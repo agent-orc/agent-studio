@@ -13,7 +13,8 @@ card (IP-16).
 1. Declare the environment in the project repository under
    `docs/deployments/environments/<id>.json`. Tokens are issued only for
    declared environments.
-2. Create an ingest token (owner or operator; the plaintext is shown once):
+2. Create an ingest token (Owner or an Admin bound to the workspace or project
+   in the networked profile; the plaintext is shown once):
 
    ```http
    POST /api/projects/{project}/environments/{environment}/telemetry/tokens
@@ -38,6 +39,9 @@ declaration file was removed, or the project left Studio) gets HTTP 401 within
 30 seconds, the time the intake trusts the declarations it last read. The token
 is rejected, not revoked: if the declarations cannot be read, the intake answers
 503 with `Retry-After` and the token keeps working once they can be read again.
+The networked profile requires `project.settings.write` to list, create, or
+revoke ingest tokens in that project. Telemetry queries require `project.read`;
+the OTLP intake authenticates the environment ingest token itself.
 
 ## Intake behaviour
 

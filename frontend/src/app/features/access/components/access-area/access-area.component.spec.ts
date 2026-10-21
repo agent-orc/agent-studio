@@ -61,4 +61,22 @@ describe('AccessAreaComponent', () => {
     expect(element.querySelector('[data-testid="access-error"]')?.textContent).toContain('cannot view');
     expect(element.querySelector('[data-testid="access-users"]')).toBeNull();
   });
+
+  it('forgets a one-time password after access is denied', async () => {
+    const access = fakeAccessService();
+    const element = await render(access);
+    const row = element.querySelector('[data-testid="access-user-dev.user"]') as HTMLElement;
+    (Array.from(row.querySelectorAll('button')).find(button => button.textContent?.includes('Reset password')) as HTMLButtonElement).click();
+    await Promise.resolve();
+    TestBed.tick();
+    expect(element.querySelector('[data-testid="access-temporary-password"]')).toBeTruthy();
+
+    access.state.set('denied');
+    access.overview.set(null);
+    TestBed.tick();
+    access.state.set('ready');
+    access.overview.set(accessOverview());
+    TestBed.tick();
+    expect(element.querySelector('[data-testid="access-temporary-password"]')).toBeNull();
+  });
 });

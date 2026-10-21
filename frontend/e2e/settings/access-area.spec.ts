@@ -154,3 +154,25 @@ test('owner invites a developer through the invitation flow and issues a service
   await setTheme(page, 'light');
   await page.screenshot({ path: join(resultDir, 'access-area-1920-light-runners.png'), fullPage: true });
 });
+
+test('denied reload clears cached accounts and a one-time token', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await stubNetworkedOwner(page);
+  const access = await openAccess(page);
+  await access.getByTestId('access-token-create-sa_deploy').click();
+  await expect(access.getByTestId('access-token-issued')).toContainText(oneTimeToken);
+
+  await page.route('**/api/auth/iam', route => json(route, { message: 'Denied Access' }, 403));
+  await access.getByTestId('access-reload').click();
+  await expect(access.getByTestId('access-error')).toContainText('cannot view access settings');
+  await expect(access.getByTestId('access-users')).toHaveCount(0);
+  await expect(access.getByTestId('access-service-accounts')).toHaveCount(0);
+  await expect(access.getByTestId('access-token-issued')).toHaveCount(0);
+  await expect(access).not.toContainText(oneTimeToken);
+
+  mkdirSync(resultDir, { recursive: true });
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(resultDir, `access-area-denied-${theme}.png`), fullPage: true });
+  }
+});

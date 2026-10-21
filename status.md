@@ -1,5 +1,15 @@
 # AGT-3228 role bindings, service accounts, and named route permissions status
 
+## AGT-3228 alternate integration recovery verification, 21 October 2026
+
+- Result implementation SHA: `6055c73dac0aedc1acdbfe1aebde79517e8dfbb9`. The failed `merge-into-develop` stage at `7c36d354026210f44a31ae66f487d9763c0c1ffa` conflicted in `status.md`. Direct merge `78d38c80e7a94529089fa7a45f64cac1a27eb847` retained delivery `4de40cd06bc35b82448e221f52118ba778e42abd` as its first parent and develop `8e3a6a8601e71915f8a76e5c966a677f37465844` as its second. The Access test and status commits stayed on top; no delivery commit was rebased, squashed, split, or dropped.
+- Verification on that recovery branch: solution and frontend builds passed; focused IAM, authorization, secret, deployment, receipt, route inventory, telemetry, and runner Zone Policy tests passed. Architecture/Guard passed 98 backend tests and matched none in the other seven .NET test projects. Access component specs, the focused Access Playwright spec, and frontend lint passed. See `/home/agent/runner-work/tasks/AGT-3228/results/integration-recovery.md` and `verification-final.md` for its logs and screenshots.
+
+## AGT-3228 alternate integration recovery, 21 October 2026
+
+- Result implementation SHA: `8c050c0390570f397835942b6065fffbc8d9a46e`. Merge `78d38c80e7a94529089fa7a45f64cac1a27eb847` preserved the prior delivery and incorporated develop `8e3a6a8601e71915f8a76e5c966a677f37465844`. The failed `merge-into-develop` stage had conflicted in `status.md`; this direct merge retained both histories. The branch kept telemetry ingest tokens in IAM state, the unified Access area, denied access cache clearing, and named telemetry route permissions. The implemented Dossier options remained IP-D9 A (scoped role bindings) and IP-D8 A (secret writes without reads).
+- Verification on that branch: solution and frontend builds, focused .NET and Access component specs, focused Access Playwright coverage, Architecture/Guard across eight .NET test projects, and frontend lint passed. Evidence is in `/home/agent/runner-work/tasks/AGT-3228/results/integration-recovery.md`.
+
 ## Round 4: operator deep review of b27fde736 (20.10.2026)
 
 - Result SHA: `4e5c1c374` (fix commit on the merge `9d7d0afa2` of `origin/develop` `d29e11c4c` into the delivery `b27fde736`; no rebase or squash). This status entry is a separate commit on top of it. `git merge-base --is-ancestor origin/develop HEAD` holds.

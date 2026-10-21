@@ -258,6 +258,10 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   accepts only a Runner credential bound to a live lease (`runner.service`).
   `secrets.resolve` is declared for workload identities and grants no route
   yet.
+- Telemetry query routes require `project.read` in the addressed project.
+  Listing, issuing, and revoking environment ingest tokens require
+  `project.settings.write` there. OTLP intake authenticates its own
+  environment token and does not use a Studio session or service-account token.
 - Migration: loading an older access state migrates a copy and replaces the
   live state only after a backup and the save succeed. Each migration writes
   its own backup `.security/access-state.v<from>.<UTC timestamp>.json`; older
