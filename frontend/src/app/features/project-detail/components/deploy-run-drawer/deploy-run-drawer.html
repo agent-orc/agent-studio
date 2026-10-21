@@ -1,0 +1,54 @@
+<app-sidesheet eyebrow="Deploy run" [title]="title()" [subtitle]="subtitle()" testid="deploy-run-drawer" (closeRequest)="closeRequest.emit()">
+  <div body class="run-drawer">
+    <p class="run-drawer__outcome">
+      <span class="run-drawer__badge" [attr.data-tone]="run().state" data-testid="deploy-run-outcome">{{ stateLabel[run().state] }}</span>
+    </p>
+    @if (actions().length) {
+      <div class="run-drawer__actions" role="group" aria-label="Run actions">
+        @for (item of actions(); track item.kind) {
+          <button type="button" [attr.data-testid]="'deploy-run-' + item.kind" [disabled]="action().busy !== null"
+                  (click)="act.emit(item.kind)">{{ action().busy === item.kind ? item.label + '…' : item.label }}</button>
+        }
+      </div>
+    }
+    @if (action().error; as error) { <p class="run-drawer__error" role="alert" data-testid="deploy-run-action-error">{{ error }}</p> }
+    <dl class="run-drawer__facts">
+      <dt>Release</dt><dd>{{ run().releaseVersion ?? 'Not in the release list' }} <code class="run-drawer__muted">{{ run().releaseId }}</code></dd>
+      <dt>Requested by</dt><dd>{{ run().requestedBy ?? 'Not recorded' }}</dd>
+      <dt>Approval</dt><dd data-testid="deploy-run-approval">{{ approval() }}</dd>
+      <dt>Queued</dt><dd><time [attr.datetime]="run().createdAt">{{ run().createdAt | date:'medium' }}</time></dd>
+      <dt>Started</dt><dd>@if (run().startedAt; as started) { <time [attr.datetime]="started">{{ started | date:'medium' }}</time> } @else { Not started }</dd>
+      <dt>Finished</dt><dd>@if (run().finishedAt; as finished) { <time [attr.datetime]="finished">{{ finished | date:'medium' }}</time> } @else { Not finished }</dd>
+      <dt>Duration</dt><dd class="run-drawer__numeric">{{ duration() ?? 'Not finished' }}</dd>
+    </dl>
+    <h3 id="deploy-run-steps-title">Steps and log</h3>
+    @switch (log().status) {
+      @case ('loading') { <p class="run-drawer__muted" data-testid="deploy-run-log-loading">Loading the step log…</p> }
+      @case ('error') { <p class="run-drawer__error" data-testid="deploy-run-log-error">{{ logError() }}</p> }
+      @case ('unavailable') { <p class="run-drawer__muted" data-testid="deploy-run-log-unavailable">This server keeps no step log for deploy runs.</p> }
+    }
+    <ol class="run-drawer__steps" aria-labelledby="deploy-run-steps-title" data-testid="deploy-run-steps">
+      @for (step of steps(); track step.step + $index) {
+        <li [attr.data-testid]="'deploy-run-step-' + step.step">
+          @if (step.state; as state) {
+            <span class="run-drawer__badge" [attr.data-tone]="state">{{ stepLabel[state] }}</span>
+          } @else {
+            <span class="run-drawer__badge">Log only</span>
+          }
+          <div>
+            <strong>{{ stepKindLabel(step.step) }}</strong>
+            @if (step.startedAt) { <time class="run-drawer__muted run-drawer__numeric" [attr.datetime]="step.startedAt">{{ step.startedAt | date:'MMM d, HH:mm:ss' }}</time> }
+            @if (step.lines.length) {
+              <ul class="run-drawer__log">
+                @for (line of step.lines; track $index) {
+                  <li><time class="run-drawer__numeric" [attr.datetime]="line.atUtc">{{ line.atUtc | date:'HH:mm:ss' }}</time> {{ line.message }}</li>
+                }
+              </ul>
+            }
+          </div>
+        </li>
+      }
+    </ol>
+    <p class="run-drawer__muted">Log lines are written by Studio from the deploy host's status reports; host command output is not stored.</p>
+  </div>
+</app-sidesheet>
