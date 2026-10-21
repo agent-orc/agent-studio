@@ -591,6 +591,8 @@ public sealed class RemoteTaskRunner
                 outcome,
                 lease.AttemptId ?? lease.LeaseId,
                 workspace.WorkBranch);
+            if (!epicPlanning)
+                await workspace.CaptureLegacyRepositoryReportsAsync(stopRun.Token);
             artifactPlan = await PrepareResultsSafeAsync(
                 taskKey, outbox?.Authority.RunId ?? lease.AttemptId ?? lease.LeaseId,
                 artifactLimits, outbox);

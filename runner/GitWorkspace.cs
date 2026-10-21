@@ -879,6 +879,44 @@ public sealed class GitWorkspace
             quarantine,
             ct);
 
+    /// <summary>Preserves legacy repository reports in the card artifact folder.</summary>
+    public async Task CaptureLegacyRepositoryReportsAsync(CancellationToken ct)
+    {
+        foreach (var (relativePath, artifactName) in new[]
+        {
+            ("status.md", "legacy-repository-status.md"),
+            ("results/status.md", "legacy-repository-results-status.md")
+        })
+        {
+            var source = Path.Combine(RepoPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(source)) continue;
+
+            var dirty = await ProjectGitAsync(
+                ["status", "--porcelain=v1", "--", relativePath], RepoPath, ct);
+            var changedInHistory = false;
+            if (!string.IsNullOrWhiteSpace(BaseSha))
+            {
+                var history = await ProjectGitAsync(
+                    ["diff", "--name-only", BaseSha!, "HEAD", "--", relativePath], RepoPath, ct);
+                changedInHistory = history.Success && !string.IsNullOrWhiteSpace(history.StdOut);
+            }
+            if (!changedInHistory && dirty.Success && string.IsNullOrWhiteSpace(dirty.StdOut)) continue;
+
+            try
+            {
+                var results = Path.Combine(_options.WorkDir, "tasks", _safeTaskKey, "results");
+                Directory.CreateDirectory(results);
+                File.Copy(source, Path.Combine(results, artifactName), overwrite: true);
+                _log($"legacy-repository-report-preserved task={_safeTaskKey} artifact=results/{artifactName}");
+            }
+            catch (Exception ex)
+            {
+                _log($"legacy-repository-report-copy-failed task={_safeTaskKey} path={relativePath} "
+                    + $"error={OneLine(ex.Message)}");
+            }
+        }
+    }
+
     private async Task<WorktreeTeardownResult> SecureAsync(
         string outcome,
         string? sourceRunAttemptId,
@@ -904,13 +942,19 @@ public sealed class GitWorkspace
             return WorktreeTeardownResult.NoResult;
         }
 
-        var status = (await Git(["status", "--porcelain=v1", "--untracked-files=all"], RepoPath, ct)).StdOut;
+        await CaptureLegacyRepositoryReportsAsync(ct);
+        // A root status.md is a card report. Keep it out of the product commit,
+        // including when the CLI left it staged before the runner arrived.
+        await Git(["reset", "-q", "HEAD", "--", "status.md", "results/status.md"], RepoPath, ct);
+        var status = (await Git(["status", "--porcelain=v1", "--untracked-files=all",
+            "--", ".", ":(exclude)status.md", ":(exclude)results/status.md"], RepoPath, ct)).StdOut;
         var wasDirty = !string.IsNullOrWhiteSpace(status);
         _log($"worktree-salvage-status path={RepoPath} dirty={wasDirty} outcome={outcome}");
 
         if (wasDirty)
         {
-            await Git(["add", "--all"], RepoPath, ct);
+            await Git(["add", "--all", "--", ".", ":(exclude)status.md",
+                ":(exclude)results/status.md"], RepoPath, ct);
             if (await ScanStagedDiffAsync(ct) is { } cause)
                 throw new WorktreeSalvageException(RepoPath, _workBranch,
                     new InvalidOperationException(cause.Summary),

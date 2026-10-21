@@ -5950,16 +5950,46 @@ public partial class GitService
                 error: $"Could not resolve the exact delivery tip of '{sourceRef}'.");
         }
 
+        var reportDiffArgs = new[] { "diff", "--name-only", "-z", $"{integrationTip}...{deliveryTip}", "--" }
+            .Concat(DeliveryReportPathPolicy.Paths).ToArray();
+        var (reportChanges, reportDiffError, reportDiffCode) = RunGitArgs(repoRoot, reportDiffArgs);
+        if (reportDiffCode != 0)
+            return MergeIntoIntegrationResult.Of(
+                MergeIntoIntegrationOutcome.Error,
+                error: $"Could not inspect delivery report paths: {reportDiffError.Trim()}");
+        var changedReports = reportChanges.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+
         var (_, directMergeError, directMergeCode) = RunGitArgs(
             repoRoot,
             "-c",
             "rerere.enabled=false",
             "merge",
             "--no-ff",
+            "--no-commit",
             "--no-edit",
             sourceRef);
-        if (directMergeCode == 0)
+        IReadOnlyList<string> directConflicts = directMergeCode == 0 ? [] : ListUnmergedFiles(repoRoot);
+        if (directMergeCode == 0 || DeliveryReportPathPolicy.AreOnlyReportConflicts(directConflicts))
         {
+            if (changedReports.Length > 0)
+            {
+                var restoreArgs = new[] { "restore", "--source=HEAD", "--staged", "--worktree", "--" }
+                    .Concat(changedReports).ToArray();
+                var (_, restoreError, restoreCode) = RunGitArgs(repoRoot, restoreArgs);
+                if (restoreCode != 0)
+                {
+                    RunGitArgs(repoRoot, "merge", "--abort");
+                    return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
+                        error: $"Could not retain integration report paths: {restoreError.Trim()}");
+                }
+            }
+            var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit");
+            if (commitCode != 0)
+            {
+                RunGitArgs(repoRoot, "merge", "--abort");
+                return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
+                    error: $"Could not commit the delivery merge: {commitError.Trim()}");
+            }
             var directMergedSha = ReadHeadShaAt(repoRoot);
             _logger.LogInformation(
                 "Merge-into-develop: directly merged {Task} into {Integration} at {Path} ({Sha}); delivery SHAs preserved",
@@ -5969,10 +5999,10 @@ public partial class GitService
                 directMergedSha);
             return MergeIntoIntegrationResult.Of(
                 MergeIntoIntegrationOutcome.Merged,
-                mergedSha: directMergedSha);
+                mergedSha: directMergedSha) with
+                { ConflictsResolved = directConflicts.Count > 0 || changedReports.Length > 0 };
         }
 
-        var directConflicts = ListUnmergedFiles(repoRoot);
         RunGitArgs(repoRoot, "merge", "--abort");
         if (directConflicts.Count == 0)
         {

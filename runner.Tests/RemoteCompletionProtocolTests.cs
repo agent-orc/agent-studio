@@ -164,6 +164,8 @@ public sealed class RemoteCompletionProtocolTests
         Assert.Contains("Replace the example reason", prompt);
         Assert.DoesNotContain("<reason>", prompt);
         Assert.Contains("[[TASK_NOOP]]", prompt);
+        Assert.Contains("JOB_RESULTS_DIR/status.md", prompt);
+        Assert.Contains("Do not create or commit a repository-root `status.md`", prompt);
         // Prompts are composed with LF on every host (PromptText); a CRLF here
         // would make the Windows prompt differ from the Linux one.
         Assert.EndsWith("\n", prompt);
