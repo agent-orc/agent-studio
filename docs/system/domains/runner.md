@@ -7,6 +7,16 @@ Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
 
+Unknown or interrupted attempts that publish salvage hand its exact ref and SHA
+to the next coding claim. The runner starts that worktree at the salvage commit;
+an unavailable or moved ref fails preparation instead of selecting the
+integration branch. The continuation prompt directs a merge of the current
+integration branch so the salvaged commit remains an ancestor of the result.
+If the delivery fence still finds that the recorded base is not an ancestor of
+the result, the legacy completion path withholds the stamp and returns the card
+to Ready. Its next claim starts at the refused result and its prompt names both
+the missing base and the result for an explicit merge.
+
 ## Host-owned Codex device login
 
 The Access and Execution Hosts sign-in actions create a 15-minute, one-at-a-time
