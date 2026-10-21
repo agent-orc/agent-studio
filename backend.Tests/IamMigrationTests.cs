@@ -178,6 +178,7 @@ public sealed class IamMigrationTests : IDisposable
         var engineSecret = $"rnr.{Guid.NewGuid():N}.{PasswordSecretHasher.RandomToken()}";
         var apiSecret = $"api.{Guid.NewGuid():N}.{PasswordSecretHasher.RandomToken()}";
         var viewerSecret = $"api.{Guid.NewGuid():N}.{PasswordSecretHasher.RandomToken()}";
+        var ingestSecret = $"otl.{Guid.NewGuid():N}.{PasswordSecretHasher.RandomToken()}";
         var sessions = new[]
         {
             new StudioSession
@@ -209,6 +210,15 @@ public sealed class IamMigrationTests : IDisposable
             ApiToken(apiSecret, "deploy bot", StudioRoles.Operator, ["alpha"], now),
             ApiToken(viewerSecret, "reader", StudioRoles.Viewer, ["*"], now),
         };
+        var ingestTokens = new[]
+        {
+            new TelemetryIngestToken
+            {
+                Id = ingestSecret.Split('.')[1], Name = "collector", Project = "alpha", Environment = "stage",
+                Signals = ["metrics"], SecretHash = PasswordSecretHasher.HashSecret(ingestSecret),
+                CreatedAt = now, CreatedBy = "usr_owner",
+            },
+        };
         var store = StoreWithState(new
         {
             Users = new object[]
@@ -216,7 +226,8 @@ public sealed class IamMigrationTests : IDisposable
                 Legacy("usr_owner", "first.owner", StudioRoles.Owner, []),
                 Legacy("usr_viewer", "viewer.alpha", StudioRoles.Viewer, ["alpha"]),
             },
-            Invitations = invitations, Sessions = sessions, Runners = runners, Enrollments = enrollments, ApiTokens = apiTokens,
+            Invitations = invitations, Sessions = sessions, Runners = runners, Enrollments = enrollments,
+            ApiTokens = apiTokens, TelemetryIngestTokens = ingestTokens,
         });
 
         var snapshot = store.ReadIamSnapshot();
@@ -226,6 +237,7 @@ public sealed class IamMigrationTests : IDisposable
         Assert.Equal(Canonical(runners), Canonical<RunnerServiceIdentity>(persisted.RootElement.GetProperty("Runners")));
         Assert.Equal(Canonical(enrollments), Canonical<RunnerEnrollment>(persisted.RootElement.GetProperty("Enrollments")));
         Assert.Equal(Canonical(invitations), Canonical<StudioInvitation>(persisted.RootElement.GetProperty("Invitations")));
+        Assert.Equal(Canonical(ingestTokens), Canonical<TelemetryIngestToken>(persisted.RootElement.GetProperty("TelemetryIngestTokens")));
         Assert.Equal(0, persisted.RootElement.GetProperty("ApiTokens").GetArrayLength());
         Assert.NotNull(store.AuthenticateSession(sessionToken, touch: false));
         Assert.Equal(runners[0].Id, store.AuthenticateRunner(runnerSecret)?.RunnerId);
@@ -242,6 +254,7 @@ public sealed class IamMigrationTests : IDisposable
         Assert.Equal(["admin@project:alpha"], Grants(snapshot, deploy.AccountId));
         Assert.Equal(["viewer@workspace"], Grants(snapshot, "sa_" + apiTokens[1].Id));
         Assert.NotNull(store.AuthenticateServiceAccount(viewerSecret));
+        Assert.Equal("alpha", store.AuthenticateTelemetryIngest(ingestSecret)?.Project);
         Assert.Equal(["deploy bot", "reader"], store.ListApiTokens().Select(token => token.Name));
         Assert.Equal(StudioRoles.Operator, store.ListApiTokens()[0].Role);
         Assert.Equal(["alpha"], store.ListApiTokens()[0].Projects);

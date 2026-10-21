@@ -195,6 +195,10 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   a human Approver bound at the workspace, project, or production environment
   may decide in scope. Service accounts cannot approve. The deployment
   lifecycle still checks the approval when it processes the decision.
+- OTLP intake uses its own hashed environment token. Telemetry metric and log
+  queries require `project.read` for the addressed project. Listing, issuing,
+  and revoking ingest tokens require `project.settings.write`, so a project
+  Admin or workspace Owner or Admin can manage them.
 - Workspace secret metadata requires `secrets.read` on the workspace.
   `/api/secrets` and `/api/secrets/audit` filter each entry by its actual
   workspace, project, or declared environment scope. A service account with

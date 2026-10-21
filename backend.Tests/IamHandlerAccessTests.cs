@@ -419,6 +419,38 @@ public sealed class IamHandlerAccessTests : IDisposable
         Assert.Equal(HttpStatusCode.Forbidden, foreign.StatusCode);
     }
 
+    [Fact]
+    public async Task Telemetry_queries_and_ingest_credentials_follow_project_permissions()
+    {
+        using var factory = BuildFactory();
+        WriteEnvironmentDeclaration("alpha", "stage-id", "stage");
+        WriteEnvironmentDeclaration("beta", "stage-id", "stage");
+        const string alpha = "/api/projects/alpha/environments/stage-id/telemetry";
+        const string beta = "/api/projects/beta/environments/stage-id/telemetry";
+        using var viewer = Client(factory, Invite(factory, "telemetry.viewer",
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
+        using var admin = Client(factory, Invite(factory, "telemetry.admin",
+            new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))));
+
+        using var ownMetrics = await viewer.GetAsync(alpha + "/metrics/names");
+        Assert.Equal(HttpStatusCode.OK, ownMetrics.StatusCode);
+        using var foreignMetrics = await viewer.GetAsync(beta + "/metrics/names");
+        Assert.Equal(HttpStatusCode.Forbidden, foreignMetrics.StatusCode);
+        using var viewerTokens = await viewer.GetAsync(alpha + "/tokens");
+        Assert.Equal(HttpStatusCode.Forbidden, viewerTokens.StatusCode);
+        using var viewerCreate = await viewer.PostAsJsonAsync(alpha + "/tokens", new { name = "collector" });
+        Assert.Equal(HttpStatusCode.Forbidden, viewerCreate.StatusCode);
+
+        using var ownTokens = await admin.GetAsync(alpha + "/tokens");
+        Assert.Equal(HttpStatusCode.OK, ownTokens.StatusCode);
+        using var created = await admin.PostAsJsonAsync(alpha + "/tokens", new { name = "collector" });
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        using var foreignTokens = await admin.GetAsync(beta + "/tokens");
+        Assert.Equal(HttpStatusCode.Forbidden, foreignTokens.StatusCode);
+        using var foreignCreate = await admin.PostAsJsonAsync(beta + "/tokens", new { name = "collector" });
+        Assert.Equal(HttpStatusCode.Forbidden, foreignCreate.StatusCode);
+    }
+
     private HttpRequestMessage OrphanFolderDelete() => new(HttpMethod.Delete, "/api/tasks/orphan-folder")
     {
         Content = JsonContent.Create(new { watchPath = ProjectPath("alpha"), lane = TaskStates.Archive, folder = "no-such-folder" }),
