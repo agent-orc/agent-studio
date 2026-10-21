@@ -590,7 +590,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     [Fact]
     public async Task UnworkedCardWithNoCoreRun_BouncesToReady_NotArchive()
     {
-        // ASS-693 / ASS-716: an epic decomposition placed sub-tasks directly in
+        // ASS-693 / ASS-716: a planning run placed follow-up tasks directly in
         // 4-auto-review. A card that never ran a core agent run (no
         // cli-output.log) has nothing to review; left there, a sweep wiped it to
         // 7-archive unworked. The sweep-guard bounces it to 2-ready instead -

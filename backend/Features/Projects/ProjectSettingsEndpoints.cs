@@ -282,12 +282,6 @@ public static class ProjectSettingsEndpoints
                     codingEmergencyLimitSource = defaults.ResolveCodingEmergencyLimit(kv.Key).Source,
                     chatMetadataEnabled = kv.Value.ChatMetadataEnabled,
                     orchestratorThinkingLevel = kv.Value.OrchestratorThinkingLevel,
-                    // Epic decomposition (planning) run knobs (way 3): null
-                    // model means "use the epic card's own model"; subTasksToReady
-                    // null/false lands generated sub-tasks in 0-backlog.
-                    epicPlanningModel = kv.Value.EpicPlanningModel,
-                    epicPlanningThinkingLevel = kv.Value.EpicPlanningThinkingLevel,
-                    epicSubTasksToReady = kv.Value.EpicSubTasksToReady ?? false,
                     intakeEnabled = kv.Value.IntakeEnabled,
                     autonomyLevel = kv.Value.AutonomyLevel,
                     waitOnQuotaEnabled = kv.Value.WaitOnQuotaEnabled,
@@ -1322,18 +1316,6 @@ public static class ProjectSettingsEndpoints
             var resolved = defaults.ResolveCodingEmergencyLimit(projectName);
             return Results.Ok(new { codingEmergencyLimitSeconds = request.Seconds,
                 effectiveSeconds = resolved.Seconds, source = resolved.Source });
-        });
-
-        // Epic decomposition (planning) run knobs (way 3): the model that
-        // authors the sub-task list and whether generated sub-tasks land in
-        // 2-ready instead of 0-backlog. Null fields leave that knob untouched.
-        app.MapPut("/api/projects/{projectName}/epic-planning", (string projectName, SetEpicPlanningRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
-        {
-            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
-            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
-
-            settings.SetEpicPlanning(projectName, req.Model, req.ThinkingLevel, req.SubTasksToReady);
-            return Results.Ok(settings.Get(projectName));
         });
 
         // ADR-0026: per-project autonomy slider for the orchestrator-prep

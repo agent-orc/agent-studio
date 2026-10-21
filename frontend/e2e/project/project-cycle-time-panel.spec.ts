@@ -160,7 +160,7 @@ function payload(window: string) {
     since: window === 'all' ? null : '2026-08-16T12:00:00Z',
     coverage: {
       tasksInProject: n + 3, tasksTerminal: n + 1, tasksInWindow: n,
-      excludedNoCompletionTimestamp: 1, excludedInFlight: 2, excludedEpics: 0,
+      excludedNoCompletionTimestamp: 1, excludedInFlight: 2,
       tasksWithoutLedger: 0, tasksWithLaneEntryCompletion: 0,
       reAcceptanceArtefactsInWindow: 1,
     },

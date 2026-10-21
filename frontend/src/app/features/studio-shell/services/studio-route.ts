@@ -21,11 +21,9 @@ export type StudioRoute =
   /** Retired Chat History tab; the app redirects it to the sidebar Chats panel. */
   | { kind: 'chat-history' }
   | { kind: 'hub'; projectSlug: string; section: string; page: string | null; folder: string | null }
-  /** `legacy` marks a retired Epics URL that the app rewrites to the Dossiers URL. */
   | { kind: 'workbenches'; projectSlug: string | null; legacy?: true }
   | { kind: 'workbench'; projectSlug: string; workbenchId: string }
   | { kind: 'task'; reference: string; tab: TaskDetailRouteTab; inspector: TaskInspectorRouteTab }
-  | { kind: 'epic'; reference: string }
   | { kind: 'workspace-settings'; section: string; detail: string | null }
   | { kind: 'deployment-dashboard' };
 
@@ -61,9 +59,6 @@ export function parseStudioRoute(hash: string): StudioRoute | null {
   }
   if (segments.length === 2 && segments[0] === 'workspace' && segments[1] === 'deployments') {
     return { kind: 'deployment-dashboard' };
-  }
-  if (segments.length === 2 && segments[0] === 'epics' && segments[1]) {
-    return { kind: 'epic', reference: segments[1] };
   }
   if (segments.length === 2 && segments[0] === 'tasks' && segments[1]) {
     const [viewTab, viewInspector] = (query.get('view') ?? '').split(':', 2);
@@ -137,8 +132,6 @@ export function studioRouteForTab(
         : '/workbenches';
     case 'task':
       return publicTaskReference ? `/tasks/${encodeURIComponent(publicTaskReference)}` : null;
-    case 'epic':
-      return `/epics/${encodeURIComponent(publicTaskReference || tab.epicKey)}`;
     case 'workspace-settings':
       return null;
     case 'deployment-dashboard':

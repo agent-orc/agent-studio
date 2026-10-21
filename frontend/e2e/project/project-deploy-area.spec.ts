@@ -40,7 +40,7 @@ interface DeployMocks {
   pipelineDefinition: Answer;
   health?: Answer;
   /** POST approve, reject, or cancel; records each call. */
-  act?: (action: string, deploymentId: string) => Answer;
+  act?: (action: string, deploymentId: string, body?: unknown) => Answer;
 }
 
 const json = (body: unknown, status = 200) => ({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -122,9 +122,10 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
     const id = route.request().url().split('/').at(-2)!;
     return deploy.deployments === MISSING ? answer(route, MISSING) : answer(route, { deploymentId: id, lines: deploymentLogFixture(id) });
   });
-  await page.route(new RegExp(`${DEPLOY}/deployments/[^/]+/(approve|reject|cancel)$`), route => {
+  await page.route(new RegExp(`${DEPLOY}/deployments/[^/]+/(approve|reject|cancel|intervention)$`), route => {
     const [id, action] = route.request().url().split('/').slice(-2);
-    return answer(route, route.request().method() === 'POST' && deploy.act ? deploy.act(action, id) : MISSING);
+    return answer(route, route.request().method() === 'POST' && deploy.act
+      ? deploy.act(action, id, route.request().postDataJSON()) : MISSING);
   });
   await page.route(`**/api/projects/${PROJECT}/pipeline-definition`, route => answer(route, deploy.pipelineDefinition));
 }
@@ -155,6 +156,66 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('shows guided failure on the environment card and sends a reasoned skip', async ({ page }) => {
+    const deployments = deployDeploymentsFixture().map(item => item.id === 'run-b-stage' ? {
+      ...item, state: 'waiting-for-intervention', createdAtUtc: new Date(DEPLOY_FIXTURE_NOW).toISOString(),
+      startedAtUtc: new Date(DEPLOY_FIXTURE_NOW).toISOString(), finishedAtUtc: null,
+      failedStep: 'health', interventionExpiresAtUtc: new Date(DEPLOY_FIXTURE_NOW + 3_600_000).toISOString(),
+    } : item);
+    const status = deployStatusFixture();
+    status[0] = { ...status[0], currentDeployment: deployments.find(item => item.id === 'run-b-stage')!,
+      intervention: { deploymentId: 'run-b-stage', failedStep: 'health',
+        expiresAtUtc: new Date(DEPLOY_FIXTURE_NOW + 3_600_000).toISOString(), decision: null, decidedBy: null } };
+    const decisions: unknown[] = [];
+    const mocks = fullMocks({ status, deployments, act: (action, id, body) => {
+      expect(action).toBe('intervention');
+      expect(id).toBe('run-b-stage');
+      decisions.push(body);
+      return deployments.find(item => item.id === id)!;
+    } });
+    await openDeploy(page, mocks);
+    const staging = page.getByRole('article', { name: 'Staging' });
+    await expect(staging.getByTestId('deploy-environment-last-run')).toContainText('waiting for intervention');
+    await expect(staging.getByTestId('deploy-environment-intervention')).toContainText('Waiting for intervention');
+    await staging.getByTestId('deploy-environment-open-run').click();
+    const drawer = page.getByTestId('deploy-run-drawer');
+    await expect(drawer.getByTestId('deploy-run-intervention')).toContainText('Health check failed');
+    await expect(drawer.getByTestId('deploy-run-skip')).toBeDisabled();
+    await setTheme(page, 'light');
+    await capture(page, 'guided-failure-light');
+    await setTheme(page, 'dark');
+    await capture(page, 'guided-failure-dark');
+    await drawer.getByTestId('deploy-run-skip-reason').fill('Known optional check');
+    await drawer.getByTestId('deploy-run-skip').click();
+    await expect.poll(() => decisions.length).toBe(1);
+    expect(decisions).toEqual([{ action: 'skip', reason: 'Known optional check' }]);
+  });
+
+  test('opens an older pending intervention while a newer run is the last run', async ({ page }) => {
+    const deployments = deployDeploymentsFixture().map(item => item.id === 'run-b-stage' ? {
+      ...item, state: 'waiting-for-intervention', finishedAtUtc: null, failedStep: 'health',
+      interventionExpiresAtUtc: new Date(DEPLOY_FIXTURE_NOW + 3_600_000).toISOString(),
+    } : item);
+    const status = deployStatusFixture();
+    status[0] = { ...status[0], intervention: { deploymentId: 'run-b-stage', failedStep: 'health',
+      expiresAtUtc: new Date(DEPLOY_FIXTURE_NOW + 3_600_000).toISOString(), decision: null, decidedBy: null } };
+    await openDeploy(page, fullMocks({ status, deployments }));
+
+    const staging = page.getByRole('article', { name: 'Staging' });
+    await expect(staging.getByTestId('deploy-environment-last-run')).toContainText('Redeploy cancelled');
+    await expect(staging.getByTestId('deploy-environment-intervention')).toContainText('Waiting for intervention');
+    await setTheme(page, 'light');
+    await capture(page, 'older-guided-card-light');
+    await setTheme(page, 'dark');
+    await capture(page, 'older-guided-card-dark');
+    await staging.getByTestId('deploy-environment-intervention').click();
+    await expect(page.getByTestId('deploy-run-drawer')).toContainText('Health check failed');
+    await setTheme(page, 'light');
+    await capture(page, 'older-guided-failure-light');
+    await setTheme(page, 'dark');
+    await capture(page, 'older-guided-failure-dark');
+  });
+
   test('works with partial data: AGT-3176 environments only, AGT-3201 and AGT-3221 routes missing', async ({ page }) => {
     await openDeploy(page, { environments: deployEnvironmentsFixture(), ...HOST_ONLY, pipelineDefinition: MISSING });
     const area = page.getByTestId('project-deploy-area');
@@ -195,6 +256,24 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(production.getByRole('button', { name: 'Open last run for Production' })).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(production.getByRole('button', { name: 'Review the pending approval for Production' })).toBeFocused();
+  });
+
+  test('status-card actions open runs beyond the loaded deployment page', async ({ page }) => {
+    const sample = deployDeploymentsFixture()[0];
+    const runs = Array.from({ length: 30 }, (_, index) => ({
+      ...sample, id: `other-run-${index}`, environmentId: 'other',
+      createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    }));
+    await openDeploy(page, fullMocks({ deployments: runs }));
+    const drawer = page.getByTestId('deploy-run-drawer');
+
+    await page.getByRole('button', { name: 'Open last run for Staging' }).click();
+    await expect(drawer).toContainText('Redeploy to Staging');
+    await drawer.getByTestId('sidesheet-close').click();
+    await page.getByRole('button', { name: 'Review the pending approval for Production' }).click();
+    await expect(drawer).toContainText('Deploy to Production');
+    await expect(drawer.getByTestId('deploy-run-approve')).toBeVisible();
+    await capture(page, 'deploy-status-run-outside-page-1280-light');
   });
 
   test('history filters AGT-3201 runs; the drawer shows steps with their log and acts on a waiting approval', async ({ page }) => {
