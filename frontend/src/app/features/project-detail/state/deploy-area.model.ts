@@ -301,7 +301,7 @@ function hostReportOf(view: CardBase['view']): ProjectEnvironments['environments
 
 function deployedArtifactOf(view: CardBase['view'], status: EnvironmentStatus | null | undefined): string | null {
   const releaseDigest = status?.currentRelease?.artifactDigests[0] ?? null;
-  return status?.intervention?.decision === 'skip'
+  return status?.intervention
     ? view?.history.find(row => digestOf(row.artifact) === digestOf(releaseDigest ?? ''))?.artifact ?? releaseDigest
     : view?.deployedArtifact ?? releaseDigest;
 }

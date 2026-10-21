@@ -29,6 +29,7 @@ import {
   RELEASE_3,
   deployDeploymentsFixture,
   deployEnvironmentsFixture,
+  deployReleasesFixture,
   deployRunsFixture,
   deploySourcesFixture,
   deployStatusFixture,
