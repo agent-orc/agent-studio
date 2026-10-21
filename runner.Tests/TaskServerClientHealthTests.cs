@@ -275,7 +275,7 @@ public class TaskServerClientHealthTests
     public async Task Probe_reports_a_reason_when_the_server_is_unreachable()
     {
         // Port 1 is reserved and never listening: connect fails fast (refused).
-        var (options, _, _, _) = RunnerOptions.Parse(["--health-check", "--server", "http://127.0.0.1:1"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--health-check", "--server", "http://127.0.0.1:1"]);
         using var client = new TaskServerClient(options);
 
         var reason = await client.ProbeHealthAsync(CancellationToken.None);
@@ -286,7 +286,7 @@ public class TaskServerClientHealthTests
     [Fact]
     public async Task Probe_propagates_a_real_shutdown_rather_than_masking_it_as_a_health_failure()
     {
-        var (options, _, _, _) = RunnerOptions.Parse(["--health-check", "--server", "http://127.0.0.1:1"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--health-check", "--server", "http://127.0.0.1:1"]);
         using var client = new TaskServerClient(options);
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync();
@@ -343,7 +343,7 @@ public class TaskServerClientHealthTests
                 """),
         });
         using var http = new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1") };
-        var (options, _, _, _) = RunnerOptions.Parse(
+        var (options, _, _, _) = RunnerTestOptions.Parse(
             ["--poll", "--server", "http://127.0.0.1", "--runner-id", "runner-v1", "--hostname", "host-a", "--max-parallelism", "2", "--state-dir", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))]);
         using var client = new TaskServerClient(
             http,
@@ -380,7 +380,7 @@ public class TaskServerClientHealthTests
                 """),
         });
         using var http = new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1") };
-        var (options, _, _, _) = RunnerOptions.Parse(
+        var (options, _, _, _) = RunnerTestOptions.Parse(
             ["--poll", "--server", "http://127.0.0.1", "--runner-id", "runner-v1", "--hostname", "host-a", "--max-parallelism", "2", "--state-dir", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))]);
         using var client = new TaskServerClient(
             http,
@@ -483,6 +483,13 @@ public class TaskServerClientHealthTests
             cache.Save(new RuntimeCapacitySettingsDto(
                 cachedHost, 5, 85, "conservative", cachedVersion, at), at);
             var warnings = new List<string>();
+            if (cachedHost == "host-b")
+                Assert.Null(cache.Load("host-a", warnings.Add));
+            else
+                Assert.NotNull(cache.Load("host-a", warnings.Add));
+            Assert.True(File.Exists(Path.Combine(state.FullName, "configuration", "runtime-capacity.json")));
+            Assert.Equal(cachedHost == "host-b" ? 1 : 0, warnings.Count);
+            warnings.Clear();
             var handler = new RecordingHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
                 Content = new StringContent("""

@@ -23,7 +23,7 @@ internal static class TempRootBootstrap
         TestTempRoot.Redirect();
         // Never inherit the live service's state root into an agent-runner testhost.
         Environment.SetEnvironmentVariable(RunnerStateRootGuard.TestRootVariable, Path.GetTempPath());
-        Environment.SetEnvironmentVariable("RUNNER_STATE_DIR", Path.Combine(Path.GetTempPath(), "runner-test-state"));
+        Environment.SetEnvironmentVariable("RUNNER_STATE_DIR", null);
         Environment.SetEnvironmentVariable("AGENT_HOST_STATE_DIR", null);
     }
 }

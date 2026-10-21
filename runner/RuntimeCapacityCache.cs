@@ -36,7 +36,6 @@ internal sealed class RuntimeCapacityCache
                     Json);
                 if (IsValid(entry, hostId)) return entry;
                 warn?.Invoke("Discarding runtime capacity cache with a foreign host or invalid server version.");
-                File.Delete(_path);
                 return null;
             }
             catch (Exception exception) when (

@@ -484,10 +484,11 @@ public sealed class RunnerOptions
                 ? maxParallelismValue
                 : EnvInt("RUNNER_MAX_PARALLELISM", 2);
 
-        var stateDir = Val("state-dir", "RUNNER_STATE_DIR").Trim();
-        if (stateDir.Length == 0 && !help)
-            throw new ArgumentException("A runner state root is required. Set RUNNER_STATE_DIR or --state-dir.");
-        if (stateDir.Length > 0) RunnerStateRootGuard.Validate(stateDir);
+        var stateDir = Val("state-dir", "RUNNER_STATE_DIR",
+            Path.Combine(Val("workdir", "RUNNER_WORKDIR", Path.Combine(Path.GetTempPath(), "agent-runner-work")), ".runner-state")).Trim();
+        RunnerStateRootGuard.Validate(stateDir, isImplicit: !overrides.ContainsKey("state-dir")
+            && string.IsNullOrWhiteSpace(Env("RUNNER_STATE_DIR")),
+            testRoot: InjectedEnvironment.Value is null ? null : Variable(RunnerStateRootGuard.TestRootVariable) ?? string.Empty);
 
         var options = new RunnerOptions
         {
