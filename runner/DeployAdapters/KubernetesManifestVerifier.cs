@@ -17,7 +17,7 @@ internal static class KubernetesManifestVerifier
         string ns, string source, string workload, string image, CancellationToken ct)
     {
         var parsed = await commands.RunAsync("kubectl", ["--kubeconfig", kubeconfig, "--namespace", ns,
-            "apply", "--dry-run=client", "--validate=false", "-o", "json", "-f", source], null, ct);
+            "apply", "--dry-run=client", "--validate=false", "-o", "json", "--recursive", "-f", source], null, ct);
         ValidateObjects(ParseObjects(parsed.Output), ns, workload, image);
     }
 

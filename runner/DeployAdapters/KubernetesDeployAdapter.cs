@@ -35,14 +35,14 @@ public sealed class KubernetesDeployAdapter(IDeploySecretResolver secrets, IDepl
             return;
         }
 
-        var manifestFiles = Directory.Exists(content)
+        // kubectl reads the same files recursively, so every replaced manifest is also applied.
+        var manifestFiles = (Directory.Exists(content)
             ? Directory.EnumerateFiles(content, "*", SearchOption.AllDirectories)
-                .Where(file => file.EndsWith(".yaml", StringComparison.Ordinal)
-                    || file.EndsWith(".yml", StringComparison.Ordinal)).ToArray()
-            : [content];
-        if (manifestFiles.Length == 0 || manifestFiles.Any(file =>
-                !file.EndsWith(".yaml", StringComparison.Ordinal) && !file.EndsWith(".yml", StringComparison.Ordinal)))
+            : [content]).Where(IsYaml).ToArray();
+        if (manifestFiles.Length == 0)
             throw new InvalidDataException("Manifest package needs YAML files.");
+        if (Directory.Exists(content) && Directory.EnumerateFiles(content, "*.json", SearchOption.AllDirectories).Any())
+            throw new InvalidDataException("Manifest package must not mix JSON manifests with YAML.");
         var replaced = 0;
         foreach (var file in manifestFiles)
         {
@@ -60,8 +60,11 @@ public sealed class KubernetesDeployAdapter(IDeploySecretResolver secrets, IDepl
     {
         await KubernetesManifestVerifier.VerifyAsync(commands, kubeconfig, ns, source, resource, image, ct);
         await commands.RunAsync("kubectl", ["--kubeconfig", kubeconfig, "--namespace", ns,
-            "apply", "-f", source], null, ct);
+            "apply", "--recursive", "-f", source], null, ct);
         await commands.RunAsync("kubectl", ["--kubeconfig", kubeconfig, "--namespace", ns,
             "rollout", "status", "deployment/" + resource, "--timeout=300s"], null, ct);
     }
+
+    private static bool IsYaml(string file) =>
+        file.EndsWith(".yaml", StringComparison.Ordinal) || file.EndsWith(".yml", StringComparison.Ordinal);
 }

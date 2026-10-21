@@ -217,6 +217,29 @@ public sealed class DeployTargetAdapterTests
     }
 
     [Fact]
+    public async Task Kubernetes_NestedManifestDirectoryIsVerifiedAndAppliedRecursively()
+    {
+        var (path, package) = Package("deploy/nested/app.yaml",
+            "kind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n      - image: __AGENT_STUDIO_IMAGE__\n");
+        try
+        {
+            var request = Container("kubernetes") with
+            {
+                Target = new DeployTarget("kubernetes", "web-vm", "secret://demo/staging/KUBECONFIG",
+                    Namespace: "staging", ManifestPath: "deploy", ImageResource: "web"),
+                ReleaseArtifacts = [Image, package], PackagePath = path, PackageArtifact = package,
+            };
+            var calls = new FakeCommands();
+            await Executor(new FakeSecrets(), calls).DeployAsync(request, CancellationToken.None);
+            Assert.Contains("--recursive", calls.Calls[0].Arguments);
+            Assert.Contains("--recursive", calls.Calls[1].Arguments);
+            Assert.Contains(Image, calls.ManifestContents);
+            Assert.DoesNotContain("__AGENT_STUDIO_IMAGE__", calls.ManifestContents);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public async Task Kubernetes_HelmAppliesExactlyTheVerifiedRendering()
     {
         var (path, package) = Package("chart/Chart.yaml", "name: web\n");
@@ -567,7 +590,10 @@ public sealed class DeployTargetAdapterTests
             if (executable == "gcloud" && arguments.Contains("--cred-file"))
                 CredentialJson = File.ReadAllText(arguments.Last());
             if (executable == "kubectl" && arguments.Contains("apply") && !arguments.Contains("--dry-run=client"))
-                ManifestContents = File.ReadAllText(arguments.Last());
+                ManifestContents = Directory.Exists(arguments.Last())
+                    ? string.Concat(Directory.EnumerateFiles(arguments.Last(), "*", SearchOption.AllDirectories)
+                        .Select(File.ReadAllText))
+                    : File.ReadAllText(arguments.Last());
             return Task.FromResult(new DeployCommandResult(0,
                 executable == "kubectl" && arguments.Contains("--dry-run=client") ? DryRunOutput : Output));
         }
