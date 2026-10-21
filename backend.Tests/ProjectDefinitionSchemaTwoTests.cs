@@ -386,6 +386,22 @@ public sealed class ProjectDefinitionSchemaTwoTests
     }
 
     [Theory]
+    [InlineData("LD_PRELOAD", "value: /tmp/hook.so")]
+    [InlineData("LD_LIBRARY_PATH", "value: /tmp")]
+    [InlineData("BASH_ENV", "value: /tmp/rc")]
+    [InlineData("PATH", "value: /tmp/bin")]
+    [InlineData("AGENT_STUDIO_ENVIRONMENT", "value: production")]
+    [InlineData("LD_AUDIT", "secret: AUDIT_HOOK")]
+    public void Loader_and_shell_variables_are_reserved_for_the_host(string name, string source)
+    {
+        var yaml = Replace(Valid, "  - name: LOG_LEVEL\n    value: info\n", $"  - name: {name}\n    {source}\n");
+
+        var result = ProjectDefinitionReader.Parse(yaml);
+
+        Assert.Contains(result.Issues, issue => issue.Code == "variable-name-reserved" && issue.Path == "variables[0].name");
+    }
+
+    [Theory]
     [InlineData("    secret: DATABASE_URL\n", "    secret: \"postgres://db/app\"\n", "variable-secret-name-invalid")]
     [InlineData("    secret: DATABASE_URL\n", "    secret: DATABASE_URL\n    value: x\n", "variable-source-invalid")]
     [InlineData("    secret: DATABASE_URL\n    environments: [production]", "    secret: DATABASE_URL\n    environments: [preview]", "variable-environment-unknown")]

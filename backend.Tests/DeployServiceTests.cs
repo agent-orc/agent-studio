@@ -372,6 +372,30 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Concurrent_runbook_and_deployment_audit_appends_preserve_every_event()
+    {
+        var (_, _, store) = Build();
+        var at = _clock.GetUtcNow().UtcDateTime;
+        const int perService = 200;
+        using var start = new Barrier(2);
+        // The deployment and runbook services hold independent project gates and share this trail.
+        Task Append(string action) => Task.Run(() =>
+        {
+            start.SignalAndWait();
+            for (var i = 0; i < perService; i++)
+                store.AppendAudit("demo", [new DeployAuditEntry(at, "host", action, null, $"{action}-{i}", "stage",
+                    new string('x', 512))]);
+        });
+
+        await Task.WhenAll(Append("deployment-succeeded"), Append("runbook-succeeded"));
+
+        var audit = store.ReadAudit("demo", int.MaxValue);
+        Assert.Equal(perService, audit.Count(entry => entry.Action == "deployment-succeeded"));
+        Assert.Equal(perService, audit.Count(entry => entry.Action == "runbook-succeeded"));
+        Assert.Equal(2 * perService, audit.Select(entry => entry.DeploymentId).Distinct().Count());
+    }
+
+    [Fact]
     public void EveryChange_LeavesAnAuditEntry()
     {
         var (deploy, environments, _) = Build();

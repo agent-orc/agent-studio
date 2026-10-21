@@ -117,4 +117,76 @@ public sealed class RunbookHostExecutorTests
             Directory.Delete(root, true);
         }
     }
+
+    [Fact]
+    public async Task Host_cancellation_kills_a_child_that_started_a_new_session()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "runbook-session-" + Guid.NewGuid().ToString("N"));
+        var scripts = Path.Combine(root, "scripts", "demo");
+        Directory.CreateDirectory(scripts);
+        var ready = Path.Combine(root, "ready");
+        var marker = Path.Combine(root, "child-wrote");
+        // The detached child leaves the script's session and process group and keeps stdout open.
+        File.WriteAllText(Path.Combine(scripts, "backup.sh"),
+            "setsid sh -c 'while :; do printf x >> \"$MARKER\"; sleep 0.05; done' &\n"
+            + "while [ ! -s \"$MARKER\" ]; do sleep 0.05; done\nprintf 'started' > \"$READY\"\nexit 0\n");
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var execution = RunbookHostExecutor.ExecuteAsync("demo", "stage", "8081", ["backup"],
+                new Dictionary<string, string> { ["READY"] = ready, ["MARKER"] = marker },
+                new Dictionary<string, string>(), [], Path.Combine(root, "scripts"), root, cancellation.Token);
+            for (var attempt = 0; attempt < 250 && !File.Exists(ready); attempt++)
+                await Task.Delay(20);
+            Assert.True(File.Exists(ready), "The script did not start its detached child.");
+            await Task.Delay(200);
+            Assert.False(execution.IsCompleted, "The detached child did not keep an output pipe open.");
+
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution.WaitAsync(TimeSpan.FromSeconds(6)));
+            var written = new FileInfo(marker).Length;
+            await Task.Delay(500);
+            Assert.Equal(written, new FileInfo(marker).Length);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Theory]
+    [InlineData("LD_PRELOAD")]
+    [InlineData("BASH_ENV")]
+    [InlineData("PATH")]
+    public async Task Refuses_loader_and_shell_variables_at_the_host_boundary(string name)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "runbook-loader-" + Guid.NewGuid().ToString("N"));
+        var scripts = Path.Combine(root, "scripts", "demo");
+        Directory.CreateDirectory(scripts);
+        var marker = Path.Combine(root, "started");
+        File.WriteAllText(Path.Combine(scripts, "backup.sh"), "printf 'started' > \"$MARKER\"\n");
+        File.WriteAllText(Path.Combine(root, "ld-preload"), "/tmp/hook.so");
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => RunbookHostExecutor.ExecuteAsync(
+                "demo", "stage", "8081", ["backup"],
+                new Dictionary<string, string> { [name] = "/tmp/hook", ["MARKER"] = marker },
+                new Dictionary<string, string>(), [], Path.Combine(root, "scripts"), root, CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => RunbookHostExecutor.ExecuteAsync(
+                "demo", "stage", "8081", ["backup"], new Dictionary<string, string> { ["MARKER"] = marker },
+                new Dictionary<string, string> { [name] = "ld-preload" }, [], Path.Combine(root, "scripts"), root,
+                CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => RunbookHostExecutor.ExecuteAsync(
+                "demo", "stage", "8081", ["backup"], new Dictionary<string, string> { ["MARKER"] = marker },
+                new Dictionary<string, string>(), ["ld-preload"], Path.Combine(root, "scripts"), root,
+                CancellationToken.None));
+            Assert.False(File.Exists(marker), "A script started with a host-controlled variable.");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
 }

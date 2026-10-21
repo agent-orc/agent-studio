@@ -100,6 +100,26 @@ public static class ProjectDeploymentVocabulary
     public const string SecretReferencePattern = "^[A-Za-z][A-Za-z0-9._-]{0,63}$";
 
     /// <summary>
+    /// Environment names that steer the dynamic loader, the C library, or the
+    /// shell that starts an operator-installed runbook script on a deploy host,
+    /// plus the names the host sets itself. project.yml never supplies them; the
+    /// validator refuses them and the host refuses them again before it starts a
+    /// process.
+    /// </summary>
+    public static bool IsHostControlledVariable(string name)
+        => HostControlledVariablePrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.Ordinal))
+           || HostControlledVariableNames.Contains(name, StringComparer.Ordinal);
+
+    private static readonly IReadOnlyList<string> HostControlledVariablePrefixes =
+        ["AGENT_STUDIO_", "LD_", "DYLD_", "BASH_FUNC_", "MALLOC_"];
+
+    private static readonly IReadOnlyList<string> HostControlledVariableNames =
+    [
+        "PATH", "IFS", "ENV", "BASH_ENV", "SHELLOPTS", "BASHOPTS", "CDPATH", "PS4", "GLOBIGNORE",
+        "GCONV_PATH", "GLIBC_TUNABLES", "LOCPATH", "NLSPATH", "HOSTALIASES", "RESOLV_HOST_CONF",
+    ];
+
+    /// <summary>
     /// The P1 base directory of every SSH destination. A later executor hands
     /// these paths to the remote shell and to <c>rsync --delete</c>, so they stay
     /// strictly below this base and use a shell-inert alphabet.
@@ -529,6 +549,9 @@ public static partial class ProjectDefinitionValidator
             var path = $"variables[{i}]";
             if (!EnvironmentName().IsMatch(variable.Name))
                 issues.Add(new($"{path}.name", "variable-name-invalid", "Variable names must be portable shell identifiers."));
+            else if (ProjectDeploymentVocabulary.IsHostControlledVariable(variable.Name))
+                issues.Add(new($"{path}.name", "variable-name-reserved",
+                    "Variables such as PATH, LD_PRELOAD, BASH_ENV, or AGENT_STUDIO_* steer the deploy host loader or shell and are set by the host only."));
             if ((variable.Value is null) == (variable.Secret is null))
                 issues.Add(new(path, "variable-source-invalid", "A variable has either a value or a secret name, not both."));
             if (variable.Secret is not null && !SecretReference().IsMatch(variable.Secret))
