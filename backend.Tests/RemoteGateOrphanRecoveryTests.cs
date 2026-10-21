@@ -354,7 +354,7 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
     }
 
     [Fact]
-    public async Task Startup_sweep_failure_does_not_disable_later_recovery()
+    public async Task Failed_sweep_does_not_disable_later_recovery()
     {
         var previous = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('b', 32));
         previous.Record(new string('c', 32), "gate-a", "/srv/gates");
@@ -376,12 +376,11 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
         var service = new RemoteGateOrphanSweepService(transport, sharded,
             NullLogger<RemoteGateOrphanSweepService>.Instance, _clock);
 
-        await service.StartAsync(CancellationToken.None);
-        Assert.True(SpinWait.SpinUntil(() => attempts == 1, TimeSpan.FromSeconds(5)));
+        await service.SweepAsync(CancellationToken.None);
+        Assert.Equal(1, attempts);
         Assert.Single(current.ReadAll());
-        _clock.Advance(TimeSpan.FromMinutes(1));
-        Assert.True(SpinWait.SpinUntil(() => current.ReadAll().Count == 0, TimeSpan.FromSeconds(5)));
-        await service.StopAsync(CancellationToken.None);
+        await service.SweepAsync(CancellationToken.None);
+        Assert.Empty(current.ReadAll());
         Assert.True(attempts >= 2);
     }
 
@@ -405,6 +404,39 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
         }).Build();
         var registry = RemoteGateTransport.CreateDefaultRegistrySafe(_clock, config,
             NullLogger<RemoteGateTransport>.Instance, dataDirectory: blocked);
+        Assert.Empty(registry.ReadAll());
+        Assert.Matches("^[0-9a-f]{32}$", registry.InstallationId);
+    }
+
+    [Fact]
+    public void Corrupt_installation_id_disables_recovery_without_preventing_host_start()
+    {
+        var data = Path.Combine(_root, "data");
+        var installation = Path.Combine(_root, "installation");
+        var config = new ConfigurationBuilder().Build();
+        RemoteGateTransport.CreateDefaultRegistry(_clock, config, installation, data);
+        var idFile = Assert.Single(Directory.EnumerateFiles(data, "installation-id", SearchOption.AllDirectories));
+        File.WriteAllText(idFile, "");
+
+        var registry = RemoteGateTransport.CreateDefaultRegistrySafe(_clock, config,
+            NullLogger<RemoteGateTransport>.Instance, installation, data);
+
+        Assert.Empty(registry.ReadAll());
+        Assert.Matches("^[0-9a-f]{32}$", registry.InstallationId);
+        Assert.NotEqual(File.ReadAllText(idFile), registry.InstallationId);
+    }
+
+    [Fact]
+    public void Invalid_configured_installation_id_disables_recovery_without_preventing_host_start()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["RemoteGate:InstallationId"] = "invalid id",
+        }).Build();
+
+        var registry = RemoteGateTransport.CreateDefaultRegistrySafe(_clock, config,
+            NullLogger<RemoteGateTransport>.Instance, _root, Path.Combine(_root, "data"));
+
         Assert.Empty(registry.ReadAll());
         Assert.Matches("^[0-9a-f]{32}$", registry.InstallationId);
     }

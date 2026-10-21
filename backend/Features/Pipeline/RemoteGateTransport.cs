@@ -248,27 +248,33 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         finally
         {
             _slotUsage.Released(runId);
-            if (remoteCreationAttempted)
+            try
             {
-                // Cancellation is a worker-owned marker, not an arbitrary PID
-                // kill. The worker observes it while queued or executing. An
-                // independent host timeout still bounds a broken SSH link.
-                var cleanup = CleanupCommand(remote);
-                try
+                if (remoteCreationAttempted)
                 {
-                    await Ssh(options, local, cleanup, TimeSpan.FromSeconds(50), CancellationToken.None);
-                    await Ssh(options, local, "test ! -e " + Quote(remote), TimeSpan.FromSeconds(10), CancellationToken.None);
+                    // Cancellation is a worker-owned marker, not an arbitrary PID
+                    // kill. The worker observes it while queued or executing. An
+                    // independent host timeout still bounds a broken SSH link.
+                    var cleanup = CleanupCommand(remote);
+                    try
+                    {
+                        await Ssh(options, local, cleanup, TimeSpan.FromSeconds(50), CancellationToken.None);
+                        await Ssh(options, local, "test ! -e " + Quote(remote), TimeSpan.FromSeconds(10), CancellationToken.None);
+                        _runs.Remove(runId);
+                    }
+                    catch (Exception exception)
+                    {
+                        _logger.LogWarning(exception, "remote_gate_cleanup_pending host={Host} run_id={RunId}", options.Host, runId);
+                    }
+                }
+                else if (_runs.ReadAll().Any(record => record.RunId == runId))
                     _runs.Remove(runId);
-                }
-                catch (Exception exception)
-                {
-                    _logger.LogWarning(exception, "remote_gate_cleanup_pending host={Host} run_id={RunId}", options.Host, runId);
-                }
             }
-            else if (_runs.ReadAll().Any(record => record.RunId == runId))
-                _runs.Remove(runId);
-            LiveRuns.TryRemove(_runs.ProcessInstance + ":" + runId, out _);
-            DeleteLocalRunFolder(local, runId);
+            finally
+            {
+                LiveRuns.TryRemove(_runs.ProcessInstance + ":" + runId, out _);
+                DeleteLocalRunFolder(local, runId);
+            }
         }
     }
 
@@ -339,7 +345,8 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         string? installationDirectory = null, string? dataDirectory = null)
     {
         try { return CreateDefaultRegistry(time, configuration, installationDirectory, dataDirectory); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or InvalidOperationException or InvalidDataException)
         {
             logger.LogWarning(exception, "remote_gate_registry_unavailable");
             return RemoteGateRunRegistry.Disabled(time);
@@ -367,6 +374,9 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                 installationId = AgentStudio.Management.InstallationConnectivityManifest
                     .Parse(File.ReadAllText(manifestPath)).InstallationId;
         }
+        if (installationId is not null
+            && !Regex.IsMatch(installationId, "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"))
+            throw new InvalidDataException("Remote gate installation id is invalid.");
         return new RemoteGateRunRegistry(Path.Combine(root, "agentstudio", "remote-gate-runs", scope), time,
             installationId);
     }

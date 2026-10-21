@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace AgentStudio.Pipeline;
 
@@ -105,31 +107,50 @@ internal sealed class RemoteGateRunRegistry
         var path = Path.Combine(root, "installation-id");
         lock (Locks.GetOrAdd(path, _ => new object()))
         {
-            if (File.Exists(path))
-                return ReadInstallationId(path);
-            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            // File.Move does not provide a cross-process compare-and-publish
+            // operation on every platform. Serialize publishers by location.
+            var mutexName = "AgentStudio.RemoteGate." + Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(path))));
+            using var mutex = new Mutex(false, mutexName);
+            try { mutex.WaitOne(); }
+            catch (AbandonedMutexException exception)
+            {
+                AgentStudio.Diagnostics.SilentCatch.Note(exception, "remote gate installation id publisher exited");
+            }
             try
             {
-                using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
-                    FileShare.None))
-                using (var writer = new StreamWriter(stream))
-                {
-                    writer.Write(Guid.NewGuid().ToString("N"));
-                    writer.Flush();
-                    stream.Flush(flushToDisk: true);
-                }
-                try { File.Move(temporary, path); }
-                catch (IOException exception) when (File.Exists(path))
-                {
-                    // Another process published first. Never replace its id.
-                    AgentStudio.Diagnostics.SilentCatch.Note(exception, "remote gate installation id published by another process");
-                }
-                return ReadInstallationId(path);
+                return LoadOrCreateInstallationIdUnderLock(path);
             }
-            finally
+            finally { mutex.ReleaseMutex(); }
+        }
+    }
+
+    private static string LoadOrCreateInstallationIdUnderLock(string path)
+    {
+        if (File.Exists(path))
+            return ReadInstallationId(path);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
+                FileShare.None))
+            using (var writer = new StreamWriter(stream))
             {
-                if (File.Exists(temporary)) File.Delete(temporary);
+                writer.Write(Guid.NewGuid().ToString("N"));
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
             }
+            try { File.Move(temporary, path); }
+            catch (IOException exception) when (File.Exists(path))
+            {
+                // Another process published first. Never replace its id.
+                AgentStudio.Diagnostics.SilentCatch.Note(exception, "remote gate installation id published by another process");
+            }
+            return ReadInstallationId(path);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
         }
     }
 
