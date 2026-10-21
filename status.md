@@ -1,5 +1,10 @@
 # AGT-3238 networked first-run and repository authority status
 
+## Refreshed integration delivery, 21 October 2026
+
+- Result SHA before this status update: `65223504345702178209ccf2ec4f89278c51b996`. The failed `merge-into-develop` stage conflicted only in `status.md`. Recovery merge `7f4799db97372b55653ada548040e983a3cedc1a` preserved reviewed delivery `91d42bcbc6c2b6a7c3a2125c0e9a7ccbacdafa70` as its first parent and fetched develop `8e3a6a8601e71915f8a76e5c966a677f37465844` as its second parent. Both sets of status entries remain; no delivery commit was rebased, squashed, split, dropped, or combined. [Integration recovery evidence](/home/agent/runner-work/tasks/AGT-3238/results/integration-recovery.txt) records the failed stage and resolution.
+- Verification on `652235043`: the solution build passed with zero errors; the five affected backend classes passed 85 tests; the guard filter passed 98 backend tests and found no matching tests in the other seven .NET test projects; the two focused frontend suites passed 22 tests; `npm --prefix frontend run lint` passed; and the networked monolith Playwright spec passed one test with a screenshot in the task results directory. `git diff --check` and both ancestry checks passed. No implementation or documentation changes were needed beyond the preserved delivery.
+
 ## Integration recovery, 21 October 2026
 
 - Result implementation and integration SHA before this status entry: `7f4799db97372b55653ada548040e983a3cedc1a`. It merges reviewed delivery `91d42bcbc6c2b6a7c3a2125c0e9a7ccbacdafa70` with fetched `origin/develop` at `8e3a6a8601e71915f8a76e5c966a677f37465844`. The failed `merge-into-develop` stage had one conflict, in `status.md`; the resolution retains both the AGT-3238 entries and the newer develop entries. Both parents remain ancestors, with no rebase, squash, split, or dropped delivery commit. A final fetch and merge found develop already up to date. Evidence: `/home/agent/runner-work/tasks/AGT-3238/results/integration-recovery.txt`.
