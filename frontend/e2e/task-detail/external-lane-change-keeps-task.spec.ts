@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { api, BACKEND } from '../helpers/api';
+import { api } from '../helpers/api';
 import { createJob, moveJob } from '../helpers/jobs';
 
 interface WatchPath { name: string; path: string; rootPath: string; }
@@ -7,14 +7,12 @@ interface WatchPath { name: string; path: string; rootPath: string; }
 async function getFirstWatchPath(): Promise<WatchPath> {
   const paths = await api<WatchPath[]>('/api/watch-paths?includeFixtures=true');
   if (!paths.length) throw new Error('No watch paths configured');
-  return paths[0];
+  return paths.find(path => /agent studio worktree|playwright/i.test(path.name)) ?? paths[0];
 }
 
 async function deleteJob(jobId: string, watchPath: string): Promise<void> {
-  await fetch(`${BACKEND}/api/tasks/${encodeURIComponent(jobId)}?watchPath=${encodeURIComponent(watchPath)}`, {
-    method: 'DELETE',
-    headers: { 'x-client-id': 'local-default' },
-  });
+  await api(`/api/tasks/${encodeURIComponent(jobId)}?watchPath=${encodeURIComponent(watchPath)}`,
+    { method: 'DELETE' });
 }
 
 function uid(suffix: string) {
