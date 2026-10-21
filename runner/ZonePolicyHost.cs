@@ -89,7 +89,7 @@ public enum ZoneProbeOutcome
     ProbeError,
 }
 
-public sealed record ZoneProbeObservation(ZoneProbeOutcome Outcome, string Detail);
+public sealed record ZoneProbeObservation(ZoneProbeOutcome Outcome, string Detail, bool LocalDenyObserved = false);
 
 /// <summary>What the verifier needs to observe a zone network.</summary>
 public interface IZoneNetworkProbe
@@ -102,6 +102,10 @@ public interface IZoneNetworkProbe
     /// resolving names through <paramref name="dns"/> when given.
     /// </summary>
     Task<ZoneProbeObservation> ConnectAsync(string network, string? dns, string address, int port, CancellationToken ct);
+
+    /// <summary>Connect and confirm that a matching local deny rule counted the packet.</summary>
+    Task<ZoneProbeObservation> ConnectWithLocalDenyAsync(
+        string network, string address, int port, CancellationToken ct);
 
     /// <summary>Containers attached to <paramref name="network"/> that publish a host port, as "name: ports".</summary>
     Task<IReadOnlyList<string>> PublishedPortsAsync(string network, CancellationToken ct);
@@ -138,6 +142,25 @@ public sealed class DockerZoneNetworkProbe(IZoneHost host, string image, int tim
             "bash", "-c", "exec 3<>\"/dev/tcp/$0/$1\"", address, port.ToString(System.Globalization.CultureInfo.InvariantCulture),
         ]);
         return Classify(await host.RunAsync("docker", args, null, ct));
+    }
+
+    public async Task<ZoneProbeObservation> ConnectWithLocalDenyAsync(
+        string network, string address, int port, CancellationToken ct)
+    {
+        var bridge = await host.RunAsync("docker", ["network", "inspect", "--format",
+            "{{index .Options \"com.docker.network.bridge.name\"}}", network], null, ct);
+        if (!bridge.Succeeded || string.IsNullOrWhiteSpace(bridge.Output))
+            return new ZoneProbeObservation(ZoneProbeOutcome.ProbeError, $"bridge lookup failed: {FirstLine(bridge.Error)}");
+        var before = await host.RunAsync("iptables-save", ["-c", "-t", "filter"], null, ct);
+        if (!before.Succeeded)
+            return new ZoneProbeObservation(ZoneProbeOutcome.ProbeError, $"firewall counter read failed: {FirstLine(before.Error)}");
+        var observation = await ConnectAsync(network, null, address, port, ct);
+        var after = await host.RunAsync("iptables-save", ["-c", "-t", "filter"], null, ct);
+        return observation with
+        {
+            LocalDenyObserved = after.Succeeded && ZoneFirewallEvidence.DenyHit(
+                before.Output, after.Output, bridge.Output.Trim(), address),
+        };
     }
 
     /// <summary>
