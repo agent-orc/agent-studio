@@ -122,7 +122,7 @@ const RAIL_L1 = [
   treeRow({ label: 'Deck', level: 'child', glyph: true, active: true }),
   treeRow({ label: 'Wiki', level: 'child', glyph: true }),
   treeRow({ label: 'Backlog', level: 'child', glyph: true }),
-  treeRow({ label: 'Epics', level: 'child', glyph: true }),
+  treeRow({ label: 'Dossiers', level: 'child', glyph: true }),
 ].join('');
 
 // Level 2 — Deck rail (INSIGHT / QUALITY sections).

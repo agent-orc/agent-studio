@@ -242,6 +242,58 @@ test('paints complete bounded core before large documents resolve in both themes
   }
 });
 
+test('card and chat link the ready delivery preview with its screenshot', async ({ page }) => {
+  await mockApplication(page);
+  const preview = {
+    address: 'https://agt-2577.fixture.preview.internal', status: 'ready',
+    deliverySha: 'a'.repeat(40), screenshotUrl: '/api/projects/fixture/previews/agt-2577/screenshot',
+    updatedAtUtc: '2026-08-11T10:00:00Z', expiresAtUtc: '2026-08-18T10:00:00Z', jobId: 'preview-job',
+  };
+  const previewTask = { ...task(), preview };
+  await page.route('**/api/v1/management/credential-inventory', route =>
+    json(route, { generatedAt: '2026-08-11T10:00:00Z', items: [] }));
+  await page.route('**/api/tasks', route => json(route, [previewTask]));
+  await page.route('**/api/v1/studio/board**', route => json(route, {
+    ...grouped(), humanReview: [previewTask],
+  }));
+  await page.route(`**/api/tasks/${TASK_ID}/core**`, route => json(route, core()));
+  await page.route(`**/api/tasks/${TASK_ID}/details/overview**`, route =>
+    json(route, resource('overview', {})));
+  await page.route(`**/api/tasks/${TASK_ID}/details/documents**`, route => {
+    const name = new URL(route.request().url()).searchParams.get('name');
+    return json(route, resource('documents', { name, markdown: 'Ready', summaryState: null }));
+  });
+  await page.route('**/api/projects/fixture/previews/agt-2577/screenshot**', route =>
+    route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC',
+      'base64') }));
+  await gotoApp(page, '/');
+  await dismissDevErrorDialog(page);
+  await page.getByRole('tab', { name: 'All projects · Board' }).click();
+  const card = page.getByTestId('task-card-preview');
+  await expect(card).toContainText('ready');
+  await expect(card.getByRole('link', { name: 'Open preview for' })).toHaveAttribute('href', preview.address);
+  await expect(card.getByRole('img')).toBeVisible();
+  await dismissDevErrorDialog(page);
+  await page.locator('app-job-card').filter({ hasText: 'Heavy task with many runs and artifacts' })
+    .dispatchEvent('click');
+  const detailPreview = page.getByTestId('task-detail-preview');
+  await expect(detailPreview).toContainText(preview.deliverySha.substring(0, 12));
+  await expect(detailPreview.getByRole('link')).toHaveAttribute('href', preview.address);
+  await expect(detailPreview.getByRole('img')).toBeVisible();
+  await page.getByTestId('inspector-tab-activity').click();
+  await expect(page.getByTestId('activity-chat-preview').getByRole('link')).toHaveAttribute('href', preview.address);
+  await dismissDevErrorDialog(page);
+  const resultsDir = process.env.JOB_RESULTS_DIR;
+  if (resultsDir) {
+    mkdirSync(resultsDir, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.screenshot({ path: path.join(resultsDir, `agt-3180-card-preview-${theme}.png`) });
+    }
+  }
+});
+
 test('pending crash recovery stays reviewable without blocking task navigation', async ({ page }) => {
   await mockApplication(page);
   let releaseDocuments!: () => void;

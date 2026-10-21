@@ -210,14 +210,6 @@ public static class TimelineEventKinds
     /// <summary>The task's lane changed (any move).</summary>
     public const string LaneChanged = "lane_changed";
     /// <summary>
-    /// An epic's planning/decomposition run (way 3) authored a sub-task list
-    /// and the runner created those sub-tasks under the epic. The "Epic
-    /// decomposition" step in the timeline/pipeline; <see cref="TimelineEvent.Summary"/>
-    /// carries the created count and <see cref="TimelineEvent.Details"/> the
-    /// target lane. Emitted by the runner, not the deterministic endpoint.
-    /// </summary>
-    public const string EpicDecomposed = "epic_decomposed";
-    /// <summary>
     /// Another card was folded into this one via the consolidation API
     /// (sibling task). The merge endpoint mirrors the secondary's
     /// timeline events into the primary's ledger and emits one

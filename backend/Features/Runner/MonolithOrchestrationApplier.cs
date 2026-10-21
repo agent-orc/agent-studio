@@ -136,6 +136,7 @@ public sealed class MonolithOrchestrationApplier(
                     "rejected:" + exception.Message);
                 aiOperator.Enqueue(task, occurrence.Run.RunId, activeChoice);
                 scanner.InvalidateCache();
+                scanner.PublishCoreFromKnownFolder(task.FolderPath);
                 return;
             }
         }
@@ -147,6 +148,7 @@ public sealed class MonolithOrchestrationApplier(
                 new DecisionChoiceV1(DecisionActionKinds.Ask, "operator:ai",
                     "rejected:active-decision-receipt-required"));
             scanner.InvalidateCache();
+            scanner.PublishCoreFromKnownFolder(task.FolderPath);
             return;
         }
         if (decision is null && occurrence.Run.CurrentStage == OrchestrationStage.GateDispatch)
@@ -157,6 +159,7 @@ public sealed class MonolithOrchestrationApplier(
         {
             aiOperator.Enqueue(task, occurrence.Run.RunId, activeChoice);
             scanner.InvalidateCache();
+            scanner.PublishCoreFromKnownFolder(task.FolderPath);
             return;
         }
         if (activeChoice is { Action: DecisionActionKinds.Checkpoint })
@@ -169,6 +172,7 @@ public sealed class MonolithOrchestrationApplier(
                 File.WriteAllText(path, $"# Verified-tree checkpoint\n\nLast verified tree: `{verified}`\n"
                     + $"Decision occurrence: `{occurrence.Run.RunId}`\n");
             scanner.InvalidateCache();
+            scanner.PublishCoreFromKnownFolder(task.FolderPath);
             return;
         }
         if (decision?.Action == TransitionAction.ReviewInfrastructureRetry)
@@ -191,10 +195,12 @@ public sealed class MonolithOrchestrationApplier(
                 await batchAdmission.AdmitAsync(task, occurrence);
                 // The per-task gate can move the card, and its wait marker with it.
                 scanner.InvalidateCache();
+                scanner.PublishCoreFromKnownFolder(task.FolderPath);
                 task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
             }
             EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
             scanner.InvalidateCache();
+            scanner.PublishCoreFromKnownFolder(task.FolderPath);
             return;
         }
         if (decision?.Action == TransitionAction.DegradeWithFollowUp)
@@ -275,6 +281,7 @@ public sealed class MonolithOrchestrationApplier(
                 == OrchestrationStage.ReviewInputDecision)
         {
             scanner.InvalidateCache();
+            scanner.PublishCoreFromKnownFolder(task.FolderPath);
             return;
         }
         if (decision?.ContinuationBase is { } continuation
@@ -316,6 +323,7 @@ public sealed class MonolithOrchestrationApplier(
             if (move.Status != MoveJobStatus.Success)
                 throw new InvalidOperationException($"Engine lane move failed: {move.Status} {move.Message}");
             scanner.InvalidateCache();
+            scanner.PublishCoreFromKnownFolder(task.FolderPath);
             task = scanner.FindJob(task.Id, task.WatchPath) ?? task with
             { FolderPath = move.NewFolderPath ?? task.FolderPath, State = target };
         }
@@ -398,6 +406,7 @@ public sealed class MonolithOrchestrationApplier(
                         ? "multi-aspect-concern" : "multi-aspect-block",
                 });
         scanner.InvalidateCache();
+        scanner.PublishCoreFromKnownFolder(task.FolderPath);
     }
 
     private void EnsureLinkedFollowUp(AgentStudio.Shared.TaskInfo task,
@@ -513,6 +522,7 @@ public sealed class MonolithOrchestrationApplier(
         }
         EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
         scanner.InvalidateCache();
+        scanner.PublishCoreFromKnownFolder(task.FolderPath);
     }
 
     /// <summary>
@@ -616,6 +626,7 @@ public sealed class MonolithOrchestrationApplier(
         {
             aiOperator.Enqueue(task, occurrence.Run.RunId, choice);
             scanner.InvalidateCache();
+            scanner.PublishCoreFromKnownFolder(task.FolderPath);
             return;
         }
         if (choice.Action == DecisionActionKinds.Observe)
@@ -653,6 +664,7 @@ public sealed class MonolithOrchestrationApplier(
             throw new InvalidOperationException($"review-decision-move-{move.Status}");
         EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
         scanner.InvalidateCache();
+        scanner.PublishCoreFromKnownFolder(task.FolderPath);
     }
 
     private void RecordOperatorDecision(MonolithOrchestrationOccurrence occurrence,
