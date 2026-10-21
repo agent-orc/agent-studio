@@ -313,6 +313,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 }
                 admissions++;
                 var outcome = await batchAdmission.AdmitAsync(card, occurrence, stoppingToken);
+                scanner.PublishCoreFromKnownFolder(card.FolderPath);
                 ForgetRetry(occurrence.Run.RunId);
                 if (outcome != EngineBatchAdmissionOutcome.Skipped) rearmed++;
                 logger.LogWarning(
@@ -420,6 +421,12 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         // index: a mutation invalidation makes the next freshness reader, task
         // detail reads among them, wait for a full workspace walk every pass.
         var markersChanged = false;
+        var changedFolders = new HashSet<string>(StringComparer.Ordinal);
+        bool RecordMarker(string folder, bool changed)
+        {
+            if (changed) changedFolders.Add(folder);
+            return changed;
+        }
         foreach (var occurrence in store.AwaitingActivation())
         {
             var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
@@ -432,14 +439,16 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     {
                         store.Activate(occurrence.Run.RunId);
                         if (card is not null && card.State == occurrence.ExpectedSourceState)
-                            markersChanged |= MarkWaiting(card.FolderPath, occurrence.Run.RunId);
+                            markersChanged |= RecordMarker(card.FolderPath,
+                                MarkWaiting(card.FolderPath, occurrence.Run.RunId));
                     }
                     else if (time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt >= PreparationGrace)
                         store.CancelUnactivated(occurrence.Run.RunId, "review-input-grounds-not-frozen");
                     continue;
                 }
                 if (card is not null)
-                    markersChanged |= EngineDecisionWaitMarker.Clear(card.FolderPath, occurrence.Run.RunId);
+                    markersChanged |= RecordMarker(card.FolderPath,
+                        EngineDecisionWaitMarker.Clear(card.FolderPath, occurrence.Run.RunId));
                 var accepted = authority.GetReview(occurrence.AuthorityAttemptId)?.Reports.Any(report =>
                     report.AuthorityStatus == AttemptWriteStatus.Accepted
                     && occurrence.IdempotencyKey ==
@@ -456,7 +465,8 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     }
                     store.Activate(occurrence.Run.RunId);
                     if (!occurrence.Shadow && card is not null && card.State == occurrence.ExpectedSourceState)
-                        markersChanged |= MarkWaiting(card.FolderPath, occurrence.Run.RunId);
+                        markersChanged |= RecordMarker(card.FolderPath,
+                            MarkWaiting(card.FolderPath, occurrence.Run.RunId));
                 }
                 else
                 {
@@ -478,7 +488,8 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
                 && item.ProjectName == occurrence.Run.ProjectId);
             if (card is not null && card.State == occurrence.ExpectedSourceState)
-                markersChanged |= MarkWaiting(card.FolderPath, occurrence.Run.RunId);
+                markersChanged |= RecordMarker(card.FolderPath,
+                    MarkWaiting(card.FolderPath, occurrence.Run.RunId));
         }
         // A marker that names a cancelled occurrence, or a completed one that
         // did not hold its card, waits for nothing; the card would show an
@@ -493,7 +504,8 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     && store.GetOccurrence(runId) is { } named
                     && (named.Run.Status == "cancelled"
                         || named.Run.Status == "completed" && !MayHoldCard(named)))
-                    markersChanged |= EngineDecisionWaitMarker.Clear(card.FolderPath, runId);
+                    markersChanged |= RecordMarker(card.FolderPath,
+                        EngineDecisionWaitMarker.Clear(card.FolderPath, runId));
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
                 or JsonException)
@@ -502,7 +514,12 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     card.Key ?? card.Id);
             }
         }
-        if (markersChanged) scanner.InvalidateCache();
+        if (markersChanged)
+        {
+            scanner.InvalidateCache();
+            foreach (var folder in changedFolders)
+                scanner.PublishCoreFromKnownFolder(folder);
+        }
     }
 
     /// <summary>

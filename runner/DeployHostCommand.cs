@@ -18,7 +18,8 @@ public static class DeployHostCommand
         string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken,
         string? RunbookName = null, string[]? RunbookSteps = null,
         Dictionary<string, string>? RunbookVariables = null,
-        Dictionary<string, string>? RunbookSecretVariables = null);
+        Dictionary<string, string>? RunbookSecretVariables = null,
+        string? RetryStep = null);
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
         HttpClient? transport = null, string? runbookRoot = null)
@@ -52,13 +53,17 @@ public static class DeployHostCommand
                 healthy = result.Success;
                 evidence = healthy ? "health-ok" : "deploy-step-failed";
             }
-            else if (job.Template == "container")
-                await DeployContainer(job, secretRoot, cancellationToken);
-            else if (job.Template == "static")
-                await DeployStatic(job, args[3], cancellationToken);
-            else throw new InvalidOperationException("Unknown template.");
-            if (job.RunbookName is null)
+            else
             {
+                if (job.RetryStep is null)
+                {
+                    if (job.Template == "container")
+                        await DeployContainer(job, secretRoot, cancellationToken);
+                    else if (job.Template == "static")
+                        await DeployStatic(job, args[3], cancellationToken);
+                    else throw new InvalidOperationException("Unknown template.");
+                }
+                else if (job.RetryStep != "health") throw new InvalidOperationException("Unknown retry step.");
                 evidence = "health-http-failed";
                 healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
                 if (healthy) evidence = "health-ok";
