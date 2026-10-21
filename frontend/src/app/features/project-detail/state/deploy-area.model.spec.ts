@@ -235,7 +235,7 @@ describe('deploy area model', () => {
     it('keeps the last successful release on a card while a guided failure is pending', () => {
       const sources = deploySourcesFixture();
       sources.environments!.environments[0].deployedArtifact = ARTIFACT_B;
-      sources.statuses![0].currentRelease = deployReleasesFixture()[2];
+      sources.statuses![0].currentRelease = RELEASE_1;
       sources.statuses![0].intervention = {
         deploymentId: 'failed-run', failedStep: 'health', expiresAtUtc: '2026-10-19T13:00:00Z',
         decision: null, decidedBy: null,
