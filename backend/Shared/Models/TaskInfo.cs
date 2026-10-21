@@ -4,6 +4,9 @@ namespace AgentStudio.Shared;
 
 public record TaskInfo
 {
+    [JsonIgnore] internal long TaskJsonLength { get; init; } = -1;
+    [JsonIgnore] internal long TaskJsonWriteTicks { get; init; }
+    [JsonIgnore] internal string TokenReceiptStamp { get; init; } = "none";
     public string Id { get; init; } = "";
     public string TaskKey { get; init; } = "";
     /// <summary>Current card preview, projected from its sidecar rather than task.json.</summary>

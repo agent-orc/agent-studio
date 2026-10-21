@@ -2435,6 +2435,7 @@ public class TaskMutationService
 
             File.Delete(stash);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
             return PendingIntentAcknowledgeResult.Consumed;
         }
         catch (Exception ex)
@@ -2477,6 +2478,7 @@ public class TaskMutationService
             if (File.Exists(canonical)) File.Delete(canonical);
             if (File.Exists(stash)) File.Delete(stash);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
             return true;
         }
         catch (Exception ex)
@@ -2560,7 +2562,11 @@ public class TaskMutationService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info is null || info.ModelExplicit || info.ThinkingLevelExplicit) return false;
         var written = TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevel", level, _logger);
-        if (written) _scanner.InvalidateCache();
+        if (written)
+        {
+            _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(info.FolderPath);
+        }
         return written;
     }
 
@@ -2671,6 +2677,7 @@ public class TaskMutationService
                 TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevel", thinkingLevel, _logger);
 
             count++;
+            _scanner.PublishCoreFromKnownFolder(job.FolderPath);
             _logger.LogInformation(
                 "backfill-agent-defaults jobId={JobId} owner={Owner} agent={Agent} cliType={CliType} model={Model} thinkingLevel={ThinkingLevel}",
                 job.Id, ownerId, cliType ?? job.Agent, cliType, model, thinkingLevel);
@@ -2712,6 +2719,7 @@ public class TaskMutationService
                 TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevel", resolved, _logger);
                 TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevelExplicit", false, _logger);
                 touched++;
+                _scanner.PublishCoreFromKnownFolder(job.FolderPath);
             }
         }
         if (touched > 0) _scanner.InvalidateCache();
@@ -2822,6 +2830,7 @@ public class TaskMutationService
             // must never do is report a backfill that did not happen.
             if (!TaskJsonFile.UpdateField(job.FolderPath, "key", key, _logger, _keyFileWriter)) continue;
             stamped++;
+            _scanner.PublishCoreFromKnownFolder(job.FolderPath);
         }
 
         if (stamped > 0) _scanner.InvalidateCache();
@@ -2901,6 +2910,7 @@ public class TaskMutationService
                     continue;
                 }
                 rekeyed++;
+                _scanner.PublishCoreFromKnownFolder(ordered[i].FolderPath);
                 _logger.LogInformation(
                     "task-key-dedup project={ProjectId} oldKey={OldKey} newKey={NewKey} jobId={JobId} keeper={KeeperId}",
                     projectId, oldKey, newKey, ordered[i].Id, keeper.Id);

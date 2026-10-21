@@ -363,7 +363,9 @@ occur. It is not a claim about tunnel transfer time.
   the run pipeline panel; old `pipeline` routes open Run steps. Operations reads
   `GET /api/projects/<project>/environments` and shows the recorded health of
   each declared environment, plus the existing Product Runtime observability
-  panel; without environments it invites setup in Deploy. The Deck rail
+  panel. Product Runtime also shows a rolling five-minute p50 and p95 for
+  completed card detail responses from the current backend process; without
+  environments it invites setup in Deploy. The Deck rail
   excludes Deploy, Deployment, Pipeline, and Observability. Agent-work panels
   stay in the Deck as the Insight rail Agent activity: the message bus panel,
   token summary, supervisor and meta-cycle sections, and analysis reports.
@@ -380,6 +382,8 @@ occur. It is not a claim about tunnel transfer time.
   filtered `total`. The server caps each page at 50 items, and the UI requests
   25. Run pages also accept `environmentId`, `state`, and `sinceUtc`, so history
   filters apply before paging. The unpaged routes remain for existing clients.
+  Status-card run actions resolve the current deployment from environment
+  status, including when that run falls outside the loaded history pages.
   Each source has its own loading or error state, so a failed deploy route
   leaves declared environment cards visible. A route 404 without an error body
   means the route is unavailable; a 404 with `{ error }` is shown as a server
@@ -402,6 +406,9 @@ occur. It is not a claim about tunnel transfer time.
   short code owns in a multi-project workspace, a pager entry outside every
   registered storage location, or a registry still loading after 3 s) is
   resolved server-side through the legacy detail route instead of failing.
+  A 202 warming reply from that route has a JSON body. TaskService retries it
+  before delivering a TaskDetail to any legacy caller, so no consumer receives
+  a null detail while the index hydrates.
   A revalidated core generation refreshes an already painted rich pane in
   place, and the expanded history or review tab reloads with it. If core
   revalidation finds the index warming, only the read retries: the selected

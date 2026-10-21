@@ -616,11 +616,17 @@ public class TaskRunnerService : BackgroundService
     }
 
     public RunnerStatus GetStatus()
+        => GetStatus(publishedOnly: false);
+
+    public RunnerStatus GetPublishedStatus()
+        => GetStatus(publishedOnly: true);
+
+    private RunnerStatus GetStatus(bool publishedOnly)
     {
         var projects = new Dictionary<string, ProjectRunnerStatus>();
         foreach (var (name, runner) in _runners)
         {
-            projects[name] = runner.GetStatus();
+            projects[name] = publishedOnly ? runner.GetPublishedStatus() : runner.GetStatus();
         }
         return new RunnerStatus { Projects = projects };
     }

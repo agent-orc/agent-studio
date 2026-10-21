@@ -204,6 +204,7 @@ public class TaskStateMachine
                 {
                     TaskJsonFile.UpdateField(recheck.FolderPath, "phase", LifecyclePhases.Integrating, _logger);
                     _scanner.InvalidateCache();
+                    _scanner.PublishCoreFromKnownFolder(recheck.FolderPath);
                 }
                 return new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
                     $"{admission.Category}: {admission.RecoveryAction} Current status: {status?.Status ?? "unknown"}.");
@@ -360,8 +361,8 @@ public class TaskStateMachine
             // pre-move snapshot. The 250 ms FileSystemWatcher debounce alone
             // is too slow for that round-trip.
             _scanner.InvalidateCache();
-            _scanner.RemoveCore(recheck);
-            _scanner.PublishCoreFromFolder(targetDir, recheck.WatchPath, recheck.ProjectName, targetState);
+            _scanner.MoveCoreFromFolder(recheck.FolderPath, targetDir,
+                recheck.WatchPath, recheck.ProjectName, targetState);
             EnqueueEvidence(recheck.WatchPath, recheck.ProjectName, targetSlug, recheck.State, targetState);
             ClearReviewPriorityOnExit(recheck, targetState);
             // Hand the post-move path back to the caller so chat-log writes
@@ -1094,6 +1095,9 @@ public class TaskStateMachine
                 TaskLayoutIndex.Rebuild(recheck.WatchPath, _logger);
                 TaskLayoutIndex.Rebuild(canonicalTarget, _logger);
                 _scanner.InvalidateCache();
+                _scanner.PublishCoreFromKnownFolder(recheck.FolderPath);
+                foreach (var update in appliedReferenceUpdates)
+                    _scanner.PublishCoreFromKnownFolder(update.FolderPath);
             }
             catch (Exception rollbackEx)
             {
@@ -1109,8 +1113,10 @@ public class TaskStateMachine
             TaskLayoutIndex.Rebuild(recheck.WatchPath, _logger);
             TaskLayoutIndex.Rebuild(canonicalTarget, _logger);
             _scanner.InvalidateCache();
-            _scanner.RemoveCore(recheck);
-            _scanner.PublishCoreFromFolder(targetDir, canonicalTarget, destinationProject.DisplayName, recheck.State);
+            _scanner.MoveCoreFromFolder(recheck.FolderPath, targetDir,
+                canonicalTarget, destinationProject.DisplayName, recheck.State);
+            foreach (var update in appliedReferenceUpdates)
+                _scanner.PublishCoreFromKnownFolder(update.FolderPath);
             _notifier?.PublishMoved(destinationProject.DisplayName, jobId, canonicalTarget, recheck.State, recheck.State);
         }
         catch (Exception ex)
@@ -1122,6 +1128,8 @@ public class TaskStateMachine
                 "change-project-post-commit-refresh-failed job={JobId} newKey={NewKey} destinationProject={DestinationProject}",
                 jobId, destinationKey, destinationProject.Id);
             _scanner.InvalidateCache();
+            _scanner.MoveCoreFromFolder(recheck.FolderPath, targetDir,
+                canonicalTarget, destinationProject.DisplayName, recheck.State);
         }
 
         _logger.LogInformation(
@@ -1367,6 +1375,7 @@ public class TaskStateMachine
                     var renamed = NeutralizeFolder(loser.FolderPath);
                     if (renamed != null)
                     {
+                        _scanner.PublishCoreFromFolder(loser.FolderPath, entry.Path, entry.Name, loser.State);
                         neutralised.Add(renamed);
                         renamedTotal++;
                     }

@@ -11,6 +11,22 @@
         }
       </div>
     }
+    @if (run().state === 'waiting-for-intervention') {
+      <p class="run-drawer__muted" data-testid="deploy-run-intervention">
+        {{ stepKindLabel(run().failedStep ?? 'run') }} failed. An Owner or Maintainer can retry, skip, or abort.
+        @if (run().interventionExpiresAt; as expires) { Decide by <time [attr.datetime]="expires">{{ expires | date:'medium' }}</time>. }
+      </p>
+      <label for="deploy-skip-reason">Reason for skipping this step</label>
+      <textarea id="deploy-skip-reason" data-testid="deploy-run-skip-reason" maxlength="500" rows="2"
+                [value]="skipReason()" (input)="skipReason.set($any($event.target).value)"></textarea>
+      <button type="button" data-testid="deploy-run-skip" [disabled]="action().busy !== null || !skipReason().trim()"
+              (click)="skip.emit(skipReason().trim())">Skip step</button>
+    }
+    @if (run().interventionDecision; as decision) {
+      <p class="run-drawer__muted" data-testid="deploy-run-intervention-decision">
+        Intervention: {{ decision }} by {{ run().interventionDecidedBy ?? 'system' }}.
+      </p>
+    }
     @if (action().error; as error) { <p class="run-drawer__error" role="alert" data-testid="deploy-run-action-error">{{ error }}</p> }
     <dl class="run-drawer__facts">
       <dt>Release</dt><dd>{{ run().releaseVersion ?? 'Not in the release list' }} <code class="run-drawer__muted">{{ run().releaseId }}</code></dd>
