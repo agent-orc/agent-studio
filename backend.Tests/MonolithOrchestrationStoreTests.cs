@@ -207,6 +207,97 @@ public sealed class MonolithOrchestrationStoreTests
         Assert.NotEqual(first.RunId, next.RunId);
     }
 
+    [Fact]
+    public async Task Superseded_application_settles_once_and_is_never_retried()
+    {
+        using var fixture = new Fixture(_time);
+        var run = fixture.Create();
+        var claim = fixture.Store.Claim(Claim("engine_one"));
+        fixture.Applier.SupersedeIn = TaskStates.Ready;
+
+        var settled = await fixture.Store.CompleteAsync(run.RunId, Complete(claim), default);
+
+        Assert.Equal("cancelled", settled.Status);
+        var restarted = fixture.Restart();
+        var occurrence = restarted.GetOccurrence(run.RunId)!;
+        Assert.True(MonolithOrchestrationStore.IsSuperseded(occurrence));
+        Assert.Equal("superseded:" + EngineDecisionSupersessionCauses.SourceStateMismatch,
+            occurrence.CancellationReason);
+        Assert.Equal(TaskStates.Ready, occurrence.SupersededInState);
+        Assert.Equal(new MonolithOrchestrationStore.ApplyingRecovery(0, 0, 0),
+            await restarted.RecoverApplyingAsync(default));
+        Assert.Equal("cancelled", (await restarted.CompleteAsync(run.RunId, Complete(claim), default)).Status);
+        Assert.Equal(1, fixture.Applier.Attempts);
+        Assert.Equal(0, fixture.Applier.Count);
+        Assert.Empty(restarted.WaitingOccurrences());
+    }
+
+    [Fact]
+    public async Task Transient_application_failure_stays_applying_and_reports_one_retry()
+    {
+        using var fixture = new Fixture(_time);
+        var run = fixture.Create();
+        var claim = fixture.Store.Claim(Claim("engine_one"));
+        fixture.Applier.ThrowNext = true;
+        await Assert.ThrowsAsync<IOException>(() => fixture.Store.CompleteAsync(run.RunId, Complete(claim), default));
+        fixture.Applier.ThrowNext = true;
+
+        Assert.Equal(new MonolithOrchestrationStore.ApplyingRecovery(0, 0, 1),
+            await fixture.Store.RecoverApplyingAsync(default));
+        Assert.Equal("applying", fixture.Store.Get(run.RunId)!.Status);
+        Assert.Equal(new MonolithOrchestrationStore.ApplyingRecovery(1, 0, 0),
+            await fixture.Store.RecoverApplyingAsync(default));
+        Assert.Equal("completed", fixture.Store.Get(run.RunId)!.Status);
+    }
+
+    [Fact]
+    public async Task Lane_hold_keeps_an_engine_completion_out_until_the_move_supersedes_it()
+    {
+        using var fixture = new Fixture(_time);
+        var run = fixture.Create();
+        var claim = fixture.Store.Claim(Claim("engine_one"));
+        var hold = fixture.Store.HoldOpenLaneDecisions("project", ["card", null]);
+        Assert.Equal([run.RunId], hold.RunIds);
+
+        var completion = fixture.Store.CompleteAsync(run.RunId, Complete(claim), default);
+        Assert.False(completion.IsCompleted);
+        var superseded = Assert.Single(hold.Supersede(EngineDecisionSupersessionCauses.OperatorMove, TaskStates.Ready));
+        hold.Dispose();
+
+        Assert.Equal(run.RunId, superseded.Run.RunId);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => completion);
+        Assert.Equal(0, fixture.Applier.Attempts);
+        Assert.Equal("superseded:" + EngineDecisionSupersessionCauses.OperatorMove,
+            fixture.Restart().GetOccurrence(run.RunId)!.CancellationReason);
+    }
+
+    [Fact]
+    public void Superseded_preparation_is_never_activated_but_can_be_prepared_again()
+    {
+        using var fixture = new Fixture(_time);
+        var prepared = fixture.Store.Create("project", "card", OrchestrationStage.ReviewDecision,
+            "{}", "review-report:review_attempt:report_key", TaskStates.AutoReview,
+            "review_attempt", 3, 4, claimable: false);
+
+        Assert.NotNull(fixture.Store.TrySupersede(prepared.RunId,
+            EngineDecisionSupersessionCauses.SourceStateMismatch, TaskStates.Ready));
+        Assert.Null(fixture.Store.TrySupersede(prepared.RunId,
+            EngineDecisionSupersessionCauses.SourceStateMismatch, TaskStates.Ready));
+
+        var restarted = fixture.Restart();
+        Assert.Empty(restarted.AwaitingActivation());
+        Assert.Throws<InvalidOperationException>(() => restarted.Activate(prepared.RunId));
+        Assert.Equal("empty", restarted.Claim(Claim("engine_one")).Status);
+
+        // The card is back in its lane and the same report is submitted again.
+        var retried = restarted.Create("project", "card", OrchestrationStage.ReviewDecision,
+            "{}", "review-report:review_attempt:report_key", TaskStates.AutoReview,
+            "review_attempt", 3, 4, claimable: false);
+        Assert.Equal("pending", retried.Status);
+        Assert.Null(restarted.GetOccurrence(prepared.RunId)!.SupersededInState);
+        Assert.Single(restarted.AwaitingActivation());
+    }
+
     private static OrchestrationClaimRequest Claim(string engine)
         => new(engine, "instance_one", [OrchestrationStage.ReviewDecision], 120);
 
@@ -240,10 +331,19 @@ public sealed class MonolithOrchestrationStoreTests
     private sealed class FakeApplier : IMonolithOrchestrationApplier
     {
         public int Count { get; private set; }
+        public int Attempts { get; private set; }
         public bool ThrowNext { get; set; }
+
+        /// <summary>The lane the card is found in, outside the decision's source lane.</summary>
+        public string? SupersedeIn { get; set; }
+
         public Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
             CompleteOrchestrationStageRequest completion, CancellationToken ct)
         {
+            Attempts++;
+            if (SupersedeIn is { } lane)
+                throw new OrchestrationOccurrenceSupersededException(
+                    EngineDecisionSupersessionCauses.SourceStateMismatch, lane);
             if (ThrowNext)
             {
                 ThrowNext = false;

@@ -89,7 +89,8 @@ public static class SystemEndpoints
                     workers },
                 taskServer = string.IsNullOrWhiteSpace(config["TaskServer:BaseUrl"])
                     ? "local monolith" : "remote Task Server",
-                engine = new { engine.State, engine.Required, engine.LastContact, engine.LastEngineId },
+                engine = new { engine.State, engine.Required, engine.LastContact, engine.LastEngineId,
+                    engine.OverdueDecisions, engine.OldestOverdueSince },
                 workstation = Environment.MachineName,
             });
         });

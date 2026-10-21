@@ -32,6 +32,18 @@ claimable occurrences. An unaccepted preparation has no wait marker and, after
 a bounded grace period, receives a durable cancellation receipt. A later valid
 report can prepare the same idempotency key again.
 
+AGT-3281: a review, gate, or review-input decision applies only to the lane it
+was decided for. An operator move or a queued `/continue` holds the card's open
+decisions and supersedes them with the move. An applier that finds the card in
+another lane (confirmed in a fresh scan) or no longer finds it, and a recovery
+pass that finds an undecided decision's card outside its lane after the
+30-second grace, also supersede it. A superseded occurrence is `cancelled` with
+`cancellationReason` `superseded:<cause>` and `supersededInState`; it is never
+retried or activated again, its card loses the wait marker and gets an
+`engine_decision_superseded` timeline entry. A card that waits longer than
+`Orchestration:EngineDecisionWait:OverdueMinutes` (default 15) while the engine
+is live raises one `engine-decision-overdue` operator-feed alert.
+
 AGT-3059 adds a per-profile rollout journal at
 `<TaskRepository>/.orchestration-rollout.json`. Coding completion, review report,
 and gate or batch result can be switched independently from Monolith to Shadow and then

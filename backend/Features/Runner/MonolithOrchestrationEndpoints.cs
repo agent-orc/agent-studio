@@ -115,10 +115,17 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
     IAiOperatorDecisionQueue aiOperator,
     OrchestratorLog operatorLog,
     EngineBatchAdmission batchAdmission,
+    TimelineLog timeline,
+    OrchestrationEngineReadiness readiness,
+    IConfiguration configuration,
     TimeProvider time,
     ILogger<MonolithOrchestrationRecoveryService> logger) : BackgroundService
 {
     private static readonly TimeSpan PreparationGrace = TimeSpan.FromSeconds(30);
+
+    /// <summary>Minutes a card may wait for an engine decision while the engine is live before it is overdue.</summary>
+    public const string OverdueWaitKey = "Orchestration:EngineDecisionWait:OverdueMinutes";
+    internal static readonly TimeSpan DefaultOverdueWait = TimeSpan.FromMinutes(15);
 
     /// <summary>Batch admissions one re-arm pass may run; the rest wait for the next pass.</summary>
     internal const int RearmBudgetPerPass = 4;
@@ -145,10 +152,11 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             {
                 aiOperator.RecoverPending();
                 RecoverOnce();
+                // The store logs one line per occurrence it could not apply yet.
                 try { await store.RecoverApplyingAsync(stoppingToken); }
                 catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
                 {
-                    logger.LogWarning(exception, "orchestration-application-retry-pending");
+                    logger.LogWarning(exception, "orchestration-application-recovery-incomplete");
                 }
                 try
                 {
@@ -162,6 +170,11 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 await RecoverRolledBackAsync(stoppingToken);
                 StartRearmPass(stoppingToken);
                 AlertLongWaits();
+                try { AlertOverdueWaits(); }
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "engine-decision-overdue-check-incomplete");
+                }
                 await Task.Delay(PreparationGrace, time, stoppingToken);
             }
         }
@@ -386,6 +399,64 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         }
     }
 
+    /// <summary>
+    /// AGT-3281: a card that has waited longer than the bound for an engine
+    /// decision while the engine is live is overdue; an engine outage has its
+    /// own alert. Each overdue occurrence raises one operator feed alert and
+    /// one log line, and the readiness snapshot carries the current count.
+    /// </summary>
+    internal IReadOnlyList<MonolithOrchestrationOccurrence> AlertOverdueWaits()
+    {
+        if (!readiness.IsLive)
+        {
+            readiness.ReportOverdueDecisions(0, null);
+            return [];
+        }
+        var now = time.GetUtcNow().UtcDateTime;
+        var bound = TimeSpan.FromMinutes(Math.Clamp(
+            configuration.GetValue<double?>(OverdueWaitKey) ?? DefaultOverdueWait.TotalMinutes, 1, 24 * 60));
+        var candidates = store.WaitingOccurrences().Where(item =>
+            item.Run.CurrentStage != OrchestrationStage.OperatorDecision
+            && !rollout.IsRolledBack(item.Profile) && now - item.Run.CreatedAt > bound).ToArray();
+        if (candidates.Length == 0)
+        {
+            readiness.ReportOverdueDecisions(0, null);
+            return [];
+        }
+        var tasks = scanner.ScanAllJobs();
+        var overdue = new List<MonolithOrchestrationOccurrence>();
+        foreach (var occurrence in candidates)
+        {
+            var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
+                && item.ProjectName == occurrence.Run.ProjectId);
+            if (card is not { WaitingForEngineDecision: true }
+                || EngineDecisionWaitMarker.Read(card.FolderPath) != occurrence.Run.RunId)
+                continue;
+            overdue.Add(occurrence);
+            var topic = "engine-decision-overdue:" + occurrence.Run.RunId;
+            if (operatorLog.Read(card.WatchPath).Any(item => item.Topic == topic)) continue;
+            var waited = now - occurrence.Run.CreatedAt;
+            logger.LogWarning(
+                "engine-decision-overdue run={RunId} task={TaskKey} profile={Profile} status={Status} lane={Lane} waitedMinutes={Minutes}",
+                occurrence.Run.RunId, card.Key ?? card.Id, occurrence.Profile, occurrence.Run.Status, card.State,
+                (int)waited.TotalMinutes);
+            operatorLog.Append(card.WatchPath, new OrchestratorLogEntry
+            {
+                Kind = OrchestratorLogKinds.Alert,
+                Topic = topic,
+                JobId = card.Id,
+                Summary = $"{card.Key ?? card.Id} has waited {(int)waited.TotalMinutes} min for engine decision "
+                    + $"{occurrence.Run.RunId} while the engine is live.",
+                Reasoning = $"The occurrence is {occurrence.Run.Status} and the card cannot be claimed until it "
+                    + "applies. Check the engine log for this run, or the occurrence's application error.",
+            });
+        }
+        readiness.ReportOverdueDecisions(overdue.Count,
+            overdue.Count == 0 ? null : new DateTimeOffset(DateTime.SpecifyKind(
+                overdue.Min(item => item.Run.CreatedAt), DateTimeKind.Utc), TimeSpan.Zero));
+        return overdue;
+    }
+
     internal static bool ShouldAlert(MonolithOrchestrationOccurrence occurrence, DateTime now)
         => occurrence.Run.Status == "pending"
             && now - occurrence.Run.CreatedAt > TimeSpan.FromMinutes(1)
@@ -482,18 +553,23 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         }
         // A marker that names a cancelled occurrence, or a completed one that
         // did not hold its card, waits for nothing; the card would show an
-        // engine wait until it leaves the lane.
+        // engine wait until it leaves the lane. One that names an open lane
+        // decision whose card left the expected lane can never apply (AGT-3281).
+        var left = new List<string>();
         foreach (var card in tasks.Where(item => item.WaitingForEngineDecision))
         {
             // RecoverOnce runs outside the loop's per-step catches, so a lane move
             // or a concurrent clear that races this read must not end the loop.
             try
             {
-                if (EngineDecisionWaitMarker.Read(card.FolderPath) is { } runId
-                    && store.GetOccurrence(runId) is { } named
-                    && (named.Run.Status == "cancelled"
-                        || named.Run.Status == "completed" && !MayHoldCard(named)))
+                if (EngineDecisionWaitMarker.Read(card.FolderPath) is not { } runId
+                    || store.GetOccurrence(runId) is not { } named)
+                    continue;
+                if (named.Run.Status == "cancelled"
+                    || named.Run.Status == "completed" && !MayHoldCard(named))
                     markersChanged |= EngineDecisionWaitMarker.Clear(card.FolderPath, runId);
+                else if (Standing(named, card.State) == EngineDecisionStanding.Superseded)
+                    left.Add(runId);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
                 or JsonException)
@@ -502,7 +578,44 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                     card.Key ?? card.Id);
             }
         }
+        if (left.Count > 0) markersChanged |= SupersedeLeftLane(left);
         if (markersChanged) scanner.InvalidateCache();
+    }
+
+    private EngineDecisionStanding Standing(MonolithOrchestrationOccurrence occurrence, string cardState)
+        => EngineDecisionStandingPolicy.Decide(new EngineDecisionStandingFacts(occurrence.Run.CurrentStage,
+            occurrence.Run.Status, occurrence.Shadow, occurrence.ExpectedSourceState, cardState,
+            time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt));
+
+    /// <summary>
+    /// Supersedes undecided occurrences whose card left the expected lane. A
+    /// cached lane can predate the move, so each is confirmed in a fresh scan.
+    /// Returns whether a card's wait marker may have changed.
+    /// </summary>
+    private bool SupersedeLeftLane(IReadOnlyList<string> runIds)
+    {
+        scanner.InvalidateCache();
+        var tasks = scanner.ScanAllJobs();
+        foreach (var runId in runIds)
+        {
+            if (store.GetOccurrence(runId) is not { } occurrence) continue;
+            var card = tasks.FirstOrDefault(item => item.ProjectName == occurrence.Run.ProjectId
+                && (item.Id == occurrence.Run.TaskId || item.TaskKey == occurrence.Run.TaskId));
+            if (card is null || Standing(occurrence, card.State) != EngineDecisionStanding.Superseded) continue;
+            try
+            {
+                if (store.TrySupersede(runId, EngineDecisionSupersessionCauses.SourceStateMismatch, card.State)
+                    is { } superseded)
+                    EngineDecisionSupersession.RecordOnCard(timeline, card.FolderPath, superseded,
+                        EngineDecisionSupersessionCauses.SourceStateMismatch, card.State, TimelineActors.System);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                logger.LogWarning(exception, "orchestration-supersession-pending run={RunId} task={TaskKey}",
+                    runId, card.Key ?? card.Id);
+            }
+        }
+        return true;
     }
 
     /// <summary>

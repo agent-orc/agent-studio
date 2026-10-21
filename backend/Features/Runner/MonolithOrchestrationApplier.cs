@@ -70,10 +70,7 @@ public sealed class MonolithOrchestrationApplier(
             await ApplyReviewInputDecisionAsync(occurrence, completion, ct);
             return;
         }
-        var task = scanner.ScanAllJobs().FirstOrDefault(candidate =>
-            candidate.ProjectName == occurrence.Run.ProjectId
-            && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId));
-        if (task is null) throw new KeyNotFoundException("Orchestration task was not found.");
+        var task = FindCard(occurrence) ?? throw CardAbsent();
         if (occurrence.Run.CurrentStage == OrchestrationStage.OperatorSweep)
         {
             await ApplySweepAsync(task, occurrence, completion, ct);
@@ -117,9 +114,15 @@ public sealed class MonolithOrchestrationApplier(
             TargetFromPayload(occurrence.Run.PayloadJson), completion.Action);
         // A batch admission has no lane effect. A card outside Auto Review owes
         // none, as in the report path; the admission records the skip.
-        if (task.State != occurrence.ExpectedSourceState && task.State != target
-            && decision?.Action != TransitionAction.DeferToBatch)
-            throw new InvalidOperationException("orchestration-source-state-mismatch");
+        if (LeftLane(task, occurrence, target, decision))
+        {
+            // AGT-3281: a cached lane can predate a move, so only a fresh read
+            // settles the decision. A card that left its lane supersedes it.
+            scanner.InvalidateCache();
+            task = FindCard(occurrence) ?? throw CardAbsent();
+            if (LeftLane(task, occurrence, target, decision))
+                throw Supersede(task, occurrence, "orchestration-source-state-mismatch");
+        }
         if (decision is null && occurrence.Run.CurrentStage == OrchestrationStage.GateDispatch)
             throw new InvalidDataException("The engine gate decision is missing its transition.");
         if (decision is null && HasPayloadProperty(occurrence.Run.PayloadJson, "reviewOutcome"))
@@ -518,10 +521,7 @@ public sealed class MonolithOrchestrationApplier(
     private async Task ApplyReviewInputDecisionAsync(MonolithOrchestrationOccurrence occurrence,
         CompleteOrchestrationStageRequest completion, CancellationToken ct)
     {
-        var task = scanner.ScanAllJobs().FirstOrDefault(candidate =>
-            candidate.ProjectName == occurrence.Run.ProjectId
-            && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId))
-            ?? throw new KeyNotFoundException("Review decision card was not found.");
+        var task = FindCard(occurrence) ?? throw CardAbsent();
         using var output = JsonDocument.Parse(completion.OutputJson);
         var root = output.RootElement;
         var decisions = services.GetRequiredService<OrchestratorDecisionStore>();
@@ -558,6 +558,11 @@ public sealed class MonolithOrchestrationApplier(
         var target = choice.Action == DecisionActionKinds.Retry
             ? TaskStates.Ready : payload.Kind == "needs-input"
                 ? TaskStates.HumanReview : TaskStates.AutoReview;
+        if (task.State != occurrence.ExpectedSourceState)
+        {
+            scanner.InvalidateCache();
+            task = FindCard(occurrence) ?? throw CardAbsent();
+        }
         if (choice.Action is DecisionActionKinds.Retry or DecisionActionKinds.Continue
             && task.State == target)
         {
@@ -565,7 +570,7 @@ public sealed class MonolithOrchestrationApplier(
             return;
         }
         if (task.State != occurrence.ExpectedSourceState)
-            throw new InvalidOperationException("review-decision-source-state-mismatch");
+            throw Supersede(task, occurrence, "review-decision-source-state-mismatch");
         if (receipt.Call.Status == DecisionCallStatuses.Completed)
         {
             var parsed = MonolithTransitionAdapter.DecisionReceiptPolicyParse(receipt.ResponseContent, receipt.Grounds);
@@ -637,6 +642,45 @@ public sealed class MonolithOrchestrationApplier(
             Summary = $"{summary}: {decision.Decider} {decision.Effect} on {task.Key ?? task.Id} ({decision.Autonomy}).",
             Reasoning = decision.Detail,
         });
+    }
+
+    /// <summary>
+    /// The occurrence's card. A cached index can miss a card that just moved,
+    /// so an absent card is looked up again in a fresh scan.
+    /// </summary>
+    private AgentStudio.Shared.TaskInfo? FindCard(MonolithOrchestrationOccurrence occurrence)
+    {
+        var card = Find(scanner.ScanAllJobs());
+        if (card is not null) return card;
+        scanner.InvalidateCache();
+        return Find(scanner.ScanAllJobs());
+
+        AgentStudio.Shared.TaskInfo? Find(IEnumerable<AgentStudio.Shared.TaskInfo> tasks)
+            => tasks.FirstOrDefault(candidate => candidate.ProjectName == occurrence.Run.ProjectId
+                && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId));
+    }
+
+    private static bool LeftLane(AgentStudio.Shared.TaskInfo task, MonolithOrchestrationOccurrence occurrence,
+        string? target, TransitionDecision? decision)
+        => task.State != occurrence.ExpectedSourceState && task.State != target
+            && decision?.Action != TransitionAction.DeferToBatch;
+
+    /// <summary>A deleted card is in no lane and owes no decision; a completed or archived one is still found.</summary>
+    private static OrchestrationOccurrenceSupersededException CardAbsent()
+        => new(EngineDecisionSupersessionCauses.CardAbsent, null);
+
+    /// <summary>
+    /// AGT-3281: the card left the lane the decision expects. The card records
+    /// why and drops its wait marker; the store settles the occurrence.
+    /// </summary>
+    private OrchestrationOccurrenceSupersededException Supersede(AgentStudio.Shared.TaskInfo task,
+        MonolithOrchestrationOccurrence occurrence, string message)
+    {
+        EngineDecisionSupersession.RecordOnCard(timeline, task.FolderPath, occurrence,
+            EngineDecisionSupersessionCauses.SourceStateMismatch, task.State, TimelineActors.System);
+        scanner.InvalidateCache();
+        return new OrchestrationOccurrenceSupersededException(
+            EngineDecisionSupersessionCauses.SourceStateMismatch, task.State, message);
     }
 
     private static string? TargetFromPayload(string payloadJson)

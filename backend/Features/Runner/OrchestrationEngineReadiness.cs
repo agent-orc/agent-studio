@@ -62,6 +62,23 @@ public sealed class OrchestrationEngineReadiness
 
     public string State => !Required ? NotRequired : IsLive ? Ready : NotLive;
 
+    private int _overdueDecisions;
+    private long _oldestOverdueTicks;
+
+    /// <summary>AGT-3281: cards that have waited past the bound for an engine decision while the engine is live.</summary>
+    public int OverdueDecisions => Volatile.Read(ref _overdueDecisions);
+
+    /// <summary>When the oldest overdue decision was created; null when none is overdue.</summary>
+    public DateTimeOffset? OldestOverdueSince => Interlocked.Read(ref _oldestOverdueTicks) is var ticks and > 0
+        ? new DateTimeOffset(ticks, TimeSpan.Zero) : null;
+
+    /// <summary>Called by the orchestration recovery pass with its current count.</summary>
+    public void ReportOverdueDecisions(int count, DateTimeOffset? oldestSince)
+    {
+        Volatile.Write(ref _overdueDecisions, Math.Max(0, count));
+        Interlocked.Exchange(ref _oldestOverdueTicks, oldestSince?.UtcTicks ?? 0);
+    }
+
     /// <summary>Called by the orchestration endpoints for every authenticated engine request.</summary>
     public void Observe(string engineId)
     {

@@ -55,6 +55,7 @@ builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrati
 builder.Services.AddSingleton<EngineBatchAdmission>();
 builder.Services.AddSingleton<OrchestrationRolloutStore>();
 builder.Services.AddSingleton<MonolithOrchestrationStore>();
+builder.Services.AddSingleton<OperatorMoveDecisionSupersession>();
 builder.Services.AddSingleton<OrchestratorDecisionStore>();
 builder.Services.AddSingleton<DecisionRuleVersionStore>();
 builder.Services.AddSingleton<DecisionGroundsCollector>();
@@ -2004,6 +2005,7 @@ if (!app.Environment.IsEnvironment("Test")
 // on `active != null`, and the project wedges until backend restart.
 var transitionsForRunner = app.Services.GetRequiredService<TaskTransitionService>();
 var runnerForTransitions = app.Services.GetRequiredService<TaskRunnerService>();
+runnerForTransitions.SetDecisionSupersession(app.Services.GetRequiredService<OperatorMoveDecisionSupersession>());
 transitionsForRunner.OnJobMoved += (projectName, jobId, fromState, toState) =>
 {
     if (fromState != TaskStates.Progress) return;

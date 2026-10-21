@@ -1554,11 +1554,18 @@ public static class TaskCrudEndpoints
                 && card.PendingIntent?.RunIntent != "steer")
                 return Results.BadRequest(new { error = "Steer requires a queued follow-up." });
 
+            // AGT-3281: an open engine decision of the card cannot apply to the
+            // lane the operator moves it to; it is superseded with the move.
+            var supersession = context.RequestServices
+                .GetService<AgentStudio.Runner.OperatorMoveDecisionSupersession>();
+            using var decisions = supersession?.Hold(card);
             var moved = await transitions.MoveAsync(
                 jobId, request.TargetState, watchPath, ct, request.TargetIndex,
                 cause: OperatorActor(context), reason: request.Reason,
                 operatorOverride: request.OperatorOverride,
                 archiveOverride: request.ArchiveOverride);
+            if (moved.Status == MoveJobStatus.Success && decisions is not null)
+                supersession!.Settle(decisions, card, OperatorActor(context));
             if (moved.Status == MoveJobStatus.Success && live?.AttemptId is { } attemptId
                 && intent == RunMoveIntent.Revoke)
             {

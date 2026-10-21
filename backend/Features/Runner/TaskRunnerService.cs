@@ -48,6 +48,7 @@ public class TaskRunnerService : BackgroundService
     private readonly PickupLockFile? _pickupLock;
     private readonly IntegrationLeaseService? _integrationLeases;
     private readonly TimelineLog? _timeline;
+    private OperatorMoveDecisionSupersession? _decisionSupersession;
     private readonly AgentStudio.Pipeline.PipelineExecutionLog? _pipelineLog;
     private readonly AgentStudio.Pipeline.ModelQualificationService? _modelQualification;
     private readonly AgentStudio.Pipeline.ModelMigrationCatalogRegistry? _modelMigrationCatalog;
@@ -1093,10 +1094,14 @@ public class TaskRunnerService : BackgroundService
         }
 
         var fromState = info.State;
+        // AGT-3281: an open engine decision of the card cannot apply to Ready.
+        using var decisions = _decisionSupersession?.Hold(info);
         var position = _states.PromoteToReadyTop(
             jobId, watchPath,
             transitionCause: LaneChangeCauses.ForOperatorMove(fromState, TaskStates.Ready),
             transitionDetail: $"follow-up-queued-{reason}");
+        if (position > 0 && decisions is not null)
+            _decisionSupersession!.Settle(decisions, info, author ?? TimelineActors.System);
 
         if (position == 0)
         {
@@ -1733,6 +1738,13 @@ public class TaskRunnerService : BackgroundService
     /// a successful <c>POST /api/tasks/{id}/move</c> guarantees the next
     /// pickup tick sees <c>active=null</c>.
     /// </summary>
+    /// <summary>
+    /// AGT-3281: late-bound, because the occurrence store's applier depends on
+    /// this service through the operator sweep actions.
+    /// </summary>
+    public void SetDecisionSupersession(OperatorMoveDecisionSupersession supersession)
+        => _decisionSupersession = supersession;
+
     public bool ClearActiveJobForProject(string projectName, string jobId, string reason)
     {
         if (string.IsNullOrEmpty(projectName) || string.IsNullOrEmpty(jobId)) return false;

@@ -64,6 +64,12 @@ public static class TimelineEventKinds
     public const string AgentRunFinished = "agent_run_finished";
     /// <summary>An operator move fenced a remote attempt while retaining its work as reference.</summary>
     public const string RunAttemptRevoked = "run_attempt_revoked";
+    /// <summary>
+    /// AGT-3281: an engine decision will not apply because its card left the
+    /// lane the decision expects (an operator move, another decision, a
+    /// completion). Details name the run, the cause, and both lanes.
+    /// </summary>
+    public const string EngineDecisionSuperseded = "engine_decision_superseded";
     /// <summary>A remote result awaits an operator decision because its brief is older.</summary>
     public const string OlderBriefDeliveryOffered = "older_brief_delivery_offered";
     /// <summary>A result producer replaced status.md after preserving the prior version.</summary>
