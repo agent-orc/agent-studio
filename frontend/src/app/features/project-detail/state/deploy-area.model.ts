@@ -218,6 +218,8 @@ export interface DeploySources {
   deployments: Deployment[] | null;
   releases: Release[] | null;
   health?: EnvironmentHealthResponse | null;
+  /** Releases of host artifacts that status does not describe, by {@link artifactLookupKey}. */
+  artifactReleases?: ReadonlyMap<string, DeployPanel<Release | null>>;
 }
 
 export type DeployPeriod = '24h' | '7d' | '30d' | 'all';
@@ -266,10 +268,40 @@ function digestOf(artifact: string): string {
   return at >= 0 ? artifact.slice(at + 1) : artifact;
 }
 
-export function releaseForArtifact(artifact: string | null, releases: readonly Release[] | null): Release | null {
-  if (!artifact || !releases) return null;
+export function carriesArtifact(release: Release | null | undefined, artifact: string | null): release is Release {
+  if (!release || !artifact) return false;
   const digest = digestOf(artifact);
-  return releases.find(release => release.artifactDigests.some(item => digestOf(item) === digest)) ?? null;
+  return release.artifactDigests.some(item => digestOf(item) === digest);
+}
+
+export function artifactLookupKey(artifact: string, notAfterUtc: string | null): string {
+  return `${artifact} ${notAfterUtc ?? ''}`;
+}
+
+export interface ArtifactReleaseLookup { key: string; artifact: string; notAfterUtc: string | null }
+
+/** The latest successful host report for the deployed artifact (AGT-3176). */
+function hostReportOf(view: CardBase['view']): ProjectEnvironments['environments'][number]['history'][number] | null {
+  return view?.history.find(row => HOST_REPORT[row.status]?.state === 'succeeded'
+    && (!view.deployedArtifact || row.artifact === view.deployedArtifact)) ?? null;
+}
+
+/**
+ * Host artifacts whose release AGT-3201 status does not name, such as a migrated
+ * host or an automatic rollback to an older artifact. Each resolves with one
+ * bounded read: the newest release with that digest created by the host deploy time.
+ */
+export function artifactReleaseLookups(sources: Pick<DeploySources, 'environments' | 'statuses'>): ArtifactReleaseLookup[] {
+  const lookups = new Map<string, ArtifactReleaseLookup>();
+  for (const view of sources.environments?.environments ?? []) {
+    const artifact = view.deployedArtifact;
+    const status = sources.statuses?.find(item => item.environment.id === view.declaration.id);
+    if (!artifact || carriesArtifact(status?.currentRelease, artifact)) continue;
+    const notAfterUtc = hostReportOf(view)?.at ?? null;
+    const key = artifactLookupKey(artifact, notAfterUtc);
+    lookups.set(key, { key, artifact, notAfterUtc });
+  }
+  return [...lookups.values()];
 }
 
 const newestFirst = (a: Deployment, b: Deployment) =>
@@ -340,12 +372,15 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
     const runs = sources.deployments || statusRun
       ? [...pageRuns, ...(statusRun && !pageRuns.some(item => item.id === statusRun.id) ? [statusRun] : [])].sort(newestFirst)
       : null;
-    const report = base.view?.history.find(row => HOST_REPORT[row.status]?.state === 'succeeded'
-      && (!base.view?.deployedArtifact || row.artifact === base.view.deployedArtifact)) ?? null;
+    const report = hostReportOf(base.view);
     const artifact = base.view?.deployedArtifact ?? status?.currentRelease?.artifactDigests[0] ?? null;
+    // The release of the latest successful run names the deployment; a digest
+    // match on a visible release page could name another release with the same digest.
+    const lookup = artifact ? sources.artifactReleases?.get(artifactLookupKey(artifact, report?.at ?? null)) : undefined;
     const statusRelease = status?.currentRelease ?? null;
-    const release = releaseForArtifact(artifact, sources.releases)
-      ?? (statusRelease?.artifactDigests.some(item => digestOf(item) === digestOf(artifact ?? '')) ? statusRelease : null);
+    const release = carriesArtifact(statusRelease, artifact) ? statusRelease
+      : lookup?.status === 'ready' && carriesArtifact(lookup.value, artifact) ? lookup.value : null;
+    const lookupPending = !release && artifact !== null && lookup?.status === 'loading';
     const current = status?.currentDeployment?.state === 'succeeded' && status.currentDeployment.releaseId === release?.id
       ? status.currentDeployment : null;
     const matchingRun = runs?.filter(item => item.state === 'succeeded' && item.releaseId === release?.id)
@@ -362,7 +397,8 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
       artifact,
       releaseVersion: release?.version ?? null,
       deployedAt,
-      cards: cardsFor(artifact !== null || release !== null, release, sources.releases !== null || status !== null),
+      cards: lookupPending ? { status: 'unknown', reason: 'Looking up the release record' }
+        : cardsFor(artifact !== null || release !== null, release, sources.releases !== null || status !== null || lookup?.status === 'ready'),
       newer: status?.newerRelease ? { version: status.newerRelease.version, cardKeys: status.cardsSinceLastDeploy } : null,
       health: healthFor(status, base, sources.health),
       lastRun,
