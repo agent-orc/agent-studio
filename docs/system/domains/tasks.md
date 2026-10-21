@@ -1759,6 +1759,10 @@ resident task facts and republish dependent blocker fields and core versions
 before acknowledgment. This includes release, reference edits, moves and
 deletion; an unrelated dirty task does not force a core request to scan. The
 sidecar watcher refreshes changed heads outside HTTP requests.
+Board waits-on chips resolve dependency targets against this published core
+reference graph. The board response signature includes its revision, so a
+dependency's release, completion, or move changes dependent chips on the next
+read even while the board's task-list scan is still catching up.
 
 The legacy full-detail route reads the resident per-card facts without waiting
 for a workspace scan. A folder move marks the source card as publishing before
@@ -1952,9 +1956,9 @@ disk for runner state.
   through `/api/v1/studio/board`) and `GET /api/tasks/` take one published
   generation of the index (`TaskIndexCache.AcquireBoardReadAsync`) and pin it
   for the request (`TaskScannerService.PinBoardRead`). Every nested index read
-  of that request answers from it: the task list, the reference graph the body's
-  dependency lookups receive, the runner status that the validator and the
-  live-status strip read, and the `tasks` generation the validator folds. The
+  of that request answers from it: the task list, the runner status that the validator and the
+  live-status strip read, and the `tasks` generation the validator folds. Dependency
+  targets use an atomically captured published core reference graph and revision. The
   shared body build pins the same generation itself, so the tag always names the
   generation the body came from.
 - **A dirty index refreshes in the background.** A dirty or TTL-expired index

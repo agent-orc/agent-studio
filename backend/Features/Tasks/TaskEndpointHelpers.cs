@@ -394,9 +394,9 @@ internal static class TaskEndpointHelpers
     /// 7-archive, and the board snapshot omits archive), so the key index is
     /// read from the archive-inclusive snapshot's published reference index.
     /// Cards without dependencies are skipped, keeping the common case free.
-    /// A board read passes the graph of its pinned generation as
-    /// <paramref name="references"/> (AGT-3088), so building the body never
-    /// re-enters the index.
+    /// A board read passes the published core graph as
+    /// <paramref name="references"/>, so dependency targets reflect durable
+    /// writes while building the body never re-enters the index.
     /// </summary>
     /// <summary>
     /// The registered client a board read is made for, or null for an

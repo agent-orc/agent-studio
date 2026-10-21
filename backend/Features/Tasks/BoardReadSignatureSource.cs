@@ -27,6 +27,9 @@ namespace AgentStudio.Tasks;
 /// everything the lane sort orders by. Inside a board read this is the pinned
 /// generation the body is built from (AGT-3088), so a publish that lands
 /// mid-request cannot tag an older body with a newer generation.</description></item>
+/// <item><description><b>Dependency targets</b> - the revision captured with
+/// the published core reference graph. Durable writes advance it before their
+/// response, including while the board snapshot is still refreshing.</description></item>
 /// <item><description><b>Generated sidecars</b> -
 /// <see cref="TaskSidecarGeneration"/>. The task index deliberately ignores
 /// them, but the response projects them (pipeline execution record, step prompt
@@ -107,7 +110,8 @@ public sealed class BoardReadSignatureSource(
         IReadOnlyList<TaskInfo> jobs,
         GitProjectionFreshness freshness,
         CliRouter router,
-        TaskRunnerService runners)
+        TaskRunnerService runners,
+        long coreReferenceRevision)
     {
         var anyProgress = false;
         for (var i = 0; i < jobs.Count && !anyProgress; i++)
@@ -117,6 +121,7 @@ public sealed class BoardReadSignatureSource(
             route,
             variant,
             Part("tasks", scanner.SnapshotGeneration),
+            Part("coreReferences", coreReferenceRevision),
             Part("sidecars", sidecars.Generation),
             Part("git", gitProjection.Generation),
             Part("gitStateAt", freshness.GitStateAt?.UtcDateTime.Ticks ?? -1),

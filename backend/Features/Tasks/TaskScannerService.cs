@@ -564,6 +564,10 @@ public class TaskScannerService : ITaskScanner
                ?? TaskReferenceIndex.Build(ScanAllJobsRaw());
     }
 
+    public (TaskReferenceIndex References, long Revision) GetPublishedCoreReferences()
+        => _indexCache?.GetPublishedCoreReferences()
+            ?? (TaskReferenceIndex.Build(ScanAllJobsRaw()), 0);
+
     /// <summary>
     /// Returns live tasks and their archive-inclusive reference graph from one
     /// cache generation. The uncached compatibility path also performs only

@@ -423,6 +423,12 @@ public sealed class TaskIndexCache
         lock (_lock) return _coreFactsByFolder.Values.ToArray();
     }
 
+    /// <summary>Dependency targets and their revision from one core publication.</summary>
+    public (TaskReferenceIndex References, long Revision) GetPublishedCoreReferences()
+    {
+        lock (_lock) return (_coreReferences, _coreWriteGeneration);
+    }
+
     /// <summary>Version of one card's durable publication, independent of board scans.</summary>
     public long GetCoreRevision(string watchPath, string identity)
     {

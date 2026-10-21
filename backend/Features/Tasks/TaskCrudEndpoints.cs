@@ -118,6 +118,7 @@ public static class TaskCrudEndpoints
             using (TaskSwitchTrace.Span("git-freshness"))
                 freshness = gitProjection.ReadFreshness(raw);
             ApplyGitStateHeaders(ctx, freshness);
+            var coreReferences = scanner.GetPublishedCoreReferences();
 
             // AGT-2703: everything above is a cache read over an already
             // scanned task set. Everything below - the token / verdict /
@@ -135,14 +136,15 @@ public static class TaskCrudEndpoints
                     raw,
                     freshness,
                     router,
-                    runners));
+                    runners,
+                    coreReferences.Revision));
 
             List<TaskInfo> BuildJobs()
             {
                 var tokenLookup = BuildTokenLookup(raw, tokens);
                 var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
                 var dependencyLookups = BuildDependencyGraphLookups(raw, scanner,
-                    attemptAuthority: attemptAuthority, references: publication?.References);
+                    attemptAuthority: attemptAuthority, references: coreReferences.References);
                 var gitLookup = gitProjection.ReadCacheOnly(raw);
                 var liveLookup = liveStatus.BuildLookup(raw);
                 var reviewQueue = attemptAuthority.ReadReviewQueue();
@@ -217,6 +219,7 @@ public static class TaskCrudEndpoints
             using (TaskSwitchTrace.Span("git-freshness"))
                 gitFreshness = gitProjection.ReadFreshness(raw);
             ApplyGitStateHeaders(context, gitFreshness);
+            var coreReferences = scanner.GetPublishedCoreReferences();
 
             // The board poll was the single biggest response this API
             // produced (8.5 MB measured on Stable), and on an unchanged board every byte
@@ -235,14 +238,15 @@ public static class TaskCrudEndpoints
                     raw,
                     gitFreshness,
                     router,
-                    runners));
+                    runners,
+                    coreReferences.Revision));
 
             byte[] BuildPayload()
             {
                 var tokenLookup = BuildTokenLookup(raw, tokens);
                 var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
                 var dependencyLookups = BuildDependencyGraphLookups(raw, scanner,
-                    attemptAuthority: attemptAuthority, references: publication?.References);
+                    attemptAuthority: attemptAuthority, references: coreReferences.References);
                 var gitLookup = gitProjection.ReadCacheOnly(raw);
                 var liveLookup = liveStatus.BuildLookup(raw);
                 var reviewQueue = attemptAuthority.ReadReviewQueue();

@@ -830,7 +830,8 @@ public sealed class BoardConditionalReadTests : IDisposable
                 jobs,
                 services.GetRequiredService<TaskListGitProjectionCache>().ReadFreshness(jobs),
                 services.GetRequiredService<CliRouter>(),
-                services.GetRequiredService<AgentStudio.Runner.TaskRunnerService>());
+                services.GetRequiredService<AgentStudio.Runner.TaskRunnerService>(),
+                cache.GetPublishedCoreReferences().Revision);
         }
 
         var tasksPart = Assert.Single(token.Split('\u001f'), part => part.StartsWith("tasks=", StringComparison.Ordinal));

@@ -585,6 +585,10 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         var libWatchPath = Uri.EscapeDataString(_libWatch);
         var appWatchPath = Uri.EscapeDataString(_appWatch);
 
+        // Warm the original board body before the write.
+        using var before = await client.GetAsync("/api/tasks/grouped");
+        before.EnsureSuccessStatusCode();
+
         using var release = await client.PutAsJsonAsync(
             $"/api/tasks/dep/release?watchPath={libWatchPath}",
             new { released = true });
@@ -598,6 +602,54 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         Assert.False(item.GetProperty("waitingForRelease").GetBoolean());
         Assert.True(item.GetProperty("fulfilled").GetBoolean());
         Assert.False(Flag(waitsOn, "blocked"));
+
+        using var board = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/grouped"));
+        var boardWaits = FindCard(board.RootElement.GetProperty("ready"), "consumer")
+            .GetProperty("waitsOn");
+        Assert.True(Flag(Assert.Single(boardWaits.GetProperty("items").EnumerateArray()), "fulfilled"));
+        Assert.False(Flag(boardWaits, "blocked"));
+    }
+
+    [Fact]
+    public async Task CompletedDependency_ImmediatelyUnblocksDetailAndBoard()
+    {
+        WriteJob(_libWatch, TaskStates.Ready, "dep", "LIB-1");
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1",
+            dependsOn: new[] { "LIB-1" });
+
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var appWatchPath = Uri.EscapeDataString(_appWatch);
+
+        using var before = await client.GetAsync("/api/tasks/grouped");
+        before.EnsureSuccessStatusCode();
+        var cache = factory.Services.GetRequiredService<TaskIndexCache>();
+        var target = cache.GetDetailFacts("dep", _libWatch).Info!;
+        var scannedReferences = cache.GetReferenceIndex();
+        Assert.True(scannedReferences.EvaluateWaitsOn(
+            cache.GetDetailFacts("consumer", _appWatch).Info!).Blocked);
+
+        // A durable writer publishes the move before the next board scan.
+        var completedFolder = Path.Combine(_libWatch, TaskStates.Completed, "dep");
+        Directory.Move(target.FolderPath, completedFolder);
+        WriteJob(_libWatch, TaskStates.Completed, "dep", "LIB-1");
+        cache.MoveCoreFromFolder(target.FolderPath, completedFolder,
+            () => target with { FolderPath = completedFolder, State = TaskStates.Completed });
+        Assert.True(scannedReferences.EvaluateWaitsOn(
+            cache.GetDetailFacts("consumer", _appWatch).Info!).Blocked);
+
+        using var detail = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/tasks/consumer?watchPath={appWatchPath}"));
+        var waitsOn = detail.RootElement.GetProperty("info").GetProperty("waitsOn");
+        Assert.True(Flag(Assert.Single(waitsOn.GetProperty("items").EnumerateArray()), "fulfilled"));
+        Assert.False(Flag(waitsOn, "blocked"));
+
+        using var board = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/grouped"));
+        var boardWaits = FindCard(board.RootElement.GetProperty("ready"), "consumer")
+            .GetProperty("waitsOn");
+        Assert.True(Flag(Assert.Single(boardWaits.GetProperty("items").EnumerateArray()), "fulfilled"));
+        Assert.False(Flag(boardWaits, "blocked"));
     }
 
     [Fact]
