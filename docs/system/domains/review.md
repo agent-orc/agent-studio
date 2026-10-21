@@ -737,10 +737,15 @@ and durations are removed. Output without a diagnostic line falls back to the
 exit status. When the merge-base command passes and the candidate command
 fails on both its original run and clean repeat with ordinary nonzero exit
 codes, the runner classifies the delivery as `product` even if diagnostics
-change or no test name can be parsed. Exit 127, timeout and abnormal
-termination remain review infrastructure. The blocking verdict carries the
-command, both SHAs, all three exit codes and a bounded, secret-scrubbed
-candidate output tail. The fix-round prompt includes that verdict.
+change or no test name can be parsed, unless the same failure fingerprint was
+seen on another card in the last 24 hours. That cross-card evidence remains
+`environment`, including when a green baseline result came from the cache.
+Exit 127, timeout and abnormal termination (including signal exits 128 and
+above) remain review infrastructure. A first-run timeout receives a clean
+repeat before settlement; a passing repeat does not charge the card. The
+blocking verdict carries the command, both SHAs, all three exit codes and a
+bounded, secret-scrubbed candidate output tail. The fix-round prompt includes
+that verdict.
 
 | Evidence | Diagnosis | Card charge |
 |---|---|---|

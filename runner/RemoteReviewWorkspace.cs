@@ -561,7 +561,9 @@ public sealed class RemoteReviewWorkspace
                         commands,
                         artifacts,
                         ct);
-                    if (execution.Signal is not null || execution.Process.ExitCode is 124 or < 0)
+                    if (execution.Signal != "timeout"
+                        && (execution.Signal is not null || execution.Process.ExitCode == 127
+                            || execution.Process.ExitCode >= 128))
                     {
                         commands.Add(await AddCommandEvidenceAsync(
                             command.StepId, command.Aspect, command.FileName, command.Arguments,
@@ -626,11 +628,21 @@ public sealed class RemoteReviewWorkspace
                                 artifacts,
                                 ct);
                         }
-                        if (cleanRepeat.Signal is not null || cleanRepeat.Process.ExitCode is 124 or < 0)
+                        if (cleanRepeat.Signal is not null || cleanRepeat.Process.ExitCode is 124 or < 0 or >= 128
+                            || ((execution.Signal is not null || execution.Process.ExitCode is 124 or < 0)
+                                && !cleanRepeat.Process.Success))
                         {
+                            commands.Add(await AddCommandEvidenceAsync(
+                                command.StepId, command.Aspect, command.FileName, command.Arguments,
+                                headBefore, treeBefore, execution.Process, execution.StartedAt,
+                                execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
+                                "verification", "candidate", comparison.BaselineSha, comparison,
+                                retryPerformed: true, dependencyCacheHit: false, dependencyCache: null,
+                                artifacts, ct, command));
                             SaveCaches(candidateCache);
                             throw await InfrastructureFailureAsync(
                                 cleanRepeat.Signal == "timeout" || cleanRepeat.Process.ExitCode == 124
+                                    || execution.Signal == "timeout" || execution.Process.ExitCode == 124
                                     ? "CommandTimeout" : "CommandInterrupted",
                                 $"Review retry '{command.StepId}' did not complete normally: " +
                                 $"{CommandLine(command)}; exit={cleanRepeat.Process.ExitCode}; " +
@@ -2079,7 +2091,7 @@ public sealed class RemoteReviewWorkspace
         {
             _log($"review fingerprint report failed step={command.StepId}: {exception.Message}");
         }
-        return reproducedExit
+        return reproducedExit && diagnosis.Classification != DeliveryFailureDiagnosis.Environment
             ? new DeliveryFailureDiagnosisResult(DeliveryFailureDiagnosis.Product, 1,
                 [ReviewCommandExitDiagnosis.Evidence($"{command.StepId}: {CommandLine(command)}", comparison.BaselineSha,
                     _subject.ExpectedResultSha, comparison.BaselineExitCode, firstResult.ExitCode,

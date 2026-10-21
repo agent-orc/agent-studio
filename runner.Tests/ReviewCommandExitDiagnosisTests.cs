@@ -13,6 +13,8 @@ public sealed class ReviewCommandExitDiagnosisTests
     [InlineData(0, 127, 127, false)]
     [InlineData(0, 1, 127, false)]
     [InlineData(0, 124, 124, false)]
+    [InlineData(0, 137, 137, false)]
+    [InlineData(0, 139, 139, false)]
     public void Only_repeated_candidate_command_failures_on_a_green_baseline_charge_the_card(
         int baseline, int candidate, int repeat, bool expected)
         => Assert.Equal(expected,
@@ -35,5 +37,31 @@ public sealed class ReviewCommandExitDiagnosisTests
         Assert.Contains("[redacted]", evidence);
         Assert.DoesNotContain(credential, evidence);
         Assert.True(evidence.Length < 2400);
+    }
+
+    [Theory]
+    [InlineData("NPM_TOKEN=abc", "abc")]
+    [InlineData("DB_PASSWORD=def", "def")]
+    [InlineData("AWS_SECRET_ACCESS_KEY=ghi", "ghi")]
+    [InlineData("{\"password\": \"jkl\"}", "jkl")]
+    [InlineData("Authorization: Basic bW5v", "bW5v")]
+    [InlineData("https://user:pass@example.invalid/path", "pass")]
+    public void Evidence_scrubs_common_credential_forms(string output, string secret)
+    {
+        var evidence = ReviewCommandExitDiagnosis.Evidence("build", "base", "candidate", 0, 1, 1, output, "");
+        Assert.Contains("[redacted]", evidence);
+        Assert.DoesNotContain(secret, evidence);
+    }
+
+    [Fact]
+    public void Evidence_keeps_long_test_names_and_git_shas_and_stdout_errors()
+    {
+        var testName = "Product.Tests." + new string('T', 60);
+        var sha = new string('a', 40);
+        var evidence = ReviewCommandExitDiagnosis.Evidence("build", sha, sha, 0, 1, 1,
+            $"Failed {testName}\nerror CS1234: compile failed", new string('e', 4000));
+        Assert.Contains(testName, evidence);
+        Assert.Contains(sha, evidence);
+        Assert.Contains("error CS1234: compile failed", evidence);
     }
 }

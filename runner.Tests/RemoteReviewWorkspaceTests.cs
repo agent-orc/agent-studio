@@ -1250,6 +1250,31 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_repeated_candidate_failure_shared_with_other_cards_stays_environmental()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then printf 'NU1301: registry unavailable\\n' >&2; exit 1; fi; exit 0");
+        var (workspace, _) = Workspace(
+            "attempt-shared-environment", subjectSha, [command], 26126,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main",
+            historyReader: fingerprint => Task.FromResult<FailureFingerprintHistoryDto?>(new(
+                fingerprint, DateTime.UnixEpoch, DateTime.UnixEpoch, 2,
+                ["review-executor"], ["other-card", "task-attempt-shared-environment"])));
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("ReviewInfra", evidence.Outcome);
+        var candidate = CandidateVerification(evidence);
+        Assert.Equal(0, candidate.BaselineExitCode);
+        Assert.Equal(1, candidate.ExitCode);
+        Assert.Equal(DeliveryFailureDiagnosis.Environment, candidate.Diagnosis?.Classification);
+        Assert.False(candidate.Diagnosis!.ChargesCard);
+        Assert.Equal("pass", Assert.Single(evidence.Verdicts).Status);
+    }
+
+    [Fact]
     [Trait("Category", "MachineBound")]
     [Trait("Category", "ReviewFlaky")]
     public async Task Verification_uses_the_typed_working_subdirectory()
@@ -1868,6 +1893,29 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         Assert.Equal("CommandTimeout", exception.Classification);
         Assert.Equal("ReviewInfra", exception.Evidence?.Outcome);
+        Assert.Contains(exception.Evidence!.Commands, item =>
+            item is { StepId: "verify-2", WorkspaceRole: "candidate" });
+    }
+
+    [Fact]
+    public async Task First_candidate_timeout_gets_a_clean_repeat_and_does_not_charge_when_it_passes()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var marker = Path.Combine(_root, "candidate-timeout-seen");
+        var command = BaselineCommand(
+            "if grep -q subject product.txt && test ! -f '" + marker + "'; then " +
+            "touch '" + marker + "'; sleep 3; fi; exit 0") with { TimeoutSeconds = 1 };
+        var (workspace, _) = Workspace("attempt-first-timeout", subjectSha,
+            [command], 26054, resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.NotEqual("ProductFailure", evidence.Outcome);
+        Assert.Contains(evidence.Commands, item =>
+            item is { StepId: "verify-2", WorkspaceRole: "clean-repeat", ExitCode: 0 });
+        Assert.False(CandidateVerification(evidence).Diagnosis?.ChargesCard ?? false);
     }
 
     [Fact]
@@ -2486,7 +2534,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         int commandSilenceWatchdogSeconds = 600,
         int reviewNoCpuProgressSeconds = 900,
         int composeScenarioMinFreePercent = ComposeScenarioDiskAdmission.DefaultMinFreePercent,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        Func<string, Task<FailureFingerprintHistoryDto?>>? historyReader = null)
     {
         var repositoryId = TaskServerClient.RepositoryIdentity(_origin)!;
         var subject = new ReviewSubjectDto(
@@ -2541,7 +2590,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             ComposeScenarioMinFreePercent = composeScenarioMinFreePercent,
         };
         return (new RemoteReviewWorkspace(options, subject, lease, log ?? (_ => { }),
-            _ => Task.FromResult<FailureFingerprintHistoryDto?>(null)), subject);
+            historyReader ?? (_ => Task.FromResult<FailureFingerprintHistoryDto?>(null))), subject);
     }
 
     private async Task<(string BaselineSha, string SubjectSha)> SeedSubjectBranchAsync()
