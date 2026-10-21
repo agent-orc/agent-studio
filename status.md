@@ -1,5 +1,10 @@
 # AGT-3238 networked first-run and repository authority status
 
+## Integration recovery, 21 October 2026
+
+- Failed stage resolved: `merge-into-develop` at integration tip `af684720e676694afb2bf676c5ff12cf29ecc91f` conflicted in `status.md`. Result implementation SHA `eb593e68cf5d42c53e4720ab354c6924a8867cfb` merges current `origin/develop` into reviewed delivery `91d42bcbc6c2b6a7c3a2125c0e9a7ccbacdafa70`. Both status histories are retained. Both inputs are ancestors of the result; no delivery commit was rebased, squashed, split, or dropped. A final `git fetch origin develop` confirmed the result still descends from current develop.
+- Verification: the solution and frontend builds passed. The affected backend class filter passed 85 tests; the architecture and guard filter passed 98 backend tests and exited successfully on all eight .NET test projects. The checklist component suite passed 19 tests, the real networked monolith Playwright spec passed, and `npm --prefix frontend run lint` and `git diff --check` passed. Logs and the screenshot are in `/home/agent/runner-work/tasks/AGT-3238/results`; [integration recovery evidence](/home/agent/runner-work/tasks/AGT-3238/results/integration-recovery.md) lists the commands and artifacts.
+
 ## Hidden repository candidates and URL start ordering review fix, 20 October 2026
 
 - Result implementation SHA: `7da2a26a5e9a30a4b6d3a0664ad3fbe0bf892cfb`, directly on reviewed delivery `29af624fbe27555f1606713c9694f11e97b32fe8`. A fresh `git fetch origin develop` and `git merge origin/develop` found the branch already up to date. `git merge-base --is-ancestor origin/develop HEAD` passed. No rebase or squash was used.
