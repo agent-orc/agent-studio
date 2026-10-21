@@ -38,9 +38,21 @@ internal static class RunnerCapabilityProbe
         }
     }
 
-    internal static IReadOnlyList<(string Provider, string Model)> ModelCandidates(RunnerOptions options)
-        => CodingCliBinaries(options).SelectMany(item =>
+    /// <summary>
+    /// The curated routes plus configured models a server asked this host to
+    /// verify (an operator fallback override or a card's primary pin). Requested
+    /// IDs are validated by <see cref="RunnerModelAcceptanceProbe.RequestProbe"/>;
+    /// a Codex ID must also appear in the CLI catalogue when it can be read.
+    /// </summary>
+    internal static IReadOnlyList<(string Provider, string Model)> ModelCandidates(
+        RunnerOptions options,
+        IReadOnlyList<(string Provider, string Model)>? requested = null)
+    {
+        requested ??= RunnerModelAcceptanceProbe.Shared.RequestedModels();
+        return CodingCliBinaries(options).SelectMany(item =>
         {
+            var configured = requested.Where(candidate => candidate.Provider == item.CliType)
+                .Select(candidate => candidate.Model);
             if (item.CliType == CliSelection.CodexCli)
             {
                 var installation = InspectCli(item.Binary);
@@ -48,7 +60,7 @@ internal static class RunnerCapabilityProbe
                     "gpt-5.5", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna",
                     "gpt-6-astra"];
                 var offered = installation is null ? null : CodexModels(installation);
-                return routes.Where(model => offered is null
+                return routes.Concat(configured).Where(model => offered is null
                         || offered.Contains(model, StringComparer.OrdinalIgnoreCase))
                     .Select(model => (item.CliType, model));
             }
@@ -56,8 +68,10 @@ internal static class RunnerCapabilityProbe
                     "claude-sonnet-5-5", "claude-fable-5-1", "claude-sonnet-4-6",
                     "claude-sonnet-4-5", "claude-opus-4-8", "claude-opus-4-7",
                     "claude-opus-4-6", "claude-opus-4-5", "claude-haiku-4-5" }
+                .Concat(configured)
                 .Select(model => (item.CliType, model));
         }).Distinct().ToArray();
+    }
     public static IReadOnlyList<AdvertisedCapabilityDto> Advertise(
         RunnerOptions options,
         bool gitPushReady,

@@ -2264,7 +2264,8 @@ public sealed partial class TaskServerStoreTests
         const string salvageRef = "refs/heads/agent-studio/salvage/runner/AGT-2874/run-1/fence-1/1111111";
         const string salvageSha = "1111111111111111111111111111111111111111";
         using var temp = new TempDirectory();
-        var store = Store(temp.Path);
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
@@ -2288,6 +2289,14 @@ public sealed partial class TaskServerStoreTests
             default);
 
         Assert.Equal("2-ready", (await store.GetTaskAsync(project.ProjectId, task.TaskKey, default))!.State);
+        // The continuation launches the declared sibling, so that is the model
+        // this host must have proven.
+        var unverified = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("empty", unverified.Status);
+        Assert.Equal(
+            new[] { CapabilityProtocol.ModelAcceptance("codex", "gpt-5.6-sol") },
+            unverified.ReprobeCapabilities);
+        await AdvertiseModelAsync(store, clock, "codex", "gpt-5.6-sol", "ready", 1, probeSequence: 1);
         var continuation = await store.ClaimAsync(
             new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Equal("gpt-6-astra", continuation.ModelFallback!.From);
@@ -2333,7 +2342,7 @@ public sealed partial class TaskServerStoreTests
     }
 
     [Fact]
-    public async Task Claim_does_not_filter_a_card_by_its_primary_model_before_fallback_routing()
+    public async Task Claim_requires_fresh_host_acceptance_of_a_named_primary_model()
     {
         using var temp = new TempDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
@@ -2345,16 +2354,25 @@ public sealed partial class TaskServerStoreTests
         await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
             new SetTaskModelRequest("claude-opus-5", 1), "operator", default);
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
-        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
-            "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, 1,
-            [new AdvertisedCapabilityDto(
-                CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol"),
-                "model-acceptance", "ready", CredentialGeneration: "login-1",
-                CredentialObservedAt: clock.GetUtcNow().UtcDateTime)]), "runner-a", default);
+        // Another model's acceptance does not prove the card's primary pin.
+        await AdvertiseModelAsync(store, clock, "codex", "gpt-6-sol", "ready", 1, probeSequence: 1);
 
-        var claim = await store.ClaimAsync(
-            new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var unverified = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
 
+        Assert.Equal("empty", unverified.Status);
+        Assert.Equal("host-model-unaccepted", unverified.PlacementReason);
+        Assert.Equal(
+            new[] { CapabilityProtocol.ModelAcceptance("claude", "claude-opus-5") },
+            unverified.ReprobeCapabilities);
+
+        await AdvertiseModelAsync(store, clock, "claude", "claude-opus-5", "ready", 2, probeSequence: 2,
+            freshForSeconds: 60);
+        clock.Advance(TimeSpan.FromSeconds(61));
+        Assert.Equal("empty", (await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+
+        await AdvertiseModelAsync(store, clock, "claude", "claude-opus-5", "ready", 3, probeSequence: 3);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Equal("claimed", claim.Status);
         Assert.Equal(task.TaskId, claim.Task?.TaskId);
     }
@@ -2372,9 +2390,8 @@ public sealed partial class TaskServerStoreTests
         await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
             new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
-        var key = CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol");
         var firstProbeAt = clock.GetUtcNow().UtcDateTime;
-        await Advertise("ready", 1);
+        await AdvertiseModelAsync(store, clock, "codex", "gpt-6-sol", "ready", 1, probeSequence: 4);
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         const string frame = """
             {"type":"turn.failed","error":{"type":"invalid_request_error","message":"The gpt-6-sol model is not supported when using Codex with a ChatGPT account","status":400}}
@@ -2382,7 +2399,8 @@ public sealed partial class TaskServerStoreTests
         var decision = ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
             claim.Run!.RunId, ExecutionAttemptKind.Coding, ProviderTerminalEvent: frame,
             ExitCode: 1, DurableOutputState: DurableOutputState.Missing,
-            EffectiveCliType: "codex", EffectiveModel: "gpt-6-sol", EffectiveThinkingLevel: "medium"));
+            EffectiveCliType: "codex", EffectiveModel: "gpt-6-sol", EffectiveThinkingLevel: "medium",
+            ModelRejectionProbeSequence: 7));
         Assert.Equal(ExecutionOutcomeKind.ProviderRejectedRequest, decision.Outcome);
 
         await store.CompleteRunAsync(claim.Run.RunId,
@@ -2397,24 +2415,21 @@ public sealed partial class TaskServerStoreTests
         Assert.Contains(await store.ListEventsAsync(claim.Run.RunId, 0, default),
             item => item.Kind == "execution.model-capability-held");
 
+        // A cached verdict and a probe that started before the runner recorded
+        // the rejection both keep the model held, however new their timestamps.
         clock.Advance(TimeSpan.FromSeconds(1));
-        await Advertise("ready", 2, firstProbeAt);
+        await AdvertiseModelAsync(store, clock, "codex", "gpt-6-sol", "ready", 2, probeSequence: 4,
+            observedAt: firstProbeAt);
+        await AdvertiseModelAsync(store, clock, "codex", "gpt-6-sol", "ready", 3, probeSequence: 6);
         Assert.NotEqual("claimed", (await store.ClaimAsync(
             new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
         Assert.Equal("unavailable", Assert.Single(
             (await store.ListRunnerCapabilitySnapshotsAsync(default)).Single().Capabilities).AdvertisedStatus);
 
         clock.Advance(TimeSpan.FromSeconds(1));
-        await Advertise("ready", 3);
+        await AdvertiseModelAsync(store, clock, "codex", "gpt-6-sol", "ready", 4, probeSequence: 8);
         Assert.Equal("claimed", (await store.ClaimAsync(
             new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
-
-        Task Advertise(string status, long generation, DateTime? observedAt = null)
-            => store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
-                "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, generation,
-                [new AdvertisedCapabilityDto(key, "model-acceptance", status,
-                    CredentialGeneration: $"login-{generation}",
-                    CredentialObservedAt: observedAt ?? clock.GetUtcNow().UtcDateTime)]), "runner-a", default);
     }
 
     [Fact]
@@ -2430,6 +2445,7 @@ public sealed partial class TaskServerStoreTests
         await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
             new SetTaskModelRequest("claude-opus-5", 1), "operator", default);
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await AdvertiseModelAsync(store, clock, "claude", "claude-opus-5", "ready", 1, probeSequence: 1);
 
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         const string frame = """

@@ -142,44 +142,22 @@ public sealed partial class TaskServerStore
     /// <summary>
     /// Streams ready, unleased tasks the host may serve, in claim order. The
     /// reader stays open only until the caller stops at an admissible task.
+    /// Model acceptance is checked per task after the effective route is known.
     /// </summary>
     private static async IAsyncEnumerable<TaskDto> ReadClaimableTasksAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         string hostId,
-        string runnerId,
-        DateTime now,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        // A rejected fallback must not hold the card after quota admission
-        // returns to its primary route. The quota planner checks acceptance
-        // after resolving the effective route.
         await using var command = Command(connection, """
             SELECT t.id, t.project_id, t.task_key, t.title, t.state, t.version, t.created_at, t.updated_at, t.body,
                    t.archive_state, t.archived_at
               FROM tasks t
-              LEFT JOIN task_studio_fields primary_route ON primary_route.task_id = t.id
              WHERE t.state = '2-ready'
                AND NOT EXISTS (
                    SELECT 1 FROM leases l
                     WHERE l.task_id = t.id AND l.status IN ('active', 'process-unknown'))
-               AND NOT EXISTS (
-                   SELECT 1 FROM events held
-                    WHERE held.task_id = t.id
-                      AND held.kind = 'execution.model-capability-held'
-                      AND json_extract(held.payload_json, '$.runnerId') = $runner
-                      AND COALESCE(NULLIF(lower(primary_route.cli_type), ''), 'claude') =
-                          lower(json_extract(held.payload_json, '$.provider'))
-                      AND lower(primary_route.model) = lower(json_extract(held.payload_json, '$.model'))
-                      AND NOT EXISTS (
-                          SELECT 1 FROM runner_capabilities recovery
-                           WHERE recovery.runner_id = $runner
-                             AND recovery.capability_key =
-                                 'model-acceptance:' || json_extract(held.payload_json, '$.provider')
-                                 || ':' || json_extract(held.payload_json, '$.model')
-                             AND recovery.advertised_status = 'ready'
-                             AND recovery.credential_observed_at > held.occurred_at
-                             AND recovery.fresh_until > $now))
                AND (
                    NOT EXISTS (
                        SELECT 1 FROM host_project_policies policy
@@ -193,7 +171,7 @@ public sealed partial class TaskServerStore
                         WHERE allowed.host_id = $host
                           AND allowed.project_id = t.project_id))
              ORDER BY t.created_at, t.task_key;
-            """, transaction, ("$host", hostId), ("$runner", runnerId), ("$now", Iso(now)));
+            """, transaction, ("$host", hostId));
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
             yield return ReadTask(reader);
@@ -264,6 +242,8 @@ internal static class ProjectPlacementReasons
     /// <summary>The project has no placement row and keeps legacy host routing.</summary>
     public const string LegacyRouting = "legacy-routing";
     public const string NoAdmissibleTask = "no-admissible-task";
+    /// <summary>Every ready task needs a named model this host has not proven.</summary>
+    public const string HostModelUnaccepted = "host-model-unaccepted";
 }
 
 internal static class ProjectPlacementSelection

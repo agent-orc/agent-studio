@@ -1645,7 +1645,22 @@ public sealed class RemoteTaskRunner
                             $"[runner] provider rejected model request provider={invocation.CliType}; provider-auth capability unchanged");
                         if (!string.IsNullOrWhiteSpace(invocation.Model)
                             && RunnerModelAcceptanceProbe.IsModelRejection(processResult, invocation.Model))
-                            RunnerModelAcceptanceProbe.Shared.RecordRejection(invocation.CliType, invocation.Model);
+                        {
+                            // The servers keep the model held until a probe
+                            // with a larger sequence succeeds on this host.
+                            var rejectionSequence = RunnerModelAcceptanceProbe.Shared.RecordRejection(
+                                invocation.CliType, invocation.Model);
+                            classified = classified with
+                            {
+                                Decision = classified.Decision with
+                                {
+                                    RawFacts = classified.Decision.RawFacts with
+                                    {
+                                        ModelRejectionProbeSequence = rejectionSequence,
+                                    },
+                                },
+                            };
+                        }
                     }
                     if (classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession
                         && slot.InputSessionId is null

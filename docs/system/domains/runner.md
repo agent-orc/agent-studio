@@ -25,10 +25,21 @@ neither Task Server nor Studio distributes ChatGPT login files.
 The coding host also probes the small set of primary and fallback model ids
 with a real request in an isolated scratch context. Each verdict is bound to
 the local credential generation and advertised as `model-acceptance:<provider>:<model>`.
-The quota view lists accepted models by host. A launch-time model refusal with
-no salvage marks that host model unavailable and puts the card back in Ready.
-Claim admission holds a refused primary until a later accepted probe. A refused
-fallback does not hold the card once quota admission can use its primary route.
+A server asks the host to probe a configured model outside that set, such as
+an operator fallback override or a card's primary pin, through the claim
+response's `reprobeCapabilities`; the host accepts only well-formed IDs for its
+own CLIs. The quota view lists accepted models by host. A launch-time model
+refusal with no salvage marks that host model unavailable and puts the card
+back in Ready.
+Every probe launch and launch rejection reserves the next value of a sequence
+persisted in the runner state directory. The run reports its rejection
+sequence, and each verdict carries its own as `model-probe:<n>` evidence. A
+refused model clears only on an accepted probe with a larger sequence; runner
+and server clocks never order the two. Task Server's direct claim, permit
+listing, and permit acceptance each require fresh host acceptance of the
+effective named model (a provider-rejection continuation's fallback, else the
+primary pin) in the transaction that creates the lease. A blank model runs the
+CLI default route, so a refused fallback does not hold it.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable

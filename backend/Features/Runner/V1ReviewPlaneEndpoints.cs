@@ -3662,11 +3662,13 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 if (!capability.Key.StartsWith("model-acceptance:", StringComparison.Ordinal))
                     return capability;
                 var rejectedKey = $"{runnerId}|{capability.Key}";
-                if (!_rejectedModels.TryGetValue(rejectedKey, out var rejectedAt))
+                if (!_rejectedModels.TryGetValue(rejectedKey, out var rejectionSequence))
                     return capability;
+                // Runner and server clocks do not order a probe against the
+                // rejection; only a larger runner probe sequence does.
                 if (string.Equals(capability.AdvertisedStatus, "ready", StringComparison.Ordinal)
-                    && capability.CredentialObservedAt is { } observedAt
-                    && observedAt.ToUniversalTime() > rejectedAt)
+                    && Contract.CapabilityProtocol.ModelProbeSupersedesRejection(
+                        Contract.CapabilityProtocol.ModelProbeSequence(capability.EvidenceId), rejectionSequence))
                 {
                     _rejectedModels.Remove(rejectedKey);
                     return capability;
@@ -4322,14 +4324,22 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 ? registration.InstanceId : null;
     }
 
-    private readonly Dictionary<string, DateTime> _rejectedModels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long?> _rejectedModels = new(StringComparer.Ordinal);
 
-    public void MarkModelRejected(string runnerId, string cliType, string model)
+    /// <param name="rejectionSequence">
+    /// The runner's model-probe sequence for the rejection; null from a runner
+    /// that predates probe sequences.
+    /// </param>
+    public void MarkModelRejected(string runnerId, string cliType, string model, long? rejectionSequence)
     {
         var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
         lock (_gate)
         {
-            _rejectedModels[$"{runnerId}|{key}"] = _time.GetUtcNow().UtcDateTime;
+            var entry = $"{runnerId}|{key}";
+            _rejectedModels[entry] = _rejectedModels.TryGetValue(entry, out var prior)
+                                     && prior is { } earlier && rejectionSequence is { } later
+                ? Math.Max(earlier, later)
+                : rejectionSequence ?? prior;
             if (!_capabilityStates.TryGetValue(runnerId, out var state)) return;
             _capabilityStates[runnerId] = state with
             {

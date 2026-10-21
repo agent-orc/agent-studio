@@ -173,6 +173,42 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
         Assert.Contains("TokenEconomy", marker.ModelFallback?.CatalogueVersion);
     }
 
+    [Fact]
+    public async Task Remote_claim_asks_the_host_to_probe_an_operator_fallback_outside_the_curated_list()
+    {
+        const string overrideModel = "gpt-6.2-nova";
+        SeedTask(
+            TaskStates.Ready, "AGT-QUOTA-OVERRIDE", "Card queued during quota incident", "Do the work.",
+            cliType: CliTypes.Claude, model: ModelIds.ClaudeOpus5, thinkingLevel: "high");
+        SeedExhaustedQuota(CliTypes.Claude, 98, TimeSpan.FromHours(3));
+
+        using var factory = BuildFactory();
+        factory.Services.GetRequiredService<CliQuotaFallbackService>().Set(new CliModelRouteProfile
+        {
+            CliType = CliTypes.Claude,
+            FallbackCliType = CliTypes.Codex,
+            FallbackModel = overrideModel,
+            FallbackThinkingLevel = "high",
+        });
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/quota-operator-override.git");
+
+        var claim = await client.ClaimAsync(
+            new RClaim(RunnerId, ProjectName, "host", 1, "remote-runner",
+                IdempotencyKey: "quota-operator-override"),
+            CancellationToken.None);
+
+        // The host has not proven the override, so the card waits and the
+        // host is asked to probe that exact configured model.
+        Assert.Equal(RClaimStatus.Empty, claim.Status);
+        Assert.Contains(
+            Contract.CapabilityProtocol.ModelAcceptance(CliTypes.Codex, overrideModel),
+            claim.ReprobeCapabilities ?? []);
+    }
+
     // ── Test B: review-claim (/api/v1/runners/{id}/review-claims) re-resolves ──
     [Theory]
     [InlineData(CliTypes.Codex, ModelIds.Gpt56Sol, "medium", CliTypes.Claude, ModelIds.ClaudeSonnet5, "high")]

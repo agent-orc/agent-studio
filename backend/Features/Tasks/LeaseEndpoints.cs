@@ -900,8 +900,17 @@ public static class LeaseEndpoints
                         task.ProjectName,
                         hostActiveRuns,
                         "remote-coding-claim",
-                        (provider, model) => capabilityRegistry.AcceptsModel(
-                            req.RunnerId.Trim(), req.CapabilityInstanceId, provider, model)));
+                        (provider, model) =>
+                        {
+                            var accepted = capabilityRegistry.AcceptsModel(
+                                req.RunnerId.Trim(), req.CapabilityInstanceId, provider, model);
+                            // Ask the host to verify a configured model it has not
+                            // proven, such as an operator fallback override outside
+                            // the curated probe list.
+                            if (!accepted && !string.IsNullOrWhiteSpace(model))
+                                reprobeCapabilities.Add(CapabilityProtocol.ModelAcceptance(provider, model));
+                            return accepted;
+                        }));
                     if (quotaPlan.IsDeferred)
                     {
                         if (quotaPlan.Outcome == QuotaAdmissionOutcome.Wait)
@@ -2554,7 +2563,8 @@ public static class LeaseEndpoints
                     capabilityRegistry.MarkModelRejected(
                         req.RunnerId.Trim(),
                         req.OutcomeDecision?.RawFacts.EffectiveCliType ?? task.CliType ?? "codex",
-                        providerRejectionModel!);
+                        providerRejectionModel!,
+                        req.OutcomeDecision?.RawFacts.ModelRejectionProbeSequence);
                     var holdPlan = quotaAdmission.Plan(new QuotaAdmissionRequest(
                         task.CliType, task.Model, task.ThinkingLevel, task.ProjectName, 0,
                         "remote-model-rejection",

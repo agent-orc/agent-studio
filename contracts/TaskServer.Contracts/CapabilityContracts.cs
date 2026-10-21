@@ -51,6 +51,42 @@ public static class CapabilityProtocol
 
     public static string ModelAcceptance(string provider, string model)
         => $"model-acceptance:{provider.Trim().ToLowerInvariant()}:{model.Trim().ToLowerInvariant()}";
+
+    public static bool TryParseModelAcceptance(string? key, out string provider, out string model)
+    {
+        provider = model = string.Empty;
+        const string prefix = "model-acceptance:";
+        if (key is null || !key.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        var separator = key.IndexOf(':', prefix.Length);
+        if (separator <= prefix.Length || separator == key.Length - 1) return false;
+        provider = key[prefix.Length..separator];
+        model = key[(separator + 1)..];
+        return true;
+    }
+
+    /// <summary>
+    /// Model-acceptance evidence id: the runner's durable, strictly increasing
+    /// probe sequence. A launch rejection reserves a sequence before the run
+    /// completes, so only a probe started after the rejection carries a larger
+    /// one. Servers compare sequences, never runner and server clocks.
+    /// </summary>
+    public static string ModelProbeEvidence(long sequence) => $"model-probe:{sequence}";
+
+    public static long? ModelProbeSequence(string? evidenceId)
+        => evidenceId is not null
+           && evidenceId.StartsWith("model-probe:", StringComparison.Ordinal)
+           && long.TryParse(evidenceId["model-probe:".Length..], System.Globalization.NumberStyles.None,
+               System.Globalization.CultureInfo.InvariantCulture, out var sequence)
+            ? sequence
+            : null;
+
+    /// <summary>
+    /// A launch rejection clears only on a ready probe with a larger sequence.
+    /// A rejection from a runner that predates sequences clears on any
+    /// sequenced probe: that probe comes from a later runner process.
+    /// </summary>
+    public static bool ModelProbeSupersedesRejection(long? probeSequence, long? rejectionSequence)
+        => probeSequence is { } probe && (rejectionSequence is not { } rejection || probe > rejection);
 }
 
 public static class CapabilityHealthStates

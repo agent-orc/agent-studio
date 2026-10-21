@@ -117,7 +117,10 @@ public sealed record ExecutionRawFacts(
     string? EffectiveCliType = null,
     string? EffectiveModel = null,
     string? EffectiveThinkingLevel = null,
-    IReadOnlyList<string>? ObservedModels = null);
+    IReadOnlyList<string>? ObservedModels = null,
+    // The runner's model-probe sequence reserved when it recorded a launch
+    // rejection of EffectiveModel. See CapabilityProtocol.ModelProbeEvidence.
+    long? ModelRejectionProbeSequence = null);
 
 /// <summary>
 /// Safe provider refusal evidence. The request and raw response are deliberately

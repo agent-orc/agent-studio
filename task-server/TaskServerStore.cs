@@ -1509,9 +1509,23 @@ public sealed partial class TaskServerStore
             // at the first admissible task, so refused projects cost one
             // evaluation and one admission receipt rather than one per task.
             var verdicts = new List<ClaimPlacementVerdict>();
+            var unacceptedModels = new SortedSet<string>(StringComparer.Ordinal);
+            async IAsyncEnumerable<TaskDto> HostAcceptedTasksAsync()
+            {
+                await foreach (var candidate in ReadClaimableTasksAsync(
+                                   connection, transaction, capabilityRunner.HostId, ct))
+                {
+                    if (await UnacceptedEffectiveModelAsync(
+                            connection, transaction, request.RunnerId, candidate.TaskId, ct) is { } unaccepted)
+                    {
+                        unacceptedModels.Add(unaccepted);
+                        continue;
+                    }
+                    yield return candidate;
+                }
+            }
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
-                ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId,
-                    request.RunnerId, UtcNow, ct),
+                HostAcceptedTasksAsync(),
                 async projectId =>
                 {
                     var verdict = await EvaluateProjectAsync(projectId);
@@ -1525,22 +1539,27 @@ public sealed partial class TaskServerStore
             var selectedPlacement = selected?.Placement;
             var placementReason = selected?.Reason
                                   ?? verdicts.LastOrDefault()?.Reason
-                                  ?? ProjectPlacementReasons.NoAdmissibleTask;
+                                  ?? (unacceptedModels.Count > 0
+                                      ? ProjectPlacementReasons.HostModelUnaccepted
+                                      : ProjectPlacementReasons.NoAdmissibleTask);
 
             if (task is null)
             {
+                // The host probes a configured model outside its curated list
+                // only when asked, so name the models it has not proven.
                 response = new ClaimResponse(
                     "empty",
                     Message: "No admissible task is ready.",
                     ReconciliationActions: reconciliationActions,
                     RuntimeCapacity: runtimeCapacity,
-                    PlacementReason: placementReason);
+                    PlacementReason: placementReason,
+                    ReprobeCapabilities: unacceptedModels.Count == 0 ? null : unacceptedModels.ToArray());
                 return;
             }
             capabilityAdmission = selected!.Admission!;
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
-                connection, transaction, task, ct);
+                connection, transaction, task.TaskId, ct);
             var continuationIntent = await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct);
             var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
             SessionContinuationLedgerEntry? previousSession = null;
@@ -2230,6 +2249,7 @@ public sealed partial class TaskServerStore
                             provider = cli,
                             model = providerRecovery.Model,
                             reason = effectiveSummary,
+                            rejectionSequence = request.OutcomeDecision?.RawFacts.ModelRejectionProbeSequence,
                         }, ct);
                 }
             }

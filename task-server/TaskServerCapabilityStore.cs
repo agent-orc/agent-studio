@@ -94,16 +94,12 @@ public sealed partial class TaskServerStore
                 if (key.StartsWith("model-acceptance:", StringComparison.Ordinal)
                     && advertisedStatus == "ready")
                 {
-                    var rejectionAt = await ScalarAsync(connection, """
-                        SELECT MAX(held.occurred_at) FROM events held
-                         WHERE held.kind = 'execution.model-capability-held'
-                           AND json_extract(held.payload_json, '$.runnerId') = $runner
-                           AND 'model-acceptance:' || json_extract(held.payload_json, '$.provider')
-                               || ':' || json_extract(held.payload_json, '$.model') = $key;
-                        """, ct, transaction, ("$runner", request.RunnerId), ("$key", key));
-                    if (rejectionAt is string rejectedAt
-                        && (capability.CredentialObservedAt is not { } observedAt
-                            || observedAt.ToUniversalTime() <= Parse(rejectedAt)))
+                    // Runner and server clocks do not order a probe against the
+                    // rejection; only a larger runner probe sequence does.
+                    var rejection = await ReadModelRejectionAsync(
+                        connection, transaction, request.RunnerId, key, ct);
+                    if (rejection.Held && !CapabilityProtocol.ModelProbeSupersedesRejection(
+                            CapabilityProtocol.ModelProbeSequence(capability.EvidenceId), rejection.Sequence))
                         advertisedStatus = "unavailable";
                 }
                 var advertisedDetail = advertisedStatus == "unavailable" &&

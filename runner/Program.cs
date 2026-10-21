@@ -277,7 +277,9 @@ RunnerModelAcceptanceProbe.Shared.Configure(
                     worker, (_, _) => { }, stopToken: deadline);
             }, ct);
     },
-    ModelProbeCredentialGeneration);
+    ModelProbeCredentialGeneration,
+    sequencePath: Path.Combine(options.StateDir, "model-acceptance-probe.sequence"),
+    log: message => Console.Error.WriteLine(message));
 
 if (help)
 {

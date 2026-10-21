@@ -829,8 +829,16 @@ public sealed class RemoteRunnerDaemon
                         AcknowledgeInventory(inventory, inventorySnapshot, claim);
                         if (claim.ReprobeCapabilities is { Count: > 0 })
                         {
+                            var modelProbeRequested = false;
                             foreach (var capability in claim.ReprobeCapabilities.Distinct(StringComparer.Ordinal))
                             {
+                                if (capability.StartsWith("model-acceptance:", StringComparison.Ordinal))
+                                {
+                                    var accepted = RunnerModelAcceptanceProbe.Shared.RequestProbe(capability);
+                                    modelProbeRequested |= accepted;
+                                    _log($"model-acceptance reprobe-request capability={capability} accepted={accepted}");
+                                    continue;
+                                }
                                 var match = RunnerCapabilityProbe.CodingCliBinaries(_options)
                                     .FirstOrDefault(item => string.Equals(
                                         AgentStudio.TaskServer.Contracts.CapabilityProtocol.ProviderAuthentication(item.CliType),
@@ -842,6 +850,8 @@ public sealed class RemoteRunnerDaemon
                                     $"provider-auth reprobe-request capability={capability} "
                                     + $"status={refreshed.Status} detail={refreshed.Detail}");
                             }
+                            if (modelProbeRequested && _options.Role is "coding" or "review")
+                                StartModelAcceptanceProbe();
                             // Publish the forced verdict before the next claim poll,
                             // so retry-dispatch cannot bounce against stale memory.
                             nextCapabilityAdvertisement = DateTime.MinValue;
