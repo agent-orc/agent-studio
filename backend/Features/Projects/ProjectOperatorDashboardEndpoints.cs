@@ -62,10 +62,11 @@ public static class ProjectOperatorDashboardEndpoints
             });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
+        // The stop is queued for the environment's host; the slot is freed when that host confirms it.
         app.MapPost("/api/projects/{projectName}/environments/{environmentId}/stop", (
             HttpContext context, string projectName, string environmentId, ProjectEnvironmentService environments) =>
             environments.Stop(projectName, environmentId, DeployEndpoints.Actor(context, projectName).Id)
-                ? Results.Ok() : Results.Conflict(new { error = "The environment is not deployed or is already stopped." }))
+                ? Results.Accepted() : Results.Conflict(new { error = "The environment is not deployed or is already stopped." }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/deploy/jobs/claim", (HttpContext context, DeployClaimRequest request,

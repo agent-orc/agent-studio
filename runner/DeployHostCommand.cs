@@ -15,7 +15,8 @@ public static class DeployHostCommand
     private sealed record Claim(string HostId);
     private sealed record Job(string Id, string Project, string EnvironmentId, string HostId,
         string Artifact, string Template, string Destination, string? HealthUrl,
-        string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken);
+        string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken,
+        string? Action = null);
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
         HttpClient? transport = null)
@@ -38,14 +39,24 @@ public static class DeployHostCommand
         try
         {
             var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
-            if (job.Template == "container")
-                await DeployContainer(job, secretRoot, cancellationToken);
-            else if (job.Template == "static")
-                await DeployStatic(job, args[3], cancellationToken);
-            else throw new InvalidOperationException("Unknown template.");
-            evidence = "health-http-failed";
-            healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
-            if (healthy) evidence = "health-ok";
+            if (job.Action == "stop")
+            {
+                // Only this evidence makes the server mark the environment stopped and free its slot.
+                evidence = "stop-failed";
+                await StopDeployment(job, cancellationToken);
+                (healthy, evidence) = (true, "host-stopped");
+            }
+            else
+            {
+                if (job.Template == "container")
+                    await DeployContainer(job, secretRoot, cancellationToken);
+                else if (job.Template == "static")
+                    await DeployStatic(job, args[3], cancellationToken);
+                else throw new InvalidOperationException("Unknown template.");
+                evidence = "health-http-failed";
+                healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
+                if (healthy) evidence = "health-ok";
+            }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
             or HttpRequestException or System.ComponentModel.Win32Exception)
@@ -112,15 +123,35 @@ public static class DeployHostCommand
         File.Move(temporary, link, true);
     }
 
-    private static async Task DeployContainer(Job job, string secretRoot, CancellationToken ct)
+    /// <summary>Removes the running container or the static <c>current</c> link; the release files stay.</summary>
+    private static async Task StopDeployment(Job job, CancellationToken ct)
     {
-        if (!int.TryParse(job.Destination, out var port) || port is < 1 or > 65535)
-            throw new InvalidOperationException("Invalid proxy port.");
+        if (job.Template == "container")
+        {
+            await Command("docker", ["rm", "-f", ContainerName(job)], ct);
+            return;
+        }
+        if (job.Template != "static") throw new InvalidOperationException("Unknown template.");
+        if (!Path.IsPathFullyQualified(job.Destination) || job.Destination.Contains("..", StringComparison.Ordinal))
+            throw new InvalidOperationException("Invalid destination.");
+        var link = Path.Combine(job.Destination, "current");
+        if (File.Exists(link) || Directory.Exists(link)) File.Delete(link);
+    }
+
+    private static string ContainerName(Job job)
+    {
         var projectName = job.Project.Length <= 64
             && job.Project.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')
             ? job.Project
             : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(job.Project)))[..16].ToLowerInvariant();
-        var name = "deploy-" + projectName + "-" + job.EnvironmentId;
+        return "deploy-" + projectName + "-" + job.EnvironmentId;
+    }
+
+    private static async Task DeployContainer(Job job, string secretRoot, CancellationToken ct)
+    {
+        if (!int.TryParse(job.Destination, out var port) || port is < 1 or > 65535)
+            throw new InvalidOperationException("Invalid proxy port.");
+        var name = ContainerName(job);
         var envFile = Path.Combine(Path.GetTempPath(), "deploy-env-" + Guid.NewGuid().ToString("N"));
         try
         {

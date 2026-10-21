@@ -21,6 +21,56 @@ namespace AgentRunner.Tests;
 
 public sealed class DeployHostCommandTests
 {
+    private sealed class StopServer(object job) : HttpMessageHandler
+    {
+        public string? Report { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/claim", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(job) };
+            Report = await request.Content!.ReadAsStringAsync(ct);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+    }
+
+    [Fact]
+    public async Task Stop_job_removes_the_static_current_link_and_confirms_with_host_stopped()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "deploy-host-stop-" + Guid.NewGuid().ToString("N"));
+        var release = Path.Combine(root, "site", new string('a', 64));
+        Directory.CreateDirectory(release);
+        var link = Path.Combine(root, "site", "current");
+        File.CreateSymbolicLink(link, release);
+        var token = Path.Combine(root, "token");
+        File.WriteAllText(token, "host-token");
+        var server = new StopServer(new
+        {
+            id = "stop-1", project = "demo", environmentId = "stage", hostId = "stage-host",
+            artifact = "release-package@sha256:" + new string('a', 64), template = "static",
+            destination = Path.Combine(root, "site"), healthUrl = (string?)null, secretRefs = Array.Empty<string>(),
+            containerPort = 0, previousArtifact = (string?)null, status = "claimed", leaseToken = "lease", action = "stop",
+        });
+        try
+        {
+            using var transport = new HttpClient(server) { BaseAddress = new Uri("https://studio.test/") };
+            var exit = await DeployHostCommand.RunAsync(
+                ["https://studio.test", "stage-host", token, Path.Combine(root, "artifacts")],
+                CancellationToken.None, transport);
+
+            Assert.Equal(0, exit);
+            Assert.False(File.Exists(link) || Directory.Exists(link));
+            Assert.True(Directory.Exists(release));
+            using var report = JsonDocument.Parse(server.Report!);
+            Assert.True(report.RootElement.GetProperty("healthy").GetBoolean());
+            Assert.Equal(ProjectEnvironmentService.HostStoppedEvidence, report.RootElement.GetProperty("evidence").GetString());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     [Trait("Category", "MachineBound")]
     public async Task RealServer_Claim_Deploy_HealthCheck_AndReport_LocalContainer()
