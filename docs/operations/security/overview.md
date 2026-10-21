@@ -77,6 +77,12 @@ that is already allowed to edit that project's checkout.
   cards, uses project and card chat, comments on previews, and accepts a
   Human Review delivery; viewer is read-only. A contributor cannot access
   credentials, hosts, settings, quotas, merges, promotions, or raw logs.
+  Product cards carry no run controls: project defaults choose the CLI, model,
+  and mode, and the card records the signed-in user as creator. Product
+  sessions read only screenshot, HTML, and Markdown result files and never run
+  conversations, session events, or agent work detail. The per-route task
+  contract is in
+  [Product session task access](../../system/domains/tasks.md#product-session-task-access-agt-3182).
   Production approval is a separate grant that an owner gives for one assigned
   project. Operator, contributor, and viewer are scoped roles. Their project membership list
   restricts project routes; an empty list grants no project, and only the
