@@ -166,6 +166,34 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
     }
 
     [Fact]
+    public void Blank_limit_fields_are_no_limit_even_when_a_ledger_is_unreadable()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "blank"), "Blank", workspace.Id, _clock);
+        var job = Path.Combine(project.StorageLocation, TaskStates.Ready, "blank-card");
+        Directory.CreateDirectory(job);
+        File.WriteAllText(Path.Combine(job, "task.json"), "{invalid-json");
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+
+        quota.SetLimits(workspace.Id, null, new QuotaLimits(null, null, null));
+        quota.SetLimits(workspace.Id, project.Id, new QuotaLimits(null, null, null));
+
+        Assert.False(quota.HasLimits());
+        foreach (var admission in new[] { quota.Admit(project.Id), quota.Admit(project.Id, hosting: true) })
+        {
+            Assert.True(admission.Allowed);
+            Assert.Null(admission.Message);
+            Assert.False(admission.MeterUnavailable);
+        }
+        var stored = File.ReadAllText(Path.Combine(_root, ".metadata", "workspace-quotas.json"));
+        Assert.DoesNotContain(workspace.Id, stored, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Unreadable_state_keeps_the_last_good_limits_and_reports_the_meter()
     {
         Directory.CreateDirectory(_root);

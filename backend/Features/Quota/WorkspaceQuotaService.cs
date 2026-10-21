@@ -97,6 +97,18 @@ public sealed class WorkspaceQuotaService
         lock (_gate) Reload();
     }
 
+    /// <summary>A limit with every field blank is no limit: admission stays a strict no-op.</summary>
+    private static bool IsEmpty(QuotaLimits limits)
+        => limits is { ModelTokensPerWeek: null, ComputeCoreHoursPerWeek: null, HostingSlots: null };
+
+    private static State WithoutEmptyLimits(State state)
+    {
+        foreach (var map in new[] { state.Workspaces, state.Projects })
+            foreach (var key in map.Where(item => IsEmpty(item.Value)).Select(item => item.Key).ToList())
+                map.Remove(key);
+        return state;
+    }
+
     private static State Empty() => new(new(StringComparer.OrdinalIgnoreCase),
         new(StringComparer.OrdinalIgnoreCase), new(StringComparer.OrdinalIgnoreCase),
         new(StringComparer.OrdinalIgnoreCase));
@@ -116,7 +128,7 @@ public sealed class WorkspaceQuotaService
             if (_loadedStamp == stamp) return;
             _loadedStamp = stamp;
             var read = JsonSerializer.Deserialize<State>(File.ReadAllText(_path));
-            if (read is not null) _state = read;
+            if (read is not null) _state = WithoutEmptyLimits(read);
             _stateReadError = null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
@@ -149,7 +161,7 @@ public sealed class WorkspaceQuotaService
             Reload();
             var map = projectId is null ? _state.Workspaces : _state.Projects;
             var key = projectId ?? workspaceId;
-            if (limits is null) map.Remove(key);
+            if (limits is null || IsEmpty(limits)) map.Remove(key);
             else map[key] = limits;
             Save();
         }
