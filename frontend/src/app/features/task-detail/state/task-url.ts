@@ -28,7 +28,7 @@ export function withoutTaskUrl(current: URL): string {
   next.searchParams.delete('job');
   next.searchParams.delete('watchPath');
   const route = routeSegmentOf(next.hash);
-  const hash = route?.startsWith('/tasks/') || route?.startsWith('/epics/')
+  const hash = route?.startsWith('/tasks/')
     ? withRouteSegment(next.hash, null)
     : next.hash;
   return `${next.pathname}${next.search}${hash}`;
@@ -37,9 +37,9 @@ export function withoutTaskUrl(current: URL): string {
 /** Read the canonical hash route, falling back to the pre-route query shape. */
 export function taskReferenceFromUrl(current: URL): string | null {
   const route = routeSegmentOf(current.hash);
-  if (route?.startsWith('/tasks/') || route?.startsWith('/epics/')) {
+  if (route?.startsWith('/tasks/')) {
     const path = route.split('?', 1)[0];
-    const raw = path.slice(path.startsWith('/tasks/') ? '/tasks/'.length : '/epics/'.length);
+    const raw = path.slice('/tasks/'.length);
     if (raw && !raw.includes('/')) {
       try {
         return decodeURIComponent(raw);

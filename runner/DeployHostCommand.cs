@@ -17,7 +17,8 @@ public static class DeployHostCommand
     private sealed record Job(string Id, string Project, string EnvironmentId, string HostId,
         string Artifact, string Template, string Destination, string? HealthUrl,
         string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken,
-        Dictionary<string, string>? SecretBindings = null, JsonElement[]? MissingSecretRefs = null);
+        Dictionary<string, string>? SecretBindings = null, JsonElement[]? MissingSecretRefs = null,
+        string? RetryStep = null);
     private sealed record IssuedSecret(string Value);
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
@@ -50,14 +51,18 @@ public static class DeployHostCommand
                 evidence = "secret-reference-collision";
                 throw new InvalidOperationException("Secret references map to the same container variable.");
             }
-            if (job.Template == "container")
-                await DeployContainer(job, client, cancellationToken);
-            else if (job.Template == "static")
+            if (job.RetryStep is null)
             {
-                if (job.SecretRefs.Length > 0) throw new InvalidOperationException("Static deployment cannot receive secrets.");
-                await DeployStatic(job, args[3], cancellationToken);
+                if (job.Template == "container")
+                    await DeployContainer(job, client, cancellationToken);
+                else if (job.Template == "static")
+                {
+                    if (job.SecretRefs.Length > 0) throw new InvalidOperationException("Static deployment cannot receive secrets.");
+                    await DeployStatic(job, args[3], cancellationToken);
+                }
+                else throw new InvalidOperationException("Unknown template.");
             }
-            else throw new InvalidOperationException("Unknown template.");
+            else if (job.RetryStep != "health") throw new InvalidOperationException("Unknown retry step.");
             evidence = "health-http-failed";
             healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
             if (healthy) evidence = "health-ok";

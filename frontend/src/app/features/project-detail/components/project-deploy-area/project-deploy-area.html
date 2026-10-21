@@ -52,8 +52,8 @@
     </div>
     @if (selectedRun(); as run) {
       @defer { <app-deploy-run-drawer class="deploy-area__drawer" [run]="run" [log]="logPanel()" [action]="actionState()"
-        (act)="act($event)" (closeRequest)="closeRun()" /> }
-      @placeholder { <p>Loading details…</p> }
+        (act)="act($event)" (skip)="act('skip', $event)" (closeRequest)="closeRun()" /> }
+      @placeholder { <p>Loading run details…</p> }
     }
   </div>
 </div>

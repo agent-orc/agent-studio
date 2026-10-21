@@ -125,7 +125,6 @@ function buildInfo(kind: Kind) {
     folderPath: `${WATCH_PATH}/.orchestrator/jobs/5e-escalated/${JOB_ID[kind]}`,
     execution: null,
     kind: 'task',
-    epicId: null,
     commit: null,
     commits: [
       { sha: 'b2ed3f47', shortSha: 'b2ed3f47', message: 'first slice', filesChanged: 3, files: ['a.ts', 'b.ts', 'c.ts'], at: '2026-07-09T18:00:00Z' },

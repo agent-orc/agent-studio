@@ -9,7 +9,8 @@ public sealed record EnvironmentDeclaration(
     string Id, string Name, string Kind, string TargetHostId, string Address,
     string Template, string Destination, string? HealthUrl, string Approval,
     IReadOnlyList<string> SecretRefs, int ContainerPort,
-    IReadOnlyList<HealthCheckDefinition>? HealthChecks = null, bool HealthChecksAllowPrivateNetwork = false);
+    IReadOnlyList<HealthCheckDefinition>? HealthChecks = null, bool HealthChecksAllowPrivateNetwork = false,
+    bool GuidedFailure = false, int InterventionTimeoutMinutes = 60);
 
 /// <summary>One declaration file: the parsed environment, or the error that makes it unusable.</summary>
 public sealed record EnvironmentDeclarationFile(string EnvironmentId, EnvironmentDeclaration? Declaration, string? Error);
@@ -27,7 +28,9 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0,
     IReadOnlyDictionary<string, string>? SecretBindings = null,
     IReadOnlyList<AgentStudio.Secrets.MissingSecretReference>? MissingSecretRefs = null,
-    string? EnvironmentKind = null);
+    string? EnvironmentKind = null,
+    bool GuidedFailure = false, bool GuidedResolved = false, string? RetryStep = null,
+    string? RetryOfJobId = null);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -210,10 +213,17 @@ public sealed class ProjectEnvironmentService
             : containerPortValue.ValueKind == JsonValueKind.Number && containerPortValue.TryGetInt32(out var parsedPort)
                 ? parsedPort : throw new JsonException("Invalid container port.");
         if (containerPort is < 1 or > 65535) throw new JsonException("Invalid container port.");
+        var guidedFailure = !value.TryGetProperty("guidedFailure", out var guided) ? false
+            : guided.ValueKind is JsonValueKind.True or JsonValueKind.False ? guided.GetBoolean()
+            : throw new JsonException("guidedFailure must be a boolean.");
+        var timeout = !value.TryGetProperty("interventionTimeoutMinutes", out var timeoutValue) ? 60
+            : timeoutValue.ValueKind == JsonValueKind.Number && timeoutValue.TryGetInt32(out var parsedTimeout)
+                ? parsedTimeout : throw new JsonException("Invalid intervention timeout.");
+        if (timeout is < 1 or > 10080) throw new JsonException("Intervention timeout must be 1 to 10080 minutes.");
         return new(id, Required("name"), kind, host, Required("address"), template,
             destination, healthUrl, approval, secrets, containerPort,
             HealthCheckDeclarations.Parse(value, Path.GetFileName(file)),
-            HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)));
+            HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)), guidedFailure, timeout);
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -305,7 +315,7 @@ public sealed class ProjectEnvironmentService
     /// deployment may start.
     /// </summary>
     public DeployJob? QueueDeployment(string project, EnvironmentDeclaration target, string artifact, string actor,
-        bool rollback)
+        bool rollback, string? retryStep = null)
     {
         if (!Digest.IsMatch(artifact)) return null;
         lock (_gate)
@@ -313,7 +323,28 @@ public sealed class ProjectEnvironmentService
             var current = Declarations(project);
             if (!IsDeclared(current, target.Id)) return null;
             var state = Load(project);
-            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor);
+            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor, retryStep);
+            Save(project, state);
+            return job;
+        }
+    }
+
+    /// <summary>Retry only while no newer job has entered this environment.</summary>
+    public DeployJob? QueueRetry(string project, EnvironmentDeclaration target, string artifact, string actor,
+        string failedJobId, string? retryStep)
+    {
+        if (!Digest.IsMatch(artifact) || retryStep is not (null or "health")) return null;
+        lock (_gate)
+        {
+            var current = Declarations(project);
+            if (!IsDeclared(current, target.Id)) return null;
+            var state = Load(project);
+            var index = state.Jobs.FindIndex(item => item.Id == failedJobId && item.Status == "failed"
+                && item.EnvironmentId == target.Id);
+            if (index < 0 || state.Jobs.Skip(index + 1).Any(item => item.EnvironmentId == target.Id)) return null;
+            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state,
+                rollback: state.Jobs[index].IsRollback, actor: actor, retryStep: retryStep,
+                retryOfJobId: failedJobId);
             Save(project, state);
             return job;
         }
@@ -570,10 +601,10 @@ public sealed class ProjectEnvironmentService
             var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
-            ClosePromotionForResult(state, job, success, now);
+            if (success || !job.GuidedFailure) ClosePromotionForResult(state, job, success, now);
             // A job already queued for the environment replaces the failed
             // one; a rollback queued behind it would replace a newer release.
-            if (!success && !job.IsRollback && job.PreviousArtifact is not null
+            if (!success && !job.GuidedFailure && !job.IsRollback && job.PreviousArtifact is not null
                 && !state.Jobs.Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "queued"))
             {
                 var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == job.EnvironmentId);
@@ -619,7 +650,7 @@ public sealed class ProjectEnvironmentService
             state.Jobs[state.Jobs.IndexOf(job)] = lost;
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, "failed", job.Artifact, job.PreviousArtifact, HostLostEvidence)));
-            ClosePromotionForResult(state, lost, success: false, now);
+            if (!job.GuidedFailure) ClosePromotionForResult(state, lost, success: false, now);
             changed = true;
         }
         return changed;
@@ -641,6 +672,32 @@ public sealed class ProjectEnvironmentService
                 Kind = SnapshotKind(deployed, state),
             }
             : current;
+
+    /// <summary>Resume the usual rollback after a guided failure is aborted or times out.</summary>
+    public bool RollbackFailedJob(string project, string jobId, bool rollback = true)
+    {
+        lock (_gate)
+        {
+            var state = Load(project);
+            var job = state.Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "failed");
+            if (job is null) return false;
+            if (job.GuidedResolved) return true;
+            ClosePromotionForResult(state, job, success: false, now: _clock.GetUtcNow().UtcDateTime);
+            var newerJob = state.Jobs.Skip(state.Jobs.IndexOf(job) + 1)
+                .Any(item => item.EnvironmentId == job.EnvironmentId);
+            if (rollback && !newerJob && job.Evidence != HostLostEvidence && job.PreviousArtifact is not null && !job.IsRollback
+                && !state.Jobs.Any(item => item.EnvironmentId == job.EnvironmentId && item.Status is "queued" or "claimed"))
+            {
+                var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == job.EnvironmentId);
+                if (declaration is not null)
+                    Queue(project, DeployedSpec(state, declaration, job.PreviousArtifact), job.PreviousArtifact,
+                        state, rollback: true, actor: "automatic-rollback");
+            }
+            state.Jobs[state.Jobs.IndexOf(job)] = job with { GuidedResolved = true };
+            Save(project, state);
+            return true;
+        }
+    }
 
     /// <summary>
     /// BD-1: the release snapshot decides what is deployed (template,
@@ -673,7 +730,7 @@ public sealed class ProjectEnvironmentService
     }
 
     private DeployJob Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
-        bool rollback = false, string? actor = null)
+        bool rollback = false, string? actor = null, string? retryStep = null, string? retryOfJobId = null)
     {
         var previous = state.History.Where(row => row.EnvironmentId == declaration.Id
             && (row.Item.Status is "healthy" or "rolled-back"))
@@ -682,7 +739,8 @@ public sealed class ProjectEnvironmentService
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
-            IsRollback: rollback, RequestedBy: actor, EnvironmentKind: declaration.Kind);
+            IsRollback: rollback, RequestedBy: actor, EnvironmentKind: declaration.Kind,
+            GuidedFailure: declaration.GuidedFailure, RetryStep: retryStep, RetryOfJobId: retryOfJobId);
         state.Jobs.Add(job);
         return job;
     }

@@ -518,58 +518,6 @@ public sealed class GitWorkspace
     private static bool SameRemote(string actual, string expected) =>
         string.Equals(actual.Trim().TrimEnd('/'), expected.Trim().TrimEnd('/'), StringComparison.Ordinal);
 
-    /// <summary>
-    /// Prepare a detached, disposable checkout for an Epic planning run. No
-    /// task branch is created or resumed and teardown never commits or pushes.
-    /// </summary>
-    public async Task<string> PrepareReadOnlyAsync(CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(_gitRemote))
-            throw MissingRepositoryUrl();
-
-        Directory.CreateDirectory(ProjectCachePath);
-        Directory.CreateDirectory(Path.Combine(ProjectCachePath, "worktrees"));
-        await GitMetadataGate.WaitAsync(ct);
-        try
-        {
-            var existingClone = Directory.Exists(Path.Combine(SharedRepoPath, ".git"));
-            if (!existingClone)
-                await Git(["clone", _gitRemote, SharedRepoPath], ProjectCachePath, ct);
-            await ConfigureOriginAsync(ct);
-            if (existingClone)
-            {
-                await Git(["fetch", "origin", "--prune"], SharedRepoPath, ct);
-            }
-
-            if (Directory.Exists(RepoPath))
-            {
-                if (!File.Exists(Path.Combine(RepoPath, ".git")))
-                    await QuarantineBrokenWorktreeAsync(ct);
-                else
-                {
-                    await WorktreeProcessReaper.ReapAsync(RepoPath, _log, ct);
-                    await Git(["worktree", "remove", "--force", RepoPath], SharedRepoPath, ct);
-                }
-            }
-            await TryGit(["worktree", "prune"], SharedRepoPath, ct);
-
-            var requested = string.IsNullOrWhiteSpace(_options.Branch) ? _baseBranch : _options.Branch!;
-            var branch = await BranchExistsOnOrigin(requested, ct)
-                ? requested
-                : await OriginDefaultBranch(ct) ?? _baseBranch;
-            await UpdateStableCheckoutAsync(branch, ct);
-            _log($"git worktree add --detach {RepoPath} from origin/{branch} for read-only Epic planning");
-            await Git(["worktree", "add", "--detach", RepoPath, $"origin/{branch}"], SharedRepoPath, ct);
-            var head = (await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim();
-            WriteWorktreeLease(head);
-            return branch;
-        }
-        finally
-        {
-            GitMetadataGate.Release();
-        }
-    }
-
     private async Task ConfigureOriginAsync(CancellationToken ct)
     {
         var fetchUrl = _gitRemote
@@ -594,32 +542,6 @@ public sealed class GitWorkspace
                 $"Project '{_projectId ?? "unknown"}' is not remote-capable because its registry has no repository URL.")
             : new InvalidOperationException(
                 "The one-shot run has no repositoryUrl and RUNNER_GIT_REMOTE is not configured as a fallback.");
-
-    /// <summary>
-    /// Remove a planning checkout without salvage. Returns true when the agent
-    /// changed tracked or untracked product-source files, which invalidates the
-    /// planning result but is never committed or pushed.
-    /// </summary>
-    public async Task<bool> TeardownReadOnlyAsync(CancellationToken ct)
-    {
-        await GitMetadataGate.WaitAsync(ct);
-        try
-        {
-            if (!Directory.Exists(RepoPath)) return false;
-            var status = (await Git(["status", "--porcelain=v1", "--untracked-files=all"], RepoPath, ct)).StdOut;
-            var mutated = !string.IsNullOrWhiteSpace(status);
-            _log($"epic-planning-checkout-teardown path={RepoPath} sourceMutated={mutated}");
-            await WorktreeProcessReaper.ReapAsync(RepoPath, _log, ct);
-            await Git(["worktree", "remove", "--force", RepoPath], SharedRepoPath, ct);
-            await TryGit(["worktree", "prune"], SharedRepoPath, ct);
-            DeleteWorktreeLease();
-            return mutated;
-        }
-        finally
-        {
-            GitMetadataGate.Release();
-        }
-    }
 
     private async Task QuarantineBrokenWorktreeAsync(CancellationToken ct)
     {

@@ -196,12 +196,13 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // artifact digest and queues stage, so public demo must deny it.
         // AGT-3201 (BD-1) added deploy runs: deploy a release, redeploy and
         // rollback on Start; approve, reject and cancel a run on Continue.
+        // AGT-3264 adds guided-failure intervention on Continue.
         // AGT-3221 added the project.yml schema 2 migration confirm on PostStep:
         // it commits and pushes project.yml through the managed repository write.
         // AGT-3068 adds three rule mutations (Continue) and one host occurrence (Start),
         // and maps the engine decision-job (Start) and receipt (Continue) routes in
         // every profile.
-        Assert.Equal(125, routes.Count);
+        Assert.Equal(126, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -221,6 +222,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/approve", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/reject", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/cancel", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/intervention", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/pipeline-definition/migration", ExecutionAdmissionPath.PostStep),
             ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue),
             ("/api/orchestration/decision-receipts/{receiptId}/operator-intent", ExecutionAdmissionPath.Continue),
@@ -260,7 +262,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             {
                 [ExecutionAdmissionPath.Claim] = 9,
                 [ExecutionAdmissionPath.Start] = 24,
-                [ExecutionAdmissionPath.Continue] = 29,
+                [ExecutionAdmissionPath.Continue] = 30,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 28,
