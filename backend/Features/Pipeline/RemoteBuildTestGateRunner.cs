@@ -18,6 +18,7 @@ public sealed record RemoteGateInvocation(
     public string? CachePath { get; init; }
     public int GateSlots { get; init; } = 1;
     public int ProcessorCount { get; init; } = 2;
+    public string InstallationId { get; init; } = "";
 }
 
 public sealed record RemoteGateResponse(

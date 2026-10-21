@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -13,6 +14,8 @@ namespace AgentStudio.Pipeline;
 /// </summary>
 public sealed class RemoteGateTransport : IRemoteGateTransport
 {
+    internal static readonly EventId OrphanedRunCancelledEvent =
+        new(1, "remote gate run orphaned and cancelled");
     /// <summary>
     /// Age after which a GUID run folder under the local transport root is
     /// treated as abandoned. The folder is last written at request.json; before
@@ -34,17 +37,25 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     private readonly ILogger<RemoteGateTransport> _logger;
     private readonly TimeProvider _time;
     private readonly string _localRoot;
+    private readonly RemoteGateRunRegistry _runs;
     private readonly Action<string> _deleteDirectory;
     private readonly GateSlotUsageTracker _slotUsage;
+    private static readonly ConcurrentDictionary<string, byte> LiveRuns = new(StringComparer.Ordinal);
+    private readonly Func<RemoteGateRunRecord, bool> _ownerIsAlive;
+    private readonly OrchestratorLog? _activity;
+    private readonly AgentStudio.Tasks.TaskScannerService? _scanner;
     private readonly Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task> _runProcess;
     private readonly string _section;
     private long _lastSweepTicks = NeverSwept;
 
     public RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
-        TimeProvider? timeProvider = null, GateSlotUsageTracker? slotUsage = null)
+        TimeProvider? timeProvider = null, GateSlotUsageTracker? slotUsage = null,
+        OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null)
         : this(configuration, logger, timeProvider ?? TimeProvider.System,
             Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport"),
-            WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage)
+            WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage,
+            runRegistry: CreateDefaultRegistrySafe(timeProvider ?? TimeProvider.System, configuration, logger),
+            activity: activity, scanner: scanner)
     {
     }
 
@@ -54,10 +65,13 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     /// <c>RemoteGate</c>.
     /// </summary>
     internal RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
-        string section, GateSlotUsageTracker slotUsage, TimeProvider? timeProvider = null)
+        string section, GateSlotUsageTracker slotUsage, TimeProvider? timeProvider = null,
+        OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null)
         : this(configuration, logger, timeProvider ?? TimeProvider.System,
             Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport"),
-            WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage)
+            WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage,
+            runRegistry: CreateDefaultRegistrySafe(timeProvider ?? TimeProvider.System, configuration, logger),
+            activity: activity, scanner: scanner)
     {
         _section = section;
     }
@@ -65,16 +79,26 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     internal RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
         TimeProvider timeProvider, string localRoot, Action<string> deleteDirectory,
         GateSlotUsageTracker? slotUsage = null,
-        Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task>? runProcess = null)
+        Func<string, IReadOnlyList<string>, string, TimeSpan, CancellationToken, Action<string>?, Task>? runProcess = null,
+        RemoteGateRunRegistry? runRegistry = null,
+        Func<RemoteGateRunRecord, bool>? ownerIsAlive = null,
+        OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null,
+        string section = RemoteGateOptions.PrimarySection)
     {
-        _section = RemoteGateOptions.PrimarySection;
+        _section = section;
         _configuration = configuration;
         _logger = logger;
         _time = timeProvider;
         _localRoot = localRoot;
+        _runs = runRegistry ?? new RemoteGateRunRegistry(localRoot + ".run-records", timeProvider);
+        if (!Regex.IsMatch(_runs.InstallationId, "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"))
+            throw new InvalidDataException("Remote gate installation id is invalid.");
         _deleteDirectory = deleteDirectory;
         _slotUsage = slotUsage ?? new GateSlotUsageTracker(clock: timeProvider);
         _runProcess = runProcess ?? RemoteGateProcess.RunAsync;
+        _ownerIsAlive = ownerIsAlive ?? IsOwnerProcessAlive;
+        _activity = activity;
+        _scanner = scanner;
     }
 
     public async Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
@@ -97,7 +121,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             throw new InvalidOperationException("Remote gate total budget must be at most 24 hours.");
         TrySweepStaleRunFolders();
         Directory.CreateDirectory(local);
-        var remoteCreated = false;
+        var remoteCreationAttempted = false;
         try
         {
             long sourcePackKiB = 0;
@@ -162,11 +186,16 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                     OnMachineGateSlotWaiting = null,
                 }, changedFiles, profile, mode, checked((int)Math.Ceiling(timeout.TotalSeconds)), overallSeconds)
             { CachePath = cache, GateSlots = options.GateSlots, ProcessorCount = options.ProcessorCount };
+            invocation = invocation with { InstallationId = _runs.InstallationId };
             await File.WriteAllTextAsync(Path.Combine(local, "request.json"),
                 JsonSerializer.Serialize(invocation, RemoteBuildTestGateRunner.Json), ct);
+            TrackLiveRun(runId);
+            _runs.Record(runId, options.Host, options.Root, request.Project, request.WatchPath);
+            // SSH can fail after mkdir succeeds on the host. From this point,
+            // cleanup must prove the directory is gone before dropping its record.
+            remoteCreationAttempted = true;
             await Ssh(options, local,
                 "umask 077; mkdir -p -- " + Quote(options.Root) + "; mkdir -- " + Quote(remote), infra, ct);
-            remoteCreated = true;
             var transfer = Stopwatch.StartNew();
             try
             {
@@ -180,14 +209,32 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             _logger.LogInformation("remote_gate_bundle_transferred run_id={RunId} bundle_bytes={BundleBytes} transfer_ms={TransferMs} budget_seconds={BudgetSeconds}",
                 runId, bundleBytes, transfer.ElapsedMilliseconds, transferBudget.TotalSeconds);
             await Scp(options, local, "request.json", options.Host + ":" + remote + "/request.json", infra, ct);
+            await Ssh(options, local, "touch -- " + Quote(remote + "/heartbeat"), infra, ct);
             _logger.LogInformation("remote_gate_dispatched run_id={RunId} host={Host} expected_sha={ExpectedSha} bundle_sha256={Digest} bundle_bytes={BundleBytes} transfer_ms={TransferMs}",
                 runId, options.Host, request.ExpectedSha, digest, bundleBytes, transfer.ElapsedMilliseconds);
-            var command = "cd " + Quote(remote) + " && exec timeout --signal=TERM --kill-after=120s "
+            var command = "cd " + Quote(remote) + " && exec flock " + Quote(remote + "/worker.lock")
+                + " timeout --signal=TERM --kill-after=120s "
                 + overallSeconds + "s env DOTNET_PROCESSOR_COUNT=" + options.ProcessorCount
                 + " dotnet " + Quote(options.WorkerPath)
                 + " --remote-build-test-gate-worker " + Quote(remote + "/request.json");
-            await Ssh(options, local, command, TimeSpan.FromSeconds(overallSeconds + 150), ct,
-                line => ReportWorkerLine(line, runId, options.Host, request));
+            using (var heartbeatStop = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                var heartbeat = RefreshHeartbeatAsync(options, local, remote, infra, heartbeatStop.Token);
+                try
+                {
+                    await Ssh(options, local, command, TimeSpan.FromSeconds(overallSeconds + 150), ct,
+                        line => ReportWorkerLine(line, runId, options.Host, request));
+                }
+                finally
+                {
+                    heartbeatStop.Cancel();
+                    try { await heartbeat; }
+                    catch (OperationCanceledException exception) when (heartbeatStop.IsCancellationRequested)
+                    {
+                        _logger.LogDebug(exception, "remote_gate_heartbeat_stopped run_id={RunId}", runId);
+                    }
+                }
+            }
             await Scp(options, local, options.Host + ":" + remote + "/response.json", "response.json", infra, ct);
             var responsePath = Path.Combine(local, "response.json");
             if (new FileInfo(responsePath).Length > 16 * 1024 * 1024)
@@ -201,21 +248,153 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         finally
         {
             _slotUsage.Released(runId);
-            if (remoteCreated)
+            if (remoteCreationAttempted)
             {
                 // Cancellation is a worker-owned marker, not an arbitrary PID
                 // kill. The worker observes it while queued or executing. An
                 // independent host timeout still bounds a broken SSH link.
-                var cleanup = "if [ -f " + Quote(remote + "/response.json") + " ]; then rm -rf -- "
-                    + Quote(remote) + "; else touch -- " + Quote(remote + "/cancel") + "; fi";
-                try { await Ssh(options, local, cleanup, TimeSpan.FromSeconds(20), CancellationToken.None); }
+                var cleanup = CleanupCommand(remote);
+                try
+                {
+                    await Ssh(options, local, cleanup, TimeSpan.FromSeconds(50), CancellationToken.None);
+                    await Ssh(options, local, "test ! -e " + Quote(remote), TimeSpan.FromSeconds(10), CancellationToken.None);
+                    _runs.Remove(runId);
+                }
                 catch (Exception exception)
                 {
                     _logger.LogWarning(exception, "remote_gate_cleanup_pending host={Host} run_id={RunId}", options.Host, runId);
                 }
             }
+            else if (_runs.ReadAll().Any(record => record.RunId == runId))
+                _runs.Remove(runId);
+            LiveRuns.TryRemove(_runs.ProcessInstance + ":" + runId, out _);
             DeleteLocalRunFolder(local, runId);
         }
+    }
+
+    internal void TrackLiveRun(string runId) => LiveRuns.TryAdd(_runs.ProcessInstance + ":" + runId, 0);
+
+    private async Task RefreshHeartbeatAsync(RemoteGateOptions options, string cwd, string remote,
+        TimeSpan timeout, CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10), _time);
+        while (await timer.WaitForNextTickAsync(ct))
+        {
+            try { await Ssh(options, cwd, "touch -- " + Quote(remote + "/heartbeat"), timeout, ct); }
+            catch (Exception exception) when (exception is IOException or TimeoutException)
+            {
+                _logger.LogWarning(exception, "remote_gate_heartbeat_failed host={Host} run_id={RunId}", options.Host,
+                    Path.GetFileName(remote));
+            }
+        }
+    }
+
+    internal async Task CancelOrphanedRunsAsync(CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(_configuration[$"{_section}:SshHost"])) return;
+        var records = _runs.ReadAll().Where(record => record.InstallationId == _runs.InstallationId
+            && (record.OwnerProcessInstance == _runs.ProcessInstance
+                ? !LiveRuns.ContainsKey(record.OwnerProcessInstance + ":" + record.RunId)
+                : !_ownerIsAlive(record))).ToList();
+        foreach (var record in records)
+        {
+            ct.ThrowIfCancellationRequested();
+            var age = _time.GetUtcNow() - record.StartedAtUtc;
+            var options = RemoteGateOptions.Read(_configuration, _section);
+            if (!string.Equals(options.Host, record.Host, StringComparison.Ordinal)
+                || !string.Equals(options.Root, record.Root, StringComparison.Ordinal)) continue;
+            var remote = record.Root + "/" + record.RunId;
+            try
+            {
+                var cleanup = CleanupCommand(remote);
+                await Ssh(options, Path.GetTempPath(), cleanup, TimeSpan.FromSeconds(50), ct);
+                await Ssh(options, Path.GetTempPath(), "test ! -e " + Quote(remote), TimeSpan.FromSeconds(10), ct);
+                _runs.Remove(record.RunId);
+                _slotUsage.Released(record.RunId);
+                _logger.LogWarning(OrphanedRunCancelledEvent,
+                    "remote gate run orphaned and cancelled run_id={RunId} host={Host} age_seconds={AgeSeconds}",
+                    record.RunId, record.Host, Math.Max(0, age.TotalSeconds));
+                var watchPath = record.WatchPath ?? _scanner?.GetWatchPaths()
+                    .FirstOrDefault(entry => string.Equals(entry.Name, record.Project, StringComparison.Ordinal))?.Path;
+                if (watchPath is not null)
+                    _activity?.Append(watchPath, new OrchestratorLogEntry
+                    {
+                        Ts = _time.GetUtcNow().UtcDateTime,
+                        Kind = OrchestratorLogKinds.Action,
+                        Topic = "remote-gate-orphan",
+                        Summary = "Remote gate run orphaned and cancelled",
+                        Reasoning = $"Run {record.RunId} on {record.Host}; age {Math.Max(0, age.TotalSeconds):F0} seconds.",
+                    });
+            }
+            catch (Exception exception) when (exception is IOException or TimeoutException)
+            {
+                _logger.LogWarning(exception, "remote_gate_orphan_cancel_pending run_id={RunId} host={Host}",
+                    record.RunId, record.Host);
+            }
+        }
+    }
+
+    internal static RemoteGateRunRegistry CreateDefaultRegistrySafe(TimeProvider time,
+        IConfiguration configuration, ILogger<RemoteGateTransport> logger,
+        string? installationDirectory = null, string? dataDirectory = null)
+    {
+        try { return CreateDefaultRegistry(time, configuration, installationDirectory, dataDirectory); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            logger.LogWarning(exception, "remote_gate_registry_unavailable");
+            return RemoteGateRunRegistry.Disabled(time);
+        }
+    }
+
+    internal static RemoteGateRunRegistry CreateDefaultRegistry(TimeProvider time, IConfiguration configuration,
+        string? installationDirectory = null, string? dataDirectory = null)
+    {
+        // The service working directory belongs to the installation. Prebuilt
+        // releases live below changing versioned directories, so BaseDirectory
+        // would strand the previous release's run records after an upgrade.
+        var configuredRoot = configuration["RemoteGate:InstallationRoot"];
+        var installation = Path.GetFullPath(installationDirectory
+            ?? (string.IsNullOrWhiteSpace(configuredRoot) ? Directory.GetCurrentDirectory() : configuredRoot));
+        var data = dataDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var root = string.IsNullOrWhiteSpace(data) ? installation : data;
+        var scope = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(installation))).ToLowerInvariant();
+        var installationId = configuration["RemoteGate:InstallationId"]?.Trim();
+        if (string.IsNullOrEmpty(installationId)
+            && !string.IsNullOrWhiteSpace(configuration["Connectivity:ManifestPath"]))
+        {
+            var manifestPath = Path.GetFullPath(configuration["Connectivity:ManifestPath"]!);
+            if (File.Exists(manifestPath))
+                installationId = AgentStudio.Management.InstallationConnectivityManifest
+                    .Parse(File.ReadAllText(manifestPath)).InstallationId;
+        }
+        return new RemoteGateRunRegistry(Path.Combine(root, "agentstudio", "remote-gate-runs", scope), time,
+            installationId);
+    }
+
+    private static bool IsOwnerProcessAlive(RemoteGateRunRecord record)
+    {
+        if (record.OwnerProcessId <= 0 || record.OwnerProcessStartTicks <= 0) return false;
+        try
+        {
+            using var process = Process.GetProcessById(record.OwnerProcessId);
+            return !process.HasExited && process.StartTime.ToUniversalTime().Ticks == record.OwnerProcessStartTicks;
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException
+            or System.ComponentModel.Win32Exception)
+        {
+            AgentStudio.Diagnostics.SilentCatch.Note(exception, "remote gate owner process inspection");
+            return false;
+        }
+    }
+
+    private static string CleanupCommand(string remote)
+    {
+        var path = Quote(remote);
+        var lockPath = Quote(remote + "/worker.lock");
+        return "if [ -d " + path + " ]; then touch -- " + Quote(remote + "/cancel")
+            + "; for i in $(seq 1 45); do [ -d " + path + " ] || exit 0; "
+            + "if flock -n " + lockPath + " sh -c " + Quote("rm -rf -- " + path)
+            + "; then break; fi; sleep 1; done; fi; test ! -e " + path;
     }
 
     internal static BuildTestGateResult AcceptResponse(RemoteGateResponse response,
