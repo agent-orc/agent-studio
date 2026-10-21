@@ -222,15 +222,19 @@ const field = (record, name) => {
   return key === undefined ? undefined : record[key];
 };
 
-/** Reads the registry, falling back to the backup like the API does when the primary file is absent or invalid. */
+/**
+ * Reads the registry, falling back to the backup like the API does when the primary file is absent or invalid.
+ * Refuses when neither file yields a registry: an empty project list would silently drop every checkout and task folder.
+ */
 export function readProjectRegistry(workspace) {
   const primary = path.join(workspace, '.metadata', 'projects.json');
+  let primaryError = null;
   for (const candidate of [primary, primary + '.bak']) {
     if (!existsSync(candidate)) continue;
     let parsed;
     try { parsed = JSON.parse(readFileSync(candidate, 'utf8')); }
     catch (error) {
-      if (candidate === primary) continue;
+      if (candidate === primary) { primaryError = error; continue; }
       throw new Error(`Project registry backup is invalid: ${error.message}`);
     }
     const projects = field(parsed, 'Projects');
@@ -247,7 +251,8 @@ export function readProjectRegistry(workspace) {
       })),
     }));
   }
-  return [];
+  if (primaryError) throw new Error(`Project registry is invalid and has no backup: ${primary}: ${primaryError.message}`);
+  throw new Error(`Project registry not found: ${primary} (check that --workspace points at the Studio workspace)`);
 }
 
 const scpRemote = /^[^\s/@:]+@[^\s/:]+:.+$/;
