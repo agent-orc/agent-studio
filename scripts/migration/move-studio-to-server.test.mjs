@@ -271,6 +271,9 @@ test('same-metadata token in a modified tracked file is screened again', async (
     const first = screenTokens([entry], { scan: () => scanFileContent(file) });
     await writeFile(file, token);
     await utimes(file, time.atime, time.mtime);
+    const after = await stat(file);
+    assert.equal(after.size, time.size);
+    assert.equal(Math.trunc(after.mtimeMs), Math.trunc(time.mtimeMs));
     const second = screenTokens([entry], { previous: first, scan: () => scanFileContent(file) });
     assert.notEqual(second[0].hash, first[0].hash);
     assert.equal(second[0].transfer, 'exclude');
@@ -541,6 +544,9 @@ test('inventory carries the injected clock and the CLI writes plan files and a r
     const taskTime = await stat(task);
     await writeFile(task, '# revised  task\n');
     await utimes(task, taskTime.atime, taskTime.mtime);
+    const taskAfter = await stat(task);
+    assert.equal(taskAfter.size, taskTime.size);
+    assert.equal(Math.trunc(taskAfter.mtimeMs), Math.trunc(taskTime.mtimeMs));
     assert.equal(run(['inventory', '--workspace', workspace, '--source-workspace', fixture.workspace,
       '--tracked', path.join(state, 'tracked.z'), '--dirty', path.join(state, 'dirty.z'),
       '--remotes', path.join(state, 'remotes.tsv'), '--extra-mapping', path.join(state, 'extra.json'),
