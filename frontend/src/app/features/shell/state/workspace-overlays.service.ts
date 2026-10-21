@@ -47,6 +47,7 @@ export type WorkspaceSettingsSection =
 
 /** Card token analysis page (AGT-3267); written once so the route never drifts. */
 const TOKEN_ANALYSIS_ROUTE = '/workspace/settings/tokens/analysis';
+const TOKEN_USAGE_ROUTE = /^\/workspace(?:\/settings)?\/tokens(?:\/(?:claude|codex))?$/;
 
 export type WorkspaceTokenUsagePage = 'workspace' | 'analysis' | 'claude' | 'codex';
 
@@ -211,14 +212,8 @@ export class WorkspaceOverlaysService {
   }
 
   private sectionForRoute(route: string): WorkspaceSettingsSection | null {
+    if (route === TOKEN_ANALYSIS_ROUTE || TOKEN_USAGE_ROUTE.test(route)) return 'tokens';
     switch (route) {
-      case '/workspace/tokens': return 'tokens';
-      case '/workspace/tokens/claude': return 'tokens';
-      case '/workspace/tokens/codex': return 'tokens';
-      case '/workspace/settings/tokens': return 'tokens';
-      case '/workspace/settings/tokens/claude': return 'tokens';
-      case '/workspace/settings/tokens/codex': return 'tokens';
-      case TOKEN_ANALYSIS_ROUTE: return 'tokens';
       case '/workspace/screenshots': return 'screenshots';
       case '/workspace/settings/screenshots': return 'screenshots';
       case '/workspace/settings/caps':
@@ -252,10 +247,11 @@ export class WorkspaceOverlaysService {
   }
 
   private tokenUsagePageForRoute(route: string): WorkspaceTokenUsagePage {
-    // Legacy loose routes know the CLI pages; the card analysis exists only below settings.
-    const page = /^\/workspace(?:\/settings)?\/tokens\/(claude|codex)$/.exec(route)?.[1]
-      ?? (route === TOKEN_ANALYSIS_ROUTE ? 'analysis' : 'workspace');
-    return page as WorkspaceTokenUsagePage;
+    // Only routes accepted by sectionForRoute reach this method.
+    if (route === TOKEN_ANALYSIS_ROUTE) return 'analysis';
+    if (route.endsWith('/claude')) return 'claude';
+    if (route.endsWith('/codex')) return 'codex';
+    return 'workspace';
   }
 
   private routeForSection(section: WorkspaceSettingsSection): string {
@@ -303,16 +299,9 @@ export class WorkspaceOverlaysService {
     '/workspace/settings/project-sources',
     '/workspace/settings/orchestrator',
     '/workspace/settings/working-memory',
-    '/workspace/settings/tokens',
-    '/workspace/settings/tokens/claude',
-    '/workspace/settings/tokens/codex',
-    TOKEN_ANALYSIS_ROUTE,
     '/workspace/settings/screenshots',
     '/workspace/caps',
     '/workspace/prompts',
-    '/workspace/tokens',
-    '/workspace/tokens/claude',
-    '/workspace/tokens/codex',
     '/workspace/screenshots',
     // Retired aliases stay here so a stale summary route still clears on close.
     '/workspace/summary',
@@ -332,7 +321,8 @@ export class WorkspaceOverlaysService {
   /** Remove an own route segment, keeping foreign segments (e.g. filters). */
   private clearOwnHash(): void {
     const route = routeSegmentOf(window.location.hash);
-    if (route && this.ownRoutes.has(route)) {
+    if (route && (this.ownRoutes.has(route)
+      || route === TOKEN_ANALYSIS_ROUTE || TOKEN_USAGE_ROUTE.test(route))) {
       const target = withRouteSegment(window.location.hash, null);
       try {
         history.replaceState(null, '', window.location.pathname + window.location.search + target);

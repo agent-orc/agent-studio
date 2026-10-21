@@ -46,14 +46,18 @@ public static class TokenAnalysisEndpoints
             return Results.Ok(analysis.Analyze(sources, days));
         });
 
-        app.MapGet("/api/projects/{projectName}/token-usage/analysis/cards/{jobId}", (string projectName,
-            string jobId, TaskScannerService scanner, ProjectRegistry registry, TokenAnalysisService analysis) =>
+        app.MapGet("/api/projects/{projectName}/token-usage/analysis/cards/{jobId}", (HttpContext context,
+            string projectName, string jobId, TaskScannerService scanner, ProjectRegistry registry,
+            TokenAnalysisService analysis) =>
         {
             if (string.IsNullOrWhiteSpace(projectName))
                 return Results.BadRequest(new { error = "project required" });
             if (string.IsNullOrWhiteSpace(jobId))
                 return Results.BadRequest(new { error = "job id required" });
             var record = registry.List().FirstOrDefault(candidate => !candidate.Archived && Names(candidate, projectName));
+            if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                && (record is null || !ProjectAccessAuthorization.Allows(human.User, record.Id, registry)))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             var entry = scanner.GetWatchPaths().FirstOrDefault(candidate =>
                 string.Equals(candidate.Name, record?.DisplayName ?? projectName, StringComparison.OrdinalIgnoreCase));
             if (record is null && entry is null)
