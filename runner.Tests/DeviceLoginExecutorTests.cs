@@ -673,13 +673,19 @@ public sealed class DeviceLoginExecutorTests
             if (path.EndsWith("/instructions", StringComparison.Ordinal)) Instructions.TrySetResult(true);
             if (path.EndsWith("/completion", StringComparison.Ordinal))
             {
-                Completion.TrySetResult((await request.Content!.ReadFromJsonAsync<DeviceLoginCompletionRequest>())!);
-                if (RejectCompletion) return new HttpResponseMessage(HttpStatusCode.Conflict);
+                var completion = (await request.Content!.ReadFromJsonAsync<DeviceLoginCompletionRequest>())!;
+                if (RejectCompletion)
+                {
+                    Completion.TrySetResult(completion);
+                    return new HttpResponseMessage(HttpStatusCode.Conflict);
+                }
                 if (LoseCompletionResponse)
                 {
                     State = "completed";
+                    Completion.TrySetResult(completion);
                     throw new HttpRequestException("Response lost after the transition.");
                 }
+                Completion.TrySetResult(completion);
             }
             return new HttpResponseMessage(HttpStatusCode.OK);
         }
