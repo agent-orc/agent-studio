@@ -448,6 +448,7 @@ public sealed class AccessSecurityTests : IDisposable
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddSingleton(store);
+        builder.Services.AddSingleton<AgentStudio.Clients.ClientIdentityStore>();
         builder.Services.AddSingleton<IConfiguration>(storeConfiguration);
         await using var app = builder.Build();
         app.MapAccessSecurityEndpoints();
