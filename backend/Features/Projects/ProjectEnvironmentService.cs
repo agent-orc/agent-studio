@@ -26,7 +26,7 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
     string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0,
-    DateTime? FirstClaimedAt = null);
+    DateTime? FirstClaimedAt = null, RunTargetHosting? Hosting = null);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -694,6 +694,7 @@ public sealed partial class ProjectEnvironmentService
             {
                 Template = deployed.Template, Destination = deployed.Destination,
                 HealthUrl = deployed.HealthUrl, SecretRefs = deployed.SecretRefs, ContainerPort = deployed.ContainerPort,
+                Hosting = deployed.Hosting ?? current.Hosting,
             }
             : current;
 
@@ -727,7 +728,7 @@ public sealed partial class ProjectEnvironmentService
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
-            IsRollback: rollback, RequestedBy: actor);
+            IsRollback: rollback, RequestedBy: actor, Hosting: declaration.Hosting);
         state.Jobs.Add(job);
         return job;
     }

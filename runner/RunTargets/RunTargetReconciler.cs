@@ -172,14 +172,7 @@ public sealed class RunTargetReconciler(
         RunTargetHostState state, List<RunTargetJobReport> reports, CancellationToken ct)
     {
         var name = Name(spec);
-        if (spec.Artifact is null)
-        {
-            // Studio knows no healthy release. That is not a removal: whatever runs keeps running and is supervised.
-            if (app.Current is null) app.Status = "stopped";
-            else if (await AttachAsync(key, name, ct)) await SuperviseAsync(key, app, state, ct);
-            return;
-        }
-        if (RunTargetNames.Invalid(spec) is { } invalid)
+        if (RunTargetNames.Invalid(spec, requireArtifact: spec.Artifact is not null) is { } invalid)
         {
             log($"run-target: {name} refused: {invalid}");
             Fail(app, spec, reports, RunTargetEvidence.StepFailed, "deploy-step-failed");
@@ -191,6 +184,13 @@ public sealed class RunTargetReconciler(
         {
             NoteDomainConflict(app, $"Studio refused {string.Join(", ", spec.RefusedDomains!)}: "
                 + "the project's allowed domain suffixes do not cover it, or another environment on this host owns it");
+        }
+        if (spec.Artifact is null)
+        {
+            // Studio knows no healthy release. That is not a removal: whatever runs keeps running and is supervised.
+            if (app.Current is null) app.Status = "stopped";
+            else if (await AttachAsync(key, name, ct)) await SuperviseAsync(key, app, state, ct);
+            return;
         }
         if (!await AttachAsync(key, name, ct)) return;
 

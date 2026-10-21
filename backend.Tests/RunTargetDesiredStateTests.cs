@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using AgentStudio.Projects;
 using AgentStudio.Security;
 using Microsoft.AspNetCore.Hosting;
@@ -108,6 +109,60 @@ public sealed class RunTargetDesiredStateTests : IDisposable
         Assert.True(service.Report("demo", rollback.JobId!, new(rollback.LeaseToken!, true, "health-ok")));
 
         Assert.Equal(_first, Assert.Single(service.DesiredState("run-host").Environments).Artifact);
+    }
+
+    [Fact]
+    public void DesiredState_UsesApprovedHostingSnapshot_WhenDeclarationChangesBeforeDeployment()
+    {
+        var service = Build();
+        var approved = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        var job = service.QueueDeployment("demo", approved, _first, "operator", rollback: false);
+        Assert.NotNull(job);
+        Assert.Equal(approved.Hosting, job.Hosting);
+        ChangeStageHosting("domains", "[\"changed.example.com\"]");
+        ChangeStageHosting("healthPath", "\"/changed\"");
+        ChangeStageHosting("variables", "{\"LOG_LEVEL\":\"debug\"}");
+        ChangeStageHosting("resources", "{\"cpus\":2,\"memoryMb\":1024}");
+
+        var pending = Assert.Single(service.DesiredState("run-host").Environments);
+        Assert.Equal(_first, pending.Artifact);
+        Assert.Equal(["stage.example.com"], pending.Domains);
+        Assert.Equal("/healthz", pending.HealthPath);
+        Assert.Equal("info", pending.Variables["LOG_LEVEL"]);
+        Assert.Equal(new RunTargetResources(0.5, 256, 256), pending.Resources);
+        Assert.True(service.Report("demo", pending.JobId!, new(pending.LeaseToken!, true, "health-ok")));
+
+        var settled = Assert.Single(service.DesiredState("run-host").Environments);
+        Assert.Equal(["stage.example.com"], settled.Domains);
+        Assert.Equal("/healthz", settled.HealthPath);
+    }
+
+    [Fact]
+    public void Rollback_RestoresEarlierHostingSnapshot_AfterSettingsChange()
+    {
+        var service = Build();
+        var first = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        Assert.NotNull(service.QueueDeployment("demo", first, _first, "operator", rollback: false));
+        var firstSpec = Assert.Single(service.DesiredState("run-host").Environments);
+        Assert.True(service.Report("demo", firstSpec.JobId!, new(firstSpec.LeaseToken!, true, "health-ok")));
+
+        ChangeStageHosting("domains", "[\"second.example.com\"]");
+        ChangeStageHosting("variables", "{\"LOG_LEVEL\":\"warn\"}");
+        var second = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        Assert.NotNull(service.QueueDeployment("demo", second, _second, "operator", rollback: false));
+        var secondSpec = Assert.Single(service.DesiredState("run-host").Environments);
+        Assert.Equal(["second.example.com"], secondSpec.Domains);
+        Assert.True(service.Report("demo", secondSpec.JobId!, new(secondSpec.LeaseToken!, true, "health-ok")));
+
+        ChangeStageHosting("domains", "[\"third.example.com\"]");
+        Assert.True(service.Rollback("demo", "stage", "operator"));
+        var rollback = Assert.Single(service.DesiredState("run-host").Environments);
+        Assert.True(rollback.IsRollback);
+        Assert.Equal(_first, rollback.Artifact);
+        Assert.Equal(["stage.example.com"], rollback.Domains);
+        Assert.Equal("info", rollback.Variables["LOG_LEVEL"]);
+        Assert.True(service.Report("demo", rollback.JobId!, new(rollback.LeaseToken!, true, "health-ok")));
+        Assert.Equal(["stage.example.com"], Assert.Single(service.DesiredState("run-host").Environments).Domains);
     }
 
     [Theory]
@@ -640,6 +695,14 @@ public sealed class RunTargetDesiredStateTests : IDisposable
 
     private string Repo => Path.Combine(_root, "repo");
     private string DeclarationDirectory => Path.Combine(Repo, "docs", "deployments", "environments");
+
+    private void ChangeStageHosting(string field, string json)
+    {
+        var path = Path.Combine(DeclarationDirectory, "stage.json");
+        var declaration = JsonNode.Parse(File.ReadAllText(path))!;
+        declaration[field] = JsonNode.Parse(json);
+        File.WriteAllText(path, declaration.ToJsonString());
+    }
 
     private void WriteExtra(string project, string domain)
     {

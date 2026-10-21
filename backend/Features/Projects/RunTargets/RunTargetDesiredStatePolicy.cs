@@ -76,14 +76,15 @@ public static partial class RunTargetDesiredStatePolicy
     /// to run.
     /// </summary>
     public static RunTargetEnvironmentSpec Project(string project, EnvironmentDeclaration declaration,
-        DeployJob? openJob, IReadOnlyList<DeploymentHistoryItem> history)
+        DeployJob? openJob, IReadOnlyList<DeploymentHistoryItem> history, DeployJob? deployedJob = null)
     {
-        var hosting = declaration.Hosting
+        var snapshot = openJob ?? deployedJob;
+        var hosting = snapshot?.Hosting ?? declaration.Hosting
             ?? throw new ArgumentException("Only edge-hosted environments have a run-target spec.", nameof(declaration));
         var artifact = openJob?.Artifact
             ?? history.LastOrDefault(item => item.Status is "healthy" or "rolled-back")?.Artifact;
-        return new(project, declaration.Id, declaration.Kind, artifact, declaration.ContainerPort,
-            hosting.HealthPath, hosting.Domains, hosting.Edge, hosting.Variables, declaration.SecretRefs,
+        return new(project, declaration.Id, declaration.Kind, artifact, snapshot?.ContainerPort ?? declaration.ContainerPort,
+            hosting.HealthPath, hosting.Domains, hosting.Edge, hosting.Variables, snapshot?.SecretRefs ?? declaration.SecretRefs,
             hosting.Resources, openJob?.Id, openJob?.LeaseToken, openJob?.IsRollback ?? false);
     }
 

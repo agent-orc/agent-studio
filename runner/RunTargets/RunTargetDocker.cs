@@ -42,11 +42,17 @@ public sealed class DockerCliRunTarget(string docker = "docker") : IRunTargetDoc
 
     public async Task<RunTargetDockerResult> EnsureNetworkAsync(string network, CancellationToken ct)
     {
-        if ((await Run(["network", "inspect", network, "--format", "{{.Name}}"], ct)).Ok)
-            return RunTargetDockerResult.Success;
-        return await Run(["network", "create", "--driver", "bridge",
-            "--label", "agent-studio.run-target=network", network], ct);
+        var existing = await RunWithOutput(["network", "inspect", network, "--format", "{{.Internal}}"], ct);
+        if (existing.Ok)
+            return existing.Detail.Trim().Equals("true", StringComparison.OrdinalIgnoreCase)
+                ? RunTargetDockerResult.Success
+                : new(false, $"network {network} is not internal; refusing to attach an app");
+        return await Run(InternalNetworkCreateArguments(network), ct);
     }
+
+    internal static string[] InternalNetworkCreateArguments(string network) =>
+        ["network", "create", "--driver", "bridge", "--internal",
+            "--label", "agent-studio.run-target=network", network];
 
     public async Task<RunTargetDockerResult> ConnectAsync(string network, string container, CancellationToken ct)
     {

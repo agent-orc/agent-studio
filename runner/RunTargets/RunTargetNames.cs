@@ -81,9 +81,9 @@ public static partial class RunTargetNames
     }
 
     /// <summary>Returns the first reason the spec cannot be hosted, or null.</summary>
-    public static string? Invalid(RunTargetEnvironmentSpec spec)
+    public static string? Invalid(RunTargetEnvironmentSpec spec, bool requireArtifact = true)
     {
-        if (!IsDigest(spec.Artifact)) return "artifact must be pinned by sha256 digest";
+        if (requireArtifact && !IsDigest(spec.Artifact)) return "artifact must be pinned by sha256 digest";
         if (spec.ContainerPort is < 1 or > 65535) return "invalid container port";
         if (!HealthPath().IsMatch(spec.HealthPath) || spec.HealthPath.Contains("..", StringComparison.Ordinal))
             return "invalid health path";

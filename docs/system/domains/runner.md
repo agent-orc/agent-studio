@@ -175,7 +175,11 @@ must equal `hostId`. The desired-state read claims the open deploy job, or
 renews its lease. A run target holds one job for at most 30 minutes from its
 first claim; after that Studio records it as `deploy-step-failed` and queues
 the usual automatic rollback. Without an open job, an environment keeps its
-last healthy or rolled-back artifact. The legacy `deploy-loop` never claims an
+last healthy or rolled-back artifact. Each job stores its approved hosting
+settings (domains, edge mode, health path, variables, and resources), port,
+and secret references. Desired state uses the open job's snapshot, then the
+last healthy job's snapshot. A rollback restores that earlier snapshot even
+if the declaration changed since approval. The legacy `deploy-loop` never claims an
 edge job. Studio writes a project's deploy state and the host's domain claims
 only when they changed.
 
@@ -229,8 +233,11 @@ secrets resolve only for the spec's own project after that check.
 
 `RunTargetReconciler` converges each environment through Docker Compose. A
 revision (artifact, port, health path, variables, secret names, resources) is
-pulled and started as its own compose project on the environment's bridge
-network. It is health-checked from inside the edge container, so the check
+pulled and started as its own compose project on the environment's internal
+Docker bridge network. Docker rejects an existing routable network with the
+same name. Only the edge joins both the app network and the public edge
+network, so apps have no route to the host's control-plane network. The app
+is health-checked from inside the edge container, so the check
 uses the same path as public traffic. Traffic switches only after the check
 passes. The replaced revision is stopped and kept, so a rollback restarts it.
 The revision before it is removed. A failed check removes the candidate and

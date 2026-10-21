@@ -116,6 +116,23 @@ public sealed class RunTargetRenderingTests
     }
 
     [Fact]
+    public async Task AppNetwork_IsInternal_AndRefusesAnExistingRoutableNetwork()
+    {
+        Assert.Contains("--internal", DockerCliRunTarget.InternalNetworkCreateArguments("app-net"));
+        if (OperatingSystem.IsWindows()) return;
+        using var workspace = new AgentStudio.TestSupport.TempWorkspace("run-target-network");
+        var root = workspace.Directory("docker");
+        var command = Path.Combine(root, "docker-fake");
+        File.WriteAllText(command, "#!/bin/sh\nif [ \"$1 $2\" = \"network inspect\" ]; then echo false; exit 0; fi\nexit 0\n");
+        File.SetUnixFileMode(command, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        var result = await new DockerCliRunTarget(command).EnsureNetworkAsync("app-net", CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Contains("not internal", result.Detail);
+    }
+
+    [Fact]
     public void AppCompose_EscapesDollarInEveryFreeTextValue_SoComposeInterpolatesNothing()
     {
         var spec = Spec() with { Project = "shop-$HOME", EnvironmentId = "prod${USER}" };

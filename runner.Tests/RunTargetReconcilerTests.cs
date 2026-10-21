@@ -80,6 +80,22 @@ public sealed class RunTargetReconcilerTests : IDisposable
     private string Caddyfile => File.ReadAllText(_store.CaddyfilePath);
 
     [Fact]
+    public async Task ArtifactMissing_WithdrawsTheDomain_AndStillSupervisesTheRunningRevision()
+    {
+        var running = Spec(First, jobId: null);
+        await Converge(running);
+        var pulls = _docker.Calls.Count(call => call.StartsWith("pull ", StringComparison.Ordinal));
+
+        var result = await Converge(Spec(null, jobId: null, domains: []));
+
+        Assert.DoesNotContain("stage.example.com {", Caddyfile);
+        Assert.Equal(First, Assert.Single(result.Observations).RunningArtifact);
+        Assert.Equal("running", Assert.Single(result.Observations).State);
+        Assert.Equal(pulls, _docker.Calls.Count(call => call.StartsWith("pull ", StringComparison.Ordinal)));
+        Assert.Contains($"probe http://{Slot(running)}:8080/healthz", _docker.Calls);
+    }
+
+    [Fact]
     public async Task Start_PullsStartsChecksHealthThroughTheEdge_RoutesTheDomain_AndReportsTheJob()
     {
         var spec = Spec(First);

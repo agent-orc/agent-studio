@@ -49,6 +49,23 @@ public sealed partial class ProjectEnvironmentService
                 projects.Add(new(project, declarations, hosted, state, before));
             }
 
+            // Lease before claiming domains: the open job's approved snapshot,
+            // or the last healthy job's snapshot, owns the running routes.
+            var projected = new List<(RunTargetProjectRead Read, RunTargetEnvironmentSpec Spec)>();
+            foreach (var read in projects)
+            {
+                foreach (var declaration in read.Hosted)
+                {
+                    var job = LeaseJob(read, declaration, hostId, now);
+                    var history = read.State.History.Where(row => row.EnvironmentId == declaration.Id)
+                        .Select(row => row.Item).ToArray();
+                    var settled = history.LastOrDefault(item => item.Status is "healthy" or "rolled-back");
+                    var deployedJob = settled is null ? null : read.State.Jobs.LastOrDefault(item =>
+                        item.EnvironmentId == declaration.Id && item.Artifact == settled.Artifact && item.Status == "healthy");
+                    projected.Add((read, RunTargetDesiredStatePolicy.Project(read.Project, declaration, job, history, deployedJob)));
+                }
+            }
+
             // An owner Studio does not see as hosted keeps its domains while the
             // host may still route them: its project was skipped or is gone from
             // Studio, or its removal has not been confirmed yet.
@@ -63,21 +80,24 @@ public sealed partial class ProjectEnvironmentService
             var claims = RunTargetDesiredStatePolicy.ClaimDomains(
                 (storedClaims is null ? null : JsonSerializer.Deserialize<Dictionary<string, RunTargetDomainClaim>>(storedClaims, _json))
                     ?? new Dictionary<string, RunTargetDomainClaim>(),
-                projects.SelectMany(read => read.Hosted.Select(item => new RunTargetDomainCandidate(read.Project, item.Id,
-                    RunTargetDesiredStatePolicy.AllowedDomains(item.Hosting!.Domains,
-                        _settings.Get(read.Project).RunTargetDomainSuffixes)))).ToArray(),
+                projected.Select(item => new RunTargetDomainCandidate(item.Spec.Project, item.Spec.EnvironmentId,
+                    RunTargetDesiredStatePolicy.AllowedDomains(item.Spec.Domains,
+                        _settings.Get(item.Spec.Project).RunTargetDomainSuffixes))).ToArray(),
                 UnseenOwnerKeeps, now);
 
             var environments = new List<RunTargetEnvironmentSpec>();
+            foreach (var item in projected)
+            {
+                var allowed = RunTargetDesiredStatePolicy.AllowedDomains(item.Spec.Domains,
+                    _settings.Get(item.Spec.Project).RunTargetDomainSuffixes);
+                var restricted = item.Spec with { Domains = allowed,
+                    RefusedDomains = item.Spec.Domains.Except(allowed, StringComparer.Ordinal).ToArray() };
+                var claimed = RunTargetDesiredStatePolicy.ApplyClaims(restricted, claims);
+                environments.Add(claimed with { RefusedDomains = restricted.RefusedDomains!
+                    .Concat(claimed.RefusedDomains ?? []).ToArray() });
+            }
             foreach (var read in projects)
             {
-                foreach (var declaration in read.Hosted)
-                {
-                    var job = LeaseJob(read, declaration, hostId, now);
-                    var history = read.State.History.Where(row => row.EnvironmentId == declaration.Id).Select(row => row.Item).ToArray();
-                    environments.Add(RunTargetDesiredStatePolicy.ApplyClaims(
-                        RunTargetDesiredStatePolicy.Project(read.Project, declaration, job, history), claims));
-                }
                 if (JsonSerializer.Serialize(read.State, _json) != read.Before) Save(read.Project, read.State);
             }
             var claimsText = JsonSerializer.Serialize(claims, _json);
