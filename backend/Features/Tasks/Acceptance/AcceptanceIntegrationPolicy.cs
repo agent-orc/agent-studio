@@ -14,7 +14,6 @@ public static class AcceptanceIntegrationPolicy
         if (request.RequiresIntegration.HasValue) return request.RequiresIntegration.Value;
         return !request.NoBranchExpected
             && !TaskModes.IsReadOnly(request.Mode)
-            && !TaskKinds.IsEpic(request.Kind)
             && !IsNoBranchTaskType(request.TaskType);
     }
 
@@ -33,7 +32,6 @@ public static class AcceptanceIntegrationPolicy
         if (task.RequiresIntegration.HasValue) return task.RequiresIntegration.Value;
         if (task.NoBranchExpected
             || TaskModes.IsReadOnly(task.Mode)
-            || TaskKinds.IsEpic(task.Kind)
             || TaskKinds.IsDecision(task.Kind))
         {
             return false;

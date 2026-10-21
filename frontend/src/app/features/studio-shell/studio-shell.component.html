@@ -458,9 +458,6 @@
               @if (tabPrefix(t); as prefix) {
                 <span class="studio-tab__prefix">{{ prefix }}</span>
               }
-              @if (t.kind === 'epic') {
-                <app-studio-icon name="epic" [size]="13"></app-studio-icon>
-              }
               @if (tabIcon(t); as icon) {
                 <app-studio-icon [name]="icon" [size]="13"></app-studio-icon>
               }

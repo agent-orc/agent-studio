@@ -348,14 +348,6 @@ public class PickupHoldPolicyTests
         Assert.Equal(PickupHoldMechanisms.DependencyGate, hold!.Mechanism);
     }
 
-    [Fact]
-    public void EpicInAPickupLane_IsAContainerHold()
-    {
-        var hold = Evaluate(Card(kind: TaskKinds.Epic));
-
-        Assert.Equal(PickupHoldMechanisms.EpicContainer, hold!.Mechanism);
-        Assert.Equal(PickupHoldResolutionKinds.DecomposeEpic, Assert.Single(hold.Resolutions).Kind);
-    }
 
     [Fact]
     public void HumanAgent_IsAPickupPolicyHold()

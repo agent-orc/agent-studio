@@ -104,7 +104,6 @@ internal static class BoardCardSummary
             ["thinkingLevelExplicit"] = job.ThinkingLevelExplicit,
             ["cliType"] = job.CliType,
             ["kind"] = job.Kind,
-            ["epicId"] = job.EpicId,
             ["dossier"] = job.Dossier,
             ["mode"] = job.Mode,
             ["ownerClientId"] = job.OwnerClientId,

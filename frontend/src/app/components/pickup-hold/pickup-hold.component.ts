@@ -11,7 +11,6 @@ export type PickupHoldVariant = 'card' | 'detail';
 const MECHANISM_LABELS: Record<string, string> = {
   'dependency-gate': 'Dependency gate',
   'dispatch-rejection': 'Dispatch refused',
-  'epic-container': 'Epic container',
   'crash-backoff': 'Crash cooldown',
   'pickup-policy': 'Pickup policy',
   'execution-placement': 'Execution placement',
@@ -27,7 +26,6 @@ export const PICKUP_HOLD_RESOLUTION_KINDS = {
   awaitTarget: 'await-target',
   restoreRunnerCapability: 'restore-runner-capability',
   retryDispatch: 'retry-dispatch',
-  decomposeEpic: 'decompose-epic',
   waitOutBackoff: 'wait-out-backoff',
   assignAgent: 'assign-agent',
   passIntake: 'pass-intake',
@@ -55,7 +53,6 @@ export const PICKUP_HOLD_RESOLUTION_ACTIONABILITY: Readonly<
   'await-target': 'non-actionable',
   'restore-runner-capability': 'non-actionable',
   'retry-dispatch': 'non-actionable',
-  'decompose-epic': 'non-actionable',
   'wait-out-backoff': 'non-actionable',
   'assign-agent': 'non-actionable',
   'pass-intake': 'non-actionable',
