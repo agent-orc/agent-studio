@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Security.Cryptography;
+using AgentStudio.Deploy;
 
 namespace AgentStudio.Projects;
 
@@ -23,7 +24,8 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     string Artifact, string Template, string Destination, string? HealthUrl,
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
-    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0);
+    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0,
+    string? ReleaseId = null, string? RollbackOfJobId = null);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -57,6 +59,8 @@ public sealed class ProjectEnvironmentService
     private const string AbortedEvidence = "deploy-aborted";
     private readonly object _gate = new();
     private readonly IConfiguration _configuration;
+    private readonly ReleaseArtifactRegistry _registry;
+    private readonly DeployStore _deployStore;
     private readonly TaskScannerService _scanner;
     private readonly GitService _git;
     private readonly ProjectSettingsService _settings;
@@ -64,9 +68,12 @@ public sealed class ProjectEnvironmentService
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public ProjectEnvironmentService(IConfiguration configuration, TaskScannerService scanner,
-        GitService git, ProjectSettingsService settings, TimeProvider clock)
+        GitService git, ProjectSettingsService settings, TimeProvider clock, ReleaseArtifactRegistry? registry = null,
+        DeployStore? deployStore = null)
     {
         _configuration = configuration;
+        _registry = registry ?? new ReleaseArtifactRegistry(configuration);
+        _deployStore = deployStore ?? new DeployStore(configuration);
         _scanner = scanner;
         _git = git;
         _settings = settings;
@@ -261,6 +268,9 @@ public sealed class ProjectEnvironmentService
         }
     }
 
+    public bool HasVerifiedArtifact(string project, string artifact, string commit, string template)
+        => _registry.Verified(project, commit, artifact, template) is not null;
+
     /// <summary>
     /// Queues stage for a gate-built artifact and returns the stage job. The
     /// caller has passed <see cref="CanQueueRelease"/> (its git checks stay
@@ -271,7 +281,7 @@ public sealed class ProjectEnvironmentService
     /// the host the current declaration names (<see cref="RouteToCurrentHost"/>).
     /// </summary>
     public DeployJob? QueueReleaseJob(string project, string artifact, string commit,
-        IReadOnlyList<EnvironmentDeclaration>? snapshot = null)
+        IReadOnlyList<EnvironmentDeclaration>? snapshot = null, string? releaseId = null)
     {
         if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit) || !HasBuiltArtifact(project, artifact, commit))
             return null;
@@ -283,10 +293,13 @@ public sealed class ProjectEnvironmentService
             var production = declarations?.FirstOrDefault(item => item.Kind == "production");
             if (stage is null || production is null || !IsDeclared(current, stage.Id) || !IsDeclared(current, production.Id))
                 return null;
+            if (!HasVerifiedArtifact(project, artifact, commit, stage.Template)
+                || !HasVerifiedArtifact(project, artifact, commit, production.Template)) return null;
             var state = Load(project);
             if (HasOpenPromotion(state, artifact)) return null;
             state.Promotions.Add(new(artifact, stage.Id, production.Id, DateTime.MinValue, "stage-queued"));
-            var job = Queue(project, RouteToCurrentHost(stage, current!), artifact, state, actor: "release-gate");
+            var job = Queue(project, RouteToCurrentHost(stage, current!), artifact, state,
+                actor: "release-gate", releaseId: releaseId);
             Save(project, state);
             return job;
         }
@@ -299,7 +312,7 @@ public sealed class ProjectEnvironmentService
     /// deployment may start.
     /// </summary>
     public DeployJob? QueueDeployment(string project, EnvironmentDeclaration target, string artifact, string actor,
-        bool rollback)
+        bool rollback, string? releaseId = null)
     {
         if (!Digest.IsMatch(artifact)) return null;
         lock (_gate)
@@ -307,7 +320,7 @@ public sealed class ProjectEnvironmentService
             var current = Declarations(project);
             if (!IsDeclared(current, target.Id)) return null;
             var state = Load(project);
-            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor);
+            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor, releaseId);
             Save(project, state);
             return job;
         }
@@ -349,7 +362,8 @@ public sealed class ProjectEnvironmentService
 
     // The gate endpoint is service-credential only. It records the built
     // artifact's immutable digest against the exact released commit.
-    public bool RegisterGateArtifact(string project, string artifact, string commit)
+    public bool RegisterGateArtifact(string project, string artifact, string commit,
+        string builderIdentity = "release-gate")
     {
         if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit)) return false;
         if (!HasIndependentReleaseEvidence(project, artifact, commit)) return false;
@@ -361,6 +375,7 @@ public sealed class ProjectEnvironmentService
             return false;
         lock (_gate)
         {
+            if (!_registry.PushVerified(project, commit, artifact, builderIdentity)) return false;
             var path = ArtifactPath(project, commit, artifact);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             if (File.Exists(path))
@@ -404,7 +419,8 @@ public sealed class ProjectEnvironmentService
                 && (artifact == "release-package@sha256:" + expected
                     || value.GetProperty("sourceSha256").GetString() == expected);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
+            or KeyNotFoundException or InvalidOperationException)
         {
             return false;
         }
@@ -413,7 +429,8 @@ public sealed class ProjectEnvironmentService
     private bool HasBuiltArtifact(string project, string artifact, string commit)
     {
         var path = ArtifactPath(project, commit, artifact);
-        return File.Exists(path) && string.Equals(File.ReadAllText(path).Trim(), artifact, StringComparison.Ordinal);
+        return File.Exists(path) && string.Equals(File.ReadAllText(path).Trim(), artifact, StringComparison.Ordinal)
+            && _registry.VerifiedForArtifact(project, commit, artifact) is not null;
     }
 
     private string ArtifactPath(string project, string commit, string artifact)
@@ -430,7 +447,7 @@ public sealed class ProjectEnvironmentService
     /// current declaration names.
     /// </summary>
     public (bool Decided, DeployJob? Job) DecidePromotion(string project, string artifact, bool approve, string actor,
-        EnvironmentDeclaration? target = null)
+        EnvironmentDeclaration? target = null, string? releaseId = null)
     {
         lock (_gate)
         {
@@ -446,7 +463,7 @@ public sealed class ProjectEnvironmentService
             { Status = approve ? "production-queued" : "rejected", Actor = actor };
             var job = approve
                 ? Queue(project, target is null ? production : RouteToCurrentHost(target, declarations), artifact, state,
-                    actor: actor)
+                    actor: actor, releaseId: releaseId)
                 : null;
             Save(project, state);
             return (true, job);
@@ -484,7 +501,7 @@ public sealed class ProjectEnvironmentService
     /// so the run log records each reclaim. Claims older than
     /// <see cref="HostLostAfter"/> fail as <c>host-lost</c> first.
     /// </summary>
-    public DeployJob? Claim(string hostId)
+    public DeployJob? Claim(string hostId, bool requireVerifiedRelease = false)
     {
         lock (_gate)
         {
@@ -504,33 +521,100 @@ public sealed class ProjectEnvironmentService
                 return null;
             foreach (var (project, state) in states)
             {
-                var job = state.Jobs.FirstOrDefault(item => item.HostId == hostId &&
-                    (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration));
-                if (job is null) continue;
-                var claimed = job with
+                var retryableEnvironments = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var job in state.Jobs.Where(item => item.HostId == hostId &&
+                    (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration)).ToArray())
                 {
-                    Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N"), Claims = job.Claims + 1,
-                };
-                state.Jobs[state.Jobs.IndexOf(job)] = claimed;
-                Save(project, state);
-                return claimed;
+                    if (retryableEnvironments.Contains(job.EnvironmentId)) continue;
+                    // The queue filename is normalized; provenance keeps the
+                    // project's original case. Never use the filename as its identity.
+                    var verification = string.Equals(job.Project, project, StringComparison.OrdinalIgnoreCase)
+                        ? VerifyRelease(job.Project, job, state, requireVerifiedRelease)
+                        : new ReleaseVerification(null);
+                    if (verification.Retryable)
+                    {
+                        retryableEnvironments.Add(job.EnvironmentId);
+                        continue;
+                    }
+                    if (verification.Job is not { } verified)
+                    {
+                        RefuseUnverified(state, job, now);
+                        Save(project, state);
+                        continue;
+                    }
+                    var claimed = verified with
+                    {
+                        Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N"),
+                        Claims = job.Claims + 1,
+                    };
+                    state.Jobs[state.Jobs.IndexOf(job)] = claimed;
+                    Save(project, state);
+                    return claimed;
+                }
             }
             return null;
         }
     }
 
     /// <summary>A claimed job whose lease token matches and has not gone stale, for secret issuance.</summary>
-    public DeployJob? FindClaimedJob(string project, string jobId, string leaseToken)
+    public DeployJob? FindClaimedJob(string project, string jobId, string leaseToken,
+        bool requireVerifiedRelease = false)
+        => FindClaimedJobVerification(project, jobId, leaseToken, requireVerifiedRelease).Job;
+
+    public (DeployJob? Job, bool Retryable) FindClaimedJobVerification(string project, string jobId,
+        string leaseToken, bool requireVerifiedRelease = false)
     {
         if (string.IsNullOrWhiteSpace(project) || project is "." or ".." || project.IndexOfAny(['/', '\\', '\0']) >= 0)
-            return null;
+            return (null, false);
         lock (_gate)
         {
-            var job = Load(project).Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
+            var state = Load(project);
+            var job = state.Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
                 && item.LeaseToken is not null && CryptographicOperations.FixedTimeEquals(
                     System.Text.Encoding.UTF8.GetBytes(item.LeaseToken), System.Text.Encoding.UTF8.GetBytes(leaseToken)));
-            return job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration ? null : job;
+            if (job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration)
+                return (null, false);
+            var verification = VerifyRelease(project, job, state, requireVerifiedRelease);
+            var verified = verification.Job;
+            if (verified is null) return (null, verification.Retryable);
+            if (verified != job)
+            {
+                state.Jobs[state.Jobs.IndexOf(job)] = verified;
+                Save(project, state);
+            }
+            return (verified, false);
         }
+    }
+
+    private readonly record struct ReleaseVerification(DeployJob? Job, bool Retryable = false);
+
+    private ReleaseVerification VerifyRelease(string project, DeployJob job, State state, bool requireRelease)
+    {
+        try
+        {
+            var releases = _deployStore.ReadReleaseRecords(project);
+            if (releases.Count == 0 && job.ReleaseId is null && !requireRelease) return new(job);
+            return new(DeployJobReleaseBinding.Verify(project, job, state.Jobs, releases,
+                _deployStore.ReadDeployments(project), _registry));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new(null, Retryable: true);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return new(null);
+        }
+    }
+
+    private static void RefuseUnverified(State state, DeployJob job, DateTime now)
+    {
+        const string evidence = "artifact-unverified";
+        var failed = job with { Status = "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence };
+        state.Jobs[state.Jobs.IndexOf(job)] = failed;
+        state.History.Add(new(job.EnvironmentId, now,
+            new(now, "failed", job.Artifact, job.PreviousArtifact, evidence)));
+        ClosePromotionForResult(state, failed, success: false, now);
     }
 
     /// <summary>
@@ -538,7 +622,7 @@ public sealed class ProjectEnvironmentService
     /// changes on a reclaim and is cleared when the claim fails as
     /// <c>host-lost</c> or is aborted, so only the current claim reports.
     /// </summary>
-    public bool Report(string project, string jobId, DeployReportRequest report)
+    public bool Report(string project, string jobId, DeployReportRequest report, bool requireVerifiedRelease = false)
     {
         lock (_gate)
         {
@@ -550,6 +634,23 @@ public sealed class ProjectEnvironmentService
             {
                 if (advanced) Save(project, state);
                 return false;
+            }
+            var verification = VerifyRelease(project, job, state, requireVerifiedRelease);
+            if (verification.Retryable)
+            {
+                if (advanced) Save(project, state);
+                return false;
+            }
+            if (verification.Job is not { } verified)
+            {
+                RefuseUnverified(state, job, _clock.GetUtcNow().UtcDateTime);
+                Save(project, state);
+                return false;
+            }
+            if (verified != job)
+            {
+                state.Jobs[state.Jobs.IndexOf(job)] = verified;
+                job = verified;
             }
             var now = _clock.GetUtcNow().UtcDateTime;
             var success = report.Healthy;
@@ -568,8 +669,11 @@ public sealed class ProjectEnvironmentService
                 && !state.Jobs.Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "queued"))
             {
                 var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == job.EnvironmentId);
+                var previous = state.Jobs.LastOrDefault(item => item.EnvironmentId == job.EnvironmentId
+                    && item.Artifact == job.PreviousArtifact && item.Status == "healthy");
                 if (declaration is not null) Queue(project, DeployedSpec(state, declaration, job.PreviousArtifact),
-                    job.PreviousArtifact, state, rollback: true, actor: "automatic-rollback");
+                    job.PreviousArtifact, state, rollback: true, actor: "automatic-rollback",
+                    releaseId: previous?.ReleaseId, rollbackOfJobId: job.Id);
             }
             Save(project, state);
             return true;
@@ -653,7 +757,7 @@ public sealed class ProjectEnvironmentService
         => declarations?.Any(item => item.Id == environmentId) == true;
 
     private DeployJob Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
-        bool rollback = false, string? actor = null)
+        bool rollback = false, string? actor = null, string? releaseId = null, string? rollbackOfJobId = null)
     {
         var previous = state.History.Where(row => row.EnvironmentId == declaration.Id
             && (row.Item.Status is "healthy" or "rolled-back"))
@@ -662,7 +766,7 @@ public sealed class ProjectEnvironmentService
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
-            IsRollback: rollback, RequestedBy: actor);
+            IsRollback: rollback, RequestedBy: actor, ReleaseId: releaseId, RollbackOfJobId: rollbackOfJobId);
         state.Jobs.Add(job);
         return job;
     }

@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
 using AgentStudio.Pipeline;
+using AgentStudio.Deploy;
 using AgentStudio.Projects;
 using AgentStudio.Security;
 using Microsoft.Extensions.Configuration;
@@ -86,6 +87,69 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.True(service.RegisterGateArtifact("demo", _artifact, commit));
     }
 
+    [Fact]
+    public void GateRegistration_BindsDigestToProjectCommitRunTemplateAndBuilder()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        WriteReleaseEvidence("demo", _artifact, commit);
+        var registry = new ReleaseArtifactRegistry(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = Path.Combine(_root, "workspace"),
+                ["Deploy:ReleaseEvidenceRoot"] = Path.Combine(_root, "release-evidence") }).Build());
+
+        Assert.True(service.RegisterGateArtifact("demo", _artifact, commit, "build-runner"));
+        var record = registry.Verified("demo", commit, _artifact, "container");
+        Assert.NotNull(record);
+        Assert.Equal(("release/test-gate", "build-runner", "external"),
+            (record.GateRunId, record.BuilderIdentity, record.Location));
+        Assert.Null(registry.Verified("other", commit, _artifact, "container"));
+        Assert.Null(registry.Verified("demo", new string('b', 40), _artifact, "container"));
+        Assert.Null(registry.Verified("demo", commit, _artifact, "static"));
+        Assert.False(service.RegisterGateArtifact("demo", _artifact, commit, "different-builder"));
+        Assert.True(service.CanQueueRelease("demo", _artifact, commit));
+
+        var path = Directory.GetFiles(Path.Combine(_root, "workspace", "release-registry", "records"),
+            "*.json", SearchOption.AllDirectories).Single();
+        File.WriteAllText(path, File.ReadAllText(path).Replace("build-runner", "imposter", StringComparison.Ordinal));
+        Assert.False(service.CanQueueRelease("demo", _artifact, commit));
+    }
+
+    [Fact]
+    public void GateRegistration_RefusesEvidenceWithoutRunIdentity()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        WriteReleaseEvidence("demo", _artifact, commit);
+        var path = Path.Combine(_root, "release-evidence", commit, "promotion-record.json");
+        File.WriteAllText(path, File.ReadAllText(path).Replace("\"gateRunId\":\"release/test-gate\",", "",
+            StringComparison.Ordinal));
+        Assert.False(service.RegisterGateArtifact("demo", _artifact, commit));
+    }
+
+    [Fact]
+    public void BuiltInRegistry_StoresPackageByDigestAndRefusesChangedBytes()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        var bytes = Encoding.UTF8.GetBytes("gate-built-release-for-" + commit);
+        var digest = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        var artifact = "release-package@sha256:" + digest;
+        WriteReleaseEvidence("demo", artifact, commit);
+        Assert.True(service.RegisterGateArtifact("demo", artifact, commit, "build-runner"));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["TaskRepository"] = Path.Combine(_root, "workspace") }).Build();
+        var registry = new ReleaseArtifactRegistry(config);
+        var record = registry.Verified("demo", commit, artifact, "static");
+        Assert.NotNull(record);
+        var blob = registry.VerifiedBlob(record);
+        Assert.NotNull(blob);
+        Assert.Equal(bytes, File.ReadAllBytes(blob));
+        Assert.False(service.QueueRelease("demo", artifact, commit)); // Both declared environments require a container.
+        File.WriteAllText(blob, "changed");
+        Assert.Null(registry.Verified("demo", commit, artifact, "static"));
+        Assert.False(service.CanQueueRelease("demo", artifact, commit));
+    }
+
     [Theory]
     [InlineData("approve")]
     [InlineData("reject")]
@@ -150,12 +214,70 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", engine.Secret);
         Assert.Equal(HttpStatusCode.Forbidden,
             (await client.PostAsJsonAsync("/api/deploy/gate-releases", body)).StatusCode);
+        var deployEnrollment = security.CreateEnrollment(new RunnerEnrollmentRequest("deploy",
+            [RunnerScopes.Deploy], null, null));
+        var deploy = security.EnrollRunner(deployEnrollment.Code);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", deploy.Secret);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync("/api/deploy/gate-releases", body)).StatusCode);
         var releaseEnrollment = security.CreateEnrollment(new RunnerEnrollmentRequest("release-gate",
             [RunnerScopes.Release], null, null));
         var release = security.EnrollRunner(releaseEnrollment.Code);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", release.Secret);
         Assert.Equal(HttpStatusCode.BadRequest,
             (await client.PostAsJsonAsync("/api/deploy/gate-releases", body)).StatusCode);
+    }
+
+    [Fact]
+    public async Task GateReleaseRoute_LocalProfileAuthenticatesOnlyTheReleaseCredential()
+    {
+        const string project = "Operator Demo";
+        var (_, repo, watch) = Build(project: project);
+        Git(repo, "add", ".");
+        Git(repo, "commit", "-m", "declarations");
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        WriteReleaseEvidence(project, _artifact, commit);
+        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.UseSetting("TaskRepository", Path.Combine(_root, "workspace"));
+            builder.UseSetting("Deploy:ReleaseEvidenceRoot", Path.Combine(_root, "release-evidence"));
+            builder.UseSetting("WatchPaths:0:Name", project);
+            builder.UseSetting("WatchPaths:0:Path", watch);
+            builder.UseSetting("WatchPaths:0:RootPath", repo);
+            builder.UseSetting("WatchPaths:0:RepositoryPath", repo);
+            builder.UseSetting("Security:Profile", "local");
+            builder.UseSetting("Logging:BackendFile:LogDirectory", Path.Combine(_root, "logs"));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(_clock);
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var request = new GateArtifactRequest(project, _artifact, commit);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync("/api/deploy/gate-releases", request)).StatusCode);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "invalid-credential");
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync("/api/deploy/gate-releases", request)).StatusCode);
+        var deploy = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest("deploy-only",
+            [RunnerScopes.Deploy], null, null)).Code);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", deploy.Secret);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync("/api/deploy/gate-releases", request)).StatusCode);
+        var builder = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest("release-builder",
+            [RunnerScopes.Release], null, null)).Code);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", builder.Secret);
+        using var accepted = await client.PostAsJsonAsync("/api/deploy/gate-releases", request);
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        var registered = factory.Services.GetRequiredService<ReleaseArtifactRegistry>()
+            .Verified(project, commit, _artifact, "container");
+        Assert.Equal(builder.Runner.Id, registered?.BuilderIdentity);
+        Assert.Equal(project, factory.Services.GetRequiredService<ProjectEnvironmentService>()
+            .Claim("stage-host", requireVerifiedRelease: true)?.Project);
     }
 
     [Fact]
@@ -350,7 +472,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         File.WriteAllText(Path.Combine(directory, "full-gate.log"), "PROMOTION_FULL_GATE=passed\n");
         File.WriteAllText(Path.Combine(directory, "promotion-record.json"), JsonSerializer.Serialize(new
         {
-            status = "promoted", gate = "passed", candidateSha = commit, atomicPush = true,
+            status = "promoted", gate = "passed", gateRunId = "release/test-gate", candidateSha = commit, atomicPush = true,
             releasePackage = new { status = "written", sha256 = digest },
         }));
         File.WriteAllText(Path.Combine(directory, "deploy-artifact.json"), JsonSerializer.Serialize(new

@@ -22,17 +22,18 @@ destination, health URL, promotion rule, and host-held secret references.
 For a container, `destination` is the local port behind the existing reverse
 proxy. For a static site, it is the served release directory; the proxy serves
 its `current` symlink. Static artifacts are tar or tar.gz files in the deploy
-host's artifact store, named by their SHA-256 digest.
+host's artifact cache after download from the built-in registry, named by their
+SHA-256 digest.
 
 After the full gate passes and the release is pushed, the promotion script can
 submit the measured package digest or the gate-built image's registry digest
 to `POST /api/deploy/gate-releases`. This route requires a service credential
-with only `runner.release`. The script checks that a container image carries
+with only `runner.release` in both local and networked profiles. The script checks that a container image carries
 the exact gated commit as its OCI revision label. Studio records the immutable
 commit/digest pair before queueing stage. The operator release route accepts
 only an artifact already recorded for that exact commit. For a static package,
-`DEPLOY_ARTIFACT_STORE` must name a store shared with the deploy host; the
-script copies the archive there under its digest. Set
+the release endpoint copies the verified archive into the built-in registry
+under its digest. The deploy host downloads it with its live job lease. Set
 `DEPLOY_RELEASE_TOKEN_FILE` and pass `--project` so successful gates queue
 stage automatically. A deploy-role credential claims work through
 `/api/deploy/jobs/claim`.
@@ -46,6 +47,70 @@ Failed production health queues the previously healthy artifact for rollback
 and leaves a failure card with the bounded health evidence in Studio.
 After the deploy, the control plane keeps probing each environment from outside
 its host; see [environment health checks](../operations/environment-health-checks.md).
+
+### Release artifact registry (IP-D3 A)
+
+The release job's exclusive `runner.release` credential can register an artifact
+only after the promotion train has written independent evidence of a passed full
+gate, the exact commit, and the package digest. The promotion tag identifies the
+gate run. Registration records project, commit, gate run, template, builder
+identity and digest in a signed, write-once provenance file under
+`<TaskRepository>/release-registry/`. The built-in backend copies static package
+bytes into `blobs/sha256/<digest>` and verifies them on reads. A container image
+may use an external registry by digest; its signed provenance stays in the
+installation, and Docker verifies the digest when the host pulls it.
+
+Each release deploy job stores the exact release ID when it is queued. The
+deploy host asks `/api/deploy/jobs/{project}/{jobId}/artifact` with its
+`runner.deploy` credential and current job lease before any transfer. Both are
+required in the local and networked profiles; the networked profile also binds
+the credential to the job's host. The server
+checks the release, provenance signature, project, commit, digest and template;
+static bytes are then served from the built-in registry through the same leased
+route. A missing or altered record, changed static bytes, wrong lease or unknown
+digest refuses the transfer. The host verifies downloaded bytes again before
+extracting them. Registry provenance is not exposed through a public browser
+route. The installation must retain `release-registry/provenance.key` together
+with the registry in backups; losing the key makes stored provenance unverifiable.
+
+On restart, a queued job saved before release IDs were added can recover its
+release from a persisted deployment run linked by job ID. An automatic rollback
+persists the failed job ID when it is queued and uses that link to find the
+last healthy source job and its release after restart. A digest match or equal
+timestamps never select a release. The claim and
+artifact routes refuse jobs whose release or registry provenance cannot be
+verified. A claim verifies only the selected host's next eligible job; an
+unverified job fails without changing jobs for other hosts. A temporary
+registry read failure leaves the job queued or claimed for retry and never
+allows artifact transfer. A later queued job for the same environment waits
+behind that retry; jobs for other environments remain eligible. If provenance
+disappears during a lease, artifact access is denied; an unverified report
+fails the job.
+
+The host contract is `GET /api/deploy/jobs/{project}/{jobId}/artifact` with
+`Authorization: Bearer <runner.deploy token>` and
+`X-Deploy-Lease: <leaseToken from the claimed job>`. In networked profiles,
+the credential's runner identity must equal the job's `hostId`. The lease must
+still be current and the job claimed. The response is a JSON provenance record
+with `project`, `commit`, `artifact`, `digest`, `gateRunId`, `template`,
+`builderIdentity`, `location`, `sourceDigest`, and its server signature. The
+server selects the job's release ID, then checks its artifact and environment
+template and verifies the record before replying. A reused digest cannot make
+the job select a different release or commit. The host
+compares the record to the claimed job before it transfers or deploys anything.
+
+For `static`, the host repeats the same leased request with `?content=1` to
+download `application/octet-stream` from the built-in blob store. Both server
+and host hash the bytes against the artifact digest. For `container`, the
+record's `location` is `external`; the host pulls the immutable image reference
+by digest from the external registry. A bad or expired lease returns `403`; a
+job with no matching release or unverified provenance returns `409`. The
+content request returns `409` when no built-in blob is available. The host
+reports a failed deploy for these permanent refusals. A temporary registry
+read failure returns `503`; the host transfers nothing and leaves the claim
+unreported so its lease can be retried. The gate's required files and
+`runner.release` push request are specified in the
+[promotion handoff](../operations/develop-main-promotion.md#release-evidence-and-registry-handoff).
 
 ### Releases, standard lifecycle and deploy runs (BD-1)
 

@@ -22,6 +22,92 @@ namespace AgentRunner.Tests;
 public sealed class DeployHostCommandTests
 {
     [Fact]
+    public async Task UnverifiedDigest_IsRefusedBeforeTransfer()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "deploy-unverified-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var token = Path.Combine(root, "token");
+        await File.WriteAllTextAsync(token, "deploy-test-token");
+        var artifact = "release-package@sha256:" + new string('a', 64);
+        var calls = new List<string>();
+        using var client = new HttpClient(new RouteHandler(request =>
+        {
+            calls.Add(request.RequestUri!.AbsolutePath);
+            if (request.RequestUri.AbsolutePath.EndsWith("/claim", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new
+                {
+                    id = "job", project = "demo", environmentId = "stage", hostId = "host",
+                    artifact, template = "static", destination = Path.Combine(root, "destination"),
+                    healthUrl = (string?)null, secretRefs = Array.Empty<string>(), containerPort = 80,
+                    previousArtifact = (string?)null, status = "claimed", leaseToken = "lease",
+                }) };
+            if (request.RequestUri.AbsolutePath.EndsWith("/artifact", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.Conflict);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        })) { BaseAddress = new Uri("https://studio.test/") };
+        try
+        {
+            Assert.Equal(1, await DeployHostCommand.RunAsync(
+                ["https://studio.test", "host", token, Path.Combine(root, "cache")], CancellationToken.None, client));
+            Assert.Equal(3, calls.Count);
+            Assert.EndsWith("/artifact", calls[1], StringComparison.Ordinal);
+            Assert.EndsWith("/report", calls[2], StringComparison.Ordinal);
+            Assert.False(Directory.Exists(Path.Combine(root, "destination")));
+            Assert.False(Directory.Exists(Path.Combine(root, "cache")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TemporaryRegistryFailure_LeavesClaimForRetryWithoutTransferOrReport(bool atContent)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "deploy-retry-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var token = Path.Combine(root, "token");
+        await File.WriteAllTextAsync(token, "deploy-test-token");
+        var digest = new string('a', 64);
+        var artifact = "release-package@sha256:" + digest;
+        var calls = new List<string>();
+        using var client = new HttpClient(new RouteHandler(request =>
+        {
+            calls.Add(request.RequestUri!.PathAndQuery);
+            if (request.RequestUri.AbsolutePath.EndsWith("/claim", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new
+                {
+                    id = "job", project = "demo", environmentId = "stage", hostId = "host",
+                    artifact, template = "static", destination = Path.Combine(root, "destination"),
+                    healthUrl = (string?)null, secretRefs = Array.Empty<string>(), containerPort = 80,
+                    previousArtifact = (string?)null, status = "claimed", leaseToken = "lease",
+                }) };
+            if (atContent && !request.RequestUri.Query.Contains("content", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new
+                {
+                    project = "demo", commit = new string('b', 40), artifact, digest,
+                    gateRunId = "gate/test", template = "static", builderIdentity = "builder",
+                    location = "built-in", sourceDigest = digest,
+                }) };
+            return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+        })) { BaseAddress = new Uri("https://studio.test/") };
+        try
+        {
+            Assert.Equal(0, await DeployHostCommand.RunAsync(
+                ["https://studio.test", "host", token, Path.Combine(root, "cache")], CancellationToken.None, client));
+            Assert.Equal(atContent ? 3 : 2, calls.Count);
+            Assert.DoesNotContain(calls, call => call.EndsWith("/report", StringComparison.Ordinal));
+            Assert.False(Directory.Exists(Path.Combine(root, "destination")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private sealed class RouteHandler(Func<HttpRequestMessage, HttpResponseMessage> reply) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(reply(request));
+    }
+
+    [Fact]
     [Trait("Category", "MachineBound")]
     public async Task RealServer_Claim_Deploy_HealthCheck_AndReport_LocalContainer()
     {
@@ -107,7 +193,8 @@ public sealed class DeployHostCommandTests
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", release.Secret);
             using var queued = await client.PostAsJsonAsync("/api/deploy/gate-releases",
                 new GateArtifactRequest(project, image, commit));
-            Assert.Equal(HttpStatusCode.Accepted, queued.StatusCode);
+            Assert.True(queued.StatusCode == HttpStatusCode.Accepted,
+                await queued.Content.ReadAsStringAsync());
             var result = await DeployHostCommand.RunAsync(
                 [client.BaseAddress!.ToString(), deploy.Runner.Id, tokenFile, root, root], CancellationToken.None, client);
             Assert.Equal(0, result);
@@ -134,7 +221,7 @@ public sealed class DeployHostCommandTests
         File.WriteAllText(Path.Combine(directory, "full-gate.log"), "PROMOTION_FULL_GATE=passed\n");
         File.WriteAllText(Path.Combine(directory, "promotion-record.json"), JsonSerializer.Serialize(new
         {
-            status = "promoted", gate = "passed", candidateSha = commit, atomicPush = true,
+            status = "promoted", gate = "passed", gateRunId = "release/test-gate", candidateSha = commit, atomicPush = true,
             releasePackage = new { status = "written", sha256 = digest },
         }));
         File.WriteAllText(Path.Combine(directory, "deploy-artifact.json"), JsonSerializer.Serialize(new
