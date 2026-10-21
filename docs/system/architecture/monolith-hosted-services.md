@@ -144,6 +144,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | TaskWatcherService | always | infra | Authority host |
 | TaskRunnerService | !PD | decide, local | Monolith: local execution (`RunOutcomePolicy`). Claimable work runs on runner hosts (D16 A); the local runner retires with I11. |
 | SourceWatcher | always | infra | Authority host |
+| TelemetryWriter | always | infra | Authority host. Single writer of the OTLP telemetry store (IP-15): drains the intake queue, masks, stores, applies retention and the minute-bucket cap; no lane move. |
 | CompanionSyncService | !PD | infra | Authority host (relays operator commands) |
 
 ## Decisions outside hosted services
