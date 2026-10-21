@@ -90,6 +90,13 @@ The project Deploy area's Secrets view offers Preview plus every declared
 environment. It reuses the provider's write-only add and rotate controls and
 stores only name-to-reference bindings as control metadata. An environment
 declaration's `secretRefs` names must each be bound before its job starts.
+Names are converted to uppercase container variables, with `.` and `-`
+replaced by `_`. Declarations that produce the same variable name are invalid,
+including case-only collisions. The host also rejects older queued jobs with
+colliding names before resolving any value. The resolution audit purpose is
+`deploy:<environment-id>` when it fits the 64-character provider limit;
+longer IDs use `deploy:` followed by a 16-character SHA-256 prefix of the ID.
+An older queued job with a collision reports `secret-reference-collision`.
 The binding may address the environment, its project, or the workspace;
 provider inheritance still chooses the closest existing secret. Preview
 bindings may be prepared before a deploy declaration exists.

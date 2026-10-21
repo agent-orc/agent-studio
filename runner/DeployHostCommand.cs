@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.Secrets;
 
 namespace AgentRunner;
 
@@ -43,6 +44,11 @@ public static class DeployHostCommand
             {
                 evidence = "secret-reference-missing";
                 throw new InvalidOperationException("Secret preflight failed.");
+            }
+            if (SecretEnvironmentVariable.HasCollision(job.SecretRefs))
+            {
+                evidence = "secret-reference-collision";
+                throw new InvalidOperationException("Secret references map to the same container variable.");
             }
             if (job.Template == "container")
                 await DeployContainer(job, client, cancellationToken);
@@ -165,6 +171,8 @@ public static class DeployHostCommand
         IReadOnlyDictionary<string, string>? bindings, CancellationToken ct)
     {
         var lines = new List<string>();
+        if (SecretEnvironmentVariable.HasCollision(names))
+            throw new InvalidOperationException("Secret references map to the same container variable.");
         foreach (var name in names)
         {
             if (name.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.')))
@@ -173,7 +181,7 @@ public static class DeployHostCommand
                 throw new InvalidOperationException("Secret binding missing.");
             var value = await ResolveSecret(client, project, environment, jobId, leaseToken, reference, ct);
             if (value.Contains('\n') || value.Contains('\r')) throw new InvalidOperationException("Secret must be single-line.");
-            lines.Add(name.Replace('-', '_').Replace('.', '_').ToUpperInvariant() + "=" + value);
+            lines.Add(SecretEnvironmentVariable.Name(name) + "=" + value);
         }
         return lines;
     }
@@ -183,7 +191,8 @@ public static class DeployHostCommand
     {
         using var response = await client.PostAsJsonAsync("api/runner/secrets/resolve", new
         {
-            reference, purpose = "deploy:" + environment,
+            reference, purpose = "deploy:" + (environment.Length <= 57 ? environment
+                : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(environment)))[..16].ToLowerInvariant()),
             workload = new { kind = "deploy-job", project, jobId, leaseToken },
         }, ct);
         if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Secret resolution failed.");

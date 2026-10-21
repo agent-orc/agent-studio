@@ -359,6 +359,21 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData("DB-URL", "DB.URL")]
+    [InlineData("Db_url", "DB_URL")]
+    public void Colliding_secret_names_make_environment_declaration_unusable(string first, string second)
+    {
+        var (service, repo, _) = Build();
+        var stage = Path.Combine(repo, "docs", "deployments", "environments", "stage.json");
+        var declaration = JsonNode.Parse(File.ReadAllText(stage))!;
+        declaration["secretRefs"] = JsonSerializer.SerializeToNode(new[] { first, second });
+        File.WriteAllText(stage, declaration.ToJsonString());
+
+        Assert.Contains("same container variable", Assert.Throws<JsonException>(() => service.Declarations("demo")).Message);
+        Assert.Null(service.DeclarationFiles("demo")!.Single(item => item.EnvironmentId == "stage").Declaration);
+    }
+
     [Fact]
     public void Release_Stages_ThenApprovesExactArtifact_AndCanRollBack()
     {

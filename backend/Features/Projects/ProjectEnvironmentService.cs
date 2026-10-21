@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Security.Cryptography;
+using AgentStudio.Secrets;
 
 namespace AgentStudio.Projects;
 
@@ -190,6 +191,8 @@ public sealed class ProjectEnvironmentService
         if (!Identifier.IsMatch(id) || !Identifier.IsMatch(host) || kind is not ("stage" or "production" or "other")
             || template is not ("container" or "static") || secrets.Any(item => !SecretIdentifier.IsMatch(item)))
             throw new JsonException($"Environment {Path.GetFileName(file)} has invalid identifiers, kind, template or secret refs.");
+        if (SecretEnvironmentVariable.HasCollision(secrets))
+            throw new JsonException($"Environment {Path.GetFileName(file)} has secret refs that map to the same container variable.");
         var destination = Required("destination");
         if (template == "static" && (!Path.IsPathFullyQualified(destination) || destination.Contains("..", StringComparison.Ordinal)))
             throw new JsonException("Static destination must be an absolute path without traversal.");

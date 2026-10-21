@@ -49,6 +49,92 @@ public sealed class DeployHostCommandTests
         Assert.DoesNotContain(value, failure.ToString());
     }
 
+    [Fact]
+    public async Task Maximum_length_environment_id_resolves_with_a_valid_purpose()
+    {
+        var environment = "e" + new string('a', 63);
+        string? purpose = null;
+        using var client = new HttpClient(new ResolveHandler(async request =>
+        {
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+            purpose = body.RootElement.GetProperty("purpose").GetString();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = JsonContent.Create(new { value = "runtime-value" }) };
+        })) { BaseAddress = new Uri("https://studio.test/") };
+
+        var lines = await DeployHostCommand.ResolveEnvironmentAsync(client, "demo", environment, "job-1", "lease-1",
+            ["DATABASE_URL"], new Dictionary<string, string>
+            { ["DATABASE_URL"] = $"secret://demo/{environment}/DATABASE_URL" }, CancellationToken.None);
+
+        Assert.Equal("DATABASE_URL=runtime-value", Assert.Single(lines));
+        Assert.True(SecretAccessPolicy.IsValidPurpose(purpose));
+    }
+
+    [Theory]
+    [InlineData("DB-URL", "DB.URL")]
+    [InlineData("Db_url", "DB_URL")]
+    public async Task Queued_job_with_colliding_secret_names_fails_before_resolution(string first, string second)
+    {
+        var requests = 0;
+        using var client = new HttpClient(new ResolveHandler(_ =>
+        {
+            requests++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        })) { BaseAddress = new Uri("https://studio.test/") };
+        var bindings = new Dictionary<string, string>
+        {
+            [first] = $"secret://demo/stage/{first}",
+            [second] = $"secret://demo/stage/{second}",
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => DeployHostCommand.ResolveEnvironmentAsync(
+            client, "demo", "stage", "job-1", "lease-1", [first, second], bindings, CancellationToken.None));
+        Assert.Equal(0, requests);
+    }
+
+    [Fact]
+    public async Task Claimed_job_with_legacy_collision_reports_failure_without_resolving_values()
+    {
+        var resolved = 0;
+        string? evidence = null;
+        using var client = new HttpClient(new ResolveHandler(async request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/claim", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new
+                    {
+                        id = "job-1", project = "demo", environmentId = "stage", hostId = "host-1",
+                        artifact = "example/app", template = "container", destination = "8080",
+                        healthUrl = (string?)null, secretRefs = new[] { "DB-URL", "DB.URL" },
+                        containerPort = 8080, previousArtifact = (string?)null, status = "claimed",
+                        leaseToken = "lease-1",
+                    }),
+                };
+            if (path.EndsWith("/resolve", StringComparison.Ordinal)) resolved++;
+            if (path.EndsWith("/report", StringComparison.Ordinal))
+            {
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+                evidence = body.RootElement.GetProperty("evidence").GetString();
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        })) { BaseAddress = new Uri("https://studio.test/") };
+        var tokenFile = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(tokenFile, "test-lease-token");
+            Assert.Equal(1, await DeployHostCommand.RunAsync(
+                [client.BaseAddress!.ToString(), "host-1", tokenFile, Path.GetTempPath()], CancellationToken.None, client));
+            Assert.Equal("secret-reference-collision", evidence);
+            Assert.Equal(0, resolved);
+        }
+        finally
+        {
+            File.Delete(tokenFile);
+        }
+    }
+
     private sealed class ResolveHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
