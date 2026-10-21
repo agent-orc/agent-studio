@@ -56,6 +56,12 @@ public sealed class ContributorAccessTests : IDisposable
         { "GET", "/api/tasks/card/results/tests.trx", null, false, false },
         { "GET", "/api/tasks/card/results/events.jsonl", null, false, false },
         { "GET", "/api/tasks/card/results/report", null, false, false },
+        { "GET", "/api/tasks/card/files/prompt.md", null, false, true },
+        { "GET", "/api/tasks/card/files/results/report.html", null, false, true },
+        { "GET", "/api/tasks/card/files/results/run.log", null, false, false },
+        { "GET", "/api/tasks/card/FILES/RESULTS/RUN.LOG", null, false, false },
+        { "GET", "/api/tasks/card/checkout/CREDENTIALS", null, false, false },
+        { "GET", "/api/tasks/card/CHECKOUT/secrets.txt", null, false, false },
         { "GET", "/api/projects/PROJ-1/CREDENTIALS", null, false, false },
         { "GET", "/api/projects/PROJ-1/settings", null, false, false },
         { "GET", "/api/projects/PROJ-1/autonomy", null, false, false },
@@ -101,8 +107,11 @@ public sealed class ContributorAccessTests : IDisposable
     public async Task Product_session_over_http_is_denied_conversation_and_raw_results_and_creates_plain_wishes()
     {
         const string project = "product-project";
+        const string otherProject = "other-project";
         const string taskKey = "AGT-PRODUCT-1";
         var projectPath = Path.Combine(_root, "projects", project);
+        var otherProjectPath = Path.Combine(_root, "projects", otherProject);
+        Directory.CreateDirectory(otherProjectPath);
         var taskPath = Path.Combine(projectPath, TaskStates.HumanReview, taskKey);
         foreach (var lane in new[] { TaskStates.Backlog, TaskStates.Ready, TaskStates.HumanReview })
             Directory.CreateDirectory(Path.Combine(projectPath, lane));
@@ -130,6 +139,10 @@ public sealed class ContributorAccessTests : IDisposable
                 ["WatchPaths:0:Path"] = projectPath,
                 ["WatchPaths:0:RootPath"] = projectPath,
                 ["WatchPaths:0:RepositoryPath"] = projectPath,
+                ["WatchPaths:1:Name"] = otherProject,
+                ["WatchPaths:1:Path"] = otherProjectPath,
+                ["WatchPaths:1:RootPath"] = otherProjectPath,
+                ["WatchPaths:1:RepositoryPath"] = otherProjectPath,
             }));
             builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(_clock));
         });
@@ -157,6 +170,35 @@ public sealed class ContributorAccessTests : IDisposable
             Assert.Equal(HttpStatusCode.Forbidden, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken));
         }
         Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/results/run.log", owner.SessionToken));
+
+        foreach (var route in new[]
+        {
+            "files/results/run.log", "files/results/RUN.LOG", "FILES/RESULTS/run.log",
+            "files/results/run.log?scope=workspace", "files/results/report.html?scope=code",
+            "checkout/CREDENTIALS", "CHECKOUT/credentials.json"
+        })
+        {
+            var status = await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken);
+            Assert.True(status == HttpStatusCode.Forbidden, $"{route}: expected Forbidden, got {status}");
+        }
+        Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/files/prompt.md", product.SessionToken));
+        Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/files/results/report.html", product.SessionToken));
+
+        using var decision = await SendAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, new
+        {
+            title = "A decision wish", watchPath = projectPath, kind = TaskKinds.Decision,
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, decision.StatusCode);
+
+        var projects = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        var destination = projects.FindByStorageLocation(otherProjectPath);
+        Assert.NotNull(destination);
+        using var crossProject = await SendAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, new
+        {
+            title = "A routed wish", watchPath = projectPath, targetState = TaskStates.Backlog,
+            routing = new { navigationProjectId = destination.Id },
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, crossProject.StatusCode);
 
         using var created = await SendAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, new
         {

@@ -59,8 +59,13 @@ public static class TaskFilesEndpoints
             [FromQuery] string? at,
             [FromQuery] string? scope,
             TaskFileHistoryService files,
-            AgentStudio.Registry.ProjectRegistry projects) =>
+            AgentStudio.Registry.ProjectRegistry projects,
+            HttpContext context) =>
         {
+            var product = ContributorAccessPolicy.IsProductSession(context);
+            if (product && !ContributorAccessPolicy.AllowsTaskFileRead(context.Request.Path.Value ?? "", scope))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (product) scope = TaskFileSources.Workspace;
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (TryStripOperationSuffix(path, "history", out var historyPath))
             {

@@ -206,8 +206,10 @@ public sealed class AccessSecurityMiddleware
         var originalPath = context.Items[AgentStudio.Host.StudioV1LegacyRouteAlias.OriginalPathItem] as string;
         var requiredRunnerScope = RequiredRunnerScope(context.Request.Method, path)
             ?? (originalPath is null ? null : RequiredRunnerScope(context.Request.Method, NormalizePath(originalPath)));
+        var productFileRead = human is not null && ContributorAccessPolicy.IsProductSession(human.User)
+            && IsRunnerTaskFileRead(context.Request.Method, path);
         if (requiredRunnerScope is not null
-            && (human is null || !(IsHumanSessionRead(context.Request.Method, path)
+            && (human is null || !(productFileRead || IsHumanSessionRead(context.Request.Method, path)
                 || originalPath is not null && IsHumanSessionRead(context.Request.Method, NormalizePath(originalPath)))))
         {
             if (runner is null)
@@ -361,7 +363,13 @@ public sealed class AccessSecurityMiddleware
                     string.Equals(project, card.ProjectName, StringComparison.OrdinalIgnoreCase)
                     || (_projects?.FindByIdOrDisplayName(project)?.StorageLocation is { } location
                         && AgentStudio.Shared.WatchPathComparison.PathsEqual(location, card.WatchPath)));
-            if (!ContributorAccessPolicy.Allows(context.Request.Method, path, card?.State, productionApproval))
+            var fileScope = context.Request.Query.ContainsKey("scope")
+                ? context.Request.Query["scope"].ToString() : null;
+            if (!ContributorAccessPolicy.Allows(context.Request.Method, path, card?.State, productionApproval)
+                || ((HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method))
+                    && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
+                    && path.Contains("/files/", StringComparison.OrdinalIgnoreCase)
+                    && !ContributorAccessPolicy.AllowsTaskFileRead(path, fileScope)))
             {
                 await Reject(context, 403, "role-denied", "The Product role cannot perform this action.");
                 return;
