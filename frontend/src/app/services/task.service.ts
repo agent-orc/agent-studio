@@ -63,6 +63,7 @@ import type {
   ProjectExpensiveJobsResponse,
   ProjectJobTokenDetail,
   ProjectPipelineCostTimeline,
+  ReviewObservationReport,
 } from '../features/project-token-usage';
 import type {
   RunTimeline,
@@ -2895,6 +2896,12 @@ export class TaskService {
     return this.http.get<ProjectPipelineCostTimeline>(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/token-usage/pipeline-cost`,
       { params },
+    );
+  }
+
+  getProjectReviewObservations(projectName: string) {
+    return this.http.get<ReviewObservationReport>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/token-usage/review-observations`,
     );
   }
 

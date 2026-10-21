@@ -28,6 +28,14 @@ The one-time `OpenAiUsageHistoryRepair` completed on Stable on 2026-09-25: `.met
 
 ## Current files
 
+The project Token Usage panel also reads
+`/api/projects/{projectName}/token-usage/review-observations`. Its review table
+shows cost per review, blocker rate, missed approvals, and cost per confirmed
+finding by model and reasoning level. The corresponding `/export` response is
+dated Studio observation evidence for Token Economy, separate from published
+model facts. See the [review domain](review.md#review-observations-and-later-evidence-agt-3269)
+for recording and attribution rules.
+
 | Stage | Files |
 |---|---|
 | Read | `Ledger/ProjectTokenLedger.cs`, `Ledger/ProjectTokenReceiptReader.cs`, `Ledger/BusTokenEntryConverter.cs`, `Ledger/BusAdHocUsageReader.cs`, `Ledger/ChatUsageFallbackReceipts.cs` |

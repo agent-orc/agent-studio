@@ -5,6 +5,7 @@ using AgentStudio.Pipeline;
 using AgentStudio.Git;
 using Microsoft.Extensions.Logging;
 using Contract = AgentStudio.TaskServer.Contracts;
+using AgentStudio.Review.Observations;
 
 namespace AgentStudio.Runner;
 
@@ -44,19 +45,22 @@ public sealed class RemoteReviewPlanBuilder
     private readonly GitService? _git;
     private readonly TimeProvider _time;
     private readonly ILogger<RemoteReviewPlanBuilder>? _logger;
+    private readonly ReviewObservationStore? _observations;
 
     public RemoteReviewPlanBuilder(
         AspectRunnerService aspects,
         IConfiguration configuration,
         GitService? git = null,
         TimeProvider? time = null,
-        ILogger<RemoteReviewPlanBuilder>? logger = null)
+        ILogger<RemoteReviewPlanBuilder>? logger = null,
+        ReviewObservationStore? observations = null)
     {
         _aspects = aspects;
         _configuration = configuration;
         _git = git;
         _time = time ?? TimeProvider.System;
         _logger = logger;
+        _observations = observations;
     }
 
     /// <summary>
@@ -338,13 +342,28 @@ public sealed class RemoteReviewPlanBuilder
             TaskMode = isConcept ? TaskModes.Concept : null,
         };
         if (isConcept) return plan;
-        plan = ApplyScopedReview(
-            plan,
-            task,
-            repositoryPath,
-            projectSettings,
-            integrationRef,
-            expectedResultSha);
+        var requireFullReview = false;
+        if (ReviewConcernRoundStore.Read(task.FolderPath) is { StillOpen: true, PreviousVerdicts.Count: > 0 }
+            && _observations is not null)
+        {
+            var cohorts = _observations.Project(task.ProjectName, task.WatchPath).ByModelAndReasoning
+                .Where(row => plan.Commands.Any(command =>
+                    Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                    && string.Equals(AgentStudio.Tokens.ModelIdentity.StoredId(command.Model),
+                        row.Model, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(command.ThinkingLevel ?? "unknown",
+                        row.ReasoningLevel, StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+            requireFullReview = ReviewObservationPolicy.RequireFullReview(cohorts);
+        }
+        if (!requireFullReview)
+            plan = ApplyScopedReview(
+                plan,
+                task,
+                repositoryPath,
+                projectSettings,
+                integrationRef,
+                expectedResultSha);
         // A scoped review drops carried-over agent commands. A no-change plan
         // has no tool command left to keep it non-empty, so it falls back to
         // the completion-only command the Task Server can admit.

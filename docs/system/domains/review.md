@@ -1134,3 +1134,45 @@ usually exists only under `refs/remotes/origin` in the Studio checkout.
   remain review infrastructure failures. The shared report diagnosis policy
   and standalone Task Server accept a failed prerequisite build only when it
   matches the planned preceding step and baseline SHA.
+# Review observations and later evidence (AGT-3269)
+
+Studio projects executed aspect and grade steps from each task's durable
+`pipeline-execution.json`, including prior attempts and repeated step runs, into
+review observations. Each observation keeps the recorded model, thinking level,
+four token dimensions, duration, verdict, severity counts, historical list-price
+estimate and evidence reference. New local and remote aspect projections, grades,
+and product gate projections bind the exact delivered Result-SHA. Older rows without that SHA remain
+visible for cost analysis but cannot receive an automatic miss attribution.
+
+`POST /api/tasks/{jobId}/review-observations?project=...` records an externally
+performed deep review (or a review outside the pipeline) in the task-local
+`results/review-observations.jsonl` journal. The request includes its exact SHA,
+measurements and cited artifact. When its cost is omitted, Studio uses the
+historical price catalogue at the review date if the model is priced.
+`POST /api/tasks/{jobId}/review-observations/{reviewId}/later-evidence?project=...`
+links a later review, gate, operator finding or production incident to an earlier
+approved review of the same SHA. The later evidence must be dated after approval
+and cite an artifact. A later blocking review or product-class remote gate on the
+same SHA supplies the link automatically. Replayed journal IDs do not duplicate
+records.
+
+`POST /api/tasks/{jobId}/review-observations/{reviewId}/finding-outcomes?project=...`
+records a cited confirmation and dismissal count for findings reported by a
+review. The journal keeps each assessment; the latest one supplies cost per
+real finding and the optional Token Economy `outcomes` field.
+
+`GET /api/projects/{projectName}/token-usage/review-observations` returns the
+per-review records, later evidence links and model/reasoning aggregates. The
+`/export` suffix returns a dated manifest with its method and
+`studio-observation` status. Eligible `runs` use Token Economy's
+`quality-studio-review-run-v1` drop shape; rows without a measured positive
+file count, CLI, model or reasoning level appear under `excludedObservations`
+instead of receiving invented values. The export does not claim publication in
+Token Economy. `/export/{reviewId}` returns one importer-ready version-1
+review-run JSON document when that review has the required fields.
+Unpriced reviews retain null cost. Cost per real finding is null unless reported
+findings have an explicit confirmed count. When a model/reasoning cohort has at
+least five approvals and two cited misses with a miss rate of at least 20%, the
+remote review plan runs every semantic aspect on a follow-up round instead of
+carrying previous verdicts over. This affects review depth only, not the task's
+acceptance or transition decision.

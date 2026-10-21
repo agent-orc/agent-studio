@@ -2655,6 +2655,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Aspects);
         var aspectSubject = ResolveBuildTestGateSubject(current, entry.Path);
+        inputs = inputs with
+        {
+            ReviewedResultSha = aspectSubject.Sha,
+            ReviewRoundId = aspectSubject.AttemptChainId ?? $"local-review-{pipelineRecord?.Attempt ?? 1}",
+        };
         var report = await _aspectRunner.RunAsync(inputs, enabledAspects, cliBinary, aspectModel, perAspectTimeout, ct,
             modelForAspect, thinkingLevelForAspect, promptForAspect, cliForAspect, modelSourceForAspect);
         if (ReviewResultWasSuperseded(current, entry, aspectSubject, report)) return;
@@ -5362,7 +5367,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                             DurationMs = report.DurationMs,
                             Model = report.Model,
                             ThinkingLevel = report.ThinkingLevel,
+                            ReviewedResultSha = ResolveBuildTestGateSubject(live, entry.Path).Sha,
                             Verdict = gradeToken,
+                            ReviewFindings = status == PipelineStepStatus.Failed
+                                ? new AgentStudio.Review.Observations.ReviewFindingCounts(Blocker: report.Findings?.Count ?? 0)
+                                : new AgentStudio.Review.Observations.ReviewFindingCounts(Major: report.Findings?.Count ?? 0),
+                            ReviewCli = request.CliType,
                             VerdictSummary = string.IsNullOrWhiteSpace(report.Summary) ? null : report.Summary,
                             EvidenceRef = report.FileName,
                         }));

@@ -3,6 +3,7 @@ using AgentStudio.Deploy;
 using AgentStudio.Search;
 using AgentStudio.Proposals;
 using AgentStudio.Telemetry;
+using AgentStudio.Review.Observations;
 
 namespace AgentStudio.Host;
 
@@ -35,6 +36,7 @@ public static class EndpointMapping
         tasks.MapTaskGitEndpoints();
         tasks.MapTaskClaudeEndpoints();
         tasks.MapTaskReviewEvidenceEndpoints();
+        tasks.MapTaskReviewObservationEndpoints();
         tasks.MapTaskExternalCompletionEndpoints();
         tasks.MapTaskCodeReviewEndpoints();
         tasks.MapReviewProjectionEndpoints();
@@ -102,6 +104,7 @@ public static class EndpointMapping
         app.MapSecurityReviewEndpoints();
         app.MapDesignSurfaceEndpoints();
         app.MapProjectTokenUsageEndpoints();
+        app.MapReviewObservationEndpoints();
         app.MapUsageCockpitEndpoints();
         app.MapPipelineHealthEndpoints();
         app.MapGateEconomicsEndpoints();
