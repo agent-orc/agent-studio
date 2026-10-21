@@ -50,19 +50,30 @@ flight. Hosting slots are reserved atomically: usage is checked first, and the
 slot count is checked again and the slot written under one lock.
 
 An unreadable quota settings file keeps the last good settings in memory, logs
-a warning, and marks admissions as meter unavailable.
+a warning, and marks admissions as meter unavailable. Without a last good state
+(the file is unreadable since the service started) every admission and the
+board refuse new work, and no quota write replaces the file until an owner
+repairs it.
 
 Hosting counts running project environments. Website dispatch reserves its slot
-before sending the workflow and releases it when dispatch fails. A failed
-workflow releases the slot only when that dispatch created the reservation, so
-a failed redeploy keeps the slot of the live deployment. An inactive GitHub
-Pages deployment is also found by the minute reconciliation service, without a
+before sending the workflow and releases it when dispatch fails. The quota
+settings persist which dispatch owns a reservation it took. A failed workflow
+releases the slot only for that owning dispatch, also after a restart and when
+the workflow created no GitHub Pages deployment; the minute reconciliation
+looks the run up again. A redeploy that takes no slot keeps the reservation
+time of the live deployment, so a failed redeploy keeps the slot and a later
+stop of the prior deployment still releases it. An inactive GitHub Pages
+deployment is also found by the minute reconciliation service, without a
 publish panel refresh. Refresh and dispatch use the same lock so an older run
 cannot release a newer reservation. The reconciliation runs only while a quota
 limit exists.
 
 Declared environments (`docs/deployments/environments/*.json`) take a slot on
-their first deploy. A release, an approved promotion, and a rollback are
+their first deploy. An environment runs when its latest successful deploy is
+not followed by a recorded stop; a failed deploy changes nothing. The minute
+reconciliation, which runs without a limit too, and saving a limit both give
+every running declared environment its slot first, so environments deployed
+before slots were tracked count before a new limit admits work. A release, an approved promotion, and a rollback are
 admitted with a hosting slot when the target environment is not running yet;
 a refusal answers `409` with the reason. A deploy job claim reserves the slot
 atomically; a refused job stays queued for the next claim. A healthy report
@@ -74,7 +85,7 @@ slot of a removed declaration and the slot a claimed deploy job reserved when
 its five-minute lease expired without a report; a later claim of that job
 reserves it again. When a newer job claims a slot held by an older failed or
 interrupted job, the reservation moves to the newer job. Reconciliation of the
-older job cannot release a newer healthy deployment's slot. Reading the
+older job or of a failed redeploy cannot release the slot of a live deployment. Reading the
 environments changes no slot. A timed promotion
 that quota refuses stays pending.
 

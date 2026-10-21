@@ -513,6 +513,69 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
     }
 
+    [Fact]
+    public void Upgrade_reconstructs_running_environment_slots_before_a_new_limit_admits_work()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, null);
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var stageJob = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", stageJob.Id, new(stageJob.LeaseToken!, true, "health-ok")));
+        Assert.True(service.Decide("demo", _artifact, true, "operator"));
+        var production = service.Claim("prod-host")!;
+        Assert.True(service.Report("demo", production.Id, new(production.LeaseToken!, true, "health-ok")));
+        Assert.True(service.Stop("demo", "production", "operator"));
+        // Before the upgrade no environment held a slot.
+        quota.SetProjectEnvironment("demo", ProjectEnvironmentService.SlotKey("stage"), false);
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+
+        // The running stage gets its slot; the recorded stop of production is honored.
+        service.ReconcileHostingSlots();
+        Assert.Equal([ProjectEnvironmentService.SlotKey("stage")], quota.ProjectEnvironmentIds("demo"));
+        quota.SetLimits(workspaceId, null, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        Assert.Throws<InvalidOperationException>(() => quota.ReserveProjectEnvironment("demo", "website"));
+
+        // A redeploy that reserves the missing slot and fails keeps the live stage deployment's slot.
+        quota.SetProjectEnvironment("demo", ProjectEnvironmentService.SlotKey("stage"), false);
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        Assert.NotNull(service.QueueDeployment("demo", stage, "registry.example/app@sha256:" + new string('b', 64),
+            "operator", rollback: false));
+        var redeploy = service.Claim("stage-host")!;
+        Assert.True(redeploy.ReservedSlot);
+        Assert.True(service.Report("demo", redeploy.Id, new(redeploy.LeaseToken!, false, "health-http-failed")));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        service.ReconcileHostingSlots();
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+
+        Assert.True(service.Stop("demo", "stage", "operator"));
+        service.ReconcileHostingSlots();
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    [Theory]
+    [InlineData(new string[0], false)]
+    [InlineData(new[] { "failed" }, false)]
+    [InlineData(new[] { "healthy" }, true)]
+    [InlineData(new[] { "healthy", "failed" }, true)]
+    [InlineData(new[] { "rolled-back", "failed", "failed" }, true)]
+    [InlineData(new[] { "healthy", "stopped" }, false)]
+    [InlineData(new[] { "healthy", "stopped", "failed" }, false)]
+    [InlineData(new[] { "healthy", "stopped", "healthy" }, true)]
+    public void Environment_runs_after_its_latest_successful_deploy_unless_a_stop_follows(string[] statuses,
+        bool running)
+    {
+        var at = _clock.GetUtcNow().UtcDateTime;
+        var history = statuses.Select(status => new ProjectEnvironmentService.EnvironmentHistoryRow("stage", at,
+                new(at, status, _artifact, null, null)))
+            .Append(new("production", at, new(at, "healthy", _artifact, null, null)));
+
+        Assert.Equal(running, ProjectEnvironmentService.IsRunning(history, "stage"));
+    }
+
     private WebApplicationFactory<Program> QuotaFactory() => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
@@ -528,7 +591,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     });
 
     private (AgentStudio.Quota.WorkspaceQuotaService Quota, string WorkspaceId) QuotaFor(
-        WebApplicationFactory<Program> factory, AgentStudio.Quota.QuotaLimits limits)
+        WebApplicationFactory<Program> factory, AgentStudio.Quota.QuotaLimits? limits)
     {
         var services = factory.Services;
         var workspace = services.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);

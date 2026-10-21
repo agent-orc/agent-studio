@@ -219,15 +219,15 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
             if (reserved) _workspaceQuota?.SetProjectEnvironment(project, "website", false);
             throw;
         }
-        _workspaceQuota?.MarkProjectEnvironmentDispatched(project, "website", dispatchStartedAt);
+        _workspaceQuota?.RecordProjectEnvironmentDispatch(project, "website", workflow, dispatchStartedAt, reserved);
         var run = StoreRun(new PublishWorkflowRun
         {
             Project = project,
             TargetId = "website",
             Workflow = workflow,
             Status = "queued",
-            TriggeredAt = DateTime.UtcNow,
-            ReservedHostingSlot = reserved,
+            // The dispatch start also identifies the persisted slot ownership of this run.
+            TriggeredAt = dispatchStartedAt.UtcDateTime,
         });
         _logger.LogInformation(
             "website-deploy-triggered project={Project} workflow={Workflow} branch={Branch}",
@@ -265,14 +265,12 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
                 Url = StringValue(e, "html_url"),
                 Error = null,
             };
-            // A failed redeploy keeps the slot of the deployment that is still live.
-            if (targetId == "website" && refreshed.Status == "completed" && refreshed.Conclusion != "success")
+            if (targetId == "website")
             {
-                if (stored.ReservedHostingSlot) _workspaceQuota?.SetProjectEnvironment(project, "website", false);
-                refreshed = refreshed with { ReservedHostingSlot = false };
+                SettleWebsiteRun(project, stored.TriggeredAt, refreshed.Status, refreshed.Conclusion);
+                if (refreshed.Status == "completed" && refreshed.Conclusion == "success")
+                    ReconcileWebsiteDeployment(root, repo, project);
             }
-            else if (targetId == "website" && refreshed.Status == "completed")
-                ReconcileWebsiteDeployment(root, repo, project);
             return StoreRun(refreshed);
         }
         catch (Exception ex)
@@ -293,7 +291,9 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
                 try
                 {
                     var root = RequireRepo(project);
-                    ReconcileWebsiteDeployment(root, RequireGitHubRepo(root), project);
+                    var repo = RequireGitHubRepo(root);
+                    ReconcileWebsiteDispatch(root, repo, project);
+                    ReconcileWebsiteDeployment(root, repo, project);
                 }
                 catch (Exception ex)
                 {
@@ -302,6 +302,37 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
             }
         }
     }
+
+    /// <summary>
+    /// Settles a dispatch whose run panel is gone, for example after a restart.
+    /// A failed workflow that created no GitHub Pages deployment still releases
+    /// the slot its dispatch reserved.
+    /// </summary>
+    private void ReconcileWebsiteDispatch(string root, string repo, string project)
+    {
+        var dispatch = _workspaceQuota?.PendingDispatches("website").FirstOrDefault(item =>
+            string.Equals(item.Project, project, StringComparison.OrdinalIgnoreCase));
+        if (dispatch is null) return;
+        var runId = FindTriggeredRun(root, repo, new PublishWorkflowRun
+        {
+            Project = project, TargetId = "website", Workflow = dispatch.Workflow, TriggeredAt = dispatch.DispatchedAt,
+        });
+        if (runId is null) return;
+        var json = RunGhRequired(root, "workflow status lookup failed", "api", $"repos/{repo}/actions/runs/{runId}");
+        using var doc = JsonDocument.Parse(json);
+        SettleWebsiteRun(project, dispatch.DispatchedAt, StringValue(doc.RootElement, "status"),
+            StringValue(doc.RootElement, "conclusion"));
+    }
+
+    /// <summary>
+    /// A completed run settles the slot ownership of its own dispatch only: a
+    /// failure releases the slot that dispatch reserved, a success leaves it to
+    /// the live deployment. A redeploy that took no slot owns nothing.
+    /// </summary>
+    internal bool SettleWebsiteRun(string project, DateTime dispatchedAt, string? status, string? conclusion)
+        => status == "completed" && _workspaceQuota is not null
+            && _workspaceQuota.SettleProjectEnvironmentDispatch(project, "website", dispatchedAt,
+                succeeded: conclusion == "success");
 
     private void ReconcileWebsiteDeployment(string root, string repo, string project)
     {

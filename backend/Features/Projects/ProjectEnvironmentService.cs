@@ -583,10 +583,15 @@ public sealed class ProjectEnvironmentService
         }
     }
 
-    /// <summary>Releases orphaned reservations and settles completed deploy claims.</summary>
+    /// <summary>
+    /// Reconstructs the slots of running declared environments, releases
+    /// orphaned reservations and settles completed deploy claims. It runs
+    /// without a limit too, so environments that were running before slots
+    /// were tracked hold their slots before a new limit admits work.
+    /// </summary>
     public void ReconcileHostingSlots()
     {
-        if (_quota is null || !_quota.HasLimits()) return;
+        if (_quota is null) return;
         lock (_gate)
         {
             var root = StoreRoot();
@@ -596,20 +601,25 @@ public sealed class ProjectEnvironmentService
             {
                 var project = Uri.UnescapeDataString(Path.GetFileNameWithoutExtension(file));
                 var declarations = Declarations(project);
+                var state = Load(project);
                 if (declarations is not null)
-                    foreach (var environmentId in _quota.ProjectEnvironmentIds(project))
+                {
+                    var held = _quota.ProjectEnvironmentIds(project);
+                    foreach (var environmentId in held)
                         if (environmentId.StartsWith("env:", StringComparison.Ordinal)
                             && declarations.All(item => SlotKey(item.Id) != environmentId))
                             _quota.SetProjectEnvironment(project, environmentId, false);
-                var state = Load(project);
+                    foreach (var declaration in declarations)
+                        if (IsRunning(state.History, declaration.Id) && !held.Contains(SlotKey(declaration.Id)))
+                            _quota.SetProjectEnvironment(project, SlotKey(declaration.Id), true);
+                }
                 var settled = state.Jobs.Where(job => job.ReservedSlot
                     && (job.Status != "claimed" || job.ClaimedAt <= now - LeaseDuration)).ToList();
                 foreach (var job in settled)
                 {
-                    // A healthy deploy now owns the slot as a running environment.
-                    // A newer healthy deploy also owns it, including when an
-                    // older queue record still carries its reservation flag.
-                    if (job.Status != "healthy" && !HasNewerHealthyDeployment(state, job))
+                    // A running environment keeps its slot: the settled deploy
+                    // succeeded, or an earlier or newer deploy is still live.
+                    if (!IsRunning(state.History, job.EnvironmentId))
                         _quota.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
                     _quota.RecordDeployEnd(project, job.Id);
                     state.Jobs[state.Jobs.IndexOf(job)] = job with { ReservedSlot = false };
@@ -686,7 +696,7 @@ public sealed class ProjectEnvironmentService
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
             _quota?.RecordDeployEnd(project, job.Id);
             if (success) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), true);
-            else if (job.ReservedSlot && !HasNewerHealthyDeployment(state, job))
+            else if (job.ReservedSlot && !IsRunning(state.History, job.EnvironmentId))
                 _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
             ClosePromotionForResult(state, job, success, now);
             // A job already queued for the environment replaces the failed
@@ -776,9 +786,14 @@ public sealed class ProjectEnvironmentService
         => state.Promotions.Any(item => item.Artifact == artifact
             && item.Status is not ("rejected" or "failed" or "cancelled"));
 
-    private static bool HasNewerHealthyDeployment(State state, DeployJob job)
-        => state.Jobs.Skip(state.Jobs.FindIndex(item => item.Id == job.Id) + 1)
-            .Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "healthy");
+    /// <summary>
+    /// An environment runs when its latest successful deploy or recorded stop
+    /// is a successful deploy. A failed deploy changes nothing: the previous
+    /// deployment stays live through a failed redeploy.
+    /// </summary>
+    internal static bool IsRunning(IEnumerable<EnvironmentHistoryRow> history, string environmentId)
+        => history.LastOrDefault(row => row.EnvironmentId == environmentId
+            && row.Item.Status is "healthy" or "rolled-back" or "stopped")?.Item.Status is "healthy" or "rolled-back";
 
     private static bool IsDeclared(IReadOnlyList<EnvironmentDeclaration>? declarations, string environmentId)
         => declarations?.Any(item => item.Id == environmentId) == true;

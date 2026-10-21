@@ -1,3 +1,4 @@
+using AgentStudio.Projects;
 using AgentStudio.Security;
 
 namespace AgentStudio.Quota;
@@ -28,12 +29,23 @@ public static class WorkspaceQuotaEndpoints
         app.MapGet("/api/workspaces/{workspaceId}/quota/audit", (HttpContext context, string workspaceId,
             WorkspaceQuotaService quotas) => Owner(context) ? Results.Ok(quotas.Audit(workspaceId, null)) : Results.Forbid())
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+        // Running environments get their slots before a new limit can admit work.
         app.MapPut("/api/workspaces/{workspaceId}/quota", (HttpContext context, string workspaceId,
-            QuotaLimits limits, WorkspaceQuotaService quotas) => Set(context, () => quotas.SetLimits(workspaceId, null, limits)))
+            QuotaLimits limits, WorkspaceQuotaService quotas, ProjectEnvironmentService environments) =>
+            Set(context, () =>
+            {
+                environments.ReconcileHostingSlots();
+                quotas.SetLimits(workspaceId, null, limits);
+            }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
         app.MapPut("/api/workspaces/{workspaceId}/projects/{projectId}/quota", (HttpContext context,
-            string workspaceId, string projectId, QuotaLimits limits, WorkspaceQuotaService quotas) =>
-            Set(context, () => quotas.SetLimits(workspaceId, projectId, limits)))
+            string workspaceId, string projectId, QuotaLimits limits, WorkspaceQuotaService quotas,
+            ProjectEnvironmentService environments) =>
+            Set(context, () =>
+            {
+                environments.ReconcileHostingSlots();
+                quotas.SetLimits(workspaceId, projectId, limits);
+            }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
         app.MapPost("/api/workspaces/{workspaceId}/quota/override", (HttpContext context,
             string workspaceId, QuotaOverrideRequest request, WorkspaceQuotaService quotas) =>
@@ -58,6 +70,7 @@ public static class WorkspaceQuotaEndpoints
         try { write(); return Results.NoContent(); }
         catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
     }
 
     /// <summary>An API token acts as its owner but is audited under its own token id.</summary>
