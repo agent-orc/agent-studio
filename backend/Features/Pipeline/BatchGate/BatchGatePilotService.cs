@@ -2260,6 +2260,7 @@ public sealed partial class BatchGatePilotService
             throw new InvalidOperationException("The engine gate occurrence is shadow-only.");
         if (occurrence.Status is "pending" or "leased" or "applying")
             EngineDecisionWaitMarker.Write(task.FolderPath, occurrence.RunId);
+        _scanner.PublishCoreFromKnownFolder(task.FolderPath);
         _scanner.InvalidateCache();
         return true;
     }

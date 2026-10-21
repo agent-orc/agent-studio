@@ -23,12 +23,15 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
     public const double BudgetMs = 30.0;
 
     private readonly ILogger<TaskOperationTimingFilter> _logger;
+    private readonly TaskDetailLatencyMetrics? _detailLatency;
     private readonly int _boardTraceSampleEvery;
     private long _boardReads;
 
-    public TaskOperationTimingFilter(ILogger<TaskOperationTimingFilter> logger, IConfiguration? configuration = null)
+    public TaskOperationTimingFilter(ILogger<TaskOperationTimingFilter> logger, IConfiguration? configuration = null,
+        TaskDetailLatencyMetrics? detailLatency = null)
     {
         _logger = logger;
+        _detailLatency = detailLatency;
         _boardTraceSampleEvery = int.TryParse(configuration?["BoardReadTrace:SampleEvery"], out var every)
             ? Math.Max(0, every)
             : 1;
@@ -50,6 +53,17 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
         var route = (http.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)
             ?.RoutePattern.RawText;
         var coreRequest = route?.EndsWith("/{jobId}/core", StringComparison.Ordinal) == true;
+        var detailRequest = http.Request.Method == "GET"
+            && route?.EndsWith("/{jobId}", StringComparison.Ordinal) == true;
+        if (detailRequest)
+        {
+            var started = Stopwatch.GetTimestamp();
+            http.Response.OnCompleted(() =>
+            {
+                _detailLatency?.Observe(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                return Task.CompletedTask;
+            });
+        }
         var traceRequested = http.Request.Headers["X-Task-Switch-Trace"] == "1";
         var boardRead = IsBoardRead(route, http.Request.Method);
         var traceEnabled = boardRead
@@ -82,6 +96,9 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
                     http.Response.Headers["X-Task-Core-Git-Spawns"] = tally.Value.Spawns.ToString(CultureInfo.InvariantCulture);
                 http.Response.Headers["X-Task-Core-Workspace-Scans"] = trace.WorkspaceScans.ToString(CultureInfo.InvariantCulture);
             }
+            if (trace != null && detailRequest)
+                http.Response.Headers["X-Task-Detail-Workspace-Scans"] =
+                    trace.WorkspaceScans.ToString(CultureInfo.InvariantCulture);
             return trace != null && result is IResult inner
                 ? new TaskSwitchTracedResult(inner, trace, GitProcessTelemetry.CurrentTally(),
                     GitProcessTelemetry.CurrentTimeouts(), _logger, traceLabel)

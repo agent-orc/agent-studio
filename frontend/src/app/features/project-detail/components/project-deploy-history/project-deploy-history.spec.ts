@@ -74,7 +74,7 @@ describe('ProjectDeployHistoryComponent', () => {
     await render({ status: 'ready', value: {} }, fixtureRuns());
     const options = Array.from(byTestId<HTMLSelectElement>('deploy-history-filter-outcome')!.options).map(option => option.value);
 
-    expect(options).toEqual(['all', 'queued', 'running', 'succeeded', 'failed', 'cancelled', 'awaiting-approval']);
+    expect(options).toEqual(['all', 'queued', 'running', 'succeeded', 'failed', 'cancelled', 'awaiting-approval', 'waiting-for-intervention']);
   });
 
   it('filters by environment, outcome, and period, and clears all filters', async () => {

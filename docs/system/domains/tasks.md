@@ -1712,6 +1712,19 @@ filesystem paths. The existing `task-op` Server-Timing duration and background
 `git-index-run` rollups retain their distinct boundaries. The capture and
 offline reducer protocol is in [measurement.md](../../task-switch-performance/measurement.md).
 
+The full-detail route resolves its card and dependency graph from published
+per-card facts. Other cards' mutations cannot make it wait for `EnsureFresh`;
+a safety-TTL or watcher repair runs in the background. It emits
+`X-Task-Detail-Freshness: ready|stale|warming`; a cold, unindexed lookup returns
+`202` while the first snapshot or that card's publication is pending; a card
+absent from an otherwise populated but dirty snapshot returns `404`.
+Durable task writes publish the affected core
+before acknowledging the write. Token usage loads through the independent
+`/details/usage` resource and does not fold the project ledger in the
+full-detail request. The trace stages remain available. Completed full-detail
+response latencies, including serialization, feed a rolling five-minute
+p50/p95/max view at `GET /api/runtime/task-detail-latency`.
+
 ## Bounded task core read (AGT-2953)
 
 `GET /api/tasks/{jobId}/core?project=PROJ-002` is an additive task-switch
@@ -1746,6 +1759,20 @@ resident task facts and republish dependent blocker fields and core versions
 before acknowledgment. This includes release, reference edits, moves and
 deletion; an unrelated dirty task does not force a core request to scan. The
 sidecar watcher refreshes changed heads outside HTTP requests.
+
+The legacy full-detail route reads the resident per-card facts without waiting
+for a workspace scan. A folder move swaps its old and new core locations under
+one publication lock. Background scans merge per folder, retaining cards
+published after the scan began and adopting unrelated scanned changes. A
+changed or missing task.json is repaired from that card's folder on read.
+During cold hydration the route returns a JSON 202 warming reply, which the
+client retries with a bounded backoff before exposing a TaskDetail. Successful
+detail replies carry
+`X-Task-Detail-Freshness` and `X-Task-Token-Freshness`; token usage is served
+from a nonblocking card cache. The separate usage resource awaits one shared
+background project ledger load asynchronously and returns the completed summary.
+The detail live-status overlay derives runner queue positions from the last
+published board generation, so it never enters the global freshness gate.
 
 This contract is the D1 and D3 recommendation in
 [the task-switch performance dossier](../../task-switch-performance/index.html).
@@ -1793,7 +1820,7 @@ cannot reappear behind a new path.
     is `ready`, `stale` (`git-snapshot-refreshing`) or `unavailable`
     (`git-snapshot-pending`). Clients show the reason and keep core usable.
   - `usage`: the token summary, last session usage and context usage. Always
-    `ready`.
+    `ready`; concurrent requests share one background project ledger load.
   - `review`: the cached review projection. With `evidence=true` it also
     returns the latest review evidence per id. The state is `ready`, `stale`
     or `warming` (`review-projection-pending`).
