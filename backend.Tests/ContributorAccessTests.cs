@@ -56,6 +56,13 @@ public sealed class ContributorAccessTests : IDisposable
         { "GET", "/api/tasks/card/results/tests.trx", null, false, false },
         { "GET", "/api/tasks/card/results/events.jsonl", null, false, false },
         { "GET", "/api/tasks/card/results/report", null, false, false },
+        { "GET", "/api/tasks/card/files/prompt.md", null, false, true },
+        { "GET", "/api/tasks/card/files/results/report.html", null, false, true },
+        { "GET", "/api/tasks/card/files/results/run.log", null, false, false },
+        { "GET", "/api/tasks/card/FILES/results/RUN.LOG", null, false, false },
+        { "GET", "/api/tasks/card/files/task.json", null, false, false },
+        { "GET", "/api/tasks/card/checkout/.env", null, false, false },
+        { "GET", "/api/tasks/card/CHECKOUT/credentials.json", null, false, false },
         { "GET", "/api/projects/PROJ-1/CREDENTIALS", null, false, false },
         { "GET", "/api/projects/PROJ-1/settings", null, false, false },
         { "GET", "/api/projects/PROJ-1/autonomy", null, false, false },
@@ -113,6 +120,7 @@ public sealed class ContributorAccessTests : IDisposable
             id = taskKey, title = "Delivered header", state = TaskStates.HumanReview, order = 1, agent = "codex", kind = "task",
         }));
         File.WriteAllText(Path.Combine(taskPath, "prompt.md"), "Calm the header.");
+        File.WriteAllText(Path.Combine(taskPath, "credentials.md"), "private credential note");
         File.WriteAllText(Path.Combine(taskPath, "logs", "cli-output.log"), "raw agent transcript");
         foreach (var name in new[] { "report.html", "notes.md", "screens/final.png", "run.log", "tests.trx", "events.jsonl" })
             File.WriteAllText(Path.Combine(taskPath, "results", name), "content of " + name);
@@ -158,6 +166,22 @@ public sealed class ContributorAccessTests : IDisposable
         }
         Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/results/run.log", owner.SessionToken));
 
+        foreach (var route in new[]
+        {
+            "files/results/run.log", "FILES/results/RUN.LOG", "files/task.json", "files/credentials.md",
+            "files/prompt.md/history", "files/prompt.md?scope=code"
+        })
+        {
+            var status = await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken);
+            Assert.True(status == HttpStatusCode.Forbidden, $"{route}: expected 403, got {(int)status}.");
+        }
+        foreach (var route in new[] { "checkout/credentials.md", "CHECKOUT/credentials.md" })
+            Assert.Equal(HttpStatusCode.Forbidden, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken));
+        foreach (var route in new[] { "files/prompt.md", "files/results/report.html" })
+            Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken));
+        Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/files/results/run.log", owner.SessionToken));
+        Assert.Equal(HttpStatusCode.Unauthorized, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/files/prompt.md", ""));
+
         using var created = await SendAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, new
         {
             title = "A product wish", watchPath = projectPath, promptMarkdown = "Make the header calmer.", targetState = TaskStates.Backlog,
@@ -193,6 +217,76 @@ public sealed class ContributorAccessTests : IDisposable
             request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={session}");
             if (csrf is not null) request.Headers.Add("X-CSRF-Token", csrf);
             if (body is not null) request.Content = JsonContent.Create(body);
+            return http.SendAsync(request);
+        }
+    }
+
+    [Fact]
+    public async Task Product_create_rejects_implicit_preparation_and_cross_project_routing()
+    {
+        var navigationPath = Path.Combine(_root, "projects", "navigation");
+        var destinationPath = Path.Combine(_root, "projects", "destination");
+        Directory.CreateDirectory(Path.Combine(navigationPath, TaskStates.Backlog));
+        Directory.CreateDirectory(Path.Combine(destinationPath, TaskStates.Backlog));
+
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root,
+                ["Security:Profile"] = "networked",
+                ["Security:BootstrapCode"] = "product-setup-code",
+                ["AllowedHosts"] = "studio.test",
+                ["WatchPaths:0:Name"] = "navigation",
+                ["WatchPaths:0:Path"] = navigationPath,
+                ["WatchPaths:0:RootPath"] = navigationPath,
+                ["WatchPaths:0:RepositoryPath"] = navigationPath,
+                ["WatchPaths:1:Name"] = "destination",
+                ["WatchPaths:1:Path"] = destinationPath,
+                ["WatchPaths:1:RootPath"] = destinationPath,
+                ["WatchPaths:1:RepositoryPath"] = destinationPath,
+            }));
+            builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(_clock));
+        });
+        using var http = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var navigation = registry.EnsureProjectForStorage(navigationPath, "navigation", DefaultWorkspace.Id);
+        var destination = registry.EnsureProjectForStorage(destinationPath, "destination", DefaultWorkspace.Id);
+        registry.UpsertOwnershipMapping(destination.Id, new ComponentOwnershipMapping
+        {
+            Id = "destination-component", Component = "Destination component", PrimaryProjectId = destination.Id,
+            AllowedTicketPrefix = destination.ShortCode, Confidence = 1,
+        });
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        store.Bootstrap(new BootstrapRequest("owner.account", "owner password phrase!", null));
+        var invite = store.InviteUser(new InviteUserRequest("product.user", "Product User", StudioRoles.Contributor, [navigation.Id]));
+        var product = store.AcceptInvitation(new AcceptInvitationRequest(invite.Token, "new product password!"));
+
+        using var decision = await SendAsync(new
+        {
+            title = "Decision wish", project = navigation.Id, kind = TaskKinds.Decision,
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, decision.StatusCode);
+
+        using var routed = await SendAsync(new
+        {
+            title = "Cross-project wish", project = navigation.Id, routing = new
+            {
+                navigationProjectId = navigation.Id, component = "Destination component"
+            }
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, routed.StatusCode);
+        Assert.Contains("project-scope-denied", await routed.Content.ReadAsStringAsync());
+        Assert.Empty(Directory.EnumerateDirectories(Path.Combine(destinationPath, TaskStates.Backlog)));
+
+        Task<HttpResponseMessage> SendAsync(object body)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/api/tasks");
+            request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={product.SessionToken}");
+            request.Headers.Add("X-CSRF-Token", product.CsrfToken);
+            request.Content = JsonContent.Create(body);
             return http.SendAsync(request);
         }
     }

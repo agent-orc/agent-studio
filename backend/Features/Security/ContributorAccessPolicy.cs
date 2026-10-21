@@ -34,6 +34,25 @@ public static class ContributorAccessPolicy
     /// <summary>Screenshots, HTML reports and Markdown; never logs, TRX, JSONL or other raw output.</summary>
     public static bool AllowsResultFile(string path) => ReadableResultExtensions.Contains(Path.GetExtension(path));
 
+    /// <summary>Only task-authored documents and safe delivery artifacts may be read through /files.</summary>
+    public static bool AllowsTaskFileRead(string path)
+    {
+        var segments = path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0 || segments.Any(segment => segment is "." or ".." || segment.Contains(':') || segment.Contains('%')))
+            return false;
+
+        if (segments.Length == 1)
+            return segments[0].Equals("prompt.md", StringComparison.OrdinalIgnoreCase)
+                || segments[0].Equals("status.md", StringComparison.OrdinalIgnoreCase)
+                || (segments[0].StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+                    && segments[0].EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+                || (segments[0].StartsWith("code-review-", StringComparison.OrdinalIgnoreCase)
+                    && segments[0].EndsWith(".md", StringComparison.OrdinalIgnoreCase));
+
+        return segments[0].Equals("results", StringComparison.OrdinalIgnoreCase)
+            && AllowsResultFile(segments[^1]);
+    }
+
     /// <summary>
     /// A Product wish carries no run controls: project defaults choose the CLI,
     /// model, thinking level, mode, web access and integration, and the card
@@ -72,6 +91,12 @@ public static class ContributorAccessPolicy
 
         if (HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method))
         {
+            if (segments.Length >= 4 && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase))
+            {
+                if (segments[3].Equals("checkout", StringComparison.OrdinalIgnoreCase)) return false;
+                if (segments[3].Equals("files", StringComparison.OrdinalIgnoreCase))
+                    return segments.Length >= 5 && AllowsTaskFileRead(string.Join('/', segments.Skip(4)));
+            }
             if (segments.Length >= 5 && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
                 && segments[3].Equals("results", StringComparison.OrdinalIgnoreCase))
                 return AllowsResultFile(path);

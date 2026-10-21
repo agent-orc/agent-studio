@@ -77,6 +77,10 @@ that is already allowed to edit that project's checkout.
   cards, uses project and card chat, comments on previews, and accepts a
   Human Review delivery; viewer is read-only. A contributor cannot access
   credentials, hosts, settings, quotas, merges, promotions, or raw logs.
+  Product reads through `/files` are limited to task documents and safe result
+  artifacts; checkout reads and historical `/files` versions are denied.
+  Human file reads require an authenticated session and project membership.
+  Runner file reads retain their claim scope and live-lease check.
   Production approval is a separate grant that an owner gives for one assigned
   project. Operator, contributor, and viewer are scoped roles. Their project membership list
   restricts project routes; an empty list grants no project, and only the
@@ -88,9 +92,10 @@ that is already allowed to edit that project's checkout.
   (reorder, batch-move) carry their targets in the request body, so their
   handlers enforce membership on every affected task; a single-task route whose
   project cannot be resolved is denied rather than allowed, so an unresolved
-  project never becomes an authorization bypass. SignalR connections and
-  subscriptions honour the forced password change and join only the groups
-  of allowed projects.
+  project never becomes an authorization bypass. Task creation checks both
+  the requested project and any resolved storage project before writing the
+  card. SignalR connections and subscriptions honour the forced password
+  change and join only the groups of allowed projects.
   Preview comments are appended to the card timeline through
   `POST /api/tasks/{jobId}/preview-comments`, with the authenticated user as
   actor and the preview ID as the reference.

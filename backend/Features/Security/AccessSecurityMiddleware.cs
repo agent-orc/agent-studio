@@ -498,6 +498,12 @@ public sealed class AccessSecurityMiddleware
     {
         if (!HttpMethods.IsGet(method)) return false;
         if (path is "/api/system/about" or "/api/v1/projects") return true;
+        if (path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase))
+        {
+            var taskParts = path.Split('/');
+            if (taskParts.Length >= 6 && taskParts[4].Equals("files", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
         if (path.StartsWith("/api/v1/failure-fingerprints", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/v1/reviews/attempts/", StringComparison.OrdinalIgnoreCase)) return true;
         if (!path.StartsWith("/api/v1/projects/", StringComparison.OrdinalIgnoreCase)) return false;
