@@ -227,6 +227,15 @@ public class TaskScannerService : ITaskScanner
 
     public void RemoveCoreByFolder(string folder) => _indexCache?.RemoveCoreByFolder(folder);
 
+    public IDisposable BeginMoveCorePublication(TaskInfo source) =>
+        _indexCache?.BeginMoveCorePublication(source) ?? NoopDisposable.Instance;
+
+    private sealed class NoopDisposable : IDisposable
+    {
+        public static readonly NoopDisposable Instance = new();
+        public void Dispose() { }
+    }
+
     public TaskInfo? FindPublishedJob(string jobId, string? watchPath = null)
         => _indexCache is null ? FindJob(jobId, watchPath)
             : _indexCache.GetDetailFacts(jobId, watchPath).Info;

@@ -189,6 +189,61 @@ public sealed class TokenAggregationServiceCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task DetailUsageCache_ReceiptPublishedDuringWalkGetsFreshTotals()
+    {
+        var config = BuildConfig();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
+        scanner.SetIndexCache(index);
+        var usage = new TaskTokenUsageCache(new ProjectTokenLedger(new AgentMessageBusStore(), config,
+            new ProjectTokenReceiptReader(), index), TokenTestServices.Pricing(), index,
+            new FakeTimeProvider());
+        WriteReceipt("AGT-1", 5500, 5000, 500);
+        index.GetSnapshot();
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var calls = 0;
+        usage.BeforeProjectWalk = () =>
+        {
+            if (Interlocked.Increment(ref calls) != 1) return;
+            entered.Set();
+            release.Wait();
+        };
+        var first = usage.GetAsync(ProjectName, _watchPath, "AGT-1");
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
+            WriteReceipt("AGT-1", 99000, 90000, 9000);
+            scanner.PublishCoreFromKnownFolder(Path.Combine(_watchPath, TaskStates.Progress, "AGT-1"));
+            var changed = usage.GetAsync(ProjectName, _watchPath, "AGT-1");
+            release.Set();
+            var result = await changed;
+            Assert.Equal(99000, result?.TotalTokens);
+            Assert.Equal(99000, (await first)?.TotalTokens);
+            Assert.Equal(2, usage.ProjectLoadCount(ProjectName, _watchPath));
+        }
+        finally { release.Set(); }
+    }
+
+    [Fact]
+    public void DetailUsageCache_DuplicateResidentIdsUseFirstReceipt()
+    {
+        var config = BuildConfig();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
+        scanner.SetIndexCache(index);
+        WriteReceipt("AGT-1", 5500, 5000, 500);
+        index.GetSnapshot();
+        var first = Assert.Single(index.GetAllResidentTasks());
+        var duplicate = first with { FolderPath = Path.Combine(_watchPath, TaskStates.Ready, "AGT-1") };
+        var stamps = TaskTokenUsageCache.CaptureReceiptStamps([first, duplicate], ProjectName, _watchPath);
+        Assert.Single(stamps);
+        Assert.Equal(first.TokenReceiptStamp ?? "none", stamps["AGT-1"]);
+    }
+
+    [Fact]
     public void DetailUsageCache_PrunesAbsentCardAfterLaterCompletedRescan()
     {
         var config = BuildConfig();

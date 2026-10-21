@@ -1761,8 +1761,9 @@ deletion; an unrelated dirty task does not force a core request to scan. The
 sidecar watcher refreshes changed heads outside HTTP requests.
 
 The legacy full-detail route reads the resident per-card facts without waiting
-for a workspace scan. A folder move swaps its old and new core locations under
-one publication lock. Background scans merge per folder, retaining cards
+for a workspace scan. A folder move marks the source card as publishing before
+the disk rename and swaps its old and new core locations under one publication
+lock, including moves across project watch paths. Background scans merge per folder, retaining cards
 published after the scan began and adopting unrelated scanned changes. A
 changed or missing task.json is repaired from that card's folder on read.
 During cold hydration the route returns a JSON 202 warming reply, which the

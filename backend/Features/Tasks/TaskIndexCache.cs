@@ -548,6 +548,18 @@ public sealed class TaskIndexCache
         }
     }
 
+    public IDisposable BeginMoveCorePublication(TaskInfo source)
+    {
+        var keys = BeginCorePublication(source);
+        return new CorePublicationScope(() => EndCorePublication(keys));
+    }
+
+    private sealed class CorePublicationScope(Action end) : IDisposable
+    {
+        private Action? _end = end;
+        public void Dispose() => Interlocked.Exchange(ref _end, null)?.Invoke();
+    }
+
     private void QueueCoreHydration()
     {
         if (Interlocked.Exchange(ref _coreHydrationQueued, 1) != 0) return;
@@ -573,7 +585,7 @@ public sealed class TaskIndexCache
             : TaskCoreSourceStamp.Read(Path.Combine(info.FolderPath, "task.json"));
 
     /// <summary>Publish one durable write without a workspace walk.</summary>
-    public void PublishCore(TaskInfo info)
+    public void PublishCore(TaskInfo info, string? sourceFolder = null)
     {
         var pendingKeys = BeginCorePublication(info);
         try
@@ -588,8 +600,13 @@ public sealed class TaskIndexCache
                     records = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer);
                 }
                 records.TryGetValue(info.FolderPath, out var previous);
-                // A move or project transfer may change the folder before publication.
                 var removedFolders = new List<string>();
+                if (sourceFolder is not null && sourceFolder != info.FolderPath)
+                {
+                    if (facts.Remove(sourceFolder)) removedFolders.Add(sourceFolder);
+                    records.Remove(sourceFolder);
+                }
+                // A move or project transfer may change the folder before publication.
                 foreach (var old in facts.Where(pair =>
                     WatchPathComparison.PathsEqual(pair.Value.WatchPath, info.WatchPath)
                     && (pair.Value.TaskKey == info.TaskKey || pair.Value.Id == info.Id))
@@ -660,7 +677,7 @@ public sealed class TaskIndexCache
                 var target = read();
                 // PublishCore replaces the old folder for this task in one
                 // facts publication. Removing first exposed a brief 404.
-                if (target is not null) PublishCore(target);
+                if (target is not null) PublishCore(target, sourceFolder);
                 else
                 {
                     RemoveCoreByFolder(sourceFolder);
