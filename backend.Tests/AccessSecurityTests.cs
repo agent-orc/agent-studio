@@ -463,6 +463,7 @@ public sealed class AccessSecurityTests : IDisposable
         });
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
         var field = typeof(AccessSecurityStore).GetField("_loginAttempts",

@@ -1363,6 +1363,7 @@ app.UseForwardedHeaders();
 // 404, rejections, exception handler) carries the framing and content policy
 // too (AGT-3230).
 if (networkedSecurityProfile) app.UseStudioResponseHeaders();
+app.UseMiddleware<LoginPayloadLimitMiddleware>();
 // Before routing, so the versioned core-attach paths Angular calls reach the
 // same legacy handlers, guards, and security checks as before (AGT-2983).
 app.UseStudioV1LegacyRouteAlias(TaskServerPlaneProxy.IsConfigured(app.Configuration));
