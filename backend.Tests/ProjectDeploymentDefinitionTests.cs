@@ -111,6 +111,20 @@ public sealed class ProjectDeploymentDefinitionTests
             issue => issue.Code == "runbook-step-reserved");
     }
 
+    [Theory]
+    [InlineData("LD_PRELOAD")]
+    [InlineData("LD_LIBRARY_PATH")]
+    [InlineData("PATH")]
+    [InlineData("BASH_ENV")]
+    [InlineData("GCONV_PATH")]
+    public void Rejects_variables_that_control_the_host_loader_or_shell(string name)
+    {
+        var yaml = Base + $"\nvariables:\n  - name: {name}\n    value: /tmp/preload\n";
+        Assert.Contains(ProjectDefinitionReader.Parse(yaml).Issues, issue => issue.Code == "variable-name-reserved");
+        Assert.DoesNotContain(ProjectDefinitionReader.Parse(yaml.Replace(name, "LOG_LEVEL", StringComparison.Ordinal)).Issues,
+            issue => issue.Code == "variable-name-reserved");
+    }
+
     [Fact]
     public void Schema_one_keeps_legacy_contract_and_rejects_deployment_fields()
     {
