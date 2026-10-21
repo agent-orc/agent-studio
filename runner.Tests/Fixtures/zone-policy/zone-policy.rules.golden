@@ -1,11 +1,10 @@
-# Rendered by agent-host zone-policy from policy 2026-10-20.3 (sha256:<policy-sha256>).
+# Rendered by agent-host zone-policy from policy 2026-10-20.5 (sha256:<policy-sha256>).
 # Load with iptables-restore --noflush; only the AGENT-ZONE-* chains are replaced.
 *filter
 :AGENT-ZONE-FWD - [0:0]
 :AGENT-ZONE-IN - [0:0]
--A AGENT-ZONE-FWD -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
--A AGENT-ZONE-IN -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
 # zone work (work) network agent-work bridge br-agent-work subnet 172.30.0.0/24
+-A AGENT-ZONE-FWD -o br-agent-work -m conntrack --ctstate RELATED,ESTABLISHED --ctorigsrc 172.30.0.0/24 -m comment --comment "work/agent-work: outbound replies" -j RETURN
 -A AGENT-ZONE-FWD -o br-agent-work -m comment --comment "work/agent-work: no inbound" -j DROP
 -A AGENT-ZONE-IN -i br-agent-work -d 172.30.0.1/32 -p udp --dport 53 -m comment --comment "work/agent-work: zone resolver" -j RETURN
 -A AGENT-ZONE-IN -i br-agent-work -d 172.30.0.1/32 -p tcp --dport 53 -m comment --comment "work/agent-work: zone resolver" -j RETURN
@@ -26,10 +25,26 @@
 -A AGENT-ZONE-IN -i br-run-default -d 198.18.186.112/32 -m comment --comment "run/agent-run-default: deny control-plane" -j REJECT --reject-with icmp-admin-prohibited
 -A AGENT-ZONE-IN -i br-run-default -d 10.20.0.0/16 -m comment --comment "run/agent-run-default: deny secret-store" -j REJECT --reject-with icmp-admin-prohibited
 -A AGENT-ZONE-IN -i br-run-default -d 192.0.2.80/32 -m comment --comment "run/agent-run-default: deny secret-store" -j REJECT --reject-with icmp-admin-prohibited
--A AGENT-ZONE-FWD -i br-run-default -o br-run-default -m comment --comment "run/agent-run-default: own network" -j RETURN
+-A AGENT-ZONE-FWD -i br-run-default -o br-run-default -d 172.31.0.0/24 -m comment --comment "run/agent-run-default: own network" -j RETURN
 -A AGENT-ZONE-FWD -i br-run-default -o br-+ -m comment --comment "run/agent-run-default: isolate from other bridges" -j DROP
 -A AGENT-ZONE-FWD -i br-run-default -o docker0 -m comment --comment "run/agent-run-default: isolate from docker0" -j DROP
--A AGENT-ZONE-IN -i br-run-default -p udp --dport 53 -m comment --comment "run/agent-run-default: host dns" -j RETURN
--A AGENT-ZONE-IN -i br-run-default -p tcp --dport 53 -m comment --comment "run/agent-run-default: host dns" -j RETURN
+-A AGENT-ZONE-FWD -i br-run-default -m conntrack --ctorigdst 10.0.0.0/8 -m comment --comment "run/agent-run-default: deny private original 10.0.0.0/8" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -d 10.0.0.0/8 -m comment --comment "run/agent-run-default: deny private destination 10.0.0.0/8" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -m conntrack --ctorigdst 172.16.0.0/12 -m comment --comment "run/agent-run-default: deny private original 172.16.0.0/12" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -d 172.16.0.0/12 -m comment --comment "run/agent-run-default: deny private destination 172.16.0.0/12" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -m conntrack --ctorigdst 192.168.0.0/16 -m comment --comment "run/agent-run-default: deny private original 192.168.0.0/16" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -d 192.168.0.0/16 -m comment --comment "run/agent-run-default: deny private destination 192.168.0.0/16" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -m conntrack --ctorigdst 169.254.0.0/16 -m comment --comment "run/agent-run-default: deny private original 169.254.0.0/16" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -d 169.254.0.0/16 -m comment --comment "run/agent-run-default: deny private destination 169.254.0.0/16" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -m conntrack --ctorigdst 100.64.0.0/10 -m comment --comment "run/agent-run-default: deny private original 100.64.0.0/10" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -d 100.64.0.0/10 -m comment --comment "run/agent-run-default: deny private destination 100.64.0.0/10" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -m conntrack --ctorigdst 127.0.0.0/8 -m comment --comment "run/agent-run-default: deny private original 127.0.0.0/8" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -d 127.0.0.0/8 -m comment --comment "run/agent-run-default: deny private destination 127.0.0.0/8" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -m conntrack --ctorigdst 198.51.100.0/24 -m comment --comment "run/agent-run-default: deny private original 198.51.100.0/24" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -i br-run-default -d 198.51.100.0/24 -m comment --comment "run/agent-run-default: deny private destination 198.51.100.0/24" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-IN -i br-run-default -d 172.31.0.1/32 -p udp --dport 53 -m comment --comment "run/agent-run-default: host dns" -j RETURN
+-A AGENT-ZONE-IN -i br-run-default -d 172.31.0.1/32 -p tcp --dport 53 -m comment --comment "run/agent-run-default: host dns" -j RETURN
 -A AGENT-ZONE-IN -i br-run-default -m comment --comment "run/agent-run-default: no host services" -j REJECT --reject-with icmp-admin-prohibited
+-A AGENT-ZONE-FWD -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+-A AGENT-ZONE-IN -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
 COMMIT
