@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
@@ -16,6 +18,10 @@ public static class RunbookHostExecutor
     private const int SigKill = 9;
     private static readonly TimeSpan StepTimeout = TimeSpan.FromMinutes(9);
     private static readonly TimeSpan RunTimeout = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan SweepInterval = TimeSpan.FromMilliseconds(50);
+    /// <summary>Every script process inherits this; a descendant in its own session still carries it.</summary>
+    private const string RunMarker = "AGENT_STUDIO_RUNBOOK_RUN";
 
     public static async Task<RunbookHostResult> ExecuteAsync(string project, string environment,
         string destination, IReadOnlyList<string> steps, IReadOnlyDictionary<string, string> variables,
@@ -32,16 +38,17 @@ public static class RunbookHostExecutor
             ["AGENT_STUDIO_PROJECT"] = project,
             ["AGENT_STUDIO_ENVIRONMENT"] = environment,
             ["AGENT_STUDIO_DESTINATION"] = destination,
+            [RunMarker] = Guid.NewGuid().ToString("N"),
         };
         foreach (var (name, value) in variables)
         {
-            if (!VariableName(name) || name.StartsWith("AGENT_STUDIO_", StringComparison.Ordinal))
+            if (!VariableName(name) || ProjectDeploymentVocabulary.IsReservedVariableName(name))
                 throw new InvalidOperationException("Invalid runbook variable name.");
             values[name] = value;
         }
         foreach (var (name, secret) in secretVariables)
         {
-            if (!VariableName(name) || name.StartsWith("AGENT_STUDIO_", StringComparison.Ordinal)
+            if (!VariableName(name) || ProjectDeploymentVocabulary.IsReservedVariableName(name)
                 || !SecretIdentifier(secret) || values.ContainsKey(name))
                 throw new InvalidOperationException("Invalid runbook secret reference.");
             values[name] = (await File.ReadAllTextAsync(Path.Combine(secretRoot, secret), cancellationToken))
@@ -51,6 +58,8 @@ public static class RunbookHostExecutor
         {
             if (!SecretIdentifier(secret)) throw new InvalidOperationException("Invalid environment secret reference.");
             var name = secret.Replace('-', '_').Replace('.', '_').ToUpperInvariant();
+            if (ProjectDeploymentVocabulary.IsReservedVariableName(name))
+                throw new InvalidOperationException("Invalid environment secret reference.");
             if (values.ContainsKey(name)) continue;
             values[name] = (await File.ReadAllTextAsync(Path.Combine(secretRoot, secret), cancellationToken))
                 .TrimEnd('\r', '\n');
@@ -73,7 +82,7 @@ public static class RunbookHostExecutor
             }
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
             timeout.CancelAfter(StepTimeout);
-            // A separate session lets cancellation signal descendants even if the shell exits first.
+            // A separate session lets cancellation signal the group even if the shell exits first.
             var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "sh" : "setsid")
             {
                 CreateNoWindow = true,
@@ -81,12 +90,13 @@ public static class RunbookHostExecutor
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            if (!OperatingSystem.IsWindows()) start.ArgumentList.Add("sh");
+            if (!OperatingSystem.IsWindows()) start.ArgumentList.Add("/bin/sh");
             start.ArgumentList.Add(script);
             foreach (var (name, value) in values) start.Environment[name] = value;
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Runbook step could not start.");
-            var output = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
-            var error = process.StandardError.BaseStream.CopyToAsync(Stream.Null);
+            using var drain = new CancellationTokenSource();
+            var output = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null, drain.Token);
+            var error = process.StandardError.BaseStream.CopyToAsync(Stream.Null, drain.Token);
             try
             {
                 await process.WaitForExitAsync(timeout.Token);
@@ -96,22 +106,108 @@ public static class RunbookHostExecutor
             }
             catch (OperationCanceledException)
             {
-                if (OperatingSystem.IsWindows())
-                {
-                    if (!process.HasExited) process.Kill(entireProcessTree: true);
-                }
-                else if (SendSignal(-process.Id, SigKill) != 0 && !process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-                await process.WaitForExitAsync(CancellationToken.None);
-                await Task.WhenAll(output, error);
+                await TerminateAsync(process, values[RunMarker], drain, output, error);
                 cancellationToken.ThrowIfCancellationRequested();
                 results.Add(new(index, false));
             }
             if (!results[^1].Success) break;
         }
         return new(results.Count == steps.Count && results.All(result => result.Success), results);
+    }
+
+    /// <summary>
+    /// Kills the script, its process group, and every process that carries this
+    /// run's marker or descends from one, until none remains or the cleanup bound
+    /// passes. Then waits for the script and its output pipes within that bound.
+    /// </summary>
+    private static async Task TerminateAsync(Process process, string marker, CancellationTokenSource drain,
+        Task output, Task error)
+    {
+        var started = Stopwatch.GetTimestamp();
+        if (OperatingSystem.IsWindows())
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
+        else
+        {
+            if (!process.HasExited && SendSignal(-process.Id, SigKill) != 0 && !process.HasExited)
+                process.Kill(entireProcessTree: true);
+            while (KillMarkedProcesses(marker) > 0 && Stopwatch.GetElapsedTime(started) < CleanupTimeout)
+                await Task.Delay(SweepInterval, CancellationToken.None);
+        }
+        var remaining = CleanupTimeout - Stopwatch.GetElapsedTime(started);
+        try
+        {
+            await process.WaitForExitAsync(CancellationToken.None).WaitAsync(Max(remaining, SweepInterval));
+            remaining = CleanupTimeout - Stopwatch.GetElapsedTime(started);
+            await Task.WhenAll(output, error).WaitAsync(Max(remaining, SweepInterval));
+        }
+        catch (TimeoutException)
+        {
+            Console.Error.WriteLine("Runbook step cleanup passed its bound; its output pipes are abandoned.");
+        }
+        drain.Cancel();
+        try
+        {
+            await Task.WhenAll(output, error).WaitAsync(SweepInterval);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or IOException)
+        {
+            Console.Error.WriteLine($"Runbook step output drain stopped: {ex.GetType().Name}");
+        }
+    }
+
+    private static TimeSpan Max(TimeSpan value, TimeSpan floor) => value > floor ? value : floor;
+
+    /// <summary>Signals live processes of this run; returns how many were still alive.</summary>
+    private static int KillMarkedProcesses(string marker)
+    {
+        var entry = Encoding.ASCII.GetBytes($"{RunMarker}={marker}\0");
+        var processes = new Dictionary<int, int>();
+        foreach (var directory in Directory.EnumerateDirectories("/proc"))
+        {
+            if (!int.TryParse(Path.GetFileName(directory), out var id) || id == Environment.ProcessId) continue;
+            if (ReadStat(directory) is { } stat && stat.State != 'Z') processes[id] = stat.ParentId;
+        }
+        var marked = processes.Keys.Where(id => CarriesMarker(id, entry)).ToHashSet();
+        // A descendant that cleared its environment still has a marked ancestor while that ancestor lives.
+        for (var added = true; added;)
+        {
+            added = false;
+            foreach (var (id, parent) in processes)
+                if (!marked.Contains(id) && marked.Contains(parent)) added = marked.Add(id) || added;
+        }
+        foreach (var id in marked) SendSignal(id, SigKill);
+        return marked.Count;
+    }
+
+    private static (char State, int ParentId)? ReadStat(string directory)
+    {
+        try
+        {
+            // pid (comm) state ppid ...; comm may itself contain spaces and parentheses.
+            var stat = File.ReadAllText(Path.Combine(directory, "stat"));
+            var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+            return (fields[0][0], int.Parse(fields[1], System.Globalization.CultureInfo.InvariantCulture));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The process exited between enumeration and read, or belongs to another user.
+            return null;
+        }
+    }
+
+    private static bool CarriesMarker(int id, byte[] entry)
+    {
+        try
+        {
+            var environment = File.ReadAllBytes($"/proc/{id}/environ");
+            return environment.AsSpan().IndexOf(entry) >= 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private static bool Identifier(string value)

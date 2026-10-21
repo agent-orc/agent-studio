@@ -6,7 +6,9 @@ namespace AgentStudio.Deploy;
 /// Files under <c>&lt;TaskRepository&gt;/deployments/projects/&lt;project&gt;/</c>:
 /// one write-once file per release (the release and its environment
 /// declaration snapshot), the run list, an append-only log per run and an
-/// append-only audit trail. Callers serialize access per project.
+/// append-only audit trail. Callers serialize access per project; the deploy
+/// and runbook services hold different locks, so appends to the shared log and
+/// audit files are serialized here.
 /// </summary>
 public sealed class DeployStore
 {
@@ -14,6 +16,7 @@ public sealed class DeployStore
     private readonly IConfiguration _configuration;
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly JsonSerializerOptions _line = new(JsonSerializerDefaults.Web);
+    private static readonly object AppendGate = new();
 
     public DeployStore(IConfiguration configuration) => _configuration = configuration;
 
@@ -96,19 +99,22 @@ public sealed class DeployStore
         {
             var directory = Path.Combine(ProjectRoot(project), "logs");
             Directory.CreateDirectory(directory);
-            File.AppendAllLines(Path.Combine(directory, SafeId(group.Key) + ".jsonl"),
-                group.Select(item => JsonSerializer.Serialize(
-                    new DeploymentLogLine(item.Step, item.AtUtc, item.Message), _line)));
+            var lines = group.Select(item => JsonSerializer.Serialize(
+                new DeploymentLogLine(item.Step, item.AtUtc, item.Message), _line)).ToArray();
+            lock (AppendGate) File.AppendAllLines(Path.Combine(directory, SafeId(group.Key) + ".jsonl"), lines);
         }
     }
 
     public IReadOnlyList<DeploymentLogLine> ReadLog(string project, string deploymentId)
     {
         var path = Path.Combine(ProjectRoot(project), "logs", SafeId(deploymentId) + ".jsonl");
-        if (!File.Exists(path)) return [];
-        return File.ReadLines(path).Where(line => line.Length > 0).Take(MaxLogLinesRead)
-            .Select(line => JsonSerializer.Deserialize<DeploymentLogLine>(line, _line)!)
-            .ToArray();
+        string[] lines;
+        lock (AppendGate)
+        {
+            if (!File.Exists(path)) return [];
+            lines = File.ReadLines(path).Where(line => line.Length > 0).Take(MaxLogLinesRead).ToArray();
+        }
+        return lines.Select(line => JsonSerializer.Deserialize<DeploymentLogLine>(line, _line)!).ToArray();
     }
 
     public void AppendAudit(string project, IEnumerable<DeployAuditEntry> entries)
@@ -117,16 +123,20 @@ public sealed class DeployStore
         if (lines.Length == 0) return;
         var root = ProjectRoot(project);
         Directory.CreateDirectory(root);
-        File.AppendAllLines(Path.Combine(root, "audit.jsonl"), lines);
+        lock (AppendGate) File.AppendAllLines(Path.Combine(root, "audit.jsonl"), lines);
     }
 
     /// <summary>Newest first.</summary>
     public IReadOnlyList<DeployAuditEntry> ReadAudit(string project, int limit)
     {
         var path = Path.Combine(ProjectRoot(project), "audit.jsonl");
-        if (!File.Exists(path)) return [];
-        return File.ReadLines(path).Where(line => line.Length > 0)
-            .Select(line => JsonSerializer.Deserialize<DeployAuditEntry>(line, _line)!)
+        string[] lines;
+        lock (AppendGate)
+        {
+            if (!File.Exists(path)) return [];
+            lines = File.ReadLines(path).Where(line => line.Length > 0).ToArray();
+        }
+        return lines.Select(line => JsonSerializer.Deserialize<DeployAuditEntry>(line, _line)!)
             .Reverse().Take(limit).ToArray();
     }
 

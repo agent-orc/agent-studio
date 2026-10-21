@@ -368,6 +368,22 @@ public sealed class ProjectDefinitionSchemaTwoTests
     }
 
     [Theory]
+    [InlineData("LD_PRELOAD", "value: /tmp/hook.so")]
+    [InlineData("LD_LIBRARY_PATH", "value: /tmp")]
+    [InlineData("BASH_ENV", "value: /tmp/env.sh")]
+    [InlineData("PATH", "value: /tmp/bin")]
+    [InlineData("AGENT_STUDIO_PROJECT", "value: other")]
+    [InlineData("LD_AUDIT", "secret: LOADER_HOOK")]
+    public void Loader_and_shell_control_variables_are_refused(string name, string source)
+    {
+        var yaml = Replace(Valid, "  - name: LOG_LEVEL\n    value: info\n", $"  - name: {name}\n    {source}\n");
+
+        var result = ProjectDefinitionReader.Parse(yaml);
+
+        Assert.Contains(result.Issues, issue => issue.Code == "variable-name-reserved" && issue.Path == "variables[0].name");
+    }
+
+    [Theory]
     [InlineData("TOKEN_TTL", "3600")]
     [InlineData("PASSWORD_MIN_LENGTH", "12")]
     [InlineData("KEYBOARD_LAYOUT", "de")]

@@ -100,6 +100,43 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Concurrent_runbook_and_deployment_audit_appends_keep_every_event()
+    {
+        var (_, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: rotate\n    steps: [rotate-secrets]\n    environments: [production]\n");
+        Commit("runbook-definition");
+        var runbooks = Runbooks(environments, store);
+        const int Appends = 300;
+        const int Requests = 10;
+        var now = _clock.GetUtcNow().UtcDateTime;
+        using var start = new Barrier(3);
+        Task Append(string action) => Task.Run(() =>
+        {
+            start.SignalAndWait();
+            for (var i = 0; i < Appends; i++)
+                store.AppendAudit("demo", [new(now, "deploy-host", action, null, $"{action}-{i}", "stage", "fixture")]);
+        });
+        var deployments = Append("deployment-fixture");
+        var runbookEntries = Append("runbook-fixture");
+        var service = Task.Run(() =>
+        {
+            start.SignalAndWait();
+            for (var i = 0; i < Requests; i++)
+            {
+                var waiting = runbooks.Request("demo", "production", "rotate", Operator).Value!;
+                Assert.Equal(DeploymentStates.Cancelled, runbooks.Reject("demo", waiting.Id, Owner).Value!.State);
+            }
+        });
+        await Task.WhenAll(deployments, runbookEntries, service);
+
+        var audit = store.ReadAudit("demo", int.MaxValue);
+        Assert.Equal(Appends, audit.Count(entry => entry.Action == "deployment-fixture"));
+        Assert.Equal(Appends, audit.Count(entry => entry.Action == "runbook-fixture"));
+        Assert.Equal(Requests, audit.Count(entry => entry.Action == "runbook-approval-requested"));
+        Assert.Equal(Requests, audit.Count(entry => entry.Action == "runbook-rejected"));
+    }
+
+    [Fact]
     public void Runbook_recovers_a_queued_host_job_when_the_run_record_write_is_lost()
     {
         var (_, environments, store) = Build();

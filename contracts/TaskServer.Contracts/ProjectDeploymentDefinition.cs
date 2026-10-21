@@ -100,6 +100,25 @@ public static class ProjectDeploymentVocabulary
     public const string SecretReferencePattern = "^[A-Za-z][A-Za-z0-9._-]{0,63}$";
 
     /// <summary>
+    /// Variables that steer the dynamic loader, the shell, or command lookup of
+    /// the host process that starts operator-installed scripts. project.yml may
+    /// not set them, and the deploy host refuses them again before it starts a script.
+    /// </summary>
+    public static readonly IReadOnlyList<string> ReservedVariableNames =
+    [
+        "PATH", "IFS", "ENV", "BASH_ENV", "SHELLOPTS", "BASHOPTS", "CDPATH", "PS4",
+        "GCONV_PATH", "GLIBC_TUNABLES", "HOSTALIASES", "LOCPATH", "NLSPATH", "RESOLV_HOST_CONF",
+    ];
+
+    /// <summary>Name prefixes reserved like <see cref="ReservedVariableNames"/>; <c>AGENT_STUDIO_</c> names come from the host.</summary>
+    public static readonly IReadOnlyList<string> ReservedVariablePrefixes =
+        ["LD_", "DYLD_", "MALLOC_", "BASH_FUNC_", "AGENT_STUDIO_"];
+
+    public static bool IsReservedVariableName(string name)
+        => ReservedVariableNames.Contains(name, StringComparer.OrdinalIgnoreCase)
+           || ReservedVariablePrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
     /// The P1 base directory of every SSH destination. A later executor hands
     /// these paths to the remote shell and to <c>rsync --delete</c>, so they stay
     /// strictly below this base and use a shell-inert alphabet.
@@ -529,6 +548,9 @@ public static partial class ProjectDefinitionValidator
             var path = $"variables[{i}]";
             if (!EnvironmentName().IsMatch(variable.Name))
                 issues.Add(new($"{path}.name", "variable-name-invalid", "Variable names must be portable shell identifiers."));
+            else if (ProjectDeploymentVocabulary.IsReservedVariableName(variable.Name))
+                issues.Add(new($"{path}.name", "variable-name-reserved",
+                    $"Variable '{variable.Name}' would control the loader, shell or command lookup of the deploy host and is refused."));
             if ((variable.Value is null) == (variable.Secret is null))
                 issues.Add(new(path, "variable-source-invalid", "A variable has either a value or a secret name, not both."));
             if (variable.Secret is not null && !SecretReference().IsMatch(variable.Secret))

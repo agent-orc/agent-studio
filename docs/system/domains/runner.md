@@ -2177,16 +2177,25 @@ each step has a `logRef` for its filtered log.
 
 The target host keeps operator-owned scripts at
 `/etc/agent-host/runbooks/<project>/<step>.sh`. The host runs each script with
-`sh` and no shell text from the repository. It supplies
+`/bin/sh` and no shell text from the repository. It supplies
 `AGENT_STUDIO_PROJECT`, `AGENT_STUDIO_ENVIRONMENT`,
 `AGENT_STUDIO_DESTINATION`, scoped plain variables and named secrets as
-environment variables. Scripts must exit zero to advance; failure stops the
+environment variables. Variables that steer the loader, the shell or command
+lookup (`PATH`, `IFS`, `ENV`, `BASH_ENV`, `LD_*`, `DYLD_*` and the rest of
+`ProjectDeploymentVocabulary.ReservedVariableNames`) are refused by the
+`project.yml` validator as `variable-name-reserved` and again by the host before
+any script starts, including names derived from environment secret references.
+Scripts must exit zero to advance; failure stops the
 remaining steps. The host drains output locally and reports only step success
 or failure, so logs do not expose secret values. A step times out after nine
 minutes, and the whole run after ten. On Linux, `setsid` gives each script its
-own process group; timeout or host cancellation also applies while draining
-output after the script exits, kills that group and waits for its output streams
-to close. Install scripts on the assigned deploy host before
+own process group, and every script process inherits a per-run
+`AGENT_STUDIO_RUNBOOK_RUN` marker. Timeout or host cancellation, also while
+draining output after the script exits, kills that group and then sweeps
+`/proc` for processes that carry the marker or descend from one, so a child that
+started its own session cannot keep running. The sweep, the process wait and
+the output drain share a ten-second cleanup bound; past it the host abandons the
+pipes. Install scripts on the assigned deploy host before
 invoking the runbook.
 
 ## Verification
