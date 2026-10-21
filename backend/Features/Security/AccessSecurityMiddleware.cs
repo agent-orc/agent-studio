@@ -361,7 +361,8 @@ public sealed class AccessSecurityMiddleware
                     string.Equals(project, card.ProjectName, StringComparison.OrdinalIgnoreCase)
                     || (_projects?.FindByIdOrDisplayName(project)?.StorageLocation is { } location
                         && AgentStudio.Shared.WatchPathComparison.PathsEqual(location, card.WatchPath)));
-            if (!ContributorAccessPolicy.Allows(context.Request.Method, path, card?.State, productionApproval))
+            if (!ContributorAccessPolicy.Allows(context.Request.Method, path, card?.State, productionApproval,
+                    context.Request.Query["scope"].FirstOrDefault()))
             {
                 await Reject(context, 403, "role-denied", "The Product role cannot perform this action.");
                 return;

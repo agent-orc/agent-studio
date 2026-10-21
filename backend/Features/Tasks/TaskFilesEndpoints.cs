@@ -54,6 +54,7 @@ public static class TaskFilesEndpoints
         group.MapGet("/{jobId}/files/{**path}", (
             string jobId,
             string path,
+            HttpContext ctx,
             [FromQuery] string? project,
             [FromQuery] string? watchPath,
             [FromQuery] string? at,
@@ -61,6 +62,12 @@ public static class TaskFilesEndpoints
             TaskFileHistoryService files,
             AgentStudio.Registry.ProjectRegistry projects) =>
         {
+            if (ContributorAccessPolicy.IsProductSession(ctx))
+            {
+                if (!ContributorAccessPolicy.AllowsTaskFileRead(path, scope) || !string.IsNullOrWhiteSpace(at))
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                scope = TaskFileSources.Workspace;
+            }
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (TryStripOperationSuffix(path, "history", out var historyPath))
             {
@@ -84,12 +91,15 @@ public static class TaskFilesEndpoints
         group.MapGet("/{jobId}/checkout/{**path}", (
             string jobId,
             string path,
+            HttpContext ctx,
             [FromQuery] string? project,
             [FromQuery] string? watchPath,
             [FromQuery] string? at,
             TaskFileHistoryService files,
             AgentStudio.Registry.ProjectRegistry projects) =>
         {
+            if (ContributorAccessPolicy.IsProductSession(ctx))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (TryStripOperationSuffix(path, "history", out var historyPath))
             {
