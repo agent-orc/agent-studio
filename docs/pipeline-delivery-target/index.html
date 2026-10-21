@@ -1,0 +1,923 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pipeline target picture: tests before delivery, delivery lanes, central source API | Article document</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  </style>
+  <style>
+    .dg-box rect, .dg-card rect { fill: var(--article-surface); stroke: var(--article-line); }
+    .dg-card rect { fill: var(--article-paper); }
+    .dg-accent rect { fill: var(--article-link-soft); stroke: color-mix(in srgb, var(--article-link) 45%, var(--article-line)); }
+    .dg-kicker { fill: var(--article-faint); font: 700 11px var(--article-sans); letter-spacing: 0.08em; }
+    .dg-strong { fill: var(--article-ink); font: 650 15px var(--article-sans); }
+    .dg-text { fill: var(--article-muted); font: 13px var(--article-sans); }
+    .dg-note { fill: var(--article-faint); font: 12px var(--article-sans); }
+    .dg-arrow { stroke: var(--article-faint); stroke-width: 2; fill: none; }
+    .dg-divider { stroke: var(--article-line); stroke-width: 1; stroke-dasharray: 4 4; fill: none; }
+    .ch-grid path { stroke: var(--article-line); stroke-width: 1; }
+    .ch-axis text, .ch-note { fill: var(--article-faint); font: 12px var(--article-sans); }
+    .ch-range rect { fill: var(--article-link); }
+    .ch-target rect { fill: var(--article-good); }
+    .ch-label { fill: var(--article-ink); font: 13px var(--article-sans); }
+    .ch-value { fill: var(--article-muted); font: 12px var(--article-sans); }
+    figure > svg text { font-family: var(--article-sans); }
+    .toc { margin: 24px 0; font-family: var(--article-sans); font-size: 0.86rem; line-height: 1.9; }
+    .decision { margin: 22px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font-family: var(--article-sans); font-size: 0.9rem; line-height: 1.55; }
+    .decision h3 { margin: 0 0 10px; }
+    .decision label { display: flex; gap: 12px; align-items: flex-start; margin: 8px 0; padding: 9px 10px; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); cursor: pointer; }
+    .decision label input { margin-top: 4px; }
+    .decision label b { display: block; }
+    .decision label span.d { display: block; color: var(--article-muted); font-size: 0.84rem; }
+    .decision .consequence { margin: 10px 0 0; color: var(--article-muted); font-size: 0.84rem; }
+    .decision textarea { width: 100%; min-height: 60px; margin-top: 8px; padding: 8px; border: 1px solid var(--article-line); border-radius: 6px; background: var(--article-paper); color: var(--article-ink); font: 0.86rem var(--article-sans); }
+  </style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept dossier &middot; AGT-3276</p>
+    <h1>Pipeline target picture</h1>
+    <p class="lede">The full test suite moves from the path of every card to the point before delivery. The board gains a Delivery section showing which cards landed in which environment. A central API replaces git for the hot paths. This Dossier updates the target picture with three parts and ten decisions, and cuts the work into implementation cards.</p>
+    <div class="meta"><span><b>Pattern</b> concept</span><span><b>Status</b> decision-pending</span><span><b>Phase</b> decision-ready</span><span><b>Source</b> AGT-3276</span><span><b>Related</b> AGT-W77, AGT-W69, AGT-W82, AGT-3044</span><span><b>As of</b> develop <code>8e3a6a86</code>, 21 October 2026</span></div>
+  </header>
+
+  <div class="callout">
+    <p><b>Source.</b> Robert, 20 October 2026, translated from German: "The target picture should be that a run of all tests happens, optionally, only before deployment or delivery. For the full pipeline we need lanes per stage: Delivery to Stage, Delivery to Dev, and so on. One lane per deployment, where you see which new cards landed there. We have to solve some of git's performance problems by offering a central API for certain functions, at least for the cards and certain views."</p>
+    <p><b>Reference.</b> Anthropic Engineering, <a href="https://www.anthropic.com/engineering/redesigning-source-control">"Redesigning source control"</a>, read 21 October 2026. Section 02 maps its practices onto Agent Studio.</p>
+  </div>
+
+  <nav class="toc" aria-label="Contents">
+    <a href="#summary">00 Summary</a> &middot; <a href="#today">01 Current costs</a> &middot; <a href="#reference">02 Reference model</a> &middot; <a href="#tests">03 Test strategy</a> &middot; <a href="#lanes">04 Delivery lanes</a> &middot; <a href="#central-api">05 Central API</a> &middot; <a href="#alternatives">06 Alternatives</a> &middot; <a href="#recommendation">07 Recommendation</a> &middot; <a href="#cards">08 Implementation plan</a> &middot; <a href="#evidence">09 Evidence</a> &middot; <a href="#open-decisions">10 Open decisions</a>
+  </nav>
+
+  <section id="summary">
+    <h2><span class="number">00</span> Summary</h2>
+    <ol>
+      <li><b>Tests.</b> Per card, only the build, the affected tests and fast checks run. After the merge, develop runs the union of affected tests per merge window and the full suite nightly. The full suite runs once on the release candidate before the first environment, required by default for projects with a production environment. A red develop is attributed to one merge and repaired by an agent: revert when clean, fix forward otherwise. A red develop holds release candidates and does not stop merges. The batch gate becomes the post-merge window, sharding moves to the nightly and pre-delivery runs, and promotion to main reuses the pre-delivery verdict.</li>
+      <li><b>Delivery lanes.</b> A Delivery section after "Done &amp; Decide" shows one column per declared environment: the cards that landed with the current release, and the cards waiting for the next deploy. It is a projection of releases and deploy runs (AGT-3201, on develop) and card-environment links (AGT-3202, not yet integrated). Cards keep their lane state. There is no Dev environment today, so "Delivery to Dev" needs a declared environment and a lifecycle order.</li>
+      <li><b>Central API.</b> The Task Server, already the decided authority, serves card state and board, task artefacts and release attribution. One producer computes diffs against merge base, history and blame as derived data. Gates and reviews fetch source through a host object cache instead of bundles and clones. The git-backed workspace repository becomes an export. Migration runs in six steps, each reversible until the write cutover.</li>
+    </ol>
+    <p>Targets: lead time card to develop median 20 minutes, gate minutes per card median 10, red develop time p90 under 2 hours, board read p95 under 200 ms with zero git spawns.</p>
+    <p class="dim">Scope note: this concept run may change only this Dossier directory. The card asks for a German Dossier under <code>docs/operations/</code> with a link from the North star. The repository language policy and the concept delivery contract require English and <code>docs/&lt;slug&gt;/</code>. Moving the Dossier, linking it from the North star and adding the row in <code>docs/start/README.md</code> is implementation card P1. No product code changed.</p>
+  </section>
+
+  <section id="today">
+    <h2><span class="number">01</span> Current costs</h2>
+    <p>Three costs dominate the path of a card from review to a running environment. Each one has a measured trace in the repository.</p>
+
+    <h3>Full suite before every merge</h3>
+    <ul>
+      <li><b>Per merge.</b> <code>PreDevelopBuildGate</code> asks for the test level <code>work-package</code> whenever a merge touches managed code or <code>frontend/</code>. <code>DeterministicTestScope</code> then falls back to the full suite: <code>.agent-studio/project.yml</code> declares no folder-to-test-project map, and a change across more than one module also forces the fallback. All four test commands run: backend, runner, task server and frontend unit.</li>
+      <li><b>Per batch.</b> Since AGT-W77 D1 (11 October 2026) the batch gate runs the full suite once per wave on the combined candidate (AGT-3052). Per card, the review runs build, lint and the tests selected by type reference (AGT-3085). The batch gate is off by default per project (<code>BatchGatePolicy</code>: <code>Enabled=false</code>, documentation scope, size 2 to 8, 45 minutes look-ahead).</li>
+      <li><b>Size.</b> <code>backend.Tests</code> holds 8,545 <code>[Fact]</code> and <code>[Theory]</code> attributes; recorded runs executed 8,980 and 9,936 test cases. The card quotes about 11,000 tests across the suites. Four percent of the tests carry 97 percent of test time (AGT-W77 §1).</li>
+      <li><b>Slots and parking.</b> On 17 to 19 October 2026 the full backend suite took 17 to 36 minutes per gate run on two gate slots, and 16 reviewed cards were parked because the gate queue exceeded its budget (AGT-3232 rationale in <code>GateShardPlanner</code>). The merge itself is still serialised for all projects by one <code>SemaphoreSlim(1,1)</code> in <code>MergeIntoDevelopRunner</code>.</li>
+      <li><b>Promotion.</b> The develop-to-main train runs the whole solution again (<code>scripts/release/promotion-full-gate.sh</code>). On 12 and 13 October the promotion gate took 91 minutes, with <code>OrchestratorApi.Tests</code> at 72 minutes. AGT-3099 removed the second identical run before publishing. The card quotes 28 to 49 minutes on a quieter host.</li>
+    </ul>
+    <figure class="breakout" id="fig-minutes">
+      <svg viewBox="0 0 1080 360" role="img" aria-labelledby="min-title min-desc">
+        <title id="min-title">Minutes of testing in front of a card, measured ranges against the per-card target</title>
+        <desc id="min-desc">Horizontal ranges on a 0 to 140 minute axis. Backend suite per gate run, 17-19 Oct: 17-36 minutes; Develop gate, 28/29 Sep receipts: 51-54 minutes; Per-card full suite under load: 25-100 minutes; Promotion gate, 12/13 Oct: 91-97 minutes; Review verification, 11 Oct: 131 minutes; Target T1 per card: 10-20 minutes. The target range is drawn in the good tone; measured ranges in the link tone.</desc>
+        <g class="ch-grid">
+          <path d="M330 20 V300"/>
+          <path d="M430 20 V300"/>
+          <path d="M530 20 V300"/>
+          <path d="M630 20 V300"/>
+          <path d="M730 20 V300"/>
+          <path d="M830 20 V300"/>
+          <path d="M930 20 V300"/>
+          <path d="M1030 20 V300"/>
+        </g>
+        <g class="ch-axis">
+          <text x="330" y="322">0</text>
+          <text x="430" y="322">20</text>
+          <text x="530" y="322">40</text>
+          <text x="630" y="322">60</text>
+          <text x="730" y="322">80</text>
+          <text x="830" y="322">100</text>
+          <text x="930" y="322">120</text>
+          <text x="1030" y="322">140</text>
+        </g>
+        <text class="ch-note" x="1030" y="346" text-anchor="end">minutes</text>
+        <text class="ch-label" x="12" y="42">Backend suite per gate run, 17-19 Oct</text>
+        <text class="ch-value" x="12" y="60">two gate slots</text>
+        <g class="ch-range"><rect x="415.0" y="34" width="95.0" height="16" rx="4"><title>Backend suite per gate run, 17-19 Oct: 17-36 min</title></rect></g>
+        <text class="ch-value" x="518.0" y="47">17-36 min</text>
+        <text class="ch-label" x="12" y="88">Develop gate, 28/29 Sep receipts</text>
+        <text class="ch-value" x="12" y="106">median to p90</text>
+        <g class="ch-range"><rect x="586.0" y="80" width="13.5" height="16" rx="4"><title>Develop gate, 28/29 Sep receipts: 51-54 min</title></rect></g>
+        <text class="ch-value" x="607.5" y="93">51-54 min</text>
+        <text class="ch-label" x="12" y="134">Per-card full suite under load</text>
+        <text class="ch-value" x="12" y="152">card statement</text>
+        <g class="ch-range"><rect x="455.0" y="126" width="375.0" height="16" rx="4"><title>Per-card full suite under load: 25-100 min</title></rect></g>
+        <text class="ch-value" x="838.0" y="139">25-100 min</text>
+        <text class="ch-label" x="12" y="180">Promotion gate, 12/13 Oct</text>
+        <text class="ch-value" x="12" y="198">two runs, same SHA</text>
+        <g class="ch-range"><rect x="785.0" y="172" width="30.0" height="16" rx="4"><title>Promotion gate, 12/13 Oct: 91-97 min</title></rect></g>
+        <text class="ch-value" x="823.0" y="185">91-97 min</text>
+        <text class="ch-label" x="12" y="226">Review verification, 11 Oct</text>
+        <text class="ch-value" x="12" y="244">one measured run</text>
+        <g class="ch-range"><rect x="980.0" y="218" width="6.0" height="16" rx="4"><title>Review verification, 11 Oct: 131 min</title></rect></g>
+        <text class="ch-value" x="994.0" y="231">131 min</text>
+        <text class="ch-label" x="12" y="272">Target T1 per card</text>
+        <text class="ch-value" x="12" y="290">median to p90</text>
+        <g class="ch-target"><rect x="380.0" y="264" width="50.0" height="16" rx="4"><title>Target T1 per card: 10-20 min</title></rect></g>
+        <text class="ch-value" x="438.0" y="277">10-20 min</text>
+      </svg>
+      <figcaption>Measured test minutes in front of a card or a release, with sources in section 09, against the T1 target of section 03. The 25 to 100 minute range is the card statement for the per-card gate under load; the other ranges are recorded runs.</figcaption>
+    </figure>
+
+    <h3>Source transfer per run</h3>
+    <p>Each remote gate receives its source as a git bundle. The SSH path thins it against up to 16 cached tips on the gate host; the pull path bundles <code>--all</code> after a fresh fetch, so it carries full history. Both refuse bundles above 1 GiB. The local pack of this repository is 271 MiB. The card reports bundles of up to 200 MB per run. Review attempts clone the repository for every attempt, partial for public repositories and full for private ones.</p>
+
+    <h3>Board reads from the workspace repository</h3>
+    <p>Card state is the <code>task.json</code> file of each task folder in the workspace repository. The backend scans folders into <code>TaskIndexCache</code>, and <code>GitStateIndexService</code> computes git projections in the background. Incidents in the git-facts Dossier: card list 25 to 90 seconds on 28 September, 94 seconds on 11 October. The card reports board latencies of 8 to 300 seconds on 15 October. The workspace repository itself reached 5.0 GB of <code>.git</code> with 3,872 commits per week in July, and its push was blocked for five days with 3,341 commits unpushed.</p>
+  </section>
+
+  <section id="reference">
+    <h2><span class="number">02</span> Reference model</h2>
+    <p>Anthropic's engineering article <a href="https://www.anthropic.com/engineering/redesigning-source-control">"Redesigning source control"</a> describes Scion, an in-house version control system for an always-online fleet of agents and jobs. It was read on 21 October 2026. Several of its practices map onto the three topics of this Dossier. Others solve a scale problem Agent Studio does not have.</p>
+    <table>
+      <thead><tr><th>Scion practice</th><th>Agent Studio today</th><th>What transfers</th></tr></thead>
+      <tbody>
+        <tr><td>Changesets are created on the server in a write-ahead log. Commits, rebases and merges run server-side; there is nothing to push.</td><td>Runner hosts commit in leased worktrees. The platform pushes; integration merges in an integration worktree under one publication lease.</td><td><b>Partly.</b> The platform already owns git (ADR-0052). Nothing requires replacing git as the storage format.</td></tr>
+        <tr><td>The merge queue has no global lock. Testing relies on post-merge and pre-deploy checks. Claude fixes the resulting conflicts and breakages quickly.</td><td>Every card or batch pays the full backend suite before it may merge. Two gate slots serialise all projects.</td><td><b>Yes, at our scale.</b> This is Robert's first point. The cost here is suite minutes and queue time per card, not lock contention between thousands of merges.</td></tr>
+        <tr><td>CI asks the server for diffs, for example a commit against its merge base, instead of checking out code.</td><td>Review attempts clone the repository and run <code>git diff</code> against the merge base on the runner host.</td><td><b>Yes.</b> A diff object keyed by base and head SHA is already proposed (AGT-3017 D1).</td></tr>
+        <tr><td>History, blame, commit and merge queries are server APIs, so many jobs need no local repository.</td><td>Card open and release attribution still spawn git or scan task folders.</td><td><b>Yes.</b> Derived data per commit, owned by one producer (git-facts Dossier AGT-3044).</td></tr>
+        <tr><td>Clients keep a bounded object cache with sparse, virtualised checkouts. Three cache tiers (node daemon, regional cache, authoritative server) each hold more than 99 % hit rate and no long-lived state.</td><td>Gate sources travel as git bundles per run; the review baseline cache and the preparation cache live per host.</td><td><b>Yes, in a smaller form.</b> Host cache, installation cache and authority. No regional tier is needed for one installation.</td></tr>
+        <tr><td>Derived data such as blame and commit-graph indices is computed separately from the write path.</td><td>Git facts are computed on demand, partly in request paths.</td><td><b>Yes.</b> This is the git-facts working decision: no request-time git.</td></tr>
+        <tr><td>About 30,000 merged changes per day in September 2026; 200x less CPU and memory than the git mirrors it replaced.</td><td>246 first-parent merges into develop from 7 to 20 October 2026: 0 to 67 per day, median about 15.</td><td><b>No.</b> We do not need a new version control system. The gain we can reach is latency per card and per board read.</td></tr>
+      </tbody>
+    </table>
+    <p>The article does not say what runs before a change merges. This Dossier therefore keeps a cheap pre-merge tier (build, affected tests, fast checks) and does not copy a "nothing before merge" rule.</p>
+  </section>
+
+  <section id="tests">
+    <h2><span class="number">03</span> Test strategy along the pipeline</h2>
+    <p>The full backend suite moves out of the path of every card. Each tier answers one question, at the point where that answer is cheapest.</p>
+    <figure class="breakout" id="fig-pipeline">
+      <svg viewBox="0 0 1080 380" role="img" aria-labelledby="pipe-title pipe-desc">
+        <title id="pipe-title">Where each test tier runs along the pipeline</title>
+        <desc id="pipe-desc">Five stations from left to right: card review, integration into develop, post-merge checks on develop, release candidate with the pre-delivery full suite, and the deploy stages Dev, Stage and Production. Per card only the build, affected tests and fast checks run. Integration runs a compile check on the merged tree. Post-merge checks run affected tests over the merged window and a nightly full suite. The full suite runs once on the release candidate before the first delivery, optional per project. A red post-merge result opens a repair card that reverts or fixes forward.</desc>
+        <g class="dg-box"><rect x="12" y="24" width="196" height="150" rx="10"/></g>
+        <text class="dg-kicker" x="28" y="48">PER CARD</text>
+        <text class="dg-strong" x="28" y="72">Review attempt</text>
+        <text class="dg-text" x="28" y="96">model review</text>
+        <text class="dg-text" x="28" y="116">build</text>
+        <text class="dg-text" x="28" y="136">affected tests</text>
+        <text class="dg-text" x="28" y="156">fast checks, lint</text>
+        <g class="dg-box"><rect x="228" y="24" width="196" height="150" rx="10"/></g>
+        <text class="dg-kicker" x="244" y="48">INTEGRATION</text>
+        <text class="dg-strong" x="244" y="72">Merge to develop</text>
+        <text class="dg-text" x="244" y="96">no global lock</text>
+        <text class="dg-text" x="244" y="116">compile of merged tree</text>
+        <text class="dg-text" x="244" y="136">contract slice</text>
+        <text class="dg-text" x="244" y="156">minutes, not tens</text>
+        <g class="dg-box"><rect x="444" y="24" width="196" height="150" rx="10"/></g>
+        <text class="dg-kicker" x="460" y="48">POST-MERGE</text>
+        <text class="dg-strong" x="460" y="72">Develop checks</text>
+        <text class="dg-text" x="460" y="96">affected union per</text>
+        <text class="dg-text" x="460" y="116">merge window</text>
+        <text class="dg-text" x="460" y="136">nightly full suite</text>
+        <text class="dg-text" x="460" y="156">last green SHA</text>
+        <g class="dg-box dg-accent"><rect x="660" y="24" width="196" height="150" rx="10"/></g>
+        <text class="dg-kicker" x="676" y="48">BEFORE DELIVERY</text>
+        <text class="dg-strong" x="676" y="72">Release candidate</text>
+        <text class="dg-text" x="676" y="96">full suite once</text>
+        <text class="dg-text" x="676" y="116">optional per project</text>
+        <text class="dg-text" x="676" y="136">reused by every stage</text>
+        <text class="dg-text" x="676" y="156">of the same artefact</text>
+        <g class="dg-box"><rect x="876" y="24" width="192" height="150" rx="10"/></g>
+        <text class="dg-kicker" x="892" y="48">DEPLOY STAGES</text>
+        <text class="dg-strong" x="892" y="72">Each environment</text>
+        <text class="dg-text" x="892" y="96">health checks</text>
+        <text class="dg-text" x="892" y="116">smoke per stage</text>
+        <text class="dg-text" x="892" y="136">same artefact,</text>
+        <text class="dg-text" x="892" y="156">no rebuild</text>
+        <path class="dg-arrow" d="M208 99 H224"/><path class="dg-arrow" d="M424 99 H440"/><path class="dg-arrow" d="M640 99 H656"/><path class="dg-arrow" d="M856 99 H872"/>
+        <g class="dg-box"><rect x="444" y="214" width="412" height="62" rx="10"/></g>
+        <text class="dg-kicker" x="460" y="238">RED AFTER MERGE</text>
+        <text class="dg-text" x="460" y="260">bisect the window, open one repair card: revert or fix forward</text>
+        <path class="dg-arrow" d="M542 174 V210"/>
+        <path class="dg-arrow" d="M444 245 H326 V178"/>
+        <text class="dg-note" x="12" y="316">Minutes per card today: 25 to 100 min of full suite in the batch or per-task gate, plus up to hours of gate queue.</text>
+        <text class="dg-note" x="12" y="340">Target: build plus affected tests per card; the full suite runs nightly on develop and once per release candidate.</text>
+      </svg>
+      <figcaption>Proposed placement of the test tiers (option T-B, section 06). The accented station is the only place the full suite is mandatory, and only for projects that enable it.</figcaption>
+    </figure>
+    <table>
+      <thead><tr><th>Tier</th><th>Where and when</th><th>What runs</th><th>Blocks</th><th>Budget</th></tr></thead>
+      <tbody>
+        <tr><td><b>T1 Per card</b></td><td>Review attempt on a runner host, every fix round</td><td>Model review; build of the solution; tests selected for the changed files from the generated project map; lint, type check and format of the touched areas; the repo-contract slice when non-code paths change</td><td>The card's integration</td><td>Median 10 min, p90 20 min</td></tr>
+        <tr><td><b>T2 Integration</b></td><td>Merge into develop, per (project, branch), no cross-project lock</td><td>Compile of the merged tree; the T1 selection again only when develop moved over shared paths</td><td>The push of this merge</td><td>Median 5 min</td></tr>
+        <tr><td><b>T3 Post-merge</b></td><td>On develop after each merge window (for example every 30 minutes or 6 merges) and nightly</td><td>Window: union of the affected tests of all merges in the window. Nightly: the full suite, sharded, on the exact tip</td><td>Nothing directly; a red result opens a repair card and holds release candidates</td><td>Window 15 min; nightly full suite as long as it takes outside the day</td></tr>
+        <tr><td><b>T4 Before delivery</b></td><td>On the release candidate, before the first environment, optional per project</td><td>The full suite (backend, runner, task server, frontend unit, the end-to-end set marked for release), sharded</td><td>The release and every deploy of it</td><td>Once per candidate; reused by every stage and by the promotion to main</td></tr>
+        <tr><td><b>T5 Per stage</b></td><td>After each deploy run</td><td>Health checks and smoke tests declared per environment</td><td>Promotion to the next environment</td><td>Minutes</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Failures after merge</h3>
+    <p>Moving the full suite after the merge means develop can turn red. The design question is how fast a red develop is found, attributed and repaired, and what it is allowed to block.</p>
+    <ol>
+      <li><b>Find.</b> Every T3 run records its tip SHA and verdict. The last green SHA per project is a first-class fact. A red window or nightly run marks develop red for that project, visible on the board header and in the Delivery section.</li>
+      <li><b>Attribute.</b> The suspects are the merges between the last green SHA and the red tip. Three cheap steps narrow them, in order. First, intersect each suspect's changed paths with the failing tests' project map. Second, re-run only the failing tests at the merge points (one test class costs seconds; the P3 report measured 7.3 s for 4 tests against 93 min for the full suite). Third, bisect only when more than one suspect remains. Flaky quarantine (AGT-W57 D3) runs first, so a known flaky test opens no repair.</li>
+      <li><b>Repair.</b> The Orchestrator Engine opens exactly one repair card per failure fingerprint, in the pattern of <code>FailureInterventionService</code>, with the attributed merge, the failing tests and the log excerpt. The repair is <b>revert</b> when one merge is attributed, the revert applies cleanly and no later merge depends on it. Otherwise it is <b>fix forward</b>: a coding attempt with the failure in its prompt, at the front of the queue. A revert reopens the original card in Preparation with the failure attached, so the work is not lost.</li>
+      <li><b>Contain.</b> A red develop holds release candidates (T4) and therefore every deploy. It does not stop merges. A card whose changed paths overlap the failing area waits for the repair; other cards keep merging. After a time box (2 hours) without a green T3, the engine escalates to the Human Operator.</li>
+    </ol>
+
+    <h3>Batch gate, sharding and promotion</h3>
+    <ul>
+      <li><b>Batch gate.</b> Today it runs the full suite once per wave on the combined candidate before merge (AGT-W59 D1, AGT-W77 D1). In the target, the batch becomes the T3 merge window: the same look-ahead planner sizes the window, the same red-member isolation becomes attribution. The pre-merge batch gate stays available per project as a stricter mode, and is the fallback while the post-merge path is proven.</li>
+      <li><b>Gate sharding (AGT-3232).</b> Sharding moves to where the full suite still runs: the nightly T3 run and the T4 release candidate. Both run outside a card's path, so they can use every free runner slot.</li>
+      <li><b>Promotion develop to main.</b> The promotion runs the full suite a second time today. In the target it promotes the exact SHA whose T4 verdict is green, and reuses that verdict instead of running again. This needs the T4 verdict keyed by commit SHA and command-set digest, which <code>GateResultCache</code> already does per host.</li>
+      <li><b>Per-task gate.</b> The develop integration gate shrinks to T2. The gate slots stop serialising all projects behind one card's full suite.</li>
+    </ul>
+  </section>
+
+  <section id="lanes">
+    <h2><span class="number">04</span> Delivery lanes per deploy stage</h2>
+    <h3>Board today</h3>
+    <p>The board ends at the lane <code>6-completed</code>, whose single display name is <b>Delivered</b>, with the sentence "Delivered and accepted." (<code>lane-presentation.ts</code>). It sits in the "Done &amp; Decide" group together with Escalated, Human review and Archive. No lane, group or filter on develop says where a card runs. The existing filter <code>waitingForReleaseOnly</code> refers to the AGT-2709 dependency release, not to a deployment.</p>
+    <p>"Delivered" therefore means "integrated and accepted", not "live". The Delivery chain Dossier (AGT-W57, E4) recorded the consequence: a read-only sweep found 4 of 8 recent "delivered" cards not live, because integration is not deployment.</p>
+    <p>The capture in section 09 shows these lanes at the end of the pinned demo board.</p>
+    <h3>Existing deploy model</h3>
+    <p>AGT-3201 (BD-1) is on develop. It gives every project the data a delivery lane needs:</p>
+    <ul>
+      <li><b>Releases.</b> A green integration build posts to <code>/api/deploy/gate-releases</code>. <code>DeployService.CreateRelease</code> records an immutable release for the gate artefact and starts the automatic Staging phase. Each release carries <code>CardKeys</code>: the cards whose integration verification names a commit reachable from this release and not from the previous one.</li>
+      <li><b>Deploy runs.</b> <code>Deployment</code> records with the states queued, running, succeeded, failed, cancelled and awaiting-approval, and the triggers deploy, redeploy, rollback and automatic-rollback.</li>
+      <li><b>Environment status.</b> <code>EnvironmentStatusProjection</code> computes, per environment in order, the current release (last successful run, rollbacks included), the newer release eligible for it (already successful in the previous environment) and <code>CardsSinceLastDeploy</code>: every card of the releases between the two. That list is exactly the "waiting" part of a delivery lane.</li>
+      <li><b>Lifecycle.</b> <code>StandardLifecyclePolicy</code>: Staging is automatic; Production needs approval by an Owner or Maintainer.</li>
+    </ul>
+    <p>Two gaps remain. First, <b>there is no Dev environment</b>. <code>EnvironmentKinds</code> knows only <code>staging</code> and <code>production</code>. Project declarations (<code>ProjectEnvironmentService</code>) accept <code>stage</code>, <code>production</code> and <code>other</code>, and sort <code>other</code> after production. "Delivery to Dev" therefore needs a declared environment and an explicit lifecycle order (decision D6). Second, <b>AGT-3202 (BD-5, cards know their environments) is not integrated</b>. Its badges, the per-card deployment projection and the board filter <code>staging-only | production | not-production | rolled-back</code> exist only on its result branch (last commit <code>c1b3b4833</code>), not on develop <code>8e3a6a86</code>.</p>
+    <h3>Proposed view</h3>
+    <p>A <b>Delivery</b> section follows the "Done &amp; Decide" group. It is a projection, not a set of new lane states. It has one column per declared environment in lifecycle order, plus a first column for cards that are integrated but not yet in any release.</p>
+    <table>
+      <thead><tr><th>Column</th><th>Header</th><th>Landed part</th><th>Waiting part</th></tr></thead>
+      <tbody>
+        <tr><td>Integrated on develop</td><td>Last release candidate, post-merge state (green, running, red)</td><td>Cards with an integration verification that no release names yet</td><td>none</td></tr>
+        <tr><td>Delivery to &lt;environment&gt;</td><td>Current release version, last run state and time, health, pending approval</td><td><code>CardKeys</code> of the current release and the releases before it, newest first, bounded to the last N releases</td><td><code>CardsSinceLastDeploy</code> of that environment</td></tr>
+      </tbody>
+    </table>
+    <figure class="breakout" id="fig-lanes">
+      <svg viewBox="0 0 1080 420" role="img" aria-labelledby="lane-title lane-desc">
+        <title id="lane-title">Proposed delivery view after integration</title>
+        <desc id="lane-desc">A board section named Delivery with four columns. Integrated on develop shows cards merged since the last release candidate. Delivery to Dev, Delivery to Stage and Delivery to Production each show a header with the release version, deploy run state and time, followed by the cards that landed with that release and, below a divider, the cards waiting for the next deployment to that environment. A card appears in every environment it has reached; its lane state stays Delivered.</desc>
+        <text class="dg-kicker" x="12" y="22">DELIVERY &#183; PROJECT VIEW, DERIVED FROM RELEASES AND DEPLOY RUNS</text>
+        <g class="dg-box"><rect x="12" y="36" width="252" height="372" rx="10"/></g>
+        <text class="dg-strong" x="28" y="64">Integrated on develop</text>
+        <text class="dg-text" x="28" y="86">since release 2026.10.21.1</text>
+        <g class="dg-card"><rect x="28" y="102" width="220" height="44" rx="7"/></g><text class="dg-text" x="40" y="129">AGT-3310 &#183; post-merge green</text>
+        <g class="dg-card"><rect x="28" y="154" width="220" height="44" rx="7"/></g><text class="dg-text" x="40" y="181">AGT-3312 &#183; post-merge green</text>
+        <g class="dg-card"><rect x="28" y="206" width="220" height="44" rx="7"/></g><text class="dg-text" x="40" y="233">AGT-3315 &#183; checks running</text>
+
+        <g class="dg-box"><rect x="284" y="36" width="252" height="372" rx="10"/></g>
+        <text class="dg-strong" x="300" y="64">Delivery to Dev</text>
+        <text class="dg-text" x="300" y="86">2026.10.21.1 &#183; succeeded 09:12</text>
+        <g class="dg-card"><rect x="300" y="102" width="220" height="44" rx="7"/></g><text class="dg-text" x="312" y="129">AGT-3301 &#183; landed</text>
+        <g class="dg-card"><rect x="300" y="154" width="220" height="44" rx="7"/></g><text class="dg-text" x="312" y="181">AGT-3304 &#183; landed</text>
+        <path class="dg-divider" d="M300 220 H520"/>
+        <text class="dg-kicker" x="300" y="244">WAITING &#183; 0</text>
+        <text class="dg-text" x="300" y="266">3 integrated cards wait for the</text>
+        <text class="dg-text" x="300" y="286">next release candidate</text>
+
+        <g class="dg-box"><rect x="556" y="36" width="252" height="372" rx="10"/></g>
+        <text class="dg-strong" x="572" y="64">Delivery to Stage</text>
+        <text class="dg-text" x="572" y="86">2026.10.20.3 &#183; succeeded yesterday</text>
+        <g class="dg-card"><rect x="572" y="102" width="220" height="44" rx="7"/></g><text class="dg-text" x="584" y="129">AGT-3288 &#183; landed</text>
+        <path class="dg-divider" d="M572 168 H792"/>
+        <text class="dg-kicker" x="572" y="192">WAITING &#183; 2</text>
+        <g class="dg-card"><rect x="572" y="204" width="220" height="44" rx="7"/></g><text class="dg-text" x="584" y="231">AGT-3301 &#183; on Dev</text>
+        <g class="dg-card"><rect x="572" y="256" width="220" height="44" rx="7"/></g><text class="dg-text" x="584" y="283">AGT-3304 &#183; on Dev</text>
+
+        <g class="dg-box dg-accent"><rect x="828" y="36" width="240" height="372" rx="10"/></g>
+        <text class="dg-strong" x="844" y="64">Delivery to Production</text>
+        <text class="dg-text" x="844" y="86">2026.10.19.1 &#183; approval pending</text>
+        <path class="dg-divider" d="M844 102 H1052"/>
+        <text class="dg-kicker" x="844" y="126">WAITING &#183; 1</text>
+        <g class="dg-card"><rect x="844" y="138" width="208" height="44" rx="7"/></g><text class="dg-text" x="856" y="165">AGT-3288 &#183; on Stage</text>
+      </svg>
+      <figcaption>Mock-up of the recommended delivery view (option L-B, section 06; the Dev column assumes decision D6). Card keys, versions and times are illustrative, not product state. A card's lane stays Delivered; the view only places it by environment. The accented column marks the stage that needs an approval.</figcaption>
+    </figure>
+    <h3>Card movement</h3>
+    <ul>
+      <li><b>The lane state does not change.</b> A card stays in <code>6-completed</code>. Integration, Human Review and acceptance keep their meaning (AGT-W57 D5). The Delivery section only places the card by environment. Lane-state rules, authority floors and the orchestration decision library stay untouched.</li>
+      <li><b>A card can show in several columns.</b> It appears as landed in every environment that runs a release containing it, and as waiting in the next one. Collapsing to "furthest environment only" is a display option, not a data rule.</li>
+      <li><b>Movement follows deploy runs.</b> A succeeded run moves the cards of its release from waiting to landed in that column, and into waiting in the next. A rollback moves them back and marks them rolled back, as AGT-3202 does for badges.</li>
+      <li><b>Archive does not hide delivery.</b> Release attribution already scans archived cards (<code>ScanAllJobsWithArchive</code>), so an archived card still shows where it runs.</li>
+      <li><b>Agent Studio itself.</b> Under BD-D4 A (recommended in the Bereitstellung Dossier) the platform's own deploy from develop to Stable becomes a project with releases and approvals. Its Delivery section then shows which cards run on Stable and which wait for the next stable update.</li>
+    </ul>
+    <h3>Relation to the Octopus-style lifecycle</h3>
+    <p>In Octopus terms (Bereitstellung Dossier, AGT-W82 §2) a lifecycle is an ordered list of phases, each with one or more environments, and a release progresses phase by phase. The Delivery section is the Octopus dashboard turned into board columns for one project: phases become columns, releases become headers, and the cards are the work items Octopus links through its issue-tracker integration. A second lifecycle such as <code>hotfix</code> (Integrated platform Dossier, IP-D12) skips columns; its cards show as landed in production without passing the waiting part of Stage. Channels need no column; a channel tag on the release header is enough.</p>
+  </section>
+
+  <section id="central-api">
+    <h2><span class="number">05</span> Central API instead of git for hot paths</h2>
+    <p>Robert's third point names the cards and certain views. The table lists every hot path that today reads git or the git-backed workspace repository, what it costs, and which service answers it in the target.</p>
+    <table>
+      <thead><tr><th>Hot path</th><th>Today</th><th>Measured</th><th>Target owner and API</th></tr></thead>
+      <tbody>
+        <tr><td><b>Card state and board</b></td><td><code>TaskScannerService</code> reads <code>task.json</code> per task folder in the workspace repository; <code>TaskIndexCache</code> publishes generations with a 30 s safety TTL; <code>GitStateIndexService</code> fills the git projection in the background.</td><td>Card list 25 to 90 s (28 Sep) and 94 s (11 Oct); 8 to 300 s board latencies (15 Oct, operator measurement); grouped client read p95 9,988 ms with 3 of 20 reads at the 15 s timeout (25 Sep).</td><td>Task Server: <code>tasks</code> table as the authority, a board read model per project, change feed for the Studio. No file scan, no git in the request.</td></tr>
+        <tr><td><b>Diff against merge base</b></td><td>Review attempts clone (<code>--filter=blob:none</code> or credentialed full clone), fetch the integration ref and run <code>git diff</code> against the merge base. Card open computes commit diffs through a 512-entry LRU.</td><td>Budget 200 files and 12,000 lines per review; card-open provenance needs 3 to 5 <code>rev-parse</code> and 2 <code>merge-base</code> calls per commit (git-facts R4).</td><td>Diff objects keyed by repository, base SHA, head SHA, options and renderer version, immutable, computed once on a runner host and served by the Task Server (AGT-3017 D1, D5 A).</td></tr>
+        <tr><td><b>History and blame for review</b></td><td>On demand: <code>TaskFileHistoryService</code>, <code>/files/{path}/history</code>, commit lists by <code>log</code>.</td><td>Single git spawns of 5 to 9 s on Windows (11 Oct); 70 to 100 ms per spawn when healthy.</td><td>Derived data per commit: path history, reachability and blame by (commit, path), computed by one producer and stored beside the facts (git-facts option C).</td></tr>
+        <tr><td><b>Gate source delivery</b></td><td><code>RemoteGateTransport</code> builds a git bundle per gate against up to 16 cached tips on the remote host; the pull transport bundles <code>--all</code>. Both refuse above 1 GiB.</td><td>Up to 200 MB per run (operator figure, 20 Oct); stale transport folders swept after 26 h.</td><td>Host object cache on each runner host: the gate asks for a tree SHA, fetches only missing objects through the Task Server, and materialises a sparse checkout of the projects its test plan needs.</td></tr>
+        <tr><td><b>Task-folder artefacts</b></td><td>Committed into the workspace repository by the evidence batcher (15 s quiet window, 60 s maximum), pushed single-flight.</td><td><code>.git</code> 5.0 GB and 3,872 commits per week in July; 3,341 commits unpushed for five days; <code>evidence-flush-stalled</code> alarm after 15 min of lock.</td><td>Task Server <code>artifacts</code> and <code>task_file_revisions</code> tables with content hashes; large blobs in an object store. The workspace repository becomes an export.</td></tr>
+        <tr><td><b>Release card attribution</b></td><td><code>DeployService.IntegratedCards</code> scans all task folders including the archive and lists git revisions per release.</td><td>Board size on 11 October: 235 live and 2,088 archived cards, all scanned per release.</td><td>A Task Server query over integration records and the reachability facts.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Task Server as authority</h3>
+    <p>The North star already names the Task Server the only durable authority for tasks, lanes, runs, review subjects, leases, events and artefacts (AGT-W49, AGT-W65). Its SQLite store has the tables: <code>tasks</code>, <code>runs</code>, <code>artifacts</code> with SHA-256 and pointer-only rows, <code>task_file_revisions</code>, review and gate subjects. It also serves run diffs from stored artefacts without git (<code>/runs/{i}/diff</code>). What is missing is the cutover. Production still runs the file-backed monolith. The remote Task Server runbook counts 296 Task Server-owned operations with v1 handlers and 50 without, which block cutover.</p>
+    <p>This Dossier adds no new authority. It asks that the hot paths above be served by the authority that is already decided, in the order of measured pain, and that git stay the storage format for source code only.</p>
+
+    <h3>Caching tiers</h3>
+    <figure class="breakout" id="fig-tiers">
+      <svg viewBox="0 0 1080 400" role="img" aria-labelledby="tier-title tier-desc">
+        <title id="tier-title">Read path through three cache tiers to the Task Server authority</title>
+        <desc id="tier-desc">Clients at the top: Studio board, review attempt, gate attempt and coding run. They call one source API. The first tier is a host cache on each runner host holding immutable objects by content hash. The second tier is the installation cache inside the Task Server process: board read model and derived data such as diffs against merge base and blame. The third tier is the authority: the Task Server SQLite store for card state and artefact metadata, and the canonical git repository for source objects. Writes go only to the authority; caches hold no long-lived state of their own.</desc>
+        <g class="dg-box"><rect x="12" y="20" width="248" height="70" rx="10"/></g>
+        <text class="dg-strong" x="28" y="50">Studio board and detail</text>
+        <text class="dg-text" x="28" y="72">card state, lanes, deliveries</text>
+        <g class="dg-box"><rect x="280" y="20" width="248" height="70" rx="10"/></g>
+        <text class="dg-strong" x="296" y="50">Review attempt</text>
+        <text class="dg-text" x="296" y="72">diff vs merge base, history</text>
+        <g class="dg-box"><rect x="548" y="20" width="248" height="70" rx="10"/></g>
+        <text class="dg-strong" x="564" y="50">Gate attempt</text>
+        <text class="dg-text" x="564" y="72">sparse source by tree</text>
+        <g class="dg-box"><rect x="816" y="20" width="252" height="70" rx="10"/></g>
+        <text class="dg-strong" x="832" y="50">Coding run</text>
+        <text class="dg-text" x="832" y="72">worktree, task artefacts</text>
+        <g class="dg-box"><rect x="12" y="122" width="1056" height="56" rx="10"/></g>
+        <text class="dg-kicker" x="28" y="146">TIER 1 &#183; RUNNER HOST</text>
+        <text class="dg-text" x="28" y="166">Host object cache: immutable trees and blobs by hash, shared by every slot on the host. Bounded, evictable, no own truth.</text>
+        <g class="dg-box"><rect x="12" y="202" width="1056" height="56" rx="10"/></g>
+        <text class="dg-kicker" x="28" y="226">TIER 2 &#183; INSTALLATION</text>
+        <text class="dg-text" x="28" y="246">Task Server read models and derived data: board projection, merge-base diffs, path history, blame, by commit SHA.</text>
+        <g class="dg-box dg-accent"><rect x="12" y="282" width="1056" height="96" rx="10"/></g>
+        <text class="dg-kicker" x="28" y="306">TIER 3 &#183; AUTHORITY</text>
+        <text class="dg-strong" x="28" y="332">Task Server (SQLite): cards, lanes, runs, artefact index, releases, deploy runs</text>
+        <text class="dg-strong" x="28" y="358">Canonical git repository: source objects, refs; the only writer is the platform</text>
+        <path class="dg-arrow" d="M136 90 V118"/><path class="dg-arrow" d="M404 90 V118"/><path class="dg-arrow" d="M672 90 V118"/><path class="dg-arrow" d="M942 90 V118"/>
+        <path class="dg-arrow" d="M540 178 V198"/><path class="dg-arrow" d="M540 258 V278"/>
+      </svg>
+      <figcaption>Proposed read path for the hot paths (option A-B, section 06). The Studio reads tier 2 directly; work on runner hosts reads through tier 1. A miss falls through exactly one tier at a time; a tier failure never fans out to the authority, following the strict tiering of the reference article.</figcaption>
+    </figure>
+    <ul>
+      <li><b>Tier 1, runner host.</b> Immutable objects by hash, shared by all slots on the host. Today's review baseline cache, gate dependency cache and preparation cache stay; the new piece is a source object cache, so gates and reviews stop transferring bundles.</li>
+      <li><b>Tier 2, installation.</b> Read models inside the Task Server: the board projection, diff objects and derived history. Keyed by immutable inputs (SHA, generation), so they never need a TTL; eviction is by size.</li>
+      <li><b>Tier 3, authority.</b> SQLite for card and artefact state; the canonical git repository for source objects. Only the platform writes to it.</li>
+    </ul>
+    <p>Each tier asks only the next one. A tier failure degrades to slower reads, never to a fallback that reads the workspace repository or spawns git in a request. This follows the strict tiering of the reference article and the "no fallback authority" guardrail of the North star.</p>
+
+    <h3>Migration path from the git-backed workspace</h3>
+    <ol>
+      <li><b>M0 Measure.</b> Board read p50 and p95 per project, git spawns per request, gate source bytes and seconds per run. The git telemetry endpoint and the gate receipts already log most of this.</li>
+      <li><b>M1 Shadow board.</b> The Task Server imports the workspace and serves the board read model in shadow. The Studio compares both answers per request and records the differences. No user-visible change.</li>
+      <li><b>M2 Board cutover.</b> The Studio reads the board and card core from the Task Server. Writes still go through the monolith API, which writes both stores for one release. Rollback is a setting.</li>
+      <li><b>M3 Write cutover.</b> The remaining 50 operations get v1 handlers. SQLite becomes the write authority and <code>task.json</code> is no longer written. This is the runbook's existing cutover, with its SQLite backups every 5 minutes and a git bundle before the switch.</li>
+      <li><b>M4 Derived source data.</b> Diff objects, path history and blame by producer, as the git-facts and route-ownership Dossiers propose.</li>
+      <li><b>M5 Gate source by object cache.</b> Gates and reviews fetch trees and blobs through tier 1. Bundles remain only as the cold-start path.</li>
+      <li><b>M6 Workspace repository as export.</b> A periodic export writes task folders into the workspace repository for audit and offline reading. Nothing reads it in a request path; its push backlog no longer matters to the board.</li>
+    </ol>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+    <h2><span class="number">06</span> Alternatives</h2>
+    <p>Each of the three topics has a realistic conservative option, the recommended option, and a more radical one.</p>
+
+    <h3>Test placement</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>T-A · Full suite per batch before merge (today's decision)</h4><p>Keep AGT-W77 D1: affected tests per card, full suite once per wave on the combined candidate before merge. Develop stays green by construction. Every card still waits for a 25 to 100 minute suite and for a free gate slot; a red member makes the whole wave wait for isolation.</p></article>
+      <article class="variant"><h4>T-B · Affected per card, full suite after merge and before delivery (recommended)</h4><p>Tiers T1 to T5 of section 03. Cards merge after minutes. Develop can be red for a bounded time; release candidates protect every environment. Needs attribution, repair cards and a last-green fact.</p></article>
+      <article class="variant"><h4>T-C · Build only before merge</h4><p>The Scion-like extreme: compile per card, every test after merge. Fastest lead time, but at our merge rate develop would be red often, and each repair costs a coding attempt. The reference article does not claim this either.</p></article>
+    </div>
+
+    <h3>Delivery lanes</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>L-A · New lane states</h4><p>Add lanes such as <code>6a-delivered-stage</code> and <code>6b-delivered-production</code>, and move cards. Familiar board mechanics, but lane state then duplicates deploy state, a card can only be in one lane while it runs in several environments, and every lane change touches the decision library, the Task Server state set and the lane-presentation source.</p></article>
+      <article class="variant"><h4>L-B · Projection section per environment (recommended)</h4><p>A Delivery section after "Done &amp; Decide" with one column per declared environment, derived from releases, deploy runs and <code>CardsSinceLastDeploy</code>. The lane state stays Delivered. No new authority, no new transition.</p></article>
+      <article class="variant"><h4>L-C · Badges and filters only</h4><p>Ship AGT-3202 as is: environment badges on each card and a board filter. Smallest change, but it answers "where does this card run" and not Robert's question "which new cards landed in Stage".</p></article>
+    </div>
+
+    <h3>Central API</h3>
+    <div class="variant-grid">
+      <article class="variant"><h4>A-A · Harden the git caches</h4><p>More caching around the existing git reads and file scans. Rejected already in the git-facts Dossier: it removes neither the cold-start cost nor the request-time fallback.</p></article>
+      <article class="variant"><h4>A-B · Task Server serves the hot paths, three cache tiers (recommended)</h4><p>Card state and artefacts in the Task Server, derived source data by one producer, host object caches for gate and review sources, workspace repository as export. Uses decisions already taken (AGT-W49, AGT-W65, AGT-3017, AGT-3044).</p></article>
+      <article class="variant"><h4>A-C · A new version-control server</h4><p>A Scion-style system with server-side changesets. It solves a problem of 30,000 merges per day and hundreds of mirrors. At about 15 merges per day it would be the largest project in the programme for a gain the Task Server path already gives.</p></article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+    <h2><span class="number">07</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Recommended target picture</h3>
+      <p><b>T-B, L-B and A-B, in that order of delivery.</b> Per card only build, affected tests and fast checks run. The full suite runs after merge, nightly and once per release candidate before delivery, optional per project. A Delivery section shows per declared environment which cards landed and which wait, as a projection of releases and deploy runs. The Task Server serves card state, board and artefacts, and derived source data replaces request-time git.</p>
+      <p>The most important reason: the full suite is the single largest cost in front of every card, and it already runs again before every release. Removing it from the card path while keeping it in front of every environment shortens lead time without letting an untested artefact reach a stage.</p>
+    </div>
+
+    <h3>Risks</h3>
+    <table>
+      <thead><tr><th>Risk</th><th>Effect</th><th>Mitigation</th></tr></thead>
+      <tbody>
+        <tr><td>Red develop: a merge breaks a test that its affected selection did not run.</td><td>Later cards build on a broken base; release candidates stop.</td><td>Merge-window T3 runs within 30 minutes; attribution narrows to one merge in most cases; revert first when clean; release candidates hold, environments stay safe. Target: red time p90 under 2 hours.</td></tr>
+        <tr><td>Conflicting merges: two cards pass T1 alone and fail together.</td><td>The combined tree fails to compile or a shared test fails.</td><td>T2 compiles the merged tree before push; T3 tests the union. The engine fixes forward with both cards in the prompt, which the reference article reports as the fast path.</td></tr>
+        <tr><td>Selection gaps: the generated map misses a dependency (reflection, files read from the repository root, configuration).</td><td>A test that should have run does not.</td><td>Full fallback for global inputs and unmapped paths stays; the repo-contract slice runs whenever non-code paths change; every T3 miss is recorded as a selection gap and feeds the map.</td></tr>
+        <tr><td>Repair storms: several red windows in a row open several repair cards.</td><td>Coding capacity goes to repairs; the queue grows.</td><td>One repair card per failure fingerprint; per-card round budget (AGT-W65 D18); after 2 hours red, escalate to the Human Operator and switch the project back to the pre-merge batch gate.</td></tr>
+        <tr><td>Flaky tests turn T3 red without a defect.</td><td>False repairs and reverts.</td><td>Quarantine with expiry (AGT-W57 D3) runs before attribution; a test that passes on re-run at the same SHA is marked flaky, not attributed.</td></tr>
+        <tr><td>Windows-only failures: T1 runs on the Linux runner.</td><td>A defect reaches develop and shows only on the Windows host.</td><td>The nightly T3 run includes a Windows run where the project declares Windows as a target; T4 runs on every declared platform.</td></tr>
+        <tr><td>Two sources of truth during the board migration.</td><td>The board shows a state the monolith does not know.</td><td>Shadow reads with recorded differences first; one write path; rollback is a setting until M3.</td></tr>
+        <tr><td>Delivery section shows wrong placement after a rewritten release.</td><td>A card appears not deployed although it is.</td><td>AGT-3202 maps rewritten releases by tree; the section reads the same projection, never its own git query.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Measurable targets</h3>
+    <table>
+      <thead><tr><th>Metric</th><th>Definition</th><th>Today</th><th>Target</th></tr></thead>
+      <tbody>
+        <tr><td>Lead time card to develop</td><td>From review pass of the last round to the integrated push, per card, median and p90 over 7 days</td><td>Not reported as one number; gate runs of 17 to 36 min plus queue waits of hours for 16 parked cards (17 to 19 Oct)</td><td>Median 20 min, p90 60 min</td></tr>
+        <tr><td>Gate minutes per card</td><td>Test and gate minutes attributed to one card across T1 and T2, excluding queue wait</td><td>Full suite per merge or a share of one per batch: 17 to 100 min</td><td>Median 10 min, p90 20 min</td></tr>
+        <tr><td>Full-suite runs per day</td><td>Count of full-suite executions per project</td><td>One per merge or batch, plus promotion</td><td>Nightly plus one per release candidate</td></tr>
+        <tr><td>Red develop time</td><td>From the first red T3 to the next green T3, per incident</td><td>Not measured; no post-merge check exists</td><td>p90 under 2 hours</td></tr>
+        <tr><td>Revert share</td><td>Merges reverted by a repair card divided by all merges</td><td>Not applicable</td><td>Under 5 % over 30 days</td></tr>
+        <tr><td>Board read</td><td>Card list and board handler p95, server side, and git spawns per request</td><td>94 s worst incident; 8 to 300 s reported 15 Oct</td><td>p95 under 200 ms, zero git spawns</td></tr>
+        <tr><td>Gate source</td><td>Bytes transferred and seconds to a ready checkout per gate run</td><td>Up to 200 MB per run (card)</td><td>Median under 10 MB, ready in 30 s</td></tr>
+        <tr><td>Delivery visibility</td><td>Share of Delivered cards whose environments are shown</td><td>0 on develop</td><td>100 % for projects with declared environments</td></tr>
+      </tbody>
+    </table>
+    <p>The gate economics endpoint of AGT-3070 (<code>GET /api/gate-economics</code>) already reports gate minutes per merge, queue wait and full-suite share. The first implementation card extends it with the per-card and post-merge metrics, so every later card is judged against a measured baseline.</p>
+  </section>
+
+  <section id="cards">
+    <h2><span class="number">08</span> Implementation plan</h2>
+    <p>Cards listed in delivery order as <code>workbench.json</code> <code>implementationTasks</code>. They carry no card keys; keys are assigned when Robert's decisions are recorded and the cards are promoted. P1 to P7 implement the test strategy, P8 and P9 the delivery lanes, P10 to P13 the central API.</p>
+    <table>
+      <thead><tr><th>#</th><th>Card</th><th>Depends on</th><th>Decision</th></tr></thead>
+      <tbody>
+        <tr><td>P1</td><td>Target picture update: North star link, docs index row, publish this Dossier under <code>docs/operations/</code></td><td>none</td><td>all</td></tr>
+        <tr><td>P2</td><td>Pipeline metrics baseline: lead time card to develop, gate minutes per card, red develop time, board read, gate source bytes</td><td>none</td><td>D1</td></tr>
+        <tr><td>P3</td><td>Per-card verify plan: build, generated project map, affected tests, fast checks</td><td>P2</td><td>D1</td></tr>
+        <tr><td>P4</td><td>Post-merge checks on develop: merge windows, nightly full suite, last green SHA</td><td>P2</td><td>D1, D3</td></tr>
+        <tr><td>P5</td><td>Attribution and repair cards: revert or fix forward</td><td>P4</td><td>D2</td></tr>
+        <tr><td>P6</td><td>Pre-delivery full suite on the release candidate, verdict reused by promotion</td><td>P4</td><td>D3, D4</td></tr>
+        <tr><td>P7</td><td>Post-merge mode switch per project; integration gate reduced to T2; per-branch merge lock</td><td>P3 to P6</td><td>D1</td></tr>
+        <tr><td>P8</td><td>Delivery lanes read model and lifecycle order of environments</td><td>AGT-3202 integrated</td><td>D5, D6</td></tr>
+        <tr><td>P9</td><td>Delivery section on the board</td><td>P8</td><td>D5, D10</td></tr>
+        <tr><td>P10</td><td>Board read model served by the Task Server, shadow then cutover</td><td>P2</td><td>D7</td></tr>
+        <tr><td>P11</td><td>Diff objects and derived history and blame for review</td><td>git-facts S1</td><td>D7</td></tr>
+        <tr><td>P12</td><td>Gate and review sources through a host object cache</td><td>P11</td><td>D8</td></tr>
+        <tr><td>P13</td><td>Task-folder artefacts in the Task Server; workspace repository as export</td><td>P10, write cutover</td><td>D9</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+    <h2><span class="number">09</span> Evidence</h2>
+    <p>Code facts are cited against develop <code>8e3a6a86</code> (21 October 2026). Figures the repository does not contain are marked as card statements: the 25 to 100 minute per-card suite, about 11,000 tests, 200 MB bundles, 8 to 300 second board latencies on 15 October and 28 to 49 minute promotions. The one claim about a visible product surface, the lanes at the end of the board, is proven by the capture below. The Delivery section and the other figures are proposals and carry no screenshot.</p>
+    <figure class="evidence-figure media-breakout" id="fig-board-lanes">
+      <div class="evidence-captures">
+        <div class="evidence-capture">
+          <span class="capture-theme">Light</span>
+          <img src="assets/board-done-and-decide-lanes-light--pinned.png" alt="All-projects board of the pinned demo workspace in the light theme with the groups Backlog, Active and Done &amp; Decide. The Done &amp; Decide group shows the lane Delivered with three cards, DEMO-7, DEMO-15 and PLAT-3; no lane or group header names an environment.">
+          <span class="figure-annotation">Delivered is the last working lane</span>
+        </div>
+        <div class="evidence-capture">
+          <span class="capture-theme">Dark</span>
+          <img src="assets/board-done-and-decide-lanes-dark--pinned.png" alt="The same all-projects board and viewport in the dark theme: the Done &amp; Decide group shows the lane Delivered with the same three cards.">
+        </div>
+      </div>
+      <figcaption>
+        <span class="figure-claim"><b>Evidence.</b> The board ends in the "Done &amp; Decide" group with the lane Delivered; no lane, column or group names an environment. A delivered card carries no environment or release marker. The full lane order of the group, Escalated, Human review, Delivered and Archive, is a code fact (<code>frontend/src/app/features/board/components/board-lane-layout.util.ts:76-88</code>, <code>:134-137</code>), not shown here.</span>
+        <span class="figure-as-of">
+          <span><b>Light:</b> captured <time datetime="2026-10-21">21 October 2026</time>, pinned ADR-0056 demo workspace on develop <code>8e3a6a86</code>, isolated worktree stack, 1920x1080; the public-demo and offline banners are hidden because the stack serves the demo profile without TLS.</span>
+          <span><b>Dark:</b> captured <time datetime="2026-10-21">21 October 2026</time>, same pinned workspace, build and banner handling.</span>
+        </span>
+      </figcaption>
+    </figure>
+    <div class="evidence-list">
+      <a class="evidence" href="#ev-scope"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-scope">Every code merge runs the full suite</b><small><code>backend/Features/Pipeline/PreDevelopBuildGate.cs:62-124</code> (work-package level); <code>backend/Features/Pipeline/DeterministicTestScope.cs:33-35</code>, <code>:78-82</code>, <code>:106-116</code> (missing map and multi-module fallback); <code>.agent-studio/project.yml</code> declares four test commands and no folder map.</small></span></a>
+      <a class="evidence" href="#ev-slots"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-slots">17 to 36 minutes per gate run, 16 parked cards, one merge lock</b><small><code>backend/Features/Pipeline/GateSharding/GateShardPlanner.cs:66-69</code> (17 to 19 October 2026); <code>backend/Features/Pipeline/MergeIntoDevelopRunner.cs:67</code> (<code>SemaphoreSlim(1,1)</code> for all projects); queue budget in <code>BuildTestGateRunner.cs</code> (<code>machine-gate-queue</code> timeout) and park routing in <code>GateFailureTriage/GateFailureRouter.cs</code>.</small></span></a>
+      <a class="evidence" href="#ev-batch"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-batch">Batch gate: full suite once per wave, off by default</b><small><code>backend/Features/Pipeline/BatchGate/BatchGatePolicy.cs:62-71</code>; planner <code>orchestration-decisions/BatchGateLookAheadPlanner.cs</code>; decision AGT-W77 D1 in <code>docs/operations/test-acceleration/index.html</code>; class selection by type reference in <code>backend/Features/Pipeline/DotNetReferenceSelection.cs</code> (AGT-3085).</small></span></a>
+      <a class="evidence" href="#ev-shard"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-shard">Sharding exists, opt-in, not enabled here</b><small><code>backend/Features/Pipeline/GateSharding/</code> and <code>BuildTestGateRunner.Sharding.cs</code> (AGT-3232, merged 20 October); <code>shards: N|auto</code> per suite; this repository declares none. On agent-runner-01 a 1,955-test slice took 469 s sharded across 2 or 4 processes against 236 s in one, so sharding pays only with extra slots or hosts (<code>docs/system/domains/pipeline.md:571-640</code>).</small></span></a>
+      <a class="evidence" href="#ev-promotion"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-promotion">Promotion runs the solution again: 91 minutes on 12/13 October</b><small><code>scripts/release/promotion-full-gate.sh</code>; <code>docs/operations/develop-main-promotion.md:197-206</code> (42 instead of 9 minutes at load 40 to 114) and <code>:332-337</code> (91 and 97 minutes, AGT-3099 one-gate deploy).</small></span></a>
+      <a class="evidence" href="#ev-nightly"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-nightly">No post-merge guard; a nightly coverage run exists</b><small>AGT-W69 card 3 (nightly guard) is not implemented; <code>GateEconomicsEndpoints.cs:12</code> carries an empty <code>LastNightlyGuard</code> field. <code>deploy/systemd/agent-coverage-run.timer</code> runs the release suites at the develop tip at 01:15, 03:15 and 05:15 and opens no card. <code>FailureInterventionService.RaiseAsync</code> (<code>backend/Features/Pipeline/FailureIntervention/FailureInterventionService.cs:100-131</code>) is the cause-card pattern.</small></span></a>
+      <a class="evidence" href="#ev-bundle"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-bundle">Gate source as bundles up to 1 GiB; reviews clone</b><small><code>backend/Features/Pipeline/RemoteGateTransport.cs:135-141</code> (thin bundle against cached tips, 1 GiB limit); <code>PullGateTransport.cs:60-64</code> (<code>bundle create --all</code>); <code>runner/RemoteReviewWorkspace.cs:20-21</code> (200 files, 12,000 lines) and its clone paths. Local pack 271 MiB.</small></span></a>
+      <a class="evidence" href="#ev-board"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-board">Board reads task folders and git projections</b><small><code>backend/Features/Tasks/TaskScannerService.cs</code> (task.json scan), <code>TaskIndexCache.cs:168</code> (30 s safety TTL), <code>backend/Features/Git/GitStateIndexService.cs</code>; incident table in <code>docs/git-facts-architecture/index.html</code> (25 to 90 s on 28 September, 94 s on 11 October; 235 live and 2,088 archived cards).</small></span></a>
+      <a class="evidence" href="#ev-taskserver"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-taskserver">Task Server has the tables, not yet the cutover</b><small><code>task-server/TaskServerStore.cs</code> (<code>tasks</code>, <code>artifacts</code> with SHA-256, <code>task_file_revisions</code>); artefact-backed <code>/runs/{i}/diff</code> in <code>StudioTaskHistoryEndpoints.cs</code>; 296 of 346 operations with v1 handlers in <code>docs/operations/remote-task-server-local-studio.md:289-290</code>.</small></span></a>
+      <a class="evidence" href="#ev-deploy"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-deploy">Releases, deploy runs and waiting cards exist; no Dev kind</b><small><code>backend/Features/Deploy/DeployContract.cs:7-11</code> (<code>staging</code>, <code>production</code>) and <code>:79-81</code> (<code>CardsSinceLastDeploy</code>); <code>DeployService.cs:72</code> (<code>CreateRelease</code>), <code>:737-765</code> (card attribution with archive scan); <code>Status/EnvironmentStatusProjection.cs:15-47</code>; <code>backend/Features/Projects/ProjectEnvironmentService.cs:147</code> (kind order stage, production, other).</small></span></a>
+      <a class="evidence" href="#ev-3202"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-3202">AGT-3202 is not on develop</b><small>Commits for AGT-3202 exist only on its result branch, last <code>c1b3b4833</code>; <code>backend/Features/Deploy/Status/</code> on develop holds only <code>EnvironmentStatusProjection.cs</code>.</small></span></a>
+      <a class="evidence" href="#ev-lanes"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-lanes">Delivered means accepted, not live</b><small><code>frontend/src/app/models/lane-presentation.ts:124</code> (<code>6-completed</code> shown as Delivered, "Delivered and accepted."); <code>frontend/src/app/features/board/components/board-lane-layout.util.ts</code> (three groups); AGT-W57 E4 in <code>docs/operations/delivery-chain/index.html</code> (4 of 8 delivered cards not live).</small></span></a>
+      <a class="evidence" href="#ev-merges"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-merges">246 develop merges in 14 days</b><small><code>git log origin/develop --first-parent --merges</code> from 7 to 20 October 2026: 0 to 67 per day, median about 15.</small></span></a>
+      <a class="evidence" href="#ev-scion"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b id="ev-scion">Reference article</b><small>Anthropic Engineering, "Redesigning source control", read 21 October 2026: server-side changesets, no global merge-queue lock, post-merge and pre-deploy testing, server diffs and history APIs, three cache tiers above 99 % hit rate, derived data, about 30,000 merges per day, 200x less CPU and memory than the replaced mirrors.</small></span></a>
+      <a class="evidence" href="#ev-selection"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b id="ev-selection">Most cards need a fraction of the suite</b><small>Four percent of tests carry 97 percent of test time (AGT-W77 §1); a failed-class rerun took 7.3 s for 4 tests against 93 min for the suite (AGT-W77 P3). The 10-minute T1 target assumes a project map selects the heavy classes only when their code changes; P2 measures it before P7 switches any project.</small></span></a>
+      <a class="evidence" href="#ev-targets"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b id="ev-targets">Targets and tiers</b><small>The tier budgets, the 2-hour red time and the 200 ms board target are proposals. The board target is the git-facts slice target; the per-card budgets are set below today's fastest recorded full gate run (17 minutes).</small></span></a>
+    </div>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+    <h2><span class="number">10</span> Open decisions</h2>
+    <p>Ten decisions for Robert. Each names a recommended working option; a promoted card uses it unless a recorded operator decision selects another. D1 to D4 shape the test strategy, D5, D6 and D10 the delivery lanes, D7 to D9 the central API.</p>
+    <table>
+      <thead><tr><th>Decision</th><th>Recommended</th><th>Main consequence</th></tr></thead>
+      <tbody>
+        <tr><td><a href="#d1-test-placement">D1</a> Test placement</td><td>T-B: affected per card, full suite after merge and before delivery</td><td>AGT-W77 D1 amended for projects in post-merge mode</td></tr>
+        <tr><td><a href="#d2-red-develop">D2</a> Red develop</td><td>Revert when clean, else fix forward; escalate after 2 hours</td><td>Revert action under the publication lease</td></tr>
+        <tr><td><a href="#d3-pre-delivery">D3</a> Full suite before delivery</td><td>Per project, required where production is declared</td><td>New <code>project.yml</code> field</td></tr>
+        <tr><td><a href="#d4-promotion">D4</a> Promotion to main</td><td>Reuse the pre-delivery verdict for the exact SHA</td><td>One full run per release</td></tr>
+        <tr><td><a href="#d5-lane-form">D5</a> Form of the delivery lanes</td><td>L-B: projection section per environment</td><td>AGT-3202 integrated first</td></tr>
+        <tr><td><a href="#d6-environments">D6</a> Environments and order</td><td>Every declared environment, explicit lifecycle order</td><td>Delivery to Dev where Dev is declared</td></tr>
+        <tr><td><a href="#d7-authority">D7</a> Authority for the hot paths</td><td>Task Server plus one producer for derived source data</td><td>Board cutover by runbook</td></tr>
+        <tr><td><a href="#d8-gate-source">D8</a> Gate and review source</td><td>Host object cache, sparse by test plan</td><td>Pull path stops bundling full history</td></tr>
+        <tr><td><a href="#d9-workspace-repo">D9</a> Workspace repository</td><td>Export only</td><td>Batcher and push worker become an export job</td></tr>
+        <tr><td><a href="#d10-lane-name">D10</a> Name of <code>6-completed</code></td><td>Rename display name to Accepted</td><td>One source change in <code>lane-presentation.ts</code></td></tr>
+      </tbody>
+    </table>
+    <div class="decision" id="d1-test-placement" data-decision-id="d1-test-placement" data-decision-kind="single" data-decision-label="D1 Test placement">
+      <h3>D1 Test placement · Where does the full suite run?</h3>
+      <label data-option-id="t-b" data-option-label="T-B · Affected tests per card; full suite after merge, nightly and before delivery (recommended)"><input type="radio" name="d1-test-placement" value="t-b"><span><b>T-B · Affected tests per card; full suite after merge, nightly and before delivery (recommended)</b><span class="d">Lead time falls to minutes; develop can be red for a bounded time; release candidates protect every environment.</span></span></label>
+      <label data-option-id="t-a" data-option-label="T-A · Keep the full suite per batch before merge (AGT-W77 D1)"><input type="radio" name="d1-test-placement" value="t-a"><span><b>T-A · Keep the full suite per batch before merge (AGT-W77 D1)</b><span class="d">Develop stays green by construction; cards keep waiting for the suite and a gate slot.</span></span></label>
+      <label data-option-id="t-c" data-option-label="T-C · Build only before merge"><input type="radio" name="d1-test-placement" value="t-c"><span><b>T-C · Build only before merge</b><span class="d">Fastest lead time; frequent red develop and more repair attempts.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: AGT-W77 D1 is amended for projects in post-merge mode; the pre-merge batch gate stays as a per-project stricter mode and as the fallback.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="d2-red-develop" data-decision-id="d2-red-develop" data-decision-kind="single" data-decision-label="D2 Response to a red develop">
+      <h3>D2 Response to a red develop · What happens when a post-merge check fails?</h3>
+      <label data-option-id="revert-first" data-option-label="A · Revert when one merge is attributed and the revert is clean, otherwise fix forward; merges continue outside the failing area; escalate after 2 hours (recommended)"><input type="radio" name="d2-red-develop" value="revert-first"><span><b>A · Revert when one merge is attributed and the revert is clean, otherwise fix forward; merges continue outside the failing area; escalate after 2 hours (recommended)</b><span class="d">Short red time without blocking unrelated cards; the reverted card returns to Preparation with the failure attached.</span></span></label>
+      <label data-option-id="fix-forward" data-option-label="B · Always fix forward"><input type="radio" name="d2-red-develop" value="fix-forward"><span><b>B · Always fix forward</b><span class="d">No reverted work; red time depends on a coding attempt.</span></span></label>
+      <label data-option-id="freeze" data-option-label="C · Freeze all merges until green"><input type="radio" name="d2-red-develop" value="freeze"><span><b>C · Freeze all merges until green</b><span class="d">Simple and safe; every red window stops the whole project.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: the engine needs a revert action under the publication lease and a repair-card pattern beside FailureInterventionService.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="d3-pre-delivery" data-decision-id="d3-pre-delivery" data-decision-kind="single" data-decision-label="D3 Full suite before delivery">
+      <h3>D3 Full suite before delivery · Is the pre-delivery full suite mandatory?</h3>
+      <label data-option-id="per-project-default-on" data-option-label="A · Per-project setting, default required when a production environment is declared, optional otherwise (recommended)"><input type="radio" name="d3-pre-delivery" value="per-project-default-on"><span><b>A · Per-project setting, default required when a production environment is declared, optional otherwise (recommended)</b><span class="d">Agent Studio and every project with production keep a full run in front of each release; small projects can skip it.</span></span></label>
+      <label data-option-id="mandatory" data-option-label="B · Mandatory for every project"><input type="radio" name="d3-pre-delivery" value="mandatory"><span><b>B · Mandatory for every project</b><span class="d">Uniform; costs a full run for projects without production.</span></span></label>
+      <label data-option-id="nightly-only" data-option-label="C · Nightly only, no run per candidate"><input type="radio" name="d3-pre-delivery" value="nightly-only"><span><b>C · Nightly only, no run per candidate</b><span class="d">Cheapest; a release can contain untested commits from the same day.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: a new project.yml field, for example delivery.fullSuite: required | optional | off.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="d4-promotion" data-decision-id="d4-promotion" data-decision-kind="single" data-decision-label="D4 Promotion develop to main">
+      <h3>D4 Promotion develop to main · Does promotion run the suite again?</h3>
+      <label data-option-id="reuse" data-option-label="A · Promote the exact SHA with a green pre-delivery verdict and reuse that verdict (recommended)"><input type="radio" name="d4-promotion" value="reuse"><span><b>A · Promote the exact SHA with a green pre-delivery verdict and reuse that verdict (recommended)</b><span class="d">One full run per release instead of two; the verdict is keyed by commit SHA and command-set digest.</span></span></label>
+      <label data-option-id="rerun" data-option-label="B · Keep a full run in the promotion train"><input type="radio" name="d4-promotion" value="rerun"><span><b>B · Keep a full run in the promotion train</b><span class="d">Independent second evidence; 72 to 91 minutes per promotion under load.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: promotion-full-gate.sh runs only when no matching verdict exists.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="d5-lane-form" data-decision-id="d5-lane-form" data-decision-kind="single" data-decision-label="D5 Form of the delivery lanes">
+      <h3>D5 Form of the delivery lanes · How does the board show where cards landed?</h3>
+      <label data-option-id="projection" data-option-label="L-B · Delivery section after Done &amp; Decide, one column per environment, derived from releases and deploy runs; lane state stays Delivered (recommended)"><input type="radio" name="d5-lane-form" value="projection"><span><b>L-B · Delivery section after Done &amp; Decide, one column per environment, derived from releases and deploy runs; lane state stays Delivered (recommended)</b><span class="d">No new lane state or transition; a card can show in several environments.</span></span></label>
+      <label data-option-id="lane-states" data-option-label="L-A · New lane states per environment"><input type="radio" name="d5-lane-form" value="lane-states"><span><b>L-A · New lane states per environment</b><span class="d">Familiar mechanics; duplicates deploy state and changes the decision library.</span></span></label>
+      <label data-option-id="badges" data-option-label="L-C · Badges and filters only (AGT-3202)"><input type="radio" name="d5-lane-form" value="badges"><span><b>L-C · Badges and filters only (AGT-3202)</b><span class="d">Smallest change; does not show which cards landed in a stage.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: AGT-3202 is integrated first; the section reuses its card deployment projection.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="d6-environments" data-decision-id="d6-environments" data-decision-kind="single" data-decision-label="D6 Environments and order">
+      <h3>D6 Environments and order · Which environments get a column?</h3>
+      <label data-option-id="declared" data-option-label="A · Every declared environment in an explicit lifecycle order, including a Dev environment of kind other where a project declares one (recommended)"><input type="radio" name="d6-environments" value="declared"><span><b>A · Every declared environment in an explicit lifecycle order, including a Dev environment of kind other where a project declares one (recommended)</b><span class="d">Columns follow the project's lifecycle; Delivery to Dev exists where Dev exists.</span></span></label>
+      <label data-option-id="fixed" data-option-label="B · Fixed Staging and Production only"><input type="radio" name="d6-environments" value="fixed"><span><b>B · Fixed Staging and Production only</b><span class="d">Matches the P1 contract today; no Dev column.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: environment declarations gain an order field; EnvironmentKinds and the lifecycle policy accept phases beyond staging and production.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="d7-authority" data-decision-id="d7-authority" data-decision-kind="single" data-decision-label="D7 Authority for card state and derived source data">
+      <h3>D7 Authority for card state and derived source data · Who answers the hot paths?</h3>
+      <label data-option-id="task-server" data-option-label="A-B · Task Server for card state, board and artefacts; one producer on a runner host for diffs, history and blame (recommended)"><input type="radio" name="d7-authority" value="task-server"><span><b>A-B · Task Server for card state, board and artefacts; one producer on a runner host for diffs, history and blame (recommended)</b><span class="d">Uses decided authority; removes request-time git and the workspace scan.</span></span></label>
+      <label data-option-id="backend-local" data-option-label="A-B' · Backend-local SQLite fact store first (git-facts option B), Task Server later"><input type="radio" name="d7-authority" value="backend-local"><span><b>A-B' · Backend-local SQLite fact store first (git-facts option B), Task Server later</b><span class="d">Faster first step in the monolith; a second migration later.</span></span></label>
+      <label data-option-id="harden" data-option-label="A-A · Harden the git caches"><input type="radio" name="d7-authority" value="harden"><span><b>A-A · Harden the git caches</b><span class="d">Least change; the cold-start and fallback costs stay.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: the board cutover follows the remote Task Server runbook; the git-facts working decision (guardrails, B, then C) is kept, with C as the target.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="d8-gate-source" data-decision-id="d8-gate-source" data-decision-kind="single" data-decision-label="D8 Gate and review source delivery">
+      <h3>D8 Gate and review source delivery · How do gates and reviews get source?</h3>
+      <label data-option-id="object-cache" data-option-label="A · Host object cache per runner host, fetch by tree SHA, sparse checkout by test plan; bundles only for cold start (recommended)"><input type="radio" name="d8-gate-source" value="object-cache"><span><b>A · Host object cache per runner host, fetch by tree SHA, sparse checkout by test plan; bundles only for cold start (recommended)</b><span class="d">Transfers only missing objects; checkouts in seconds after warm-up.</span></span></label>
+      <label data-option-id="bundles" data-option-label="B · Keep thin bundles against cached tips"><input type="radio" name="d8-gate-source" value="bundles"><span><b>B · Keep thin bundles against cached tips</b><span class="d">No new component; full-history bundles on the pull path stay.</span></span></label>
+      <label data-option-id="shared-fs" data-option-label="C · Shared network file system for repositories"><input type="radio" name="d8-gate-source" value="shared-fs"><span><b>C · Shared network file system for repositories</b><span class="d">No transfer; couples hosts to one file server.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: the pull path stops bundling --all; review clones use the same cache.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="d9-workspace-repo" data-decision-id="d9-workspace-repo" data-decision-kind="single" data-decision-label="D9 End state of the workspace repository">
+      <h3>D9 End state of the workspace repository · What remains of the git-backed workspace?</h3>
+      <label data-option-id="export" data-option-label="A · Periodic export for audit and offline reading; nothing reads it in a request (recommended)"><input type="radio" name="d9-workspace-repo" value="export"><span><b>A · Periodic export for audit and offline reading; nothing reads it in a request (recommended)</b><span class="d">Push backlogs stop affecting the board; history stays readable.</span></span></label>
+      <label data-option-id="authority" data-option-label="B · Keep it as write authority for task files"><input type="radio" name="d9-workspace-repo" value="authority"><span><b>B · Keep it as write authority for task files</b><span class="d">No migration of task files; scan and push costs stay.</span></span></label>
+      <label data-option-id="remove" data-option-label="C · Remove it after cutover"><input type="radio" name="d9-workspace-repo" value="remove"><span><b>C · Remove it after cutover</b><span class="d">Least storage; loses the offline audit trail.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: the evidence batcher and push worker move to an export job after the write cutover.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+    <div class="decision" id="d10-lane-name" data-decision-id="d10-lane-name" data-decision-kind="single" data-decision-label="D10 Name of the lane 6-completed">
+      <h3>D10 Name of the lane 6-completed · Does Delivered keep its name?</h3>
+      <label data-option-id="accepted" data-option-label="A · Rename the display name to Accepted; Delivery is reserved for environments (recommended)"><input type="radio" name="d10-lane-name" value="accepted"><span><b>A · Rename the display name to Accepted; Delivery is reserved for environments (recommended)</b><span class="d">Removes the clash between Delivered and Delivery to Stage; one change in lane-presentation.ts and its specs.</span></span></label>
+      <label data-option-id="keep" data-option-label="B · Keep Delivered"><input type="radio" name="d10-lane-name" value="keep"><span><b>B · Keep Delivered</b><span class="d">No rename; Delivered keeps meaning integrated and accepted, not live.</span></span></label>
+      <p class="consequence">Consequence of the recommendation: the lane key stays 6-completed; only the display name and sentence change.</p>
+      <div data-comment="Comment (optional)"><textarea placeholder="Comment (optional)"></textarea></div>
+    </div>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2><span class="number">11</span> Implementation</h2>
+    <p>Delivery slices append their current implementation status here. Decision content above remains unchanged. Each slice is one <code>workbench.json</code> <code>implementationTasks</code> entry with a bounded <code>acceptanceScope</code>.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+</main>
+</body>
+</html>
