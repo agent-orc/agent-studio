@@ -150,6 +150,38 @@ public sealed class BatchGateGitReplayTests : IDisposable
     }
 
     [Fact]
+    public void RootStatusConflictWithoutProjectOptInEjectsSecondMember()
+    {
+        Directory.CreateDirectory(_root);
+        Git("init", "-q");
+        Git("config", "user.name", "Test");
+        Git("config", "user.email", "test@example.invalid");
+        File.WriteAllText(Path.Combine(_root, "status.md"), "base content\n");
+        Git("add", "status.md");
+        Git("commit", "-qm", "base");
+        var baseSha = Git("rev-parse", "HEAD");
+
+        Git("checkout", "-qb", "first");
+        File.WriteAllText(Path.Combine(_root, "status.md"), "first content\n");
+        Git("commit", "-qam", "first");
+        var firstSha = Git("rev-parse", "HEAD");
+
+        Git("checkout", "-q", "--detach", baseSha);
+        Git("checkout", "-qb", "second");
+        File.WriteAllText(Path.Combine(_root, "status.md"), "second content\n");
+        Git("commit", "-qam", "second");
+        var secondSha = Git("rev-parse", "HEAD");
+        var secondRef = "refs/heads/agent-studio/results/second/" + secondSha;
+        Git("update-ref", secondRef, secondSha);
+
+        var replay = Service().ReplayBatchMember(_root, secondRef, secondSha, firstSha);
+
+        Assert.False(replay.Success);
+        Assert.Equal(BatchReplayFailure.Conflict, replay.Failure);
+        Assert.Contains("status.md", replay.ConflictedFiles);
+    }
+
+    [Fact]
     public void FixRoundWithAnIntegrationMergeIsMergedIntoTheCandidateWithExactParents()
     {
         Directory.CreateDirectory(_root);
