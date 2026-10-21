@@ -16,7 +16,8 @@ public sealed record StagePayload(
     bool InfrastructureRetryAvailable = false, int MaximumReissues = 2,
     int? ReissuesUsed = null,
     ReviewRoundBudgetLedger? DeliveredRounds = null,
-    int MaximumDeliveredRounds = 4);
+    int MaximumDeliveredRounds = 4,
+    DeepReviewRepeatedBlock? RepeatedDeepReviewBlock = null);
 
 public sealed record StagePolicyDecision(OrchestrationAction Action, TransitionDecision? Transition = null);
 
@@ -43,7 +44,8 @@ public static class StageDecisionPolicy
             new(payload.MaximumCardRounds, payload.MaximumConcernRounds,
                 payload.MaximumDeliveredRounds, MaximumReissues: payload.MaximumReissues),
             new(payload.AutomaticRoundsUsed ?? reissuesUsed, payload.ConcernRoundsUsed, reissuesUsed),
-            new(payload.ReviewPlan?.BuildTestDeferredToBatch == true, payload.InfrastructureRetryAvailable), payload.DeliveredRounds);
+            new(payload.ReviewPlan?.BuildTestDeferredToBatch == true, payload.InfrastructureRetryAvailable), payload.DeliveredRounds,
+            RepeatedDeepReviewBlock: payload.RepeatedDeepReviewBlock);
     }
 
     public static ReviewRoundBudgetLedger DeliveredHistory(IEnumerable<StagePayload> priorOldestFirst)

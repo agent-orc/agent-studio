@@ -39,6 +39,9 @@ public sealed class RemotePipelineReviewEvidenceProjector
     /// <summary>Receipt participant prefix for remote review attempt usage.</summary>
     public const string ReviewParticipantPrefix = "support:remote-review:";
 
+    /// <summary>Receipt participant prefix for the deep review of an attempt, kept apart from the aspects.</summary>
+    public const string DeepReviewParticipantPrefix = "support:deep-review:";
+
     /// <summary>
     /// Synchronous so the evidence worker can apply the task-level projection
     /// (aspect files, pipeline steps, timeline) inside the review-generation
@@ -74,6 +77,38 @@ public sealed class RemotePipelineReviewEvidenceProjector
         ProjectToolGate(task, review, report, execution.Attempt);
         ProjectTimeline(task, review, report, evidenceFile, receivedAt);
         RecordReviewUsage(task, review, report);
+        RecordDeepReviewRound(task, review, report, receivedAt);
+    }
+
+    /// <summary>
+    /// Records the executed deep review in the card's deep-review ledger: the
+    /// graded delivery, its verdict, the fingerprints of its blocking findings
+    /// (the repeat check of the next round reads them) and its usage. One
+    /// entry per review attempt keeps a replayed report idempotent.
+    /// </summary>
+    internal static void RecordDeepReviewRound(TaskInfo task, ReviewAttemptDto review,
+        Contract.ReviewReportRequest report, DateTime receivedAt)
+    {
+        var command = report.Commands.LastOrDefault(item => item.Phase == "verification"
+            && Contract.ReviewCommandKinds.IsAgent(item.ExecutionKind) && DeepReviewAspect.Matches(item.StepId));
+        if (command is null || string.IsNullOrWhiteSpace(review.AttemptId)) return;
+        var verdict = report.Verdicts.LastOrDefault(item => DeepReviewAspect.Matches(item.Aspect));
+        var fingerprints = verdict is null ? []
+            : MonolithTransitionAdapter.DeepReviewDecisionPolicyBlockFingerprints(
+                [new Contract.ReviewFollowUpFinding(verdict.Aspect, verdict.Status, verdict.Summary,
+                    verdict.EvidenceChecked, verdict.Missing, verdict.Classification)])
+                .Select(item => item.Fingerprint).ToArray();
+        DeepReviewLedgerStore.RecordRound(task.FolderPath, new DeepReviewRoundEntry(
+            review.AttemptId,
+            command.ExpectedResultSha,
+            verdict?.Status ?? "missing",
+            verdict?.Summary,
+            fingerprints,
+            command.Model,
+            command.ThinkingLevel,
+            command.InputTokens,
+            command.OutputTokens,
+            receivedAt));
     }
 
     /// <summary>
@@ -86,27 +121,40 @@ public sealed class RemotePipelineReviewEvidenceProjector
     private void RecordReviewUsage(TaskInfo task, ReviewAttemptDto review, Contract.ReviewReportRequest report)
     {
         if (_mutations is null || string.IsNullOrWhiteSpace(review.AttemptId)) return;
-        var calls = BuildReviewUsageCalls(_pricing, review, report);
-        if (calls.Count == 0) return;
-        if (!_mutations.SetTokenReceiptEntriesOnFolder(
-            task.FolderPath,
-            ReviewParticipantPrefix + review.AttemptId,
-            calls))
+        foreach (var (participant, deepReview) in new[]
+                 {
+                     (ReviewParticipantPrefix, false),
+                     (DeepReviewParticipantPrefix, true),
+                 })
         {
-            // The evidence worker retries I/O failures and leaves the
-            // settlement journal unfinished until the receipt is durable.
-            throw new IOException($"Failed to persist remote review usage receipt for {review.AttemptId}");
+            var calls = BuildReviewUsageCalls(_pricing, review, report, deepReview);
+            if (calls.Count == 0) continue;
+            if (!_mutations.SetTokenReceiptEntriesOnFolder(
+                task.FolderPath,
+                participant + review.AttemptId,
+                calls))
+            {
+                // The evidence worker retries I/O failures and leaves the
+                // settlement journal unfinished until the receipt is durable.
+                throw new IOException($"Failed to persist remote review usage receipt for {review.AttemptId}");
+            }
         }
     }
 
+    /// <param name="deepReview">
+    /// True for the deep-review command only, false for every other agent
+    /// aspect, so the ledger attributes deep-review tokens to their own participant.
+    /// </param>
     internal static IReadOnlyList<TaskTokenCall> BuildReviewUsageCalls(ITokenPricing pricing,
         ReviewAttemptDto review,
-        Contract.ReviewReportRequest report)
+        Contract.ReviewReportRequest report,
+        bool deepReview = false)
     {
         var host = review.Lease?.HostId ?? report.Environment.HostId;
         var calls = new List<TaskTokenCall>();
         foreach (var command in report.Commands.Where(command =>
-                     Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)))
+                     Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                     && DeepReviewAspect.Matches(command.StepId) == deepReview))
         {
             var total = command.InputTokens + command.OutputTokens
                         + command.CacheReadTokens + command.CacheCreationTokens;
@@ -183,7 +231,9 @@ public sealed class RemotePipelineReviewEvidenceProjector
         var aspectId = command.StepId.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
             ? command.StepId["aspect-".Length..]
             : command.Aspect;
-        if (!AspectRunnerService.Catalogue.TryGetValue(aspectId, out var definition))
+        var definition = DeepReviewAspect.Matches(aspectId) ? DeepReviewAspect.Definition
+            : AspectRunnerService.Catalogue.GetValueOrDefault(aspectId);
+        if (definition is null)
             return;
         var remoteVerdict = report.Verdicts.LastOrDefault(verdict =>
             string.Equals(verdict.Aspect, command.Aspect, StringComparison.OrdinalIgnoreCase));

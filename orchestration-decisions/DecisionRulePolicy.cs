@@ -30,17 +30,21 @@ public sealed record DecisionRuleModelCatalogue(string Cli, IReadOnlyList<Decisi
 
 /// <summary>
 /// The closed trigger list. Each entry is read by a live decision path: the
-/// coding completion step transition, or the card-free capacity check.
+/// coding completion step transition, the card-free capacity check, or the
+/// deep-review decision of a Remote Review plan.
 /// </summary>
 public static class DecisionRuleTriggers
 {
     public const string StepTransition = "step-transition";
     public const string CodingCompletion = "CodingCompletion";
     public const string CapacityCheck = "capacity-check";
+    public const string DeepReview = "deep-review";
 
     public static readonly IReadOnlyList<string> Card = [StepTransition, CodingCompletion];
     public static readonly IReadOnlyList<string> Host = [CapacityCheck];
-    public static readonly IReadOnlyList<string> All = [.. Card, .. Host];
+    /// <summary>Review-plan triggers. Their rules only add grounds; they never offer or remove a lane action.</summary>
+    public static readonly IReadOnlyList<string> Review = [DeepReview];
+    public static readonly IReadOnlyList<string> All = [.. Card, .. Host, .. Review];
 
     /// <summary>Facts every coding completion occurrence carries.</summary>
     public static readonly IReadOnlyList<string> CodingCompletionFacts =
@@ -61,6 +65,19 @@ public static class DecisionRuleTriggers
         "host.admission-verdicts", "host.allocation-changes",
     ];
 
+    /// <summary>
+    /// Numeric facts a deep-review rule can compare with its threshold. A
+    /// fired rule adds an elevated ground and may name the deep-review model;
+    /// the hard-floor grounds and the xhigh level stay platform code.
+    /// </summary>
+    public static readonly IReadOnlyList<string> DeepReviewFacts =
+    [
+        "diff.changed-lines", "diff.changed-files", "review.blocking-rounds", "review.delivered-rounds",
+        "gate.red-count", "deep-review.rounds-used",
+    ];
+
+    public static bool IsReview(string? trigger) => trigger is not null && Review.Contains(trigger, StringComparer.Ordinal);
+
     public static bool IsCard(string? trigger) => trigger is not null && Card.Contains(trigger, StringComparer.Ordinal);
 
     public static bool IsHost(string? trigger) => trigger is not null && Host.Contains(trigger, StringComparer.Ordinal);
@@ -72,7 +89,8 @@ public static class DecisionRuleTriggers
     public static readonly IReadOnlyList<string> HistoricalFacts = ["review.last-outcome"];
 
     public static IReadOnlyList<string> KnownFacts(string? trigger)
-        => IsCard(trigger) ? CodingCompletionFacts : IsHost(trigger) ? CapacityCheckFacts : [];
+        => IsCard(trigger) ? CodingCompletionFacts : IsHost(trigger) ? CapacityCheckFacts
+            : IsReview(trigger) ? DeepReviewFacts : [];
 
     /// <summary>Facts an ask or hold rule may read: known facts observed at the occurrence.</summary>
     public static IReadOnlyList<string> EvidenceFacts(string? trigger)
@@ -226,6 +244,8 @@ public static class DecisionRulePolicy
             if (rule.WarningThreshold is { Length: > 0 } threshold
                 && !decimal.TryParse(threshold, NumberStyles.Number, CultureInfo.InvariantCulture, out _))
                 refusals.Add($"Rule {rule.Id} needs a numeric warning threshold.");
+            if (DecisionRuleTriggers.IsReview(rule.Trigger) && DeepReviewRuleRefusal(rule) is { } reviewRefusal)
+                refusals.Add(reviewRefusal);
             if (projectOverlay && DecisionRuleTriggers.IsHost(rule.Trigger))
                 refusals.Add($"Project rule {rule.Id} cannot govern host-wide actions.");
             if (rule.Model is { Length: > 0 } model && ModelRefusal(model, models) is { } modelRefusal)
@@ -283,6 +303,25 @@ public static class DecisionRulePolicy
             return $"sets model {model}, which the configured decision CLI {models.Cli} cannot serve.";
         return option.Trusted ? null
             : $"sets model {model}, which is below the trusted correctness floor.";
+    }
+
+    /// <summary>
+    /// A deep-review rule raises a review ground: it offers only <c>prepare</c>,
+    /// signals on missing data, needs a numeric threshold on a known fact, and
+    /// stays inside the A0/A1 floor. It cannot lower or skip a deep review.
+    /// </summary>
+    private static string? DeepReviewRuleRefusal(DecisionRuleV1 rule)
+    {
+        if (rule.CandidateActions.Count != 1 || rule.CandidateActions[0] != DecisionActionKinds.Prepare)
+            return $"Deep-review rule {rule.Id} may only offer prepare; it raises a ground and cannot skip a deep review.";
+        if (rule.MissingDataBehavior != "signal")
+            return $"Deep-review rule {rule.Id} must use signal for missing data.";
+        if (string.IsNullOrWhiteSpace(rule.WarningThreshold))
+            return $"Deep-review rule {rule.Id} needs a numeric warning threshold.";
+        if (!DecisionRuleTriggers.DeepReviewFacts.Contains(rule.FactId, StringComparer.Ordinal))
+            return $"Deep-review rule {rule.Id} reads {rule.FactId}, which is not a deep-review fact.";
+        return rule.AutonomyClass is "A0" or "A1" ? null
+            : $"Deep-review rule {rule.Id} must stay within the A0/A1 floor.";
     }
 
     private static string Behavior(DecisionRuleV1 rule)

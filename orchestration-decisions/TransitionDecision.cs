@@ -27,7 +27,8 @@ public sealed record GateBatchFacts(bool DeferredToBatch = false, bool Infrastru
     bool AspectRetryExhausted = false, bool InterventionActive = false, bool ProbeFailed = false);
 public sealed record TransitionFacts(CardFacts Card, AttemptFacts Attempt, ReviewFacts Review,
     DecisionSettings Settings, TimelineCounters Counters, GateBatchFacts Gate,
-    ReviewRoundBudgetLedger? DeliveredRounds = null, bool AcceptedReplay = false);
+    ReviewRoundBudgetLedger? DeliveredRounds = null, bool AcceptedReplay = false,
+    DeepReviewRepeatedBlock? RepeatedDeepReviewBlock = null);
 public sealed record DecisionReceipt(string Rule, string CardKey, string AttemptId,
     int RoundsUsed, int RoundsAllowed, IReadOnlyList<string> Aspects);
 public sealed record CandidateAction(TransitionAction Action, DecisionUnion Union, DecisionAuthority AuthorityFloor);
@@ -55,7 +56,8 @@ public static class TransitionDecisionPolicy
             new(facts.Counters.AutomaticRounds, facts.Settings.MaximumRounds),
             facts.DeliveredRounds ?? ReviewRoundBudgetLedger.Empty, facts.Attempt.Id,
             facts.Settings.MaximumDeliveredRounds, facts.Settings.ConsecutiveBlockRounds,
-            facts.Counters.Reissues, facts.Settings.MaximumReissues, facts.AcceptedReplay));
+            facts.Counters.Reissues, facts.Settings.MaximumReissues, facts.AcceptedReplay,
+            facts.RepeatedDeepReviewBlock));
         TransitionAction action;
         string reason;
         if (facts.AcceptedReplay || facts.Card.State != TaskStates.AutoReview)
@@ -79,7 +81,9 @@ public static class TransitionDecisionPolicy
         else if (review.Escalate)
         {
             action = TransitionAction.Escalate;
-            reason = "The card round budget is spent with an open test block.";
+            reason = review.RepeatedDeepReviewBlock is { } repeated
+                ? $"The deep-review finding blocked {repeated.ConsecutiveRounds} consecutive rounds; a person decides instead of another fix round."
+                : "The card round budget is spent with an open test block.";
         }
         else if (review.ShouldDegrade)
         {

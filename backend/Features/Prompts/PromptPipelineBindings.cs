@@ -15,6 +15,7 @@ public static class PromptPipelineBindings
             ["aspect-documentation-impact"] = "review-aspect-documentation-impact.md",
             ["aspect-tests-and-evidence"] = "review-aspect-tests-and-evidence.md",
             [PipelineCatalogue.RemoteConceptFitStepId] = "review-aspect-concept-fit.md",
+            [AgentStudio.Runner.DeepReviewAspect.StepId] = AgentStudio.Runner.DeepReviewAspect.PromptTemplate,
             [PipelineCatalogue.PostAbortReviewStepId] = "post-abort-review.md",
             [PipelineCatalogue.CodeReviewGradeStepId] = "code-review-grade.md",
             [PipelineCatalogue.TaskSpawnerStepId] = "task-spawner-relevance.md",

@@ -53,19 +53,28 @@ public static class ReviewFindingRoundPrompt
             EndFence(tag));
     }
 
-    /// <summary>Per-aspect review findings as one fenced data block.</summary>
+    /// <summary>
+    /// Per-aspect review findings as one fenced data block. Findings that
+    /// several aspects (or the deep review) report about the same location
+    /// are one entry (<see cref="ReviewFindingMergePolicy"/>).
+    /// </summary>
     public static string RenderAspectFindings(IReadOnlyList<ReviewFollowUpFinding> findings, string? nonce = null)
     {
         var lines = new List<string>();
-        foreach (var finding in findings)
+        foreach (var merged in ReviewFindingMergePolicy.Merge(findings))
         {
-            lines.Add($"## {finding.Aspect}");
+            var shared = merged.Aspects.Count > 1;
+            lines.Add($"## {string.Join(" + ", merged.Aspects)}");
             lines.Add("");
-            lines.Add($"- Summary: {finding.Summary}");
-            if (!string.IsNullOrWhiteSpace(finding.EvidenceChecked))
-                lines.Add($"- Evidence checked: {finding.EvidenceChecked}");
-            if (!string.IsNullOrWhiteSpace(finding.Finding))
-                lines.Add($"- Finding: {finding.Finding}");
+            foreach (var finding in merged.Sources)
+            {
+                var source = shared ? $" ({finding.Aspect})" : string.Empty;
+                lines.Add($"- Summary{source}: {finding.Summary}");
+                if (!string.IsNullOrWhiteSpace(finding.EvidenceChecked))
+                    lines.Add($"- Evidence checked{source}: {finding.EvidenceChecked}");
+                if (!string.IsNullOrWhiteSpace(finding.Finding))
+                    lines.Add($"- Finding{source}: {finding.Finding}");
+            }
             lines.Add("");
         }
         while (lines.Count > 0 && lines[^1].Length == 0) lines.RemoveAt(lines.Count - 1);

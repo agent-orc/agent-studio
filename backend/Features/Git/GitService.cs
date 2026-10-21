@@ -4069,6 +4069,31 @@ public partial class GitService
             .ToArray();
     }
 
+    /// <summary>
+    /// Added plus deleted lines of a delivery against its merge base with the
+    /// target (<c>git diff --numstat target...source</c>). Binary files count
+    /// zero lines. Null when the diff could not be computed.
+    /// </summary>
+    public int? ChangedLinesAgainstMergeBase(string repoRoot, string targetRef, string sourceRef)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return null;
+        if (!IsLikelyBranchName(targetRef) || !IsLikelyBranchName(sourceRef)) return null;
+
+        var (output, _, code) = RunGitArgs(
+            repoRoot, "diff", "--numstat", $"{targetRef}...{sourceRef}", RevisionsOnly);
+        if (code != 0) return null;
+
+        long lines = 0;
+        foreach (var row in output.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var columns = row.Split('\t');
+            if (columns.Length < 3) continue;
+            if (int.TryParse(columns[0], out var added)) lines += added;
+            if (int.TryParse(columns[1], out var deleted)) lines += deleted;
+        }
+        return (int)Math.Min(int.MaxValue, lines);
+    }
+
     /// <summary>Path cap of one <see cref="ReadFilesAtRevision"/> call.</summary>
     internal const int MaxRevisionFileReadPaths = 512;
 

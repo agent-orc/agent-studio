@@ -29,6 +29,10 @@ public static class ReviewRoundBudgetPolicy
     public const int DefaultMaximumRounds = 4;
     public const int DefaultConsecutiveBlockRounds = 2;
 
+    /// <summary>Blocking aspects a spent budget escalates instead of degrading, in reporting order.</summary>
+    public static readonly IReadOnlyList<string> NonDegradableAspects =
+        ["build-tests", "review-verification", "tests-and-evidence", DeepReviewDecisionPolicy.AspectId];
+
     /// <summary>
     /// A report with one of these outcomes delivered a review round. The report
     /// endpoint accepts outcome tokens case-insensitively, so the ledger must too.
@@ -116,15 +120,12 @@ public static class ReviewRoundBudgetPolicy
         maximumRounds = Math.Clamp(maximumRounds, 1, 20);
         consecutiveBlockRounds = Math.Clamp(consecutiveBlockRounds, 1, 20);
         // The deterministic build/test gate owns its failure. Never turn that
-        // failure, or a mixed review containing it, into an acceptance.
-        if (blocked.Contains("build-tests", StringComparer.OrdinalIgnoreCase)
-            || blocked.Contains("review-verification", StringComparer.OrdinalIgnoreCase)
-            || blocked.Contains("tests-and-evidence", StringComparer.OrdinalIgnoreCase))
-            return new(roundNumber, maximumRounds, [],
-                blocked.Contains("build-tests", StringComparer.OrdinalIgnoreCase)
-                    ? "build-tests"
-                    : blocked.Contains("review-verification", StringComparer.OrdinalIgnoreCase)
-                        ? "review-verification" : "tests-and-evidence");
+        // failure, or a mixed review containing it, into an acceptance. A
+        // deep-review block (security, data loss, fencing) is never degraded
+        // to a concern either; a spent budget escalates it to a person.
+        if (NonDegradableAspects.FirstOrDefault(aspect =>
+                blocked.Contains(aspect, StringComparer.OrdinalIgnoreCase)) is { } owner)
+            return new(roundNumber, maximumRounds, [], owner);
 
         string? recurrent = null;
         foreach (var aspect in blocked)

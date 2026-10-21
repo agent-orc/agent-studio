@@ -291,6 +291,20 @@ usable above the 24-hour default. The runner watchdog retains its typed timeout 
 existing salvage ref and SHA publication. RB-S2 stepped shaping budgets are
 superseded and were not implemented.
 
+AGT-3268 adds `DeepReviewDecisionPolicy`. From frozen `DeepReviewFacts` it
+decides per Remote Review delivery whether a deep review runs (`run`, `skip`
+or `ask`), and at which model and reasoning level. The inputs are the Token
+Economy risk class, touched areas, diff size, producing route, deep-review
+and review history, red gates, quota state and `deep-review` rules. The
+policy also fingerprints blocking deep-review findings by their cited files.
+`RepeatedBlock` names a finding that blocked again after its fix round.
+`ReviewBudgetFacts`, `TransitionFacts` and `StagePayload` carry it as
+`RepeatedDeepReviewBlock`. A product-failure report with such a block
+escalates instead of opening another round, and `deep-review` is a
+non-degradable aspect like the test gates. The `deep-review` rule trigger
+only adds grounds; see
+[review.md](../domains/review.md#engine-decided-deep-review-agt-3268).
+
 ## Inputs and outputs
 
 `TransitionFacts` contains card identity and lane, attempt identity and settled

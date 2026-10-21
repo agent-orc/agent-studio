@@ -549,6 +549,8 @@ internal static class PromptDescriptionCatalog
             "Review aspect that checks the change against the task's requirements.", "Review"),
         ["review-aspect-concept-fit.md"] = new("Aspect: concept fit",
             "Remote Review aspect that checks a Dossier against the current concept brief.", "Review"),
+        ["review-aspect-deep-review.md"] = new("Aspect: deep review",
+            "Engine-decided Remote Review deep pass for privilege, data-loss, resource, loop, fencing and race defects.", "Review"),
         ["review-aspect-tests-and-evidence.md"] = new("Aspect: tests & evidence",
             "Review aspect that checks for adequate tests and verification evidence.", "Review"),
         ["review-aspect-documentation-impact.md"] = new("Aspect: documentation impact",

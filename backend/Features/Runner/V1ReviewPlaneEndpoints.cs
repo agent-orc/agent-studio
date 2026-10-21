@@ -932,7 +932,9 @@ public static class V1ReviewPlaneEndpoints
                     ReissuesUsed: CountPriorAutomaticReissues(configuration["TaskRepository"],
                         reviewTask.ProjectName, reviewTask.Id),
                     DeliveredRounds: ReviewRoundBudgetStore.Read(reviewTask.FolderPath, rounds),
-                    MaximumDeliveredRounds: settings.Get(reviewTask.ProjectName).MaxDeliveredReviewRounds);
+                    MaximumDeliveredRounds: settings.Get(reviewTask.ProjectName).MaxDeliveredReviewRounds,
+                    RepeatedDeepReviewBlock: DeepReviewDecisionService.RepeatedBlock(
+                        reviewTask.FolderPath, attemptId, request.Verdicts, logger));
                 var existingOccurrence = orchestration.GetByIdempotencyKey(reviewOccurrenceKey);
                 var occurrence = existingOccurrence is { Status: not "cancelled" }
                     ? existingOccurrence
@@ -1079,6 +1081,8 @@ public static class V1ReviewPlaneEndpoints
                 ReviewDecisionLog.ReadAll(configuration["TaskRepository"]!, preparedTask.ProjectName),
                 timeline.ReadAll(preparedTask.FolderPath), preparedTask.Id,
                 CardRoundBudget.ResolveAllowed(configuration));
+            var deepReviewRepeat = DeepReviewDecisionService.RepeatedBlock(
+                preparedTask.FolderPath, attemptId, originalVerdicts, logger);
             var budgetDecision = MonolithTransitionAdapter.ReviewBudget(new ReviewBudgetFacts(
                 outcome.ToString(),
                 originalVerdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
@@ -1091,7 +1095,8 @@ public static class V1ReviewPlaneEndpoints
                 ReviewRoundBudgetPolicy.DefaultConsecutiveBlockRounds,
                 CountPriorAutomaticReissues(configuration["TaskRepository"], preparedTask.ProjectName, preparedTask.Id),
                 settings.Get(preparedTask.ProjectName).MaxAutoReissueAttempts
-                    ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2), acceptedReplay));
+                    ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2), acceptedReplay,
+                deepReviewRepeat));
             var roundBudget = budgetDecision.RoundBudget;
             var blockingAspects = budgetDecision.BlockingAspects;
             var cardAction = budgetDecision.CardAction;
@@ -1116,7 +1121,8 @@ public static class V1ReviewPlaneEndpoints
                     continuation = new RemoteReviewContinuation(
                         RemoteReviewContinuationKind.BudgetEscalation, string.Empty,
                         blockingAspects, settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
-                        cardBudget, deliveredRound, roundSeed);
+                        cardBudget, deliveredRound, roundSeed,
+                        RepeatedDeepReviewBlock: budgetDecision.RepeatedDeepReviewBlock);
                 else if (RemoteReviewContinuationPolicy.OpensFindingRound(outcome, reviewFollowUp.Action))
                 {
                     // AGT-3056: the round continues on the delivery this review graded.
@@ -1274,7 +1280,8 @@ public static class V1ReviewPlaneEndpoints
                     ReissuesUsed: CountPriorAutomaticReissues(configuration["TaskRepository"],
                         preparedTask.ProjectName, preparedTask.Id),
                     DeliveredRounds: roundSeed,
-                    MaximumDeliveredRounds: settings.Get(preparedTask.ProjectName).MaxDeliveredReviewRounds);
+                    MaximumDeliveredRounds: settings.Get(preparedTask.ProjectName).MaxDeliveredReviewRounds,
+                    RepeatedDeepReviewBlock: deepReviewRepeat);
                 var shadowJson = JsonSerializer.Serialize(shadowPayload, Json);
                 var shadowDecision = MonolithTransitionAdapter.Decide(
                     MonolithTransitionAdapter.StageDecisionPolicyFacts(preparedTask.Id, 0, shadowPayload));

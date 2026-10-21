@@ -35,6 +35,7 @@ public static class StepCostMeasurement
         PipelineCatalogue.ConceptSightReviewGateStepId,
         PipelineCatalogue.UiHumanReviewGateStepId,
         PipelineCatalogue.DriftCodePatternStepId,
+        AgentStudio.Runner.DeepReviewAspect.DecisionStepId,
     };
 
     /// <summary>

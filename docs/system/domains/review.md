@@ -1,6 +1,6 @@
 # Review Domain Map
 
-Version: 2026-10-12
+Version: 2026-10-21
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Review host placement (D19 A, AGT-3069)
@@ -18,6 +18,80 @@ Setting `required` to `false` restores the default preference. Standalone
 subjects freeze this choice when created; the monolith also checks the current
 project requirement before claim. A lease already granted remains fenced to
 its chosen host.
+
+## Engine-decided deep review (AGT-3268)
+
+A Remote Review plan can carry one `deep-review` agent aspect besides the
+bounded aspects. It replaces the operator's external deep-review loop of
+20.10.2026. `DeepReviewDecisionPolicy` in the decision library decides per
+delivery whether it runs, and at which model and reasoning level. The
+monolith's `DeepReviewDecisionService` collects the grounds when
+`RemoteReviewPlanBuilder` freezes the plan:
+
+- the Token Economy risk class from the card's correctness floor
+  (`ModelRoutingPolicyRegistry.CorrectnessRisk`);
+- touched areas of the changed paths (security, fencing, migration,
+  concurrency);
+- diff size (changed files and `git diff --numstat` lines);
+- the producing model and reasoning level;
+- earlier deep-review rounds and outcomes from the card's
+  `deep-review-ledger.json`;
+- delivered, blocking and red-gate rounds from `review-round-budget.json`;
+- the quota state of the deep-review CLI from the quota cache and caps;
+- active `deep-review` rules of the workspace and project.
+
+| Grounds | Decision |
+|---|---|
+| Mode `off`, no exact result SHA, the delivery already deep-reviewed, or 3 deep reviews spent on the card | skip |
+| No hard floor, risk area, size, producer, history or rule ground (quota headroom alone never counts) | skip |
+| Hard floor or touched risk area | run at `gpt-6-sol`/`xhigh` |
+| Elevated floor, more than 500 lines or 25 files, a producer below Sol/medium with 150 or more lines, a prior deep-review block, two blocking rounds, a red gate, or a fired rule | run at `gpt-6-sol`/`medium` |
+| Capped quota at a hard floor | ask: quota never lowers a hard floor, a person decides |
+| Capped quota without a hard floor, or a single elevated ground near the cap | skip |
+
+The first decision for a result SHA is frozen in the ledger, so a rebuilt
+plan reuses it. Each decision is also a rule row
+(`post-deep-review-decision`, verdict `run`, `shadow-run`, `skip` or `ask`)
+in the decision chain between the pipeline steps. The plan's skipped
+aspects name every decision that was not dispatched, with its reason.
+`ReviewDecisionOrchestrator:DeepReview:Mode` is `shadow` by default: the
+decision is recorded and never dispatched. `active` freezes the read-only
+command (`aspect-deep-review`, prompt `review-aspect-deep-review.md`) into the
+plan for a `run`. `off` records nothing. `:Cli`, `:Model` and `:MaxRounds`
+default to `codex`, `gpt-6-sol` and `3`. Scoped review never carries a
+deep-review verdict over.
+
+The review host runs the command like any agent aspect, read-only in the
+review workspace. Its verdict is projected as `aspect-deep-review.md` beside
+the aspect findings. Its tokens land in the task ledger under the participant
+`support:deep-review:<attempt>`, apart from `support:remote-review:<attempt>`;
+cycle-time attribution places both in the review segment. The executed round,
+with the fingerprints of its blocking findings, is recorded in the deep-review
+ledger.
+
+Aspect and deep-review findings form one fix round:
+`ReviewFindingMergePolicy` merges findings that cite the same `file:line`
+locations, or have the same normalized text, into one entry that names every
+reporter. A deep-review block is never degraded to a concern. When the round
+budget is spent it escalates like a test block. A deep-review finding that
+blocks again in the next deep-review round (same cited files, any wording)
+escalates the card to a person with the reason
+`deep-review-repeated-block`, instead of opening another round. The repeat
+reaches `ReviewBudgetPolicy`, the shadow review-report payload and the engine
+payload as `RepeatedDeepReviewBlock`.
+
+A `deep-review` rule in the Rules editor offers only `prepare`, uses `signal`
+for missing data, stays within A0/A1, and compares a numeric threshold with
+`diff.changed-lines`, `diff.changed-files`, `review.blocking-rounds`,
+`review.delivered-rounds`, `gate.red-count` or `deep-review.rounds-used`. A
+fired rule adds an elevated ground and may name the deep-review model. It
+cannot skip a deep review, lower the `xhigh` hard-floor level or change the
+round limit.
+
+Not yet covered: the standalone Task Server plan path and the local
+(non-remote) aspect runner do not decide a deep review. In `active` mode, an
+`ask` is visible in the decision chain and the skipped aspects but does not
+hold the delivery.
 
 ## Quality Studio shadow evidence
 

@@ -44,19 +44,22 @@ public sealed class RemoteReviewPlanBuilder
     private readonly GitService? _git;
     private readonly TimeProvider _time;
     private readonly ILogger<RemoteReviewPlanBuilder>? _logger;
+    private readonly DeepReviewDecisionService? _deepReview;
 
     public RemoteReviewPlanBuilder(
         AspectRunnerService aspects,
         IConfiguration configuration,
         GitService? git = null,
         TimeProvider? time = null,
-        ILogger<RemoteReviewPlanBuilder>? logger = null)
+        ILogger<RemoteReviewPlanBuilder>? logger = null,
+        DeepReviewDecisionService? deepReview = null)
     {
         _aspects = aspects;
         _configuration = configuration;
         _git = git;
         _time = time ?? TimeProvider.System;
         _logger = logger;
+        _deepReview = deepReview;
     }
 
     /// <summary>
@@ -306,6 +309,10 @@ public sealed class RemoteReviewPlanBuilder
                 ThinkingLevel: thinking));
         }
 
+        if (!isConcept && !noChange)
+            AddDeepReview(task, repositoryPath, integrationRef, resultRef, resultSha, changedPaths, inputs,
+                commands, skipped);
+
         var hasModelReview = commands.Any(command =>
             Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind));
         if (deferBuildTest && !hasModelReview)
@@ -358,6 +365,51 @@ public sealed class RemoteReviewPlanBuilder
                     .ToArray(),
             }
             : plan;
+    }
+
+    /// <summary>
+    /// The engine-decided deep review (AGT-3268). The decision is frozen per
+    /// result SHA; only a dispatched decision (<c>active</c> mode) adds the
+    /// read-only agent command at the decided model and reasoning level. Any
+    /// other decision is named in the skipped aspects with its reason.
+    /// </summary>
+    private void AddDeepReview(
+        TaskInfo task,
+        string? repositoryPath,
+        string? integrationRef,
+        string? resultRef,
+        string? resultSha,
+        IReadOnlyList<string>? changedPaths,
+        AspectRunInputs inputs,
+        List<Contract.ReviewCommandDto> commands,
+        List<Contract.ReviewSkippedAspectDto> skipped)
+    {
+        if (_deepReview?.Decide(task, repositoryPath, integrationRef, resultRef, resultSha, changedPaths)
+            is not { } entry)
+            return;
+        var decision = entry.Decision;
+        if (!decision.Dispatch || decision.Model is null)
+        {
+            skipped.Add(new(DeepReviewAspect.Id, decision.Action == DeepReviewActions.Run
+                ? $"Shadow mode: the engine would run a deep review at {decision.Model}/{decision.ThinkingLevel}; {decision.Reason}"
+                : decision.Reason));
+            return;
+        }
+        var prompt = _aspects.BuildAspectPrompt(DeepReviewAspect.Definition, inputs, decision.Model,
+            pipelineStepId: DeepReviewAspect.StepId);
+        var budget = ReviewAspectTimeoutPolicy.Derive(entry.CliType, decision.Model, decision.ThinkingLevel,
+            Contract.ReviewAspectBudgetPolicy.MaterialCharacters(prompt), _configuration);
+        commands.Add(new Contract.ReviewCommandDto(
+            DeepReviewAspect.StepId,
+            DeepReviewAspect.Id,
+            entry.CliType,
+            [],
+            TimeoutSeconds: budget.Seconds,
+            ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
+            Prompt: prompt,
+            CliType: entry.CliType,
+            Model: decision.Model,
+            ThinkingLevel: decision.ThinkingLevel));
     }
 
     /// <summary>
@@ -479,7 +531,9 @@ public sealed class RemoteReviewPlanBuilder
         foreach (var plannedCommand in plan.Commands)
         {
             var command = plannedCommand;
+            // A dispatched deep review was decided for this delivery; it is never carried over.
             if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                || DeepReviewAspect.Matches(command.Aspect)
                 || !decisions.TryGetValue(command.Aspect, out var decision)
                 || decision.Run
                 || !previous.TryGetValue(command.Aspect, out var priorVerdict))

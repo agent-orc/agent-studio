@@ -5,10 +5,16 @@ namespace AgentStudio.OrchestrationDecisions;
 public sealed record ReviewBudgetFacts(string Outcome, IReadOnlyList<ReviewFollowUpFinding> Findings,
     int ConcernRoundsUsed, int MaximumConcernRounds, CardRoundBudgetState CardBudget,
     ReviewRoundBudgetLedger DeliveredRounds, string AttemptId, int MaximumDeliveredRounds,
-    int ConsecutiveBlockRounds, int PriorReissues, int MaximumReissues, bool AcceptedReplay = false);
+    int ConsecutiveBlockRounds, int PriorReissues, int MaximumReissues, bool AcceptedReplay = false,
+    DeepReviewRepeatedBlock? RepeatedDeepReviewBlock = null);
 
+/// <param name="RepeatedDeepReviewBlock">
+/// Set when <see cref="Escalate"/> comes from a deep-review finding that blocked
+/// again after its fix round, rather than from a spent card budget.
+/// </param>
 public sealed record ReviewBudgetDecision(ReviewFollowUpDecision FollowUp, ReviewRoundBudgetDecision RoundBudget,
-    CardRoundBudgetAction CardAction, IReadOnlyList<string> BlockingAspects, bool ShouldDegrade, bool Escalate);
+    CardRoundBudgetAction CardAction, IReadOnlyList<string> BlockingAspects, bool ShouldDegrade, bool Escalate,
+    DeepReviewRepeatedBlock? RepeatedDeepReviewBlock = null);
 
 public static class ReviewBudgetPolicy
 {
@@ -37,7 +43,13 @@ public static class ReviewBudgetPolicy
             if (!adjusted.Any(item => ReviewGradingPolicy.IsBlockingToken(item.Status)))
                 followUp = ReviewRoundBudgetPolicy.ApplyFollowUp(followUp, round);
         }
+        // A deep-review finding that blocks again after its fix round goes to a
+        // person; another automatic round would only repeat the same loop.
+        var repeated = !facts.AcceptedReplay && facts.Outcome == ReviewOutcomeKinds.ProductFailure
+            ? facts.RepeatedDeepReviewBlock : null;
         return new(followUp, round, card, blocked, degrade,
-            !facts.AcceptedReplay && facts.Outcome == ReviewOutcomeKinds.ProductFailure && card == CardRoundBudgetAction.Escalate);
+            !facts.AcceptedReplay && facts.Outcome == ReviewOutcomeKinds.ProductFailure
+                && (card == CardRoundBudgetAction.Escalate || repeated is not null),
+            repeated);
     }
 }

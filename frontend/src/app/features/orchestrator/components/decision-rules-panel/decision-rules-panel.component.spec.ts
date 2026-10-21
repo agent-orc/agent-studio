@@ -117,6 +117,7 @@ describe('DecisionRulesPanelComponent', () => {
     const options = [...fixture.nativeElement.querySelectorAll('.rules__row select')[0].options]
       .map((option: HTMLOptionElement) => option.value);
     expect(options).toEqual([...DECISION_RULE_TRIGGERS]);
+    expect(options).toContain('deep-review');
     component.updateRule(0, 'id', 'queue-pressure');
     component.updateRule(0, 'factId', 'host.queue');
     component.reason.set('Watch queue pressure');

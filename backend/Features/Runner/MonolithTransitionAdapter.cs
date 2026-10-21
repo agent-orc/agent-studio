@@ -243,6 +243,16 @@ public static class MonolithTransitionAdapter
     public static bool TransitionDecisionPolicyRetryInfrastructure(bool budgetAvailable, bool aspectRetryExhausted, bool interventionActive, bool probeFailed, bool diagnosisSupported)
         => TransitionDecisionPolicy.RetryInfrastructure(budgetAvailable, aspectRetryExhausted, interventionActive, probeFailed, diagnosisSupported);
 
+    public static DeepReviewDecision DeepReview(DeepReviewFacts facts) => DeepReviewDecisionPolicy.Decide(facts);
+
+    public static IReadOnlyList<(string Fingerprint, string Finding)> DeepReviewDecisionPolicyBlockFingerprints(
+        IEnumerable<ReviewFollowUpFinding> findings)
+        => DeepReviewDecisionPolicy.BlockFingerprints(findings);
+
+    public static DeepReviewRepeatedBlock? DeepReviewDecisionPolicyRepeatedBlock(IEnumerable<ReviewFollowUpFinding> current,
+        IReadOnlyList<DeepReviewRoundRecord> priorRoundsOldestFirst, string currentAttemptId)
+        => DeepReviewDecisionPolicy.RepeatedBlock(current, priorRoundsOldestFirst, currentAttemptId);
+
     public static string? TransitionDecisionPolicyTargetLane(TransitionAction? action, string? sourcePayloadTarget, OrchestrationAction stageAction)
         => TransitionDecisionPolicy.TargetLane(action, sourcePayloadTarget, stageAction);
 

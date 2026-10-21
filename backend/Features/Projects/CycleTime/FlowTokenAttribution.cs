@@ -30,9 +30,8 @@ public static class FlowTokenAttribution
                     index = segments.FindIndex(s => s.Class == "active"
                         && s.Step is ("coding" or "codingNoDelivery") && s.Start <= call.Ts && s.End >= call.Ts);
             }
-            else if (participant.StartsWith("support:remote-review:", StringComparison.Ordinal))
+            else if (ReviewAttemptOf(participant) is { } id)
             {
-                var id = participant["support:remote-review:".Length..];
                 index = segments.FindIndex(s => s.AttemptId == id
                     && s.Step is ("reviewAspects" or "reviewFailedAttempt"));
                 if (index < 0) index = segments.FindIndex(s => s.Step == "reviewAspects"
@@ -62,6 +61,14 @@ public static class FlowTokenAttribution
         }
         return row with { Flow = row.Flow with { Segments = segments.OrderBy(s => s.Start).ToList() },
             CardTokens = cardTokens, CardCostUsd = cardCost };
+    }
+
+    /// <summary>The review attempt of a remote review or deep review participant (both run in the review segment).</summary>
+    private static string? ReviewAttemptOf(string participant)
+    {
+        foreach (var prefix in new[] { "support:remote-review:", "support:deep-review:" })
+            if (participant.StartsWith(prefix, StringComparison.Ordinal)) return participant[prefix.Length..];
+        return null;
     }
 
     private static long Tokens(TaskTokenCall call) => call.InputTokens + call.OutputTokens

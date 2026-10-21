@@ -188,6 +188,31 @@ public sealed class ModelRoutingPolicyRegistry
         };
     }
 
+    /// <summary>
+    /// The card's correctness risk class from the same floor signals
+    /// <see cref="Recommend"/> applies, without a model catalogue:
+    /// <c>critical</c> for a Sol/xhigh hard floor, <c>elevated</c> for a
+    /// Sol/medium floor, otherwise <c>standard</c>. The deep-review decision
+    /// reads it as the Token Economy risk class of the delivery.
+    /// </summary>
+    public (string RiskClass, string? FloorTier, string Reason) CorrectnessRisk(
+        string? taskType, string? title, string? prompt)
+    {
+        var text = $"{title}\n{prompt}";
+        if (CriticalFloorSignal.Match(text) is { Success: true } critical)
+            return ("critical", "sol-xhigh", $"hard floor sol-xhigh: task text names '{critical.Value}'");
+        var subsystems = RuntimeSubsystemSignal.Matches(text)
+            .Select(match => match.Value.ToLowerInvariant()).Distinct(StringComparer.Ordinal).Count();
+        if (SolFloorSignal.Match(text) is { Success: true } sol)
+            return ("elevated", "sol-medium", $"floor sol-medium: task text names '{sol.Value}'");
+        if (subsystems >= 3)
+            return ("elevated", "sol-medium", $"floor sol-medium: {subsystems} runtime subsystems named");
+        var floor = Policy.TaskTypeDefaults.TryGetValue(TaskTypes.Normalize(taskType), out var typeDefault)
+            ? typeDefault.HardFloorTier : null;
+        return ("standard", string.IsNullOrWhiteSpace(floor) ? null : floor,
+            $"no hard floor signal for {TaskTypes.Normalize(taskType)}");
+    }
+
     /// <summary>The explicitly declared same-provider sibling for a request refusal.</summary>
     public ProviderRejectionModelFallback? ProviderRejectionFallback(
         string? cliType,

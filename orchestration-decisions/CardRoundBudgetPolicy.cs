@@ -17,7 +17,7 @@ public static class CardRoundBudgetPolicy
     {
         if (!budget.Exhausted) return CardRoundBudgetAction.OpenRound;
         var aspects = blockingAspects.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return aspects.Overlaps(["build-tests", "tests-and-evidence", "review-verification"])
+        return aspects.Overlaps(ReviewRoundBudgetPolicy.NonDegradableAspects)
             ? CardRoundBudgetAction.Escalate
             : CardRoundBudgetAction.DegradeToFollowUp;
     }

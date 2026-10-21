@@ -11,6 +11,10 @@ public enum RemoteReviewContinuationKind { FindingRound, BudgetEscalation }
 /// card's continuation base before the move to Ready. Null for an escalation and
 /// for a subject that named no fenced result ref.
 /// </param>
+/// <param name="RepeatedDeepReviewBlock">
+/// AGT-3268: set on an escalation caused by a deep-review finding that blocked
+/// again after its fix round, so the person sees that finding as the reason.
+/// </param>
 public sealed record RemoteReviewContinuation(
     RemoteReviewContinuationKind Kind,
     string FollowUp,
@@ -19,7 +23,8 @@ public sealed record RemoteReviewContinuation(
     CardRoundBudgetState Budget,
     DeliveredReviewRound? DeliveredRound = null,
     ReviewRoundBudgetLedger? DeliveredRoundSeed = null,
-    ContinuationBaseRecord? Base = null);
+    ContinuationBaseRecord? Base = null,
+    DeepReviewRepeatedBlock? RepeatedDeepReviewBlock = null);
 
 
 
@@ -81,8 +86,13 @@ public static class RemoteReviewContinuationProjection
             task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
             var target = continuation.Kind == RemoteReviewContinuationKind.FindingRound
                 ? TaskStates.Ready : TaskStates.Escalated;
+            var repeated = continuation.Kind == RemoteReviewContinuationKind.BudgetEscalation
+                ? continuation.RepeatedDeepReviewBlock : null;
             var cause = continuation.Kind == RemoteReviewContinuationKind.FindingRound
-                ? "multi-aspect-block" : "card-round-budget";
+                ? "multi-aspect-block" : repeated is not null ? "deep-review-repeated-block" : "card-round-budget";
+            var escalationReason = repeated is not null
+                ? $"Deep-review finding blocked {repeated.ConsecutiveRounds} consecutive rounds; a person decides: {repeated.Finding}"
+                : $"Automatic round budget spent ({continuation.Budget.Used} of {continuation.Budget.Allowed}).";
             var moveKey = $"continuation:{entry.IdempotencyKey}";
             // A settled review stays the card's current attempt until the next
             // one is minted, so a later return to 4-auto-review must not replay
@@ -105,7 +115,7 @@ public static class RemoteReviewContinuationProjection
                     cause: $"remote-review-continuation:{entry.AttemptId}",
                     reason: continuation.Kind == RemoteReviewContinuationKind.FindingRound
                         ? $"Blocking review findings from {entry.AttemptId}."
-                        : $"Automatic round budget spent ({continuation.Budget.Used} of {continuation.Budget.Allowed}).",
+                        : escalationReason,
                     authorityWrite: new AttemptWriteReference(
                         entry.AttemptId, entry.Report.Fence, entry.Report.AuthorityEpoch, moveKey),
                     suppressProductExecution: true,
@@ -130,6 +140,11 @@ public static class RemoteReviewContinuationProjection
                 continuation.Kind == RemoteReviewContinuationKind.FindingRound
                     ? CardRoundBudgetAction.OpenRound : CardRoundBudgetAction.Escalate);
             receipt["reviewAttemptId"] = entry.AttemptId;
+            if (repeated is not null)
+            {
+                receipt["deepReviewFingerprint"] = repeated.Fingerprint;
+                receipt["deepReviewRounds"] = repeated.ConsecutiveRounds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
             if (continuation.Kind == RemoteReviewContinuationKind.FindingRound)
             {
                 TaskJsonFile.UpdateOrder(task.FolderPath, 0, logger);
@@ -185,7 +200,9 @@ public static class RemoteReviewContinuationProjection
                 TimelineActors.QualityLoop,
                 continuation.Kind == RemoteReviewContinuationKind.FindingRound
                     ? $"Blocking findings from review {entry.AttemptId} reopened the card."
-                    : $"Automatic round budget spent ({continuation.Budget.Used} of {continuation.Budget.Allowed}); open blocking aspects: {string.Join(", ", continuation.BlockingAspects)}.",
+                    : repeated is not null
+                        ? escalationReason
+                        : $"Automatic round budget spent ({continuation.Budget.Used} of {continuation.Budget.Allowed}); open blocking aspects: {string.Join(", ", continuation.BlockingAspects)}.",
                 runId: entry.AttemptId, details: receipt);
             return true;
         }
