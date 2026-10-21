@@ -42,6 +42,71 @@ public sealed class RunnerModelAcceptanceProbeTests
     }
 
     [Fact]
+    public async Task Launch_rejection_recorded_during_a_probe_wins_and_orders_later_evidence()
+    {
+        var now = DateTimeOffset.UnixEpoch.AddHours(1);
+        var probe = new RunnerModelAcceptanceProbe();
+        var generation = "login-a";
+        var racingRejection = true;
+        probe.Configure((provider, model, _) =>
+        {
+            // The coding run's refusal lands while this probe is in flight.
+            if (racingRejection) probe.RecordRejection(provider, model);
+            return Task.FromResult(new ProcessResult(0, "OK", ""));
+        }, _ => generation, () => now);
+
+        await probe.RefreshAsync([("codex", "gpt-6-sol")], CancellationToken.None);
+        var held = Assert.Single(probe.Snapshot("codex", ["gpt-6-sol"]));
+        Assert.Equal("unavailable", held.Status);
+
+        racingRejection = false;
+        generation = "login-b";
+        var unverified = Assert.Single(probe.Snapshot("codex", ["gpt-6-sol"]));
+        await probe.RefreshAsync([("codex", "gpt-6-sol")], CancellationToken.None);
+        var recovered = Assert.Single(probe.Snapshot("codex", ["gpt-6-sol"]));
+
+        Assert.Equal("unknown", unverified.Status);
+        Assert.Equal("ready", recovered.Status);
+        Assert.True(recovered.ProbeSequence > unverified.ProbeSequence);
+        Assert.True(unverified.ProbeSequence >= held.ProbeSequence);
+    }
+
+    [Fact]
+    public void Operator_configured_routes_outside_the_built_in_list_are_probe_candidates()
+    {
+        var options = new RunnerOptions
+        {
+            ServerUrl = "http://127.0.0.1:5031",
+            RunnerId = "coding-a",
+            RunnerName = "coding-a",
+            Hostname = "host-a",
+            BackendName = "test",
+            Role = "coding",
+            WorkDir = Path.GetTempPath(),
+            BaseBranch = "main",
+            CodexCliBin = Path.Combine(Path.GetTempPath(), $"missing-codex-{Guid.NewGuid():N}"),
+            ClaudeCliBin = Path.Combine(Path.GetTempPath(), $"missing-claude-{Guid.NewGuid():N}"),
+        };
+        var probe = new RunnerModelAcceptanceProbe();
+        probe.UseConfiguredModels(
+        [
+            new ConfiguredModelRouteDto("Codex", " gpt-6.2-sol "),
+            new ConfiguredModelRouteDto("claude", "claude-opus-6[1m]"),
+            new ConfiguredModelRouteDto("codex", "../escape"),
+            new ConfiguredModelRouteDto("codex", "gpt 6"),
+            new ConfiguredModelRouteDto("gemini", "gemini-3-pro"),
+        ]);
+
+        var candidates = RunnerCapabilityProbe.ModelCandidates(options, probe.ConfiguredModels);
+
+        Assert.Contains(("codex", "gpt-6.2-sol"), candidates);
+        Assert.Contains(("claude", "claude-opus-6[1m]"), candidates);
+        Assert.Contains(("codex", "gpt-6-sol"), candidates);
+        Assert.DoesNotContain(candidates, item => item.Model.Contains("escape", StringComparison.Ordinal)
+                                                  || item.Model.Contains(' ') || item.Provider == "gemini");
+    }
+
+    [Fact]
     public async Task Inconclusive_probe_retries_after_bounded_backoff()
     {
         var now = DateTimeOffset.UnixEpoch.AddHours(1);

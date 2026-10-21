@@ -38,7 +38,22 @@ internal static class RunnerCapabilityProbe
         }
     }
 
-    internal static IReadOnlyList<(string Provider, string Model)> ModelCandidates(RunnerOptions options)
+    internal static IReadOnlyList<(string Provider, string Model)> ModelCandidates(
+        RunnerOptions options,
+        IReadOnlyList<(string Provider, string Model)>? configured = null)
+    {
+        // Operator-configured primary and fallback routes are probed even when
+        // they are newer than the built-in list or the CLI's own catalogue.
+        var providers = CodingCliBinaries(options).Select(item => item.CliType).ToHashSet(StringComparer.Ordinal);
+        return BuiltInModelCandidates(options)
+            .Concat((configured ?? RunnerModelAcceptanceProbe.Shared.ConfiguredModels)
+                .Where(route => providers.Contains(route.Provider)
+                    && RunnerModelAcceptanceProbe.IsProbeableModelId(route.Model)))
+            .Distinct()
+            .ToArray();
+    }
+
+    private static IReadOnlyList<(string Provider, string Model)> BuiltInModelCandidates(RunnerOptions options)
         => CodingCliBinaries(options).SelectMany(item =>
         {
             if (item.CliType == CliSelection.CodexCli)

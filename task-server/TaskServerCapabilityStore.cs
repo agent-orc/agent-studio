@@ -35,6 +35,7 @@ public sealed partial class TaskServerStore
             request.SchemaVersion == CapabilityProtocol.LegacySchemaVersion && request.CredentialHealthVersion is not null)
             throw new ArgumentException("Credential health version requires capability schema 2.");
 
+        IReadOnlyList<ConfiguredModelRouteDto> configuredRoutes = [];
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var runner = await ReadCapabilityRunnerAsync(
@@ -91,24 +92,12 @@ public sealed partial class TaskServerStore
                     throw new TaskServerConflictException("stale-capability-advertisement",
                         $"A newer credential observation already exists for {key}.");
                 var advertisedStatus = capability.Status.Trim().ToLowerInvariant();
-                if (key.StartsWith("model-acceptance:", StringComparison.Ordinal)
-                    && advertisedStatus == "ready")
-                {
-                    var rejectionAt = await ScalarAsync(connection, """
-                        SELECT MAX(held.occurred_at) FROM events held
-                         WHERE held.kind = 'execution.model-capability-held'
-                           AND json_extract(held.payload_json, '$.runnerId') = $runner
-                           AND 'model-acceptance:' || json_extract(held.payload_json, '$.provider')
-                               || ':' || json_extract(held.payload_json, '$.model') = $key;
-                        """, ct, transaction, ("$runner", request.RunnerId), ("$key", key));
-                    if (rejectionAt is string rejectedAt
-                        && (capability.CredentialObservedAt is not { } observedAt
-                            || observedAt.ToUniversalTime() <= Parse(rejectedAt)))
-                        advertisedStatus = "unavailable";
-                }
+                if (key.StartsWith("model-acceptance:", StringComparison.Ordinal))
+                    advertisedStatus = await ApplyModelRejectionAsync(connection, transaction, request,
+                        key, advertisedStatus, capability.ProbeSequence, ct);
                 var advertisedDetail = advertisedStatus == "unavailable" &&
                                        string.Equals(capability.Status, "ready", StringComparison.OrdinalIgnoreCase)
-                    ? "The provider refused this model for the host login."
+                    ? ModelRefusedDetail
                     : capability.Detail;
                 var tracksProbeHistory = key.StartsWith("provider-auth:", StringComparison.Ordinal);
                 var positiveRecovery = request.CredentialHealthVersion != 2 && tracksProbeHistory
@@ -298,10 +287,12 @@ public sealed partial class TaskServerStore
                     telemetryAt = request.Telemetry?.ObservedAt,
                 }),
                 ct);
+            configuredRoutes = await ReadConfiguredModelRoutesAsync(connection, transaction, ct);
         }, ct);
         await EvaluateHostCliPolicyAsync(request.RunnerId, actorId, ct);
         return (await ListRunnerCapabilitySnapshotsAsync(ct))
-            .Single(item => string.Equals(item.RunnerId, request.RunnerId, StringComparison.Ordinal));
+            .Single(item => string.Equals(item.RunnerId, request.RunnerId, StringComparison.Ordinal))
+            with { ConfiguredModelRoutes = configuredRoutes };
     }
 
     private static void ValidateCredentialCapability(

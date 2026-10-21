@@ -1510,8 +1510,9 @@ public sealed partial class TaskServerStore
             // evaluation and one admission receipt rather than one per task.
             var verdicts = new List<ClaimPlacementVerdict>();
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
-                ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId,
-                    request.RunnerId, UtcNow, ct),
+                WhereModelAcceptedAsync(
+                    ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
+                    connection, transaction, request.RunnerId, ct),
                 async projectId =>
                 {
                     var verdict = await EvaluateProjectAsync(projectId);
@@ -1540,7 +1541,7 @@ public sealed partial class TaskServerStore
             capabilityAdmission = selected!.Admission!;
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
-                connection, transaction, task, ct);
+                connection, transaction, task.TaskId, ct);
             var continuationIntent = await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct);
             var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
             SessionContinuationLedgerEntry? previousSession = null;
@@ -2215,14 +2216,8 @@ public sealed partial class TaskServerStore
                 var cli = request.OutcomeDecision?.RawFacts.EffectiveCliType?.Trim().ToLowerInvariant();
                 if (!string.IsNullOrWhiteSpace(cli))
                 {
-                    await ExecuteAsync(connection, """
-                        UPDATE runner_capabilities
-                           SET advertised_status = 'unavailable',
-                               detail = 'The provider refused this model for the host login.'
-                         WHERE runner_id = $runner AND capability_key = $key;
-                        """, ct, transaction,
-                        ("$runner", request.RunnerId),
-                        ("$key", CapabilityProtocol.ModelAcceptance(cli, providerRecovery.Model)));
+                    await RecordModelRejectionAsync(connection, transaction, request.RunnerId,
+                        CapabilityProtocol.ModelAcceptance(cli, providerRecovery.Model), now, ct);
                     await AppendLifecycleEventAsync(connection, transaction, runId, lease.TaskId,
                         lease.Fence, "execution.model-capability-held", new
                         {
@@ -4292,7 +4287,13 @@ public sealed partial class TaskServerStore
                 ON orchestrator_context_turns(context_key, sequence);
             CREATE INDEX IF NOT EXISTS ix_leases_task_status ON leases(task_id, status);
             CREATE INDEX IF NOT EXISTS ix_events_run_cursor ON events(run_id, cursor);
-            CREATE INDEX IF NOT EXISTS ix_events_kind_occurred ON events(kind, occurred_at);
+            CREATE TABLE IF NOT EXISTS runner_model_rejections(
+                runner_id TEXT NOT NULL,
+                capability_key TEXT NOT NULL,
+                rejected_at TEXT NOT NULL,
+                acknowledged_instance_id TEXT,
+                acknowledged_sequence INTEGER,
+                PRIMARY KEY(runner_id, capability_key));
             CREATE INDEX IF NOT EXISTS ix_artifacts_run ON artifacts(run_id);
             CREATE INDEX IF NOT EXISTS ix_legacy_entities_migration_kind
                 ON legacy_migration_entities(migration_id, entity_kind);

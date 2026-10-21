@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
@@ -16,6 +17,36 @@ internal sealed class RunnerModelAcceptanceProbe
     private Func<string, string, CancellationToken, Task<ProcessResult>>? _launch;
     private Func<string, string?> _generation = _ => null;
     private Func<DateTimeOffset> _clock = () => DateTimeOffset.UtcNow;
+    private IReadOnlyList<(string Provider, string Model)> _configured = [];
+    // Causal order for the server: a verdict written after the server saw a
+    // non-ready entry carries a larger sequence than that entry did.
+    private long _sequence;
+    private const int MaxConfiguredModels = 16;
+    private static readonly Regex ProbeableModelId = new(
+        @"^[A-Za-z0-9](?:[A-Za-z0-9._\-\[\]]{0,79})$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>Operator-configured routes beyond the built-in candidate list.</summary>
+    internal IReadOnlyList<(string Provider, string Model)> ConfiguredModels
+    {
+        get { lock (_sync) return _configured; }
+    }
+
+    internal void UseConfiguredModels(IEnumerable<ConfiguredModelRouteDto>? routes)
+    {
+        var accepted = (routes ?? [])
+            .Select(route => (Provider: CliSelection.NormalizeCliType(route.CliType), Model: route.Model?.Trim()))
+            .Where(route => route.Provider is not null && IsProbeableModelId(route.Model))
+            .Select(route => (route.Provider!, route.Model!))
+            .Distinct()
+            .Take(MaxConfiguredModels)
+            .ToArray();
+        lock (_sync) _configured = accepted;
+    }
+
+    /// <summary>The model id reaches a CLI argument and a probe directory name.</summary>
+    internal static bool IsProbeableModelId(string? model)
+        => model is not null && ProbeableModelId.IsMatch(model) && !model.Contains("..", StringComparison.Ordinal);
 
     internal void Configure(
         Func<string, string, CancellationToken, Task<ProcessResult>> launch,
@@ -37,17 +68,20 @@ internal sealed class RunnerModelAcceptanceProbe
         var currentGeneration = _generation(provider);
         lock (_sync)
         {
+            var horizon = _sequence;
             return models.Select(model =>
             {
                 _verdicts.TryGetValue(CapabilityProtocol.ModelAcceptance(provider, model), out var verdict);
                 var current = verdict is not null && verdict.Generation == currentGeneration;
+                var status = current ? verdict!.Status : "unknown";
                 return new AdvertisedCapabilityDto(
                     CapabilityProtocol.ModelAcceptance(provider, model), "model-acceptance",
-                    current ? verdict!.Status : "unknown",
+                    status,
                     Identity: $"{provider}/{model}",
                     Detail: current ? verdict!.Detail : "Model acceptance has not been checked for this login.",
                     CredentialGeneration: currentGeneration,
-                    CredentialObservedAt: current ? verdict!.ObservedAt.UtcDateTime : null);
+                    CredentialObservedAt: current ? verdict!.ObservedAt.UtcDateTime : null,
+                    ProbeSequence: status == "ready" ? verdict!.Sequence : horizon);
             }).ToArray();
         }
     }
@@ -57,7 +91,8 @@ internal sealed class RunnerModelAcceptanceProbe
         var generation = _generation(provider);
         lock (_sync)
             _verdicts[CapabilityProtocol.ModelAcceptance(provider, model)] = new ModelVerdict(
-                generation, "unavailable", "The provider refused this model for the host login.", _clock());
+                generation, "unavailable", "The provider refused this model for the host login.", _clock(),
+                ++_sequence);
     }
 
     internal async Task RefreshAsync(
@@ -72,8 +107,10 @@ internal sealed class RunnerModelAcceptanceProbe
                 Func<string, string, CancellationToken, Task<ProcessResult>>? launch;
                 string? generation;
                 bool cached;
+                long started;
                 lock (_sync)
                 {
+                    started = _sequence;
                     launch = _launch;
                     generation = _generation(provider);
                     cached = _verdicts.TryGetValue(CapabilityProtocol.ModelAcceptance(provider, model), out var prior)
@@ -104,14 +141,16 @@ internal sealed class RunnerModelAcceptanceProbe
                 lock (_sync)
                 {
                     if (_generation(provider) != generation) continue;
+                    // A launch rejection recorded while this probe ran is newer
+                    // evidence; the probe result must not overwrite it.
                     if (_verdicts.TryGetValue(CapabilityProtocol.ModelAcceptance(provider, model), out var newer)
-                        && newer.Generation == generation && newer.Status != "unknown") continue;
+                        && newer.Generation == generation && newer.Sequence > started) continue;
                     _verdicts[CapabilityProtocol.ModelAcceptance(provider, model)] = new ModelVerdict(
                         generation, status,
                         status == "ready" ? "A real request was accepted for this model."
                             : status == "unavailable" ? "The provider refused this model for the host login."
                             : "The model acceptance probe could not verify this route.",
-                        _clock());
+                        _clock(), ++_sequence);
                 }
             }
         }
@@ -124,5 +163,6 @@ internal sealed class RunnerModelAcceptanceProbe
                string.Join('\n', result.StdOut, result.StdErr), out var rejection)
            && ProviderRequestRejectionClassifier.IsModelUnavailable(rejection, model);
 
-    private sealed record ModelVerdict(string? Generation, string Status, string Detail, DateTimeOffset ObservedAt);
+    private sealed record ModelVerdict(
+        string? Generation, string Status, string Detail, DateTimeOffset ObservedAt, long Sequence);
 }
