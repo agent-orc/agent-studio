@@ -359,6 +359,8 @@ test.describe('Execution Hosts settings section', () => {
           const sizes = await cell.evaluate(el => ({ scroll: el.scrollWidth, client: el.clientWidth }));
           expect(sizes.scroll).toBeLessThanOrEqual(sizes.client + 1);
         }
+      } else {
+        await expect(loads.first()).toBeHidden();
       }
       const bar = page.getByTestId('status-bar');
       const chat = bar.getByTestId('usage-chat-trigger');
