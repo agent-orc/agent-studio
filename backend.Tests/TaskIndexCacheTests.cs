@@ -22,6 +22,153 @@ public class TaskIndexCacheTests : IDisposable
     private readonly TaskScannerService _scanner;
     private readonly TaskIndexCache _cache;
 
+    [Fact]
+    public void AbsentCardOnDirtySnapshot_DoesNotRemainWarming()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "Present");
+        _cache.GetSnapshot();
+        _cache.Invalidate();
+
+        var missing = _cache.GetDetailFacts("card-gone", _watchPath);
+
+        Assert.Null(missing.Info);
+        Assert.False(missing.Warming);
+    }
+
+    [Fact]
+    public async Task DetailFacts_DoNotWaitForUnrelatedRefresh_AndKeepOwnPublication()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "First");
+        WriteJob(TaskStates.Ready, "card-b", "Second");
+        var clock = new FakeTimeProvider();
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scans = 0;
+        var cache = new TaskIndexCache(_scanner, NullLogger<TaskIndexCache>.Instance, _config,
+            () =>
+            {
+                if (Interlocked.Increment(ref scans) > 1)
+                {
+                    entered.TrySetResult(true);
+                    release.Task.GetAwaiter().GetResult();
+                }
+                return _scanner.ScanAllJobsRaw();
+            }, timeProvider: clock);
+        _scanner.SetIndexCache(cache);
+        cache.GetSnapshot();
+        cache.Invalidate();
+        try
+        {
+            var first = cache.GetDetailFacts("card-a", _watchPath);
+            Assert.Equal("First", first.Info?.Title);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(30), clock);
+
+            var unrelated = cache.GetDetailFacts("card-a", _watchPath);
+            Assert.Equal("First", unrelated.Info?.Title);
+
+            cache.PublishCore(first.Info! with { Title = "Published A" });
+            Assert.Equal("Published A", cache.GetDetailFacts("card-a", _watchPath).Info?.Title);
+            WriteJob(TaskStates.Ready, "card-b", "Adopted B");
+        }
+        finally
+        {
+            release.TrySetResult(true);
+        }
+        if (cache.RefreshInFlight is { } refresh)
+            await refresh.WaitAsync(TimeSpan.FromSeconds(30), clock);
+        Assert.Equal("Published A", cache.GetDetailFacts("card-a", _watchPath).Info?.Title);
+        Assert.Equal("Adopted B", cache.GetDetailFacts("card-b", _watchPath).Info?.Title);
+    }
+
+    [Fact]
+    public async Task Rescan_DoesNotClearWatcherStalenessForAChangedFolder()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "Before");
+        var clock = new FakeTimeProvider();
+        var scanned = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scans = 0;
+        var cache = new TaskIndexCache(_scanner, NullLogger<TaskIndexCache>.Instance, _config,
+            () =>
+            {
+                var facts = _scanner.ScanAllJobsRaw();
+                if (Interlocked.Increment(ref scans) > 1)
+                {
+                    scanned.TrySetResult(true);
+                    release.Task.GetAwaiter().GetResult();
+                }
+                return facts;
+            }, timeProvider: clock);
+        _scanner.SetIndexCache(cache);
+        cache.GetSnapshot();
+        cache.Invalidate();
+        _ = cache.GetDetailFacts("card-a", _watchPath);
+        try
+        {
+            await scanned.Task;
+            WriteJob(TaskStates.Ready, "card-a", "After changed");
+            cache.NotifyCoreFileChanged(Path.Combine(_watchPath, TaskStates.Ready, "card-a", "task.json"));
+        }
+        finally { release.TrySetResult(true); }
+        if (cache.RefreshInFlight is { } refresh) await refresh;
+        var detail = cache.GetDetailFacts("card-a", _watchPath);
+        Assert.Equal("Before", detail.Info?.Title);
+        Assert.True(detail.Stale);
+    }
+
+    [Fact]
+    public async Task DetailFacts_WaitsForItsPublication_AndMarksABoundedTimeout()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "Before");
+        var clock = new FakeTimeProvider();
+        var cache = new TaskIndexCache(_scanner, NullLogger<TaskIndexCache>.Instance,
+            _config, timeProvider: clock);
+        _scanner.SetIndexCache(cache);
+        cache.GetSnapshot();
+        var old = cache.GetDetailFacts("card-a", _watchPath).Info!;
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var publishing = Task.Run(() => cache.PublishCoreFromFolder(old.FolderPath, () =>
+        {
+            entered.TrySetResult(true);
+            release.Task.GetAwaiter().GetResult();
+            return old with { Title = "After" };
+        }));
+        await entered.Task;
+        var timedRead = cache.GetDetailFactsAsync("card-a", _watchPath, CancellationToken.None).AsTask();
+        clock.Advance(TimeSpan.FromMilliseconds(25));
+        var timed = await timedRead;
+        Assert.Equal("Before", timed.Info?.Title);
+        Assert.True(timed.Stale);
+        release.TrySetResult(true);
+        await publishing;
+        var after = await cache.GetDetailFactsAsync("card-a", _watchPath, CancellationToken.None);
+        Assert.Equal("After", after.Info?.Title);
+        Assert.False(after.Stale);
+    }
+
+    [Fact]
+    public async Task OrderedFolderReads_KeepTheLaterPublication()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "Before");
+        _cache.GetSnapshot();
+        var old = _cache.GetDetailFacts("card-a", _watchPath).Info!;
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var watcher = Task.Run(() => _cache.PublishCoreFromFolder(old.FolderPath, () =>
+        {
+            entered.TrySetResult(true);
+            release.Task.GetAwaiter().GetResult();
+            return old;
+        }));
+        await entered.Task;
+        var writer = Task.Run(() => _cache.PublishCoreFromFolder(old.FolderPath,
+            () => old with { Title = "After" }));
+        release.TrySetResult(true);
+        await Task.WhenAll(watcher, writer);
+        Assert.Equal("After", _cache.GetDetailFacts("card-a", _watchPath).Info?.Title);
+    }
+
     public TaskIndexCacheTests()
     {
         _watchPath = Path.Combine(Path.GetTempPath(), "atp-cache-" + Guid.NewGuid().ToString("N"));

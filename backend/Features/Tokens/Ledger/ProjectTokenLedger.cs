@@ -58,6 +58,10 @@ public sealed class ProjectTokenLedger
             key, version, SnapshotTtl, () => LoadSnapshotUncached(projectName, watchPath));
     }
 
+    /// <summary>One fresh load for the independent per-card usage resource.</summary>
+    public ProjectTokenLedgerSnapshot LoadFreshSnapshot(string projectName, string watchPath)
+        => LoadSnapshotUncached(projectName, watchPath);
+
     private ProjectTokenLedgerSnapshot LoadSnapshotUncached(string projectName, string watchPath)
     {
         var warnings = new List<string>();

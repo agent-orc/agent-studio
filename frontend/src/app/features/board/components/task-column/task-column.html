@@ -198,12 +198,10 @@
               @for (job of group.jobs; track job.taskKey) {
                 <app-job-card
                   [job]="job"
-                  [epicSubTasks]="allBoardJobs()"
                   [compact]="compact()"
                   [highlightJobId]="highlightJobId()"
                   [mutationsBlocked]="mutationsBlocked()"
                   (click)="jobClick.emit(job)"
-                  (subTaskClick)="jobClick.emit($event)"
                   (deleteRequested)="jobDeleteRequest.emit($event)"
                   [draggable]="!mutationsBlocked()"
                   (dragstart)="onDragStart($event, job)" />
@@ -225,12 +223,10 @@
             }
             <app-job-card
               [job]="job"
-              [epicSubTasks]="allBoardJobs()"
               [compact]="compact()"
               [highlightJobId]="highlightJobId()"
               [mutationsBlocked]="mutationsBlocked()"
               (click)="jobClick.emit(job)"
-              (subTaskClick)="jobClick.emit($event)"
               (deleteRequested)="jobDeleteRequest.emit($event)"
               (pickNextRequested)="jobPickNextRequest.emit($event)"
               [draggable]="!mutationsBlocked()"
