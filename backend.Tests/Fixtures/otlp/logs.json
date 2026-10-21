@@ -1,0 +1,89 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "shop-api"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "Shop.Checkout"
+          },
+          "logRecords": [
+            {
+              "timeUnixNano": "1792152000000000000",
+              "severityNumber": 9,
+              "severityText": "Information",
+              "body": {
+                "stringValue": "order placed"
+              },
+              "attributes": [
+                {
+                  "key": "order.id",
+                  "value": {
+                    "intValue": "42"
+                  }
+                },
+                {
+                  "key": "tags",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "new"
+                        },
+                        {
+                          "stringValue": "express"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ],
+              "traceId": "0102030405060708090a0b0c0d0e0f10",
+              "spanId": "0102030405060708"
+            },
+            {
+              "timeUnixNano": "1792152060000000000",
+              "severityNumber": 17,
+              "severityText": "Error",
+              "body": {
+                "kvlistValue": {
+                  "values": [
+                    {
+                      "key": "message",
+                      "value": {
+                        "stringValue": "payment failed"
+                      }
+                    },
+                    {
+                      "key": "code",
+                      "value": {
+                        "intValue": "402"
+                      }
+                    }
+                  ]
+                }
+              },
+              "eventName": "payment.failed"
+            },
+            {
+              "severityText": "warning",
+              "body": {
+                "stringValue": "disk low"
+              },
+              "observedTimeUnixNano": "1792152120000000000"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
