@@ -139,7 +139,7 @@ async function openDeploy(page: Page, deploy: DeployMocks): Promise<void> {
     activeKey: `hub:${project}`,
   })), { project: PROJECT });
   await mockApp(page, deploy);
-  await page.goto('/');
+  await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"], vite-error-overlay')
     .forEach(element => ((element as HTMLElement).style.display = 'none')));
   await expect(page.getByTestId('project-deploy-area')).toBeVisible({ timeout: 60_000 });
