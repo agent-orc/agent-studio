@@ -38,12 +38,15 @@ public sealed partial class BatchGatePilotService
     public bool IsQueuedForBatch(string reviewAttemptId) => _store.IsQueued(reviewAttemptId);
 
     /// <summary>
-    /// True when the slots in use cannot drain this scope's queue inside the
+    /// True when the slots in use cannot drain the shared machine queue inside the
     /// queue wait budget of one gate request; the planner then prefers batches.
     /// </summary>
-    private bool GateBacklogged(string project, IReadOnlyList<BatchGatePendingRecord> current)
+    internal bool GateBacklogged(string project, IReadOnlyList<BatchGatePendingRecord> waiting)
     {
-        var facts = QueueFacts(project, current.Count(Queued));
+        var queuedProjects = waiting.Where(Queued)
+            .Select(item => item.Subject.Project).ToArray();
+        var facts = _queueStalls.SharedFacts(project, queuedProjects, QueueBudget(project),
+            ConfiguredGateSlots());
         var assessment = MonolithTransitionAdapter.GateQueue(facts);
         if (assessment.Backlogged)
             _logger.LogDebug(
@@ -119,14 +122,16 @@ public sealed partial class BatchGatePilotService
     private GateQueueFacts QueueFacts(string project, int queuedMembers, TimeSpan? oldestWaitAtLeast = null)
     {
         var budget = QueueBudget(project);
-        var configured = new[]
+        return _queueStalls.Facts(project, queuedMembers, budget, ConfiguredGateSlots(), oldestWaitAtLeast);
+    }
+
+    private int ConfiguredGateSlots()
+        => new[]
         {
             _gateSlots?.Snapshot().Total ?? 0,
             _configuration?.GetValue("RemoteGate:GateSlots", 0) ?? 0,
             _configuration?.GetValue("LocalGate:GateSlots", 0) ?? 0,
         }.Max();
-        return _queueStalls.Facts(project, queuedMembers, budget, configured, oldestWaitAtLeast);
-    }
 
     /// <summary>
     /// Re-reads the generation after a per-task gate returned. A result of any
@@ -223,7 +228,8 @@ public sealed partial class BatchGatePilotService
                 + $"{ledger.Overruns} queue overrun(s), the cap is {Minutes((long)cap.TotalMilliseconds)} min. "
                 + "The code was not tested; add gate capacity or release the card to the gate queue. "
                 + "Last overrun: " + gate.Reason),
-            recordInStore, ct, GateQueueStallPolicy.GateCapacityCategory).ConfigureAwait(false);
+            infrastructure: true, recordInStore, ct,
+            GateQueueStallPolicy.GateCapacityCategory).ConfigureAwait(false);
     }
 
     /// <summary>

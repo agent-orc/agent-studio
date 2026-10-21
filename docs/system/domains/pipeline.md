@@ -262,6 +262,9 @@ stall event has `episodeId`, `project`, `raisedAtUtc`, `queueDepth`,
 `episodeOpenedAtUtc`. Times are UTC; durations are milliseconds. An open
 episode survives a restart and a reminder increments `raise` without creating
 a new episode. `advisory` and `episodeOpenedAtUtc` can be null.
+Batch planning assesses the shared machine gate queue across projects and
+planning groups, including live requests waiting for a slot. Each project's
+stall report and release route remain scoped to that project.
 
 Release considers cards escalated for a machine gate queue overrun of their
 current passed review. It moves each eligible card to Auto Review and admits

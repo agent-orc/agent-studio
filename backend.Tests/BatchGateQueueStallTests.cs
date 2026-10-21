@@ -19,6 +19,56 @@ namespace AgentStudio.Tests;
 public sealed partial class BatchGatePilotServiceTests
 {
     [Fact]
+    public void Shared_gate_queue_backlog_prefers_a_batch_across_projects_and_live_waiters()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
+        settings.SetBatchGate(ProjectName, settings.Get(ProjectName).BatchGate with
+        {
+            Planner = "look-ahead", GateTimeoutMinutes = 60,
+        });
+        var members = new[]
+        {
+            SeedMember(factory, "DOC-SHARED-A", "docs/shared-a.md"),
+            SeedMember(factory, "DOC-SHARED-B", "docs/shared-b.md"),
+            SeedMember(factory, "DOC-SHARED-C", "docs/shared-c.md"),
+        };
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var template = store.ReadPending(members[0].ReviewAttemptId)!;
+        for (var index = 0; index < 3; index++)
+            store.Enqueue(template with
+            {
+                ReviewAttemptId = $"other-project-review-{index}",
+                Subject = template.Subject with
+                {
+                    Project = "other-project", TaskKey = $"OTHER-{index}",
+                },
+            });
+        pilot.QueueStalls.Waiting(ProjectName, "live-slot-waiter", 3, 3);
+
+        var projectOnly = pilot.QueueStalls.Facts(ProjectName, 3, TimeSpan.FromMinutes(62), 3);
+        var otherOnly = pilot.QueueStalls.Facts("other-project", 3, TimeSpan.FromMinutes(62), 3);
+        Assert.False(MonolithTransitionAdapter.GateQueue(projectOnly).Backlogged);
+        Assert.False(MonolithTransitionAdapter.GateQueue(otherOnly).Backlogged);
+        Assert.True(pilot.GateBacklogged(ProjectName, store.ListPending()));
+
+        var snapshot = BuildSnapshot(factory);
+        var highRiskFirst = snapshot.Waiting.Select((card, index) =>
+            index == 0 ? card with { Risk = .8 } : card with { Risk = .05 }).ToArray();
+        var plan = BatchGateLookAheadPlanner.Plan(snapshot with
+        {
+            Waiting = highRiskFirst,
+            GateBacklog = pilot.GateBacklogged(ProjectName, store.ListPending()),
+        });
+        Assert.Equal("close", plan.Decision);
+        Assert.Equal(BatchGateLookAheadPlanner.BacklogReason, plan.Reason);
+        Assert.Equal(members.Skip(1).Select(member => member.Key), plan.ProposedMembers);
+    }
+
+    [Fact]
     public async Task Queue_overrun_keeps_cards_in_auto_review_and_raises_one_stall_event()
     {
         using var factory = BuildFactory();

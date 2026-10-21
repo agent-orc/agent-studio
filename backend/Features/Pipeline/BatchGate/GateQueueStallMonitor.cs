@@ -85,6 +85,28 @@ public sealed class GateQueueStallMonitor(BatchGateStore store, TimeProvider tim
     }
 
     /// <summary>
+    /// Planning uses the machine queue shared by all projects. Pending batch
+    /// members and live slot waiters both occupy that queue. Slot reports name
+    /// the same host pool, so use its highest observed total, not their sum.
+    /// </summary>
+    public GateQueueFacts SharedFacts(string project, IReadOnlyList<string> queuedProjects,
+        TimeSpan queueBudget, int configuredSlots)
+    {
+        var waiters = _waiting.Values.ToArray();
+        var slotReports = _lastSlots.Values.ToArray();
+        var total = slotReports.Select(slots => slots.Total).DefaultIfEmpty(0).Max();
+        var busy = slotReports.Select(slots => slots.Busy).DefaultIfEmpty(0).Max();
+        var inUse = Math.Max(1, total > 0 ? total : configuredSlots);
+        var projects = queuedProjects.Append(project).Concat(waiters.Select(waiter => waiter.Project))
+            .Distinct(StringComparer.Ordinal);
+        var typical = projects.Select(TypicalGateDuration).DefaultIfEmpty(DefaultGateDuration).Max();
+        var oldest = waiters.Length == 0 ? TimeSpan.Zero
+            : time.GetUtcNow() - waiters.Min(waiter => waiter.SinceUtc);
+        return new GateQueueFacts(queuedProjects.Count + waiters.Length, busy, inUse,
+            Math.Max(inUse, configuredSlots), oldest, typical, queueBudget);
+    }
+
+    /// <summary>
     /// Records a queue overrun. Returns the event when this overrun opened a
     /// new episode or the open episode's reminder is due, otherwise null.
     /// </summary>
