@@ -142,7 +142,7 @@ public static class TaskCrudEndpoints
                 var tokenLookup = BuildTokenLookup(raw, tokens);
                 var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
                 var dependencyLookups = BuildDependencyGraphLookups(raw, scanner,
-                    attemptAuthority: attemptAuthority, references: publication?.References);
+                    attemptAuthority: attemptAuthority);
                 var gitLookup = gitProjection.ReadCacheOnly(raw);
                 var liveLookup = liveStatus.BuildLookup(raw);
                 var reviewQueue = attemptAuthority.ReadReviewQueue();
@@ -196,8 +196,8 @@ public static class TaskCrudEndpoints
                 includeNested: true);
 
             // AGT-3088: the read takes one already published index generation
-            // and pins it, so every nested index read below - the reference
-            // graph, the runner status the validator and the live-status strip
+            // and pins it for board cards and runner status. Dependency targets
+            // use the separately published core graph; the live-status strip
             // read, the generation folded into the tag - answers from that one
             // generation and none of them refreshes on this thread. A dirty
             // index starts a background refresh; only a cold start or this
@@ -242,7 +242,7 @@ public static class TaskCrudEndpoints
                 var tokenLookup = BuildTokenLookup(raw, tokens);
                 var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
                 var dependencyLookups = BuildDependencyGraphLookups(raw, scanner,
-                    attemptAuthority: attemptAuthority, references: publication?.References);
+                    attemptAuthority: attemptAuthority);
                 var gitLookup = gitProjection.ReadCacheOnly(raw);
                 var liveLookup = liveStatus.BuildLookup(raw);
                 var reviewQueue = attemptAuthority.ReadReviewQueue();
@@ -484,7 +484,7 @@ public static class TaskCrudEndpoints
                     .Where(job => !job.Fixture)
                 : Enumerable.Empty<TaskInfo>();
             var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(
-                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority, facts.References));
+                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority));
             var withRuntime = WithRuntime(pricing, detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
             withRuntime = TaskSwitchTrace.Run("runtime", () => withRuntime with
             {

@@ -189,6 +189,70 @@ public sealed class TokenAggregationServiceCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task DetailUsageCache_ReceiptPublishedDuringWalkGetsFollowUpLoad()
+    {
+        var config = BuildConfig();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
+        scanner.SetIndexCache(index);
+        WriteReceipt("AGT-1", 5500, 5000, 500);
+        index.GetSnapshot();
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var walks = 0;
+        var ledger = new ProjectTokenLedger(new AgentMessageBusStore(), config,
+            new ProjectTokenReceiptReader(), index);
+        var usage = new TaskTokenUsageCache(ledger, TokenTestServices.Pricing(), index,
+            new FakeTimeProvider(), beforeProjectWalk: () =>
+            {
+                if (Interlocked.Increment(ref walks) != 1) return;
+                entered.Set();
+                release.Wait();
+            });
+
+        var first = usage.GetAsync(ProjectName, _watchPath, "AGT-1");
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
+        try
+        {
+            WriteReceipt("AGT-1", 99000, 90000, 9000);
+            scanner.PublishCoreFromKnownFolder(Path.Combine(_watchPath, TaskStates.Progress, "AGT-1"));
+            var second = usage.GetAsync(ProjectName, _watchPath, "AGT-1");
+            release.Set();
+            var refreshed = await second;
+            Assert.Equal(99000, refreshed?.TotalTokens);
+            Assert.Equal(2, usage.ProjectLoadCount(ProjectName, _watchPath));
+            await first;
+            Assert.Equal(99000, usage.Get(ProjectName, _watchPath, "AGT-1")?.TotalTokens);
+        }
+        finally { release.Set(); }
+    }
+
+    [Fact]
+    public void DetailUsageCache_DuplicateLaneIdKeepsFirstReceipt()
+    {
+        var config = BuildConfig();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
+        scanner.SetIndexCache(index);
+        WriteReceipt("AGT-1", 5500, 5000, 500);
+        var duplicate = Path.Combine(_watchPath, TaskStates.Ready, "AGT-1");
+        Directory.CreateDirectory(duplicate);
+        File.Copy(Path.Combine(_watchPath, TaskStates.Progress, "AGT-1", "task.json"),
+            Path.Combine(duplicate, "task.json"));
+        index.GetSnapshot();
+        Assert.Equal(2, index.GetAllResidentTasks().Count(task => task.Id == "AGT-1"));
+        var ledger = new ProjectTokenLedger(new AgentMessageBusStore(), config,
+            new ProjectTokenReceiptReader(), index);
+        var usage = new TaskTokenUsageCache(ledger, TokenTestServices.Pricing(), index,
+            new FakeTimeProvider());
+
+        Assert.NotNull(usage.Get(ProjectName, _watchPath, "AGT-1"));
+        Assert.Equal(1, usage.ProjectLoadCount(ProjectName, _watchPath));
+    }
+
+    [Fact]
     public void DetailUsageCache_PrunesAbsentCardAfterLaterCompletedRescan()
     {
         var config = BuildConfig();

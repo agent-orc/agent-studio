@@ -243,6 +243,9 @@ public class TaskScannerService : ITaskScanner
         => MoveCoreFromFolder(sourceFolder, targetFolder, watchPath,
             _indexCache?.GetCoreByFolder(sourceFolder)?.ProjectName ?? Path.GetFileName(watchPath), state);
 
+    public Action BeginCoreMove(TaskInfo source) =>
+        _indexCache?.BeginCoreMove(source) ?? (() => { });
+
     public void MoveCoreFromFolder(string sourceFolder, string targetFolder,
         string watchPath, string projectName, string state)
     {
@@ -549,6 +552,11 @@ public class TaskScannerService : ITaskScanner
     /// Production reads reuse the graph published by <see cref="TaskIndexCache"/>
     /// instead of rebuilding it on every claim poll or endpoint request.
     /// </summary>
+    public TaskReferenceIndex GetCoreReferenceIndex() =>
+        _indexCache?.GetCoreReferenceIndex() ?? GetReferenceIndex();
+
+    public long CoreDependencyGeneration => _indexCache?.CoreDependencyGeneration ?? 0;
+
     public TaskReferenceIndex GetReferenceIndex()
     {
         return _indexCache?.GetReferenceIndex()

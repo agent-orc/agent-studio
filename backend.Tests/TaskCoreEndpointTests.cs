@@ -215,6 +215,10 @@ public sealed class TaskCoreEndpointTests : IDisposable
             move.EnsureSuccessStatusCode();
         using (var old = await client.GetAsync($"/api/tasks/AGT-transfer?project={source.Id}"))
             Assert.Equal(HttpStatusCode.NotFound, old.StatusCode);
+        using (var oldCore = await client.GetAsync($"/api/tasks/AGT-transfer/core?project={source.Id}"))
+            Assert.Equal(HttpStatusCode.NotFound, oldCore.StatusCode);
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        Assert.Single(index.GetAllResidentTasks(), task => task.Id == "AGT-transfer");
         using (var moved = await client.GetAsync($"/api/tasks/AGT-transfer?project={target.Id}"))
         {
             moved.EnsureSuccessStatusCode();

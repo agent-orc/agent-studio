@@ -99,6 +99,7 @@ public sealed class TaskIndexCache
     private readonly Dictionary<string, TaskCoreSourceStamp> _coreTaskStamps = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private long _coreWriteGeneration;
+    private long _coreDependencyGeneration;
     private long _coreScanSequence;
     public event Action<long, IReadOnlyList<TaskInfo>>? CoreRescanCompleted;
 
@@ -418,6 +419,16 @@ public sealed class TaskIndexCache
             .Where(task => task.State != TaskStates.Archive).ToArray();
     }
 
+    public TaskReferenceIndex GetCoreReferenceIndex()
+    {
+        lock (_lock) return _coreReferences;
+    }
+
+    public long CoreDependencyGeneration
+    {
+        get { lock (_lock) return _coreDependencyGeneration; }
+    }
+
     public IReadOnlyList<TaskInfo> GetAllResidentTasks()
     {
         lock (_lock) return _coreFactsByFolder.Values.ToArray();
@@ -573,7 +584,7 @@ public sealed class TaskIndexCache
             : TaskCoreSourceStamp.Read(Path.Combine(info.FolderPath, "task.json"));
 
     /// <summary>Publish one durable write without a workspace walk.</summary>
-    public void PublishCore(TaskInfo info)
+    public void PublishCore(TaskInfo info, string? sourceFolder = null)
     {
         var pendingKeys = BeginCorePublication(info);
         try
@@ -591,8 +602,9 @@ public sealed class TaskIndexCache
                 // A move or project transfer may change the folder before publication.
                 var removedFolders = new List<string>();
                 foreach (var old in facts.Where(pair =>
-                    WatchPathComparison.PathsEqual(pair.Value.WatchPath, info.WatchPath)
-                    && (pair.Value.TaskKey == info.TaskKey || pair.Value.Id == info.Id))
+                    (sourceFolder is not null && facts.Comparer.Equals(pair.Key, sourceFolder))
+                    || (WatchPathComparison.PathsEqual(pair.Value.WatchPath, info.WatchPath)
+                        && (pair.Value.TaskKey == info.TaskKey || pair.Value.Id == info.Id)))
                     .Select(pair => pair.Key).ToArray())
                 {
                     if (old != info.FolderPath)
@@ -648,6 +660,12 @@ public sealed class TaskIndexCache
         finally { EndCorePublication(pending); }
     }
 
+    public Action BeginCoreMove(TaskInfo source)
+    {
+        var keys = BeginCorePublication(source);
+        return () => EndCorePublication(keys);
+    }
+
     public void MoveCoreFromFolder(string sourceFolder, string targetFolder, Func<TaskInfo?> read)
     {
         TaskInfo? source;
@@ -660,7 +678,7 @@ public sealed class TaskIndexCache
                 var target = read();
                 // PublishCore replaces the old folder for this task in one
                 // facts publication. Removing first exposed a brief 404.
-                if (target is not null) PublishCore(target);
+                if (target is not null) PublishCore(target, sourceFolder);
                 else
                 {
                     RemoveCoreByFolder(sourceFolder);
@@ -689,12 +707,30 @@ public sealed class TaskIndexCache
         AddLegacyCoreAliases(aliases, byFolder.Values);
         lock (_lock)
         {
+            if (DependencyFactsChanged(_coreFactsByFolder, facts))
+                _coreDependencyGeneration++;
             _coreFactsByFolder = facts;
             _coreByFolder = byFolder;
             _core = aliases;
             _coreReferences = references;
             _coreWriteGeneration++;
         }
+    }
+
+    private static bool DependencyFactsChanged(
+        Dictionary<string, TaskInfo> previous, Dictionary<string, TaskInfo> current)
+    {
+        if (previous.Count != current.Count) return true;
+        foreach (var (folder, task) in current)
+        {
+            if (!previous.TryGetValue(folder, out var old)
+                || old.Key != task.Key || old.State != task.State || old.Released != task.Released
+                || old.Title != task.Title || old.Kind != task.Kind
+                || old.Decision?.Status != task.Decision?.Status
+                || !old.References.DependsOn.SequenceEqual(task.References.DependsOn))
+                return true;
+        }
+        return false;
     }
 
     // Caller holds _lock. A tombstone survives scans that started before it.
