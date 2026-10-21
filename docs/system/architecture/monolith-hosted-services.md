@@ -126,6 +126,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | OperatorSweepHostedService | !PD | decide, switched | `OperatorSweep` profile (`OperatorSweepPolicy`). Effect: `MonolithOrchestrationApplier` with `OperatorSweepActions`. |
 | WatcherHostedService | !PD, off by default | report | Authority host (drafts proposals, no lane move) |
 | EnvironmentHealthWorker | !PD, not Test | report | Authority host (IP-14 environment health checks; opens incident and certificate cards in Backlog and comments on them, no lane move) |
+| CardPreviewSweep | !PD, not Test | infra | Authority host. Reconciles green deliveries, integration and expiry into fenced preview deploy and removal jobs; it does not move cards. |
 | DeploymentInterventionWorker | !PD, not Test | infra | Authority host. Runs deployment intervention timeout reconciliation each minute; it does not move task lanes. |
 | OrphanReaperHostedService | !PD | infra | Authority host |
 | CleanContextRetentionHostedService | !PD | infra | Authority host |

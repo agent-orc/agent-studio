@@ -316,7 +316,8 @@
         "src/app/features/task-detail/components/prompt-pane/pipeline-step-toggle/pipeline-step-toggle.component.scss",
         "src/app/features/task-detail/components/protocol-pane/run-timeline/review-attempt-history/review-attempt-history.component.scss",
         "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.scss",
-        "src/app/features/test-evidence/components/test-evidence-status/test-evidence-status.component.scss"
+        "src/app/features/test-evidence/components/test-evidence-status/test-evidence-status.component.scss",
+        "src/app/components/task-preview/task-preview.component.scss"
       ],
       "rules": {
         "color-no-hex": null,

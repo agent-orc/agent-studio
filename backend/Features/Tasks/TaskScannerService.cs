@@ -880,7 +880,8 @@ public class TaskScannerService : ITaskScanner
                 Provenance = ReadProvenance(raw),
                 ExternalCompletion = ReadExternalCompletion(raw),
                 RemoteDispatchRejection = ReadRemoteDispatchRejection(raw),
-                Decision = ReadDecision(raw)
+                Decision = ReadDecision(raw),
+                Preview = AgentStudio.Deploy.CardPreviewStore.Read(jobDir)?.Preview
             };
             // Re-stat first so a self-heal this scan performed itself (the
             // divergent-id repair above, the ownerClientId migration below) is
@@ -2377,6 +2378,7 @@ public class TaskScannerService : ITaskScanner
             SteerPendingSince = ReadSteerPendingSince(jobDir, cached.State),
             ParkedBlocker = ReadParkedBlocker(jobDir, cached.State),
             NeedsInput = ReadNeedsInput(jobDir, cached.State),
+            Preview = AgentStudio.Deploy.CardPreviewStore.Read(jobDir)?.Preview,
         };
 
     private static DateTime GetLastActivityTime(string dir)
