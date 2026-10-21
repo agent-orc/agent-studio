@@ -1,5 +1,8 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
@@ -14,8 +17,12 @@ public sealed record RunbookHostResult(bool Success, IReadOnlyList<RunbookHostSt
 public static class RunbookHostExecutor
 {
     private const int SigKill = 9;
+    private const int MaxTerminationSweeps = 20;
+    /// <summary>Inherited by every descendant, including one that starts a new session.</summary>
+    private const string RunMarkerVariable = "AGENT_STUDIO_RUNBOOK_RUN";
     private static readonly TimeSpan StepTimeout = TimeSpan.FromMinutes(9);
     private static readonly TimeSpan RunTimeout = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(5);
 
     public static async Task<RunbookHostResult> ExecuteAsync(string project, string environment,
         string destination, IReadOnlyList<string> steps, IReadOnlyDictionary<string, string> variables,
@@ -32,16 +39,19 @@ public static class RunbookHostExecutor
             ["AGENT_STUDIO_PROJECT"] = project,
             ["AGENT_STUDIO_ENVIRONMENT"] = environment,
             ["AGENT_STUDIO_DESTINATION"] = destination,
+            [RunMarkerVariable] = Guid.NewGuid().ToString("N"),
         };
         foreach (var (name, value) in variables)
         {
-            if (!VariableName(name) || name.StartsWith("AGENT_STUDIO_", StringComparison.Ordinal))
+            if (!VariableName(name) || name.StartsWith("AGENT_STUDIO_", StringComparison.Ordinal)
+                || ProjectDeploymentVocabulary.IsReservedVariableName(name))
                 throw new InvalidOperationException("Invalid runbook variable name.");
             values[name] = value;
         }
         foreach (var (name, secret) in secretVariables)
         {
             if (!VariableName(name) || name.StartsWith("AGENT_STUDIO_", StringComparison.Ordinal)
+                || ProjectDeploymentVocabulary.IsReservedVariableName(name)
                 || !SecretIdentifier(secret) || values.ContainsKey(name))
                 throw new InvalidOperationException("Invalid runbook secret reference.");
             values[name] = (await File.ReadAllTextAsync(Path.Combine(secretRoot, secret), cancellationToken))
@@ -51,6 +61,8 @@ public static class RunbookHostExecutor
         {
             if (!SecretIdentifier(secret)) throw new InvalidOperationException("Invalid environment secret reference.");
             var name = secret.Replace('-', '_').Replace('.', '_').ToUpperInvariant();
+            if (ProjectDeploymentVocabulary.IsReservedVariableName(name))
+                throw new InvalidOperationException("Invalid environment secret reference.");
             if (values.ContainsKey(name)) continue;
             values[name] = (await File.ReadAllTextAsync(Path.Combine(secretRoot, secret), cancellationToken))
                 .TrimEnd('\r', '\n');
@@ -81,7 +93,8 @@ public static class RunbookHostExecutor
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            if (!OperatingSystem.IsWindows()) start.ArgumentList.Add("sh");
+            // An absolute shell path keeps the inherited PATH from choosing the interpreter.
+            if (!OperatingSystem.IsWindows()) start.ArgumentList.Add("/bin/sh");
             start.ArgumentList.Add(script);
             foreach (var (name, value) in values) start.Environment[name] = value;
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Runbook step could not start.");
@@ -96,22 +109,80 @@ public static class RunbookHostExecutor
             }
             catch (OperationCanceledException)
             {
-                if (OperatingSystem.IsWindows())
-                {
-                    if (!process.HasExited) process.Kill(entireProcessTree: true);
-                }
-                else if (SendSignal(-process.Id, SigKill) != 0 && !process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-                await process.WaitForExitAsync(CancellationToken.None);
-                await Task.WhenAll(output, error);
+                Terminate(process, values[RunMarkerVariable]);
+                // A survivor that holds a pipe must not hang execution; the bounds end cleanup either way.
+                await SettleAsync(process.WaitForExitAsync(CancellationToken.None));
+                await SettleAsync(Task.WhenAll(output, error));
                 cancellationToken.ThrowIfCancellationRequested();
                 results.Add(new(index, false));
             }
             if (!results[^1].Success) break;
         }
         return new(results.Count == steps.Count && results.All(result => result.Success), results);
+    }
+
+    private static void Terminate(Process process, string runMarker)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            return;
+        }
+        if (SendSignal(-process.Id, SigKill) != 0 && !process.HasExited) process.Kill(entireProcessTree: true);
+        // A descendant that called setsid left the process group but still carries the run marker.
+        // Repeat until a sweep finds nothing, so a child forked during a sweep is caught by the next.
+        for (var sweep = 0; sweep < MaxTerminationSweeps; sweep++)
+            if (KillMarkedProcesses(runMarker) == 0) return;
+    }
+
+    private static int KillMarkedProcesses(string runMarker)
+    {
+        if (!Directory.Exists("/proc")) return 0;
+        var entry = Encoding.ASCII.GetBytes(RunMarkerVariable + "=" + runMarker + "\0");
+        var killed = 0;
+        foreach (var directory in Directory.EnumerateDirectories("/proc"))
+        {
+            if (!int.TryParse(Path.GetFileName(directory), NumberStyles.None, CultureInfo.InvariantCulture, out var id)
+                || id == Environment.ProcessId)
+                continue;
+            byte[] environment;
+            try
+            {
+                environment = File.ReadAllBytes(Path.Combine(directory, "environ"));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // The process exited during the sweep or belongs to another user; neither is a runbook descendant.
+                continue;
+            }
+            if (HasEntry(environment, entry) && SendSignal(id, SigKill) == 0) killed++;
+        }
+        return killed;
+    }
+
+    private static bool HasEntry(ReadOnlySpan<byte> environment, ReadOnlySpan<byte> entry)
+    {
+        for (var start = 0; start < environment.Length;)
+        {
+            if (environment[start..].StartsWith(entry)) return true;
+            var next = environment[start..].IndexOf((byte)0);
+            if (next < 0) return false;
+            start += next + 1;
+        }
+        return false;
+    }
+
+    private static async Task SettleAsync(Task task)
+    {
+        try
+        {
+            await task.WaitAsync(CleanupTimeout);
+        }
+        catch (TimeoutException)
+        {
+            // The step already failed; an unreaped survivor must not hold the host.
+            return;
+        }
     }
 
     private static bool Identifier(string value)
