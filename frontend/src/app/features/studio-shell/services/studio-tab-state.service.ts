@@ -27,10 +27,12 @@ interface PersistedState {
   activeKey: string | null;
 }
 
-/** A persisted tab of the retired Epics overview restores as the Dossiers overview of the same scope. */
-function migrateRetiredEpicsTab(tab: StudioTab): StudioTab {
+/** Convert a retired overview tab while retaining its project scope. */
+function migrateRetiredOverviewTab(tab: StudioTab): StudioTab {
   const legacy = tab as { kind?: string; projectName?: string | null };
-  return legacy?.kind === 'epics' ? { kind: 'workbenches', projectName: legacy.projectName ?? null } : tab;
+  return legacy?.kind === 'epics'
+    ? { kind: 'workbenches', projectName: legacy.projectName ?? null }
+    : tab;
 }
 
 /**
@@ -403,7 +405,7 @@ export class StudioTabStateService {
       // studioTabKey. This is also the migration for persisted Backlog Triage
       // tabs from builds that still exposed that feature.
       this.restoredRetiredChatHistory = parsed.tabs.some(t => (t as { kind?: string })?.kind === 'chat-history');
-      const safeTabs = parsed.tabs.map(migrateRetiredEpicsTab).filter(t => {
+      const safeTabs = parsed.tabs.map(migrateRetiredOverviewTab).filter(t => {
         try { return typeof studioTabKey(t) === 'string'; }
         catch { return false; }
       });
@@ -446,12 +448,6 @@ export class StudioTabStateService {
         return { kind: 'board', projectName: tab.projectName };
       case 'feed':
         return { kind: 'feed' };
-      case 'epic':
-        return {
-          kind: 'epic',
-          epicKey: tab.epicKey,
-          viewTaskKey: tab.viewTaskKey || undefined,
-        };
       case 'task': {
         const scope = normalizeTaskTabScope(tab.scope);
         return { kind: 'task', taskKey: tab.taskKey, ...(scope ? { scope } : {}) };

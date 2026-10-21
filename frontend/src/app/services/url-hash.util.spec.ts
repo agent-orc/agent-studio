@@ -24,12 +24,12 @@ describe('url-hash.util', () => {
   describe('routeSegmentOf / kvValueOf', () => {
     it('finds the route segment regardless of position', () => {
       expect(routeSegmentOf('#filters=a&/workspace/settings')).toBe('/workspace/settings');
-      expect(routeSegmentOf('#/epics&filters=a')).toBe('/epics');
+      expect(routeSegmentOf('#/board&filters=a')).toBe('/board');
       expect(routeSegmentOf('#filters=a')).toBeNull();
     });
 
     it('reads a kv value without decoding it', () => {
-      expect(kvValueOf('#/epics&filters=projects%3AAgent%20Studio', 'filters'))
+      expect(kvValueOf('#/board&filters=projects%3AAgent%20Studio', 'filters'))
         .toBe('projects%3AAgent%20Studio');
       expect(kvValueOf('#filters=a', 'filter')).toBeNull();
     });
@@ -46,8 +46,8 @@ describe('url-hash.util', () => {
     });
 
     it('replaces a foreign route instead of stacking a second one', () => {
-      expect(withRouteSegment('#/workspace/settings&filters=a', '/epics'))
-        .toBe('#/epics&filters=a');
+      expect(withRouteSegment('#/workspace/settings&filters=a', '/board'))
+        .toBe('#/board&filters=a');
     });
 
     it('removes the route and keeps the rest', () => {
@@ -72,7 +72,7 @@ describe('url-hash.util', () => {
     });
 
     it('removes the segment with a null value', () => {
-      expect(withKvSegment('#/epics&filters=a', 'filters', null)).toBe('#/epics');
+      expect(withKvSegment('#/board&filters=a', 'filters', null)).toBe('#/board');
       expect(withKvSegment('#filters=a', 'filters', null)).toBe('');
     });
   });

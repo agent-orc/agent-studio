@@ -6,6 +6,7 @@ internal static class WorkerEdgeCredentialBoundary
     private static readonly string[] ExactNames =
     [
         "RUNNER_AUTH_TOKEN", "RUNNER_AUTH_TOKEN_FILE", "RUNNER_CLIENT_ID",
+        "RUNNER_STATE_DIR", "AGENT_HOST_STATE_DIR",
         "STUDIO_COOKIE", "STUDIO_CSRF",
     ];
 

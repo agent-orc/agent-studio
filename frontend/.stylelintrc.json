@@ -195,6 +195,7 @@
         "src/app/features/project-detail/components/project-wiki-section/area-glossary/area-glossary.component.scss",
         "src/app/features/project-detail/components/project-pipeline-definition/project-pipeline-definition.scss",
         "src/app/features/project-detail/components/project-pipeline-diagram/project-pipeline-diagram.scss",
+        "src/app/features/project-detail/components/task-detail-latency/task-detail-latency.component.scss",
         "src/app/features/usage-cockpit/**/*.scss",
         "src/app/components/async-feedback/loading-surface/loading-surface.component.scss",
         "src/app/components/cli-model-selector/cli-model-selector.component.scss",
@@ -315,7 +316,8 @@
         "src/app/features/task-detail/components/prompt-pane/pipeline-step-toggle/pipeline-step-toggle.component.scss",
         "src/app/features/task-detail/components/protocol-pane/run-timeline/review-attempt-history/review-attempt-history.component.scss",
         "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.scss",
-        "src/app/features/test-evidence/components/test-evidence-status/test-evidence-status.component.scss"
+        "src/app/features/test-evidence/components/test-evidence-status/test-evidence-status.component.scss",
+        "src/app/components/task-preview/task-preview.component.scss"
       ],
       "rules": {
         "color-no-hex": null,

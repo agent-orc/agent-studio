@@ -144,7 +144,7 @@ public class CapabilityFailureReporterTests
 
     private static TaskServerClient NewClient(StubHandler handler)
     {
-        var (options, _, _, _) = RunnerOptions.Parse(
+        var (options, _, _, _) = RunnerTestOptions.Parse(
             ["--server", "http://127.0.0.1:5030", "--runner-id", "agent-runner-test"]);
         var http = new HttpClient(handler) { BaseAddress = new Uri(options.ServerUrl) };
         return new TaskServerClient(
