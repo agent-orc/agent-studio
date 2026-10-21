@@ -32,7 +32,7 @@ short code. An invalid window returns `400`, an unknown project `404`.
 - The window filters on the completion time (`since = now - window`); `all`
   takes every completed task. In-flight tasks are counted in the coverage block
   but never enter the aggregates, because cycle time is defined on completion.
-- Epics and fixtures are excluded. A task archived without ever recording a
+- Fixtures are excluded. A task archived without ever recording a
   `6-completed` entry is counted as `excludedNoCompletionTimestamp`; for a bounded
   window this counter covers only the tasks whose terminal-lane entry lies inside
   the window, because older terminal tasks are skipped without reading their
@@ -188,7 +188,7 @@ example the integration outcome behind an operator requeue) is kept.
 | Writer | Cause (qualifier) |
 |---|---|
 | Runner claim (local pickup, remote claim, claim replay) | `claimed` (`local-pickup`, `claim-replay`) |
-| Core-run completion, remote completion, liveness re-trigger, stale-progress sentinel recovery, crash-recovery completion marker, settled-run recovery, UI iteration review, epic planning | `delivered` (agent outcome, `settled-run-recovery`, `ui-iteration-n/m`, `epic-planning`, ...) |
+| Core-run completion, remote completion, liveness re-trigger, stale-progress sentinel recovery, crash-recovery completion marker, settled-run recovery, UI iteration review | `delivered` (agent outcome, `settled-run-recovery`, `ui-iteration-n/m`, ...) |
 | Remote review verdict, orchestrator accept paths | `review-verdict` (integration outcome or `delivery-gate-failed`; `accept`, `accept-with-concerns`, `loop-break-accept`, `concept-sight-review`, `stale-verdict-backfill`) |
 | Escalation funnel and orchestrator escalations | `escalated` (escalation category or orchestrator escalate id: `agent-blocked`, `completion-gate`, `build-test-gate-double-fail`, ...) |
 | Orchestrator reissue `build-test-gate-fail` | `gate-failure` (`build-test-gate-fail`) |
@@ -196,7 +196,7 @@ example the integration outcome behind an operator requeue) is kept.
 | Automatic agent round, operator rebase recovery | `integration-recovery` (merge outcome or failure code) |
 | Remote lease recovery, liveness demotion, crash-recovery stale pickup lock | `lease-recovery` (`remote-runner-confirmed-inactive`, `run-liveness-process-lost`, ...) |
 | Remote claim environment retry | `claim-environment-retry` (`n/m`) |
-| Pick reverted, spawn failure, stale-progress orphan, delivery-envelope retry, steer-timeout auto-answer, empty epic decomposition | `runner-requeue` (qualifier names the path) |
+| Pick reverted, spawn failure, stale-progress orphan, delivery-envelope retry, steer-timeout auto-answer | `runner-requeue` (qualifier names the path) |
 | Acceptance finalization (worker, backstop) | `accepted`; failed acceptance integration back to Human Review: `acceptance-integration-failed` (outcome) |
 | External completion | `external-completion` (source) |
 | Orchestrator prep accept/bounce, operator promotion | `promoted` |

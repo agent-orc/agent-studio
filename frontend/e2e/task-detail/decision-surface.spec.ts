@@ -39,7 +39,6 @@ function taskInfo() {
     folderPath: `${WATCH_PATH}/.orchestrator/jobs/5e-escalated/${JOB_ID}`,
     execution: null,
     kind: 'task',
-    epicId: null,
     commit: null,
     commits: [],
     mergeSignal: null,

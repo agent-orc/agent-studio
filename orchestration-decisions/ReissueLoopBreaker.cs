@@ -2,7 +2,7 @@ namespace AgentStudio.OrchestrationDecisions;
 
 /// <summary>
 /// Deterministic loop-breaker for the auto-review reissue cycle (ASS-794,
-/// Epic-776 orchestrator hardening). It sits on the multi-aspect BLOCK path in
+/// ASS-776 orchestrator hardening). It sits on the multi-aspect BLOCK path in
 /// <c>ProcessDoneAsync</c>, the one reissue branch that did not previously
 /// enforce the shared reissue budget and could therefore pendulum a card
 /// between <c>2-ready</c> and the run loop forever.

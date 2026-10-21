@@ -231,8 +231,8 @@ public static class MonolithTransitionAdapter
     public static string TransitionDecisionPolicyCompletionLane(string outcome, bool providerRejected)
         => TransitionDecisionPolicy.CompletionLane(outcome, providerRejected);
 
-    public static bool TransitionDecisionPolicyCreateReview(bool epicPlanning, string outcome, bool verifiedDelivery, bool reportOnly)
-        => TransitionDecisionPolicy.CreateReview(epicPlanning, outcome, verifiedDelivery, reportOnly);
+    public static bool TransitionDecisionPolicyCreateReview(string outcome, bool verifiedDelivery, bool reportOnly)
+        => TransitionDecisionPolicy.CreateReview(outcome, verifiedDelivery, reportOnly);
 
     public static bool TransitionDecisionPolicyIsDeferredAcceptance(bool deferred, string outcome)
         => TransitionDecisionPolicy.IsDeferredAcceptance(deferred, outcome);

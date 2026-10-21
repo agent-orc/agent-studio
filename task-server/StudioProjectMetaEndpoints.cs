@@ -3,7 +3,7 @@ using AgentStudio.TaskServer.Contracts;
 namespace AgentStudio.TaskServer;
 
 /// <summary>
-/// The G2 "project meta" P1 bundle: epics, tags, project autonomy and
+/// The G2 "project meta" P1 bundle: tags, project autonomy and
 /// execution-runner settings, and pipeline projections. Domain logic lives
 /// on the <see cref="TaskServerStore"/> partial in
 /// <c>TaskServerStudioProjectMetaStore.cs</c>; this file only maps routes,
@@ -16,37 +16,8 @@ internal static class StudioProjectMetaEndpoints
         var studio = app.MapGroup("/api/v1/studio")
             .RequireTaskServerScope(TaskServerScopes.TasksRead);
 
-        MapEpicEndpoints(studio);
         MapTagEndpoints(studio);
         MapProjectMetaEndpoints(studio);
-    }
-
-    private static void MapEpicEndpoints(RouteGroupBuilder studio)
-    {
-        var epics = studio.MapGroup("/epics");
-
-        // Declared before "/{epicId}" for readability; ASP.NET's endpoint
-        // routing already prefers the more specific literal segments over a
-        // route parameter regardless of declaration order.
-        epics.MapGet("/completed/count", async (
-            string? project, bool? includeFixtures, TaskServerStore store, CancellationToken ct)
-            => await TaskServerEndpoints.InvokeAsync(async ()
-                => new EpicCompletedCountResponse(await store.CountCompletedEpicsAsync(project, ct))));
-
-        epics.MapGet("", async (
-            string? project, string? status, bool? includeFixtures, TaskServerStore store, CancellationToken ct)
-            => await TaskServerEndpoints.InvokeAsync(async ()
-                => new EpicListResponse(await store.ListEpicsAsync(project, status, ct))));
-
-        epics.MapGet("/{epicId}", async (string epicId, TaskServerStore store, CancellationToken ct)
-            => await TaskServerEndpoints.InvokeNullableAsync(() => store.GetEpicAsync(epicId, ct)));
-
-        epics.MapPost("/{epicId}/sub-tasks", async (
-            string epicId, HttpContext context, CreateTaskRequest request, TaskServerStore store, CancellationToken ct)
-            => await TaskServerEndpoints.InvokeAsync(
-                () => store.CreateEpicSubTaskAsync(epicId, request, TaskServerEndpoints.Actor(context), ct),
-                StatusCodes.Status201Created))
-            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
     }
 
     private static void MapTagEndpoints(RouteGroupBuilder studio)

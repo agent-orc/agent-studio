@@ -146,7 +146,6 @@ public sealed class LegacyRunnerCompletionContractTests : IDisposable
             "refs/heads/develop",
             new string('a', 64),
             ["Implemented and verified.", "[[TASK_DONE]]"],
-            sourceMutated: true,
             sessionContinuation: evidence);
 
         // Negative control: the server check is live. Evidence naming the lease
