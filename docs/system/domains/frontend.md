@@ -42,6 +42,12 @@ The same tab reads `GET /api/projects/{project}/deploy/operations` for 30-day
 monitoring, usage, load, deploy and rollback markers, and project DORA. Each
 marker opens its release and exposes the release's card keys. The project API
 also feeds the project's Operations rail, which the overview dashboard opens.
+A rail marker passes a release target for its own project to that project's
+Deploy view. The view then reads only the bounded page containing the release
+and keeps its other sources loaded. Marker card keys resolve by exact key
+through `GET /api/tasks/{key}/core`, so archived cards open too. A later card
+click or leaving the view cancels a pending lookup. Log search accepts any
+release ID, including releases whose marker predates the 30-day trend.
 The API derives DORA from production deploy runs and archive-inclusive card creation
 times: successful change runs per week, median card-to-production time, failed
 or rolled-back changes divided by terminal change runs, and median time from a

@@ -56,11 +56,13 @@ export class ProjectDeployAreaComponent {
   private releaseReads = new Subscription();
   private logReads = new Subscription();
   private mutations = new Subscription();
+  private cardReads = new Subscription();
   private readGeneration = 0;
   private releaseGeneration = 0;
   private logGeneration = 0;
   private mutationAction: DeployRunAction | null = null;
   private runOpener: HTMLElement | null = null;
+  private openedTarget: { project: string; id: string } | null = null;
 
   readonly projectName = input.required<string>();
   readonly releaseTarget = input<{ project: string; id: string } | null>(null);
@@ -105,8 +107,10 @@ export class ProjectDeployAreaComponent {
     }));
   }
 
+  /** A later card click replaces a lookup that has not answered yet. */
   openCard(key: string): void {
-    this.cardLookup.resolve(this.projectName(), key).subscribe(card => this.openTask.emit(card));
+    this.cardReads.unsubscribe();
+    this.cardReads = this.cardLookup.resolve(this.projectName(), key).subscribe(card => this.openTask.emit(card));
   }
 
   private readonly sources = computed(() => ({
@@ -142,21 +146,30 @@ export class ProjectDeployAreaComponent {
     effect(() => this.view.set(this.initialView()));
     effect(onCleanup => {
       const project = this.projectName();
-      const target = this.releaseTarget();
-      untracked(() => {
-        this.load(project, true);
-        if (target?.project === project) this.openRelease(target.id);
-      });
+      untracked(() => this.load(project, true));
       onCleanup(() => {
         this.subscriptions.unsubscribe();
         this.runReads.unsubscribe();
         this.releaseReads.unsubscribe();
         this.logReads.unsubscribe();
+        this.cardReads.unsubscribe();
         this.mutations.unsubscribe();
         this.mutations = new Subscription();
         this.mutationAction = null;
       });
     });
+    // A new target on the same project only opens its release page; the other sources stay loaded.
+    effect(() => {
+      const target = this.releaseTarget();
+      untracked(() => {
+        if (target && target !== this.openedTarget && target.project === this.projectName()) this.openTargetRelease(target);
+      });
+    });
+  }
+
+  private openTargetRelease(target: { project: string; id: string }): void {
+    this.openedTarget = target;
+    this.openRelease(target.id);
   }
 
   show(view: DeployView): void {
@@ -233,7 +246,9 @@ export class ProjectDeployAreaComponent {
       this.releaseOffset.set(0);
     }
     this.subscriptions.add(this.data.environments(projectName).subscribe(panel => this.environmentPanel.set(panel)));
-    this.loadReleases(projectName, true);
+    const target = this.releaseTarget();
+    if (resetSelection && target?.project === projectName) this.openTargetRelease(target);
+    else this.loadReleases(projectName, true);
     this.subscriptions.add(this.data.pipeline(projectName).subscribe(panel => this.pipelinePanel.set(panel)));
     this.subscriptions.add(this.data.health(projectName).subscribe(panel => this.healthPanel.set(panel)));
     this.reloadRuns(projectName, false);

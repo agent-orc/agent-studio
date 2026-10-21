@@ -1,7 +1,5 @@
-import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
-import { HttpErrorResponse } from '@angular/common/http';
-import { HttpTestingController } from '@angular/common/http/testing';
+import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { DeferBlockState, TestBed, type ComponentFixture } from '@angular/core/testing';
 import { BehaviorSubject, Subject, map, type Observable } from 'rxjs';
@@ -411,27 +409,40 @@ describe('ProjectDeployAreaComponent', () => {
     expect(text('deploy-release-detail')).toContain('version-35');
   });
 
-  it('keeps an older marker release request when the Deploy view mounts with an initial page still pending', async () => {
+  it('reads only the containing page when the Deploy view mounts with an older release target', async () => {
     data.controlledReleases = true;
+    data.requests.length = 0;
     const fresh = TestBed.createComponent(ProjectDeployAreaComponent);
     fresh.componentRef.setInput('projectName', 'Website');
     fresh.componentRef.setInput('releaseTarget', { project: 'Website', id: 'release-35' });
     fresh.detectChanges();
     await fresh.whenStable();
 
-    expect(data.requests.slice(-2)).toEqual(['deployments:0:all', 'release-containing:release-35']);
+    expect(data.requests.filter(request => request.startsWith('release'))).toEqual(['release-containing:release-35']);
     expect(data.containingReads).toHaveLength(1);
     expect(data.containingReads[0].observers).toHaveLength(1);
     const release = deployReleasesFixture()[0];
     const page = { items: [{ ...release, id: 'release-35', version: 'older release' }], offset: 25, limit: 25, total: 40 };
     data.containingReads[0].next({ status: 'ready', value: page });
-    data.releasePageReads.at(-1)!.next({ status: 'ready', value: { items: [release], offset: 0, limit: 25, total: 40 } });
     fresh.detectChanges();
     await fresh.whenStable();
     expect(fresh.componentInstance.releaseOffset()).toBe(25);
     expect((fresh.nativeElement as HTMLElement).querySelector('[data-testid="deploy-release-detail"]')?.textContent)
       .toContain('older release');
     fresh.destroy();
+  });
+
+  it('opens a new release target on the mounted Deploy view without reloading its other sources', async () => {
+    data.serveEverything();
+    await settle();
+    data.requests.length = 0;
+    fixture.componentRef.setInput('releaseTarget', { project: 'Website', id: 'release-35' });
+    await settle();
+    expect(data.requests).toEqual(['release-containing:release-35']);
+    expect(fixture.componentInstance.highlightedReleaseId()).toBe('release-35');
+    fixture.componentRef.setInput('releaseTarget', { project: 'Other', id: 'release-9' });
+    await settle();
+    expect(data.requests).toEqual(['release-containing:release-35']);
   });
 
   it('does not send a project release target to a second mounted Deploy view', async () => {
@@ -463,6 +474,16 @@ describe('ProjectDeployAreaComponent', () => {
       watchPath: '/tasks/website', state: 'ready' });
     expect(opened).toEqual([{ jobId: 'arch-51', watchPath: '/tasks/website' }]);
     http.expectNone(req => req.url === '/api/tasks/archive');
+  });
+
+  it('cancels a pending card lookup when the Deploy view is destroyed', () => {
+    const opened: { jobId: string; watchPath: string }[] = [];
+    fixture.componentInstance.openTask.subscribe(card => opened.push(card));
+    fixture.componentInstance.openCard('CARD-1');
+    const request = TestBed.inject(HttpTestingController).expectOne(req => req.url === '/api/tasks/CARD-1/core');
+    fixture.destroy();
+    expect(request.cancelled).toBe(true);
+    expect(opened).toEqual([]);
   });
 
   it('clears server history filters when leaving History so the reopened controls match the data', async () => {
