@@ -390,6 +390,9 @@ public sealed class ProjectDefinitionSchemaTwoTests
     [InlineData("    secret: DATABASE_URL\n", "    secret: DATABASE_URL\n    value: x\n", "variable-source-invalid")]
     [InlineData("    secret: DATABASE_URL\n    environments: [production]", "    secret: DATABASE_URL\n    environments: [preview]", "variable-environment-unknown")]
     [InlineData("  - name: DATABASE_URL\n", "  - name: LOG_LEVEL\n", "variable-duplicate")]
+    [InlineData("  - name: DATABASE_URL\n", "  - name: LD_PRELOAD\n", "variable-name-reserved")]
+    [InlineData("  - name: DATABASE_URL\n", "  - name: BASH_ENV\n", "variable-name-reserved")]
+    [InlineData("  - name: DATABASE_URL\n", "  - name: PATH\n", "variable-name-reserved")]
     public void Variable_rules_name_the_offending_entry(string before, string after, string code)
     {
         var result = ProjectDefinitionReader.Parse(Replace(Valid, before, after));

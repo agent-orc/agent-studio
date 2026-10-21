@@ -89,6 +89,24 @@ public static class ProjectDeploymentVocabulary
     public static readonly IReadOnlyList<string> ApprovalRoles = ["Owner", "Maintainer"];
     public static readonly IReadOnlyList<string> VariableKeys = ["name", "value", "secret", "environments"];
     public static readonly IReadOnlyList<string> RunbookKeys = ["name", "steps", "environments"];
+
+    /// <summary>
+    /// Environment names that steer the dynamic loader, the shell, or command
+    /// lookup instead of the workload. Repository variables never set them: the
+    /// validator refuses them and the deploy host refuses them again before it
+    /// starts an operator-installed script.
+    /// </summary>
+    public static readonly IReadOnlyList<string> ReservedVariableNames =
+        ["PATH", "IFS", "ENV", "BASH_ENV", "SHELLOPTS", "BASHOPTS", "CDPATH", "PS4", "GLOBIGNORE",
+         "GCONV_PATH", "GLIBC_TUNABLES", "HOSTALIASES", "LOCPATH", "NLSPATH", "RESOLV_HOST_CONF"];
+
+    /// <summary>Name prefixes with the same effect as <see cref="ReservedVariableNames"/>.</summary>
+    public static readonly IReadOnlyList<string> ReservedVariablePrefixes =
+        ["LD_", "DYLD_", "BASH_FUNC_", "MALLOC_", "AGENT_STUDIO_"];
+
+    public static bool IsReservedVariableName(string name)
+        => ReservedVariableNames.Contains(name, StringComparer.OrdinalIgnoreCase)
+           || ReservedVariablePrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
     public static readonly IReadOnlyList<string> StepKinds =
         ["static-site", "container", "publish-static", "start-container", "run", "health", "approval"];
     public const int MaxHealthTimeoutSeconds = 900;
@@ -529,6 +547,9 @@ public static partial class ProjectDefinitionValidator
             var path = $"variables[{i}]";
             if (!EnvironmentName().IsMatch(variable.Name))
                 issues.Add(new($"{path}.name", "variable-name-invalid", "Variable names must be portable shell identifiers."));
+            else if (ProjectDeploymentVocabulary.IsReservedVariableName(variable.Name))
+                issues.Add(new($"{path}.name", "variable-name-reserved",
+                    $"Variable '{variable.Name}' is reserved: loader, shell and command lookup names such as LD_PRELOAD or PATH cannot be set from project.yml."));
             if ((variable.Value is null) == (variable.Secret is null))
                 issues.Add(new(path, "variable-source-invalid", "A variable has either a value or a secret name, not both."));
             if (variable.Secret is not null && !SecretReference().IsMatch(variable.Secret))

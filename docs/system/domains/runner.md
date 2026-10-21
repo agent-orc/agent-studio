@@ -2149,10 +2149,17 @@ Optional `environments`
 restricts a runbook to staging or production. The integration branch version
 is read when the run is requested; its steps and environment-scoped variables
 are frozen in the run. Plain variables and secret-provider names follow the
-deployment variable contract. A production run waits for a signed-in Owner or
+deployment variable contract. Names that steer the loader, the shell or
+command lookup (`LD_*`, `DYLD_*`, `BASH_FUNC_*`, `MALLOC_*`, `PATH`, `IFS`,
+`ENV`, `BASH_ENV` and similar, see
+`ProjectDeploymentVocabulary.ReservedVariableNames`) are refused with
+`variable-name-reserved`, and the deploy host refuses them again before it
+starts a script. A production run waits for a signed-in Owner or
 Maintainer; approval queues the frozen steps through the existing deploy host
 claim and report lease. No artifact is required and the release and deployment
-history remain unchanged. Runs share the deployment log and audit store.
+history remain unchanged. Runs share the deployment log and audit store;
+`DeployStore` serializes audit appends and reads, so runbook and deployment
+events written at the same time both persist.
 
 The project deployment API uses the prefix
 `/api/projects/{projectName}/deploy`. The environment page uses these
@@ -2184,9 +2191,14 @@ environment variables. Scripts must exit zero to advance; failure stops the
 remaining steps. The host drains output locally and reports only step success
 or failure, so logs do not expose secret values. A step times out after nine
 minutes, and the whole run after ten. On Linux, `setsid` gives each script its
-own process group; timeout or host cancellation also applies while draining
-output after the script exits, kills that group and waits for its output streams
-to close. Install scripts on the assigned deploy host before
+own session and process group, and every step process carries a per-step
+`AGENT_STUDIO_RUNBOOK_STEP` marker in its environment. Timeout or host
+cancellation also applies while draining output after the script exits. It
+kills the group, then repeatedly kills every live process in the session or
+with the marker, so a descendant that started its own session stops too.
+Waiting for the exit and the output drain after that is bounded to ten
+seconds; an unfinished drain is abandoned and logged. Install scripts on the
+assigned deploy host before
 invoking the runbook.
 
 ## Verification

@@ -117,4 +117,78 @@ public sealed class RunbookHostExecutorTests
             Directory.Delete(root, true);
         }
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Cancellation_stops_a_child_in_a_new_session_within_a_bound(bool scriptExits)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), "runbook-session-" + Guid.NewGuid().ToString("N"));
+        var scripts = Path.Combine(root, "scripts", "demo");
+        Directory.CreateDirectory(scripts);
+        var ready = Path.Combine(root, "ready");
+        var marker = Path.Combine(root, "child-wrote");
+        // The child leaves the script's session and process group, ignores TERM, and keeps the output pipe.
+        File.WriteAllText(Path.Combine(scripts, "backup.sh"),
+            "setsid sh -c 'trap \"\" TERM HUP; while :; do printf x >> \"$MARKER\"; sleep 0.05; done' &\n"
+            + "while [ ! -s \"$MARKER\" ]; do sleep 0.02; done\nprintf 'started' > \"$READY\"\n"
+            + (scriptExits ? "exit 0\n" : "wait\n"));
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var execution = RunbookHostExecutor.ExecuteAsync("demo", "stage", "8081", ["backup"],
+                new Dictionary<string, string> { ["READY"] = ready, ["MARKER"] = marker },
+                new Dictionary<string, string>(), [], Path.Combine(root, "scripts"), root, cancellation.Token);
+            for (var attempt = 0; attempt < 250 && !File.Exists(ready); attempt++)
+                await Task.Delay(20);
+            Assert.True(File.Exists(ready), "The script did not start its child.");
+            Assert.False(execution.IsCompleted, "The child did not keep the step running.");
+
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution.WaitAsync(TimeSpan.FromSeconds(5)));
+            var written = new FileInfo(marker).Length;
+            await Task.Delay(500);
+            Assert.Equal(written, new FileInfo(marker).Length);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Theory]
+    [InlineData("LD_PRELOAD")]
+    [InlineData("LD_LIBRARY_PATH")]
+    [InlineData("BASH_ENV")]
+    [InlineData("PATH")]
+    public async Task Refuses_loader_and_shell_variables_before_starting_a_script(string name)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "runbook-reserved-" + Guid.NewGuid().ToString("N"));
+        var scripts = Path.Combine(root, "scripts", "demo");
+        Directory.CreateDirectory(scripts);
+        var marker = Path.Combine(root, "started");
+        File.WriteAllText(Path.Combine(scripts, "backup.sh"), $"printf 'started' > '{marker}'\n");
+        File.WriteAllText(Path.Combine(root, "ld-preload"), "/tmp/evil.so");
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => RunbookHostExecutor.ExecuteAsync(
+                "demo", "stage", "8081", ["backup"], new Dictionary<string, string> { [name] = "/tmp/evil" },
+                new Dictionary<string, string>(), [], Path.Combine(root, "scripts"), root, CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => RunbookHostExecutor.ExecuteAsync(
+                "demo", "stage", "8081", ["backup"], new Dictionary<string, string>(),
+                new Dictionary<string, string> { [name] = "ld-preload" }, [], Path.Combine(root, "scripts"), root,
+                CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => RunbookHostExecutor.ExecuteAsync(
+                "demo", "stage", "8081", ["backup"], new Dictionary<string, string>(),
+                new Dictionary<string, string>(), ["ld-preload"], Path.Combine(root, "scripts"), root,
+                CancellationToken.None));
+            Assert.False(File.Exists(marker), "A script started with a reserved variable.");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
 }
