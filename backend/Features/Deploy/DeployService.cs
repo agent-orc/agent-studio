@@ -178,14 +178,30 @@ public sealed class DeployService
         }
     }
 
-    public DeployPage<Release>? ReleasePage(string project, int offset, int limit)
+    /// <param name="artifact">
+    /// Only releases that carry this artifact's digest (registry prefix ignored),
+    /// so a host artifact maps to its release without reading the whole history.
+    /// </param>
+    /// <param name="notAfterUtc">Only releases created at or before this time, such as the host deploy time.</param>
+    public DeployPage<Release>? ReleasePage(string project, int offset, int limit,
+        string? artifact = null, DateTime? notAfterUtc = null)
     {
         lock (_gate)
         {
-            var releases = SyncLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
+            var digest = artifact is null ? null : DigestOf(artifact);
+            var releases = SyncLocked(project)?.Releases
+                .Where(item => digest is null || item.ArtifactDigests.Any(value => DigestOf(value) == digest))
+                .Where(item => notAfterUtc is null || item.CreatedAtUtc <= notAfterUtc)
+                .OrderByDescending(item => item.CreatedAtUtc)
                 .ThenByDescending(item => item.Id, StringComparer.Ordinal).ToArray();
             return releases is null ? null : Page(releases, offset, limit);
         }
+    }
+
+    private static string DigestOf(string artifact)
+    {
+        var at = artifact.LastIndexOf('@');
+        return at >= 0 ? artifact[(at + 1)..] : artifact;
     }
 
     public ReleaseDetailResponse? ReleaseDetail(string project, string releaseId)
