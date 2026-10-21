@@ -561,6 +561,17 @@ public sealed class RemoteReviewWorkspace
                         commands,
                         artifacts,
                         ct);
+                    if (execution.Signal is not null || execution.Process.ExitCode < 0)
+                    {
+                        SaveCaches(candidateCache);
+                        throw await InfrastructureFailureAsync(
+                            execution.Signal == "timeout" ? "CommandTimeout" : "CommandUnavailable",
+                            $"Review command '{command.StepId}' did not complete normally; " +
+                            $"exit={execution.Process.ExitCode}; signal={execution.Signal ?? "none"}.",
+                            commands,
+                            artifacts,
+                            ct);
+                    }
                     if (comparison is not null && !comparison.BlockedByIsolatedBuild)
                     {
                         var reviewFlakyTests = ReviewFlakyTestIndex.Discover(RepositoryPath, _log);
@@ -604,6 +615,17 @@ public sealed class RemoteReviewWorkspace
                                 "ToolUnavailable",
                                 $"Review retry '{command.StepId}' lost its declared toolchain; " +
                                 $"exit={cleanRepeat.Process.ExitCode}; budget={BudgetSummary(command.TimeoutSeconds, cleanRepeat, command.Model)}.",
+                                commands,
+                                artifacts,
+                                ct);
+                        }
+                        if (cleanRepeat.Signal is not null || cleanRepeat.Process.ExitCode < 0)
+                        {
+                            SaveCaches(candidateCache);
+                            throw await InfrastructureFailureAsync(
+                                cleanRepeat.Signal == "timeout" ? "CommandTimeout" : "CleanRepeatUnavailable",
+                                $"Review retry '{command.StepId}' did not complete normally; " +
+                                $"exit={cleanRepeat.Process.ExitCode}; signal={cleanRepeat.Signal ?? "none"}.",
                                 commands,
                                 artifacts,
                                 ct);
@@ -691,7 +713,10 @@ public sealed class RemoteReviewWorkspace
                                     IntegrationBranchDefectClassification, 1,
                                     [$"build {command.StepId} was already red on the integration branch"])
                                 : await DiagnoseFailureAsync(
-                                    command, requiredComparison, execution.Process, cleanRepeat?.Process, ct),
+                                    command, requiredComparison, execution.Process, cleanRepeat?.Process,
+                                    commands.Any(item => item.Phase == "clean-repeat"
+                                        && item.WorkspaceRole == "clean-repeat"
+                                        && item.StepId == command.StepId), ct),
                         };
                     if (comparison.Diagnosis?.Classification == DeliveryFailureDiagnosis.Environment
                         && candidateCache is not null)
@@ -727,7 +752,8 @@ public sealed class RemoteReviewWorkspace
                     execution.AgentUsage));
                 var verdict = comparison is null
                     ? ParseVerdict(command, execution.Process)
-                    : BaselineVerdict(command, comparison);
+                    : BaselineVerdict(command, comparison, execution.Process,
+                        cleanRepeat?.Process, _subject.ExpectedResultSha);
                 verdicts.Add(ReviewVerdictCitationPolicy.Normalize(
                     verdict,
                     ReviewCommandKinds.IsAgent(command.ExecutionKind)));
@@ -1997,6 +2023,7 @@ public sealed class RemoteReviewWorkspace
         BaselineComparison comparison,
         ProcessResult firstResult,
         ProcessResult? cleanResult,
+        bool cleanRepeatedSameStep,
         CancellationToken ct)
     {
         var initial = comparison.InitialFailures.Count > 0
@@ -2023,7 +2050,21 @@ public sealed class RemoteReviewWorkspace
         {
             _log($"review fingerprint history unavailable step={command.StepId}: {exception.Message}");
         }
-        var diagnosis = DeliveryFailureDiagnosis.Classify(new(
+        var unparsed = initial.Count == 0 || initial.All(failure =>
+            failure.StartsWith("<unparsed failure", StringComparison.Ordinal));
+        var repeatExitConfirmed = unparsed && cleanRepeatedSameStep
+            && comparison.BaselineExitCode == 0
+            && firstResult.ExitCode > 0 && firstResult.ExitCode != 127
+            && cleanResult is { ExitCode: > 0 and not 127 };
+        // A parsed test name can identify a specific failure. For an unparsed
+        // command, two positive failure exits of the same step are the proof;
+        // incidental diagnostic text and fingerprint-store availability are not.
+        var diagnosis = repeatExitConfirmed
+            ? new DeliveryFailureDiagnosisResult(DeliveryFailureDiagnosis.Product, 1,
+                [$"baseline exit={comparison.BaselineExitCode}",
+                 $"candidate exit={firstResult.ExitCode}",
+                 $"clean-repeat exit={cleanResult!.ExitCode}"])
+            : DeliveryFailureDiagnosis.Classify(new(
             historyAvailable ? fingerprint : null,
             comparison.BaselineExitCode == 0,
             comparison.BaselineFailures.Count > 0
@@ -3039,7 +3080,10 @@ public sealed class RemoteReviewWorkspace
 
     internal static ReviewVerdictDto BaselineVerdict(
         ReviewCommandDto command,
-        BaselineComparison comparison)
+        BaselineComparison comparison,
+        ProcessResult? candidate = null,
+        ProcessResult? cleanRepeat = null,
+        string? candidateSha = null)
     {
         var newFailures = comparison.NewFailures.Count == 0
             ? "0 new failures"
@@ -3065,13 +3109,21 @@ public sealed class RemoteReviewWorkspace
         };
         if (comparison.Diagnosis is { } diagnosis)
         {
+            var commandEvidence = diagnosis.ChargesCard && candidate is not null
+                ? $"; command={ReviewCommandFailureEvidence.Scrub(CommandLine(command) ?? command.FileName)}; step={command.StepId}" +
+                  $"; baseline-sha={comparison.BaselineSha}; baseline-exit={comparison.BaselineExitCode}" +
+                  $"; candidate-sha={candidateSha ?? "unknown"}; candidate-exit={candidate.ExitCode}" +
+                  $"; clean-repeat-exit={(cleanRepeat is null ? "unavailable" : cleanRepeat.ExitCode.ToString())}" +
+                  $"; candidate output tail:\n{ReviewCommandFailureEvidence.Tail(candidate)}"
+                : string.Empty;
             return new ReviewVerdictDto(
                 command.Aspect,
                 diagnosis.ChargesCard ? "block" : "pass",
                 diagnosis.Classification,
                 string.Join("; ", diagnosis.Evidence) +
                 $"; failed-tests={string.Join(", ", comparison.InitialFailures)}" +
-                $"; confidence={diagnosis.Confidence:0.00}; baseline={comparison.BaselineSha} ({comparison.Provenance})",
+                $"; confidence={diagnosis.Confidence:0.00}; baseline={comparison.BaselineSha} ({comparison.Provenance})" +
+                commandEvidence,
                 $"command:{command.StepId}; baseline:{comparison.BaselineSha}",
                 diagnosis.ChargesCard ? string.Join(", ", comparison.InitialFailures) : "none");
         }

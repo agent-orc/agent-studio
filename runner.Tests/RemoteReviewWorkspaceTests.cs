@@ -808,6 +808,42 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.False(exception.Evidence.Workspace.DirtyAfter);
     }
 
+    [Fact]
+    public async Task Candidate_exit_127_is_infrastructure_even_when_the_baseline_would_pass()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then exit 127; fi; exit 0");
+        var (workspace, _) = Workspace("attempt-candidate-127", subjectSha, [command], 24015,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("ToolUnavailable", exception.Classification);
+        Assert.Equal("ReviewInfra", exception.Evidence!.Outcome);
+        Assert.Equal(127, CandidateVerification(exception.Evidence).ExitCode);
+    }
+
+    [Fact]
+    public async Task Candidate_timeout_is_infrastructure_even_when_the_baseline_passes()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = new ReviewCommandDto("verify-2", "build-tests", PosixShell.RequirePath(),
+            ["-c", "if grep -q subject product.txt; then sleep 30; fi; exit 0"],
+            TimeoutSeconds: 1, CompareToBaseline: true);
+        var (workspace, _) = Workspace("attempt-candidate-timeout", subjectSha, [command], 24016,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("CommandTimeout", exception.Classification);
+        Assert.Equal("ReviewInfra", exception.Evidence!.Outcome);
+    }
+
     /// <summary>
     /// AGT-2750: a review worker whose <c>/tmp</c> mount was torn down by a
     /// <c>PrivateTmp=true</c> unit restart mid-build produces no parseable
@@ -1247,6 +1283,58 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal(2, candidate.ExitCode);
         Assert.Equal(DeliveryFailureDiagnosis.Product, candidate.Diagnosis?.Classification);
         Assert.Equal("ProductFailure", evidence.Outcome);
+    }
+
+    [Fact]
+    public async Task Unparsed_command_failure_with_different_output_is_charged_and_cited()
+    {
+        var (baselineSha, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf 'build error in run %s\\n' \"$$\"; " +
+            "case \"$PWD\" in *clean-repeat*) exit 2;; esac; exit 1; fi; exit 0");
+        var (workspace, _) = Workspace("attempt-unparsed", subjectSha, [command], 26125,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        var candidate = CandidateVerification(evidence);
+        var repeat = Assert.Single(evidence.Commands, item => item.Phase == "clean-repeat"
+            && item.WorkspaceRole == "clean-repeat");
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal(1, candidate.ExitCode);
+        Assert.Equal(2, repeat.ExitCode);
+        Assert.Equal(0, candidate.BaselineExitCode);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, candidate.Diagnosis?.Classification);
+        var summary = Assert.Single(evidence.Verdicts).Summary;
+        Assert.Contains("command=", summary, StringComparison.Ordinal);
+        Assert.Contains("step=verify-2", summary, StringComparison.Ordinal);
+        Assert.Contains($"baseline-sha={baselineSha}", summary, StringComparison.Ordinal);
+        Assert.Contains($"candidate-sha={subjectSha}", summary, StringComparison.Ordinal);
+        Assert.Contains("candidate-exit=1; clean-repeat-exit=2", summary, StringComparison.Ordinal);
+        Assert.Contains("candidate output tail:", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Unparsed_failure_cleared_by_repeat_does_not_charge_card()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var marker = Path.Combine(_root, "unparsed-first-run");
+        var command = BaselineCommand(
+            "if grep -q subject product.txt && test ! -f '" + marker + "'; then " +
+            "touch '" + marker + "'; printf 'build error\\n'; exit 1; fi; exit 0");
+        var (workspace, _) = Workspace("attempt-unparsed-flaky", subjectSha, [command], 26126,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("ReviewInfra", evidence.Outcome);
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence,
+            CandidateVerification(evidence).Diagnosis?.Classification);
+        Assert.Equal(0, Assert.Single(evidence.Commands, item =>
+            item.Phase == "clean-repeat" && item.WorkspaceRole == "clean-repeat").ExitCode);
     }
 
     [Fact]

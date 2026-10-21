@@ -293,14 +293,18 @@ public sealed class OperatorSweepPolicyTests
             ],
             [],
             [
-                new Contract.ReviewVerdictDto("tests", "block", "product", "OrderTotal_RoundsDown fails.", "OrderTests.cs"),
+                new Contract.ReviewVerdictDto("tests", "block", "product",
+                    "OrderTotal_RoundsDown fails; command=dotnet test backend.Tests; " +
+                    "baseline-exit=0; candidate-exit=1; candidate output tail:\nerror CS1002", "OrderTests.cs"),
                 new Contract.ReviewVerdictDto("lint", "pass", "none", "Clean."),
             ]);
 
         var prompt = OperatorSweepActions.BuildFixRoundFollowUp("rev-9", report, null, round: 2, allowed: 4);
 
         Assert.Contains("rev-9", prompt);
-        Assert.Contains("OrderTotal_RoundsDown fails.", prompt);
+        Assert.Contains("OrderTotal_RoundsDown fails", prompt);
+        Assert.Contains("command=dotnet test backend.Tests", prompt);
+        Assert.Contains("candidate output tail:\nerror CS1002", prompt);
         Assert.DoesNotContain("Clean.", prompt);
         Assert.Contains("`dotnet test backend.Tests`", prompt);
         Assert.DoesNotContain("npm run lint", prompt);
