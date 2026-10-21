@@ -1,0 +1,153 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "shop-api"
+            }
+          },
+          {
+            "key": "deployment.environment",
+            "value": {
+              "stringValue": "stage"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "shop.http"
+          },
+          "metrics": [
+            {
+              "name": "process.memory.usage",
+              "unit": "By",
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "1792152000000000000",
+                    "asInt": "5242880",
+                    "attributes": [
+                      {
+                        "key": "state",
+                        "value": {
+                          "stringValue": "used"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "timeUnixNano": "1792152000000000000"
+                  },
+                  {
+                    "timeUnixNano": "1792152000000000000",
+                    "asInt": "1",
+                    "flags": 1
+                  }
+                ]
+              }
+            },
+            {
+              "name": "http.server.requests",
+              "unit": "{request}",
+              "sum": {
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1792151400000000000",
+                    "timeUnixNano": "1792152000000000000",
+                    "asDouble": 42.0,
+                    "attributes": [
+                      {
+                        "key": "http.route",
+                        "value": {
+                          "stringValue": "/cart"
+                        }
+                      },
+                      {
+                        "key": "http.status_code",
+                        "value": {
+                          "intValue": "200"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "aggregationTemporality": 2,
+                "isMonotonic": true
+              }
+            },
+            {
+              "name": "http.server.duration",
+              "unit": "ms",
+              "histogram": {
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1792151940000000000",
+                    "timeUnixNano": "1792152000000000000",
+                    "count": "4",
+                    "sum": 100.0,
+                    "bucketCounts": [
+                      "1",
+                      "2",
+                      "1"
+                    ],
+                    "explicitBounds": [
+                      20.0,
+                      30.0
+                    ],
+                    "attributes": [
+                      {
+                        "key": "http.route",
+                        "value": {
+                          "stringValue": "/cart"
+                        }
+                      }
+                    ],
+                    "min": 10.0,
+                    "max": 40.0
+                  }
+                ],
+                "aggregationTemporality": 1
+              }
+            },
+            {
+              "name": "db.query.duration",
+              "unit": "ms",
+              "summary": {
+                "dataPoints": [
+                  {
+                    "startTimeUnixNano": "1792151940000000000",
+                    "timeUnixNano": "1792152000000000000",
+                    "count": "3",
+                    "sum": 30.0
+                  }
+                ]
+              }
+            },
+            {
+              "name": "queue.wait",
+              "unit": "s",
+              "exponentialHistogram": {
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "1792152000000000000",
+                    "count": "2",
+                    "sum": 8.0,
+                    "scale": 1,
+                    "min": 3.0,
+                    "max": 5.0
+                  }
+                ],
+                "aggregationTemporality": 1
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
