@@ -68,6 +68,28 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Concurrent_runbook_and_deployment_audit_appends_keep_both_events()
+    {
+        var (_, _, store) = Build();
+        var detail = new string('x', 16_384);
+        using var start = new Barrier(2);
+        Task Append(string action) => Task.Run(() =>
+        {
+            start.SignalAndWait();
+            for (var i = 0; i < 100; i++)
+                store.AppendAudit("demo", [new(_clock.GetUtcNow().UtcDateTime, "deploy-host", action, null,
+                    $"{action}-{i}", "stage", detail)]);
+        });
+
+        await Task.WhenAll(Append("runbook-succeeded"), Append("deployment-queued"));
+
+        var audit = store.ReadAudit("demo", 1000);
+        Assert.Equal(100, audit.Count(entry => entry.Action == "runbook-succeeded"));
+        Assert.Equal(100, audit.Count(entry => entry.Action == "deployment-queued"));
+        Assert.Equal(200, audit.Select(entry => entry.DeploymentId).Distinct().Count());
+    }
+
+    [Fact]
     public void Production_runbook_waits_for_owner_or_maintainer_and_records_rejection()
     {
         var (_, environments, store) = Build();
