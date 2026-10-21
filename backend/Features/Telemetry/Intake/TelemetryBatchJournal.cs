@@ -19,6 +19,8 @@ internal sealed class TelemetryBatchJournal
         _durability.FlushParentDirectory(_root);
         _durability.FlushParentDirectory(Path.GetDirectoryName(_root)!);
         foreach (var completed in Directory.EnumerateFiles(_root, "*.done")) File.Delete(completed);
+        // A .tmp file was never renamed to its stage, so no request was acknowledged for it.
+        foreach (var unfinished in Directory.EnumerateFiles(_root, "*.json.tmp")) File.Delete(unfinished);
         _nextOrder = Directory.EnumerateFiles(_root, "*.json")
             .Select(path => OrderOf(Path.GetFileNameWithoutExtension(path))).DefaultIfEmpty().Max();
     }

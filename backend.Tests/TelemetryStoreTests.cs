@@ -162,6 +162,80 @@ public sealed class TelemetryStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Replay_marker_outlives_the_persisted_stage_completion()
+    {
+        var options = new TelemetryOptions { StoreRoot = _root };
+        var durability = new RecordingDurability();
+        var store = new TelemetryStore(options, NullLogger<TelemetryStore>.Instance, durability);
+        var queue = new TelemetryIntakeQueue(options, null, null, durability);
+        var databasePath = store.DatabasePath(_stage);
+        Assert.Equal(TelemetryEnqueueResult.Accepted,
+            queue.TryEnqueue(new(_stage, [Gauge("marker", 1, Nanos(_clock.GetUtcNow()))], [], 256)));
+        long? markersAtCompletion = null;
+        durability.OnMove = destination =>
+        {
+            if (!destination.EndsWith(".done", StringComparison.Ordinal)) return;
+            using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM ingest_commits";
+            markersAtCompletion = (long)command.ExecuteScalar()!;
+        };
+        var writer = new TelemetryWriter(queue, store, [], new CredentialTelemetryValueMasker(),
+            options, _clock, NullLogger<TelemetryWriter>.Instance);
+
+        Assert.Equal(1, await writer.DrainOnceAsync(CancellationToken.None));
+
+        // A crash between the rename and the marker removal must still find the marker.
+        Assert.Equal(1L, markersAtCompletion);
+        using var after = new SqliteConnection($"Data Source={databasePath};Pooling=False");
+        after.Open();
+        using var count = after.CreateCommand();
+        count.CommandText = "SELECT COUNT(*) FROM ingest_commits";
+        Assert.Equal(0L, (long)count.ExecuteScalar()!);
+    }
+
+    [Fact]
+    public async Task Unmasked_legacy_stage_is_masked_after_replay()
+    {
+        var options = new TelemetryOptions { StoreRoot = _root };
+        var secret = new string('z', 24);
+        var credential = "Authorization: Bearer " + secret;
+        var legacy = new TelemetryIntakeQueue(options, new PassThroughMasker());
+        var log = new TelemetryLogRecord(Nanos(_clock.GetUtcNow()), 17, credential, credential,
+            Attributes([("auth", credential)]), null, null, credential);
+        Assert.Equal(TelemetryEnqueueResult.Accepted, legacy.TryEnqueue(new(_stage, [], [log], 512)));
+        var stage = Assert.Single(Directory.EnumerateFiles(Path.Combine(_root, "pending"), "*.json"));
+        Assert.Contains(secret, await File.ReadAllTextAsync(stage));
+
+        var recovered = new TelemetryIntakeQueue(options);
+        var store = Store(options);
+        var writer = new TelemetryWriter(recovered, store, [], new CredentialTelemetryValueMasker(),
+            options, _clock, NullLogger<TelemetryWriter>.Instance);
+        Assert.Equal(1, await writer.DrainOnceAsync(CancellationToken.None));
+
+        var stored = System.Text.Json.JsonSerializer.Serialize(Logs(store));
+        Assert.DoesNotContain(secret, stored);
+        Assert.Contains("[REDACTED]", stored);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "pending"), "*.json"));
+    }
+
+    [Fact]
+    public void Unfinished_stage_writes_are_removed_on_startup()
+    {
+        var options = new TelemetryOptions { StoreRoot = _root };
+        var pending = Path.Combine(_root, "pending");
+        Directory.CreateDirectory(pending);
+        var unfinished = Path.Combine(pending, $"{1:D20}-{Guid.NewGuid():N}.json.tmp");
+        File.WriteAllText(unfinished, "{\"Environ");
+
+        var queue = new TelemetryIntakeQueue(options);
+
+        Assert.False(File.Exists(unfinished));
+        Assert.Equal(0, queue.PendingRecords);
+    }
+
+    [Fact]
     public async Task Failed_store_root_sync_keeps_the_stage_for_retry()
     {
         var options = new TelemetryOptions { StoreRoot = _root };
@@ -595,6 +669,12 @@ public sealed class TelemetryStoreTests : IDisposable
     private static TelemetryAttributes Attributes((string Key, string Value)[] values)
         => TelemetryAttributes.From(values.Select(item => KeyValuePair.Create(item.Key, item.Value)));
 
+    /// <summary>Stages values unchanged, like a stage file written before staging masked them.</summary>
+    private sealed class PassThroughMasker : ITelemetryValueMasker
+    {
+        public string Mask(string value) => value;
+    }
+
     private sealed class RecordingDurability : ITelemetryDurability
     {
         public List<string> Events { get; } = [];
@@ -607,9 +687,12 @@ public sealed class TelemetryStoreTests : IDisposable
             TelemetryDurability.Instance.FlushParentDirectory(path);
         }
 
+        public Action<string>? OnMove { get; set; }
+
         public void MoveStagedFile(string source, string destination)
         {
             Events.Add("move:" + destination);
+            OnMove?.Invoke(destination);
             TelemetryDurability.Instance.MoveStagedFile(source, destination);
         }
     }
