@@ -261,7 +261,9 @@ public sealed partial class TaskServerStoreTests
         await restarted.InitializeAsync();
         Assert.Equal("queued", (await restarted.GetContinuationIntentAsync(
             project.ProjectId, task.TaskId, "continue-2", default))!.Status);
-        await restarted.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var registered = await restarted.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await ModelAcceptanceTestSupport.AcceptModelsAsync(restarted, registered.LastSeenAt, "runner-a", "instance-a", 1,
+            ModelAcceptanceTestSupport.PolicyRoutes);
         var claim = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Equal("continue-1", claim.ContinuationIntent?.Receipt.CommandId);
         Assert.Equal("First instruction", claim.FollowUp!.Prompt);
@@ -517,7 +519,9 @@ public sealed partial class TaskServerStoreTests
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
-        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var registered = await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await ModelAcceptanceTestSupport.AcceptModelsAsync(store, registered.LastSeenAt, "runner-a", "instance-a", 1,
+            ModelAcceptanceTestSupport.PolicyRoutes);
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         var run = claim.Run!;
         var lease = claim.Lease!;
@@ -565,7 +569,9 @@ public sealed partial class TaskServerStoreTests
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
-        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var registered = await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await ModelAcceptanceTestSupport.AcceptModelsAsync(store, registered.LastSeenAt, "runner-a", "instance-a", 1,
+            ModelAcceptanceTestSupport.PolicyRoutes);
         var first = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         var prior = new SessionContinuationLedgerEntry(
             first.Run!.RunId, task.TaskKey, "codex", "https://example.test/repo.git",
@@ -655,7 +661,9 @@ public sealed partial class TaskServerStoreTests
             "Resolve the conflict.", "Run focused tests.");
         await store.UpdateTaskAsync(project.ProjectId, task.TaskKey,
             new UpdateTaskRequest(null, body, "2-ready", task.Version, delta), "test", default);
-        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var registered = await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await ModelAcceptanceTestSupport.AcceptModelsAsync(store, registered.LastSeenAt, "runner-a", "instance-a", 1,
+            ModelAcceptanceTestSupport.PolicyRoutes);
 
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Equal("gpt-6-sol", claim.MechanicalFreshRoute?.Model);
@@ -2267,7 +2275,9 @@ public sealed partial class TaskServerStoreTests
         var store = Store(temp.Path);
         await store.InitializeAsync();
         var (_, project, task) = await SeedReadyTaskAsync(store);
-        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var registered = await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await ModelAcceptanceTestSupport.AcceptModelsAsync(store, registered.LastSeenAt, "runner-a", "instance-a", 1,
+            ModelAcceptanceTestSupport.PolicyRoutes);
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         var decision = ProviderRefusalDecision(claim.Run!.RunId, "gpt-6-astra");
 
@@ -2333,7 +2343,7 @@ public sealed partial class TaskServerStoreTests
     }
 
     [Fact]
-    public async Task Claim_does_not_filter_a_card_by_its_primary_model_before_fallback_routing()
+    public async Task Claim_requires_fresh_host_acceptance_of_the_named_primary_model()
     {
         using var temp = new TempDirectory();
         var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
@@ -2345,18 +2355,42 @@ public sealed partial class TaskServerStoreTests
         await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
             new SetTaskModelRequest("claude-opus-5", 1), "operator", default);
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
-        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
-            "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, 1,
-            [new AdvertisedCapabilityDto(
-                CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol"),
-                "model-acceptance", "ready", CredentialGeneration: "login-1",
-                CredentialObservedAt: clock.GetUtcNow().UtcDateTime)]), "runner-a", default);
+        var probeRoutes = await ModelAcceptanceTestSupport.AcceptModelsAsync(
+            store, clock.GetUtcNow().UtcDateTime, "runner-a", "instance-a", 1, ("codex", "gpt-6-sol"));
+        Assert.Contains(CapabilityProtocol.ModelAcceptance("claude", "claude-opus-5"), probeRoutes.ModelProbeKeys!);
 
-        var claim = await store.ClaimAsync(
-            new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var unverified = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("empty", unverified.Status);
+        Assert.StartsWith("model-acceptance-unverified", unverified.PlacementReason);
 
-        Assert.Equal("claimed", claim.Status);
-        Assert.Equal(task.TaskId, claim.Task?.TaskId);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await ModelAcceptanceTestSupport.AcceptModelsAsync(
+            store, clock.GetUtcNow().UtcDateTime, "runner-a", "instance-a", 2, ("claude", "claude-opus-5"));
+        var accepted = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", accepted.Status);
+        Assert.Equal(task.TaskId, accepted.Task?.TaskId);
+    }
+
+    [Fact]
+    public async Task Expired_host_acceptance_does_not_admit_a_named_primary_model()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await ModelAcceptanceTestSupport.AcceptModelsAsync(
+            store, clock.GetUtcNow().UtcDateTime, "runner-a", "instance-a", 1, ("codex", "gpt-6-sol"));
+
+        clock.Advance(TimeSpan.FromSeconds(181));
+        var expired = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("empty", expired.Status);
+        Assert.StartsWith("model-acceptance-unverified", expired.PlacementReason);
     }
 
     [Fact]
@@ -2372,17 +2406,10 @@ public sealed partial class TaskServerStoreTests
         await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
             new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
-        var key = CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol");
         var firstProbeAt = clock.GetUtcNow().UtcDateTime;
-        await Advertise("ready", 1);
+        await Advertise(1, firstProbeAt, firstProbeAt);
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
-        const string frame = """
-            {"type":"turn.failed","error":{"type":"invalid_request_error","message":"The gpt-6-sol model is not supported when using Codex with a ChatGPT account","status":400}}
-            """;
-        var decision = ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
-            claim.Run!.RunId, ExecutionAttemptKind.Coding, ProviderTerminalEvent: frame,
-            ExitCode: 1, DurableOutputState: DurableOutputState.Missing,
-            EffectiveCliType: "codex", EffectiveModel: "gpt-6-sol", EffectiveThinkingLevel: "medium"));
+        var decision = ModelAcceptanceTestSupport.ModelRefusalDecision(claim.Run!.RunId, "gpt-6-sol");
         Assert.Equal(ExecutionOutcomeKind.ProviderRejectedRequest, decision.Outcome);
 
         await store.CompleteRunAsync(claim.Run.RunId,
@@ -2397,24 +2424,71 @@ public sealed partial class TaskServerStoreTests
         Assert.Contains(await store.ListEventsAsync(claim.Run.RunId, 0, default),
             item => item.Kind == "execution.model-capability-held");
 
+        // A replayed cached verdict carries the watermark of its old probe.
         clock.Advance(TimeSpan.FromSeconds(1));
-        await Advertise("ready", 2, firstProbeAt);
+        await Advertise(2, clock.GetUtcNow().UtcDateTime, firstProbeAt);
         Assert.NotEqual("claimed", (await store.ClaimAsync(
             new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
         Assert.Equal("unavailable", Assert.Single(
             (await store.ListRunnerCapabilitySnapshotsAsync(default)).Single().Capabilities).AdvertisedStatus);
 
         clock.Advance(TimeSpan.FromSeconds(1));
-        await Advertise("ready", 3);
+        await Advertise(3, clock.GetUtcNow().UtcDateTime, clock.GetUtcNow().UtcDateTime);
         Assert.Equal("claimed", (await store.ClaimAsync(
             new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
 
-        Task Advertise(string status, long generation, DateTime? observedAt = null)
-            => store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
-                "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, generation,
-                [new AdvertisedCapabilityDto(key, "model-acceptance", status,
-                    CredentialGeneration: $"login-{generation}",
-                    CredentialObservedAt: observedAt ?? clock.GetUtcNow().UtcDateTime)]), "runner-a", default);
+        Task Advertise(long generation, DateTime hostTime, DateTime watermark)
+            => ModelAcceptanceTestSupport.AdvertiseModelAsync(store, "runner-a", "instance-a",
+                generation, "codex", "gpt-6-sol", "ready", hostTime, watermark);
+    }
+
+    [Fact]
+    public async Task Delayed_advertisement_from_a_host_clock_ahead_cannot_clear_a_model_rejection()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
+        var registered = await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        // The host clock runs 90 seconds ahead of the Task Server.
+        DateTime HostNow() => clock.GetUtcNow().UtcDateTime.AddSeconds(90);
+        var watermarkBeforeRefusal = registered.LastSeenAt;
+        await Advertise(1, HostNow(), watermarkBeforeRefusal);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", claim.Status);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var decision = ModelAcceptanceTestSupport.ModelRefusalDecision(claim.Run!.RunId, "gpt-6-sol");
+        await store.CompleteRunAsync(claim.Run.RunId,
+            new CompleteRunRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                claim.Lease.Fence, decision.Outcome.ToString(),
+                IdempotencyKey: $"completion:{claim.Run.RunId}:model-refusal",
+                Sequence: 1, OutcomeDecision: decision), "runner-a", default);
+
+        // A probe that started before the refusal arrives late. Its host
+        // observation is later than the refusal on the server clock, but its
+        // watermark is not.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var delayed = await Advertise(2, HostNow(), watermarkBeforeRefusal);
+        Assert.Equal("unavailable", Assert.Single(delayed.Capabilities).AdvertisedStatus);
+        Assert.NotEqual("claimed", (await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+
+        // The next probe starts after that response and carries its server time.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var recovered = await Advertise(3, HostNow(), delayed.LastSeenAt);
+        Assert.Equal("ready", Assert.Single(recovered.Capabilities).AdvertisedStatus);
+        Assert.Equal("claimed", (await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+
+        Task<RunnerCapabilitySnapshotDto> Advertise(long generation, DateTime hostTime, DateTime watermark)
+            => ModelAcceptanceTestSupport.AdvertiseModelAsync(store, "runner-a", "instance-a",
+                generation, "codex", "gpt-6-sol", "ready", hostTime, watermark);
     }
 
     [Fact]
@@ -2430,15 +2504,11 @@ public sealed partial class TaskServerStoreTests
         await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
             new SetTaskModelRequest("claude-opus-5", 1), "operator", default);
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await ModelAcceptanceTestSupport.AcceptModelsAsync(
+            store, clock.GetUtcNow().UtcDateTime, "runner-a", "instance-a", 1, ("claude", "claude-opus-5"));
 
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
-        const string frame = """
-            {"type":"turn.failed","error":{"type":"invalid_request_error","message":"The gpt-6-sol model is not supported when using Codex with a ChatGPT account","status":400}}
-            """;
-        var decision = ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
-            claim.Run!.RunId, ExecutionAttemptKind.Coding, ProviderTerminalEvent: frame,
-            ExitCode: 1, DurableOutputState: DurableOutputState.Missing,
-            EffectiveCliType: "codex", EffectiveModel: "gpt-6-sol", EffectiveThinkingLevel: "medium"));
+        var decision = ModelAcceptanceTestSupport.ModelRefusalDecision(claim.Run!.RunId, "gpt-6-sol");
         await store.CompleteRunAsync(claim.Run.RunId,
             new CompleteRunRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
                 claim.Lease.Fence, decision.Outcome.ToString(),

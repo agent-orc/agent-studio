@@ -35,6 +35,24 @@ public sealed class CliQuotaFallbackService
         lock (_lock) return new Dictionary<string, CliModelRouteProfile>(_profiles, StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Model-acceptance keys of every operator-configured primary and fallback
+    /// model, so a host proves them with its own login before admission.
+    /// </summary>
+    public IReadOnlyList<string> ConfiguredModelAcceptanceKeys()
+        => GetAll().Values
+            .SelectMany(profile => new[]
+            {
+                (Cli: profile.CliType, Model: profile.PrimaryModel),
+                (Cli: profile.FallbackCliType ?? profile.CliType, Model: profile.FallbackModel),
+            })
+            .Where(route => !string.IsNullOrWhiteSpace(route.Cli) && !string.IsNullOrWhiteSpace(route.Model))
+            .Select(route => AgentStudio.TaskServer.Contracts.CapabilityProtocol.ModelAcceptance(route.Cli, route.Model!))
+            .Where(key => AgentStudio.TaskServer.Contracts.CapabilityProtocol.TryParseModelAcceptance(key, out _, out _))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
     public CliModelRouteProfile Set(CliModelRouteProfile profile)
     {
         if (string.IsNullOrWhiteSpace(profile.CliType)) throw new ArgumentException("cliType is required");

@@ -185,7 +185,8 @@ public static class V1ReviewPlaneEndpoints
             Contract.CapabilityAdvertisementRequest request,
             V1ReviewExecutorRegistry registry,
             AdaptiveReviewParallelismAdvisor reviewParallelism,
-            AgentStudio.Clients.ClientIdentityStore clients) =>
+            AgentStudio.Clients.ClientIdentityStore clients,
+            AgentStudio.Cli.CliQuotaFallbackService quotaRoutes) =>
         {
             if (!RunnerMatches(context, runnerId))
                 return Results.Unauthorized();
@@ -195,7 +196,10 @@ public static class V1ReviewPlaneEndpoints
                     "Route and capability runner ids differ."));
             try
             {
-                var snapshot = registry.AdvertiseCapabilities(runnerId, request);
+                var snapshot = registry.AdvertiseCapabilities(runnerId, request) with
+                {
+                    ModelProbeKeys = quotaRoutes.ConfiguredModelAcceptanceKeys(),
+                };
                 clients.RecordSeen(runnerId);
                 // AGT-2820: the review plane's parallelism recommendation used to
                 // be an unread number on a diagnostics endpoint - it answered
@@ -3664,9 +3668,17 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 var rejectedKey = $"{runnerId}|{capability.Key}";
                 if (!_rejectedModels.TryGetValue(rejectedKey, out var rejectedAt))
                     return capability;
+                // The watermark is this registry's own clock, echoed from an
+                // earlier response the host received before it probed. The
+                // host clock never orders the probe after the rejection.
+                var watermark = request.Capabilities
+                    .LastOrDefault(item => string.Equals(
+                        item.Key.Trim().ToLowerInvariant(), capability.Key, StringComparison.Ordinal))
+                    ?.ProbeServerWatermark?.ToUniversalTime();
                 if (string.Equals(capability.AdvertisedStatus, "ready", StringComparison.Ordinal)
-                    && capability.CredentialObservedAt is { } observedAt
-                    && observedAt.ToUniversalTime() > rejectedAt)
+                    && watermark is { } issued
+                    && issued > rejectedAt
+                    && issued <= now)
                 {
                     _rejectedModels.Remove(rejectedKey);
                     return capability;

@@ -1370,6 +1370,7 @@ public sealed class TaskServerClient : IDisposable
                 HealthOutcome = null,
                 ServiceAvailability = null,
                 CredentialHealth = null,
+                ProbeServerWatermark = null,
             }).ToArray(),
             telemetry,
             RunnerReleaseIdentity.CurrentIdentity,
@@ -1380,6 +1381,9 @@ public sealed class TaskServerClient : IDisposable
             request,
             ct);
         AdoptRoleMaxParallelism(snapshot?.RoleMaxParallelism);
+        if (snapshot is not null)
+            RunnerModelAcceptanceProbe.Shared.ObserveServer(
+                snapshot.LastSeenAt, snapshot.ModelProbeKeys, snapshot.Capabilities ?? []);
     }
 
     /// <summary>

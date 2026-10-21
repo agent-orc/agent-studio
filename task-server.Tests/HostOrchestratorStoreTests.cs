@@ -29,7 +29,9 @@ public sealed class HostOrchestratorStoreTests
             "Resolve the conflict.", "Run focused tests.");
         await first.UpdateTaskAsync(project.ProjectId, task.TaskKey,
             new UpdateTaskRequest(null, null, "2-ready", task.Version, delta), "test", default);
-        await first.RegisterRunnerAsync("runner-a", Runner("instance-a"), "runner-a", default);
+        var registered = await first.RegisterRunnerAsync("runner-a", Runner("instance-a"), "runner-a", default);
+        await ModelAcceptanceTestSupport.AcceptModelsAsync(first, registered.LastSeenAt, "runner-a", "instance-a", 1,
+            ModelAcceptanceTestSupport.PolicyRoutes);
 
         var report1 = Report(
             sequence: 1,
@@ -294,6 +296,79 @@ public sealed class HostOrchestratorStoreTests
     }
 
     [Fact]
+    public async Task Permits_honor_model_rejection_holds_and_require_fresh_host_acceptance()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Workspace"), "test", default);
+        var project = await store.CreateProjectAsync(
+            new CreateProjectRequest(workspace.WorkspaceId, "Project", "TS"), "test", default);
+        var task = await store.CreateTaskAsync(
+            project.ProjectId, new CreateTaskRequest("Task", "Do the work", "2-ready"), "test", default);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "runner-a", default);
+
+        // An unverified named primary is neither offered nor claimed.
+        Assert.Empty((await ReportAsync(1)).AvailableWork);
+        var unverified = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "runner-a", default);
+        Assert.Equal("empty", unverified.Status);
+        Assert.StartsWith("model-acceptance-unverified", unverified.PlacementReason);
+
+        await AdvertiseAsync(1, "ready", clock.GetUtcNow().UtcDateTime);
+        var offered = await ReportAsync(2);
+        var permit = Assert.Single(offered.AvailableWork);
+
+        // A refusal between offer and acceptance is rechecked in the
+        // transaction that would create the lease.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await AdvertiseAsync(2, "unavailable", clock.GetUtcNow().UtcDateTime);
+        var refused = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.AcceptWorkPermitAsync(
+            permit.PermitId, AcceptRequest(offered, "accept-after-refusal"), "runner-a", default));
+        Assert.Equal("work-permit-model-unaccepted", refused.Code);
+
+        // A launch refusal holds the card, so its permit is not offered again.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var probedBeforeRefusal = clock.GetUtcNow().UtcDateTime;
+        await AdvertiseAsync(3, "ready", probedBeforeRefusal);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "runner-a", default);
+        Assert.Equal("claimed", claim.Status);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var decision = ModelAcceptanceTestSupport.ModelRefusalDecision(claim.Run!.RunId, "gpt-6-sol");
+        await store.CompleteRunAsync(claim.Run.RunId,
+            new CompleteRunRequest("runner-a", "instance-a", claim.Lease!.LeaseId, claim.Lease.Fence,
+                decision.Outcome.ToString(), IdempotencyKey: "model-refusal", Sequence: 1,
+                OutcomeDecision: decision), "runner-a", default);
+        Assert.Equal("2-ready", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await AdvertiseAsync(4, "ready", probedBeforeRefusal);
+        Assert.Empty((await ReportAsync(3)).AvailableWork);
+
+        // A probe ordered after the refusal releases the hold.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await AdvertiseAsync(5, "ready", clock.GetUtcNow().UtcDateTime);
+        var reoffered = await ReportAsync(4);
+        var recoveredPermit = Assert.Single(reoffered.AvailableWork);
+        Assert.Equal(task.TaskId, recoveredPermit.Task.TaskId);
+        Assert.Equal("accepted", (await store.AcceptWorkPermitAsync(
+            recoveredPermit.PermitId, AcceptRequest(reoffered, "accept-recovered"), "runner-a", default)).Status);
+
+        Task<HostReportResponse> ReportAsync(long sequence)
+            => store.AcceptHostReportAsync(
+                "runner-a", Report(sequence, new HostCapacityDto(1, 1, 0, 0, 1)), "runner-a", default);
+        Task AdvertiseAsync(long generation, string status, DateTime watermark)
+            => ModelAcceptanceTestSupport.AdvertiseModelAsync(store, "runner-a", "instance-a", generation,
+                "codex", "gpt-6-sol", status, clock.GetUtcNow().UtcDateTime, watermark);
+        static WorkPermitAcceptRequest AcceptRequest(HostReportResponse report, string key)
+            => new(HostOrchestratorContract.Current, "host-a", "instance-a", "runner-a",
+                report.AcceptedSequence, report.PolicyVersion, key);
+    }
+
+    [Fact]
     public async Task Report_sequence_is_idempotent_and_capacity_invariants_fail_closed()
     {
         using var temp = new TempDirectory();
@@ -519,7 +594,7 @@ public sealed class HostOrchestratorStoreTests
         Assert.Equal("project-concurrency-full", fullClaim.PlacementReason);
     }
 
-    private static TaskServerStore Store(string dataDirectory)
+    private static TaskServerStore Store(string dataDirectory, TimeProvider? clock = null)
         => new(
             Options.Create(new TaskServerOptions
             {
@@ -527,7 +602,7 @@ public sealed class HostOrchestratorStoreTests
                 MinimumLeaseSeconds = 30,
                 MaximumLeaseSeconds = 600,
             }),
-            TimeProvider.System);
+            clock ?? TimeProvider.System);
 
     private static RegisterRunnerRequest Runner(string instanceId, string hostId = "host-a")
         => new(

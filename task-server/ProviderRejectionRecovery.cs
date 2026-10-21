@@ -119,7 +119,7 @@ public sealed partial class TaskServerStore
     private async Task<ProviderRejectionClaimContinuation?> ReadProviderFallbackForClaimAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        TaskDto task,
+        string taskId,
         CancellationToken ct)
     {
         string? payload = null;
@@ -133,7 +133,7 @@ public sealed partial class TaskServerStore
                AND event.kind = 'execution.outcome.classified'
              ORDER BY event.cursor DESC
              LIMIT 1;
-            """, transaction, ("$task", task.TaskId)))
+            """, transaction, ("$task", taskId)))
         await using (var reader = await command.ExecuteReaderAsync(ct))
         {
             if (await reader.ReadAsync(ct))
@@ -159,7 +159,7 @@ public sealed partial class TaskServerStore
             SalvageBranch: salvageBranch,
             SalvageCommitSha: salvageCommitSha);
         var fallback = (await PlanProviderRejectionAsync(
-            connection, transaction, task.TaskId, synthetic, ct))?.Fallback;
+            connection, transaction, taskId, synthetic, ct))?.Fallback;
         return fallback is null
                || string.IsNullOrWhiteSpace(salvageBranch)
                || string.IsNullOrWhiteSpace(salvageCommitSha)

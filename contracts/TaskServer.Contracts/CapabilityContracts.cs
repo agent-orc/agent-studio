@@ -51,6 +51,27 @@ public static class CapabilityProtocol
 
     public static string ModelAcceptance(string provider, string model)
         => $"model-acceptance:{provider.Trim().ToLowerInvariant()}:{model.Trim().ToLowerInvariant()}";
+
+    /// <summary>
+    /// Reads a model-acceptance key whose provider is a coding CLI and whose
+    /// model is a plain model ID that is safe to pass to that CLI.
+    /// </summary>
+    public static bool TryParseModelAcceptance(string? key, out string provider, out string model)
+    {
+        provider = model = string.Empty;
+        const string prefix = "model-acceptance:";
+        if (key is null || !key.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        var parts = key[prefix.Length..].Split(':', 2);
+        if (parts.Length != 2 || parts[0] is not ("claude" or "codex")
+            || !IsModelId(parts[1])) return false;
+        (provider, model) = (parts[0], parts[1]);
+        return true;
+    }
+
+    public static bool IsModelId(string? model)
+        => model is { Length: > 0 and <= 64 }
+           && char.IsAsciiLetterOrDigit(model[0])
+           && model.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_');
 }
 
 public static class CapabilityHealthStates
@@ -85,7 +106,11 @@ public sealed record AdvertisedCapabilityDto(
     IReadOnlyList<string>? EvidenceRefs = null,
     string? HealthOutcome = null,
     string? ServiceAvailability = null,
-    string? CredentialHealth = null)
+    string? CredentialHealth = null,
+    // Model acceptance only: the server clock value from the last capability
+    // response this host had received before the probe started. It orders a
+    // probe after a server-recorded rejection without comparing host clocks.
+    DateTime? ProbeServerWatermark = null)
 {
     // Keep the previous in-process constructor available during rolling
     // upgrades. Rich fields are negotiated on the HTTP wire separately.
@@ -97,7 +122,7 @@ public sealed record AdvertisedCapabilityDto(
         IReadOnlyList<string>? supportedModels)
         : this(key, category, status, version, identity, detail, signal, expiresAt,
             limitedUntil, credentialModifiedAt, evidenceId, evidenceExcerpt, supportedModels,
-            null, null, null, null, null, null, null, null, null, null, null) { }
+            null, null, null, null, null, null, null, null, null, null, null, null) { }
 }
 
 public sealed record CapabilityAdvertisementRequest(
@@ -367,7 +392,10 @@ public sealed record RunnerCapabilitySnapshotDto(
     IReadOnlyList<InstalledCliDto>? InstalledClis = null,
     HostCliUpdateDto? CliUpdate = null,
     RunnerReleaseIdentityDto? Release = null,
-    int ActiveGateCount = 0);
+    int ActiveGateCount = 0,
+    // Configured or queued model routes, as model-acceptance keys, that this
+    // host should prove with its own login.
+    IReadOnlyList<string>? ModelProbeKeys = null);
 
 public static class InstalledCliProjection
 {

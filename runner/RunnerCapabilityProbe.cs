@@ -38,9 +38,20 @@ internal static class RunnerCapabilityProbe
         }
     }
 
-    internal static IReadOnlyList<(string Provider, string Model)> ModelCandidates(RunnerOptions options)
-        => CodingCliBinaries(options).SelectMany(item =>
+    /// <summary>
+    /// The curated routes plus every valid configured primary, fallback, or
+    /// queued card route the server named for this host. The real probe is the
+    /// proof, so a configured route is not limited to the CLI's model listing.
+    /// </summary>
+    internal static IReadOnlyList<(string Provider, string Model)> ModelCandidates(
+        RunnerOptions options, RunnerModelAcceptanceProbe? probe = null)
+    {
+        var configured = (probe ?? RunnerModelAcceptanceProbe.Shared).Configured;
+        return CodingCliBinaries(options).SelectMany(item =>
         {
+            var named = configured
+                .Where(route => route.Provider == item.CliType && CapabilityProtocol.IsModelId(route.Model))
+                .Select(route => (item.CliType, route.Model));
             if (item.CliType == CliSelection.CodexCli)
             {
                 var installation = InspectCli(item.Binary);
@@ -50,14 +61,17 @@ internal static class RunnerCapabilityProbe
                 var offered = installation is null ? null : CodexModels(installation);
                 return routes.Where(model => offered is null
                         || offered.Contains(model, StringComparer.OrdinalIgnoreCase))
-                    .Select(model => (item.CliType, model));
+                    .Select(model => (item.CliType, model))
+                    .Concat(named);
             }
             return new[] { "claude-opus-5", "claude-sonnet-5", "claude-opus-5-5",
                     "claude-sonnet-5-5", "claude-fable-5-1", "claude-sonnet-4-6",
                     "claude-sonnet-4-5", "claude-opus-4-8", "claude-opus-4-7",
                     "claude-opus-4-6", "claude-opus-4-5", "claude-haiku-4-5" }
-                .Select(model => (item.CliType, model));
+                .Select(model => (item.CliType, model))
+                .Concat(named);
         }).Distinct().ToArray();
+    }
     public static IReadOnlyList<AdvertisedCapabilityDto> Advertise(
         RunnerOptions options,
         bool gitPushReady,

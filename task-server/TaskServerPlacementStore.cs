@@ -153,7 +153,9 @@ public sealed partial class TaskServerStore
     {
         // A rejected fallback must not hold the card after quota admission
         // returns to its primary route. The quota planner checks acceptance
-        // after resolving the effective route.
+        // after resolving the effective route. Recovery needs a probe that
+        // started after a server response later than the refusal; the
+        // runner's own clock never orders it.
         await using var command = Command(connection, """
             SELECT t.id, t.project_id, t.task_key, t.title, t.state, t.version, t.created_at, t.updated_at, t.body,
                    t.archive_state, t.archived_at
@@ -178,7 +180,7 @@ public sealed partial class TaskServerStore
                                  'model-acceptance:' || json_extract(held.payload_json, '$.provider')
                                  || ':' || json_extract(held.payload_json, '$.model')
                              AND recovery.advertised_status = 'ready'
-                             AND recovery.credential_observed_at > held.occurred_at
+                             AND recovery.probe_server_watermark > held.occurred_at
                              AND recovery.fresh_until > $now))
                AND (
                    NOT EXISTS (

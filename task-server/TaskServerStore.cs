@@ -1509,9 +1509,12 @@ public sealed partial class TaskServerStore
             // at the first admissible task, so refused projects cost one
             // evaluation and one admission receipt rather than one per task.
             var verdicts = new List<ClaimPlacementVerdict>();
+            var modelRefusals = new List<string>();
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
-                ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId,
-                    request.RunnerId, UtcNow, ct),
+                WhereModelRouteAcceptedAsync(connection, transaction,
+                    ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId,
+                        request.RunnerId, UtcNow, ct),
+                    request.RunnerId, modelRefusals, ct),
                 async projectId =>
                 {
                     var verdict = await EvaluateProjectAsync(projectId);
@@ -1525,6 +1528,7 @@ public sealed partial class TaskServerStore
             var selectedPlacement = selected?.Placement;
             var placementReason = selected?.Reason
                                   ?? verdicts.LastOrDefault()?.Reason
+                                  ?? modelRefusals.LastOrDefault()
                                   ?? ProjectPlacementReasons.NoAdmissibleTask;
 
             if (task is null)
@@ -1540,20 +1544,10 @@ public sealed partial class TaskServerStore
             capabilityAdmission = selected!.Admission!;
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
-                connection, transaction, task, ct);
+                connection, transaction, task.TaskId, ct);
             var continuationIntent = await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct);
             var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
-            SessionContinuationLedgerEntry? previousSession = null;
-            var priorSessionJson = Convert.ToString(await ScalarAsync(connection, """
-                SELECT payload_json FROM events
-                 WHERE task_id = $task AND kind = 'session.continuation'
-                 ORDER BY rowid DESC LIMIT 1;
-                """, ct, transaction, ("$task", task.TaskId)), CultureInfo.InvariantCulture);
-            if (!string.IsNullOrWhiteSpace(priorSessionJson))
-            {
-                try { previousSession = JsonSerializer.Deserialize<SessionContinuationLedgerEntry>(priorSessionJson); }
-                catch (JsonException) { /* Corrupt evidence never authorizes a resume. */ }
-            }
+            var previousSession = await ReadPreviousSessionAsync(connection, transaction, task.TaskId, ct);
             var mechanicalFreshRoute = await ReadMechanicalFreshRouteAsync(
                 connection, transaction, task.TaskId, mechanicalDelta, previousSession, ct);
             var mechanicalBase = MechanicalFallbackBase(previousSession);
@@ -3721,6 +3715,7 @@ public sealed partial class TaskServerStore
                 health_outcome TEXT,
                 service_availability TEXT,
                 credential_health TEXT,
+                probe_server_watermark TEXT,
                 advertised_instance_id TEXT,
                 evidence_id TEXT,
                 evidence_excerpt TEXT,
@@ -4355,6 +4350,7 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runner_capabilities", "health_outcome", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "service_availability", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_health", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "probe_server_watermark", "TEXT", ct);
         await EnsureColumnAsync(connection, "provider_health_circuits", "canary_generation", "TEXT", ct);
         await EnsureColumnAsync(connection, "provider_health_circuits", "canary_source", "TEXT", ct);
         await EnsureColumnAsync(connection, "provider_health_circuits", "evidence_signature", "TEXT", ct);

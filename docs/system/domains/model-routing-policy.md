@@ -553,6 +553,8 @@ and advertises accepted or refused models. When the primary quota is capped
 and the comparable fallback is not accepted on that host, admission waits for
 the quota reset instead of launching the refused model. A launch-time model
 refusal with no salvage returns the card to Ready with a host capability hold.
+Only a probe that started after a server response later than the refusal
+clears that hold; the [runner domain](runner.md) describes the watermark.
 
 The equivalence adapter reads Token Economy's published, embedded model-routing
 knowledge base and price catalogue from the exactly pinned NuGet package. It

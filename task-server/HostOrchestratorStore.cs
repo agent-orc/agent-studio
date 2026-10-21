@@ -247,6 +247,11 @@ public sealed partial class TaskServerStore
                     "work-permit-task-not-ready",
                     $"Permit '{permitId}' refers to task state '{taskState}', not '2-ready'.");
             }
+            // The offer may predate a launch refusal on this host. Recheck in
+            // the transaction that creates the lease.
+            if (await ModelRouteRefusalAsync(connection, transaction, taskId, request.RunnerId,
+                    deliversContinuationRoutes: false, ct) is { } modelRefusal)
+                throw new TaskServerConflictException("work-permit-model-unaccepted", modelRefusal);
 
             var fence = Convert.ToInt64(await ScalarAsync(connection,
                 "SELECT last_fence FROM fence_counters WHERE task_id = $task;", ct, transaction, ("$task", taskId))
@@ -573,7 +578,10 @@ public sealed partial class TaskServerStore
             if (!refusals.TryGetValue(permit.Task.ProjectId, out var refusal))
                 refusals[permit.Task.ProjectId] = refusal = await PermitPlacementRefusalAsync(
                     connection, transaction, permit.Task.ProjectId, runnerId, ct);
-            if (refusal is null) admitted.Add(permit);
+            if (refusal is null
+                && await ModelRouteRefusalAsync(connection, transaction, permit.Task.TaskId, runnerId,
+                    deliversContinuationRoutes: false, ct) is null)
+                admitted.Add(permit);
         }
         return admitted;
     }

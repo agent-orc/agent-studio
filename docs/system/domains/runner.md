@@ -22,13 +22,29 @@ with actor, host, provider and outcome, without the code. Timeout and cancel
 clear the instructions. Each runner keeps its own native credential store;
 neither Task Server nor Studio distributes ChatGPT login files.
 
-The coding host also probes the small set of primary and fallback model ids
-with a real request in an isolated scratch context. Each verdict is bound to
-the local credential generation and advertised as `model-acceptance:<provider>:<model>`.
+The coding host also probes the curated primary and fallback model ids with a
+real request in an isolated scratch context. It also probes the valid model ids
+the server names in `ModelProbeKeys` on each capability response: Studio sends
+the operator's configured quota primary and fallback models, and Task Server
+sends the named primary models of Ready cards. Each verdict is bound to the
+local credential generation and advertised as `model-acceptance:<provider>:<model>`.
 The quota view lists accepted models by host. A launch-time model refusal with
 no salvage marks that host model unavailable and puts the card back in Ready.
-Claim admission holds a refused primary until a later accepted probe. A refused
-fallback does not hold the card once quota admission can use its primary route.
+
+Task Server claims and work permits lease a card only when the claiming host
+has a fresh accepted probe for the effective named model: the mechanical route,
+then an explicit continuation selection, then a provider fallback, then the
+card's primary model. A blank model is the CLI default and needs no model probe.
+A permit offer is rechecked in the transaction that accepts it. A refused
+fallback does not hold the card once its effective route is the primary again.
+
+A refusal is cleared only by a causally later probe. Each probe carries
+`ProbeServerWatermark`, the server time from the last capability response the
+host received before the probe started. Studio and Task Server clear a refusal
+only when that watermark is later than their own refusal time and not in the
+future. A delayed or replayed verdict therefore cannot clear a refusal, even
+when the host clock runs ahead. When the server still reports a model as
+unavailable, the host probes it again after ten minutes.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable

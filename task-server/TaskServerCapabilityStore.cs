@@ -91,21 +91,18 @@ public sealed partial class TaskServerStore
                     throw new TaskServerConflictException("stale-capability-advertisement",
                         $"A newer credential observation already exists for {key}.");
                 var advertisedStatus = capability.Status.Trim().ToLowerInvariant();
+                // The watermark is a server time this host received before it
+                // probed; a value from the future was not issued by this server.
+                var probeWatermark = key.StartsWith("model-acceptance:", StringComparison.Ordinal)
+                                     && capability.ProbeServerWatermark?.ToUniversalTime() is { } issued
+                                     && issued <= UtcNow
+                    ? issued : (DateTime?)null;
                 if (key.StartsWith("model-acceptance:", StringComparison.Ordinal)
-                    && advertisedStatus == "ready")
-                {
-                    var rejectionAt = await ScalarAsync(connection, """
-                        SELECT MAX(held.occurred_at) FROM events held
-                         WHERE held.kind = 'execution.model-capability-held'
-                           AND json_extract(held.payload_json, '$.runnerId') = $runner
-                           AND 'model-acceptance:' || json_extract(held.payload_json, '$.provider')
-                               || ':' || json_extract(held.payload_json, '$.model') = $key;
-                        """, ct, transaction, ("$runner", request.RunnerId), ("$key", key));
-                    if (rejectionAt is string rejectedAt
-                        && (capability.CredentialObservedAt is not { } observedAt
-                            || observedAt.ToUniversalTime() <= Parse(rejectedAt)))
-                        advertisedStatus = "unavailable";
-                }
+                    && advertisedStatus == "ready"
+                    && await LatestModelRejectionAsync(connection, transaction, request.RunnerId, key, ct)
+                        is { } rejectedAt
+                    && (probeWatermark is not { } watermark || watermark <= rejectedAt))
+                    advertisedStatus = "unavailable";
                 var advertisedDetail = advertisedStatus == "unavailable" &&
                                        string.Equals(capability.Status, "ready", StringComparison.OrdinalIgnoreCase)
                     ? "The provider refused this model for the host login."
@@ -162,7 +159,7 @@ public sealed partial class TaskServerStore
                         limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json,
                         credential_generation, credential_observed_at, last_real_success_at, expiry_provenance,
                         access_token_expires_at, effective_source, native_file_shadowed, evidence_refs_json,
-                        health_outcome, service_availability, credential_health,
+                        health_outcome, service_availability, credential_health, probe_server_watermark,
                         advertised_instance_id, advertised_at, fresh_until,
                         generation, recovery_history_json, updated_at)
                     VALUES (
@@ -171,7 +168,7 @@ public sealed partial class TaskServerStore
                         $limited, $credential_modified, $evidence_id, $evidence_excerpt, $supported_models,
                         $credential_generation, $credential_observed, $last_real_success, $expiry_provenance,
                         $access_expires, $effective_source, $native_shadowed, $evidence_refs,
-                        $health_outcome, $service_availability, $credential_health,
+                        $health_outcome, $service_availability, $credential_health, $probe_watermark,
                         $instance, $advertised,
                         $fresh, $generation, $history, $updated)
                     ON CONFLICT(runner_id, capability_key) DO UPDATE SET
@@ -206,6 +203,7 @@ public sealed partial class TaskServerStore
                         health_outcome = excluded.health_outcome,
                         service_availability = excluded.service_availability,
                         credential_health = excluded.credential_health,
+                        probe_server_watermark = excluded.probe_server_watermark,
                         advertised_instance_id = excluded.advertised_instance_id,
                         advertised_at = excluded.advertised_at,
                         fresh_until = excluded.fresh_until,
@@ -242,6 +240,7 @@ public sealed partial class TaskServerStore
                     ("$health_outcome", request.CredentialHealthVersion == 2 ? capability.HealthOutcome : null),
                     ("$service_availability", request.CredentialHealthVersion == 2 ? capability.ServiceAvailability : null),
                     ("$credential_health", request.CredentialHealthVersion == 2 ? capability.CredentialHealth : null),
+                    ("$probe_watermark", probeWatermark is { } stored ? Iso(stored) : null),
                     ("$instance", request.InstanceId),
                     ("$advertised", Iso(advertisedAt)),
                     ("$fresh", Iso(freshUntil)),
@@ -300,8 +299,13 @@ public sealed partial class TaskServerStore
                 ct);
         }, ct);
         await EvaluateHostCliPolicyAsync(request.RunnerId, actorId, ct);
-        return (await ListRunnerCapabilitySnapshotsAsync(ct))
+        var snapshot = (await ListRunnerCapabilitySnapshotsAsync(ct))
             .Single(item => string.Equals(item.RunnerId, request.RunnerId, StringComparison.Ordinal));
+        await using var probeConnection = await OpenReadyAsync(ct);
+        return snapshot with
+        {
+            ModelProbeKeys = await ReadModelProbeKeysAsync(probeConnection, null, ct),
+        };
     }
 
     private static void ValidateCredentialCapability(
