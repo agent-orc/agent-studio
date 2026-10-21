@@ -66,9 +66,11 @@ that is already allowed to edit that project's checkout.
   The per-client key table expires old entries and holds at most 4,096 keys
   (`Security:LoginThrottle:MaxTrackedKeys`, capped at 4,096). When full, new
   failed login keys receive 429 until entries expire; existing keys retain
-  their lockout counters.
-  Password resets create a temporary
-  password, revoke existing sessions, and force a change at the next login.
+  their lockout counters. A failed login for an existing account still spends
+  its username budget when the client-key table is full. Login bodies are
+  limited to 2 KiB, and retained throttle keys have a fixed size. Password
+  resets create a temporary password, revoke existing sessions, and force a
+  change at the next login.
 - Human sessions use a random opaque token stored only as a SHA-256 hash on the
   server. The cookie is `Secure`, `HttpOnly`, `SameSite=Strict`, host-only, and
   has idle plus absolute expiry. Browser mutations require the matching CSRF
