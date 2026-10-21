@@ -115,7 +115,8 @@ public static class DeployEndpoints
         _ => Results.Conflict(new { error = outcome.Error }),
     };
 
-    private static IResult QuotaRefusable(Func<IResult> action)
+    /// <summary>Maps a quota refusal from a deploy action to 409 with reason <c>quota</c>.</summary>
+    internal static IResult QuotaRefusable(Func<IResult> action)
     {
         try { return action(); }
         catch (DeployQuotaRefusedException ex)

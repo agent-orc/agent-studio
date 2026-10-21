@@ -15,7 +15,7 @@ public static class ProjectOperatorDashboardEndpoints
         // starts the automatic Staging phase of the standard lifecycle.
         app.MapPost("/api/deploy/gate-releases", (GateArtifactRequest request,
             ProjectEnvironmentService environments, DeployService deploy) =>
-            QuotaRefusable(() => environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit)
+            DeployEndpoints.QuotaRefusable(() => environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit)
                 ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate"),
                     "Gate artifact or environment declarations are invalid.")
                 : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." })))
@@ -27,7 +27,7 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapPost("/api/projects/{projectName}/environments/releases", (HttpContext context, string projectName,
             ReleaseArtifactRequest request, DeployService deploy) =>
-            QuotaRefusable(() => ReleaseCreated(deploy.CreateRelease(projectName, request.Artifact, request.Commit,
+            DeployEndpoints.QuotaRefusable(() => ReleaseCreated(deploy.CreateRelease(projectName, request.Artifact, request.Commit,
                 DeployEndpoints.Actor(context, projectName).Id),
                 "Artifact, commit, or stage and production declarations are invalid.")))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
@@ -37,12 +37,12 @@ public static class ProjectOperatorDashboardEndpoints
         // and the lifecycle decides each approval again.
         app.MapPost("/api/projects/{projectName}/environments/promotions/approve", (
             HttpContext context, string projectName, PromotionDecisionRequest request, DeployService deploy) =>
-            QuotaRefusable(() => DecidePromotion(context, projectName, request, approve: true, deploy)))
+            DeployEndpoints.QuotaRefusable(() => DecidePromotion(context, projectName, request, approve: true, deploy)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/projects/{projectName}/environments/promotions/reject", (
             HttpContext context, string projectName, PromotionDecisionRequest request, DeployService deploy) =>
-            QuotaRefusable(() => DecidePromotion(context, projectName, request, approve: false, deploy)))
+            DeployEndpoints.QuotaRefusable(() => DecidePromotion(context, projectName, request, approve: false, deploy)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/projects/{projectName}/environments/{environmentId}/rollback", (
@@ -52,7 +52,7 @@ public static class ProjectOperatorDashboardEndpoints
             if (!actor.IsApprover && deploy.Environments(projectName)?.FirstOrDefault(item => item.Id == environmentId)
                     is { } environment && StandardLifecyclePolicy.RequiresApproval(environment))
                 return ApprovalRequired();
-            return QuotaRefusable(() => deploy.RollbackEnvironment(projectName, environmentId, actor) switch
+            return DeployEndpoints.QuotaRefusable(() => deploy.RollbackEnvironment(projectName, environmentId, actor) switch
             {
                 { Kind: DeployOutcomeKind.Ok } => Results.Accepted(),
                 { Kind: DeployOutcomeKind.NotFound } => Results.Conflict(new { error = "No previous artifact is available." }),
@@ -172,13 +172,4 @@ public static class ProjectOperatorDashboardEndpoints
     private static IResult ApprovalRequired() => Results.Json(
         new { error = $"Production approval requires the {StandardLifecyclePolicy.ApprovalRoles} role." },
         statusCode: StatusCodes.Status403Forbidden);
-
-    private static IResult QuotaRefusable(Func<IResult> action)
-    {
-        try { return action(); }
-        catch (DeployQuotaRefusedException ex)
-        {
-            return Results.Conflict(new { error = ex.Message, reason = "quota" });
-        }
-    }
 }

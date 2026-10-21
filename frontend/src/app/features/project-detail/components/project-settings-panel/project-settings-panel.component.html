@@ -23,7 +23,7 @@
   <app-project-execution-definition [projectName]="projectName()" />
   <app-batch-settings [project]="projectName()" />
   @if (workspaceId() && projectId()) {
-    <app-workspace-quota [workspaceId]="workspaceId()!" [projectId]="projectId()" />
+    @defer { <app-workspace-quota [workspaceId]="workspaceId()!" [projectId]="projectId()" /> }
   }
   <section class="ps-settings__section ps-settings__section--preview"
            id="url-preview-quick-setup"
