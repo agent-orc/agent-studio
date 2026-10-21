@@ -339,8 +339,9 @@ export function generateMapping({ workspace, projects, remotes = {}, extra = {} 
 
   const mapped = value => covered(value) || checkouts.some(checkout => isUnder(value, checkout.source));
   for (const project of projects) {
-    for (const [kind, value] of [['RootPath', project.rootPath]]) {
-      if (value && windowsPath.test(value) && !mapped(value)) issues.push({ code: 'unmapped-path', projects: [project.id], field: kind, path: value });
+    const rootPath = project.rootPath;
+    if (rootPath && windowsPath.test(rootPath) && !mapped(rootPath)) {
+      issues.push({ code: 'unmapped-path', projects: [project.id], field: 'RootPath', path: rootPath });
     }
   }
   for (const [from, to] of Object.entries(extra)) {
@@ -454,8 +455,8 @@ export function tokenStateIssues(entries, roots = []) {
 
 /**
  * Inventory plan for the state directory. The clock is injected so the plan is
- * reproducible in tests. `scanTokens` (relative path -> token shape or null)
- * screens each archive candidate and records its digest for delta selection.
+ * reproducible in tests. `scanTokens` returns a content digest and token shape
+ * for each archive candidate, so delta selection compares the current bytes.
  */
 export function buildInventory({
   workspace, files, tracked, dirty, projects, remotes, extra, home, exists, credentialHelper, now,

@@ -248,13 +248,14 @@ test('token screen reads every archive file even when size and time match', () =
   ]);
 
   scanned.length = 0;
-  const second = screenTokens([entry('.runtime/leak.log', 10, 1000), entry('.runtime/clean.log', 12, 2000)], { scan, previous: first });
+  const second = screenTokens([entry('.runtime/leak.log', 10, 1000), entry('.runtime/clean.log', 12, 2000)], { scan });
   assert.deepEqual(scanned, ['.runtime/leak.log', '.runtime/clean.log']);
   assert.equal(second[0].reason, 'token-pattern');
   assert.equal(second[1].transfer, 'archive');
   const tracked = entry('notes/modified.md', 40, 1000, { state: 'tracked-modified' });
   const clean = screenTokens([tracked], { scan: () => ({ hash: 'before', token: null }) });
-  const changed = screenTokens([tracked], { previous: clean, scan: () => ({ hash: 'after', token: 'github-token' }) });
+  assert.equal(clean[0].transfer, 'archive');
+  const changed = screenTokens([tracked], { scan: () => ({ hash: 'after', token: 'github-token' }) });
   assert.equal(changed[0].transfer, 'exclude');
   assert.equal(changed[0].token, 'github-token');
 });
@@ -265,6 +266,7 @@ test('same-metadata token in a modified tracked file is screened again', async (
     const file = path.join(root, 'status.md');
     const token = fakeToken.github();
     await writeFile(file, 'a'.repeat(token.length));
+    await utimes(file, fixedClock(), fixedClock());
     const time = await stat(file);
     const entry = { path: 'projects/demo/tasks/AGT-1/status.md', size: token.length, mtimeMs: Math.trunc(time.mtimeMs),
       area: 'other', state: 'tracked-modified', transfer: 'archive' };
@@ -274,7 +276,7 @@ test('same-metadata token in a modified tracked file is screened again', async (
     const after = await stat(file);
     assert.equal(after.size, time.size);
     assert.equal(Math.trunc(after.mtimeMs), Math.trunc(time.mtimeMs));
-    const second = screenTokens([entry], { previous: first, scan: () => scanFileContent(file) });
+    const second = screenTokens([entry], { scan: () => scanFileContent(file) });
     assert.notEqual(second[0].hash, first[0].hash);
     assert.equal(second[0].transfer, 'exclude');
     assert.deepEqual(tokenStateIssues(second, ['projects/demo/tasks']).map(issue => issue.code), ['token-in-state']);
@@ -465,6 +467,8 @@ test('delta selection refuses paths that could escape the server workspace', () 
 test('inventory carries the injected clock and the CLI writes plan files and a repeatable delta', async () => {
   const { root, workspace } = await materialize({ ...fixture.files, ...credentialFiles });
   try {
+    const task = path.join(root, 'external', '.orchestrator', 'jobs', 'AGT-1', 'task.md');
+    await utimes(task, fixedClock(), fixedClock());
     const inventory = buildInventory({
       workspace: fixture.workspace,
       files: scanWorkspace(workspace),
@@ -540,7 +544,6 @@ test('inventory carries the injected clock and the CLI writes plan files and a r
     assert.equal(run([...storageDelta, '--previous', path.join(state, 'storage-manifest.json'),
       '--manifest', path.join(state, 'storage-manifest.next.json')]), 0);
     assert.deepEqual((await readFile(path.join(state, 'storage-copy.z'), 'utf8')).split('\0').filter(Boolean), ['AGT-2/task.md']);
-    const task = path.join(root, 'external', '.orchestrator', 'jobs', 'AGT-1', 'task.md');
     const taskTime = await stat(task);
     await writeFile(task, '# revised  task\n');
     await utimes(task, taskTime.atime, taskTime.mtime);
