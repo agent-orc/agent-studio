@@ -1,4 +1,3 @@
-import { excludeEpics } from '../board';
 import type { GroupedJobs, TaskInfo } from '../../models/task.model';
 import { projectIdentity } from '../../services/project-identity.util';
 import type { StructuredTooltip } from 'coding-agent-chat/shared';
@@ -91,15 +90,7 @@ export function buildProjectSidebarRows(
     return value;
   };
 
-  // Count exactly what the board lanes render. The board strips epic
-  // containers from every lane (`excludeEpics`, wired into `App.displayGrouped`)
-  // because an epic is a container, not a board work-item - it lives in the
-  // Epics view instead. Re-using that same function rather than re-deriving
-  // `kind !== 'epic'` here keeps the two surfaces in lockstep by construction:
-  // an operator saw a green lane dot on a project whose board lanes all showed
-  // 0 tasks, because the tree counted an epic parked in 5-human-review that no
-  // lane was allowed to draw (operator 2026-08-23).
-  const boardGrouped = excludeEpics(grouped);
+  const boardGrouped = grouped;
 
   for (const [laneKey, lane] of Object.entries(boardGrouped)) {
     // `review` is the legacy alias of `autoReview` (see GroupedJobs) - iterating

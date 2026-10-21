@@ -171,8 +171,6 @@ export function buildComposerLocationContext(
       return { project: tab.projectName, surface: 'Dossiers' };
     case 'activity':
       return taskContext('Activity', tab.taskKey, tasks);
-    case 'epic':
-      return taskContext('Epic', tab.epicKey, tasks);
     case 'hub':
       return {
         project: tab.projectName,

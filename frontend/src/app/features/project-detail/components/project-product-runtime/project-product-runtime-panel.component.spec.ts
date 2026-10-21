@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ProjectProductRuntimePanelComponent } from './project-product-runtime-panel.component';
@@ -19,6 +19,25 @@ import { ProjectProductRuntimePanelComponent } from './project-product-runtime-p
  * stable across template tweaks.
  */
 describe('ProjectProductRuntimePanelComponent (smoke)', () => {
+  it('shows the rolling card opening latency in Operations', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectProductRuntimePanelComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectProductRuntimePanelComponent);
+    fixture.componentRef.setInput('projectName', 'PROJ-002');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/runtime/PROJ-002/events').flush({ project: 'PROJ-002', events: [], warnings: [] });
+    http.expectOne('/api/runtime/task-detail-latency').flush({ count: 100, p50Ms: 44, p95Ms: 180, maxMs: 220 });
+    fixture.detectChanges();
+    const text = (fixture.nativeElement.querySelector('[data-testid="task-detail-latency"]') as HTMLElement).textContent ?? '';
+    expect(text).toContain('100 reads / 5 min');
+    expect(text).toContain('p50 44 ms');
+    expect(text).toContain('p95 180 ms');
+    fixture.destroy();
+  });
+
   it('compiles + instantiates without throwing', async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectProductRuntimePanelComponent],

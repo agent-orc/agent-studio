@@ -123,7 +123,7 @@ public class DuplicateTaskKeyTests : IDisposable
 
         // Two different tasks share DEM-5; an unrelated DEM-3 also exists so the
         // replacement key must clear the on-disk maximum, not just the keeper.
-        SeedKeyedJob(TaskStates.Ready, "picker", "DEM-5", "2026-05-31T17:39:32Z", title: "Create-Dialog Parent-Epic-Picker");
+        SeedKeyedJob(TaskStates.Ready, "picker", "DEM-5", "2026-05-31T17:39:32Z", title: "Create-Dialog Parent-Picker");
         SeedKeyedJob(TaskStates.Archive, "completion-loop", "DEM-5", "2026-05-31T17:54:51Z", title: "Orchestrator-Completion-Loop");
         SeedKeyedJob(TaskStates.HumanReview, "older", "DEM-3", "2026-05-30T09:00:00Z");
 

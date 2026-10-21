@@ -448,30 +448,50 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
+        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail",
                 loggerFactory.CreateLogger("TaskDetail"), includeNested: true);
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var detail = scanner.GetJobDetail(jobId, watchPath);
-            if (detail is null) return Results.NotFound();
+            var facts = await index.GetDetailFactsAsync(jobId, watchPath, context.RequestAborted);
+            if (facts.Info is null)
+            {
+                if (facts.Warming)
+                {
+                    context.Response.Headers["X-Task-Detail-Freshness"] = "warming";
+                    return Results.Accepted(value: new { state = "warming", reason = "task-index-warming" });
+                }
+                return Results.NotFound();
+            }
+            context.Response.Headers["X-Task-Detail-Freshness"] = facts.Stale ? "stale" : "ready";
+            var detail = scanner.GetJobDetailFromInfo(facts.Info);
             // Detail and the Git resource consume the same completed repository
             // snapshot. A stale result for an older task attempt is withheld.
             var gitFacts = TaskSwitchTrace.Run("index.lookup", () => gitProjection.ReadTask(detail.Info).Data);
             if (gitFacts?.ReconstructedCommits is { } commits)
                 detail = detail with { Info = detail.Info with { Commits = commits.ToList() } };
-            var tokenLookup = TaskSwitchTrace.Run("tokens", () => BuildTokenLookup(new[] { detail.Info }, tokens));
+            // The ledger fold runs only in the usage resource or a background
+            // warm. Legacy detail consumers retain the last cached summary.
+            var tokenSummary = tokenCache.GetCached(detail.Info, out var tokenReady);
+            context.Response.Headers["X-Task-Token-Freshness"] = tokenReady ? "ready" : "warming";
+            IReadOnlyDictionary<string, TaskTokenSummary>? tokenLookup = tokenSummary is null
+                ? null : new Dictionary<string, TaskTokenSummary> { [detail.Info.TaskKey] = tokenSummary };
             var verdictLookup = TaskSwitchTrace.Run("runtime", () => BuildOrchestratorVerdictLookup(new[] { detail.Info }, configuration));
-            var eligibleWaiters = ProjectAccessAuthorization
-                .FilterTasks(context, scanner.ScanAllJobs(), projects)
-                .Where(job => !job.Fixture);
-            var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority));
+            var needsDependencyProjection = detail.Info.References.DependsOn.Count > 0
+                || detail.Info.State == TaskStates.HumanReview;
+            var eligibleWaiters = needsDependencyProjection
+                ? ProjectAccessAuthorization.FilterTasks(context, index.GetResidentTasks(), projects)
+                    .Where(job => !job.Fixture)
+                : Enumerable.Empty<TaskInfo>();
+            var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(
+                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority, facts.References));
             var withRuntime = WithRuntime(pricing, detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
             withRuntime = TaskSwitchTrace.Run("runtime", () => withRuntime with
             {
                 Info = betterCandidates.Attach(withRuntime.Info, projectSettings.Get(withRuntime.Info.ProjectName)),
             });
-            var liveLookup = TaskSwitchTrace.Run("runtime", () => liveStatus.BuildLookup(new[] { withRuntime.Info }));
+            var liveLookup = TaskSwitchTrace.Run("runtime", () => liveStatus.BuildLookup(
+                new[] { withRuntime.Info }, publishedRunnerStatus: true));
             if (liveLookup.TryGetValue(withRuntime.Info.TaskKey, out var currentLiveStatus))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { LiveStatus = currentLiveStatus } };
             if (gitFacts is not null)
@@ -871,6 +891,7 @@ public static class TaskCrudEndpoints
                     $"Operator chose {req.Decision} for run {offer.AttemptId} delivered against an older brief.",
                     offer.AttemptId,
                     details: new Dictionary<string, string> { ["decision"] = req.Decision });
+                scanner.PublishCoreFromKnownFolder(folder);
                 scanner.InvalidateCache();
                 return MoveResult(moved);
             }
@@ -981,13 +1002,19 @@ public static class TaskCrudEndpoints
             IConfiguration configuration,
             CancellationToken ct) =>
         {
+            if (req.CompatibilityFields?.Keys.Any(key =>
+                string.Equals(key, "epicId", StringComparison.OrdinalIgnoreCase)) == true)
+            {
+                ctx.Response.Headers["Deprecation"] = "true";
+                ctx.Response.Headers.Warning = "299 - \"epicId is deprecated and ignored\"";
+            }
             if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
                 && req.TargetState is not (null or TaskStates.Backlog or TaskStates.Ready))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             if (string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest("Title is required");
             if (req.Kind is not null && !TaskKinds.All.Contains(req.Kind.Trim(), StringComparer.OrdinalIgnoreCase))
-                return Results.BadRequest(new { error = "kind must be task, epic, or decision." });
+                return Results.BadRequest(new { error = "kind must be task or decision." });
             if (TaskKinds.IsDecision(req.Kind))
             {
                 var errors = DecisionCardPolicy.ValidateContent(req.Decision);
@@ -1226,17 +1253,6 @@ public static class TaskCrudEndpoints
             if (req.UseOwnSession.HasValue)
                 mutations.SetJobUseOwnSession(jobId, req.UseOwnSession.Value, watchPath);
             return Results.Ok();
-        });
-
-        // Epics assignment way 2 (post-hoc): attach/detach a task to a parent epic.
-        // Body { epicId }: null or empty detaches. (Way 1 is CreateTaskRequest.EpicId
-        // at create time; way 3 is an epic's decomposition run creating sub-tasks
-        // with epicId via the create path.)
-        group.MapPut("/{jobId}/epic", (string jobId, string? project, string? watchPath, SetJobEpicRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
-        {
-            watchPath = ResolveWatchPath(projects, project, watchPath);
-            var ok = mutations.SetJobEpic(jobId, req?.EpicId, watchPath);
-            return ok ? Results.Ok() : Results.NotFound();
         });
 
         group.MapPut("/{jobId}/dossier", (string jobId, string? project, string? watchPath,
