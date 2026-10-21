@@ -4,7 +4,8 @@ using System.Collections.Concurrent;
 namespace AgentStudio.Projects;
 
 public sealed record HostedVolumeSchedule(string Project, string Environment, string Volume, int? HourUtc,
-    DateTimeOffset? LastAttemptAt, string? LastError, IReadOnlyList<HostedVolumeBackup> Backups);
+    DateTimeOffset? LastAttemptAt, string? LastError, IReadOnlyList<HostedVolumeBackup> Backups,
+    bool PendingPrune = false);
 public sealed record HostedVolumeAudit(DateTimeOffset At, string Actor, string Action, string Environment,
     string Volume, string? BackupId, string Outcome)
 {
@@ -73,6 +74,28 @@ public sealed class HostedVolumeBackupService(
         try
         {
             var now = clock.GetUtcNow();
+            IReadOnlySet<string>? pendingIds = null;
+            await _gate.WaitAsync(cancellationToken);
+            try
+            {
+                var schedule = FindSchedule(ReadState(project), key);
+                if (schedule.PendingPrune)
+                    pendingIds = schedule.Backups.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+            }
+            finally { _gate.Release(); }
+            if (pendingIds is not null)
+            {
+                try
+                {
+                    await engine.PruneBackupsAsync(key, pendingIds, cancellationToken);
+                    await SetPruneStateAsync(project, key, pending: false, error: null);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    await SetPruneStateAsync(project, key, pending: true, error: ex.Message, attemptAt: now, actor: actor);
+                    throw new IOException("Hosted volume archive cleanup must complete before another backup.", ex);
+                }
+            }
             HostedVolumeBackup backup;
             try
             {
@@ -97,15 +120,20 @@ public sealed class HostedVolumeBackupService(
             {
                 var state = ReadState(project);
                 var schedule = FindSchedule(state, key);
-                var updated = schedule with { LastAttemptAt = now, LastError = null,
+                var updated = schedule with { LastAttemptAt = now, LastError = null, PendingPrune = true,
                     Backups = schedule.Backups.Append(backup).TakeLast(HostedVolumeSchedulePolicy.MaxBackups).ToArray() };
                 Save(project, state, updated, new(now, actor, "backup", environment, volume, backup.Id, "succeeded"));
                 retainedIds = updated.Backups.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
             }
             finally { _gate.Release(); }
-            try { await engine.PruneBackupsAsync(key, retainedIds, CancellationToken.None); }
+            try
+            {
+                await engine.PruneBackupsAsync(key, retainedIds, CancellationToken.None);
+                await SetPruneStateAsync(project, key, pending: false, error: null);
+            }
             catch (Exception ex)
             {
+                await SetPruneStateAsync(project, key, pending: true, error: ex.Message);
                 logger.LogWarning(ex, "Could not prune hosted volume archives for {Project}/{Environment}/{Volume}",
                     project, environment, volume);
             }
@@ -241,6 +269,25 @@ public sealed class HostedVolumeBackupService(
                 .Append(schedule).ToArray(),
             Audit = Append(state.Audit, audit),
         });
+
+    private async Task SetPruneStateAsync(string project, HostedVolumeKey key, bool pending, string? error,
+        DateTimeOffset? attemptAt = null, string? actor = null)
+    {
+        await _gate.WaitAsync(CancellationToken.None);
+        try
+        {
+            var state = ReadState(project);
+            var previous = FindSchedule(state, key);
+            var schedule = previous with { PendingPrune = pending, LastError = error,
+                LastAttemptAt = attemptAt ?? previous.LastAttemptAt };
+            WriteState(project, state with { Schedules = state.Schedules
+                .Where(item => item.Environment != key.Environment || item.Volume != key.Volume)
+                .Append(schedule).ToArray(),
+                Audit = actor is null ? state.Audit : Append(state.Audit,
+                    new(attemptAt!.Value, actor, "backup", key.Environment, key.Volume, null, "failed")) });
+        }
+        finally { _gate.Release(); }
+    }
 
     private static IReadOnlyList<HostedVolumeAudit> Append(IReadOnlyList<HostedVolumeAudit> audit, HostedVolumeAudit entry)
         => audit.Append(entry).TakeLast(500).ToArray();

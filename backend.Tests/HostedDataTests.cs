@@ -174,4 +174,71 @@ public sealed class HostedDataTests : IDisposable
         Assert.False(Directory.Exists(path + ".previous-" + restoreId));
         Assert.False(Directory.Exists(staging));
     }
+
+    [Fact]
+    public async Task BackupRejectsFileSwappedToSymlinkImmediatelyBeforeOpen()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var volumeRoot = Path.Combine(_root, "volumes");
+        var archiveRoot = Path.Combine(_root, "archives");
+        var key = new HostedVolumeKey("demo", "stage", "uploads");
+        var path = Path.Combine(volumeRoot, key.Project, key.Environment, key.Volume);
+        Directory.CreateDirectory(path);
+        var source = Path.Combine(path, "data.txt");
+        var outside = Path.Combine(_root, "private.txt");
+        File.WriteAllText(source, "volume-data");
+        File.WriteAllText(outside, "outside-data");
+        var swapped = false;
+        var engine = new LocalHostedVolumeBackupEngine(volumeRoot, archiveRoot,
+            NullLogger<LocalHostedVolumeBackupEngine>.Instance,
+            previous => Directory.Delete(previous, recursive: true), _clock,
+            beforeOpenSource: candidate =>
+            {
+                if (candidate != source || swapped) return;
+                swapped = true;
+                File.Delete(source);
+                File.CreateSymbolicLink(source, outside);
+            });
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => engine.BackupAsync(key, _clock.GetUtcNow(), CancellationToken.None));
+        Assert.True(swapped);
+        Assert.Equal("outside-data", File.ReadAllText(outside));
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(archiveRoot, "demo", "stage", "uploads")));
+    }
+
+    [Fact]
+    public async Task FailedPreviousCleanupSurvivesRestartAndBlocksAnotherRestoreUntilRetry()
+    {
+        var volumeRoot = Path.Combine(_root, "volumes");
+        var archiveRoot = Path.Combine(_root, "archives");
+        var key = new HostedVolumeKey("demo", "stage", "uploads");
+        var failCleanup = true;
+        Action<string> cleanup = previous =>
+        {
+            if (failCleanup) throw new IOException("Previous directory is busy.");
+            Directory.Delete(previous, recursive: true);
+        };
+        var engine = new LocalHostedVolumeBackupEngine(volumeRoot, archiveRoot,
+            NullLogger<LocalHostedVolumeBackupEngine>.Instance, cleanup, _clock);
+        var path = engine.VolumePath(key);
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, "data.txt"), "backed-up");
+        var backup = await engine.BackupAsync(key, _clock.GetUtcNow(), CancellationToken.None);
+        File.WriteAllText(Path.Combine(path, "data.txt"), "live-before-restore");
+        await engine.RestoreAsync(backup, CancellationToken.None);
+        Assert.True(File.Exists(path + ".restore-pending"));
+        Assert.Single(Directory.EnumerateDirectories(Path.GetDirectoryName(path)!, "uploads.previous-*"));
+
+        var restarted = new LocalHostedVolumeBackupEngine(volumeRoot, archiveRoot,
+            NullLogger<LocalHostedVolumeBackupEngine>.Instance, cleanup, _clock);
+        await Assert.ThrowsAsync<IOException>(() => restarted.RestoreAsync(backup, CancellationToken.None));
+        Assert.Single(Directory.EnumerateDirectories(Path.GetDirectoryName(path)!, "uploads.previous-*"));
+        Assert.True(File.Exists(path + ".restore-pending"));
+
+        failCleanup = false;
+        await restarted.RestoreAsync(backup, CancellationToken.None);
+        Assert.False(File.Exists(path + ".restore-pending"));
+        Assert.Empty(Directory.EnumerateDirectories(Path.GetDirectoryName(path)!, "uploads.previous-*"));
+        Assert.Equal("backed-up", File.ReadAllText(Path.Combine(path, "data.txt")));
+    }
 }

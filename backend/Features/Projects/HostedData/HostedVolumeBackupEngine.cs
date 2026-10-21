@@ -34,7 +34,8 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
     private readonly string _backupRoot;
     private readonly ILogger<LocalHostedVolumeBackupEngine> _logger;
     private readonly Action<string> _deletePrevious;
-    private readonly Func<string, Stream> _openSource;
+    private readonly Func<string, Stream>? _openSource;
+    private readonly Action<string>? _beforeOpenSource;
     private readonly TimeProvider _clock;
     internal static readonly TimeSpan BackupTimeout = TimeSpan.FromMinutes(10);
 
@@ -45,14 +46,15 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
 
     internal LocalHostedVolumeBackupEngine(string volumeRoot, string backupRoot,
         ILogger<LocalHostedVolumeBackupEngine> logger, Action<string> deletePrevious, TimeProvider? clock = null,
-        Func<string, Stream>? openSource = null)
+        Func<string, Stream>? openSource = null, Action<string>? beforeOpenSource = null)
     {
         _volumeRoot = volumeRoot;
         _backupRoot = backupRoot;
         _logger = logger;
         _deletePrevious = deletePrevious;
         _clock = clock ?? TimeProvider.System;
-        _openSource = openSource ?? (path => new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true));
+        _openSource = openSource;
+        _beforeOpenSource = beforeOpenSource;
         RecoverPendingRestores();
     }
 
@@ -67,7 +69,6 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         token.ThrowIfCancellationRequested();
         var source = VolumePath(key);
         if (!Directory.Exists(source)) throw new DirectoryNotFoundException("Declared volume is absent on the host.");
-        EnsureNoLinks(source, token);
         var id = Guid.NewGuid().ToString("N");
         var directory = Path.Combine(_backupRoot, Segment(key.Project), Segment(key.Environment), Segment(key.Volume));
         Directory.CreateDirectory(directory);
@@ -78,20 +79,7 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
             await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
             using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: false))
             {
-                foreach (var path in Directory.EnumerateFileSystemEntries(source, "*", SearchOption.AllDirectories))
-                {
-                    token.ThrowIfCancellationRequested();
-                    var relative = Path.GetRelativePath(source, path).Replace('\\', '/');
-                    if (Directory.Exists(path))
-                    {
-                        zip.CreateEntry(relative + "/");
-                        continue;
-                    }
-                    var entry = zip.CreateEntry(relative, CompressionLevel.Optimal);
-                    await using var input = _openSource(path);
-                    await using var compressed = entry.Open();
-                    await input.CopyToAsync(compressed, token);
-                }
+                await HostedVolumeSafeReader.AddEntriesAsync(source, zip, token, OpenSource, _beforeOpenSource);
             }
             token.ThrowIfCancellationRequested();
             var digest = await Digest(temporary, token);
@@ -132,6 +120,9 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         var destination = VolumePath(key);
         var parent = Path.GetDirectoryName(destination)!;
         Directory.CreateDirectory(parent);
+        var pending = MarkerPath(destination);
+        if (File.Exists(pending) && !RecoverPendingRestore(pending))
+            throw new IOException("Pending volume restore cleanup did not complete.");
         var restoreId = Guid.NewGuid().ToString("N");
         var staging = destination + ".restore-" + restoreId;
         var previous = destination + ".previous-" + restoreId;
@@ -170,7 +161,7 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         catch
         {
             if (moved && !Directory.Exists(destination)) Directory.Move(previous, destination);
-            if (Directory.Exists(destination)) File.Delete(MarkerPath(destination));
+            if (Directory.Exists(destination) && !Directory.Exists(previous)) File.Delete(MarkerPath(destination));
             throw;
         }
         finally
@@ -183,8 +174,8 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         {
             try
             {
-                File.Delete(MarkerPath(destination));
                 _deletePrevious(previous);
+                File.Delete(MarkerPath(destination));
             }
             catch (Exception ex)
             {
@@ -231,7 +222,7 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         }
     }
 
-    private void RecoverPendingRestore(string marker)
+    private bool RecoverPendingRestore(string marker)
     {
         var destination = marker[..^".restore-pending".Length];
         Segment(Path.GetFileName(destination));
@@ -244,13 +235,25 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
             if (!Directory.Exists(previous)) throw new InvalidDataException("Pending volume restore has no live or previous directory.");
             Directory.Move(previous, destination);
         }
-        File.Delete(marker);
         if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
         if (Directory.Exists(previous))
         {
             try { _deletePrevious(previous); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Recovered volume, but could not remove previous directory {Previous}", previous); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Recovered volume, but could not remove previous directory {Previous}", previous);
+                return false;
+            }
         }
+        File.Delete(marker);
+        return true;
+    }
+
+    private Stream OpenSource(string path, Stream safeStream)
+    {
+        if (_openSource is null) return safeStream;
+        safeStream.Dispose();
+        return _openSource(path);
     }
 
     private static string MarkerPath(string destination) => destination + ".restore-pending";

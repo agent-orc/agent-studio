@@ -107,6 +107,42 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedArchivePruningPersistsAndPreventsRepeatedBackupGrowth()
+    {
+        var (environments, config, key, _) = PrepareVolumeBackups();
+        var engine = new FailingPruneEngine();
+        var service = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        for (var index = 0; index < HostedVolumeSchedulePolicy.MaxBackups; index++)
+            await service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+        engine.FailPruning = true;
+        await service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+        Assert.Equal(HostedVolumeSchedulePolicy.MaxBackups + 1, engine.Archives.Count);
+        var state = (await service.ReadAsync(key.Project, CancellationToken.None))!;
+        Assert.True(Assert.Single(state.Schedules).PendingPrune);
+        Assert.NotNull(Assert.Single(state.Schedules).LastError);
+
+        var restarted = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        for (var attempt = 0; attempt < 3; attempt++)
+            await Assert.ThrowsAsync<IOException>(() => restarted.BackupAsync(key.Project, key.Environment,
+                key.Volume, "owner", CancellationToken.None));
+        Assert.Equal(HostedVolumeSchedulePolicy.MaxBackups + 1, engine.Archives.Count);
+        Assert.Equal(HostedVolumeSchedulePolicy.MaxBackups + 1, engine.BackupCalls);
+        var blocked = (await restarted.ReadAsync(key.Project, CancellationToken.None))!;
+        Assert.Equal(_clock.GetUtcNow(), Assert.Single(blocked.Schedules).LastAttemptAt);
+        Assert.Equal(3, blocked.Audit.Count(entry => entry.Action == "backup" && entry.Outcome == "failed"));
+
+        engine.FailPruning = false;
+        await restarted.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+        state = (await restarted.ReadAsync(key.Project, CancellationToken.None))!;
+        Assert.False(Assert.Single(state.Schedules).PendingPrune);
+        Assert.Null(Assert.Single(state.Schedules).LastError);
+        Assert.Equal(HostedVolumeSchedulePolicy.MaxBackups, engine.Archives.Count);
+        Assert.Equal(HostedVolumeSchedulePolicy.MaxBackups, Assert.Single(state.Schedules).Backups.Count);
+    }
+
+    [Fact]
     public async Task CancelledBackupRemovesTemporaryArchive()
     {
         var (_, _, key, _) = PrepareVolumeBackups();
@@ -622,6 +658,35 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
 
         public Task PruneBackupsAsync(HostedVolumeKey key, IReadOnlySet<string> retainedIds,
             CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class FailingPruneEngine : IHostedVolumeBackupEngine
+    {
+        public HashSet<string> Archives { get; } = [];
+        public bool FailPruning { get; set; }
+        public int BackupCalls { get; private set; }
+
+        public Task<HostedVolumeBackup> BackupAsync(HostedVolumeKey key, DateTimeOffset now,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            BackupCalls++;
+            var id = Guid.NewGuid().ToString("N");
+            Archives.Add(id);
+            return Task.FromResult(new HostedVolumeBackup(id, key, now, "digest", 0));
+        }
+
+        public Task RestoreAsync(HostedVolumeBackup backup, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task PruneBackupsAsync(HostedVolumeKey key, IReadOnlySet<string> retainedIds,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (FailPruning) throw new IOException("Archive cleanup failed.");
+            Archives.RemoveWhere(id => !retainedIds.Contains(id));
+            return Task.CompletedTask;
+        }
     }
 
     private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false,
