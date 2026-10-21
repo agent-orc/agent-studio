@@ -6,6 +6,18 @@ namespace AgentStudio.Tests;
 
 public class RunOutcomeContractTests
 {
+    [Fact]
+    public void ResultDocument_RecordsExactImmutableShaOnce()
+    {
+        var sha = new string('a', 40);
+        var report = AgentStudio.Review.SummaryGenerationService.AppendImmutableResultSha(
+            "# Status\n", sha);
+
+        Assert.Contains($"- Immutable result SHA: `{sha}`", report);
+        Assert.Equal(report,
+            AgentStudio.Review.SummaryGenerationService.AppendImmutableResultSha(report, sha));
+    }
+
     public static IEnumerable<object[]> TerminalCases()
     {
         yield return [AgentOutcomeKind.Done, "success", "Success"];

@@ -61,6 +61,25 @@ public class GitServiceWorktreeRunCommitTests : IDisposable
     }
 
     [Fact]
+    public void WorktreeRunCommit_ExcludesRootStatusFromProductCommit()
+    {
+        var repoRoot = SeedRepo("Ada Lovelace", "ada@example.com");
+        var worktree = Path.Combine(_tempDir, "report-worktree");
+        RunGit(repoRoot, $"worktree add -q -b task/report {worktree}");
+        var git = BuildGitService(repoRoot);
+        File.WriteAllText(Path.Combine(worktree, "status.md"), "card report\n");
+        File.WriteAllText(Path.Combine(worktree, "feature.txt"), "feature\n");
+
+        var result = git.WorktreeRunCommit("Proj", worktree, "feat: add feature",
+            taskId: "my-task", expectedBranch: "task/report");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal("feature", RunGitCapture(worktree, "show HEAD:feature.txt"));
+        Assert.Equal("", RunGitCapture(worktree, "ls-tree --name-only HEAD -- status.md"));
+        Assert.True(File.Exists(Path.Combine(worktree, "status.md")));
+    }
+
+    [Fact]
     public void CrashRecoveryCommit_StillStampsCrashRecoveryAuthor()
     {
         var repoRoot = SeedRepo("Ada Lovelace", "ada@example.com");

@@ -321,6 +321,26 @@ public sealed class GitWorkspaceTests : IDisposable
             (await GitAsync(_origin, "log", "-1", "--format=%s", $"refs/heads/{result.Branch}")).StdOut);
     }
 
+    [Fact]
+    public async Task Teardown_preserves_root_status_as_card_artifact_without_committing_it()
+    {
+        await SeedOriginAsync();
+        var workspace = CreateWorkspace();
+        await workspace.PrepareAsync(CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(workspace.RepoPath, "status.md"), "card result\n");
+        await File.WriteAllTextAsync(Path.Combine(workspace.RepoPath, "feature.txt"), "feature\n");
+
+        var result = await workspace.TeardownAsync("Done", CancellationToken.None);
+
+        Assert.True(result.SecuredWork);
+        Assert.Equal("card result\n", await File.ReadAllTextAsync(
+            Path.Combine(_workDir, "tasks", "AGT-2147", "results", "legacy-repository-status.md")));
+        Assert.Equal("feature", (await GitAsync(_origin,
+            "show", $"refs/heads/{result.Branch}:feature.txt")).StdOut);
+        var report = await RunGitAsync(_origin, "show", $"refs/heads/{result.Branch}:status.md");
+        Assert.False(report.Success);
+    }
+
     [Theory]
     [InlineData("runner/runner-test/AGT-2147", true)]
     [InlineData("runner/runner-test/AGT-2147-collision-local-remote", true)]
