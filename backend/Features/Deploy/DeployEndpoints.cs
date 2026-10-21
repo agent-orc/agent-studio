@@ -18,12 +18,21 @@ public static class DeployEndpoints
         project.MapGet("/releases", (string projectName, DeployService deploy) =>
             deploy.Releases(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
+        project.MapGet("/releases/page", (string projectName, int? offset, int? limit, DeployService deploy) =>
+            deploy.ReleasePage(projectName, offset ?? 0, limit ?? 25) is { } value
+                ? Results.Ok(value) : UnknownProject(projectName));
+
         project.MapGet("/releases/{releaseId}", (string projectName, string releaseId, DeployService deploy) =>
             deploy.ReleaseDetail(projectName, releaseId) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
 
         project.MapGet("/deployments", (string projectName, string? environmentId, DeployService deploy) =>
             deploy.Deployments(projectName, environmentId) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
+        project.MapGet("/deployments/page", (string projectName, string? environmentId, string? state,
+            DateTime? sinceUtc, int? offset, int? limit, DeployService deploy) =>
+            deploy.DeploymentPage(projectName, environmentId, state, sinceUtc, offset ?? 0, limit ?? 25) is { } value
+                ? Results.Ok(value) : UnknownProject(projectName));
 
         project.MapGet("/deployments/{deploymentId}", (string projectName, string deploymentId, DeployService deploy) =>
             deploy.DeploymentById(projectName, deploymentId) is { } value
