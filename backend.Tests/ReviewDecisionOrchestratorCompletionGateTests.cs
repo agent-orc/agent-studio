@@ -608,8 +608,7 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
         _cancellationMutations = mutations;
         _cancellationScanner = scanner;
         var transitions = new TaskTransitionService(scanner, stateMachine, mutations, git, settings,
-            NullLogger<TaskTransitionService>.Instance, configuration: config,
-            gateCancellation: gateCancellation);
+            NullLogger<TaskTransitionService>.Instance, configuration: config);
         _cancellationTransitions = transitions;
         var taskAccess = new AgentStudio.TaskAccess.TaskAccessService(
             scanner, mutations, stateMachine, transitions, indexCache,
