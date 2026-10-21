@@ -2032,7 +2032,11 @@ public sealed class RemoteReviewWorkspace
             cleanFingerprint,
             otherCards,
             prior,
-            initial.Any(known.Contains)));
+            initial.Any(known.Contains),
+            ReproducibleUnparsedCommand: Unparsed(initial)
+                && cleanResult is { ExitCode: > 0 and < 126 }
+                && firstResult.ExitCode is > 0 and < 126
+                && Unparsed(SubjectFailures(command, cleanResult))));
         try
         {
             if (client is not null)
@@ -2046,6 +2050,10 @@ public sealed class RemoteReviewWorkspace
         }
         return diagnosis;
     }
+
+    private static bool Unparsed(IReadOnlyList<string> failures)
+        => failures.Count == 0 || failures.All(failure =>
+            failure.StartsWith("<unparsed failure", StringComparison.Ordinal));
 
     private string ReviewFailureFingerprint(
         string stepId, IReadOnlyList<string> failures, ProcessResult? process)

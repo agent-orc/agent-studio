@@ -87,6 +87,23 @@ public sealed class DeliveryFailureDiagnosisTests
             DeliveryFailureDiagnosis.Classify(new(
                 "test:guard", true, null, false, "test:other")).Classification);
 
+    [Theory]
+    [InlineData(true, false, DeliveryFailureDiagnosis.Product)]
+    [InlineData(false, false, DeliveryFailureDiagnosis.Environment)]
+    [InlineData(true, true, DeliveryFailureDiagnosis.FirstOccurrence)]
+    public void Unparsed_command_uses_green_baseline_and_repeated_failure_class(
+        bool baselinePassed, bool cleanRepeatPassed, string expected)
+    {
+        var result = DeliveryFailureDiagnosis.Classify(new(
+            "review:diagnostic-varies", baselinePassed, null, cleanRepeatPassed,
+            cleanRepeatPassed ? null : "review:other-diagnostic", 2,
+            cleanRepeatPassed ? 0 : 3,
+            ReproducibleUnparsedCommand: !cleanRepeatPassed));
+
+        Assert.Equal(expected, result.Classification);
+        Assert.Equal(expected == DeliveryFailureDiagnosis.Product, result.ChargesCard);
+    }
+
     [Fact]
     public void Reviewer_block_without_changed_file_citation_becomes_concern()
     {
@@ -183,6 +200,72 @@ public sealed class DeliveryFailureDiagnosisTests
 
         Assert.Equal("ReviewInfra", normalized.Outcome);
         Assert.Equal("DiagnosisEvidenceInvalid", normalized.FailureClassification);
+    }
+
+    [Fact]
+    public void Candidate_exit_127_stays_infrastructure_even_with_a_claimed_product_diagnosis()
+    {
+        var claimed = FailedCommand("verify-2", DeliveryFailureDiagnosis.Product, true)
+            with { ExitCode = 127 };
+        var report = EmptyReport("ProductFailure") with
+        {
+            Commands =
+            [
+                claimed,
+                claimed with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat", ExitCode = 127 },
+            ],
+        };
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal("ToolUnavailable", normalized.FailureClassification);
+    }
+
+    [Fact]
+    public void Command_evidence_bounds_the_tail_and_scrubs_a_runtime_credential()
+    {
+        var secret = new string('x', 24);
+        var candidate = FailedCommand("verify-2", DeliveryFailureDiagnosis.Product, true);
+        var output = string.Join('\n', Enumerable.Range(0, 1000).Select(index => $"build line {index}"))
+            + $"\ntoken={secret}\nerror: last build failure";
+        var bytes = System.Text.Encoding.UTF8.GetBytes(output);
+        var artifact = new ReviewArtifactEvidenceDto("candidate.verify-2.stdout.log", "text/plain",
+            candidate.StdoutSha256, bytes.Length, Convert.ToBase64String(bytes));
+
+        var formatted = ReviewCommandFailureEvidence.Format(candidate, null, [artifact]);
+
+        Assert.InRange(formatted.Length, 1, 2_500);
+        Assert.Contains("error: last build failure", formatted, StringComparison.Ordinal);
+        Assert.Contains("token=[REDACTED]", formatted, StringComparison.Ordinal);
+        Assert.DoesNotContain("build line 0", formatted, StringComparison.Ordinal);
+        Assert.DoesNotContain(secret, formatted, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Command_output_words_do_not_change_a_confirmed_product_on_second_normalization()
+    {
+        var candidate = FailedCommand("verify-2", DeliveryFailureDiagnosis.Product, true);
+        var output = System.Text.Encoding.UTF8.GetBytes("error: reviewer says this is flaky\n");
+        var report = EmptyReport("ProductFailure") with
+        {
+            Commands =
+            [
+                candidate,
+                candidate with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat" },
+            ],
+            Artifacts = [new ReviewArtifactEvidenceDto("candidate.verify-2.stdout.log", "text/plain",
+                candidate.StdoutSha256, output.Length, Convert.ToBase64String(output))],
+            Verdicts = [new ReviewVerdictDto("build-tests", "block", DeliveryFailureDiagnosis.Product,
+                "Build failed.", "command:verify-2")],
+        };
+
+        var once = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+        var twice = ReviewReportDiagnosisPolicy.Normalize(once, new ReviewPlanDto([], []));
+
+        Assert.Contains("is flaky", once.Verdicts[0].Summary, StringComparison.Ordinal);
+        Assert.Equal("ProductFailure", twice.Outcome);
+        Assert.Equal(once.Verdicts[0].Summary, twice.Verdicts[0].Summary);
     }
 
     [Fact]

@@ -42,6 +42,12 @@ public static class ReviewReportDiagnosisPolicy
 
     public static ReviewReportRequest Normalize(ReviewReportRequest request, ReviewPlanDto? plan)
     {
+        if (ReviewToolchainFailurePolicy.IsUnavailable(request.Commands, request.Artifacts))
+            return request with
+            {
+                Outcome = "ReviewInfra",
+                FailureClassification = "ToolUnavailable",
+            };
         // Report admission is shared by the Task Server and monolith. A retry
         // flag alone cannot turn a failed or unobserved item into a flake.
         var flakeChecked = ReviewFlakeEvidencePolicy.Normalize(request);
@@ -132,6 +138,7 @@ public static class ReviewReportDiagnosisPolicy
             {
                 Outcome = "ProductFailure",
                 FailureClassification = DeliveryFailureDiagnosis.Product,
+                Verdicts = AddCommandEvidence(verdicts, failed, request.Commands, request.Artifacts),
             };
         if (nonProduct is not null)
             return request with { Outcome = "ReviewInfra", FailureClassification = nonProduct };
@@ -149,6 +156,37 @@ public static class ReviewReportDiagnosisPolicy
                 != ReviewGrade.ProductFailure)
             return request with { Outcome = "Pass", FailureClassification = null };
         return request;
+    }
+
+    private static ReviewVerdictDto[] AddCommandEvidence(
+        ReviewVerdictDto[] verdicts,
+        IReadOnlyList<ReviewCommandEvidenceDto> failed,
+        IReadOnlyList<ReviewCommandEvidenceDto> commands,
+        IReadOnlyList<ReviewArtifactEvidenceDto> artifacts)
+    {
+        var enriched = verdicts.ToArray();
+        foreach (var candidate in failed.Where(command => command.Diagnosis?.ChargesCard == true))
+        {
+            var index = Array.FindIndex(enriched, verdict =>
+                verdict.Aspect == candidate.Aspect
+                && verdict.Status is "block" or "fail"
+                && (verdict.EvidenceChecked?.Contains($"command:{candidate.StepId}", StringComparison.Ordinal) == true
+                    || !enriched.Any(other => other.Aspect == candidate.Aspect
+                        && other.EvidenceChecked?.Contains($"command:{candidate.StepId}", StringComparison.Ordinal) == true)));
+            if (index < 0 || enriched[index].Summary.Contains(
+                    $"{ReviewCommandFailureEvidence.Marker} step={candidate.StepId};",
+                    StringComparison.Ordinal))
+                continue;
+            var clean = commands.FirstOrDefault(command =>
+                command.StepId == candidate.StepId && command.Phase == "clean-repeat"
+                && command.WorkspaceRole == "clean-repeat");
+            enriched[index] = enriched[index] with
+            {
+                Summary = enriched[index].Summary.TrimEnd() + "\n"
+                    + ReviewCommandFailureEvidence.Format(candidate, clean, artifacts),
+            };
+        }
+        return enriched;
     }
 
     private static ReviewCommandEvidenceDto[] FailedDeterministicCandidates(ReviewReportRequest request)

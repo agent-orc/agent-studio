@@ -293,7 +293,10 @@ public sealed class OperatorSweepPolicyTests
             ],
             [],
             [
-                new Contract.ReviewVerdictDto("tests", "block", "product", "OrderTotal_RoundsDown fails.", "OrderTests.cs"),
+                new Contract.ReviewVerdictDto("tests", "block", "product",
+                    "OrderTotal_RoundsDown fails.\nCandidate command evidence: step=verify-1; command=dotnet test backend.Tests; "
+                    + "baseline=base exit=0; candidate=result exit=1; clean-repeat exit=1\n"
+                    + "Candidate output tail:\nerror: OrderTotal_RoundsDown", "OrderTests.cs"),
                 new Contract.ReviewVerdictDto("lint", "pass", "none", "Clean."),
             ]);
 
@@ -303,6 +306,8 @@ public sealed class OperatorSweepPolicyTests
         Assert.Contains("OrderTotal_RoundsDown fails.", prompt);
         Assert.DoesNotContain("Clean.", prompt);
         Assert.Contains("`dotnet test backend.Tests`", prompt);
+        Assert.Contains("Candidate output tail:\nerror: OrderTotal_RoundsDown", prompt);
+        Assert.Contains("baseline=base exit=0; candidate=result exit=1", prompt);
         Assert.DoesNotContain("npm run lint", prompt);
         Assert.Contains("automatic round 2 of 4", prompt);
     }

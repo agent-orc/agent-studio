@@ -1250,6 +1250,63 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Unparsed_build_failure_with_changing_diagnostics_charges_card_and_carries_scrubbed_evidence()
+    {
+        var (baselineSha, subjectSha) = await SeedSubjectBranchAsync();
+        var secret = new string('x', 24);
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf 'error: build worker %s\\n' \"$$\"; " +
+            "printf 'token=%s\\n' \"$(printf '%024d' 0 | tr 0 x)\"; exit 1; fi; exit 0")
+            with { BaselineMode = ReviewBaselineModes.ExitStatus };
+        var (workspace, subject) = Workspace("attempt-build-unparsed", subjectSha,
+            [command], 26126, resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan);
+        var candidate = CandidateVerification(evidence);
+        var clean = Assert.Single(evidence.Commands, item => item is
+            { StepId: "verify-2", Phase: "clean-repeat", WorkspaceRole: "clean-repeat" });
+
+        Assert.Equal(0, candidate.BaselineExitCode);
+        Assert.Equal(1, candidate.ExitCode);
+        Assert.Equal(1, clean.ExitCode);
+        Assert.Empty(candidate.NewFailures!);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, candidate.Diagnosis?.Classification);
+        Assert.Equal("ProductFailure", normalized.Outcome);
+        var verdict = Assert.Single(normalized.Verdicts);
+        Assert.Contains("command=", verdict.Summary, StringComparison.Ordinal);
+        Assert.Contains($"baseline={baselineSha} exit=0", verdict.Summary, StringComparison.Ordinal);
+        Assert.Contains($"candidate={subjectSha} exit=1", verdict.Summary, StringComparison.Ordinal);
+        Assert.Contains("clean-repeat exit=1", verdict.Summary, StringComparison.Ordinal);
+        Assert.Contains("error: build worker", verdict.Summary, StringComparison.Ordinal);
+        Assert.Contains("token=[REDACTED]", verdict.Summary, StringComparison.Ordinal);
+        Assert.DoesNotContain(secret, verdict.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Candidate_exit_127_with_green_merge_base_is_tool_unavailable()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then exit 127; fi; exit 0")
+            with { BaselineMode = ReviewBaselineModes.ExitStatus };
+        var (workspace, _) = Workspace("attempt-candidate-tool-missing", subjectSha,
+            [command], 26127, resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("ToolUnavailable", exception.Classification);
+        Assert.Equal("ReviewInfra", exception.Evidence?.Outcome);
+        Assert.Equal(127, CandidateVerification(exception.Evidence!).ExitCode);
+    }
+
+    [Fact]
     [Trait("Category", "MachineBound")]
     [Trait("Category", "ReviewFlaky")]
     public async Task Verification_uses_the_typed_working_subdirectory()

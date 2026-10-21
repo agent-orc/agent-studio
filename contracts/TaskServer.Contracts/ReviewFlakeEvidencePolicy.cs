@@ -76,10 +76,16 @@ public static partial class ReviewFlakeEvidencePolicy
         };
     }
 
-    private static bool ClaimsFlake(string? text) => text is not null
-        && (text.Contains(ReviewFlakyQuarantine.Classification, StringComparison.OrdinalIgnoreCase)
-            || text == DeliveryFailureDiagnosis.Intermittent || FlakeWord().IsMatch(
-                text.Replace("0 flaky quarantined failures", "", StringComparison.OrdinalIgnoreCase)));
+    private static bool ClaimsFlake(string? text)
+    {
+        if (text is null) return false;
+        var evidence = text.IndexOf(
+            "\n" + ReviewCommandFailureEvidence.Marker, StringComparison.Ordinal);
+        if (evidence >= 0) text = text[..evidence];
+        return text.Contains(ReviewFlakyQuarantine.Classification, StringComparison.OrdinalIgnoreCase)
+               || text == DeliveryFailureDiagnosis.Intermittent || FlakeWord().IsMatch(
+                   text.Replace("0 flaky quarantined failures", "", StringComparison.OrdinalIgnoreCase));
+    }
 
     // Match an affirmative attribution, not discussion of the flake policy.
     [GeneratedRegex(@"\b(?:is|are|was|were|as|known|existing|pre-existing)\s+(?:(?:a|an|the|known|existing|pre-existing|test|baseline)\s+)*(?:flake|flaky|flakiness)\b|\b[1-9]\d*\s+flaky\s+(?:quarantined\s+)?failures?\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

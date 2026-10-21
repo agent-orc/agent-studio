@@ -737,9 +737,19 @@ and durations are removed. Output without a diagnostic line falls back to the
 exit status. A reproducible build or lint regression therefore produces the
 same fingerprint in both runs and can be classified as `product`.
 
+When neither candidate run has a parsed test name, a green merge base and two
+ordinary failing exits of the same planned step prove the delivery failure even
+if diagnostic text changes between runs. Exit 127, missing toolchains, timeouts,
+and host errors remain review infrastructure. A red merge base remains an
+integration or environment failure. The settled product verdict records the
+command, both SHAs, baseline and candidate exit codes, clean-repeat exit code,
+and a bounded, credential-scrubbed tail of the candidate output. Finding rounds
+carry that verdict text into the coding prompt as quoted evidence.
+
 | Evidence | Diagnosis | Card charge |
 |---|---|---|
 | Baseline green, clean repeat red with the same fingerprint, no other card matches | `product` | yes |
+| Baseline green, candidate and clean repeat both have an ordinary failing exit on the same step, no parsed test names | `product` | yes |
 | Baseline red or same fingerprint on the baseline or other cards | `environment` | no |
 | Clean repeat green and fingerprint has known intermittent pattern or prior occurrence | `intermittent` | no |
 | Clean repeat green without history, or required evidence unavailable | `unclassified-first-occurrence` | no |
@@ -751,8 +761,9 @@ the runner API. The cause breaker can read the same 24-hour summaries; a
 management endpoint exposes the store without a new UI. Only confirmed
 `product` diagnoses spend the retry budget, anti-churn limit, and reissue
 counter. `environment` evacuates the participating dependency cache entry and
-frozen review state. An unavailable fingerprint store cannot establish a
-card-specific failure, so it cannot produce `product`.
+frozen review state. For parsed test failures, an unavailable fingerprint store
+cannot establish a card-specific failure. The unparsed-command rule above uses
+the measured baseline and clean repeat directly.
 
 The older `ReviewFailureAttributionPolicy` still explains pre-AGT-2916
 reports, but does not authorize a new card charge. For evidence that carries a

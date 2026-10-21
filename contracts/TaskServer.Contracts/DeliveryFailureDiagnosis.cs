@@ -11,7 +11,8 @@ public sealed record DeliveryFailureDiagnosisInput(
     int PriorMatchesLast24Hours = 0,
     bool KnownIntermittentPattern = false,
     bool ReviewerBlocked = false,
-    bool EvidenceAgainstDiff = true);
+    bool EvidenceAgainstDiff = true,
+    bool ReproducibleUnparsedCommand = false);
 
 public sealed record DeliveryFailureDiagnosisResult(
     string Classification,
@@ -61,6 +62,15 @@ public static class DeliveryFailureDiagnosis
             if (input.KnownIntermittentPattern || input.PriorMatchesLast24Hours > 0)
                 return new(Intermittent, 0.9, evidence);
             return new(FirstOccurrence, 0.5, evidence);
+        }
+
+        // A deterministic command can fail before a test runner emits a test
+        // name. The same ordinary failure exit class on the clean repeat, with
+        // a green merge base, proves a regression even if diagnostic text varies.
+        if (input.BaselinePassed == true && input.ReproducibleUnparsedCommand)
+        {
+            evidence.Add("same step and ordinary failure exit class on both candidate runs; no parsed test name");
+            return new(Product, 1, evidence);
         }
 
         if (input.OtherCardMatchesLast24Hours > 0)
