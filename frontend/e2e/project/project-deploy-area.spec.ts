@@ -152,7 +152,7 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
-  test('Operations rail opens an older release on a fresh Deploy mount while the first page is pending', async ({ page }) => {
+  test('Operations rail opens an older release on a fresh Deploy mount without fetching the first page', async ({ page }) => {
     const base = deployReleasesFixture()[0];
     const releases = Array.from({ length: 40 }, (_, index) => ({ ...base,
       id: `release-${index}`, version: `version-${index}`,
@@ -170,8 +170,11 @@ test.describe('Project Deploy area (mocked)', () => {
     }));
     await page.getByTestId(`studio-explorer-project-operations-${PROJECT}`).click();
     await expect(page.getByTestId('operations-release-release-35')).toBeVisible();
-    let pendingFirstPage: Route | undefined;
-    await page.route(`**${DEPLOY}/releases/page?*`, route => { pendingFirstPage = route; });
+    const firstPageRequests: string[] = [];
+    await page.route(`**${DEPLOY}/releases/page?*`, route => {
+      firstPageRequests.push(route.request().url());
+      return answer(route, { items: releases.slice(0, 25), offset: 0, limit: 25, total: releases.length });
+    });
     const containing: string[] = [];
     await page.route(`**${DEPLOY}/releases/*/page?*`, async route => {
       containing.push(route.request().url());
@@ -181,9 +184,7 @@ test.describe('Project Deploy area (mocked)', () => {
     await page.getByTestId('operations-release-release-35').click();
     await expect(page.getByTestId('deploy-release-detail')).toContainText('version-35');
     expect(containing).toHaveLength(1);
-    expect(pendingFirstPage).toBeDefined();
-    await pendingFirstPage!.fulfill(json({ items: releases.slice(0, 25), offset: 0, limit: 25, total: releases.length }))
-      .catch(() => undefined);
+    expect(firstPageRequests).toHaveLength(0);
     await expect(page.getByTestId('deploy-release-detail')).toContainText('version-35');
     await capture(page, 'operations-older-release');
   });
