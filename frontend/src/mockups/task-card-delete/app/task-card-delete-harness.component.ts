@@ -5,22 +5,7 @@ import { TaskState } from '../../../app/models/task.model';
 import type { TaskInfo } from '../../../app/models/task.model';
 
 /**
- * AGT-2020 visual harness — "Delete: Hover-Icon → Kontextmenü".
- *
- * It mounts the *real* `TaskCardComponent` (task + epic) so the reviewer can
- * eyeball, in both themes, the two halves of the change exactly as the board
- * paints them:
- *  - the card carries **no** hover trash button any more (right-click / Menu
- *    key is the only delete affordance), and
- *  - the card's own right-click context menu ends in a destructive, danger-
- *    styled "Delete task" / "Delete epic" row behind a separator.
- *
- * Backend-free: the card is seeded from a hand-built `TaskInfo` and its
- * best-effort epic lookup simply resolves to "No epics" without a backend —
- * the precedent set by the other `src/mockups/*` harnesses.
- *
- * The theme buttons flip `html[data-studio-theme]` (dark is the app default,
- * light is the opt-in) so a single harness proves both palettes.
+ * Visual harness for the task card context menu in both themes.
  */
 function makeTask(overrides: Partial<TaskInfo> = {}): TaskInfo {
   return {
@@ -64,18 +49,6 @@ export class TaskCardDeleteHarnessComponent {
   readonly theme = signal<Theme>('dark');
 
   readonly task = signal<TaskInfo>(makeTask());
-  readonly epic = signal<TaskInfo>(
-    makeTask({
-      id: 'epic-seed',
-      taskKey: 'demo::epic-seed',
-      key: 'ATP-9',
-      title: 'EPIC: Board-Interaktionen aufräumen',
-      kind: 'epic',
-      state: TaskState.Ready,
-      folderPath: '/demo/watch/2-ready/epic-seed',
-    }),
-  );
-
   setTheme(theme: Theme): void {
     this.theme.set(theme);
     const root = document.documentElement;

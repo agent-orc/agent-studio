@@ -1,5 +1,5 @@
 import { TaskState, integrationRecordTooltip, latestIntegratedRecord } from '../../../../models/task.model';
-import type { TaskInfo, ClientSummary, CliType, TagRegistryEntry, EpicRollup, AutoLoopSnapshot, PendingIntent, TaskMode } from '../../../../models/task.model';
+import type { TaskInfo, ClientSummary, CliType, TagRegistryEntry, AutoLoopSnapshot, PendingIntent, TaskMode } from '../../../../models/task.model';
 import type { TaskCommitInfo } from '../../../../features/git';
 import type { StructuredTooltip } from 'coding-agent-chat/shared';
 import type { MenuItem } from '../../../../components/menu';
@@ -1839,8 +1839,6 @@ export function buildPendingTooltip(pi: PendingIntent): string {
 
 // Context-menu action ids shared between the menu builder and the click
 // handler in the component.
-export const EPIC_ASSIGN_PREFIX = 'epic-assign:';
-export const EPIC_DETACH_ID = 'epic-detach';
 export const FILTER_DEPENDENTS_ID = 'filter-dependents';
 /**
  * Destructive "Delete task" context-menu row. Replaces the hover trash button
@@ -1859,15 +1857,10 @@ export function cardMoveTarget(id: string): string | null {
 }
 
 /**
- * Right-click context-menu rows for a card: copy actions + (for non-epic cards)
- * the epic assign/detach submenu. The active epic is marked; a detach row is
- * appended only when the card is already attached to one.
+ * Right-click context-menu rows for a card.
  */
 export function buildCardCtxMenuItems(
   job: TaskInfo,
-  isEpic: boolean,
-  epics: readonly EpicRollup[],
-  currentEpicId: string | null,
   mutationsBlocked = false,
   visibleLanes: readonly string[] = MANUAL_MOVE_LANES,
 ): MenuItem[] {
@@ -1917,42 +1910,13 @@ export function buildCardCtxMenuItems(
     }
   }
 
-  // Epic assignment is only meaningful for ordinary task cards - an epic is not
-  // a sub-task of another epic.
-  if (!isEpic) {
-    items.push({ kind: 'separator' });
-    items.push({ kind: 'header', label: 'Epic' });
-    if (epics.length === 0 && !currentEpicId) {
-      items.push({ kind: 'row', id: 'epic-none', label: 'No epics in this project', disabled: true });
-    } else {
-      for (const epic of epics) {
-        items.push({
-          kind: 'row',
-          id: EPIC_ASSIGN_PREFIX + epic.id,
-          label: epic.title || epic.id,
-          active: epic.id === currentEpicId,
-          disabled: mutationsBlocked,
-        });
-      }
-      if (currentEpicId) {
-        items.push({
-          kind: 'row',
-          id: EPIC_DETACH_ID,
-          label: 'Detach from epic',
-          disabled: mutationsBlocked,
-        });
-      }
-    }
-  }
-
   // Destructive delete lives at the very end behind a separator so it never
-  // sits next to the everyday copy/assign rows. Present on every card — for an
-  // epic card it may be the only actionable row, which the operator accepted.
+  // sits next to the everyday copy rows. Present on every card.
   items.push({ kind: 'separator' });
   items.push({
     kind: 'row',
     id: DELETE_ID,
-    label: isEpic ? 'Delete epic' : 'Delete task',
+    label: 'Delete task',
     danger: true,
     disabled: mutationsBlocked,
   });

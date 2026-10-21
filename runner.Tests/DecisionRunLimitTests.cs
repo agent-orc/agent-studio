@@ -30,23 +30,6 @@ public sealed class DecisionRunLimitTests
         Assert.Equal(expectedSeconds, mechanical.TimeoutSeconds);
     }
 
-    [Theory]
-    [InlineData(60)]
-    [InlineData(7200)]
-    public void Epic_planning_keeps_claimed_limit_when_it_refines_provider_selection(int cardSeconds)
-    {
-        var claim = new RunSpecDto(CliType: "codex", RunTimeoutSeconds: cardSeconds);
-        var planning = new RemoteEpicPlanningPromptResponse("prompt", "claude", "model", "high");
-
-        var effective = RemoteTaskRunner.ResolveEpicPlanningRunSpec(claim, planning);
-
-        Assert.Equal(cardSeconds, effective.RunTimeoutSeconds);
-        Assert.Equal("codex", effective.CliType);
-        var planningWorker = DurableAgentProcess.BuildSpec(Options(), Path.GetTempPath(), "prompt",
-            Path.GetTempPath(), effective,
-            timeoutSeconds: RemoteTaskRunner.EffectiveRunTimeoutSeconds(effective, mechanicalResume: false));
-        Assert.Equal(cardSeconds, planningWorker.TimeoutSeconds);
-    }
 
     private static RunnerOptions Options() => new()
     {

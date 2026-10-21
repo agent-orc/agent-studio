@@ -62,7 +62,6 @@ async function stubWorkspace(
       body = JSON.stringify({ projectName: PROJECT, items: [] });
     }
     if (requestPath === '/api/cli/quota') body = '{"snapshots":[]}';
-    if (requestPath === '/api/epics') body = '[]';
     if (requestPath.startsWith('/api/tasks/archive')) body = '{"items":[],"total":0,"offset":0,"limit":50}';
     if (requestPath.endsWith('/visual-evidence')) body = JSON.stringify({
       project: PROJECT, capturedAt: '2026-07-12T10:00:00Z', unseenCount: 0, items: [],
