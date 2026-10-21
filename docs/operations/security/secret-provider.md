@@ -90,6 +90,10 @@ The project Deploy area's Secrets view offers Preview plus every declared
 environment. It reuses the provider's write-only add and rotate controls and
 stores only name-to-reference bindings as control metadata. An environment
 declaration's `secretRefs` names must each be bound before its job starts.
+For container deployments, names become uppercase environment variables with
+`.` and `-` replaced by `_`. A declaration is invalid when two names would
+become the same variable, including case-only differences. The run host also
+rejects an already queued job with such names before resolving any value.
 The binding may address the environment, its project, or the workspace;
 provider inheritance still chooses the closest existing secret. Preview
 bindings may be prepared before a deploy declaration exists.
@@ -106,6 +110,10 @@ also needs an interactive Owner or project production approver with
 permission seam for AGT-3228 to replace with scope roles.
 The Secrets view uses the environment declaration's `kind` to show the
 Production approval control, even when its ID is not `production` or `prod`.
+Deploy resolution records `deploy:<environment>` as its audit purpose. For an
+environment ID longer than 57 characters, the purpose uses its first 40
+characters and a 16-character SHA-256 suffix so it stays within the provider's
+64-character purpose limit.
 
 Bindings are persisted under
 `<TaskRepository>/.security/secret-bindings/<key>.json`, separate from the
