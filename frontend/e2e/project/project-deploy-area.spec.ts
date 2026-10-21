@@ -88,7 +88,8 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
     capturedAt: new Date(DEPLOY_FIXTURE_NOW).toISOString(), probeOrigin: 'mock', environments: [],
   }));
   await page.route(`**${DEPLOY}/status`, route => answer(route, deploy.status));
-  await page.route(`**${DEPLOY}/releases/page?*`, route => {
+  // A predicate, not a glob: the artifact query value contains "/", which a glob "*" does not match.
+  await page.route(url => url.pathname === `${DEPLOY}/releases/page`, route => {
     if (deploy.releases === MISSING || (deploy.releases && typeof deploy.releases === 'object' && 'status' in deploy.releases))
       return answer(route, deploy.releases);
     const params = new URL(route.request().url()).searchParams;
