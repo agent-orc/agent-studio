@@ -290,7 +290,9 @@ public sealed class DeployService
                     ? File.GetLastWriteTimeUtc(Path.Combine(task.FolderPath, IntegrationVerificationStore.FileName)).Ticks : 0L))
                 .ToArray();
             var runs = snapshot.Deployments(project);
-            var signature = string.Join('|', snapshot.Releases.Select(item => item.Id + ':' + item.CardKeys.Count))
+            var signature = string.Join('|', snapshot.Environments.Select(item =>
+                    item.Id + ':' + item.Name + ':' + item.Order))
+                + "|" + string.Join('|', snapshot.Releases.Select(item => item.Id + ':' + item.CardKeys.Count))
                 + "|" + string.Join('|', runs.Select(item => item.Id + ':' + item.State + ':' + item.FinishedAtUtc?.Ticks))
                 + "|" + string.Join('|', tasks.Select(item => item.Task.Id + ':' + item.Task.Title + ':' + item.Stamp));
             if (_deliveryLaneCache.TryGetValue(project, out var cached) && cached.Signature == signature)

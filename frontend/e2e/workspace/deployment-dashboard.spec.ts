@@ -76,8 +76,11 @@ test('workspace deployment matrix filters and opens project deployment in both t
   await dashboard.getByRole('button', { name: 'Website Production deployment' }).click();
   await expect(page.getByTestId('studio-tab-hub:Website')).toBeVisible();
 
-  await page.goto('/#/projects/website/board');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole('button', { name: 'Board, 0 ready, 0 in progress, 0 human review' }).click();
+  await page.getByTestId('delivery-mode-toggle').click();
   await expect(page.getByTestId('delivery-lane-Website-dev')).toBeVisible();
+  await expect(page.getByTestId('delivery-lane-API-dev')).toHaveCount(0);
   await expect(page.getByTestId('delivery-card-WEB-1')).toBeVisible();
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });

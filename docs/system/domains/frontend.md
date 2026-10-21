@@ -50,7 +50,7 @@ labels its values as sample data. BD-1 will replace the fixture producer with
 the deployment API; the `Environment`, `Release`, `Deployment`, and
 `EnvironmentStatus` contracts live under `frontend/src/app/features/deployments/`.
 
-The board and workspace dashboard also show read-only delivery lanes per project.
+The board's Delivery lanes mode and workspace dashboard show read-only delivery lanes per project.
 `GET /api/projects/{projectName}/deploy/delivery-lanes` accumulates card keys in
 release snapshots and assigns each integrated card to the furthest environment
 whose current successful release contains it. The current release follows the

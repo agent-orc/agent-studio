@@ -592,6 +592,7 @@ export class App implements OnInit, OnDestroy {
   readonly laneGroups = computed<BoardLaneGroup[]>(
     () => buildLaneGroups(this.displayGrouped(), this.boardDrag.active()),
   );
+  readonly deliveryMode = signal(false);
   // Copilot removed: no CLI exposes the inline path/token config card, so the
   // error-dialog "Open CLI config" affordance is permanently disabled.
   readonly selectedJobUsesCopilot = computed(() => false);

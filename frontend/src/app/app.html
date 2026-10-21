@@ -134,7 +134,17 @@
                 <app-loading-surface kind="board" label="Loading board…" />
               } @else {
               <app-active-board-filters [resultCount]="filteredTaskCount()" /><app-tag-filters [projectName]="boardProjectScope()" />
-              @if (groupByEpic()) {
+              <button type="button" class="btn btn--ghost" data-testid="delivery-mode-toggle"
+                      (click)="deliveryMode.set(!deliveryMode())">
+                {{ deliveryMode() ? 'Task board' : 'Delivery lanes' }}</button>
+              @if (deliveryMode()) {
+                <main class="dashboard dashboard--delivery" data-testid="studio-delivery-board">
+                  @defer (on idle) {
+                  <app-delivery-lanes [project]="boardProjectScope()" [projects]="projectNames()" [boardFilters]="true"
+                    (openDeployment)="studioTabState.open({ kind: 'hub', projectName: $event, section: 'deployment' })" (openCard)="openDeliveryCard($event)" />
+                  }
+                </main>
+              } @else if (groupByEpic()) {
                 <main class="dashboard dashboard--studio dashboard--epic-board"
                       data-testid="studio-board">
                   <app-dossier-group-board
@@ -677,7 +687,7 @@
               </section>
             }
             @defer (on idle) {
-              <app-delivery-lanes [projects]="projectNames()" [boardFilters]="true"
+              <app-delivery-lanes [project]="boardProjectScope()" [projects]="projectNames()" [boardFilters]="true"
                 (openDeployment)="studioTabState.open({ kind: 'hub', projectName: $event, section: 'deployment' })"
                 (openCard)="openDeliveryCard($event)" />
             }
