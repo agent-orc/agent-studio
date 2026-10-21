@@ -76,6 +76,8 @@ public record TaskTokenCall
     public long OutputTokens { get; init; }
     public long CacheReadTokens { get; init; }
     public long CacheCreationTokens { get; init; }
+    /// <summary>Subset of <see cref="OutputTokens"/> reported as reasoning. Null when the CLI does not report it.</summary>
+    public long? ReasoningTokens { get; init; }
     /// <summary>Provider input-counter semantics captured at parse time. Null on legacy rows.</summary>
     public bool? InputIncludesCached { get; init; }
     /// <summary>Stable marker for a historical normalization applied after capture.</summary>

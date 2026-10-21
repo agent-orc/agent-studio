@@ -472,7 +472,7 @@
   }
 
   <app-pipeline-token-usage [summary]="pipelinePoll.pipeline()?.tokensByModel ?? null"
-    [showTaskTotal]="showAllRunsTaskTotal()" />
+    [showTaskTotal]="showAllRunsTaskTotal()" [analysisProject]="job().projectName" [analysisJobId]="job().id" />
 
   @if (selectedTokenRow(); as tokenRow) {
     <app-overview-step-token-modal

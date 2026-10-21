@@ -1,0 +1,27 @@
+<section class="sc" data-testid="token-analysis-scatter" aria-labelledby="sc-title">
+  <header class="sc__head">
+    <h3 id="sc-title">Tokens versus rounds</h3>
+    <p>{{ points().length }} cards, peak {{ fmt(maxTokens()) }} tokens</p>
+  </header>
+  <ul class="sc__legend" aria-label="Outcome groups">
+    @for (item of legend; track item.group) {
+      <li><span class="sc__mark sc__mark--{{ item.group }} sc__mark--legend" [style.background]="item.color"></span>{{ item.label }}</li>
+    }
+  </ul>
+  <div class="sc__plot" role="group" aria-label="Cards by rounds and tokens">
+    <span class="sc__axis sc__axis--top">{{ fmt(maxTokens()) }}</span>
+    <div class="sc__area">
+      @for (point of placed(); track point.id) {
+        <button type="button" class="sc__mark sc__mark--{{ point.group }}" [class.sc__mark--selected]="point.id === selectedId()"
+                [style.left.%]="point.left" [style.bottom.%]="point.bottom" [style.background]="point.color"
+                [appTooltip]="point.tip" [attr.aria-label]="point.tip" (click)="cardSelect.emit(point.id)"></button>
+      }
+    </div>
+  </div>
+  <div class="sc__ticks" aria-hidden="true">
+    @for (round of roundTicks(); track round) {
+      <span [style.left.%]="tickLeft(round)">{{ round }}</span>
+    }
+  </div>
+  <p class="sc__caption">Rounds: coding runs and fix rounds per card</p>
+</section>

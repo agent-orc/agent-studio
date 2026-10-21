@@ -1,0 +1,65 @@
+<section class="tav" data-testid="token-analysis-view" [attr.data-scope]="fixedProject() ? 'project' : 'workspace'">
+  <header class="tav__head">
+    <div>
+      <span class="tav__eyebrow">{{ fixedProject() ? 'Project ' + fixedProject() : 'Workspace' }}</span>
+      <h2>Token analysis by card</h2>
+      <p>Where each card spent its tokens: usage kind, model, reasoning level, CLI, host, rounds and outcome.</p>
+    </div>
+    <button type="button" class="tav__button" data-testid="token-analysis-reload" (click)="reload()" [disabled]="loading()">Refresh</button>
+  </header>
+
+  <app-token-analysis-filters [filters]="effective()" [options]="options()" [fixedProject]="fixedProject()"
+                              (filtersChange)="setFilters($event)" />
+
+  @if (error(); as message) {
+    <div class="tav__state tav__state--error" role="alert" data-testid="token-analysis-error">
+      <strong>{{ message }}</strong>
+      <span>Check that the backend is reachable, then try again.</span>
+      <button type="button" class="tav__button" data-testid="token-analysis-retry" (click)="reload()">Retry</button>
+    </div>
+  } @else if (loading() && !data()) {
+    <p class="tav__state" data-testid="token-analysis-loading">Loading token usage…</p>
+  } @else if (data(); as d) {
+    @if (freshnessWarning(); as warning) {
+      <p class="tav__notice" data-testid="token-analysis-partial"><strong>Partial data.</strong> {{ warning }}</p>
+    }
+    <dl class="tav__stats" data-testid="token-analysis-stats">
+      <div><dt>Cards</dt><dd>{{ visible().length }}</dd></div>
+      <div><dt>Tokens</dt><dd data-testid="token-analysis-total">{{ fmt(totals().tokens) }}</dd></div>
+      <div><dt>Theoretical cost</dt><dd>{{ usd(totals().cost) }}</dd></div>
+      <div><dt>Runs in flight</dt><dd data-testid="token-analysis-in-flight">{{ inFlight() }}</dd></div>
+    </dl>
+
+    @if (effective().card) {
+      <app-card-token-drilldown [detail]="detail()" [loading]="detailLoading()" [error]="detailError()"
+                                (closed)="selectCard(effective().card!)" (retry)="retryDetail()" />
+    }
+
+    @if (cards().length === 0 && d.remainders.length === 0) {
+      <div class="tav__state" data-testid="token-analysis-empty">
+        <strong>No token usage in this range.</strong>
+        <span>Nothing was recorded in the last {{ d.days }} day{{ d.days === 1 ? '' : 's' }}. Pick a longer time range.</span>
+      </div>
+    } @else if (visible().length === 0 && remainders().length === 0) {
+      <div class="tav__state" data-testid="token-analysis-filtered-empty">
+        <strong>No cards match these filters.</strong>
+        <span>Loosen or reset the filters above.</span>
+      </div>
+    } @else {
+      <div class="tav__grid">
+        <app-token-analysis-kind-bars class="tav__wide" [rows]="stacks()" [kinds]="kinds()"
+                                      [selectedId]="effective().card" (cardSelect)="selectCard($event)" />
+        <div class="tav__wide tav__time">
+          <app-token-analysis-time-chart [chart]="chart()" />
+          <app-token-analysis-quota [lines]="quota()" [days]="chart().days.length" [windows]="d.quota"
+                                    [cli]="effective().cli" />
+        </div>
+        <app-token-analysis-scatter [points]="scatter()" [selectedId]="effective().card" (cardSelect)="selectCard($event)" />
+        <app-token-analysis-distribution [levels]="levels()" [models]="models()" [mix]="mix()" />
+      </div>
+      <app-token-analysis-card-table [cards]="visible()" [remainders]="remainders()" [kinds]="kinds()"
+                                     [selectedId]="effective().card" (cardSelect)="selectCard($event)" />
+    }
+    <p class="tav__note">{{ d.disclaimer }} Days are UTC.</p>
+  }
+</section>

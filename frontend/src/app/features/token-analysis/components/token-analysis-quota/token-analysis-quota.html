@@ -1,0 +1,51 @@
+<section class="qc" data-testid="token-analysis-quota" aria-labelledby="qc-title">
+  <header class="qc__head">
+    <h3 id="qc-title">Provider quota windows</h3>
+    <p>Used percent from the quota history, same days as above</p>
+  </header>
+  @if (paths().length === 0) {
+    <p class="qc__empty" data-testid="token-analysis-quota-empty">No quota readings were recorded in this range.</p>
+  } @else {
+    <ul class="qc__legend" aria-label="Quota windows">
+      @for (line of paths(); track line.key) {
+        <li><span class="qc__swatch" [style.background]="line.color"></span>{{ line.label }}
+          @if (line.last !== null) { <span class="qc__num">{{ line.last }}%</span> }</li>
+      }
+    </ul>
+    <div class="qc__plot">
+      <span class="qc__axis qc__axis--top">100%</span>
+      <span class="qc__axis qc__axis--mid">50%</span>
+      <svg class="qc__svg" [attr.viewBox]="viewBox()" preserveAspectRatio="none" role="img"
+           aria-label="Quota used percent per window over time">
+        @for (line of paths(); track line.key) {
+          <path [attr.d]="line.d" [attr.stroke]="line.color" class="qc__line"><title>{{ line.label }}</title></path>
+        }
+      </svg>
+    </div>
+  }
+  @if (rows().length > 0) {
+    <div class="qc__table-wrap">
+      <table class="qc__table" data-testid="token-analysis-quota-table">
+        <caption>Tokens per quota percentage point per window</caption>
+        <thead>
+          <tr><th scope="col">Window</th><th scope="col">From</th><th scope="col">To</th>
+            <th scope="col" class="qc__num">Used</th><th scope="col" class="qc__num">Tokens</th>
+            <th scope="col" class="qc__num">Per point</th><th scope="col" class="qc__num">Uncached per point</th></tr>
+        </thead>
+        <tbody>
+          @for (row of rows(); track row.key) {
+            <tr [class.qc__row--open]="row.open">
+              <td>{{ row.label }} @if (row.open) { <span class="qc__badge">running</span> }</td>
+              <td>{{ row.from | date: 'MMM d, HH:mm' }}</td>
+              <td>{{ row.to | date: 'MMM d, HH:mm' }}</td>
+              <td class="qc__num">{{ row.delta }} pt</td>
+              <td class="qc__num">{{ fmt(row.tokens) }}</td>
+              <td class="qc__num">{{ row.perPct === null ? 'n/a' : fmt(row.perPct) }}</td>
+              <td class="qc__num">{{ row.uncachedPerPct === null ? 'n/a' : fmt(row.uncachedPerPct) }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</section>

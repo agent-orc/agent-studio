@@ -45,7 +45,10 @@ export type WorkspaceSettingsSection =
   | 'tokens'
   | 'screenshots';
 
-export type WorkspaceTokenUsagePage = 'workspace' | 'claude' | 'codex';
+/** Card token analysis page (AGT-3267); written once so the route never drifts. */
+const TOKEN_ANALYSIS_ROUTE = '/workspace/settings/tokens/analysis';
+
+export type WorkspaceTokenUsagePage = 'workspace' | 'analysis' | 'claude' | 'codex';
 
 /**
  * Shell-feature service: open/close state + URL-hash sync for the consolidated
@@ -215,6 +218,7 @@ export class WorkspaceOverlaysService {
       case '/workspace/settings/tokens': return 'tokens';
       case '/workspace/settings/tokens/claude': return 'tokens';
       case '/workspace/settings/tokens/codex': return 'tokens';
+      case TOKEN_ANALYSIS_ROUTE: return 'tokens';
       case '/workspace/screenshots': return 'screenshots';
       case '/workspace/settings/screenshots': return 'screenshots';
       case '/workspace/settings/caps':
@@ -248,13 +252,10 @@ export class WorkspaceOverlaysService {
   }
 
   private tokenUsagePageForRoute(route: string): WorkspaceTokenUsagePage {
-    if (route === '/workspace/tokens/claude' || route === '/workspace/settings/tokens/claude') {
-      return 'claude';
-    }
-    if (route === '/workspace/tokens/codex' || route === '/workspace/settings/tokens/codex') {
-      return 'codex';
-    }
-    return 'workspace';
+    // Legacy loose routes know the CLI pages; the card analysis exists only below settings.
+    const page = /^\/workspace(?:\/settings)?\/tokens\/(claude|codex)$/.exec(route)?.[1]
+      ?? (route === TOKEN_ANALYSIS_ROUTE ? 'analysis' : 'workspace');
+    return page as WorkspaceTokenUsagePage;
   }
 
   private routeForSection(section: WorkspaceSettingsSection): string {
@@ -305,6 +306,7 @@ export class WorkspaceOverlaysService {
     '/workspace/settings/tokens',
     '/workspace/settings/tokens/claude',
     '/workspace/settings/tokens/codex',
+    TOKEN_ANALYSIS_ROUTE,
     '/workspace/settings/screenshots',
     '/workspace/caps',
     '/workspace/prompts',

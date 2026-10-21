@@ -124,7 +124,8 @@ public sealed class AdHocUsageRecorder
                     participantId: "support:adhoc",
                     topic: string.IsNullOrWhiteSpace(record.Source) ? AdHocUsageSources.Unknown : record.Source,
                     usage: usage,
-                    createdAt: record.Ts == default ? null : DateTime.SpecifyKind(record.Ts, DateTimeKind.Utc));
+                    createdAt: record.Ts == default ? null : DateTime.SpecifyKind(record.Ts, DateTimeKind.Utc),
+                    attributedProject: record.Project);
             }
             return true;
         }

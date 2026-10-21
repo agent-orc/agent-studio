@@ -5,8 +5,10 @@ import { CliUsageStore } from '../../services/cli-usage.store';
 import { CliUsageDetailComponent } from '../cli-usage-detail/cli-usage-detail';
 import { CliWindowAnalysisComponent } from '../cli-window-analysis/cli-window-analysis';
 
-type WorkspaceTokenUsagePage = 'workspace' | 'claude' | 'codex';
+import { TokenAnalysisViewComponent } from '../../../token-analysis';
 import { WorkspaceTokenTimelineComponent } from '../workspace-token-timeline/workspace-token-timeline';
+
+type WorkspaceTokenUsagePage = 'workspace' | 'analysis' | 'claude' | 'codex';
 
 /**
  * AGT-2035 — the single "Token usage" area of the consolidated Workspace
@@ -26,7 +28,7 @@ import { WorkspaceTokenTimelineComponent } from '../workspace-token-timeline/wor
 @Component({
   selector: 'app-token-usage-section',
   standalone: true,
-  imports: [WorkspaceTokenTimelineComponent, CliUsageDetailComponent, CliWindowAnalysisComponent],
+  imports: [WorkspaceTokenTimelineComponent, CliUsageDetailComponent, CliWindowAnalysisComponent, TokenAnalysisViewComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './token-usage-section.component.html',
   styleUrl: './token-usage-section.component.scss',
