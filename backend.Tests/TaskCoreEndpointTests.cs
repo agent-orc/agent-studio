@@ -83,6 +83,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
         await WarmIndexAsync(factory, "AGT-edit");
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
 
         using (var put = await client.PutAsJsonAsync(
             $"/api/tasks/AGT-edit/title?project={project.Id}", new { title = "Edited" }))
@@ -120,6 +121,10 @@ public sealed class TaskCoreEndpointTests : IDisposable
             using var body = JsonDocument.Parse(await merge.Content.ReadAsStringAsync());
             restoreToken = body.RootElement.GetProperty("restoreToken").GetString()!;
         }
+        using (var detail = await client.GetAsync($"/api/tasks/AGT-secondary?project={project.Id}"))
+            Assert.Equal(HttpStatusCode.NotFound, detail.StatusCode);
+        index.Invalidate();
+        index.GetSnapshot();
         using (var detail = await client.GetAsync($"/api/tasks/AGT-secondary?project={project.Id}"))
             Assert.Equal(HttpStatusCode.NotFound, detail.StatusCode);
         using (var undo = await client.PostAsJsonAsync(

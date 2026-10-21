@@ -686,6 +686,11 @@ public sealed class TaskIndexCache
             {
                 facts = new Dictionary<string, TaskInfo>(_coreFactsByFolder, _coreFactsByFolder.Comparer);
                 records = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer);
+                _removedCoreKeys.Add(CoreKey(info.WatchPath, info.Id));
+                if (!string.IsNullOrWhiteSpace(info.TaskKey))
+                    _removedCoreKeys.Add(CoreKey(info.WatchPath, info.TaskKey));
+                if (!string.IsNullOrWhiteSpace(info.Key))
+                    _removedCoreKeys.Add(CoreKey(info.WatchPath, info.Key));
                 foreach (var key in _core.Where(pair =>
                     WatchPathComparison.PathsEqual(pair.Value.WatchPath, info.WatchPath)
                     && (pair.Value.TaskKey == info.TaskKey || pair.Value.Id == info.Id))
@@ -980,12 +985,10 @@ public sealed class TaskIndexCache
             {
                 Dictionary<string, TaskInfo> mergedFacts;
                 Dictionary<string, TaskCoreRecord> mergedRecords;
-                bool hadConcurrentPublication;
                 lock (_lock)
                 {
                     mergedFacts = new Dictionary<string, TaskInfo>(_coreFactsByFolder, _coreFactsByFolder.Comparer);
                     mergedRecords = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer);
-                    hadConcurrentPublication = _coreWriteGeneration != coreWriteGenBefore;
                 }
                 var adopted = new List<string>();
                 var removed = new List<string>();
@@ -1024,7 +1027,15 @@ public sealed class TaskIndexCache
                         _coreTaskStamps.Remove(folder);
                         _staleCoreFolders.Remove(folder);
                     }
-                    if (!hadConcurrentPublication) _removedCoreKeys.Clear();
+                    // Tombstones for absent cards survive unrelated scans and
+                    // writes. A card that reappears releases only its aliases.
+                    foreach (var record in mergedRecords.Values)
+                    {
+                        _removedCoreKeys.Remove(CoreKey(record.WatchPath, record.Id));
+                        _removedCoreKeys.Remove(CoreKey(record.WatchPath, record.TaskKey));
+                        if (!string.IsNullOrWhiteSpace(record.Key))
+                            _removedCoreKeys.Remove(CoreKey(record.WatchPath, record.Key));
+                    }
                     _snapshotAt = _time.GetUtcNow();
                     _hasSnapshot = true;
                     _publishedMutationGen = Math.Max(_publishedMutationGen, mutationGenBefore);
