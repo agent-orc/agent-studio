@@ -17,7 +17,7 @@ public static class ProjectOperatorDashboardEndpoints
             ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration,
             AccessSecurityStore security) =>
         {
-            var builder = GateBuilder(context, configuration, security);
+            var builder = AuthenticatedRunner(context, configuration, security);
             if (builder is null || !builder.Scopes.Contains(RunnerScopes.Release))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             return environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit, builder.RunnerId)
@@ -90,15 +90,20 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapGet("/api/deploy/jobs/{project}/{jobId}/artifact", (HttpContext context, string project, string jobId,
             ProjectEnvironmentService environments, DeployStore releases, ReleaseArtifactRegistry registry,
-            IConfiguration configuration) =>
+            IConfiguration configuration, AccessSecurityStore security) =>
         {
+            // Artifact bytes and provenance go only to a runner.deploy
+            // credential in every profile; the local profile has no
+            // middleware authentication, so the route authenticates itself.
+            var principal = AuthenticatedRunner(context, configuration, security);
+            if (principal is null) return Results.StatusCode(StatusCodes.Status401Unauthorized);
+            if (!principal.Scopes.Contains(RunnerScopes.Deploy))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             var lease = context.Request.Headers["X-Deploy-Lease"].ToString();
             var claim = environments.FindClaimedJobVerification(project, jobId, lease, requireVerifiedRelease: true);
             if (claim.Retryable) return RegistryUnavailable();
             var job = claim.Job;
-            if (job is null || SecurityProfiles.IsNetworked(configuration)
-                && (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
-                    || principal.RunnerId != job.HostId))
+            if (job is null || SecurityProfiles.IsNetworked(configuration) && principal.RunnerId != job.HostId)
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             try
             {
@@ -211,7 +216,7 @@ public static class ProjectOperatorDashboardEndpoints
 
     private static IResult RegistryUnavailable() => Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
 
-    private static RunnerPrincipal? GateBuilder(HttpContext context, IConfiguration configuration,
+    private static RunnerPrincipal? AuthenticatedRunner(HttpContext context, IConfiguration configuration,
         AccessSecurityStore security)
     {
         if (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is RunnerPrincipal principal)
