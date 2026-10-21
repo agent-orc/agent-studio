@@ -72,9 +72,17 @@ public static class ContributorAccessPolicy
 
         if (HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method))
         {
-            if (segments.Length >= 5 && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
-                && segments[3].Equals("results", StringComparison.OrdinalIgnoreCase))
-                return AllowsResultFile(path);
+            if (segments.Length >= 4 && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase))
+            {
+                if (segments[3].Equals("checkout", StringComparison.OrdinalIgnoreCase)) return false;
+                if (segments[3].Equals("files", StringComparison.OrdinalIgnoreCase))
+                    return segments.Length == 5 && (segments[4].Equals("prompt.md", StringComparison.OrdinalIgnoreCase)
+                        || segments[4].Equals("status.md", StringComparison.OrdinalIgnoreCase))
+                        || segments.Length >= 6 && segments[4].Equals("results", StringComparison.OrdinalIgnoreCase)
+                            && AllowsResultFile(path);
+                if (segments[3].Equals("results", StringComparison.OrdinalIgnoreCase))
+                    return segments.Length >= 5 && AllowsResultFile(path);
+            }
             if (path.StartsWith("/api/runner/", StringComparison.OrdinalIgnoreCase))
                 return path.Contains("/orchestrator-chat", StringComparison.OrdinalIgnoreCase);
             if (path.StartsWith("/api/orchestrator/", StringComparison.OrdinalIgnoreCase))

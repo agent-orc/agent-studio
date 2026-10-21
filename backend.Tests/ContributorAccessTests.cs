@@ -56,6 +56,16 @@ public sealed class ContributorAccessTests : IDisposable
         { "GET", "/api/tasks/card/results/tests.trx", null, false, false },
         { "GET", "/api/tasks/card/results/events.jsonl", null, false, false },
         { "GET", "/api/tasks/card/results/report", null, false, false },
+        { "GET", "/api/tasks/card/files/prompt.md", null, false, true },
+        { "GET", "/api/tasks/card/files/status.md", null, false, true },
+        { "GET", "/api/tasks/card/files/results/report.html", null, false, true },
+        { "GET", "/api/tasks/card/files/results/screens/final.PNG", null, false, true },
+        { "GET", "/api/tasks/card/files/results/run.log", null, false, false },
+        { "GET", "/api/tasks/card/FILES/RESULTS/run.log", null, false, false },
+        { "GET", "/api/tasks/card/files/logs/cli-output.log", null, false, false },
+        { "GET", "/api/tasks/card/files/credentials.md", null, false, false },
+        { "GET", "/api/tasks/card/checkout/credentials.txt", null, false, false },
+        { "GET", "/api/tasks/card/CHECKOUT/credentials.md", null, false, false },
         { "GET", "/api/projects/PROJ-1/CREDENTIALS", null, false, false },
         { "GET", "/api/projects/PROJ-1/settings", null, false, false },
         { "GET", "/api/projects/PROJ-1/autonomy", null, false, false },
@@ -113,6 +123,8 @@ public sealed class ContributorAccessTests : IDisposable
             id = taskKey, title = "Delivered header", state = TaskStates.HumanReview, order = 1, agent = "codex", kind = "task",
         }));
         File.WriteAllText(Path.Combine(taskPath, "prompt.md"), "Calm the header.");
+        File.WriteAllText(Path.Combine(taskPath, "status.md"), "Human review is ready.");
+        File.WriteAllText(Path.Combine(taskPath, "credentials.md"), "private credentials");
         File.WriteAllText(Path.Combine(taskPath, "logs", "cli-output.log"), "raw agent transcript");
         foreach (var name in new[] { "report.html", "notes.md", "screens/final.png", "run.log", "tests.trx", "events.jsonl" })
             File.WriteAllText(Path.Combine(taskPath, "results", name), "content of " + name);
@@ -136,6 +148,15 @@ public sealed class ContributorAccessTests : IDisposable
         using var http = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var restrictedPath = Path.Combine(_root, "projects", "restricted-project");
+        Directory.CreateDirectory(restrictedPath);
+        var restricted = registry.EnsureProjectForStorage(restrictedPath, "restricted-project", DefaultWorkspace.Id, _clock);
+        registry.UpsertOwnershipMapping(restricted.Id, new ComponentOwnershipMapping
+        {
+            Id = "restricted-widget", Component = "Restricted widget", PrimaryProjectId = restricted.Id,
+            Confidence = 1,
+        });
         var owner = store.Bootstrap(new BootstrapRequest("owner.account", "owner password phrase!", null));
         var invite = store.InviteUser(new InviteUserRequest("product.user", "Product User", StudioRoles.Contributor, [project]));
         var product = store.AcceptInvitation(new AcceptInvitationRequest(invite.Token, "new product password!"));
@@ -157,6 +178,38 @@ public sealed class ContributorAccessTests : IDisposable
             Assert.Equal(HttpStatusCode.Forbidden, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken));
         }
         Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/results/run.log", owner.SessionToken));
+        foreach (var name in new[] { "prompt.md", "status.md", "results/report.html", "results/screens/final.png" })
+            Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/files/{name}", product.SessionToken));
+        foreach (var route in new[]
+        {
+            "files/results/run.log", "FILES/RESULTS/run.log", "files/logs/cli-output.log",
+            "files/credentials.md", "checkout/credentials.md", "CHECKOUT/credentials.md",
+            "files/prompt.md?scope=code", "files/results/report.html?scope=code",
+        })
+            Assert.Equal(HttpStatusCode.Forbidden, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken));
+        var decisionRequest = new
+        {
+            title = "Choose a design", watchPath = projectPath, kind = TaskKinds.Decision,
+            decision = new
+            {
+                question = "Which layout should we use?",
+                options = new[] { new { id = "a", label = "Compact" }, new { id = "b", label = "Spacious" } },
+            },
+        };
+        Assert.Equal(HttpStatusCode.Forbidden,
+            await StatusAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, decisionRequest));
+        Assert.Equal(HttpStatusCode.OK,
+            await StatusAsync(HttpMethod.Post, "/api/tasks", owner.SessionToken, owner.CsrfToken, decisionRequest));
+
+        var crossProjectRequest = new
+        {
+            title = "Fix the restricted widget", watchPath = projectPath, targetState = TaskStates.Backlog,
+            routing = new { component = "Restricted widget" },
+        };
+        Assert.Equal(restricted.Id, new ComponentRoutingService(registry)
+            .Resolve(new(Component: "Restricted widget")).StorageProjectId);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            await StatusAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, crossProjectRequest));
 
         using var created = await SendAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, new
         {
@@ -181,9 +234,9 @@ public sealed class ContributorAccessTests : IDisposable
         foreach (var field in new[] { "noBranchExpected", "requiresIntegration", "fixture" })
             Assert.False(stored.ContainsKey(field), field);
 
-        async Task<HttpStatusCode> StatusAsync(HttpMethod method, string path, string session)
+        async Task<HttpStatusCode> StatusAsync(HttpMethod method, string path, string session, string? csrf = null, object? body = null)
         {
-            using var response = await SendAsync(method, path, session);
+            using var response = await SendAsync(method, path, session, csrf, body);
             return response.StatusCode;
         }
 

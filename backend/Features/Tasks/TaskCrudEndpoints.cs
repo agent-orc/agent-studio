@@ -981,9 +981,13 @@ public static class TaskCrudEndpoints
             IConfiguration configuration,
             CancellationToken ct) =>
         {
-            if (ContributorAccessPolicy.ProductSessionUser(ctx) is { } productUser)
+            var productUser = ContributorAccessPolicy.ProductSessionUser(ctx);
+            if (productUser is not null)
             {
-                if (req.TargetState is not (null or TaskStates.Backlog or TaskStates.Ready))
+                var effectiveState = string.IsNullOrWhiteSpace(req.TargetState)
+                    ? TaskKinds.IsDecision(req.Kind) ? TaskStates.Preparation : TaskStates.Backlog
+                    : req.TargetState;
+                if (effectiveState is not (TaskStates.Backlog or TaskStates.Ready))
                     return Results.StatusCode(StatusCodes.Status403Forbidden);
                 req = ContributorAccessPolicy.ForProductCreate(req, productUser.Id);
             }
@@ -1041,6 +1045,9 @@ public static class TaskCrudEndpoints
                         routing = resolvedRouting,
                     });
                 }
+                if (productUser is not null
+                    && !ProjectAccessAuthorization.Allows(productUser, resolvedRouting.StorageProjectId, projects))
+                    return Results.Json(new { error = "project-scope-denied", message = "This account is not a member of the destination project." }, statusCode: StatusCodes.Status403Forbidden);
                 if (!string.IsNullOrWhiteSpace(req.RequestedTaskPrefix)
                     && !string.Equals(req.RequestedTaskPrefix, resolvedRouting.AllowedTicketPrefix, StringComparison.OrdinalIgnoreCase))
                 {

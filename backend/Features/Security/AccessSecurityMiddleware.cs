@@ -204,10 +204,19 @@ public sealed class AccessSecurityMiddleware
         // original versioned route as a fallback so only those client reads
         // gain a Runner scope, not other legacy /api/tasks/{id} reads.
         var originalPath = context.Items[AgentStudio.Host.StudioV1LegacyRouteAlias.OriginalPathItem] as string;
+        var productTaskFileRead = human is not null
+            && ContributorAccessPolicy.IsProductSession(human.User)
+            && IsRunnerTaskFileRead(context.Request.Method, path);
+        if (productTaskFileRead
+            && !ContributorAccessPolicy.Allows(context.Request.Method, path, null, false))
+        {
+            await Reject(context, 403, "role-denied", "The Product role cannot read this file.");
+            return;
+        }
         var requiredRunnerScope = RequiredRunnerScope(context.Request.Method, path)
             ?? (originalPath is null ? null : RequiredRunnerScope(context.Request.Method, NormalizePath(originalPath)));
         if (requiredRunnerScope is not null
-            && (human is null || !(IsHumanSessionRead(context.Request.Method, path)
+            && (human is null || !(productTaskFileRead || IsHumanSessionRead(context.Request.Method, path)
                 || originalPath is not null && IsHumanSessionRead(context.Request.Method, NormalizePath(originalPath)))))
         {
             if (runner is null)
