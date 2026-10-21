@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using AgentStudio.Projects;
 using AgentStudio.Security;
+using AgentStudio.Secrets;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -21,6 +22,39 @@ namespace AgentRunner.Tests;
 
 public sealed class DeployHostCommandTests
 {
+    [Fact]
+    public async Task Host_resolves_bound_references_under_its_lease_and_never_sends_values_to_the_control_plane()
+    {
+        var value = "runtime-" + Guid.NewGuid().ToString("N");
+        string? received = null;
+        using var client = new HttpClient(new ResolveHandler(async request =>
+        {
+            received = await request.Content!.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = JsonContent.Create(new { value, reference = "secret://demo/stage/DATABASE_URL" }) };
+        })) { BaseAddress = new Uri("https://studio.test/") };
+        var lines = await DeployHostCommand.ResolveEnvironmentAsync(client, "demo", "stage", "job-1", "lease-1",
+            ["DATABASE_URL"], new Dictionary<string, string>
+            { ["DATABASE_URL"] = "secret://demo/stage/DATABASE_URL" }, CancellationToken.None);
+
+        Assert.Equal("DATABASE_URL=" + value, Assert.Single(lines));
+        Assert.Contains("secret://demo/stage/DATABASE_URL", received);
+        Assert.Contains("lease-1", received);
+        Assert.DoesNotContain(value, received);
+        using var denied = new HttpClient(new ResolveHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden)
+        { Content = JsonContent.Create(new { error = value }) }))) { BaseAddress = new Uri("https://studio.test/") };
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => DeployHostCommand.ResolveEnvironmentAsync(
+            denied, "demo", "stage", "job-1", "lease-1", ["DATABASE_URL"],
+            new Dictionary<string, string> { ["DATABASE_URL"] = "secret://demo/stage/DATABASE_URL" }, CancellationToken.None));
+        Assert.DoesNotContain(value, failure.ToString());
+    }
+
+    private sealed class ResolveHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => respond(request);
+    }
+
     [Fact]
     [Trait("Category", "MachineBound")]
     public async Task RealServer_Claim_Deploy_HealthCheck_AndReport_LocalContainer()
@@ -72,6 +106,7 @@ public sealed class DeployHostCommandTests
                         ["Security:Profile"] = "networked",
                         ["AllowedHosts"] = "studio.test",
                         ["Deploy:ReleaseEvidenceRoot"] = Path.Combine(root, "release-evidence"),
+                        ["Secrets:KeyFile"] = Path.Combine(root, "keys", "secrets.kek"),
                         ["WatchPaths:0:Name"] = project,
                         ["WatchPaths:0:Path"] = watch,
                         ["WatchPaths:0:RootPath"] = repo,
@@ -98,16 +133,23 @@ public sealed class DeployHostCommandTests
                 id = "stage", name = "Stage", kind = "stage", targetHostId = deploy.Runner.Id,
                 address = $"http://127.0.0.1:{port}/", template = "container", destination = port.ToString(),
                 healthUrl = $"http://127.0.0.1:{port}/", containerPort = 80,
+                secretRefs = new[] { "DATABASE_URL" },
             }));
             Git(repo, "add", "docs/deployments/environments");
             Git(repo, "commit", "-m", "declare environments");
             var commit = Git(repo, "rev-parse", "HEAD").Trim();
             var service = factory.Services.GetRequiredService<ProjectEnvironmentService>();
+            var value = "runtime-" + Guid.NewGuid().ToString("N");
+            await factory.Services.GetRequiredService<ISecretProvider>().PutAsync(
+                SecretScope.ForEnvironment(project, "stage"), "DATABASE_URL", value, SecretActor.Human("owner"));
+            factory.Services.GetRequiredService<ProjectSecretBindings>().Bind(project, "stage", "DATABASE_URL",
+                $"secret://{project}/stage/DATABASE_URL", "human:owner", null);
             WriteReleaseEvidence(root, project, image, commit);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", release.Secret);
             using var queued = await client.PostAsJsonAsync("/api/deploy/gate-releases",
                 new GateArtifactRequest(project, image, commit));
-            Assert.Equal(HttpStatusCode.Accepted, queued.StatusCode);
+            Assert.True(queued.StatusCode == HttpStatusCode.Accepted,
+                await queued.Content.ReadAsStringAsync());
             var result = await DeployHostCommand.RunAsync(
                 [client.BaseAddress!.ToString(), deploy.Runner.Id, tokenFile, root, root], CancellationToken.None, client);
             Assert.Equal(0, result);
@@ -115,6 +157,9 @@ public sealed class DeployHostCommandTests
             Assert.Equal(image, state.Environments.Single(item => item.Declaration.Id == "stage").DeployedArtifact);
             Assert.Equal("pending", Assert.Single(state.Promotions).Status);
             Assert.Equal("healthy", Assert.Single(state.Environments[0].History).Status);
+            Assert.Contains("DATABASE_URL=" + value, Docker("inspect", "--format", "{{range .Config.Env}}{{println .}}{{end}}", containerName));
+            Assert.DoesNotContain(value, Docker("logs", containerName));
+            Assert.DoesNotContain(value, JsonSerializer.Serialize(state));
         }
         finally
         {
