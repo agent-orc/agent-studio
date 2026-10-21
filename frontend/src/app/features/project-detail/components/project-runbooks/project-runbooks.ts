@@ -59,7 +59,7 @@ export class ProjectRunbooksComponent {
   }
 
   start(name: string): void {
-    this.mutate(`${this.base(this.projectName()).replace('/runbooks', '')}/environments/${encodeURIComponent(this.environmentId())}/runbooks/${encodeURIComponent(name)}/runs`);
+    this.mutate(`${this.deployBase(this.projectName())}/environments/${encodeURIComponent(this.environmentId())}/runbooks/${encodeURIComponent(name)}/runs`);
   }
 
   decide(id: string, action: 'approve' | 'reject'): void {
@@ -83,6 +83,10 @@ export class ProjectRunbooksComponent {
   }
 
   private base(project: string): string {
-    return `/api/projects/${encodeURIComponent(project)}/deploy/runbooks`;
+    return `${this.deployBase(project)}/runbooks`;
+  }
+
+  private deployBase(project: string): string {
+    return `/api/projects/${encodeURIComponent(project)}/deploy`;
   }
 }
