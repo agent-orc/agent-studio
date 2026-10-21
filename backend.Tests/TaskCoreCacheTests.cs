@@ -107,8 +107,10 @@ public sealed class TaskCoreCacheTests : IDisposable
         // The expired lookup queued exactly one background rescan.
         Assert.True(await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5))));
         Assert.True(cache.GetCore(task.Id, _root).Warming);
+        var refresh = cache.RefreshInFlight;
+        Assert.NotNull(refresh);
         release.Set();
-        await cache.RefreshInFlight!.WaitAsync(TimeSpan.FromSeconds(5));
+        await refresh.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.False(cache.GetCore(task.Id, _root).Warming);
         Assert.Equal(2, Volatile.Read(ref calls));
     }
