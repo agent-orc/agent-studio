@@ -118,6 +118,43 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Concurrent_runbook_and_deployment_audit_appends_keep_every_event()
+    {
+        var (_, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: rotate\n    steps: [rotate-secrets]\n    environments: [production]\n");
+        Commit("runbook-definition");
+        var runbooks = Runbooks(environments, store);
+        const int requests = 30;
+        var message = new string('m', 300);
+        var deploymentEvents = 0;
+        using var start = new Barrier(2);
+        var runbookWriter = Task.Run(() =>
+        {
+            start.SignalAndWait();
+            for (var i = 0; i < requests; i++)
+                Assert.Equal(DeployOutcomeKind.Ok, runbooks.Request("demo", "production", "rotate", Operator).Kind);
+        });
+        // The deployment service appends its audit under its own lock, so only the store orders both writers.
+        var deploymentWriter = Task.Run(() =>
+        {
+            start.SignalAndWait();
+            while (!runbookWriter.IsCompleted)
+            {
+                store.AppendAudit("demo", Enumerable.Range(0, 20).Select(index => new DeployAuditEntry(
+                    _clock.GetUtcNow().UtcDateTime, "release-gate", "deployment-queued", $"release-{index}",
+                    $"deployment-{deploymentEvents + index}", "stage", message)).ToArray());
+                deploymentEvents += 20;
+            }
+        });
+        await Task.WhenAll(runbookWriter, deploymentWriter);
+
+        var audit = store.ReadAudit("demo", int.MaxValue);
+        Assert.Equal(requests, audit.Count(entry => entry.Action == "runbook-approval-requested"));
+        Assert.Equal(deploymentEvents, audit.Count(entry => entry.Action == "deployment-queued"));
+        Assert.True(deploymentEvents > 0, "The deployment writer did not overlap the runbook writer.");
+    }
+
+    [Fact]
     public async Task Corrupt_runbook_store_does_not_fail_host_claim_or_report_and_later_reconciles()
     {
         var (_, environments, store) = Build();
