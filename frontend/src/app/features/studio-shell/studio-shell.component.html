@@ -495,11 +495,14 @@
         -->
         <ng-content select="[studioContent]"></ng-content>
         @if (activeTab()?.kind === 'deployment-dashboard') {
+          @defer (on idle) {
           <app-workspace-deployment-dashboard
             [projectNames]="knownProjectNames()"
             [projectStorageByName]="projectStorageByName()"
             [workspaces]="registryWorkspaces()"
-            (openDeployment)="openProjectDeployment($event)" />
+            (openDeployment)="openProjectDeployment($event)"
+            (openCard)="openDeliveryCard($event)" />
+          }
         }
         @if (activeTab() === null) {
           <app-studio-welcome

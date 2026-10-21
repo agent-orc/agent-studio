@@ -50,6 +50,16 @@ labels its values as sample data. BD-1 will replace the fixture producer with
 the deployment API; the `Environment`, `Release`, `Deployment`, and
 `EnvironmentStatus` contracts live under `frontend/src/app/features/deployments/`.
 
+The board and workspace dashboard also show read-only delivery lanes per project.
+`GET /api/projects/{projectName}/deploy/delivery-lanes` accumulates card keys in
+release snapshots and assigns each integrated card to the furthest environment
+whose current successful release contains it. The current release follows the
+latest successful deploy run, including rollback. Cards absent from every current
+release appear under Waiting for release. The projection is cached by release,
+deploy-run and integration-verification changes; board reads do not walk git.
+Lane headers open the project's Deploy area, and board search and filters narrow
+the delivery cards.
+
 The project execution assignment card warns when automatic pickup is placed
 at `local` and the settings projection reports `localCodingAdmitted: false`.
 Ready cards show the corresponding `execution-placement` pickup hold and a

@@ -13,6 +13,7 @@ import {
   OnDestroy,
 } from '@angular/core';
 import { forkJoin } from 'rxjs';
+import { DeliveryLanesComponent } from './features/deployments';
 import { FormsModule } from '@angular/forms';
 import {
   BoardFiltersService, ActiveBoardFiltersComponent,
@@ -171,6 +172,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
 @Component({
   selector: 'app-root',
   imports: [
+    DeliveryLanesComponent,
     TaskColumnComponent,
     ScrollMemoryDirective,
     TaskDetailComponent,
@@ -1189,6 +1191,11 @@ export class App implements OnInit, OnDestroy {
       this.studioTabState.open({ kind: 'task', taskKey: job.taskKey });
     }
     this.jobSelection.openDetailAfterPaint(job);
+  }
+  openDeliveryCard(key: string): void {
+    const card = this.jobService.jobs().find(job =>
+      (job.displayKey ?? job.taskKey).toLowerCase() === key.toLowerCase());
+    if (card) this.openDetail(card);
   }
   closeDetail() {
     this.jobSelection.closeDetail();

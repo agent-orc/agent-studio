@@ -676,6 +676,11 @@
                 </div>
               </section>
             }
+            @defer (on idle) {
+              <app-delivery-lanes [projects]="projectNames()" [boardFilters]="true"
+                (openDeployment)="studioTabState.open({ kind: 'hub', projectName: $event, section: 'deployment' })"
+                (openCard)="openDeliveryCard($event)" />
+            }
           </main>
         }
       </div>
