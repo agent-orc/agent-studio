@@ -430,6 +430,50 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Saving_blank_limit_fields_stays_a_strict_admission_no_op_with_an_unreadable_ledger()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "blank"), "Blank", workspace.Id, _clock);
+        var job = Path.Combine(project.StorageLocation, TaskStates.Ready, "blank-card");
+        Directory.CreateDirectory(job);
+        File.WriteAllText(Path.Combine(job, "task.json"), "{invalid-json");
+        await Bus(services, project.DisplayName, "01HX0000000000000000000033",
+            new AgentMessageTokens(Input: 10, Output: 5, Model: "gpt-5.6-sol"));
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+
+        quota.SetLimits(workspace.Id, null, new QuotaLimits(null, null, null));
+        quota.SetLimits(workspace.Id, project.Id, new QuotaLimits(null, null, null));
+
+        Assert.False(quota.HasLimits());
+        Assert.Null(quota.Snapshot(workspace.Id).Limits);
+        Assert.Null(quota.Snapshot(workspace.Id, project.Id).Limits);
+        foreach (var admission in new[] { quota.Admit(project.Id), quota.Admit(project.Id, hosting: true) })
+        {
+            Assert.True(admission.Allowed);
+            Assert.Null(admission.Message);
+            Assert.False(admission.MeterUnavailable);
+        }
+        Assert.False(quota.BoardAdmission(workspace.Id).Workspace.Limited);
+
+        // A settings file written before blank fields were normalized carries the same no-op.
+        var blank = new { ModelTokensPerWeek = (long?)null, ComputeCoreHoursPerWeek = (decimal?)null, HostingSlots = (int?)null };
+        File.WriteAllText(Path.Combine(_root, ".metadata", "workspace-quotas.json"), JsonSerializer.Serialize(new
+        {
+            Workspaces = new Dictionary<string, object> { [workspace.Id] = blank },
+            Projects = new Dictionary<string, object> { [project.Id] = blank },
+            Overrides = new Dictionary<string, DateTime>(), Environments = new Dictionary<string, string>(),
+        }));
+        using var reopened = Factory();
+        var legacy = reopened.Services.GetRequiredService<WorkspaceQuotaService>();
+        Assert.False(legacy.HasLimits());
+        Assert.Equal(new QuotaAdmission(true, null), legacy.Admit(project.Id, hosting: true));
+    }
+
+    [Fact]
     public void Without_any_limit_admission_answers_without_message_or_meter_warning()
     {
         Directory.CreateDirectory(_root);
