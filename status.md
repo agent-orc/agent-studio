@@ -1,5 +1,11 @@
 # AGT-3238 networked first-run and repository authority status
 
+## Final integration refresh, 21 October 2026
+
+- Verified implementation SHA: `3fd43df6929eb12ccc65a0064f876e70d5d01ced`. This merge adds `origin/develop` at `8e3a6a8601e71915f8a76e5c966a677f37465844` to prior AGT-3238 delivery `08007e2255739d2ed4a3014149b361ec57322639`. The earlier `merge-into-develop` failure at `af684720e676694afb2bf676c5ff12cf29ecc91f` was the `status.md` conflict resolved in `eb593e68cf5d42c53e4720ab354c6924a8867cfb`. The refreshed merge was clean; reviewed delivery `91d42bcbc6c2b6a7c3a2125c0e9a7ccbacdafa70` and the final fetched `origin/develop` are both ancestors. No delivery commit was rebased, squashed, split, or dropped.
+- Implemented option remains the explicit unavailable-plane state for a networked monolith without the Task Server proxy. Local first-run routes stay local-only; networked repository candidate changes require Owner authority and are audited; URL start and deletion share registry coordination. The original implementation and regression coverage remain intact.
+- Verification on this refreshed tree: the solution and frontend builds passed; the affected backend class filter passed 93 tests; architecture and guard tests passed 98 backend tests and ran on all eight .NET test projects; the focused frontend suite passed 23 tests; the real networked monolith Playwright spec passed and saved a screenshot. `npm --prefix frontend run lint` passed, including the 424-component size baseline. `git diff --check` passed. Logs and [integration recovery evidence](/home/agent/runner-work/tasks/AGT-3238/results/integration-recovery.md) are in the task results directory. This status entry is a separate commit on top of the verified implementation SHA.
+
 ## Integration recovery, 21 October 2026
 
 - Failed stage resolved: `merge-into-develop` at integration tip `af684720e676694afb2bf676c5ff12cf29ecc91f` conflicted in `status.md`. Result implementation SHA `eb593e68cf5d42c53e4720ab354c6924a8867cfb` merges current `origin/develop` into reviewed delivery `91d42bcbc6c2b6a7c3a2125c0e9a7ccbacdafa70`. Both status histories are retained. Both inputs are ancestors of the result; no delivery commit was rebased, squashed, split, or dropped. A final `git fetch origin develop` confirmed the result still descends from current develop.
