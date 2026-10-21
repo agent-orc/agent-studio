@@ -14,7 +14,6 @@ export {
 } from './state/project-hub-route';
 
 // container components
-export { ProjectDetailComponent } from './components/project-detail/project-detail';
 export { ProjectOverviewDashboardComponent } from './components/project-overview-dashboard/project-overview-dashboard';
 export { ProjectDeploymentPanelComponent } from './components/project-deployment-panel/project-deployment-panel.component';
 export { ProjectDeployAreaComponent } from './components/project-deploy-area/project-deploy-area';

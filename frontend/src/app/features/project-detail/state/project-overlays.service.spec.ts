@@ -18,6 +18,26 @@ describe('ProjectOverlaysService · orch-feed deep-link anchor', () => {
     history.replaceState(null, '', window.location.pathname + window.location.search);
   });
 
+  it('requests deferred overlays for every open overlay and clears when each closes', () => {
+    const svc = new ProjectOverlaysService();
+    expect(svc.anyOpen()).toBe(false);
+
+    svc.orchFeedProject.set('Runbook');
+    expect(svc.anyOpen()).toBe(true);
+    svc.orchFeedProject.set(null);
+    expect(svc.anyOpen()).toBe(false);
+
+    svc.projectShellName.set('Runbook');
+    expect(svc.anyOpen()).toBe(true);
+    svc.projectShellName.set(null);
+    expect(svc.anyOpen()).toBe(false);
+
+    svc.analysisReportFocus.set({ project: 'Runbook', reportId: 'report-1' });
+    expect(svc.anyOpen()).toBe(true);
+    svc.analysisReportFocus.set(null);
+    expect(svc.anyOpen()).toBe(false);
+  });
+
   it('stamps #/project/<slug>/feed when the feed opens', () => {
     const svc = new ProjectOverlaysService();
     svc.openOrchFeed('Agent Task Processor');
