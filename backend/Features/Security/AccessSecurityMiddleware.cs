@@ -488,6 +488,8 @@ public sealed class AccessSecurityMiddleware
     private static bool IsHumanSessionRead(string method, string path)
     {
         if (!HttpMethods.IsGet(method)) return false;
+        if (path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
+            && path.Contains("/files/", StringComparison.OrdinalIgnoreCase)) return true;
         if (path is "/api/system/about" or "/api/v1/projects") return true;
         if (path.StartsWith("/api/v1/failure-fingerprints", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/v1/reviews/attempts/", StringComparison.OrdinalIgnoreCase)) return true;

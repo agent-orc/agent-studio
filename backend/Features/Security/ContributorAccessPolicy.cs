@@ -34,6 +34,11 @@ public static class ContributorAccessPolicy
     /// <summary>Screenshots, HTML reports and Markdown; never logs, TRX, JSONL or other raw output.</summary>
     public static bool AllowsResultFile(string path) => ReadableResultExtensions.Contains(Path.GetExtension(path));
 
+    /// <summary>Only the card's authored documents are readable through the file-history route.</summary>
+    public static bool AllowsTaskFile(string path)
+        => path.Equals("prompt.md", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("status.md", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// A Product wish carries no run controls: project defaults choose the CLI,
     /// model, thinking level, mode, web access and integration, and the card
@@ -72,6 +77,13 @@ public static class ContributorAccessPolicy
 
         if (HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method))
         {
+            if (segments.Length >= 4 && segments[0].Equals("api", StringComparison.OrdinalIgnoreCase)
+                && segments[1].Equals("tasks", StringComparison.OrdinalIgnoreCase))
+            {
+                if (segments[3].Equals("checkout", StringComparison.OrdinalIgnoreCase)) return false;
+                if (segments[3].Equals("files", StringComparison.OrdinalIgnoreCase))
+                    return segments.Length == 5 && AllowsTaskFile(segments[4]);
+            }
             if (segments.Length >= 5 && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
                 && segments[3].Equals("results", StringComparison.OrdinalIgnoreCase))
                 return AllowsResultFile(path);

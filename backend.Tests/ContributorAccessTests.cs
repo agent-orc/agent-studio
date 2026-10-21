@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using AgentStudio.Registry;
 using AgentStudio.Shared;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -56,6 +57,14 @@ public sealed class ContributorAccessTests : IDisposable
         { "GET", "/api/tasks/card/results/tests.trx", null, false, false },
         { "GET", "/api/tasks/card/results/events.jsonl", null, false, false },
         { "GET", "/api/tasks/card/results/report", null, false, false },
+        { "GET", "/api/tasks/card/files/prompt.md", null, false, true },
+        { "GET", "/api/tasks/card/files/status.md", null, false, true },
+        { "GET", "/api/tasks/card/files/results/report.html", null, false, false },
+        { "GET", "/api/tasks/card/files/results/run.log", null, false, false },
+        { "GET", "/api/tasks/card/FILES/RESULTS/run.log", null, false, false },
+        { "GET", "/api/tasks/card/files/logs/cli-output.log", null, false, false },
+        { "GET", "/api/tasks/card/checkout/credentials.json", null, false, false },
+        { "GET", "/api/tasks/card/CHECKOUT/private.txt", null, false, false },
         { "GET", "/api/projects/PROJ-1/CREDENTIALS", null, false, false },
         { "GET", "/api/projects/PROJ-1/settings", null, false, false },
         { "GET", "/api/projects/PROJ-1/autonomy", null, false, false },
@@ -113,6 +122,7 @@ public sealed class ContributorAccessTests : IDisposable
             id = taskKey, title = "Delivered header", state = TaskStates.HumanReview, order = 1, agent = "codex", kind = "task",
         }));
         File.WriteAllText(Path.Combine(taskPath, "prompt.md"), "Calm the header.");
+        File.WriteAllText(Path.Combine(taskPath, "status.md"), "Delivery notes.");
         File.WriteAllText(Path.Combine(taskPath, "logs", "cli-output.log"), "raw agent transcript");
         foreach (var name in new[] { "report.html", "notes.md", "screens/final.png", "run.log", "tests.trx", "events.jsonl" })
             File.WriteAllText(Path.Combine(taskPath, "results", name), "content of " + name);
@@ -157,6 +167,23 @@ public sealed class ContributorAccessTests : IDisposable
             Assert.Equal(HttpStatusCode.Forbidden, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken));
         }
         Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/results/run.log", owner.SessionToken));
+        foreach (var route in new[]
+        {
+            "files/results/run.log", "FILES/RESULTS/run.log", "files/results/report.html",
+            "files/logs/cli-output.log", "checkout/credentials.json", "CHECKOUT/private.txt"
+        })
+        {
+            var status = await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken);
+            Assert.True(status == HttpStatusCode.Forbidden, $"{route} returned {status}");
+        }
+        foreach (var name in new[] { "prompt.md", "status.md" })
+            Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/files/{name}?scope=code", product.SessionToken));
+
+        using var omittedDecisionState = await SendAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, new
+        {
+            title = "A decision wish", watchPath = projectPath, kind = TaskKinds.Decision,
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, omittedDecisionState.StatusCode);
 
         using var created = await SendAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, new
         {
@@ -180,6 +207,25 @@ public sealed class ContributorAccessTests : IDisposable
         Assert.NotEqual("max", (string?)stored["thinkingLevel"]);
         foreach (var field in new[] { "noBranchExpected", "requiresIntegration", "fixture" })
             Assert.False(stored.ContainsKey(field), field);
+
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var navigation = registry.EnsureProjectForStorage(projectPath, project, DefaultWorkspace.Id);
+        var destinationPath = Path.Combine(_root, "projects", "other-project");
+        Directory.CreateDirectory(destinationPath);
+        var destination = registry.EnsureProjectForStorage(destinationPath, "Other Project", DefaultWorkspace.Id);
+        registry.UpsertOwnershipMapping(destination.Id, new ComponentOwnershipMapping
+        {
+            Id = "private-component", Component = "Private component", PrimaryProjectId = destination.Id,
+            AllowedTicketPrefix = destination.ShortCode, Confidence = 1,
+        });
+        using var crossProject = await SendAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, new
+        {
+            title = "Cross-project wish", project = navigation.Id, promptMarkdown = "Update the component.",
+            targetState = TaskStates.Backlog,
+            routing = new { navigationProjectId = navigation.Id, component = "Private component" },
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, crossProject.StatusCode);
+        Assert.Equal("project-scope-denied", (await crossProject.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
 
         async Task<HttpStatusCode> StatusAsync(HttpMethod method, string path, string session)
         {
