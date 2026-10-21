@@ -35,6 +35,8 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
     private readonly ILogger<LocalHostedVolumeBackupEngine> _logger;
     private readonly Action<string> _deletePrevious;
     private readonly Func<string, Stream> _openSource;
+    private readonly bool _hasSourceOverride;
+    private readonly Action<string>? _beforeSourceOpen;
     private readonly TimeProvider _clock;
     internal static readonly TimeSpan BackupTimeout = TimeSpan.FromMinutes(10);
 
@@ -45,7 +47,7 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
 
     internal LocalHostedVolumeBackupEngine(string volumeRoot, string backupRoot,
         ILogger<LocalHostedVolumeBackupEngine> logger, Action<string> deletePrevious, TimeProvider? clock = null,
-        Func<string, Stream>? openSource = null)
+        Func<string, Stream>? openSource = null, Action<string>? beforeSourceOpen = null)
     {
         _volumeRoot = volumeRoot;
         _backupRoot = backupRoot;
@@ -53,6 +55,8 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         _deletePrevious = deletePrevious;
         _clock = clock ?? TimeProvider.System;
         _openSource = openSource ?? (path => new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true));
+        _hasSourceOverride = openSource is not null;
+        _beforeSourceOpen = beforeSourceOpen;
         RecoverPendingRestores();
     }
 
@@ -67,7 +71,7 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         token.ThrowIfCancellationRequested();
         var source = VolumePath(key);
         if (!Directory.Exists(source)) throw new DirectoryNotFoundException("Declared volume is absent on the host.");
-        EnsureNoLinks(source, token);
+        if (!OperatingSystem.IsLinux()) EnsureNoLinks(source, token);
         var id = Guid.NewGuid().ToString("N");
         var directory = Path.Combine(_backupRoot, Segment(key.Project), Segment(key.Environment), Segment(key.Volume));
         Directory.CreateDirectory(directory);
@@ -78,7 +82,10 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
             await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
             using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: false))
             {
-                foreach (var path in Directory.EnumerateFileSystemEntries(source, "*", SearchOption.AllDirectories))
+                if (OperatingSystem.IsLinux())
+                    await HostedVolumeNoFollowReader.WriteEntriesAsync(_volumeRoot, key, zip,
+                        _beforeSourceOpen, _hasSourceOverride ? _openSource : null, token);
+                else foreach (var path in Directory.EnumerateFileSystemEntries(source, "*", SearchOption.AllDirectories))
                 {
                     token.ThrowIfCancellationRequested();
                     var relative = Path.GetRelativePath(source, path).Replace('\\', '/');
@@ -88,6 +95,7 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
                         continue;
                     }
                     var entry = zip.CreateEntry(relative, CompressionLevel.Optimal);
+                    _beforeSourceOpen?.Invoke(path);
                     await using var input = _openSource(path);
                     await using var compressed = entry.Open();
                     await input.CopyToAsync(compressed, token);
@@ -130,6 +138,13 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         if (!string.Equals(await Digest(archive, cancellationToken), backup.Sha256, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Backup checksum does not match.");
         var destination = VolumePath(key);
+        var pending = MarkerPath(destination);
+        if (File.Exists(pending))
+        {
+            RecoverPendingRestore(pending);
+            if (File.Exists(pending))
+                throw new IOException("Previous volume restore cleanup is incomplete.");
+        }
         var parent = Path.GetDirectoryName(destination)!;
         Directory.CreateDirectory(parent);
         var restoreId = Guid.NewGuid().ToString("N");
@@ -183,8 +198,8 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         {
             try
             {
-                File.Delete(MarkerPath(destination));
                 _deletePrevious(previous);
+                File.Delete(MarkerPath(destination));
             }
             catch (Exception ex)
             {
@@ -244,13 +259,13 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
             if (!Directory.Exists(previous)) throw new InvalidDataException("Pending volume restore has no live or previous directory.");
             Directory.Move(previous, destination);
         }
-        File.Delete(marker);
         if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
         if (Directory.Exists(previous))
         {
             try { _deletePrevious(previous); }
             catch (Exception ex) { _logger.LogWarning(ex, "Recovered volume, but could not remove previous directory {Previous}", previous); }
         }
+        if (!Directory.Exists(previous)) File.Delete(marker);
     }
 
     private static string MarkerPath(string destination) => destination + ".restore-pending";

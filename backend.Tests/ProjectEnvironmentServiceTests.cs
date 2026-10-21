@@ -107,6 +107,47 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedPruneRemainsPendingAcrossRestartAndBlocksFurtherArchives()
+    {
+        var (environments, config, key, _) = PrepareVolumeBackups();
+        var local = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"),
+            Path.Combine(_root, "archives"), clock: _clock);
+        var engine = new FailingPruneEngine(local);
+        var service = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        for (var index = 0; index < HostedVolumeSchedulePolicy.MaxBackups; index++)
+            await service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+
+        engine.FailPrune = true;
+        await service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+        var archivePath = Path.Combine(_root, "archives", "demo", "stage", "uploads");
+        Assert.Equal(HostedVolumeSchedulePolicy.MaxBackups + 1,
+            Directory.EnumerateFiles(archivePath, "*.zip").Count());
+        var persisted = (await service.ReadAsync(key.Project, CancellationToken.None))!.Schedules.Single();
+        Assert.True(persisted.CleanupPending);
+        Assert.Contains("busy", persisted.LastError);
+
+        service = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        var creations = engine.BackupCount;
+        for (var index = 0; index < 3; index++)
+            await Assert.ThrowsAsync<IOException>(() => service.BackupAsync(
+                key.Project, key.Environment, key.Volume, "owner", CancellationToken.None));
+        Assert.Equal(creations, engine.BackupCount);
+        Assert.Equal(HostedVolumeSchedulePolicy.MaxBackups + 1,
+            Directory.EnumerateFiles(archivePath, "*.zip").Count());
+
+        engine.FailPrune = false;
+        await service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+        Assert.Equal(HostedVolumeSchedulePolicy.MaxBackups,
+            Directory.EnumerateFiles(archivePath, "*.zip").Count());
+        persisted = (await service.ReadAsync(key.Project, CancellationToken.None))!.Schedules.Single();
+        Assert.False(persisted.CleanupPending);
+        Assert.Null(persisted.LastError);
+        Assert.Equal(HostedVolumeSchedulePolicy.MaxBackups, persisted.Backups.Count);
+    }
+
+    [Fact]
     public async Task CancelledBackupRemovesTemporaryArchive()
     {
         var (_, _, key, _) = PrepareVolumeBackups();
@@ -622,6 +663,27 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
 
         public Task PruneBackupsAsync(HostedVolumeKey key, IReadOnlySet<string> retainedIds,
             CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class FailingPruneEngine(IHostedVolumeBackupEngine inner) : IHostedVolumeBackupEngine
+    {
+        public bool FailPrune { get; set; }
+        public int BackupCount { get; private set; }
+
+        public async Task<HostedVolumeBackup> BackupAsync(HostedVolumeKey key, DateTimeOffset now,
+            CancellationToken cancellationToken)
+        {
+            BackupCount++;
+            return await inner.BackupAsync(key, now, cancellationToken);
+        }
+
+        public Task RestoreAsync(HostedVolumeBackup backup, CancellationToken cancellationToken)
+            => inner.RestoreAsync(backup, cancellationToken);
+
+        public Task PruneBackupsAsync(HostedVolumeKey key, IReadOnlySet<string> retainedIds,
+            CancellationToken cancellationToken)
+            => FailPrune ? Task.FromException(new IOException("Archive cleanup is busy."))
+                : inner.PruneBackupsAsync(key, retainedIds, cancellationToken);
     }
 
     private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false,

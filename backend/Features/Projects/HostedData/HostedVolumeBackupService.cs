@@ -4,7 +4,10 @@ using System.Collections.Concurrent;
 namespace AgentStudio.Projects;
 
 public sealed record HostedVolumeSchedule(string Project, string Environment, string Volume, int? HourUtc,
-    DateTimeOffset? LastAttemptAt, string? LastError, IReadOnlyList<HostedVolumeBackup> Backups);
+    DateTimeOffset? LastAttemptAt, string? LastError, IReadOnlyList<HostedVolumeBackup> Backups)
+{
+    public bool CleanupPending { get; init; }
+}
 public sealed record HostedVolumeAudit(DateTimeOffset At, string Actor, string Action, string Environment,
     string Volume, string? BackupId, string Outcome)
 {
@@ -73,6 +76,22 @@ public sealed class HostedVolumeBackupService(
         try
         {
             var now = clock.GetUtcNow();
+            var current = (await ReadAsync(project, cancellationToken))!;
+            var scheduleBefore = FindSchedule(current, key);
+            if (scheduleBefore.CleanupPending)
+            {
+                try
+                {
+                    await engine.PruneBackupsAsync(key,
+                        scheduleBefore.Backups.Select(item => item.Id).ToHashSet(StringComparer.Ordinal), cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    await RecordCleanupAsync(project, key, now, actor, ex);
+                    throw;
+                }
+                await RecordCleanupAsync(project, key, now, actor, null);
+            }
             HostedVolumeBackup backup;
             try
             {
@@ -98,7 +117,8 @@ public sealed class HostedVolumeBackupService(
                 var state = ReadState(project);
                 var schedule = FindSchedule(state, key);
                 var updated = schedule with { LastAttemptAt = now, LastError = null,
-                    Backups = schedule.Backups.Append(backup).TakeLast(HostedVolumeSchedulePolicy.MaxBackups).ToArray() };
+                    Backups = schedule.Backups.Append(backup).TakeLast(HostedVolumeSchedulePolicy.MaxBackups).ToArray(),
+                    CleanupPending = true };
                 Save(project, state, updated, new(now, actor, "backup", environment, volume, backup.Id, "succeeded"));
                 retainedIds = updated.Backups.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
             }
@@ -106,12 +126,35 @@ public sealed class HostedVolumeBackupService(
             try { await engine.PruneBackupsAsync(key, retainedIds, CancellationToken.None); }
             catch (Exception ex)
             {
+                await RecordCleanupAsync(project, key, now, actor, ex);
                 logger.LogWarning(ex, "Could not prune hosted volume archives for {Project}/{Environment}/{Volume}",
                     project, environment, volume);
+                return backup;
             }
+            await RecordCleanupAsync(project, key, now, actor, null);
             return backup;
         }
         finally { volumeGate.Release(); }
+    }
+
+    private async Task RecordCleanupAsync(string project, HostedVolumeKey key, DateTimeOffset now,
+        string actor, Exception? error)
+    {
+        await _gate.WaitAsync(CancellationToken.None);
+        try
+        {
+            var state = ReadState(project);
+            var previous = FindSchedule(state, key);
+            var schedule = previous with
+            {
+                CleanupPending = error is not null,
+                LastError = error?.Message,
+                LastAttemptAt = error is null ? previous.LastAttemptAt : now,
+            };
+            Save(project, state, schedule, new(now, actor, "backup-cleanup", key.Environment, key.Volume,
+                null, error is null ? "succeeded" : "failed"));
+        }
+        finally { _gate.Release(); }
     }
 
     public async Task RestoreAsync(string project, string environment, string volume, string backupId,

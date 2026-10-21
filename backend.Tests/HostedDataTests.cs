@@ -148,6 +148,47 @@ public sealed class HostedDataTests : IDisposable
         Assert.Equal("backed-up", File.ReadAllText(Path.Combine(path, "data.txt")));
         Assert.NotNull(previous);
         Assert.Equal("live-before-restore", File.ReadAllText(Path.Combine(previous!, "data.txt")));
+        Assert.True(File.Exists(path + ".restore-pending"));
+
+        var restarted = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"),
+            Path.Combine(_root, "archives"), NullLogger<LocalHostedVolumeBackupEngine>.Instance,
+            _ => throw new IOException("Previous directory is still busy."));
+        await Assert.ThrowsAsync<IOException>(() => restarted.RestoreAsync(backup, CancellationToken.None));
+        Assert.Single(Directory.EnumerateDirectories(Path.GetDirectoryName(path)!, "uploads.previous-*"));
+        Assert.True(File.Exists(path + ".restore-pending"));
+
+        var recovered = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"),
+            Path.Combine(_root, "archives"));
+        Assert.False(File.Exists(path + ".restore-pending"));
+        Assert.False(Directory.Exists(previous));
+        await recovered.RestoreAsync(backup, CancellationToken.None);
+        Assert.Equal("backed-up", File.ReadAllText(Path.Combine(path, "data.txt")));
+    }
+
+    [Fact]
+    public async Task BackupRejectsFileChangedToSymlinkBeforeOpen()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var volumeRoot = Path.Combine(_root, "volumes");
+        var enginePath = Path.Combine(volumeRoot, "demo", "stage", "uploads");
+        Directory.CreateDirectory(enginePath);
+        var file = Path.Combine(enginePath, "data.txt");
+        var outside = Path.Combine(_root, "outside.txt");
+        File.WriteAllText(file, "volume-data");
+        File.WriteAllText(outside, "outside-secret");
+        var engine = new LocalHostedVolumeBackupEngine(volumeRoot, Path.Combine(_root, "archives"),
+            NullLogger<LocalHostedVolumeBackupEngine>.Instance, path => Directory.Delete(path, true), _clock,
+            beforeSourceOpen: path =>
+            {
+                Assert.Equal(file, path);
+                File.Delete(file);
+                File.CreateSymbolicLink(file, outside);
+            });
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => engine.BackupAsync(
+            new("demo", "stage", "uploads"), _clock.GetUtcNow(), CancellationToken.None));
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "archives", "demo", "stage", "uploads")));
+        Assert.Equal("outside-secret", File.ReadAllText(outside));
     }
 
     [Fact]

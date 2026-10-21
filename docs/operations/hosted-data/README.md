@@ -41,7 +41,11 @@ stored beneath `TaskRepository/hosted-volume-archives`. Restore verifies the
 archive SHA-256 and extracts to a staging directory before replacing the live
 directory. Each volume retains its 14 newest backup records and archives.
 Archive pruning is retried on the next backup if storage cleanup fails. A
-backup has a 10-minute limit; scheduled backups use at most four concurrent
+durable `cleanupPending` schedule field blocks new archives until that retry
+succeeds; the previous failure remains in `lastError`. At most one archive can
+remain beyond the 14 retained records while cleanup is pending. Cleanup
+attempts appear in the audit trail as `backup-cleanup` entries. A backup has a
+10-minute limit; scheduled backups use at most four concurrent
 operations so a stalled volume does not hold up another project's backup.
 Backup and restore operations serialize per volume. A restore in progress does
 not hold the Studio state lock, so schedules, audit reads, and operations on
@@ -65,7 +69,7 @@ value.
 | `POST /{volume}/backups/{backupId}/restore` | Empty JSON object | `200` with no body after the staged volume replaces the live directory. |
 
 A schedule has `project`, `environment`, `volume`, `hourUtc`, `lastAttemptAt`,
-`lastError`, and `backups` (the backup response shape above). An audit entry has
+`lastError`, `cleanupPending`, and `backups` (the backup response shape above). An audit entry has
 `id`, `at`, `actor`, `action`, `environment`, `volume`, `backupId`, and `outcome`.
 The GET response selects schedules for the requested environment and its last
 100 audit entries; the per-project store retains the last 500 entries. Restore
@@ -85,16 +89,21 @@ declarations and `adapterReady` state.
 
 Restore checks the archive checksum and paths before changing the live volume.
 Once the staged directory replaces it, the API reports success even if removal
-of the old directory fails; the host logs that cleanup failure and retains the
-old directory for an operator to inspect. If the final audit write fails after
+of the old directory fails; the host logs that cleanup failure and keeps its
+recovery marker. Another restore of that volume waits for the old directory to
+be removed, including after an adapter restart. If the final audit write fails after
 the replacement, the API still reports success and logs the audit error. The
 earlier `started` entry remains as evidence of the attempt.
 Before moving the live directory aside, the host writes a durable
 `<volume>.restore-pending` marker that identifies its previous directory. On
 adapter restart, a missing live directory is recovered from that previous
 directory. If the staged replacement is already live, recovery keeps it and
-cleans up the previous directory. An invalid marker or a missing live and
+retries removal of the previous directory. The marker stays until cleanup
+succeeds. An invalid marker or a missing live and
 previous directory stops adapter startup for operator repair.
+On Linux, backup reads traverse pinned directory descriptors and open each
+entry without following symbolic links. A path changed to a link during backup
+fails the backup and removes its temporary archive.
 
 AGT-3229 was not on `origin/develop` when this work started. A control-plane
 adapter implementing `IHostedVolumeBackupEngine` must call its run-zone host
