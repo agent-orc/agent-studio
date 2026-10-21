@@ -50,6 +50,7 @@
           </dl>
         </article>
       </div>
+      @defer (on viewport) { <app-review-statistics [projectName]="projectName()" /> } @placeholder { <p class="operator-dashboard__empty">Review economics</p> }
     </section>
 
     <app-project-visual-evidence-queue

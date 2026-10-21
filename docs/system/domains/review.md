@@ -1,7 +1,29 @@
 # Review Domain Map
 
-Version: 2026-10-12
+Version: 2026-10-21
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Review economics (AGT-3278)
+
+`GET /api/projects/{projectName}/token-usage/reviews` folds the canonical
+deduplicated project token ledger into delivery review attempts. Query filters
+are `days` (1 to 90, default 30), `model`, `level`, and `host`. The endpoint
+returns median and nearest-rank p90 tokens and historical list-price USD per
+delivery review, accepted-card review rounds and spend, review share of card
+tokens, step and model/level splits, daily 7-day and 30-day median series, and
+the underlying review call rows. The ledger snapshot and the derived response
+are cached for at most 60 seconds against the task index generation.
+
+Remote Review receipts now preserve `support:remote-review:{attempt}:step:{stepId}`
+on each agent command. Replaying an attempt replaces all of its step rows.
+Local aspect and grade usage emits project-scoped ledger rows with the pipeline
+attempt and step; a local call made without a pipeline attempt remains a
+distinct legacy round. Review decision calls are attributed to the card.
+Older receipts retain their attempt attribution but appear under
+`review, step unknown`. Calls without a historical catalog price remain in
+token statistics and are omitted from USD samples. The project overview and
+usage cockpit show the same read-only tiles and link each tile to the matching
+review rows. Miss-rate feedback awaits AGT-3269.
 
 ## Review host placement (D19 A, AGT-3069)
 

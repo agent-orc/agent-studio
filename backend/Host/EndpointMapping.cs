@@ -102,6 +102,7 @@ public static class EndpointMapping
         app.MapSecurityReviewEndpoints();
         app.MapDesignSurfaceEndpoints();
         app.MapProjectTokenUsageEndpoints();
+        app.MapReviewStatisticsEndpoints();
         app.MapUsageCockpitEndpoints();
         app.MapPipelineHealthEndpoints();
         app.MapGateEconomicsEndpoints();

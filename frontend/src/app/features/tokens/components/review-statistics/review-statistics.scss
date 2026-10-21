@@ -1,0 +1,24 @@
+:host { display: block; min-width: 0; }
+.review-stats { color: var(--studio-fg); }
+.review-stats__head { display: flex; justify-content: space-between; gap: var(--studio-spacing-3); }
+.review-stats__head h3 { margin: 0; color: var(--studio-fg-strong); font-size: 1rem; }
+.review-stats__head p, .review-stats__detail { color: var(--studio-fg-muted); font-size: .78rem; }
+.review-stats__head p { margin: .35rem 0 .75rem; }
+.review-stats__filters { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: .9rem; }
+.review-stats__filters label { display: grid; gap: .2rem; color: var(--studio-fg-dim); font-size: .72rem; }
+.review-stats__filters select { max-width: 12rem; padding: .35rem; border: 1px solid var(--studio-border-strong); border-radius: 6px; background: var(--studio-bg-elevated); color: var(--studio-fg); }
+.review-stats__tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .6rem; }
+.review-stats__tile { display: grid; gap: .3rem; min-width: 0; padding: .75rem; border: 1px solid var(--studio-border); border-radius: 8px; background: var(--studio-bg-elevated); color: inherit; text-decoration: none; }
+.review-stats__tile:hover, .review-stats__tile:focus-visible { border-color: var(--studio-border-strong); background: var(--studio-bg-hover); }
+.review-stats__label { color: var(--studio-fg-dim); font-size: .78rem; }
+.review-stats__value, .review-stats__num { font-variant-numeric: tabular-nums; }
+.review-stats__value { color: var(--studio-fg-strong); font-size: 1.2rem; }
+.review-stats__trends { display: grid; gap: .1rem; color: var(--studio-fg-muted); font-size: .72rem; white-space: nowrap; }
+.review-stats__warning { color: var(--studio-fg-dim); }
+.review-stats__evidence { margin-top: .85rem; }
+.review-stats__evidence summary { cursor: pointer; }
+.review-stats__table-wrap { max-height: 25rem; overflow: auto; }
+.review-stats__evidence table { border-collapse: collapse; min-width: 700px; width: 100%; font-size: .75rem; }
+.review-stats__evidence th, .review-stats__evidence td { padding: .4rem; border-bottom: 1px solid var(--studio-border); text-align: left; }
+.review-stats__num { text-align: right !important; }
+@media (max-width: 480px) { .review-stats__tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .review-stats__trends { overflow: hidden; font-size: .65rem; } }

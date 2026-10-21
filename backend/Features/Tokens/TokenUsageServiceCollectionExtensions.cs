@@ -12,6 +12,7 @@ public static class TokenUsageServiceCollectionExtensions
         // Read: the merged project ledger and the ad-hoc bus source.
         services.AddSingleton<ProjectTokenReceiptReader>();
         services.AddSingleton<ProjectTokenLedger>();
+        services.AddSingleton<ReviewStatisticsService>();
         services.AddSingleton<BusAdHocUsageReader>();
 
         // Price: one service owns all provider calls and per-entry timestamps.

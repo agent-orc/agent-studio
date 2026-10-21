@@ -653,8 +653,11 @@ public sealed class AspectRunnerService
             sw.Stop();
             var durationMs = sw.ElapsedMilliseconds;
             var parsed = AdHocClaudeInvoker.ParseOrFallback(rawResponse, model);
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.ReviewDecision, model, parsed.Usage,
-                durationMs, ok: true, project: inputs.Project, jobId: inputs.JobId);
+            AdHocClaudeInvoker.Record(_usage, $"aspect-{def.Id}", model, parsed.Usage,
+                durationMs, ok: true, project: inputs.Project, jobId: inputs.JobId,
+                thinkingLevel: thinkingLevel,
+                participantId: string.IsNullOrWhiteSpace(inputs.ReviewAttemptId) ? null
+                    : $"support:review-attempt:{inputs.ReviewAttemptId}:step:aspect-{def.Id}");
             return (parsed.Text, true, parsed.Usage, durationMs);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -824,6 +827,7 @@ public sealed record AspectRunInputs(
     string DiffSummary,
     string StatusSummary)
 {
+    public string? ReviewAttemptId { get; init; }
     /// <summary>
     /// Inventory of the job's <c>results/</c> folder (file list + short
     /// excerpts). Completes the evidence source so a reviewer never reads an
