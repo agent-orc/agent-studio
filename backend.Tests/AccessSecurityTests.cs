@@ -1,6 +1,10 @@
 using System.Text;
+using System.Net.Http.Json;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 using Xunit;
@@ -397,7 +401,7 @@ public sealed class AccessSecurityTests : IDisposable
     }
 
     [Fact]
-    public void Guessed_usernames_and_addresses_keep_throttle_state_bounded()
+    public async Task Guessed_usernames_and_addresses_keep_throttle_state_bounded()
     {
         var (store, _, clock) = NewStore(new Dictionary<string, string?>
         {
@@ -437,6 +441,31 @@ public sealed class AccessSecurityTests : IDisposable
         Assert.Single(budgets);
         Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
             store.Login("first.owner", "correct horse battery staple!", "owner|new-address")).Status);
+
+        clock.Advance(TimeSpan.FromMinutes(16));
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(store);
+        builder.Services.AddSingleton<AgentStudio.Clients.ClientIdentityStore>();
+        using var app = builder.Build();
+        app.MapAccessSecurityEndpoints();
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+
+        for (var index = 0; index < 12; index++)
+        {
+            using var response = await client.PostAsJsonAsync("/api/auth/login",
+                new LoginRequest(new string('u', 3000) + index, "wrong password"));
+            Assert.Equal(index < 8 ? 401 : 429, (int)response.StatusCode);
+            Assert.InRange(clients.Count + budgets.Count, 0, 9);
+            Assert.All(clients.Keys.Cast<string>(), key => Assert.Equal(64, key.Length));
+        }
+
+        using var oversized = await client.PostAsJsonAsync("/api/auth/login",
+            new LoginRequest(new string('u', 5000), "wrong password"));
+        Assert.Equal(401, (int)oversized.StatusCode);
+        Assert.Contains("invalid-credentials", await oversized.Content.ReadAsStringAsync());
+        Assert.Equal(8, clients.Count);
     }
 
     [Theory]

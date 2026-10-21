@@ -1,10 +1,14 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace AgentStudio.Security;
 
 public static class AccessSecurityEndpoints
 {
+    private const int MaxLoginPayloadBytes = 4096;
+    private static readonly JsonSerializerOptions LoginJson = new(JsonSerializerDefaults.Web);
+
     public static void MapAccessSecurityEndpoints(this WebApplication app)
     {
         var auth = app.MapGroup("/api/auth");
@@ -37,14 +41,7 @@ public static class AccessSecurityEndpoints
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken));
             }));
 
-        auth.MapPost("/login", (LoginRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
-            Execute(() =>
-            {
-                var key = $"{(request.Username ?? string.Empty).Trim().ToLowerInvariant()}|{LoginThrottleKeys.Client(context.Connection.RemoteIpAddress)}";
-                var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key);
-                SetSessionCookies(context, result.SessionToken, result.CsrfToken);
-                return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken));
-            }));
+        auth.MapPost("/login", LoginAsync);
 
         auth.MapPost("/invite/accept", (AcceptInvitationRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
             Execute(() =>
@@ -236,6 +233,39 @@ public static class AccessSecurityEndpoints
                 return Results.NoContent();
             }));
     }
+
+    private static async Task<IResult> LoginAsync(HttpContext context, AccessSecurityStore store, IConfiguration configuration)
+    {
+        if (!context.Request.HasJsonContentType()) return Results.StatusCode(StatusCodes.Status415UnsupportedMediaType);
+        if (context.Request.ContentLength > MaxLoginPayloadBytes) return InvalidCredentials();
+
+        var bytes = new byte[MaxLoginPayloadBytes + 1];
+        var length = 0;
+        while (length < bytes.Length)
+        {
+            var count = await context.Request.Body.ReadAsync(bytes.AsMemory(length), context.RequestAborted);
+            if (count == 0) break;
+            length += count;
+        }
+        if (length > MaxLoginPayloadBytes) return InvalidCredentials();
+
+        LoginRequest? request;
+        try { request = JsonSerializer.Deserialize<LoginRequest>(bytes.AsSpan(0, length), LoginJson); }
+        catch (JsonException) { return Results.BadRequest(); }
+        if (request is null) return Results.BadRequest();
+
+        return Execute(() =>
+        {
+            var key = $"{(request.Username ?? string.Empty).Trim().ToLowerInvariant()}|{LoginThrottleKeys.Client(context.Connection.RemoteIpAddress)}";
+            var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key);
+            SetSessionCookies(context, result.SessionToken, result.CsrfToken);
+            return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken));
+        });
+    }
+
+    private static IResult InvalidCredentials()
+        => Results.Json(new { error = "invalid-credentials", message = "Username or password is incorrect." },
+            statusCode: StatusCodes.Status401Unauthorized);
 
     private static IResult Execute(Func<IResult> operation)
     {
