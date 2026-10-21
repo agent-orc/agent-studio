@@ -2,7 +2,8 @@
 // Pure planning half of move-studio-to-server.sh: workspace inventory
 // classification, path mapping generation, and delta selection. The shell
 // script owns every process, SSH, Git, tar, and Docker side effect; this module
-// only reads the workspace and writes plan files into the local state directory.
+// reads the workspace and registered task storage, then writes plan files into
+// the local state directory.
 import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -339,8 +340,9 @@ export function generateMapping({ workspace, projects, remotes = {}, extra = {} 
 
   const mapped = value => covered(value) || checkouts.some(checkout => isUnder(value, checkout.source));
   for (const project of projects) {
-    for (const [kind, value] of [['RootPath', project.rootPath]]) {
-      if (value && windowsPath.test(value) && !mapped(value)) issues.push({ code: 'unmapped-path', projects: [project.id], field: kind, path: value });
+    const rootPath = project.rootPath;
+    if (rootPath && windowsPath.test(rootPath) && !mapped(rootPath)) {
+      issues.push({ code: 'unmapped-path', projects: [project.id], field: 'RootPath', path: rootPath });
     }
   }
   for (const [from, to] of Object.entries(extra)) {
@@ -454,8 +456,8 @@ export function tokenStateIssues(entries, roots = []) {
 
 /**
  * Inventory plan for the state directory. The clock is injected so the plan is
- * reproducible in tests. `scanTokens` (relative path -> token shape or null)
- * screens each archive candidate and records its digest for delta selection.
+ * reproducible in tests. `scanTokens` returns a content digest and token shape
+ * for each archive candidate, so delta selection observes same-metadata edits.
  */
 export function buildInventory({
   workspace, files, tracked, dirty, projects, remotes, extra, home, exists, credentialHelper, now,
