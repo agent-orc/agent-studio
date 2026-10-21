@@ -308,7 +308,7 @@ app-status-bar {
     padding-inline: var(--studio-spacing-1);
   }
 
-  .statusbar__group--left app-statusbar-item:nth-of-type(2),
+  .statusbar__group--left .statusbar__review,
   .statusbar__group--left .statusbar__sep {
     display: none;
   }
@@ -327,7 +327,7 @@ app-status-bar {
 }
 
 @container statusbar (width <= 460px) {
-  .statusbar__group--left app-statusbar-item:nth-of-type(3),
+  .statusbar__group--left .statusbar__automation,
   .statusbar .hquota {
     display: none;
   }

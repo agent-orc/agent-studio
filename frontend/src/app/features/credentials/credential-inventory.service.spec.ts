@@ -17,6 +17,9 @@ describe('CredentialInventoryService', () => {
   });
 
   it('refreshes board and activity alerts while the session stays open', () => {
+    TestBed.inject(AuthSessionState).status.set({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+    });
     const service = TestBed.inject(CredentialInventoryService);
     const http = TestBed.inject(HttpTestingController);
     const url = '/api/v1/management/credential-inventory';
@@ -45,6 +48,32 @@ describe('CredentialInventoryService', () => {
     vi.advanceTimersByTime(60_000);
     http.expectNone('/api/v1/management/credential-inventory');
     expect(service.state()).toBe('unsupported');
+    http.verify();
+  });
+
+  it('waits for auth startup before deciding whether the inventory route exists', () => {
+    const auth = TestBed.inject(AuthSessionState);
+    const service = TestBed.inject(CredentialInventoryService);
+    const http = TestBed.inject(HttpTestingController);
+    service.ensureLoaded();
+    http.expectNone('/api/v1/management/credential-inventory');
+    auth.status.set({ profile: 'local', bootstrapRequired: false, authenticated: false });
+    TestBed.tick();
+    http.expectNone('/api/v1/management/credential-inventory');
+    expect(service.state()).toBe('unsupported');
+    http.verify();
+  });
+
+  it('loads once when auth startup identifies a networked profile', () => {
+    const auth = TestBed.inject(AuthSessionState);
+    const service = TestBed.inject(CredentialInventoryService);
+    const http = TestBed.inject(HttpTestingController);
+    service.ensureLoaded();
+    http.expectNone('/api/v1/management/credential-inventory');
+    auth.status.set({ profile: 'networked', bootstrapRequired: false, authenticated: true });
+    TestBed.tick();
+    http.expectOne('/api/v1/management/credential-inventory').flush({ generatedAt: 'now', items: [] });
+    expect(service.state()).toBe('ready');
     http.verify();
   });
 });
