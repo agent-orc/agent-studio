@@ -30,10 +30,12 @@ public sealed class TaskLiveStatusProjection(
         TaskStates.AutoReview,
     };
 
-    public IReadOnlyDictionary<string, TaskLiveStatus> BuildLookup(IEnumerable<TaskInfo> jobs)
+    public IReadOnlyDictionary<string, TaskLiveStatus> BuildLookup(IEnumerable<TaskInfo> jobs,
+        bool publishedRunnerStatus = false)
     {
         var jobList = jobs.Where(job => VisibleStates.Contains(job.State)).ToList();
-        var runnerStatus = runners.GetStatus().Projects;
+        var runnerStatus = (publishedRunnerStatus
+            ? runners.GetPublishedStatus() : runners.GetStatus()).Projects;
         var result = new Dictionary<string, TaskLiveStatus>(StringComparer.OrdinalIgnoreCase);
         // AGT-3094: both reads are the authority's immutable board snapshot, so
         // the review queue line stays lock-free and costs one read per call.

@@ -14,6 +14,29 @@ public sealed class DeploymentReconcilerTests
     private static readonly Release R1 = new("r1", "demo", "2026.10.16.1", new string('1', 40), [Artifact],
         "process", "variables", ["AGT-1"], T0, ReleaseSnapshot.DefaultChannel);
 
+    [Theory]
+    [InlineData(true, "failed", DeploymentTriggers.Deploy, true)]
+    [InlineData(false, "failed", DeploymentTriggers.Deploy, false)]
+    [InlineData(true, "succeeded", DeploymentTriggers.Deploy, false)]
+    [InlineData(true, "failed", DeploymentTriggers.Rollback, true)]
+    [InlineData(true, "failed", DeploymentTriggers.AutomaticRollback, false)]
+    public void GuidedFailurePolicy_PausesFailedManualRunsButNotAutomaticRollback(
+        bool enabled, string state, string trigger, bool expected)
+        => Assert.Equal(expected, GuidedFailurePolicy.ShouldPause(enabled, state, trigger));
+
+    [Fact]
+    public void GuidedFailurePolicy_RequiresApproverAndSkipReason()
+    {
+        Assert.NotNull(GuidedFailurePolicy.RejectDecision(DeploymentStates.WaitingForIntervention,
+            "retry", approver: false, reason: null));
+        Assert.NotNull(GuidedFailurePolicy.RejectDecision(DeploymentStates.WaitingForIntervention,
+            "skip", approver: true, " "));
+        Assert.Null(GuidedFailurePolicy.RejectDecision(DeploymentStates.WaitingForIntervention,
+            "skip", approver: true, "Known optional check"));
+        Assert.Null(GuidedFailurePolicy.RejectDecision(DeploymentStates.WaitingForIntervention,
+            "abort", approver: true, null));
+    }
+
     [Fact]
     public void AdoptsQueueJob_ThenFollowsClaimAndReport_WithStepsLogAndAudit()
     {
@@ -71,6 +94,48 @@ public sealed class DeploymentReconcilerTests
         var run = Assert.Single(result.Deployments);
         Assert.Equal((DeploymentStates.Succeeded, DeploymentStates.Failed), (run.Steps[0].State, run.Steps[1].State));
         Assert.Contains(result.Log, line => line.Step == DeployStepNames.Health && line.Message.Contains("failed"));
+    }
+
+    [Fact]
+    public void HealthRetry_KeepsTheCompletedDeployStepAcrossRestartClaimAndReport()
+    {
+        var failed = Job("job-1", "stage", "failed", T0) with
+        {
+            GuidedFailure = true, ClaimedAt = T0.AddMinutes(1), FinishedAt = T0.AddMinutes(2),
+            Evidence = DeployEvidence.HealthFailed,
+        };
+        var waiting = Reconcile([], [failed]);
+        var original = Assert.Single(waiting.Deployments);
+        Assert.Equal(DeploymentStates.WaitingForIntervention, original.State);
+        Assert.Equal(DeploymentStates.Succeeded, original.Steps[0].State);
+
+        // The retry job has reached the store, but the run update has not.
+        var retry = Job("job-2", "stage", "queued", T0.AddMinutes(3)) with
+        {
+            RequestedBy = "owner", RetryOfJobId = failed.Id, RetryStep = DeployStepNames.Health,
+        };
+        var attached = Reconcile(waiting.Deployments, [failed, retry]);
+        var queued = Assert.Single(attached.Deployments);
+        Assert.Equal((original.Id, retry.Id, DeployStepNames.Health), (queued.Id, queued.JobId, queued.RetryStep));
+        Assert.Equal((DeploymentStates.Succeeded, DeploymentStepStates.Pending),
+            (queued.Steps[0].State, queued.Steps[1].State));
+        Assert.Equal(original.Steps[0].StartedAtUtc, queued.Steps[0].StartedAtUtc);
+
+        var claimed = retry with { Status = "claimed", ClaimedAt = T0.AddMinutes(4) };
+        var running = Assert.Single(Reconcile(attached.Deployments, [failed, claimed]).Deployments);
+        Assert.Equal((DeploymentStates.Succeeded, DeploymentStepStates.Pending),
+            (running.Steps[0].State, running.Steps[1].State));
+        Assert.Equal(original.Steps[0].StartedAtUtc, running.Steps[0].StartedAtUtc);
+
+        var healthy = claimed with
+        {
+            Status = "healthy", FinishedAt = T0.AddMinutes(5), Evidence = DeployEvidence.HealthOk,
+        };
+        var complete = Assert.Single(Reconcile([running], [failed, healthy]).Deployments);
+        Assert.Equal((DeploymentStates.Succeeded, DeploymentStates.Succeeded),
+            (complete.Steps[0].State, complete.Steps[1].State));
+        Assert.Equal(original.Steps[0].StartedAtUtc, complete.Steps[0].StartedAtUtc);
+        Assert.Equal(T0.AddMinutes(5), complete.Steps[1].FinishedAtUtc);
     }
 
     [Fact]
@@ -166,6 +231,18 @@ public sealed class DeploymentReconcilerTests
         Assert.Equal(DeploymentTriggers.AutomaticRollback, run.Trigger);
         Assert.False(run.NeedsApproval);
         Assert.DoesNotContain(run.Steps, step => step.Name == DeployStepNames.Approval);
+    }
+
+    [Fact]
+    public void AutomaticRollback_FailureDoesNotPauseEvenWhenItsJobCarriesGuidedFailure()
+    {
+        var rollback = Job("auto", "production", "failed", T0.AddMinutes(9)) with
+        {
+            IsRollback = true, RequestedBy = "automatic-rollback", GuidedFailure = true,
+            FinishedAt = T0.AddMinutes(10), Evidence = DeployEvidence.DeployFailed,
+        };
+        var run = Assert.Single(Reconcile([], [rollback]).Deployments);
+        Assert.Equal((DeploymentTriggers.AutomaticRollback, DeploymentStates.Failed), (run.Trigger, run.State));
     }
 
     [Fact]

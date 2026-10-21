@@ -1,0 +1,10 @@
+<section class="task-latency" aria-label="Card opening latency" data-testid="task-detail-latency">
+  <strong>Card latency</strong>
+  @if (metric(); as value) {
+    <span>{{ value.count }} reads / 5 min</span>
+    <span>p50 {{ value.p50Ms === null ? 'No data' : Math.round(value.p50Ms) + ' ms' }}</span>
+    <span>p95 {{ value.p95Ms === null ? 'No data' : Math.round(value.p95Ms) + ' ms' }}</span>
+  } @else {
+    <span>Unavailable</span>
+  }
+</section>

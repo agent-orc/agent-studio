@@ -203,6 +203,12 @@ public class TaskScannerService : ITaskScanner
             0));
     }
 
+    public T ReadPublishedGeneration<T>(string name, long version,
+        Func<TaskIndexPublication, T> build) where T : class
+        => _indexCache is null
+            ? ReadPerGeneration(name, version, build)
+            : _indexCache.GetDerivedPublished(name, version, build);
+
     private sealed class NoPin : IDisposable
     {
         public static readonly NoPin Instance = new();
@@ -214,12 +220,16 @@ public class TaskScannerService : ITaskScanner
     {
         if (_indexCache is null) return;
         var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
-        var updated = ScanJobFolder(folder, entry, state);
-        if (updated is not null) _indexCache.PublishCore(updated);
-        else _indexCache.RemoveCoreByFolder(folder);
+        _indexCache.PublishCoreFromFolder(folder, () => ScanJobFolder(folder, entry, state));
     }
 
     public void RemoveCore(TaskInfo info) => _indexCache?.RemoveCore(info);
+
+    public void RemoveCoreByFolder(string folder) => _indexCache?.RemoveCoreByFolder(folder);
+
+    public TaskInfo? FindPublishedJob(string jobId, string? watchPath = null)
+        => _indexCache is null ? FindJob(jobId, watchPath)
+            : _indexCache.GetDetailFacts(jobId, watchPath).Info;
 
     public void PublishCoreFromKnownFolder(string folder)
     {
@@ -230,11 +240,20 @@ public class TaskScannerService : ITaskScanner
 
     public void MoveCoreFromKnownFolder(string sourceFolder, string targetFolder,
         string watchPath, string state)
+        => MoveCoreFromFolder(sourceFolder, targetFolder, watchPath,
+            _indexCache?.GetCoreByFolder(sourceFolder)?.ProjectName ?? Path.GetFileName(watchPath), state);
+
+    public void MoveCoreFromFolder(string sourceFolder, string targetFolder,
+        string watchPath, string projectName, string state)
     {
-        var known = _indexCache?.GetCoreByFolder(sourceFolder);
-        _indexCache?.RemoveCoreByFolder(sourceFolder);
-        PublishCoreFromFolder(targetFolder, watchPath,
-            known?.ProjectName ?? Path.GetFileName(watchPath), state);
+        _indexCache?.MoveCoreFromFolder(sourceFolder, targetFolder, () =>
+        {
+            var entry = new WatchPathEntry
+            {
+                Name = projectName, Path = watchPath
+            };
+            return ScanJobFolder(targetFolder, entry, state);
+        });
     }
 
     private static string? ReadArchiveState(string jobDir)
@@ -759,6 +778,13 @@ public class TaskScannerService : ITaskScanner
 
             var info = new TaskInfo
             {
+                TaskJsonLength = taskJsonInfo.Length,
+                TaskJsonWriteTicks = taskJsonInfo.LastWriteTimeUtc.Ticks,
+                TokenReceiptStamp = raw.TryGetProperty("tokenSummary", out var receipt)
+                    && receipt.ValueKind == JsonValueKind.Object
+                        ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                            JsonSerializer.SerializeToUtf8Bytes(receipt)))
+                        : "none",
                 Id = resolvedId,
                 TaskKey = TaskIdentity.CreateKey(entry.Path, resolvedId),
                 Key = ReadReferenceKey(raw),
@@ -984,7 +1010,12 @@ public class TaskScannerService : ITaskScanner
     {
         var info = FindJob(jobId, watchPath);
         if (info == null) return null;
+        return GetJobDetailFromInfo(info);
+    }
 
+    /// <summary>Hydrates sidecars for a card already resolved by the keyed index.</summary>
+    public TaskDetail GetJobDetailFromInfo(TaskInfo info)
+    {
         var dir = info.FolderPath;
         var statusMd = TaskSwitchTrace.Run("sidecar.status", () => ReadFileOrNull(Path.Combine(dir, "status.md")));
         var generated = TaskSwitchTrace.Run("sidecar.other", () => _fileGenerationIndex?.ReadForJob(dir)
