@@ -48,6 +48,10 @@ export interface Deployment {
   trigger: string;
   requestedBy: string | null;
   createdAtUtc: string;
+  interventionExpiresAtUtc?: string | null;
+  failedStep?: string | null;
+  interventionDecidedBy?: string | null;
+  interventionDecision?: string | null;
 }
 
 export interface EnvironmentStatus {
@@ -57,6 +61,8 @@ export interface EnvironmentStatus {
   newerRelease: Release | null;
   cardsSinceLastDeploy: string[];
   health: string;
+  intervention?: { deploymentId: string; failedStep: string; expiresAtUtc: string | null;
+    decision: string | null; decidedBy: string | null } | null;
 }
 
 export interface DeploymentLogLine {
@@ -71,7 +77,7 @@ export interface DeploymentLogResponse {
 }
 
 /** Every `DeploymentStates` value of the contract. */
-export const DEPLOYMENT_STATES = ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'awaiting-approval'] as const;
+export const DEPLOYMENT_STATES = ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'awaiting-approval', 'waiting-for-intervention'] as const;
 export type DeploymentState = (typeof DEPLOYMENT_STATES)[number];
 export type RunState = DeploymentState | 'unknown';
 /** Step states reuse the run vocabulary plus `pending` and `skipped`. */
@@ -84,6 +90,7 @@ export const RUN_STATE_LABEL: Record<RunState, string> = {
   failed: 'Failed',
   cancelled: 'Cancelled',
   'awaiting-approval': 'Awaiting approval',
+  'waiting-for-intervention': 'Waiting for intervention',
   unknown: 'Unknown state',
 };
 
@@ -131,9 +138,10 @@ const HOST_REPORT: Record<string, { state: DeploymentState; trigger: string }> =
 export const HEALTH_LABEL: Record<HealthState, string> = { healthy: 'Healthy', unhealthy: 'Unhealthy', unknown: 'No data', up: 'Up', degraded: 'Degraded', down: 'Down', invalid: 'Misconfigured' };
 
 /** Actions the lifecycle accepts per state (AGT-3201 StandardLifecyclePolicy); the server still decides. */
-export type DeployRunAction = 'approve' | 'reject' | 'cancel';
+export type DeployRunAction = 'approve' | 'reject' | 'cancel' | 'retry' | 'skip' | 'abort';
 export function runActions(state: RunState): DeployRunAction[] {
   if (state === 'awaiting-approval') return ['approve', 'reject', 'cancel'];
+  if (state === 'waiting-for-intervention') return ['retry', 'abort'];
   return state === 'queued' || state === 'running' ? ['cancel'] : [];
 }
 
@@ -177,6 +185,10 @@ export interface DeployRun {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  interventionExpiresAt?: string | null;
+  failedStep?: string | null;
+  interventionDecidedBy?: string | null;
+  interventionDecision?: string | null;
   steps: DeployRunStep[];
 }
 
@@ -209,6 +221,7 @@ export interface EnvironmentCardView {
   health: DeployHealth;
   lastRun: CardRun | null;
   awaitingApproval: CardApproval | null;
+  intervention?: EnvironmentStatus['intervention'];
 }
 
 /** Ready panel values; null means that source is loading, failed, or absent. */
@@ -331,6 +344,10 @@ export function buildDeployRuns(deployments: readonly Deployment[], names: Reado
     createdAt: item.createdAtUtc,
     startedAt: item.startedAtUtc,
     finishedAt: item.finishedAtUtc,
+    interventionExpiresAt: item.interventionExpiresAtUtc ?? null,
+    failedStep: item.failedStep ?? null,
+    interventionDecidedBy: item.interventionDecidedBy ?? null,
+    interventionDecision: item.interventionDecision ?? null,
     steps: item.steps.map(step => ({
       name: step.name, state: stepState(step.state), startedAt: step.startedAtUtc, finishedAt: step.finishedAtUtc,
     })),
@@ -373,7 +390,10 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
       ? [...pageRuns, ...(statusRun && !pageRuns.some(item => item.id === statusRun.id) ? [statusRun] : [])].sort(newestFirst)
       : null;
     const report = hostReportOf(base.view);
-    const artifact = base.view?.deployedArtifact ?? status?.currentRelease?.artifactDigests[0] ?? null;
+    const releaseDigest = status?.currentRelease?.artifactDigests[0] ?? null;
+    const artifact = status?.intervention
+      ? base.view?.history.find(row => digestOf(row.artifact) === digestOf(releaseDigest ?? ''))?.artifact ?? releaseDigest
+      : base.view?.deployedArtifact ?? releaseDigest;
     // The release of the latest successful run names the deployment; a digest
     // match on a visible release page could name another release with the same digest.
     const lookup = artifact ? sources.artifactReleases?.get(artifactLookupKey(artifact, report?.at ?? null)) : undefined;
@@ -403,6 +423,7 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
       health: healthFor(status, base, sources.health),
       lastRun,
       awaitingApproval: approvalFor(base, runs, sources),
+      intervention: status?.intervention,
     };
   });
 }

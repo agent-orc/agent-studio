@@ -114,9 +114,11 @@ export class ProjectDeployDataService {
   }
 
   /** Approve, reject, or cancel a run; the server checks role and state. */
-  act(projectName: string, deploymentId: string, action: DeployRunAction): Observable<Deployment> {
+  act(projectName: string, deploymentId: string, action: DeployRunAction, reason?: string): Observable<Deployment> {
     return this.http.post<Deployment>(
-      `${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}/${action}`, {});
+      `${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}/${
+        action === 'retry' || action === 'skip' || action === 'abort' ? 'intervention' : action}`,
+      action === 'retry' || action === 'skip' || action === 'abort' ? { action, reason } : {});
   }
 
   pipeline(projectName: string): Observable<DeployPanel<PipelineDefinitionResponse>> {

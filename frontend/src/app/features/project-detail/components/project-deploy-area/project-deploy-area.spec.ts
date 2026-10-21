@@ -248,6 +248,30 @@ describe('ProjectDeployAreaComponent', () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  it('opens status-card runs when newer deployments fill the loaded pages', async () => {
+    data.serveEverything();
+    const other = deployDeploymentsFixture()[0];
+    data.deploymentsPanel.next({ status: 'ready', value: Array.from({ length: 30 }, (_, index) => ({
+      ...other, id: `run-other-${index}`, environmentId: 'other',
+      createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    })) });
+    await settle();
+
+    expect(fixture.componentInstance.runs().some(run => run.id === 'run-c-stage-redeploy')).toBe(false);
+    expect(fixture.componentInstance.historyRuns().some(run => run.id === 'run-c-production')).toBe(false);
+
+    (host().querySelector('[aria-label="Open last run for Staging"]') as HTMLButtonElement).click();
+    await settle();
+    expect(text('deploy-run-drawer')).toContain('Redeploy to Staging');
+    expect(data.requests).toContain('log:run-c-stage-redeploy');
+
+    await click('sidesheet-close');
+    await click('deploy-environment-review-approval');
+    expect(text('deploy-run-drawer')).toContain('Deploy to Production');
+    expect(byTestId('deploy-run-approve')).not.toBeNull();
+    expect(data.requests).toContain('log:run-c-production');
+  });
+
   it('opens a run from the history table and marks its row', async () => {
     data.serveEverything();
     await settle();

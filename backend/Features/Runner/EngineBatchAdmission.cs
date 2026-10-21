@@ -72,6 +72,7 @@ public sealed class EngineBatchAdmission(
             await batches.RunEmergencyFallbackAsync(task, review, source, reviewedAt, stopping)
                 .ConfigureAwait(false);
             scanner.InvalidateCache();
+            scanner.PublishCoreFromKnownFolder(task.FolderPath);
             state = scanner.FindJob(task.Id, task.WatchPath)?.State;
         }
         catch (Exception fallbackError) when (!stopping.IsCancellationRequested)
