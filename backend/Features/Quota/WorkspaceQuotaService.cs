@@ -127,6 +127,9 @@ public sealed class WorkspaceQuotaService
         }
     }
 
+    private static bool IsLimit(QuotaLimits limits)
+        => limits is not { ModelTokensPerWeek: null, ComputeCoreHoursPerWeek: null, HostingSlots: null };
+
     private void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
@@ -144,6 +147,8 @@ public sealed class WorkspaceQuotaService
             throw new ArgumentException("Quota limits must be nonnegative.");
         if (projectId is not null && !_projects.List().Any(p => p.Id == projectId && p.WorkspaceId == workspaceId))
             throw new KeyNotFoundException("Project does not belong to workspace.");
+        // Blank fields save as no limit, so HasLimits stays false and admission a strict no-op.
+        if (limits is { ModelTokensPerWeek: null, ComputeCoreHoursPerWeek: null, HostingSlots: null }) limits = null;
         lock (_gate)
         {
             Reload();
@@ -197,7 +202,9 @@ public sealed class WorkspaceQuotaService
         lock (_gate)
         {
             Reload();
-            return _state.Workspaces.Count > 0 || _state.Projects.Count > 0 || _stateReadError is not null;
+            // Entries saved with blank fields before SetLimits normalized them limit nothing.
+            return _state.Workspaces.Values.Any(IsLimit) || _state.Projects.Values.Any(IsLimit)
+                || _stateReadError is not null;
         }
     }
 
