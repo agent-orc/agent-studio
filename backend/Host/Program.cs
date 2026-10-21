@@ -523,6 +523,16 @@ builder.Services.AddSingleton<TaskPublishableService>();
 builder.Services.AddSingleton<PublishActionService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
+builder.Services.AddSingleton<IHostedVolumeBackupEngine>(sp =>
+    sp.GetRequiredService<IConfiguration>()["HostedData:LocalVolumeRoot"] is { Length: > 0 } root
+        ? new LocalHostedVolumeBackupEngine(root, Path.Combine(
+            sp.GetRequiredService<IConfiguration>()["TaskRepository"] ?? throw new InvalidOperationException("TaskRepository is required."),
+            "hosted-volume-archives"), sp.GetRequiredService<ILogger<LocalHostedVolumeBackupEngine>>(),
+            sp.GetRequiredService<TimeProvider>())
+        : new UnboundHostedVolumeBackupEngine());
+builder.Services.AddSingleton<HostedVolumeBackupService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<HostedVolumeBackupWorker>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
 builder.Services.AddSingleton<ProjectPipelineDefinitionService>();

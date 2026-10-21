@@ -8,7 +8,10 @@ public sealed record EnvironmentDeclaration(
     string Id, string Name, string Kind, string TargetHostId, string Address,
     string Template, string Destination, string? HealthUrl, string Approval,
     IReadOnlyList<string> SecretRefs, int ContainerPort,
-    IReadOnlyList<HealthCheckDefinition>? HealthChecks = null, bool HealthChecksAllowPrivateNetwork = false);
+    IReadOnlyList<HealthCheckDefinition>? HealthChecks = null, bool HealthChecksAllowPrivateNetwork = false)
+{
+    public HostedDataDeclaration Data { get; init; } = HostedDataDeclaration.Empty;
+}
 
 /// <summary>One declaration file: the parsed environment, or the error that makes it unusable.</summary>
 public sealed record EnvironmentDeclarationFile(string EnvironmentId, EnvironmentDeclaration? Declaration, string? Error);
@@ -23,7 +26,10 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     string Artifact, string Template, string Destination, string? HealthUrl,
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
-    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0);
+    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0)
+{
+    public HostedDataDeclaration Data { get; init; } = HostedDataDeclaration.Empty;
+}
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -93,7 +99,7 @@ public sealed class ProjectEnvironmentService
         var directory = Path.Combine(root, "docs", "deployments", "environments");
         if (!Directory.Exists(directory)) return [];
         return ParseDeclarationFiles(Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
-            .Select(file => (Path.GetFileName(file), File.ReadAllText(file))));
+            .Select(file => (Path.GetFileName(file), File.ReadAllText(file))), project);
     }
 
     /// <summary>
@@ -117,7 +123,7 @@ public sealed class ProjectEnvironmentService
             if (_git.GetFileAtCommit(root, commit, path) is not { } json) return null;
             files.Add((Path.GetFileName(path), json));
         }
-        var parsed = ParseDeclarationFiles(files);
+        var parsed = ParseDeclarationFiles(files, project);
         if (parsed.FirstOrDefault(item => item.Error is not null) is { Error: { } error }) throw new JsonException(error);
         return parsed.Select(item => item.Declaration!).ToArray();
     }
@@ -125,7 +131,8 @@ public sealed class ProjectEnvironmentService
     private bool IsWatched(string project)
         => _scanner.GetWatchPaths().Any(item => string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase));
 
-    private static IReadOnlyList<EnvironmentDeclarationFile> ParseDeclarationFiles(IEnumerable<(string Name, string Json)> files)
+    private static IReadOnlyList<EnvironmentDeclarationFile> ParseDeclarationFiles(IEnumerable<(string Name, string Json)> files,
+        string project)
     {
         var result = new List<EnvironmentDeclarationFile>();
         foreach (var (file, json) in files)
@@ -133,6 +140,7 @@ public sealed class ProjectEnvironmentService
             try
             {
                 var declaration = ParseDeclaration(file, json);
+                HostedDataBinding.DeclaredSecretNames(project, declaration.Id, declaration.SecretRefs, declaration.Data);
                 result.Add(new(declaration.Id, declaration, null));
             }
             catch (JsonException ex)
@@ -204,10 +212,13 @@ public sealed class ProjectEnvironmentService
             : containerPortValue.ValueKind == JsonValueKind.Number && containerPortValue.TryGetInt32(out var parsedPort)
                 ? parsedPort : throw new JsonException("Invalid container port.");
         if (containerPort is < 1 or > 65535) throw new JsonException("Invalid container port.");
-        return new(id, Required("name"), kind, host, Required("address"), template,
+        return new EnvironmentDeclaration(id, Required("name"), kind, host, Required("address"), template,
             destination, healthUrl, approval, secrets, containerPort,
             HealthCheckDeclarations.Parse(value, Path.GetFileName(file)),
-            HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)));
+            HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)))
+        {
+            Data = HostedDataDeclaration.Parse(value, template, id, Path.GetFileName(file)),
+        };
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -629,6 +640,7 @@ public sealed class ProjectEnvironmentService
             {
                 Template = deployed.Template, Destination = deployed.Destination,
                 HealthUrl = deployed.HealthUrl, SecretRefs = deployed.SecretRefs, ContainerPort = deployed.ContainerPort,
+                Data = deployed.Data,
             }
             : current;
 
@@ -660,9 +672,11 @@ public sealed class ProjectEnvironmentService
             .LastOrDefault()?.Item.Artifact;
         var job = new DeployJob(Guid.NewGuid().ToString("N"), project, declaration.Id,
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
-            declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
+            declaration.HealthUrl,
+            HostedDataBinding.DeclaredSecretNames(project, declaration.Id, declaration.SecretRefs, declaration.Data),
+            declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
-            IsRollback: rollback, RequestedBy: actor);
+            IsRollback: rollback, RequestedBy: actor) { Data = declaration.Data };
         state.Jobs.Add(job);
         return job;
     }

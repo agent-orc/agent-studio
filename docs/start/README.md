@@ -51,6 +51,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Topic | Start here |
 |---|---|
 | Product installer for Windows and Linux | [operations/setup/install.md](../operations/setup/install.md) |
+| Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
