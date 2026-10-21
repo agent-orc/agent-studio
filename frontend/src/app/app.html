@@ -292,6 +292,7 @@
               }
             }
             @case ('hub') {
+              @defer (when studioTabState.activeTab()?.kind === 'hub') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'hub') {
                   <app-project-hub-view
@@ -300,6 +301,7 @@
                     [pipelineStepId]="tab.pipelineStepId"
                     (openTask)="onOpenTaskFromReel($event)" />
                 }
+              }
               }
             }
             @case ('workbenches') {
@@ -314,17 +316,21 @@
               }
             }
             @case ('diff') {
+              @defer (when studioTabState.activeTab()?.kind === 'diff') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'diff') {
                   <app-studio-diff-view [commitSha]="tab.commitSha" />
                 }
               }
+              }
             }
             @case ('activity') {
+              @defer (when studioTabState.activeTab()?.kind === 'activity') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'activity') {
                   <app-studio-activity-view [taskKey]="tab.taskKey" />
                 }
+              }
               }
             }
             @case ('url-preview') {
@@ -413,6 +419,7 @@
         <app-tag-manager-dialog
           (closed)="onTagManagerClosed()" />
       }
+      @defer (when projectOverlays.anyOpen()) {
       <app-project-overlays
         (securityFollowUp)="onSecurityFollowUp($event)"
         (securityOpenEvidence)="onSecurityOpenEvidence($event)"
@@ -420,6 +427,7 @@
         (uxuiFollowUp)="onUxuiFollowUp($event)"
         (uxuiActionQueued)="onUxuiActionQueued($event)"
         (openTask)="onOpenTaskFromReel($event)" />
+      }
       @defer (when verboseDebugContext() !== null) {
         @if (verboseDebugContext(); as ctx) {
           <app-verbose-debug-overlay
@@ -713,6 +721,7 @@
         (defaultCliChange)="onDefaultCliChange($event)"
         (defaultModelChange)="onDefaultModelChange($event)" />
 
+      @defer (when projectOverlays.anyOpen()) {
       <app-project-overlays
         (securityFollowUp)="onSecurityFollowUp($event)"
         (securityOpenEvidence)="onSecurityOpenEvidence($event)"
@@ -720,6 +729,7 @@
         (uxuiFollowUp)="onUxuiFollowUp($event)"
         (uxuiActionQueued)="onUxuiActionQueued($event)"
         (openTask)="onOpenTaskFromReel($event)" />
+      }
 
 
       <app-workspace-overlays [watchPaths]="watchPaths()"

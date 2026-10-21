@@ -7,6 +7,25 @@ Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
 
+## Initial bundle ratchet
+
+The production `initial` budget in `frontend/angular.json` is a delivery
+ratchet. A frontend change must fit the current `maximumError`; it must not
+raise that value merely to pass review. Measure the production build with
+`npm --prefix frontend run build -- --stats-json` and inspect
+`frontend/dist/frontend/stats.json` before changing startup imports. The
+reported initial total includes every synchronously imported JavaScript and
+stylesheet. Prefer a deferred component or dynamic import at the feature entry
+point, and check that its code has no second eager path through a feature
+barrel. Verify the view loads in Playwright after splitting it.
+
+Only the release operator may approve a temporary increase to
+`maximumError` to unblock a deployment. That increase needs the measured old
+and new totals, the reason for the emergency, and a follow-up card to restore
+the ratchet. A delivery that reduces the bundle should lower `maximumError`
+to its measured initial size plus a small build-variance margin; preserve the
+`anyComponentStyle` budgets and component-size baselines.
+
 ## Environment flow
 
 The Studio header opens a full-width Environment view. It refreshes every 15
