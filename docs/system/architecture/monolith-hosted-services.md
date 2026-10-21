@@ -108,7 +108,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | AutoReviewPostProcessingRecoveryService | loop | apply-recover | Authority |
 | RemoteReviewEvidenceProjectionWorker | loop | apply-recover | Authority |
 | RemoteReviewSettlementReconciler | loop | apply-recover | Authority |
-| BatchGatePilotHostedService | loop | decide, switched | `GateResult` profile for every batch gate outcome, releases and red per-task gates (`HoldForEngineBatchDecision`, AGT-3234). Batch forming, closing and the advisor move with AGT-3055. |
+| BatchGatePilotHostedService | loop | decide, switched | `GateResult` profile for every batch gate outcome, releases and red per-task gates (`HoldForEngineBatchDecision`, AGT-3234). A per-task gate whose budget ran out in the machine gate queue is requeued through `GateQueueStallPolicy` (AGT-3219). Batch forming, closing and the advisor move with AGT-3055. |
 | IntakeHostedService | !PD, per project | decide, operator | AI Operator decider `intake-routing` (`IntakeRoutingPolicy`): an already-done card goes to a person in Human Review. Effect: `IntakeRoutingEffect`. |
 | GitInventoryRefreshHostedService | !PD | infra | Authority host |
 | ProjectRepositoryVisibilitySync | always | infra | Authority host. Copies project visibility settings to registered Task Server repositories. |
