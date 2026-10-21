@@ -3,7 +3,8 @@
 Workspace owners set weekly model-token and compute core-hour limits and a
 hosting-slot limit in Settings. A project can also have its own limits. Both
 levels apply: a project cannot bypass the workspace limit. A blank field has no
-limit; zero refuses new work. Weeks start Monday at 00:00 UTC. Usage resets by
+limit; zero refuses new work. Saving every field blank removes the limit, so
+admission stays a strict no-op even while a meter source is unreadable. Weeks start Monday at 00:00 UTC. Usage resets by
 the read window, while the stored limits remain in force.
 
 The quota read API is `GET /api/workspaces/{id}/quota` or
@@ -67,11 +68,15 @@ admitted with a hosting slot when the target environment is not running yet;
 a refusal answers `409` with the reason. A deploy job claim reserves the slot
 atomically; a refused job stays queued for the next claim. A healthy report
 marks the environment running, a failed first deploy returns the slot, and
-`POST /api/projects/{project}/environments/{environmentId}/stop` records an
-operator-confirmed stop and frees the slot. The minute reconciliation frees the
-slot of a removed declaration and the slot a claimed deploy job reserved when
-its five-minute lease expired without a report; a later claim of that job
-reserves it again. Reading the environments changes no slot. A timed promotion
+either report settles the reservation, so a healthy deployment keeps its slot.
+`POST /api/projects/{project}/environments/{environmentId}/stop` (approver for
+environments that need approval) queues a stop for the environment's deploy
+host and answers `202`. The environment stays running and keeps its slot until
+that host claims the stop and reports `stop-ok` with its lease token; a failed
+or lost stop leaves the slot occupied. The minute reconciliation frees the
+slot of a removed declaration and the slot of a claim that no report settled
+(an expired five-minute lease, a lost host, an aborted claim); a later claim of
+that job reserves it again. Reading the environments changes no slot. A timed promotion
 that quota refuses stays pending.
 
 Status is derived from tokens and core-hours: `warning` at 80% and `blocked`

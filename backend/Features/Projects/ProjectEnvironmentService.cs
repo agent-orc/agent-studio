@@ -24,7 +24,7 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
     string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0,
-    bool ReservedSlot = false);
+    bool ReservedSlot = false, bool IsStop = false);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -59,6 +59,8 @@ public sealed class ProjectEnvironmentService
     private static readonly Regex Digest = new(@"\A[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}\z", RegexOptions.Compiled);
     private const string HostLostEvidence = "host-lost";
     private const string AbortedEvidence = "deploy-aborted";
+    private const string StopOkEvidence = "stop-ok";
+    private const string StopFailedEvidence = "stop-failed";
     private readonly object _gate = new();
     private readonly IConfiguration _configuration;
     private readonly TaskScannerService _scanner;
@@ -267,7 +269,7 @@ public sealed class ProjectEnvironmentService
                 var pending = state.Jobs.LastOrDefault(job => job.EnvironmentId == item.Id
                     && (job.Status is "queued" or "claimed"));
                 return new ProjectEnvironmentView(item, latest?.Artifact,
-                    latest is null ? "unknown" : latest.Status == "failed" ? "failed" : "healthy",
+                    latest is null ? "unknown" : latest.Status is "failed" or "stopped" ? latest.Status : "healthy",
                     pending?.Artifact, history);
             }).ToArray(), state.Promotions.ToArray(), state.Jobs.Select(Sanitize).ToArray(),
                 state.History.Where(row => row.Item.Status == "failed").AsEnumerable().Reverse()
@@ -543,13 +545,23 @@ public sealed class ProjectEnvironmentService
                 if (AdvanceQueue(state)) Save(project, state);
                 states.Add((project, state));
             }
-            if (states.Any(item => item.State.Jobs.Any(job =>
+            if (states.Any(item => item.State.Jobs.Concat(item.State.Stops).Any(job =>
                     job.HostId == hostId && job.Status == "claimed" && job.ClaimedAt > now - LeaseDuration)))
                 return null;
             foreach (var (project, state) in states)
             {
-                var job = state.Jobs.FirstOrDefault(item => item.HostId == hostId &&
-                    (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration));
+                bool Claimable(DeployJob item) => item.HostId == hostId &&
+                    (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration);
+                // A stop frees a slot, so it is never held back by the quota.
+                if (state.Stops.FirstOrDefault(Claimable) is { } stop)
+                {
+                    var claimedStop = stop with
+                    { Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N"), Claims = stop.Claims + 1 };
+                    state.Stops[state.Stops.IndexOf(stop)] = claimedStop;
+                    Save(project, state);
+                    return claimedStop;
+                }
+                var job = state.Jobs.FirstOrDefault(Claimable);
                 if (job is null) continue;
                 if (!TryAdmitClaim(project, job, out var reserved)) continue;
                 var claimed = job with
@@ -566,7 +578,12 @@ public sealed class ProjectEnvironmentService
         }
     }
 
-    /// <summary>Releases reservations for removed environments and expired deploy leases.</summary>
+    /// <summary>
+    /// Releases reservations for removed environments and for claims that no
+    /// report settled: an expired lease, a lost host or an aborted claim. A
+    /// report clears <see cref="DeployJob.ReservedSlot"/>, so a healthy
+    /// deployment keeps its slot.
+    /// </summary>
     public void ReconcileHostingSlots()
     {
         if (_quota is null || !_quota.HasLimits()) return;
@@ -585,6 +602,9 @@ public sealed class ProjectEnvironmentService
                             && declarations.All(item => SlotKey(item.Id) != environmentId))
                             _quota.SetProjectEnvironment(project, environmentId, false);
                 var state = Load(project);
+                // Rows written before a report cleared the flag are settled, not expired.
+                var settled = state.Jobs.Where(job => job.ReservedSlot && job.Status == "healthy").ToList();
+                foreach (var job in settled) state.Jobs[state.Jobs.IndexOf(job)] = job with { ReservedSlot = false };
                 var expired = state.Jobs.Where(job => job.ReservedSlot
                     && (job.Status != "claimed" || job.ClaimedAt <= now - LeaseDuration)).ToList();
                 foreach (var job in expired)
@@ -593,7 +613,7 @@ public sealed class ProjectEnvironmentService
                     _quota.RecordDeployEnd(project, job.Id);
                     state.Jobs[state.Jobs.IndexOf(job)] = job with { ReservedSlot = false };
                 }
-                if (expired.Count > 0) Save(project, state);
+                if (settled.Count + expired.Count > 0) Save(project, state);
             }
         }
     }
@@ -612,7 +632,12 @@ public sealed class ProjectEnvironmentService
         }
     }
 
-    /// <summary>Records an operator-confirmed stop and releases its hosting slot.</summary>
+    /// <summary>
+    /// Queues a stop for the environment's host. The environment stays running
+    /// and keeps its hosting slot until that host claims the stop and reports
+    /// it done with its lease token (<see cref="Report"/>). A stop already
+    /// waiting for the host counts as requested.
+    /// </summary>
     public bool Stop(string project, string environmentId, string actor)
     {
         lock (_gate)
@@ -622,13 +647,29 @@ public sealed class ProjectEnvironmentService
             var state = Load(project);
             var current = state.History.LastOrDefault(row => row.EnvironmentId == environmentId)?.Item;
             if (current is null || current.Status == "stopped") return false;
-            var now = _clock.GetUtcNow().UtcDateTime;
-            state.History.Add(new(environmentId, now, new(now, "stopped", current.Artifact, current.Artifact,
-                "stopped-by:" + actor)));
+            if (state.Stops.Any(item => item.EnvironmentId == environmentId && item.Status is "queued" or "claimed"))
+                return true;
+            state.Stops.Add(new DeployJob(Guid.NewGuid().ToString("N"), project, environmentId,
+                declaration.TargetHostId, current.Artifact, declaration.Template, declaration.Destination,
+                null, [], declaration.ContainerPort, current.Artifact, "queued", _clock.GetUtcNow().UtcDateTime,
+                RequestedBy: actor, IsStop: true));
             Save(project, state);
-            _quota?.SetProjectEnvironment(project, SlotKey(environmentId), false);
             return true;
         }
+    }
+
+    /// <summary>The host confirmed the stop: the environment is stopped and its slot is free.</summary>
+    private void SettleStop(string project, State state, DeployJob stop, bool stopped, DateTime now)
+    {
+        state.Stops[state.Stops.IndexOf(stop)] = stop with
+        {
+            Status = stopped ? "stopped" : "failed", LeaseToken = null, FinishedAt = now,
+            Evidence = stopped ? StopOkEvidence : StopFailedEvidence,
+        };
+        if (!stopped) return;
+        state.History.Add(new(stop.EnvironmentId, now, new(now, "stopped", stop.Artifact, stop.Artifact,
+            "stopped-by:" + stop.RequestedBy)));
+        _quota?.SetProjectEnvironment(project, SlotKey(stop.EnvironmentId), false);
     }
 
     /// <summary>
@@ -642,6 +683,14 @@ public sealed class ProjectEnvironmentService
         {
             var state = Load(project);
             var advanced = AdvanceQueue(state);
+            var now = _clock.GetUtcNow().UtcDateTime;
+            if (state.Stops.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
+                    && item.LeaseToken == report.LeaseToken) is { } stop)
+            {
+                SettleStop(project, state, stop, report.Healthy && report.Evidence == StopOkEvidence, now);
+                Save(project, state);
+                return true;
+            }
             var job = state.Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
                 && item.LeaseToken == report.LeaseToken);
             if (job is null)
@@ -649,13 +698,17 @@ public sealed class ProjectEnvironmentService
                 if (advanced) Save(project, state);
                 return false;
             }
-            var now = _clock.GetUtcNow().UtcDateTime;
             var success = report.Healthy;
             // Host output is deliberately not accepted as an audit string. Keep a bounded status code only.
             var evidence = report.Evidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
                 ? report.Evidence : success ? "health-ok" : "deploy-step-failed";
+            // The report settles the reservation: the slot stays with a healthy
+            // deployment and is released here for a failed first deploy.
             state.Jobs[state.Jobs.IndexOf(job)] = job with
-            { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence };
+            {
+                Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence,
+                ReservedSlot = false,
+            };
             var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
@@ -712,6 +765,12 @@ public sealed class ProjectEnvironmentService
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, "failed", job.Artifact, job.PreviousArtifact, HostLostEvidence)));
             ClosePromotionForResult(state, lost, success: false, now);
+            changed = true;
+        }
+        foreach (var stop in state.Stops.Where(item => item.Status == "claimed" && item.ClaimedAt <= now - HostLostAfter).ToArray())
+        {
+            state.Stops[state.Stops.IndexOf(stop)] = stop with
+            { Status = "failed", LeaseToken = null, FinishedAt = now, Evidence = HostLostEvidence };
             changed = true;
         }
         return changed;
@@ -797,6 +856,8 @@ public sealed class ProjectEnvironmentService
         public List<DeployJob> Jobs { get; set; } = [];
         public List<EnvironmentPromotion> Promotions { get; set; } = [];
         public List<EnvironmentHistoryRow> History { get; set; } = [];
+        /// <summary>Stop requests for the hosts; kept apart from deploy jobs, which the deploy runs adopt.</summary>
+        public List<DeployJob> Stops { get; set; } = [];
     }
     public sealed record EnvironmentHistoryRow(string EnvironmentId, DateTime At, DeploymentHistoryItem Item);
 }

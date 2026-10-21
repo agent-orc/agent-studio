@@ -62,11 +62,20 @@ public static class ProjectOperatorDashboardEndpoints
             });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
+        // The stop is a request to the environment's host: the environment
+        // keeps running and keeps its hosting slot until that host reports the
+        // stop with its lease token.
         app.MapPost("/api/projects/{projectName}/environments/{environmentId}/stop", (
-            HttpContext context, string projectName, string environmentId, ProjectEnvironmentService environments) =>
-            environments.Stop(projectName, environmentId, DeployEndpoints.Actor(context, projectName).Id)
-                ? Results.Ok() : Results.Conflict(new { error = "The environment is not deployed or is already stopped." }))
-            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+            HttpContext context, string projectName, string environmentId, ProjectEnvironmentService environments,
+            DeployService deploy) =>
+        {
+            var actor = DeployEndpoints.Actor(context, projectName);
+            if (!actor.IsApprover && deploy.Environments(projectName)?.FirstOrDefault(item => item.Id == environmentId)
+                    is { } environment && StandardLifecyclePolicy.RequiresApproval(environment))
+                return ApprovalRequired();
+            return environments.Stop(projectName, environmentId, actor.Id)
+                ? Results.Accepted() : Results.Conflict(new { error = "The environment is not deployed or is already stopped." });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/deploy/jobs/claim", (HttpContext context, DeployClaimRequest request,
             ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration) =>

@@ -121,6 +121,64 @@ public sealed class DeployHostCommandTests
         }
     }
 
+    [Fact]
+    public async Task Stop_job_removes_the_static_site_and_acknowledges_with_its_lease()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "deploy-host-stop-" + Guid.NewGuid().ToString("N"));
+        var destination = Path.Combine(root, "site");
+        Directory.CreateDirectory(Path.Combine(destination, "release"));
+        File.CreateSymbolicLink(Path.Combine(destination, "current"), Path.Combine(destination, "release"));
+        var tokenFile = Path.Combine(root, "token");
+        File.WriteAllText(tokenFile, "host-token");
+        var plane = new StopPlane(destination);
+        try
+        {
+            using var client = new HttpClient(plane) { BaseAddress = new Uri("http://studio.test/") };
+            var result = await DeployHostCommand.RunAsync(
+                ["http://studio.test", "stage-host", tokenFile, Path.Combine(root, "artifacts")],
+                CancellationToken.None, client);
+
+            Assert.Equal(0, result);
+            Assert.False(File.Exists(Path.Combine(destination, "current")) || Directory.Exists(Path.Combine(destination, "current")));
+            Assert.True(Directory.Exists(Path.Combine(destination, "release")));
+            using var report = JsonDocument.Parse(Assert.Single(plane.Reports));
+            Assert.Equal("lease-1", report.RootElement.GetProperty("leaseToken").GetString());
+            Assert.True(report.RootElement.GetProperty("healthy").GetBoolean());
+            Assert.Equal("stop-ok", report.RootElement.GetProperty("evidence").GetString());
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    private sealed class StopPlane(string destination) : HttpMessageHandler
+    {
+        public List<string> Reports { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/deploy/jobs/claim")
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new
+                    {
+                        id = "stop-1", project = "demo", environmentId = "stage", hostId = "stage-host",
+                        artifact = "site@sha256:" + new string('a', 64), template = "static", destination,
+                        healthUrl = (string?)null, secretRefs = Array.Empty<string>(), containerPort = 0,
+                        previousArtifact = (string?)null, status = "claimed", leaseToken = "lease-1", isStop = true,
+                    }),
+                };
+            if (path == "/api/deploy/jobs/demo/stop-1/report")
+            {
+                Reports.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }
+    }
+
     private static void WriteReleaseEvidence(string root, string project, string artifact, string commit)
     {
         var directory = Path.Combine(root, "release-evidence", commit);
