@@ -19,12 +19,12 @@ internal sealed class RuntimeCapacityCache
     public RuntimeCapacityCache(string runnerStateRoot)
     {
         _path = Path.Combine(
-            Path.GetFullPath(runnerStateRoot),
+            RunnerStateRootGuard.Validate(runnerStateRoot),
             "configuration",
             "runtime-capacity.json");
     }
 
-    public RuntimeCapacityCacheEntry? Load(string hostId)
+    public RuntimeCapacityCacheEntry? Load(string hostId, Action<string>? warn = null)
     {
         lock (_gate)
         {
@@ -34,11 +34,15 @@ internal sealed class RuntimeCapacityCache
                 var entry = JsonSerializer.Deserialize<RuntimeCapacityCacheEntry>(
                     File.ReadAllText(_path),
                     Json);
-                return IsValid(entry, hostId) ? entry : null;
+                if (IsValid(entry, hostId)) return entry;
+                warn?.Invoke("Discarding runtime capacity cache with a foreign host or invalid server version.");
+                File.Delete(_path);
+                return null;
             }
             catch (Exception exception) when (
                 exception is IOException or UnauthorizedAccessException or JsonException)
             {
+                warn?.Invoke("Discarding unreadable runtime capacity cache.");
                 return null;
             }
         }
