@@ -1421,7 +1421,8 @@ public class TaskMutationService
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
-        TaskJsonFile.UpdateField(info.FolderPath, "released", released, _logger);
+        if (!TaskJsonFile.UpdateField(info.FolderPath, "released", released, _logger))
+            return false;
         var dependents = ReleaseGatedDependentKeys(info);
         _timeline?.Append(
             info.FolderPath,
@@ -1453,7 +1454,7 @@ public class TaskMutationService
         if (string.IsNullOrWhiteSpace(info.Key)) return [];
         try
         {
-            return _scanner.GetReferenceIndex()
+            return _scanner.GetCoreReferenceIndex()
                 .Dependents(info.Key, TaskReferenceKinds.DependsOn)
                 .Where(link => link.ReleaseGate && !string.IsNullOrWhiteSpace(link.SourceKey))
                 .Select(link => link.SourceKey!)

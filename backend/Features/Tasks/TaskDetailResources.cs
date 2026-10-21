@@ -76,7 +76,7 @@ public static class TaskDetailResources
             var lookup = Resolve(jobId, project, generation, context, projects, index);
             if (lookup.Error is not null) return lookup.Error;
             var core = lookup.Core!;
-            var summary = await tokens.GetAsync(core.ProjectName, core.WatchPath, core.Id);
+            var summary = await tokens.GetAsync(core.ProjectName, core.WatchPath, core.Id, context.RequestAborted);
             var data = new TaskUsageResource(summary, core.LastUsage,
                 scanner.ReadContextUsage(core.FolderPath));
             return Reply(context, core, lookup.ProjectId!, runtime, "usage", "ready", data, null,
