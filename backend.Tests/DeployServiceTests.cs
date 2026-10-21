@@ -1033,9 +1033,21 @@ public sealed class DeployServiceTests : IDisposable
             [RunnerScopes.Deploy], null, null));
         var credential = security.EnrollRunner(enrollment.Code);
         using var host = factory.CreateClient();
+        var artifactUrl = $"/api/deploy/jobs/demo/{stage.Id}/artifact";
+        using var unauthenticatedRequest = new HttpRequestMessage(HttpMethod.Get, artifactUrl);
+        unauthenticatedRequest.Headers.Add("X-Deploy-Lease", stage.LeaseToken);
+        using var unauthenticated = await host.SendAsync(unauthenticatedRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, unauthenticated.StatusCode);
+        var releaseCredential = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest(
+            "builder-only", [RunnerScopes.Release], null, null)).Code);
+        host.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", releaseCredential.Secret);
+        using var wrongScopeRequest = new HttpRequestMessage(HttpMethod.Get, artifactUrl);
+        wrongScopeRequest.Headers.Add("X-Deploy-Lease", stage.LeaseToken);
+        using var wrongScope = await host.SendAsync(wrongScopeRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, wrongScope.StatusCode);
         host.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
             "Bearer", credential.Secret);
-        var artifactUrl = $"/api/deploy/jobs/demo/{stage.Id}/artifact";
         using var withoutLease = await host.GetAsync(artifactUrl);
         Assert.Equal(HttpStatusCode.Forbidden, withoutLease.StatusCode);
         using var artifactRequest = new HttpRequestMessage(HttpMethod.Get, artifactUrl);
@@ -1048,6 +1060,7 @@ public sealed class DeployServiceTests : IDisposable
             Assert.Equal(commit, provenance.RootElement.GetProperty("commit").GetString());
             Assert.Equal("release/test-gate", provenance.RootElement.GetProperty("gateRunId").GetString());
             Assert.Equal("container", provenance.RootElement.GetProperty("template").GetString());
+            Assert.Equal(new string('a', 64), provenance.RootElement.GetProperty("digest").GetString());
         }
         Assert.Equal(releaseId, stage.ReleaseId);
         var otherCommit = Commit("reuse-digest");
@@ -1102,6 +1115,71 @@ public sealed class DeployServiceTests : IDisposable
         using var approved = await client.PostAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve", null);
         Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
         Assert.Equal(auth.User!.Id, service.DeploymentById("demo", production.Id)!.ApprovedBy);
+    }
+
+    [Fact]
+    public async Task NetworkedArtifactRoute_RequiresDeployCredentialAndReturnsDigest()
+    {
+        Build();
+        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.UseSetting("TaskRepository", Path.Combine(_root, "workspace"));
+            builder.UseSetting("Deploy:ReleaseEvidenceRoot", Path.Combine(_root, "release-evidence"));
+            builder.UseSetting("WatchPaths:0:Name", "demo");
+            builder.UseSetting("WatchPaths:0:Path", _watch);
+            builder.UseSetting("WatchPaths:0:RootPath", _repo);
+            builder.UseSetting("WatchPaths:0:RepositoryPath", _repo);
+            builder.UseSetting("Security:Profile", "networked");
+            builder.UseSetting("AllowedHosts", "studio.test");
+            builder.UseSetting("Logging:BackendFile:LogDirectory", Path.Combine(_root, "logs"));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(_clock);
+            });
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test") });
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var deployCredential = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest(
+            "stage-deploy", [RunnerScopes.Deploy], null, null)).Code);
+        var releaseCredential = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest(
+            "builder-only", [RunnerScopes.Release], null, null)).Code);
+        var stagePath = Path.Combine(_repo, "docs", "deployments", "environments", "stage.json");
+        var declaration = JsonNode.Parse(File.ReadAllText(stagePath))!;
+        declaration["targetHostId"] = deployCredential.Runner.Id;
+        File.WriteAllText(stagePath, declaration.ToJsonString());
+        var commit = Commit("networked-deploy-host");
+        WriteReleaseEvidence(Artifact('a'), commit);
+        var environments = factory.Services.GetRequiredService<ProjectEnvironmentService>();
+        Assert.True(environments.RegisterGateArtifact("demo", Artifact('a'), commit));
+        var created = factory.Services.GetRequiredService<DeployService>()
+            .CreateRelease("demo", Artifact('a'), commit, "release-gate");
+        Assert.Equal(DeployOutcomeKind.Ok, created.Kind);
+        var job = environments.Claim(deployCredential.Runner.Id, requireVerifiedRelease: true)!;
+        var url = $"/api/deploy/jobs/demo/{job.Id}/artifact";
+
+        using var missingRequest = new HttpRequestMessage(HttpMethod.Get, url);
+        missingRequest.Headers.Add("X-Deploy-Lease", job.LeaseToken);
+        using var missing = await client.SendAsync(missingRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, missing.StatusCode);
+
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", releaseCredential.Secret);
+        using var wrongScopeRequest = new HttpRequestMessage(HttpMethod.Get, url);
+        wrongScopeRequest.Headers.Add("X-Deploy-Lease", job.LeaseToken);
+        using var wrongScope = await client.SendAsync(wrongScopeRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, wrongScope.StatusCode);
+
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", deployCredential.Secret);
+        using var validRequest = new HttpRequestMessage(HttpMethod.Get, url);
+        validRequest.Headers.Add("X-Deploy-Lease", job.LeaseToken);
+        using var valid = await client.SendAsync(validRequest);
+        Assert.Equal(HttpStatusCode.OK, valid.StatusCode);
+        using var provenance = JsonDocument.Parse(await valid.Content.ReadAsStringAsync());
+        Assert.Equal(new string('a', 64), provenance.RootElement.GetProperty("digest").GetString());
     }
 
     [Theory]
