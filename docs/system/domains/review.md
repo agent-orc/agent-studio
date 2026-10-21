@@ -734,12 +734,17 @@ failure, or exception. Before comparison, every attempt-local path (candidate
 `repository`, `clean-repeat-<hash>-<guid>`, baseline workspace, and runtime
 home, temp, and cache directories) becomes a placeholder, and all timestamps
 and durations are removed. Output without a diagnostic line falls back to the
-exit status. A reproducible build or lint regression therefore produces the
-same fingerprint in both runs and can be classified as `product`.
+exit status. When the merge-base command passes and the candidate command
+fails on both its original run and clean repeat with ordinary nonzero exit
+codes, the runner classifies the delivery as `product` even if diagnostics
+change or no test name can be parsed. Exit 127, timeout and abnormal
+termination remain review infrastructure. The blocking verdict carries the
+command, both SHAs, all three exit codes and a bounded, secret-scrubbed
+candidate output tail. The fix-round prompt includes that verdict.
 
 | Evidence | Diagnosis | Card charge |
 |---|---|---|
-| Baseline green, clean repeat red with the same fingerprint, no other card matches | `product` | yes |
+| Baseline green, candidate and clean repeat both have ordinary nonzero exits | `product` | yes |
 | Baseline red or same fingerprint on the baseline or other cards | `environment` | no |
 | Clean repeat green and fingerprint has known intermittent pattern or prior occurrence | `intermittent` | no |
 | Clean repeat green without history, or required evidence unavailable | `unclassified-first-occurrence` | no |
@@ -752,7 +757,8 @@ management endpoint exposes the store without a new UI. Only confirmed
 `product` diagnoses spend the retry budget, anti-churn limit, and reissue
 counter. `environment` evacuates the participating dependency cache entry and
 frozen review state. An unavailable fingerprint store cannot establish a
-card-specific failure, so it cannot produce `product`.
+card-specific failure from one run. The green-baseline and repeated-red
+exit-status proof is independent of that store.
 
 The older `ReviewFailureAttributionPolicy` still explains pre-AGT-2916
 reports, but does not authorize a new card charge. For evidence that carries a

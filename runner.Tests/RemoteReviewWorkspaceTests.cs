@@ -1803,6 +1803,73 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, normalized.FailureClassification);
     }
 
+    [Theory]
+    [InlineData(ReviewBaselineModes.ExitStatus)]
+    [InlineData(ReviewBaselineModes.TestFailures)]
+    public async Task Repeated_unparsed_command_failure_on_green_baseline_opens_a_product_fix_round_with_output(
+        string baselineMode)
+    {
+        var (baselineSha, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf 'error: compile failed in %s\\n' \"$(cat /proc/sys/kernel/random/uuid)\"; " +
+            "exit 1; fi; exit 0") with { BaselineMode = baselineMode };
+        var (workspace, subject) = Workspace("attempt-unparsed-repeat", subjectSha,
+            [command], 26050, resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(Report(evidence, workspace), subject.Plan);
+        var candidate = CandidateVerification(evidence);
+        var repeat = Assert.Single(evidence.Commands, item => item.Phase == "clean-repeat");
+        var verdict = Assert.Single(evidence.Verdicts);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("ProductFailure", normalized.Outcome);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, candidate.Diagnosis?.Classification);
+        Assert.Equal(0, candidate.BaselineExitCode);
+        Assert.Equal(1, candidate.ExitCode);
+        Assert.Equal(1, repeat.ExitCode);
+        if (baselineMode == ReviewBaselineModes.ExitStatus)
+            Assert.Empty(candidate.NewFailures!);
+        else
+            Assert.Equal(["<unparsed failure in verify-2>"], candidate.NewFailures);
+        Assert.Equal("block", verdict.Status);
+        Assert.Contains("error: compile failed", verdict.Summary);
+        Assert.Contains($"baseline={baselineSha} exit=0", verdict.Summary);
+        Assert.Contains($"candidate={subjectSha} exit=1", verdict.Summary);
+        Assert.Contains("clean-repeat exit=1", verdict.Summary);
+        Assert.Contains("verify-2", verdict.Summary);
+        var prompt = ReviewFindingRoundPrompt.Build(
+            [new ReviewFollowUpFinding(verdict.Aspect, verdict.Status,
+                verdict.Summary, verdict.EvidenceChecked, verdict.Missing, verdict.Classification)],
+            "review-unparsed", true, "fixed-nonce");
+        Assert.Contains("error: compile failed", prompt);
+        Assert.Contains("verify-2", prompt);
+    }
+
+    [Fact]
+    public async Task Timed_out_clean_repeat_is_review_infrastructure_even_after_a_green_baseline()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var marker = Path.Combine(_root, "first-failure-seen");
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            $"if test ! -f '{marker}'; then touch '{marker}'; exit 1; fi; " +
+            "sleep 3; fi; exit 0") with { TimeoutSeconds = 1 };
+        var (workspace, _) = Workspace("attempt-repeat-timeout", subjectSha,
+            [command], 26052, resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("CommandTimeout", exception.Classification);
+        Assert.Equal("ReviewInfra", exception.Evidence?.Outcome);
+    }
+
     [Fact]
     public void Missing_baseline_comparison_is_reported_as_infrastructure_with_command_context()
     {

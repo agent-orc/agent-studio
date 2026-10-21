@@ -561,6 +561,24 @@ public sealed class RemoteReviewWorkspace
                         commands,
                         artifacts,
                         ct);
+                    if (execution.Signal is not null || execution.Process.ExitCode is 124 or < 0)
+                    {
+                        commands.Add(await AddCommandEvidenceAsync(
+                            command.StepId, command.Aspect, command.FileName, command.Arguments,
+                            headBefore, treeBefore, execution.Process, execution.StartedAt,
+                            execution.FinishedAt, execution.Signal, command.TimeoutSeconds,
+                            "verification", "candidate", comparison.BaselineSha, comparison,
+                            retryPerformed: false, dependencyCacheHit: false, dependencyCache: null,
+                            artifacts, ct, command));
+                        SaveCaches(candidateCache);
+                        throw await InfrastructureFailureAsync(
+                            execution.Signal == "timeout" || execution.Process.ExitCode == 124
+                                ? "CommandTimeout" : "CommandInterrupted",
+                            $"Review command '{command.StepId}' did not complete normally: " +
+                            $"{CommandLine(command)}; exit={execution.Process.ExitCode}; " +
+                            $"signal={execution.Signal ?? "none"}.",
+                            commands, artifacts, ct);
+                    }
                     if (comparison is not null && !comparison.BlockedByIsolatedBuild)
                     {
                         var reviewFlakyTests = ReviewFlakyTestIndex.Discover(RepositoryPath, _log);
@@ -607,6 +625,17 @@ public sealed class RemoteReviewWorkspace
                                 commands,
                                 artifacts,
                                 ct);
+                        }
+                        if (cleanRepeat.Signal is not null || cleanRepeat.Process.ExitCode is 124 or < 0)
+                        {
+                            SaveCaches(candidateCache);
+                            throw await InfrastructureFailureAsync(
+                                cleanRepeat.Signal == "timeout" || cleanRepeat.Process.ExitCode == 124
+                                    ? "CommandTimeout" : "CommandInterrupted",
+                                $"Review retry '{command.StepId}' did not complete normally: " +
+                                $"{CommandLine(command)}; exit={cleanRepeat.Process.ExitCode}; " +
+                                $"signal={cleanRepeat.Signal ?? "none"}.",
+                                commands, artifacts, ct);
                         }
                         if (StalledWithoutCpuProgress(cleanRepeat))
                         {
@@ -691,7 +720,7 @@ public sealed class RemoteReviewWorkspace
                                     IntegrationBranchDefectClassification, 1,
                                     [$"build {command.StepId} was already red on the integration branch"])
                                 : await DiagnoseFailureAsync(
-                                    command, requiredComparison, execution.Process, cleanRepeat?.Process, ct),
+                                    command, requiredComparison, execution, cleanRepeat, ct),
                         };
                     if (comparison.Diagnosis?.Classification == DeliveryFailureDiagnosis.Environment
                         && candidateCache is not null)
@@ -1995,10 +2024,16 @@ public sealed class RemoteReviewWorkspace
     private async Task<DeliveryFailureDiagnosisResult> DiagnoseFailureAsync(
         ReviewCommandDto command,
         BaselineComparison comparison,
-        ProcessResult firstResult,
-        ProcessResult? cleanResult,
+        CommandExecution first,
+        CommandExecution? clean,
         CancellationToken ct)
     {
+        var firstResult = first.Process;
+        var cleanResult = clean?.Process;
+        var reproducedExit = ReviewCommandExitDiagnosis.Reproduced(
+            comparison.BaselineExitCode, firstResult.ExitCode, cleanResult?.ExitCode,
+            first.Signal, clean?.Signal);
+
         var initial = comparison.InitialFailures.Count > 0
             ? comparison.InitialFailures : comparison.PreExistingFailures;
         var fingerprint = ReviewFailureFingerprint(command.StepId, initial, firstResult);
@@ -2044,7 +2079,12 @@ public sealed class RemoteReviewWorkspace
         {
             _log($"review fingerprint report failed step={command.StepId}: {exception.Message}");
         }
-        return diagnosis;
+        return reproducedExit
+            ? new DeliveryFailureDiagnosisResult(DeliveryFailureDiagnosis.Product, 1,
+                [ReviewCommandExitDiagnosis.Evidence($"{command.StepId}: {CommandLine(command)}", comparison.BaselineSha,
+                    _subject.ExpectedResultSha, comparison.BaselineExitCode, firstResult.ExitCode,
+                    cleanResult!.ExitCode, firstResult.StdOut, firstResult.StdErr)])
+            : diagnosis;
     }
 
     private string ReviewFailureFingerprint(
@@ -3073,7 +3113,11 @@ public sealed class RemoteReviewWorkspace
                 $"; failed-tests={string.Join(", ", comparison.InitialFailures)}" +
                 $"; confidence={diagnosis.Confidence:0.00}; baseline={comparison.BaselineSha} ({comparison.Provenance})",
                 $"command:{command.StepId}; baseline:{comparison.BaselineSha}",
-                diagnosis.ChargesCard ? string.Join(", ", comparison.InitialFailures) : "none");
+                diagnosis.ChargesCard
+                    ? comparison.InitialFailures.Count > 0
+                        ? string.Join(", ", comparison.InitialFailures)
+                        : $"failed command {command.StepId}"
+                    : "none");
         }
         var baselineState = comparison.BaselineExitCode == 0
             ? "green on the merge base"
