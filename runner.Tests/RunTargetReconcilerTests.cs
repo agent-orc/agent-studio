@@ -531,6 +531,97 @@ public sealed class RunTargetReconcilerTests : IDisposable
     }
 
     [Fact]
+    public async Task Removal_ThatCannotRemoveTheNetwork_IsNotConfirmed_AndRetriesTheNetwork()
+    {
+        await Converge(Spec(First));
+        _docker.NetworkRemoveFails = true;
+
+        var result = await Desired([], removals: [new RunTargetRemoval("demo", "stage")]);
+
+        Assert.Empty(result.Observations);
+        var app = _store.Load().Apps[Key];
+        Assert.Equal(((RunTargetSlot?)null, (RunTargetSlot?)null), (app.Current, app.Previous));
+
+        _docker.NetworkRemoveFails = false;
+        var calls = _docker.Calls.Count;
+        result = await Desired([], removals: [new RunTargetRemoval("demo", "stage")]);
+
+        Assert.DoesNotContain(_docker.Calls.Skip(calls), call => call.StartsWith("down "));
+        Assert.Contains("network-rm " + RunTargetNames.AppNetwork(Key), _docker.Calls.Skip(calls));
+        Assert.Equal("removed", Assert.Single(result.Observations).State);
+        Assert.Empty(_store.Load().Apps);
+    }
+
+    [Fact]
+    public async Task FailedCandidate_ThatDockerCannotRemove_IsTakenDownOnALaterCycle()
+    {
+        var first = Spec(First);
+        var second = Spec(Second, jobId: "job-2");
+        await Converge(first);
+        _docker.UnhealthyProjects.Add(Slot(second));
+        _docker.DownFailsFor.Add(Slot(second));
+
+        await Converge(second);
+
+        Assert.Equal(Slot(second), Assert.Single(_store.Load().OrphanedRevisions).ComposeProject);
+
+        _docker.DownFailsFor.Clear();
+        var calls = _docker.Calls.Count;
+        await _reconciler.SuperviseOnlyAsync("connection refused", CancellationToken.None);
+
+        Assert.Equal(["down " + Slot(second)], _docker.Calls.Skip(calls).Where(call => call.StartsWith("down ")));
+        Assert.Empty(_store.Load().OrphanedRevisions);
+        Assert.Equal(First, _store.Load().Apps[Key].Current!.Artifact);
+    }
+
+    [Fact]
+    public async Task ReplacedPreviousRevision_ThatDockerCannotRemove_IsTakenDownOnALaterCycle()
+    {
+        var first = Spec(First);
+        var third = Spec(Third, jobId: "job-3");
+        await Converge(first);
+        await Converge(Spec(Second, jobId: "job-2"));
+        _docker.DownFailsFor.Add(Slot(first));
+
+        await Converge(third);
+
+        var state = _store.Load();
+        Assert.Equal(Slot(first), Assert.Single(state.OrphanedRevisions).ComposeProject);
+        Assert.Equal((Third, Second), (state.Apps[Key].Current!.Artifact, state.Apps[Key].Previous!.Artifact));
+
+        _docker.DownFailsFor.Clear();
+        var calls = _docker.Calls.Count;
+        await Converge(Spec(Third, jobId: null));
+
+        Assert.Equal(["down " + Slot(first)], _docker.Calls.Skip(calls).Where(call => call.StartsWith("down ")));
+        Assert.Empty(_store.Load().OrphanedRevisions);
+    }
+
+    [Fact]
+    public async Task OrphanedRevision_ThatIsDeployedAgain_IsNotTakenDown()
+    {
+        var first = Spec(First);
+        var second = Spec(Second, jobId: "job-2");
+        await Converge(first);
+        _docker.UnhealthyProjects.Add(Slot(second));
+        _docker.DownFailsFor.Add(Slot(second));
+        await Converge(second);
+        _docker.UnhealthyProjects.Clear();
+
+        // Docker still fails, so the orphan stays listed while the redeploy makes it current.
+        await Converge(Spec(Second, jobId: "job-3"));
+        Assert.Equal(Second, _store.Load().Apps[Key].Current!.Artifact);
+        _docker.DownFailsFor.Clear();
+        var calls = _docker.Calls.Count;
+
+        await Converge(Spec(Second, jobId: null));
+
+        Assert.DoesNotContain(_docker.Calls.Skip(calls), call => call.StartsWith("down "));
+        Assert.Empty(_store.Load().OrphanedRevisions);
+        Assert.Contains($"reverse_proxy {Slot(second)}:8080", Caddyfile);
+    }
+
+    [Fact]
     public async Task ForcedAppKeyCollision_RefusesTheSpecAndTheRemoval_AndLeavesTheOwnerRunning()
     {
         var owner = Spec(First, jobId: null);

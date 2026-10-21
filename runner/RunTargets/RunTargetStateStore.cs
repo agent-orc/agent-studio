@@ -49,6 +49,12 @@ public sealed class RunTargetHostState
 
     /// <summary>Domain to app key. The first app that routed a domain keeps it (<see cref="RunTargetCaddyfile.ClaimDomains"/>).</summary>
     public Dictionary<string, string> DomainOwners { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Revisions no app holds any more whose <c>compose down</c> failed. Each
+    /// cycle takes them down again until Docker confirms.
+    /// </summary>
+    public List<RunTargetSlot> OrphanedRevisions { get; set; } = [];
 }
 
 /// <summary>

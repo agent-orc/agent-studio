@@ -92,6 +92,11 @@ public sealed class RunTargetReconciler(
         }
         var removed = new List<RunTargetRemoval>();
 
+        if (state.OrphanedRevisions.Count > 0)
+        {
+            await RemoveOrphanedRevisionsAsync(state, ct);
+            store.Save(state);
+        }
         if (specs.Count > 0 || removals.Count > 0 || state.Apps.Count > 0)
         {
             // Removals first, so a domain they free can go to a new app in this cycle.
@@ -153,6 +158,8 @@ public sealed class RunTargetReconciler(
     /// <summary>
     /// Takes both revisions and the app network down. Each slot is cleared and
     /// saved as soon as it is gone, so a retry continues where a failure stopped.
+    /// The app stays in the state, unconfirmed, until the network is gone too,
+    /// so Studio keeps sending the removal and the next cycle retries it.
     /// </summary>
     private async Task<bool> RemoveAppAsync(string key, RunTargetAppState app, RunTargetHostState state, CancellationToken ct)
     {
@@ -162,7 +169,11 @@ public sealed class RunTargetReconciler(
         if (!await RemoveSlotAsync(app.Previous, ct)) return false;
         app.Previous = null;
         var network = await docker.RemoveNetworkAsync(RunTargetNames.AppNetwork(key), ct);
-        if (!network.Ok) log($"run-target: could not remove network {RunTargetNames.AppNetwork(key)}: {network.Detail}");
+        if (!network.Ok)
+        {
+            log($"run-target: could not remove network {RunTargetNames.AppNetwork(key)}: {network.Detail}");
+            return false;
+        }
         state.Apps.Remove(key);
         log($"run-target: removed {app.Project}/{app.EnvironmentId}; Studio took it off this host");
         return true;
@@ -243,7 +254,7 @@ public sealed class RunTargetReconciler(
         if (!started.Ok)
         {
             log($"run-target: {name} start failed: {resolved.Mask(started.Detail)}");
-            await DiscardCandidateAsync(candidate, restoring, ct);
+            await DiscardCandidateAsync(candidate, restoring, state, ct);
             Fail(app, spec, reports, RunTargetEvidence.StepFailed, "deploy-step-failed");
             return;
         }
@@ -251,7 +262,7 @@ public sealed class RunTargetReconciler(
         if (!await WaitHealthyAsync(candidate, settings.HealthAttempts, ct))
         {
             log($"run-target: {name} candidate {revision} failed its health check; the running revision keeps serving");
-            await DiscardCandidateAsync(candidate, restoring, ct);
+            await DiscardCandidateAsync(candidate, restoring, state, ct);
             Fail(app, spec, reports, RunTargetEvidence.HealthFailed, "health-failed");
             return;
         }
@@ -278,7 +289,7 @@ public sealed class RunTargetReconciler(
         if (!await PublishRoutesAsync(state, ct))
         {
             app.Current = replaced;
-            await DiscardCandidateAsync(candidate, restoring, ct);
+            await DiscardCandidateAsync(candidate, restoring, state, ct);
             return false;
         }
         if (replaced is not null)
@@ -287,8 +298,9 @@ public sealed class RunTargetReconciler(
             if (!stopped.Ok) log($"run-target: {name} could not stop replaced revision {replaced.Revision}: {stopped.Detail}");
             else secretFiles.Remove(replaced.ComposeProject);
         }
-        if (app.Previous is { } older && older.Revision != candidate.Revision && older.Revision != replaced?.Revision)
-            await RemoveSlotAsync(older, ct);
+        if (app.Previous is { } older && older.Revision != candidate.Revision && older.Revision != replaced?.Revision
+            && !await RemoveSlotAsync(older, ct))
+            state.OrphanedRevisions.Add(older);
         app.Previous = replaced;
         if (app.CrashRollbackRevision is { } crashed && crashed != app.Current.Revision && crashed != app.Previous?.Revision)
             app.CrashRollbackRevision = null;
@@ -396,7 +408,7 @@ public sealed class RunTargetReconciler(
         {
             log($"run-target: {name} previous revision {previous.Revision} did not come up healthy; keeping the current one"
                 + (started.Ok ? "" : $": {resolved.Mask(started.Detail)}"));
-            await DiscardCandidateAsync(previous, restoring: true, ct);
+            await DiscardCandidateAsync(previous, restoring: true, state, ct);
             return false;
         }
         return await SwapAsync(name, app, previous, restoring: true, state, ct);
@@ -505,17 +517,38 @@ public sealed class RunTargetReconciler(
         return false;
     }
 
-    private async Task DiscardCandidateAsync(RunTargetSlot candidate, bool restoring, CancellationToken ct)
+    private async Task DiscardCandidateAsync(RunTargetSlot candidate, bool restoring, RunTargetHostState state,
+        CancellationToken ct)
     {
         // A restored previous revision stays available for the next rollback.
         if (!restoring)
         {
-            await RemoveSlotAsync(candidate, ct);
+            if (!await RemoveSlotAsync(candidate, ct)) state.OrphanedRevisions.Add(candidate);
             return;
         }
         var stopped = await docker.ComposeStopAsync(candidate.ComposeProject, candidate.ComposeFile, ct);
         if (stopped.Ok) secretFiles.Remove(candidate.ComposeProject);
         else log($"run-target: could not stop revision {candidate.Revision}: {stopped.Detail}");
+    }
+
+    /// <summary>
+    /// Takes down the revisions whose earlier removal failed. A revision that an
+    /// app runs or keeps again (the same artifact was redeployed) is no orphan
+    /// any more and is only dropped from the list.
+    /// </summary>
+    private async Task RemoveOrphanedRevisionsAsync(RunTargetHostState state, CancellationToken ct)
+    {
+        var held = state.Apps.Values
+            .SelectMany(app => new[] { app.Current?.ComposeProject, app.Previous?.ComposeProject })
+            .OfType<string>()
+            .ToHashSet(StringComparer.Ordinal);
+        var remaining = new List<RunTargetSlot>();
+        foreach (var orphan in state.OrphanedRevisions.DistinctBy(slot => slot.ComposeProject, StringComparer.Ordinal))
+        {
+            if (held.Contains(orphan.ComposeProject)) continue;
+            if (!await RemoveSlotAsync(orphan, ct)) remaining.Add(orphan);
+        }
+        state.OrphanedRevisions = remaining;
     }
 
     private async Task<bool> RemoveSlotAsync(RunTargetSlot? slot, CancellationToken ct)

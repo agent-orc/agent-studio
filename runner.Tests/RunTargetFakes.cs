@@ -16,6 +16,7 @@ internal sealed class FakeRunTargetDocker : IRunTargetDocker
 
     /// <summary>Compose projects whose <c>down</c> fails while the others succeed.</summary>
     public HashSet<string> DownFailsFor { get; } = new(StringComparer.Ordinal);
+    public bool NetworkRemoveFails { get; set; }
     public string? FailUpWith { get; set; }
     public int Reloads { get; private set; }
 
@@ -40,7 +41,9 @@ internal sealed class FakeRunTargetDocker : IRunTargetDocker
     public Task<RunTargetDockerResult> RemoveNetworkAsync(string network, CancellationToken ct)
     {
         Calls.Add("network-rm " + network);
-        return Task.FromResult(RunTargetDockerResult.Success);
+        return Task.FromResult(NetworkRemoveFails
+            ? new RunTargetDockerResult(false, "network has active endpoints")
+            : RunTargetDockerResult.Success);
     }
 
     public Task<RunTargetDockerResult> ComposeUpAsync(string project, string composeFile, CancellationToken ct)

@@ -205,7 +205,13 @@ placements recorded before kinds were kept are treated the same way. A
 declaration that comes back clears the pending removal. The host takes both
 revisions down, each slot cleared as soon as it is gone, so a retry continues
 where a failure stopped. It then removes the app network and confirms with an
-observation in state `removed`. Studio drops the placement and keeps the last
+observation in state `removed`. A failed network removal leaves the app in the
+host state unconfirmed, so Studio keeps sending the removal and the next cycle
+removes the network again. A replaced or failed revision whose `compose down`
+fails is listed in `orphanedRevisions` of the host state, and every cycle,
+supervise-only passes included, takes it down again until Docker confirms; a
+revision that an app runs or keeps again leaves the list without being taken
+down. Studio drops the placement and keeps the last
 20 removals, with decision and actor, in `runTargetRemovals`. An app the
 desired state does not mention is kept as it is, with its route, its previous
 revision, and crash supervision. So is an app whose environment has no
