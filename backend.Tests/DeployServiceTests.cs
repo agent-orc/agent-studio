@@ -100,6 +100,31 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Concurrent_runbook_and_deployment_audit_appends_preserve_every_event()
+    {
+        var (_, _, store) = Build();
+        const int Rounds = 200;
+        using var start = new Barrier(2);
+        var now = _clock.GetUtcNow().UtcDateTime;
+        // The runbook and deployment services hold separate gates and share this store.
+        Task Writer(string actor, string action) => Task.Run(() =>
+        {
+            start.SignalAndWait();
+            for (var i = 0; i < Rounds; i++)
+                store.AppendAudit("demo", [new(now, actor, action, null, $"{action}-{i}", "stage", $"{action} {i}")]);
+        });
+
+        await Task.WhenAll(Writer("deploy-host", "runbook-succeeded"), Writer("operator", "deployment-queued"));
+
+        var audit = store.ReadAudit("demo", Rounds * 4);
+        Assert.Equal(Rounds * 2, audit.Count);
+        Assert.Equal(Rounds, audit.Select(entry => entry.DeploymentId).Distinct()
+            .Count(id => id!.StartsWith("runbook-succeeded-", StringComparison.Ordinal)));
+        Assert.Equal(Rounds, audit.Select(entry => entry.DeploymentId).Distinct()
+            .Count(id => id!.StartsWith("deployment-queued-", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public void Runbook_recovers_a_queued_host_job_when_the_run_record_write_is_lost()
     {
         var (_, environments, store) = Build();
