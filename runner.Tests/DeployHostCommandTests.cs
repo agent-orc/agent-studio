@@ -52,7 +52,6 @@ public sealed class DeployHostCommandTests
         File.WriteAllText(Path.Combine(repo, "initial"), "initial");
         Git(repo, "add", ".");
         Git(repo, "commit", "-m", "initial");
-        var commit = Git(repo, "rev-parse", "HEAD").Trim();
         File.WriteAllText(Path.Combine(environmentDir, "production.json"), JsonSerializer.Serialize(new
         {
             id = "production", name = "Production", kind = "production", targetHostId = "prod-host",
@@ -100,6 +99,9 @@ public sealed class DeployHostCommandTests
                 address = $"http://127.0.0.1:{port}/", template = "container", destination = port.ToString(),
                 healthUrl = $"http://127.0.0.1:{port}/", containerPort = 80,
             }));
+            Git(repo, "add", "docs/deployments/environments");
+            Git(repo, "commit", "-m", "declare environments");
+            var commit = Git(repo, "rev-parse", "HEAD").Trim();
             var service = factory.Services.GetRequiredService<ProjectEnvironmentService>();
             WriteReleaseEvidence(root, project, image, commit);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", release.Secret);
