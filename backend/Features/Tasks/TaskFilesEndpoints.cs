@@ -58,9 +58,17 @@ public static class TaskFilesEndpoints
             [FromQuery] string? watchPath,
             [FromQuery] string? at,
             [FromQuery] string? scope,
+            HttpContext ctx,
             TaskFileHistoryService files,
             AgentStudio.Registry.ProjectRegistry projects) =>
         {
+            if (ContributorAccessPolicy.IsProductSession(ctx))
+            {
+                if (!ContributorAccessPolicy.AllowsTaskFileRead(path)
+                    || (scope is not null && !scope.Equals(TaskFileSources.Workspace, StringComparison.OrdinalIgnoreCase)))
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                scope = TaskFileSources.Workspace;
+            }
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (TryStripOperationSuffix(path, "history", out var historyPath))
             {
@@ -87,9 +95,12 @@ public static class TaskFilesEndpoints
             [FromQuery] string? project,
             [FromQuery] string? watchPath,
             [FromQuery] string? at,
+            HttpContext ctx,
             TaskFileHistoryService files,
             AgentStudio.Registry.ProjectRegistry projects) =>
         {
+            if (ContributorAccessPolicy.IsProductSession(ctx))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (TryStripOperationSuffix(path, "history", out var historyPath))
             {

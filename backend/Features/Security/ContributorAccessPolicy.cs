@@ -34,6 +34,20 @@ public static class ContributorAccessPolicy
     /// <summary>Screenshots, HTML reports and Markdown; never logs, TRX, JSONL or other raw output.</summary>
     public static bool AllowsResultFile(string path) => ReadableResultExtensions.Contains(Path.GetExtension(path));
 
+    /// <summary>Only card documents and safe result artifacts may be read through the file/history route.</summary>
+    public static bool AllowsTaskFileRead(string path)
+    {
+        var document = path.EndsWith("/history", StringComparison.OrdinalIgnoreCase)
+            ? path[..^"/history".Length]
+            : path;
+        if (document.Equals("prompt.md", StringComparison.OrdinalIgnoreCase)
+            || document.Equals("status.md", StringComparison.OrdinalIgnoreCase)) return true;
+        var segments = document.Split('/');
+        return segments.Length >= 2 && segments[0].Equals("results", StringComparison.OrdinalIgnoreCase)
+            && segments.Skip(1).All(segment => segment.Length > 0 && segment is not ("." or ".."))
+            && AllowsResultFile(document);
+    }
+
     /// <summary>
     /// A Product wish carries no run controls: project defaults choose the CLI,
     /// model, thinking level, mode, web access and integration, and the card
@@ -69,6 +83,15 @@ public static class ContributorAccessPolicy
 
         var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (segments.Any(DeniedSegments.Contains)) return false;
+
+        if (segments.Length >= 4 && segments[0].Equals("api", StringComparison.OrdinalIgnoreCase)
+            && segments[1].Equals("tasks", StringComparison.OrdinalIgnoreCase))
+        {
+            if (segments[3].Equals("checkout", StringComparison.OrdinalIgnoreCase)) return false;
+            if (segments[3].Equals("files", StringComparison.OrdinalIgnoreCase)
+                && (segments.Length < 5 || !AllowsTaskFileRead(string.Join('/', segments[4..]))))
+                return false;
+        }
 
         if (HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method))
         {

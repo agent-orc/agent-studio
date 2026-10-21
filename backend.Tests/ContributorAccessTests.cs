@@ -56,6 +56,13 @@ public sealed class ContributorAccessTests : IDisposable
         { "GET", "/api/tasks/card/results/tests.trx", null, false, false },
         { "GET", "/api/tasks/card/results/events.jsonl", null, false, false },
         { "GET", "/api/tasks/card/results/report", null, false, false },
+        { "GET", "/api/tasks/card/files/prompt.md", null, false, true },
+        { "GET", "/api/tasks/card/files/status.md/history", null, false, true },
+        { "GET", "/api/tasks/card/files/results/run.log", null, false, false },
+        { "GET", "/api/tasks/card/files/results/report.html", null, false, true },
+        { "GET", "/api/tasks/card/files/task.json", null, false, false },
+        { "GET", "/api/tasks/card/checkout/credentials.json", null, false, false },
+        { "GET", "/api/tasks/card/CHECKOUT/credentials.json", null, false, false },
         { "GET", "/api/projects/PROJ-1/CREDENTIALS", null, false, false },
         { "GET", "/api/projects/PROJ-1/settings", null, false, false },
         { "GET", "/api/projects/PROJ-1/autonomy", null, false, false },
@@ -157,6 +164,41 @@ public sealed class ContributorAccessTests : IDisposable
             Assert.Equal(HttpStatusCode.Forbidden, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken));
         }
         Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/results/run.log", owner.SessionToken));
+        Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/files/prompt.md", product.SessionToken));
+        Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/files/results/report.html", product.SessionToken));
+        foreach (var route in new[]
+        {
+            "files/results/run.log", "FILES/results/run.log", "files/logs/cli-output.log",
+            "files/task.json", "checkout/credentials.json", "CHECKOUT/credentials.json",
+            "files/prompt.md?scope=code",
+        })
+            Assert.Equal(HttpStatusCode.Forbidden, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken));
+
+        using var decision = await SendAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, new
+        {
+            title = "Hidden preparation decision", watchPath = projectPath, kind = TaskKinds.Decision,
+            promptMarkdown = "Choose a color.",
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, decision.StatusCode);
+
+        var projects = factory.Services.GetRequiredService<ProjectRegistry>();
+        var destinationPath = Path.Combine(_root, "projects", "unassigned-project");
+        Directory.CreateDirectory(destinationPath);
+        var destination = projects.EnsureProjectForStorage(destinationPath, "Unassigned project", DefaultWorkspace.Id);
+        projects.UpsertOwnershipMapping(destination.Id, new ComponentOwnershipMapping
+        {
+            Id = "unassigned-component", Component = "Unassigned component",
+            ObservedSurfaces = ["Unassigned surface"], PrimaryProjectId = destination.Id,
+            AllowedTicketPrefix = "OTHER", Confidence = 1,
+        });
+        using var crossProject = await SendAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, new
+        {
+            title = "Cross-project wish", watchPath = projectPath,
+            routing = new { observedSurface = "Unassigned surface", component = "Unassigned component" },
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, crossProject.StatusCode);
+        Assert.DoesNotContain(Directory.EnumerateFiles(destinationPath, "task.json", SearchOption.AllDirectories),
+            file => File.ReadAllText(file).Contains("Cross-project wish", StringComparison.Ordinal));
 
         using var created = await SendAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, new
         {
