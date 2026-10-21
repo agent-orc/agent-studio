@@ -11,7 +11,7 @@
 // IPv4 addresses and CIDRs stay literal rules.
 {
   "schemaVersion": 1,
-  "version": "2026-10-20.3",
+  "version": "2026-10-20.5",
   "resolver": {
     "upstreams": ["${AGENT_ZONE_DNS_RESOLVERS}"],
     "setTimeoutSeconds": 86400
@@ -100,11 +100,12 @@
       "name": "run",
       "kind": "run",
       "networks": [
-        { "name": "agent-run-default", "bridge": "br-run-default", "subnet": "172.31.0.0/24", "tenant": "default" }
+        { "name": "agent-run-default", "bridge": "br-run-default", "subnet": "172.31.0.0/24", "tenant": "default", "privateAllow": [] }
       ],
       "egress": {
         "default": "allow",
-        "deny": ["control-plane", "secret-store"]
+        "deny": ["control-plane", "secret-store"],
+        "zeroTierRanges": ["${AGENT_ZONE_ZEROTIER_RANGES}"]
       },
       "verify": {
         "reachable": [
@@ -112,7 +113,10 @@
         ],
         "blocked": [
           { "destination": "control-plane" },
-          { "destination": "secret-store", "port": 443 }
+          { "destination": "secret-store", "port": 443 },
+          { "host": "169.254.169.254", "port": 80, "requireControl": false },
+          { "host": "${AGENT_ZONE_LAN_PROBE}", "port": 443 },
+          { "host": "${AGENT_ZONE_ZEROTIER_PEER}", "port": 443 }
         ]
       }
     }

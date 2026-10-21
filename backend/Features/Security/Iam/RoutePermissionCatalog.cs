@@ -246,6 +246,19 @@ public static class RoutePermissionCatalog
         Environment("R", IamPermissions.SecretsRead, "/api/projects/{}/environments/{}/secrets/**", null, "environment");
         Environment("W", IamPermissions.SecretsWrite, "/api/projects/{}/environments/{}/secrets/**", null, "environment");
 
+        // OTLP intake validates its own environment token. Human query and
+        // token-management routes still use the Studio permission boundary.
+        Add("POST", IamPermissions.Anonymous, "/api/telemetry/otlp/v1/metrics", "/api/telemetry/otlp/v1/logs");
+        Add("R", IamPermissions.ProjectRead,
+            "/api/projects/{}/environments/{}/telemetry/metrics/names",
+            "/api/projects/{}/environments/{}/telemetry/metrics",
+            "/api/projects/{}/environments/{}/telemetry/logs");
+        Add("R", IamPermissions.ProjectSettingsWrite,
+            "/api/projects/{}/environments/{}/telemetry/tokens");
+        Add("W", IamPermissions.ProjectSettingsWrite,
+            "/api/projects/{}/environments/{}/telemetry/tokens",
+            "/api/projects/{}/environments/{}/telemetry/tokens/{}");
+
         // Receipt handlers filter reads and check the receipt's project before
         // recording an intent. A scoped operator can therefore use its own
         // receipts without an installation-wide operation binding.

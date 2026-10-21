@@ -61,6 +61,7 @@ export class AccessService {
       this.state.set('ready');
     } catch (error: unknown) {
       const status = error instanceof HttpErrorResponse ? error.status : 0;
+      this.clearPrivateState();
       this.state.set(status === 401 || status === 403 ? 'denied' : 'error');
       this.error.set(status === 401
         ? 'Sign in to manage access. A local installation without sign-in has one implicit owner and needs no setup.'
@@ -163,11 +164,22 @@ export class AccessService {
       await this.load();
       return result;
     } catch (error: unknown) {
+      if (error instanceof HttpErrorResponse && (error.status === 401 || error.status === 403)) {
+        this.clearPrivateState();
+        this.state.set('denied');
+      }
       this.error.set(message(error, 'The change could not be saved.'));
       return null;
     } finally {
       this.busy.set(false);
     }
+  }
+
+  private clearPrivateState(): void {
+    this.overview.set(null);
+    this.projects.set([]);
+    this.enrollments.set([]);
+    this.runners.set([]);
   }
 }
 

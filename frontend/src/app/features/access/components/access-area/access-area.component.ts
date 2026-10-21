@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, computed, effect, inject, signal } from '@angular/core';
 import { scopeLabel, type AccessUser } from '../../models/access.model';
 import { AccessService } from '../../services/access.service';
 import { AccessBindingsComponent } from '../access-bindings/access-bindings.component';
@@ -24,6 +24,12 @@ export class AccessAreaComponent implements OnInit {
   readonly access = inject(AccessService);
   readonly overview = this.access.overview;
   readonly temporaryPassword = signal<{ username: string; value: string } | null>(null);
+
+  constructor() {
+    effect(() => {
+      if (this.access.state() === 'denied') this.temporaryPassword.set(null);
+    });
+  }
 
   readonly counts = computed(() => {
     const overview = this.overview();

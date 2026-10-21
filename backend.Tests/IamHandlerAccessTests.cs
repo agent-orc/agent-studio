@@ -419,6 +419,29 @@ public sealed class IamHandlerAccessTests : IDisposable
         Assert.Equal(HttpStatusCode.Forbidden, foreign.StatusCode);
     }
 
+    [Fact]
+    public async Task Telemetry_queries_and_ingest_tokens_respect_project_bindings()
+    {
+        using var factory = BuildFactory();
+        WriteEnvironmentDeclaration("alpha", "stage", "stage");
+        WriteEnvironmentDeclaration("beta", "stage", "stage");
+        using var viewer = Client(factory, Invite(factory, "telemetry.viewer",
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
+        using var admin = Client(factory, Invite(factory, "telemetry.admin",
+            new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))));
+
+        using var alphaRead = await viewer.GetAsync("/api/projects/alpha/environments/stage/telemetry/metrics/names");
+        Assert.Equal(HttpStatusCode.OK, alphaRead.StatusCode);
+        using var betaRead = await viewer.GetAsync("/api/projects/beta/environments/stage/telemetry/metrics/names");
+        Assert.Equal(HttpStatusCode.Forbidden, betaRead.StatusCode);
+        using var viewerTokens = await viewer.GetAsync("/api/projects/alpha/environments/stage/telemetry/tokens");
+        Assert.Equal(HttpStatusCode.Forbidden, viewerTokens.StatusCode);
+        using var alphaTokens = await admin.GetAsync("/api/projects/alpha/environments/stage/telemetry/tokens");
+        Assert.Equal(HttpStatusCode.OK, alphaTokens.StatusCode);
+        using var betaTokens = await admin.GetAsync("/api/projects/beta/environments/stage/telemetry/tokens");
+        Assert.Equal(HttpStatusCode.Forbidden, betaTokens.StatusCode);
+    }
+
     private HttpRequestMessage OrphanFolderDelete() => new(HttpMethod.Delete, "/api/tasks/orphan-folder")
     {
         Content = JsonContent.Create(new { watchPath = ProjectPath("alpha"), lane = TaskStates.Archive, folder = "no-such-folder" }),
