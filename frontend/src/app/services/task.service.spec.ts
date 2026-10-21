@@ -87,6 +87,24 @@ describe('TaskService', () => {
     }
   });
 
+  it('retries a warming project detail reply', () => {
+    vi.useFakeTimers();
+    try {
+      let selected: TaskDetail | undefined;
+      service.getDetailByProject('AGT-1', 'project-1').subscribe(detail => { selected = detail; });
+      const url = '/api/v1/projects/project-1/tasks/AGT-1';
+      http.expectOne(request => request.url === url && request.params.get('project') === 'project-1')
+        .flush({ state: 'warming' }, { status: 202, statusText: 'Accepted' });
+      expect(selected).toBeUndefined();
+      vi.advanceTimersByTime(100);
+      http.expectOne(request => request.url === url && request.params.get('project') === 'project-1')
+        .flush({ info: { id: 'AGT-1' } } as unknown as TaskDetail);
+      expect(selected?.info.id).toBe('AGT-1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('decodes job file content from UTF-8 bytes', () => {
     const expected = 'Lücken / gehört / für / „Anführung"';
     let actual = '';

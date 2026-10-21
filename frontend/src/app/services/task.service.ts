@@ -883,10 +883,7 @@ export class TaskService {
     const projectId = project.trim();
     if (!projectId) return this.getDetail(jobId, fallbackWatchPath);
 
-    const request = this.http.get<TaskDetail>(
-      this.taskV1Url(jobId, projectId),
-      { params: new HttpParams().set('project', projectId) },
-    );
+    const request = this.getDetail(jobId, undefined, projectId);
     return fallbackWatchPath
       ? request.pipe(catchError(() => this.getDetail(jobId, fallbackWatchPath)))
       : request;
