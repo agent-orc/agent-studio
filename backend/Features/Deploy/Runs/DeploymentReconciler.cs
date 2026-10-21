@@ -100,7 +100,10 @@ public static class DeploymentReconciler
 
             var trigger = !job.IsRollback ? DeploymentTriggers.Deploy
                 : actor == "automatic-rollback" ? DeploymentTriggers.AutomaticRollback : DeploymentTriggers.Rollback;
-            var needsApproval = StandardLifecyclePolicy.RequiresApproval(environment)
+            var record = input.Releases.FirstOrDefault(item => item.Release.Id == release.Id);
+            var phase = record?.Lifecycle.FirstOrDefault(item => item.Phase == environment.Kind);
+            var needsApproval = (record is { Lifecycle.Count: > 0 }
+                    ? phase?.Approval.Count > 0 : StandardLifecyclePolicy.RequiresApproval(environment))
                 && trigger != DeploymentTriggers.AutomaticRollback;
             var run = new DeploymentRecord
             {
@@ -135,6 +138,10 @@ public static class DeploymentReconciler
                 .LastOrDefault();
             if (record is null) continue;
             var release = record.Release;
+            if (record.Lifecycle.Count > 0 && record.Lifecycle.All(item => item.Phase != environment.Kind))
+                continue;
+            if (record.Lifecycle.Count > 0 && record.Lifecycle.First(item => item.Phase == environment.Kind).Approval.Count == 0)
+                continue;
             // Any run for this release here since staging turned healthy answers
             // the promotion already, including a cancelled one.
             if (runs.Any(item => item.EnvironmentId == environment.Id && item.ReleaseId == release.Id

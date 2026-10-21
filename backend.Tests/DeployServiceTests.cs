@@ -715,6 +715,53 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void Release_creation_uses_committed_channel_rules_and_preserves_the_snapshot()
+    {
+        var (deploy, environments, store) = Build();
+        WriteProjectYml("""
+            lifecycles:
+              standard:
+                - phase: staging
+                  automatic: true
+                - phase: production
+                  approval: [Owner]
+                  requires: staging
+              hotfix:
+                - phase: staging
+                  automatic: true
+                - phase: production
+                  automatic: true
+                  requires: staging
+            channels:
+              - name: default
+                lifecycle: standard
+                default: true
+              - name: hotfix
+                lifecycle: hotfix
+                branchPattern: refs/heads/hotfix/*
+            variables:
+              - name: LOG_LEVEL
+                value: debug
+                channels: [hotfix]
+            """);
+        var commit = Commit("channel-definition");
+        var artifact = Artifact('a');
+        WriteReleaseEvidence(artifact, commit);
+        Assert.True(environments.RegisterGateArtifact("demo", artifact, commit));
+        var refused = deploy.CreateRelease("demo", artifact, commit, "release-gate", branch: "refs/heads/main",
+            requestedChannel: "hotfix");
+        Assert.Equal(DeployOutcomeKind.Invalid, refused.Kind);
+        Assert.Contains("branchPattern=refs/heads/hotfix/*", refused.Error);
+        var created = deploy.CreateRelease("demo", artifact, commit, "release-gate",
+            branch: "refs/heads/hotfix/urgent");
+        Assert.Equal(DeployOutcomeKind.Ok, created.Kind);
+        Assert.Equal("hotfix", created.Value!.Channel);
+        Assert.Equal("staging", Assert.Single(store.ReadReleaseRecords("demo")).Lifecycle[1].Requires);
+        Report(deploy, environments, "stage-host", healthy: true);
+        Assert.Contains(deploy.Deployments("demo", "production")!, item => item.State == DeploymentStates.Queued);
+    }
+
+    [Fact]
     public async Task Routes_ServeTheSharedContract()
     {
         Build();
@@ -752,6 +799,11 @@ public sealed class DeployServiceTests : IDisposable
         Assert.True(factory.Services.GetRequiredService<ProjectEnvironmentService>()
             .RegisterGateArtifact("demo", Artifact('a'), commit));
 
+        using var unknownChannel = await client.PostAsJsonAsync("/api/projects/demo/environments/releases",
+            new ReleaseArtifactRequest(Artifact('a'), commit, Channel: "hotfix"));
+        Assert.Equal(HttpStatusCode.BadRequest, unknownChannel.StatusCode);
+        Assert.Contains("Channel 'hotfix' is not declared", await unknownChannel.Content.ReadAsStringAsync());
+
         using var created = await client.PostAsJsonAsync("/api/projects/demo/environments/releases",
             new ReleaseArtifactRequest(Artifact('a'), commit));
         Assert.Equal(HttpStatusCode.Accepted, created.StatusCode);
@@ -776,6 +828,7 @@ public sealed class DeployServiceTests : IDisposable
         using var releasePage = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/releases/page?offset=0&limit=1"));
         Assert.Equal(1, releasePage.RootElement.GetProperty("total").GetInt32());
         Assert.Single(releasePage.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal("default", releasePage.RootElement.GetProperty("items")[0].GetProperty("channel").GetString());
         using var runPage = JsonDocument.Parse(await client.GetStringAsync(
             "/api/projects/demo/deploy/deployments/page?environmentId=stage&state=queued&offset=0&limit=1"));
         Assert.Equal(1, runPage.RootElement.GetProperty("total").GetInt32());

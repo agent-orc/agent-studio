@@ -316,6 +316,7 @@ test.describe('Project Deploy area (mocked)', () => {
         await capture(page, `deploy-overview-${width}-${theme}`);
         await page.getByTestId('deploy-tab-releases').click();
         await expect(page.getByTestId('deploy-release-detail')).toContainText('WEB-35');
+        await expect(page.getByRole('list', { name: 'Releases, newest first' }).getByRole('button').first()).toContainText('default');
         await capture(page, `deploy-releases-${width}-${theme}`);
         await page.getByTestId('deploy-tab-pipeline').click();
         await expect(page.getByTestId('pipeline-node-staging')).toBeVisible();
