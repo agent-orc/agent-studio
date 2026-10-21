@@ -991,6 +991,7 @@ public static class V1ReviewPlaneEndpoints
                         orchestration.CancelUnactivated(occurrence.RunId, "review-settlement-failed");
                         EngineDecisionWaitMarker.Clear(reviewTask.FolderPath, occurrence.RunId);
                         scanner.InvalidateCache();
+                        scanner.PublishCoreFromKnownFolder(reviewTask.FolderPath);
                     }
                     logger.LogError(exception, "engine-review-settlement-failed attempt={AttemptId}", attemptId);
                     return Results.Json(new Contract.ApiError("review-settlement-repair-required",
@@ -1002,6 +1003,7 @@ public static class V1ReviewPlaneEndpoints
                     orchestration.CancelUnactivated(occurrence.RunId, "review-settlement-rejected");
                     EngineDecisionWaitMarker.Clear(reviewTask.FolderPath, occurrence.RunId);
                     scanner.InvalidateCache();
+                    scanner.PublishCoreFromKnownFolder(reviewTask.FolderPath);
                     return Results.Conflict(new Contract.ApiError("idempotency-conflict",
                         "The review report key is bound to a different payload."));
                 }
@@ -1010,6 +1012,7 @@ public static class V1ReviewPlaneEndpoints
                     orchestration.CancelUnactivated(occurrence.RunId, "review-settlement-rejected");
                     EngineDecisionWaitMarker.Clear(reviewTask.FolderPath, occurrence.RunId);
                     scanner.InvalidateCache();
+                    scanner.PublishCoreFromKnownFolder(reviewTask.FolderPath);
                     return AttemptError(engineSettled);
                 }
                 try
@@ -1027,6 +1030,7 @@ public static class V1ReviewPlaneEndpoints
                 if (occurrence.Status is "pending" or "leased" or "applying")
                     EngineDecisionWaitMarker.Write(reviewTask.FolderPath, occurrence.RunId);
                 scanner.InvalidateCache();
+                scanner.PublishCoreFromKnownFolder(reviewTask.FolderPath);
                 var engineReceivedAt = engineSettled.ReviewAttempt.Reports.LastOrDefault(report =>
                     report.IdempotencyKey == request.IdempotencyKey)?.ReceivedAt ?? DateTime.UtcNow;
                 evidenceQueue.Enqueue(new RemoteReviewEvidenceProjectionRequest(
@@ -1396,7 +1400,10 @@ public static class V1ReviewPlaneEndpoints
                         logger.LogError(fallbackError,
                             "batch-gate-emergency-fallback-failed attempt={AttemptId}", attemptId);
                     }
-                    if (emergencyBatchState is not (TaskStates.HumanReview or TaskStates.Escalated))
+                    // AGT-3219: a queue overrun of the emergency gate admits the
+                    // review to the batch queue; the card stays in Auto Review.
+                    if (emergencyBatchState is not (TaskStates.HumanReview or TaskStates.Escalated)
+                        && !batchPilot.IsQueuedForBatch(settled.ReviewAttempt.AttemptId))
                         return Results.Json(new Contract.ApiError(
                             "batch-gate-evidence-missing",
                             "The settled review could not enter the durable batch queue or finish its per-task gate."),

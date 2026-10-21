@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, OnInit, computed, effect, inject, input, output, signal } from '@angular/core';
-import { TaskState, isTerminalTaskState, type AutoLoopSnapshot, type TaskExecutionLocation, type TaskInfo, type PendingIntent, type EpicRollup } from '../../../../models/task.model';
+import { TaskState, isTerminalTaskState, type AutoLoopSnapshot, type TaskExecutionLocation, type TaskInfo, type PendingIntent } from '../../../../models/task.model';
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
 import { GitSummaryService } from '../../../../services/git-summary.service';
 import { TaskService } from '../../../../services/task.service';
@@ -43,8 +43,6 @@ import {
   commitChainVariant,
   formatTokens,
   taskTypeIconName,
-  EPIC_ASSIGN_PREFIX,
-  EPIC_DETACH_ID,
   FILTER_DEPENDENTS_ID,
   DELETE_ID,
   type CommitChainView,
@@ -61,6 +59,7 @@ import { RunDispositionBadgesComponent } from '../run-disposition-badges/run-dis
 import { IntegrationStatusBadgeComponent } from '../../../../components/integration-status-badge/integration-status-badge.component';
 import { ReviewDecisionBadgesComponent } from '../review-decision-badges/review-decision-badges.component';
 import { TaskLiveStatusComponent } from '../../../../components/task-live-status/task-live-status.component';
+import { TaskPreviewComponent } from '../../../../components/task-preview/task-preview.component';
 import { TokenPopoverDirective } from './token-popover.directive';
 import { TaskTokenUsagePopoverComponent } from './token-usage-popover/token-usage-popover.component';
 import { TaskCardQuotaWaitComponent } from '../task-card-quota-wait/task-card-quota-wait.component';
@@ -70,13 +69,11 @@ import { NotificationService } from '../../../../services/notification.service';
 import { copyTextToClipboard } from '../../../../services/clipboard.util';
 import { deriveStalledTaskState, isTaskRunActive } from '../../../../services/run-activity.util';
 import { BoardFiltersService } from '../../state/board-filters.service';
-import { EpicExpansionStore } from '../../state/epic-expansion.service';
 import { TaskSelectionService } from '../../../task-detail/runtime';
 import { PostProcessingActivityComponent } from '../post-processing-activity/post-processing-activity.component';
 import { TestEvidenceStatusComponent } from '../../../test-evidence';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
 import { CodexSignInDialogService, ClaudeSignInDialogService, ProviderAuthStatusService, modelCliVersionWaitReason, providerAuthWaitReason } from '../../../remote-hosts';
-import { laneName } from '../../../../models/lane-presentation';
 import { buildDecisionBadge, decisionBlockReason, decisionBlockers } from '../../../../models/decision-card-presentation';
 import { TaskCardDecisionChipsComponent } from '../task-card-decision-chips/task-card-decision-chips.component';
 import { FailureInterventionChipComponent } from '../failure-intervention-chip/failure-intervention-chip.component';
@@ -93,14 +90,13 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, TaskCardCauseWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent],
+  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaNoticeComponent, TaskCardQuotaWaitComponent, TaskCardCauseWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',
 })
 export class TaskCardComponent implements OnInit, OnDestroy {
   readonly job = input.required<TaskInfo>();
-  readonly epicSubTasks = input<readonly TaskInfo[]>([]);
   readonly compact = input<boolean>(false);
   readonly mutationsBlocked = input<boolean>(false);
   /**
@@ -110,7 +106,6 @@ export class TaskCardComponent implements OnInit, OnDestroy {
    */
   readonly highlightJobId = input<string | null>(null);
   readonly deleteRequested = output<TaskInfo>();
-  readonly subTaskClick = output<TaskInfo>();
   /**
    * F5: emitted when the user clicks the inline "Pick next" affordance
    * on a 2-ready card. The host wires this to `moveJobToTop` so the
@@ -374,52 +369,6 @@ export class TaskCardComponent implements OnInit, OnDestroy {
 
   readonly identity = computed(() => projectIdentity(this.job().projectName));
 
-  /** Epic container card: drives the "EPIC" badge in the title row. */
-  readonly isEpic = computed(() => this.job().kind === 'epic');
-  readonly inlineEpicSubTasks = computed(() => {
-    const job = this.job();
-    if (job.kind !== 'epic') return [] as TaskInfo[];
-    return this.epicSubTasks()
-      .filter((task) => task.kind !== 'epic' && task.epicId === job.id && task.watchPath === job.watchPath)
-      .sort((a, b) => {
-        const state = (a.state ?? '').localeCompare(b.state ?? '');
-        if (state !== 0) return state;
-        return (a.title || a.id).localeCompare(b.title || b.id);
-      });
-  });
-  readonly hasInlineEpicSubTasks = computed(() => this.inlineEpicSubTasks().length > 0);
-
-  private readonly epicExpansion = inject(EpicExpansionStore);
-  /**
-   * Inline epic expand state, read from the shared {@link EpicExpansionStore}
-   * keyed on this epic's id rather than a local signal. Keying on the task id
-   * (not the component instance) is what keeps the expand open across polling
-   * cycles and card re-mounts - see the store's class doc.
-   */
-  readonly epicExpanded = computed(() => this.epicExpansion.isExpanded(this.job().id));
-
-  /** Parent epic id when this card is a sub-task, else null (drives the "↳ epic" chip). */
-  readonly subTaskEpicId = computed(() => {
-    const id = this.job().epicId;
-    return id && id.trim().length > 0 ? id : null;
-  });
-
-  toggleEpicExpanded(event: Event): void {
-    event.stopPropagation();
-    this.epicExpansion.toggle(this.job().id);
-  }
-
-  onInlineSubTaskClick(event: Event, subTask: TaskInfo): void {
-    event.stopPropagation();
-    this.subTaskClick.emit(subTask);
-  }
-
-  readonly laneLabel = laneName;
-
-  verdictLabel(verdict: TaskInfo['orchestratorVerdict']): string | null {
-    return verdict ? verdict.replace(/-/g, ' ') : null;
-  }
-
   readonly isRunning = computed(() =>
     this.job().state === TaskState.Progress && isTaskRunActive(this.job()));
   readonly stalledState = computed(() => deriveStalledTaskState(this.job(), nowTick()));
@@ -445,7 +394,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
     return Math.floor(hrs / 24) + 'd ago';
   });
 
-  // Context menu: copy actions + epic assignment (way 2).
+  // Context menu actions.
   private readonly notifications = inject(NotificationService);
   private readonly jobs = inject(TaskService);
   private readonly boardMutations = inject(BoardMutationsService);
@@ -453,11 +402,8 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private readonly selection = inject(TaskSelectionService);
   private readonly boardFilters = inject(BoardFiltersService);
   readonly cardContextMenu = signal<{ x: number; y: number } | null>(null);
-  /** Epics in this card's project, loaded on right-click for the assign submenu. */
-  private readonly epicsForMenu = signal<EpicRollup[]>([]);
-
   readonly cardCtxMenuItems = computed(() => buildCardCtxMenuItems(
-    this.job(), this.isEpic(), this.epicsForMenu(), this.subTaskEpicId(), this.mutationsBlocked(),
+    this.job(), this.mutationsBlocked(),
     focusVisibleLaneStates(this.laneFocus())));
 
   /** AGT-2029: open the dependency this card is waiting on (see resolveDependencyTarget). */
@@ -500,15 +446,6 @@ export class TaskCardComponent implements OnInit, OnDestroy {
 
   private openCardMenuAt(x: number, y: number): void {
     this.cardContextMenu.set({ x, y });
-    // Refresh the assign list each open (only for task cards). Best-effort:
-    // the section just shows "No epics" on failure.
-    if (!this.isEpic() && !this.mutationsBlocked()) {
-      const watchPath = this.job().watchPath;
-      this.jobs.getEpics().subscribe({
-        next: (list) => this.epicsForMenu.set((list ?? []).filter((e) => e.watchPath === watchPath)),
-        error: () => this.epicsForMenu.set([]),
-      });
-    }
   }
 
   closeCardContextMenu(): void {
@@ -535,18 +472,6 @@ export class TaskCardComponent implements OnInit, OnDestroy {
       this.deleteRequested.emit(job);
       return;
     }
-    if (ev.id.startsWith(EPIC_ASSIGN_PREFIX)) {
-      if (this.mutationsBlocked()) return;
-      const epicId = ev.id.slice(EPIC_ASSIGN_PREFIX.length);
-      if (epicId === this.subTaskEpicId()) return; // already in this epic
-      this.assignEpic(epicId);
-      return;
-    }
-    if (ev.id === EPIC_DETACH_ID) {
-      if (this.mutationsBlocked()) return;
-      this.assignEpic(null);
-      return;
-    }
     if (ev.id === FILTER_DEPENDENTS_ID && job.key) {
       this.boardFilters.setDependsOnFilter(job.key);
       this.notifications.info(`Filtering to tasks that depend on ${job.key}`);
@@ -565,19 +490,4 @@ export class TaskCardComponent implements OnInit, OnDestroy {
     }
   }
 
-  /** Way 2: attach (epicId) or detach (null) this task, then refresh the board. */
-  private assignEpic(epicId: string | null): void {
-    if (this.mutationsBlocked()) return;
-    const job = this.job();
-    this.jobs.setJobEpic(job.id, epicId, job.watchPath).subscribe({
-      next: () => {
-        const epic = this.epicsForMenu().find((e) => e.id === epicId);
-        this.notifications.success(
-          epicId ? `Assigned to epic: ${epic?.title ?? epicId}` : 'Detached from epic',
-        );
-        this.jobs.refresh(true);
-      },
-      error: () => this.notifications.error('Could not update epic assignment'),
-    });
-  }
 }

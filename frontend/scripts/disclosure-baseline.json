@@ -57,17 +57,9 @@
       "kind": "staged-adoption",
       "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
     },
-    "src/app/features/board/components/epic-group-board/epic-group-board.component.html": {
-      "kind": "staged-adoption",
-      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
-    },
     "src/app/features/board/components/filters-dropdown/filters-dropdown.component.html": {
       "kind": "popup-trigger",
       "reason": "Board filter dropdown trigger; the panel is an anchored overlay."
-    },
-    "src/app/features/board/components/task-card/task-card.component.html": {
-      "kind": "staged-adoption",
-      "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
     },
     "src/app/features/orchestrator/components/global-orchestrator-card/global-orchestrator-card.html": {
       "kind": "staged-adoption",

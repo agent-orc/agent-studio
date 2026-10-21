@@ -10,6 +10,13 @@ The fixed receipts and bus fixture in [`TokenUsageCharacterizationTests`](../../
 
 `ProjectTokenLedger.LoadSnapshot` merges project bus history, durable `task.json.tokenSummary` calls, and chat fallback receipts. `ProjectTokenReceiptReader` reads both legacy lane folders and bucketed task folders, including archived tasks. `TokenLedgerMerge` removes bus/receipt overlap; `TokenLedgerDuplicates` collapses duplicate calls within a source. Receipt calls are authoritative for a task's coding run. A task without a coding receipt keeps its historical `pipeline-execution.json` cost record. A failed source is represented in `ProjectTokenDataFreshness` as partial or unavailable instead of silently becoming a zero.
 
+The separate task usage resource reads this merged ledger after the core card
+has painted. One single-flight priced fold per project supplies per-card
+summaries. A change to that card's receipt bytes or a matching token bus append
+invalidates its summary; heartbeat-only core publications leave it cached.
+The full-detail response returns a cached summary when available and starts a
+background warm when it is missing. It never folds the ledger on the request.
+
 The writers are `ProjectRunner.MirrorAgentTurnUsageToBus` for local coding calls, `RemoteTokenReceiptService` for remote coding completion, `RemotePipelineReviewEvidenceProjector` for remote review, and `OrchestratorChatService.RecordChatUsageAsync` for chat. Chat fallback receipts are written when the bus append fails. The merged ledger retains participant, host, CLI, model, timestamp, and token dimensions.
 
 `TokenAggregationService.WorkspaceTimeline` filters to the requested UTC window before pricing entries. The fold applies the same half-open interval `[start, end)` and builds project, model, host, and bucket rows from the selected entries. `WorkspaceTimelineRange` reads bus rows for its exact calendar interval. Both preserve the recorded timestamp for historical pricing.

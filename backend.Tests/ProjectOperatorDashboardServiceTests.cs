@@ -31,11 +31,8 @@ public sealed class ProjectOperatorDashboardServiceTests : IDisposable
         var completedTwice = Task("completed-twice", TaskStates.Archive, now.AddDays(-6));
         var tooOld = Task("too-old", TaskStates.Completed, now.AddDays(-8));
         var reopened = Task("reopened", TaskStates.Ready, now.AddMinutes(-10));
-        var completedEpic = Task("completed-epic", TaskStates.Completed, now.AddMinutes(-30)) with
-        {
-            Kind = TaskKinds.Epic,
-        };
-        var tasks = new[] { archivedWithHistory, archivedLegacy, currentLegacy, completedTwice, tooOld, reopened, completedEpic };
+        var retiredParent = Task("old-parent", TaskStates.Archive, now.AddHours(-1)) with { Kind = "epic" };
+        var tasks = new[] { archivedWithHistory, archivedLegacy, currentLegacy, completedTwice, tooOld, reopened, retiredParent };
 
         var events = new Dictionary<string, IReadOnlyList<TimelineEvent>>(StringComparer.Ordinal)
         {
@@ -49,7 +46,7 @@ public sealed class ProjectOperatorDashboardServiceTests : IDisposable
             ],
             [tooOld.Id] = [LaneChange(now.AddDays(-8), TaskStates.Completed)],
             [reopened.Id] = [LaneChange(now.AddMinutes(-10), TaskStates.Completed)],
-            [completedEpic.Id] = [LaneChange(now.AddMinutes(-30), TaskStates.Completed)],
+            [retiredParent.Id] = [LaneChange(now.AddHours(-1), TaskStates.Completed)],
         };
 
         var result = ProjectThroughputService.BuildSummary(
@@ -62,7 +59,6 @@ public sealed class ProjectOperatorDashboardServiceTests : IDisposable
             new[] { "archived-history", "current-legacy" },
             result.RecentCompletions.Select(item => item.TaskId));
         Assert.DoesNotContain(result.RecentCompletions, item => item.TaskId == archivedLegacy.Id);
-        Assert.DoesNotContain(result.RecentCompletions, item => item.TaskId == completedEpic.Id);
         Assert.DoesNotContain(result.RecentCompletions, item => item.TaskId == reopened.Id);
         Assert.Equal(1, result.ReAcceptanceArtefactsLast7d);
     }
