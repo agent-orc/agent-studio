@@ -253,6 +253,15 @@ public sealed class TaskIndexCache
         where T : class
         => Current().GetOrAddDerived(name, version, build);
 
+    /// <summary>Derives from the resident generation without entering the global refresh gate.</summary>
+    public T GetDerivedPublished<T>(string name, long version, Func<TaskIndexPublication, T> build)
+        where T : class
+    {
+        TaskIndexPublication publication;
+        lock (_lock) publication = Pinned ?? _publication;
+        return publication.GetOrAddDerived(name, version, build);
+    }
+
     /// <summary>
     /// The board-read entry point (AGT-3088). Returns an already published
     /// generation without running a disk walk on the caller's thread. A dirty
@@ -566,8 +575,9 @@ public sealed class TaskIndexCache
                 records.TryGetValue(info.FolderPath, out var previous);
                 // A move or project transfer may change the folder before publication.
                 var removedFolders = new List<string>();
-                foreach (var old in facts.Where(pair => pair.Value.TaskKey == info.TaskKey
-                    || (pair.Value.Id == info.Id && WatchPathComparison.PathsEqual(pair.Value.WatchPath, info.WatchPath)))
+                foreach (var old in facts.Where(pair =>
+                    WatchPathComparison.PathsEqual(pair.Value.WatchPath, info.WatchPath)
+                    && (pair.Value.TaskKey == info.TaskKey || pair.Value.Id == info.Id))
                     .Select(pair => pair.Key).ToArray())
                 {
                     if (old != info.FolderPath)
@@ -676,8 +686,9 @@ public sealed class TaskIndexCache
             {
                 facts = new Dictionary<string, TaskInfo>(_coreFactsByFolder, _coreFactsByFolder.Comparer);
                 records = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer);
-                foreach (var key in _core.Where(pair => pair.Value.TaskKey == info.TaskKey
-                    || (pair.Value.Id == info.Id && WatchPathComparison.PathsEqual(pair.Value.WatchPath, info.WatchPath)))
+                foreach (var key in _core.Where(pair =>
+                    WatchPathComparison.PathsEqual(pair.Value.WatchPath, info.WatchPath)
+                    && (pair.Value.TaskKey == info.TaskKey || pair.Value.Id == info.Id))
                     .Select(pair => pair.Key))
                     _removedCoreKeys.Add(key);
             }
@@ -718,12 +729,17 @@ public sealed class TaskIndexCache
             ? Path.GetDirectoryName(Path.GetDirectoryName(path))
             : Path.GetDirectoryName(path);
         if (folder is null) return;
+        var observedTaskStamp = name == "task.json" ? TaskCoreSourceStamp.Read(path) : default;
         TaskCoreRecord? known;
         var startWorker = false;
         lock (_lock)
         {
             _coreByFolder.TryGetValue(folder, out known);
+            if (name == "task.json" && known is not null
+                && _coreTaskStamps.GetValueOrDefault(folder) == observedTaskStamp)
+                return;
             _staleCoreFolders.Add(folder);
+            _coreFolderVersions[folder] = ++_coreWriteGeneration;
             startWorker = !_pendingCoreFolders.ContainsKey(folder);
             _pendingCoreFolders[folder] = _pendingCoreFolders.GetValueOrDefault(folder) + 1;
         }

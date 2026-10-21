@@ -1767,6 +1767,8 @@ During cold hydration the route returns a JSON 202 warming reply, which the
 client retries before exposing a TaskDetail. Successful detail replies carry
 `X-Task-Detail-Freshness` and `X-Task-Token-Freshness`; token usage is served
 from a nonblocking card cache, while the separate usage resource can fill it.
+The detail live-status overlay derives runner queue positions from the last
+published board generation, so it never enters the global freshness gate.
 
 This contract is the D1 and D3 recommendation in
 [the task-switch performance dossier](../../task-switch-performance/index.html).

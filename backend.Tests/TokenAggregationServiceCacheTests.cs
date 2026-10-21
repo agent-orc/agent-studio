@@ -137,6 +137,23 @@ public sealed class TokenAggregationServiceCacheTests : IDisposable
         var refreshed = usage.Get(ProjectName, _watchPath, "AGT-1");
         Assert.NotNull(refreshed);
         Assert.Equal(100, refreshed.InputTokens);
+
+        var folder = Path.Combine(_watchPath, TaskStates.Progress, "AGT-1");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), System.Text.Json.JsonSerializer.Serialize(new
+        {
+            id = "AGT-1", key = "external-card-key", title = "Card", state = TaskStates.Progress,
+            order = 1,
+        }));
+        scanner.PublishCoreFromFolder(folder, _watchPath, ProjectName, TaskStates.Progress);
+        usage.OnTokenUsageAppended(new AgentMessage
+        {
+            Id = "token-row-02", CreatedAt = new DateTime(2026, 10, 21, 8, 1, 0, DateTimeKind.Utc),
+            ParticipantId = "agent:codex", Role = "actor", Kind = "token-usage",
+            Project = ProjectName, JobId = "external-card-key",
+        });
+        usage.Get(ProjectName, _watchPath, "AGT-1");
+        Assert.Equal(3, usage.ProjectLoadCount(ProjectName, _watchPath));
     }
 
     private IConfiguration BuildConfig()

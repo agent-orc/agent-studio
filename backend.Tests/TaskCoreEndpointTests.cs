@@ -38,6 +38,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
             }));
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        client.DefaultRequestHeaders.Add("X-Task-Switch-Trace", "1");
         var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
         await WarmIndexAsync(factory, "AGT-target");
         var index = factory.Services.GetRequiredService<TaskIndexCache>();
@@ -48,6 +49,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         using var detail = await client.GetAsync($"/api/tasks/AGT-target?project={project.Id}");
         detail.EnsureSuccessStatusCode();
         Assert.Equal("ready", detail.Headers.GetValues("X-Task-Detail-Freshness").Single());
+        Assert.Equal("0", detail.Headers.GetValues("X-Task-Detail-Workspace-Scans").Single());
         Assert.Empty(tokenReader.Calls);
         using var body = JsonDocument.Parse(await detail.Content.ReadAsStringAsync());
         Assert.Equal("AGT-target", body.RootElement.GetProperty("info").GetProperty("id").GetString());
@@ -73,7 +75,9 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Seed("AGT-delete", TaskStates.Ready);
         Seed("AGT-primary", TaskStates.Ready);
         Seed("AGT-secondary", TaskStates.Ready);
-        Seed("AGT-archive", TaskStates.Completed);
+        Seed("AGT-archive", TaskStates.Completed, requiresIntegration: false);
+        Directory.CreateDirectory(Path.Combine(Jobs, TaskStates.Preparation));
+        Directory.CreateDirectory(Path.Combine(Jobs, TaskStates.Archive));
         await using var factory = Factory();
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
@@ -107,12 +111,22 @@ public sealed class TaskCoreEndpointTests : IDisposable
         using (var detail = await client.GetAsync($"/api/tasks/AGT-delete?project={project.Id}"))
             Assert.Equal(HttpStatusCode.NotFound, detail.StatusCode);
 
+        string restoreToken;
         using (var merge = await client.PostAsJsonAsync(
             $"/api/tasks/AGT-primary/merge?project={project.Id}",
             new { secondaryId = "AGT-secondary", mode = MergeModes.Consolidate }))
+        {
             merge.EnsureSuccessStatusCode();
+            using var body = JsonDocument.Parse(await merge.Content.ReadAsStringAsync());
+            restoreToken = body.RootElement.GetProperty("restoreToken").GetString()!;
+        }
         using (var detail = await client.GetAsync($"/api/tasks/AGT-secondary?project={project.Id}"))
             Assert.Equal(HttpStatusCode.NotFound, detail.StatusCode);
+        using (var undo = await client.PostAsJsonAsync(
+            "/api/tasks/AGT-primary/merge/undo", new { restoreToken }))
+            undo.EnsureSuccessStatusCode();
+        using (var restored = await client.GetAsync($"/api/tasks/AGT-secondary?project={project.Id}"))
+            restored.EnsureSuccessStatusCode();
 
         using (var archive = await client.PostAsJsonAsync(
             $"/api/tasks/AGT-archive/move?project={project.Id}",
@@ -725,13 +739,15 @@ public sealed class TaskCoreEndpointTests : IDisposable
             }));
         });
 
-    private void Seed(string id, string state, string? gatedTarget = null, string? key = null)
+    private void Seed(string id, string state, string? gatedTarget = null, string? key = null,
+        bool? requiresIntegration = null)
     {
         var folder = Path.Combine(Jobs, state, id);
         Directory.CreateDirectory(Path.Combine(folder, "logs"));
         File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
         {
             id, key = key ?? id, title = "Task core contract", state, order = 10,
+            requiresIntegration,
             ownerClientId = "local-default",
             enteredLaneAt = DateTime.UtcNow,
             mode = "coding", modelExplicit = true, thinkingLevelExplicit = true,

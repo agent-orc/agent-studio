@@ -490,7 +490,8 @@ public static class TaskCrudEndpoints
             {
                 Info = betterCandidates.Attach(withRuntime.Info, projectSettings.Get(withRuntime.Info.ProjectName)),
             });
-            var liveLookup = TaskSwitchTrace.Run("runtime", () => liveStatus.BuildLookup(new[] { withRuntime.Info }));
+            var liveLookup = TaskSwitchTrace.Run("runtime", () => liveStatus.BuildLookup(
+                new[] { withRuntime.Info }, publishedRunnerStatus: true));
             if (liveLookup.TryGetValue(withRuntime.Info.TaskKey, out var currentLiveStatus))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { LiveStatus = currentLiveStatus } };
             if (gitFacts is not null)
@@ -890,6 +891,7 @@ public static class TaskCrudEndpoints
                     $"Operator chose {req.Decision} for run {offer.AttemptId} delivered against an older brief.",
                     offer.AttemptId,
                     details: new Dictionary<string, string> { ["decision"] = req.Decision });
+                scanner.PublishCoreFromKnownFolder(folder);
                 scanner.InvalidateCache();
                 return MoveResult(moved);
             }

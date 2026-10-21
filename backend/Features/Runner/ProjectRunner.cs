@@ -1185,7 +1185,11 @@ public class ProjectRunner
         return CapEvaluation.NotBlocked;
     }
 
-    public ProjectRunnerStatus GetStatus()
+    public ProjectRunnerStatus GetStatus() => GetStatus(publishedOnly: false);
+
+    public ProjectRunnerStatus GetPublishedStatus() => GetStatus(publishedOnly: true);
+
+    private ProjectRunnerStatus GetStatus(bool publishedOnly)
     {
         var statusAt = DateTime.UtcNow;
         var providerLimits = _providerLimits.Active(statusAt);
@@ -1193,8 +1197,12 @@ public class ProjectRunner
         {
             // AGT-3088: the published snapshot already parsed every live
             // card's quota-wait marker, so status reads never probe disk.
-            foreach (var wait in _scanner.ReadPerGeneration(
-                         ProviderWaitsProjection, 0, static publication => ReadProviderWaits(publication.Live)))
+            var waits = publishedOnly
+                ? _scanner.ReadPublishedGeneration(
+                    ProviderWaitsProjection, 0, static publication => ReadProviderWaits(publication.Live))
+                : _scanner.ReadPerGeneration(
+                    ProviderWaitsProjection, 0, static publication => ReadProviderWaits(publication.Live));
+            foreach (var wait in waits)
             {
                 _providerLimits.Record(new ProviderLimitStatus(
                     wait.CliType,
@@ -1205,7 +1213,7 @@ public class ProjectRunner
             }
             providerLimits = _providerLimits.Active(statusAt);
         }
-        var queued = GetQueuedJobIds();
+        var queued = GetQueuedJobIds(publishedOnly);
         var activeJobKey = GetActiveJobKey();
         CliExecution? activeExec = null;
         if (activeJobKey != null && _activeCliType != null)
@@ -1231,7 +1239,7 @@ public class ProjectRunner
             PendingMode = _pendingMode,
             PendingModeWillApplyAfter = _pendingModeWillApplyAfter,
             PendingModeActiveTaskCount = PendingModeActiveTaskCount(),
-            PendingModeActiveTaskTitle = PendingModeActiveTaskTitle(),
+            PendingModeActiveTaskTitle = PendingModeActiveTaskTitle(publishedOnly),
             ModeReason = _modeReason,
             ModeChangedAt = _modeChangedAt,
             ModeSource = _modeSource,
@@ -9448,7 +9456,7 @@ public class ProjectRunner
         lock (_modeChangeGate) return _pendingMode == null ? 0 : _pendingModeDrainJobIds.Count;
     }
 
-    private string? PendingModeActiveTaskTitle()
+    private string? PendingModeActiveTaskTitle(bool publishedOnly = false)
     {
         string? jobId;
         lock (_modeChangeGate)
@@ -9456,7 +9464,12 @@ public class ProjectRunner
             if (_pendingMode == null || _pendingModeDrainJobIds.Count != 1) return null;
             jobId = _pendingModeDrainJobIds.First();
         }
-        try { return _scanner.FindJob(jobId, Entry.Path)?.Title; }
+        try
+        {
+            return (publishedOnly
+                ? _scanner.FindPublishedJob(jobId, Entry.Path)
+                : _scanner.FindJob(jobId, Entry.Path))?.Title;
+        }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Could not resolve pending-mode task title for {JobId}", jobId);
@@ -10656,7 +10669,7 @@ public class ProjectRunner
         planSnapshot?.ResumeFlag == true
         && !string.IsNullOrWhiteSpace(planSnapshot.SessionToResume);
 
-    private List<string> GetQueuedJobIds()
+    private List<string> GetQueuedJobIds(bool publishedOnly = false)
     {
         // This ordered list is the single queue-position source used by the
         // status API and TaskLiveStatusProjection. It applies the pickup
@@ -10665,10 +10678,13 @@ public class ProjectRunner
         // runner-slot position. AGT-3088: the snapshot-derived part of that
         // policy is evaluated once per index generation and settings version
         // for all runners; only the in-memory crash backoff is applied here.
-        var orders = _scanner.ReadPerGeneration(
-            DisplayedReadyOrderProjection,
-            _projectSettings.Version,
-            publication => BuildDisplayedReadyOrders(publication, _projectSettings));
+        var orders = publishedOnly
+            ? _scanner.ReadPublishedGeneration(
+                DisplayedReadyOrderProjection, _projectSettings.Version,
+                publication => BuildDisplayedReadyOrders(publication, _projectSettings))
+            : _scanner.ReadPerGeneration(
+                DisplayedReadyOrderProjection, _projectSettings.Version,
+                publication => BuildDisplayedReadyOrders(publication, _projectSettings));
         if (!orders.TryGetValue(ProjectName, out var ordered)) return [];
         return ordered
             .Where(job => !IsInRapidCrashBackoff(job.Id))

@@ -203,6 +203,12 @@ public class TaskScannerService : ITaskScanner
             0));
     }
 
+    public T ReadPublishedGeneration<T>(string name, long version,
+        Func<TaskIndexPublication, T> build) where T : class
+        => _indexCache is null
+            ? ReadPerGeneration(name, version, build)
+            : _indexCache.GetDerivedPublished(name, version, build);
+
     private sealed class NoPin : IDisposable
     {
         public static readonly NoPin Instance = new();
@@ -218,6 +224,12 @@ public class TaskScannerService : ITaskScanner
     }
 
     public void RemoveCore(TaskInfo info) => _indexCache?.RemoveCore(info);
+
+    public void RemoveCoreByFolder(string folder) => _indexCache?.RemoveCoreByFolder(folder);
+
+    public TaskInfo? FindPublishedJob(string jobId, string? watchPath = null)
+        => _indexCache is null ? FindJob(jobId, watchPath)
+            : _indexCache.GetDetailFacts(jobId, watchPath).Info;
 
     public void PublishCoreFromKnownFolder(string folder)
     {

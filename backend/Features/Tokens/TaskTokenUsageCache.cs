@@ -110,7 +110,15 @@ public sealed class TaskTokenUsageCache
         if (message.Kind != "token-usage" || string.IsNullOrWhiteSpace(message.Project)
             || string.IsNullOrWhiteSpace(message.JobId)) return;
         var projectName = _projects?.FindByIdOrDisplayName(message.Project)?.DisplayName ?? message.Project;
-        _busRevisions.AddOrUpdate((projectName, message.JobId), 1, (_, old) => old + 1);
+        var ids = _index.GetAllResidentTasks()
+            .Where(task => task.ProjectName == projectName
+                && (task.Id == message.JobId || task.TaskKey == message.JobId
+                    || task.Key == message.JobId))
+            .Select(task => task.Id)
+            .Append(message.JobId)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in ids)
+            _busRevisions.AddOrUpdate((projectName, id), 1, (_, old) => old + 1);
     }
 
     internal long ProjectLoadCount(string projectName, string watchPath) =>

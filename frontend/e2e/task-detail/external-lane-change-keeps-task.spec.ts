@@ -48,6 +48,8 @@ test.describe('External lane change keeps task in view', () => {
 
       // Open the third job. Pager captures the 2-ready lane.
       await clickCardAndWaitForDetail(page, ids[2]);
+      if (process.env.JOB_RESULTS_DIR)
+        await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/task-detail-ready.png` });
       const count = page.getByTestId('lane-pager-count');
       await expect(count).toContainText(/^\d+ \/ \d+$/, { timeout: 5_000 });
       const initial = (await count.textContent())!.trim();
