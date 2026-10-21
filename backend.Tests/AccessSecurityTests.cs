@@ -1,10 +1,6 @@
 using System.Text;
-using System.Net.Http.Json;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 using Xunit;
@@ -401,6 +397,55 @@ public sealed class AccessSecurityTests : IDisposable
     }
 
     [Fact]
+    public void Saturated_client_throttle_still_spends_the_existing_username_budget()
+    {
+        var (store, _, clock) = NewStore(new Dictionary<string, string?>
+        {
+            ["Security:LoginThrottle:MaxTrackedKeys"] = "1",
+            ["Security:LoginThrottle:MaxFailuresPerUsername"] = "2",
+            ["Security:LoginThrottle:UsernameWindowMinutes"] = "30"
+        });
+        const string password = "correct horse battery staple!";
+        store.Bootstrap(new BootstrapRequest("first.owner", password, null));
+
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("unknown.user", "wrong password", "client|one")).Status);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("first.owner", "wrong password", "client|two")).Status);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("FIRST.OWNER", "wrong password", "client|three")).Status);
+
+        // Client-key expiry frees capacity, but the account budget still blocks
+        // a valid password until its own window expires.
+        clock.Advance(TimeSpan.FromMinutes(16));
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("first.owner", password, "client|four")).Status);
+        clock.Advance(TimeSpan.FromMinutes(15));
+        Assert.Equal("first.owner", store.Login("first.owner", password, "client|four").User.Username);
+    }
+
+    [Fact]
+    public void Saturated_client_throttle_does_not_track_guessed_usernames()
+    {
+        var (store, _, _) = NewStore(new Dictionary<string, string?>
+        {
+            ["Security:LoginThrottle:MaxTrackedKeys"] = "1"
+        });
+        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("unknown.user", "wrong password", "client|one")).Status);
+
+        for (var index = 0; index < 10; index++)
+            Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+                store.Login($"guessed.user.{index}", "wrong password", $"client|{index + 2}")).Status);
+
+        var field = typeof(AccessSecurityStore).GetField("_usernameFailures",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var budgets = Assert.IsAssignableFrom<System.Collections.IDictionary>(field!.GetValue(store));
+        Assert.Empty(budgets);
+    }
+
+    [Fact]
     public async Task Guessed_usernames_and_addresses_keep_throttle_state_bounded()
     {
         var (store, _, clock) = NewStore(new Dictionary<string, string?>
@@ -624,12 +669,7 @@ public sealed class AccessSecurityTests : IDisposable
         context.Request.Method = method;
         context.Request.Path = path;
         context.Request.Scheme = scheme;
-        if (sessionToken is not null)
-        {
-            context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={sessionToken}");
-            // A browser session request from a Studio page (AGT-3230 Origin rule).
-            context.Request.Headers["Sec-Fetch-Site"] = "same-origin";
-        }
+        if (sessionToken is not null) context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={sessionToken}");
         if (csrf is not null) context.Request.Headers["X-CSRF-Token"] = new StringValues(csrf);
         if (bearer is not null) context.Request.Headers.Authorization = new StringValues("Bearer " + bearer);
         context.Response.Body = new MemoryStream();

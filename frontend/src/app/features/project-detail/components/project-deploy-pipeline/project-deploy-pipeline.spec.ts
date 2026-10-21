@@ -1,18 +1,40 @@
-import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
-import { describe, expect, it } from 'vitest';
-import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
+import { TestBed } from '@angular/core/testing';
 import { ProjectDeployPipelineComponent } from './project-deploy-pipeline';
+import { pipelineDefinitionFixture } from '../../testing/deploy-fixtures';
+
+async function render(panel: unknown): Promise<HTMLElement> {
+  const fixture = TestBed.createComponent(ProjectDeployPipelineComponent);
+  fixture.componentRef.setInput('panel', panel);
+  fixture.detectChanges();
+  await fixture.whenStable();
+  return fixture.nativeElement as HTMLElement;
+}
 
 describe('ProjectDeployPipelineComponent', () => {
-  it('connects project.yml CI stages to approval and Production steps', async () => {
+  beforeEach(async () => {
     await TestBed.configureTestingModule({ imports: [ProjectDeployPipelineComponent], providers: [provideZonelessChangeDetection()] }).compileComponents();
-    const fixture = TestBed.createComponent(ProjectDeployPipelineComponent);
-    new ProjectDeployDataService().load('demo').subscribe(data => fixture.componentRef.setInput('snapshot', data));
-    fixture.detectChanges();
-    const host = fixture.nativeElement as HTMLElement;
-    expect(host.querySelectorAll('.deploy-flow__stage')).toHaveLength(6);
-    expect(host.querySelector('[data-testid="deploy-stage-build"]')?.textContent).toContain('commands.build');
-    expect(host.querySelector('[data-testid="deploy-stage-production"]')?.textContent).toContain('Owner or Maintainer approval');
+  });
+  it('shows loading, unavailable, and server-error states', async () => {
+    expect((await render({ status: 'loading' })).querySelector('app-loading-surface')).not.toBeNull();
+    expect((await render({ status: 'unavailable' })).textContent).toContain('Pipeline definition unavailable');
+    expect((await render({ status: 'error', message: 'Broken file' })).textContent).toContain('Broken file');
+  });
+
+  it('uses the AGT-3221 diagram for gate, artifacts, Staging, and Production', async () => {
+    const host = await render({ status: 'ready', value: pipelineDefinitionFixture() });
+    expect(host.querySelector('[data-testid="pipeline-node-gate"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="pipeline-node-artifacts"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="pipeline-node-staging"]')?.textContent).toContain('Static site');
+    expect(host.querySelector('[data-testid="pipeline-node-production"]')?.textContent).toContain('Compose service');
+  });
+
+  it('shows the parsed diagram beside validation issues on an invalid file', async () => {
+    const value = { ...pipelineDefinitionFixture(), valid: false, issues: [
+      { path: 'deploy[0]', code: 'invalid-step', message: 'Invalid step', line: 12 },
+    ] };
+    const host = await render({ status: 'ready', value });
+    expect(host.querySelector('[data-testid="deploy-pipeline-issues"]')?.textContent).toContain('Invalid step');
+    expect(host.querySelector('[data-testid="pipeline-diagram"]')).not.toBeNull();
   });
 });
