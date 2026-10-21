@@ -1,5 +1,11 @@
 using System.Text;
+using System.Net;
+using System.Net.Http.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
@@ -397,9 +403,9 @@ public sealed class AccessSecurityTests : IDisposable
     }
 
     [Fact]
-    public void Guessed_usernames_and_addresses_keep_throttle_state_bounded()
+    public async Task Guessed_usernames_and_addresses_keep_throttle_state_bounded()
     {
-        var (store, _, clock) = NewStore(new Dictionary<string, string?>
+        var (store, storeConfiguration, clock) = NewStore(new Dictionary<string, string?>
         {
             ["Security:LoginThrottle:MaxFailuresPerUsername"] = "2",
             ["Security:LoginThrottle:MaxFailures"] = "2",
@@ -437,6 +443,36 @@ public sealed class AccessSecurityTests : IDisposable
         Assert.Single(budgets);
         Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
             store.Login("first.owner", "correct horse battery staple!", "owner|new-address")).Status);
+
+        clock.Advance(TimeSpan.FromMinutes(16));
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(store);
+        builder.Services.AddSingleton<IConfiguration>(storeConfiguration);
+        await using var app = builder.Build();
+        app.MapAccessSecurityEndpoints();
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+
+        for (var index = 0; index < 10; index++)
+        {
+            var username = $"guessed.user.{index}." + new string('x', 2000);
+            using var response = await client.PostAsJsonAsync("/api/auth/login", new LoginRequest(username, "wrong password"));
+            Assert.Equal(index < 8 ? HttpStatusCode.Unauthorized : HttpStatusCode.TooManyRequests, response.StatusCode);
+            if (index < 8) Assert.Contains("invalid-credentials", await response.Content.ReadAsStringAsync());
+            Assert.InRange(clients.Count + budgets.Count, 0, 8);
+            Assert.All(clients.Keys.Cast<string>(), key => Assert.Equal(64, key.Length));
+        }
+
+        for (var index = 0; index < 3; index++)
+        {
+            var username = $"oversized.{index}." + new string('x', 5000);
+            using var response = await client.PostAsJsonAsync("/api/auth/login", new LoginRequest(username, "wrong password"));
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            Assert.Contains("invalid-credentials", await response.Content.ReadAsStringAsync());
+            Assert.Equal(8, clients.Count);
+        }
+        Assert.Empty(budgets);
     }
 
     [Theory]

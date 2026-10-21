@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace AgentStudio.Security;
 
@@ -37,14 +38,33 @@ public static class AccessSecurityEndpoints
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken));
             }));
 
-        auth.MapPost("/login", (LoginRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
-            Execute(() =>
+        auth.MapPost("/login", async (HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
+        {
+            const int maxPayloadBytes = 4096;
+            if (context.Request.ContentLength > maxPayloadBytes) return InvalidCredentials();
+            var payload = new byte[maxPayloadBytes + 1];
+            var length = 0;
+            while (length < payload.Length)
+            {
+                var count = await context.Request.Body.ReadAsync(payload.AsMemory(length), context.RequestAborted);
+                if (count == 0) break;
+                length += count;
+            }
+            if (length > maxPayloadBytes) return InvalidCredentials();
+
+            LoginRequest? request;
+            try { request = JsonSerializer.Deserialize<LoginRequest>(payload.AsSpan(0, length), JsonSerializerOptions.Web); }
+            catch (JsonException) { return InvalidCredentials(); }
+            if (request is null) return InvalidCredentials();
+
+            return Execute(() =>
             {
                 var key = $"{(request.Username ?? string.Empty).Trim().ToLowerInvariant()}|{LoginThrottleKeys.Client(context.Connection.RemoteIpAddress)}";
                 var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken));
-            }));
+            });
+        });
 
         auth.MapPost("/invite/accept", (AcceptInvitationRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
             Execute(() =>
@@ -242,6 +262,10 @@ public static class AccessSecurityEndpoints
         try { return operation(); }
         catch (SecurityOperationException ex) { return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status); }
     }
+
+    private static IResult InvalidCredentials()
+        => Results.Json(new { error = "invalid-credentials", message = "Username or password is incorrect." },
+            statusCode: StatusCodes.Status401Unauthorized);
 
     private static ApiTokenResponse ToApiTokenResponse(StudioApiToken token)
         => new(token.Id, token.Name, token.Role, token.Projects, token.CreatedBy,
