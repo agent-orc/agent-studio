@@ -66,12 +66,14 @@ that is already allowed to edit that project's checkout.
   The per-client key table expires old entries and holds at most 4,096 keys
   (`Security:LoginThrottle:MaxTrackedKeys`, capped at 4,096). When full, new
   failed login keys receive 429 until entries expire; existing keys retain
-  their lockout counters. The login endpoint accepts at most 4 KiB of JSON,
+  their lockout counters. A failure for an existing username still spends that
+  account's budget when the client-key table is full. The login endpoint
+  accepts at most 4 KiB of JSON,
   and retained throttle keys are fixed-size SHA-256 digests even when a caller
   supplies an invalid, overlong username. Invalid usernames receive the same
-  invalid-credentials response as other failed logins.
-  Password resets create a temporary
-  password, revoke existing sessions, and force a change at the next login.
+  invalid-credentials response as other failed logins. Password resets create
+  a temporary password, revoke existing sessions, and force a change at the
+  next login.
 - Human sessions use a random opaque token stored only as a SHA-256 hash on the
   server. The cookie is `Secure`, `HttpOnly`, `SameSite=Strict`, host-only, and
   has idle plus absolute expiry. Browser mutations require the matching CSRF
