@@ -14,6 +14,9 @@ namespace AgentStudio.Runner;
 /// </summary>
 public sealed class RemotePipelineReviewEvidenceProjector
 {
+    private static readonly AspectDefinition DeepReviewDefinition = new(
+        "deep-review", "quality", "", "Deep review",
+        "Review authority, security, data loss, resource bounds, concurrency, and state transitions.");
     private readonly ITokenPricing _pricing;
     private readonly PipelineExecutionLog _pipeline;
     private readonly TimelineLog _timeline;
@@ -60,6 +63,21 @@ public sealed class RemotePipelineReviewEvidenceProjector
             task.Id,
             report.Commands.Select(command => command.StartedAt).DefaultIfEmpty(receivedAt).Min());
         using var attempt = _pipeline.EnterAttempt(task.FolderPath, execution.Attempt);
+
+        if (review.Subject.Plan?.DeepReviewDecision is { } deepDecision)
+            _pipeline.RecordStep(task.FolderPath, new PipelineStepExecution
+            {
+                StepId = "post-deep-review-decision",
+                Kind = StepKind.Orchestrator,
+                Attempt = execution.Attempt,
+                Status = deepDecision.Dispatched ? PipelineStepStatus.Passed : PipelineStepStatus.Skipped,
+                StartedAt = review.CreatedAt,
+                CompletedAt = review.CreatedAt,
+                Verdict = deepDecision.Dispatched ? "selected" : "observed",
+                VerdictSummary = $"{deepDecision.Mode} decision {deepDecision.ReceiptId}",
+                Reason = string.Join(", ", deepDecision.Grounds),
+                EvidenceRef = "review-subject:" + review.Subject.SubjectId,
+            });
 
         foreach (var command in report.Commands.Where(command => command.Phase == "verification"))
         {
@@ -184,7 +202,10 @@ public sealed class RemotePipelineReviewEvidenceProjector
             ? command.StepId["aspect-".Length..]
             : command.Aspect;
         if (!AspectRunnerService.Catalogue.TryGetValue(aspectId, out var definition))
-            return;
+        {
+            if (!string.Equals(aspectId, "deep-review", StringComparison.OrdinalIgnoreCase)) return;
+            definition = DeepReviewDefinition;
+        }
         var remoteVerdict = report.Verdicts.LastOrDefault(verdict =>
             string.Equals(verdict.Aspect, command.Aspect, StringComparison.OrdinalIgnoreCase));
         var status = remoteVerdict?.Status.ToLowerInvariant() switch

@@ -4069,6 +4069,26 @@ public partial class GitService
             .ToArray();
     }
 
+    /// <summary>Exact added and removed text lines for a delivery against its merge base.</summary>
+    public int? ChangedLinesAgainstMergeBase(string repoRoot, string targetRef, string sourceRef)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !IsLikelyBranchName(targetRef) || !IsLikelyBranchName(sourceRef)) return null;
+        var (output, _, code) = RunGitArgs(
+            repoRoot, "diff", "--numstat", $"{targetRef}...{sourceRef}", RevisionsOnly);
+        if (code != 0) return null;
+        var total = 0L;
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = line.Split('\t');
+            if (parts.Length < 3) continue;
+            if (int.TryParse(parts[0], out var added)) total += added;
+            if (int.TryParse(parts[1], out var removed)) total += removed;
+            if (total > int.MaxValue) return int.MaxValue;
+        }
+        return (int)total;
+    }
+
     /// <summary>Path cap of one <see cref="ReadFilesAtRevision"/> call.</summary>
     internal const int MaxRevisionFileReadPaths = 512;
 
