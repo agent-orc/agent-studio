@@ -151,6 +151,68 @@ public sealed class HostedDataTests : IDisposable
     }
 
     [Fact]
+    public async Task ConcurrentFileSwapCannotReadOutsideDeclaredVolume()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var volumeRoot = Path.Combine(_root, "volumes");
+        var archiveRoot = Path.Combine(_root, "archives");
+        var key = new HostedVolumeKey("demo", "stage", "uploads");
+        var path = Path.Combine(volumeRoot, "demo", "stage", "uploads");
+        Directory.CreateDirectory(path);
+        var original = Path.Combine(path, "data.txt");
+        var outside = Path.Combine(_root, "outside.txt");
+        File.WriteAllText(original, "inside");
+        File.WriteAllText(outside, "outside-secret");
+        var swapped = false;
+        var engine = new LocalHostedVolumeBackupEngine(volumeRoot, archiveRoot,
+            NullLogger<LocalHostedVolumeBackupEngine>.Instance, directory => Directory.Delete(directory, true),
+            _clock, beforeOpenSource: relative =>
+            {
+                if (relative != "data.txt") return;
+                File.Move(original, original + ".original");
+                File.CreateSymbolicLink(original, outside);
+                swapped = true;
+            });
+
+        await Assert.ThrowsAsync<IOException>(() => engine.BackupAsync(key, _clock.GetUtcNow(), CancellationToken.None));
+        Assert.True(swapped);
+        Assert.Equal("outside-secret", File.ReadAllText(outside));
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(archiveRoot, "demo", "stage", "uploads"), "*.zip"));
+    }
+
+    [Fact]
+    public async Task CleanupMarkerSurvivesRestartAndBlocksRepeatedRestoresUntilCleanupSucceeds()
+    {
+        var volumeRoot = Path.Combine(_root, "volumes");
+        var archiveRoot = Path.Combine(_root, "archives");
+        var key = new HostedVolumeKey("demo", "stage", "uploads");
+        var engine = new LocalHostedVolumeBackupEngine(volumeRoot, archiveRoot,
+            NullLogger<LocalHostedVolumeBackupEngine>.Instance,
+            _ => throw new IOException("busy"), _clock);
+        var path = engine.VolumePath(key);
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, "data.txt"), "backup");
+        var backup = await engine.BackupAsync(key, _clock.GetUtcNow(), CancellationToken.None);
+        File.WriteAllText(Path.Combine(path, "data.txt"), "old-live");
+        await engine.RestoreAsync(backup, CancellationToken.None);
+        Assert.True(File.Exists(path + ".restore-pending"));
+        Assert.Single(Directory.EnumerateDirectories(Path.GetDirectoryName(path)!, "uploads.previous-*"));
+
+        var restarted = new LocalHostedVolumeBackupEngine(volumeRoot, archiveRoot,
+            NullLogger<LocalHostedVolumeBackupEngine>.Instance,
+            _ => throw new IOException("still busy"), _clock);
+        await Assert.ThrowsAsync<IOException>(() => restarted.RestoreAsync(backup, CancellationToken.None));
+        Assert.Single(Directory.EnumerateDirectories(Path.GetDirectoryName(path)!, "uploads.previous-*"));
+        Assert.Equal("backup", File.ReadAllText(Path.Combine(path, "data.txt")));
+
+        var recovered = new LocalHostedVolumeBackupEngine(volumeRoot, archiveRoot, clock: _clock);
+        Assert.False(File.Exists(path + ".restore-pending"));
+        Assert.Empty(Directory.EnumerateDirectories(Path.GetDirectoryName(path)!, "uploads.previous-*"));
+        await recovered.RestoreAsync(backup, CancellationToken.None);
+        Assert.Empty(Directory.EnumerateDirectories(Path.GetDirectoryName(path)!, "uploads.previous-*"));
+    }
+
+    [Fact]
     public void RestartRecoversLiveVolumeAfterInterruptedDirectorySwap()
     {
         var volumeRoot = Path.Combine(_root, "volumes");

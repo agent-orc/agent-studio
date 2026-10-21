@@ -4,7 +4,10 @@ using System.Collections.Concurrent;
 namespace AgentStudio.Projects;
 
 public sealed record HostedVolumeSchedule(string Project, string Environment, string Volume, int? HourUtc,
-    DateTimeOffset? LastAttemptAt, string? LastError, IReadOnlyList<HostedVolumeBackup> Backups);
+    DateTimeOffset? LastAttemptAt, string? LastError, IReadOnlyList<HostedVolumeBackup> Backups)
+{
+    public string? CleanupError { get; init; }
+}
 public sealed record HostedVolumeAudit(DateTimeOffset At, string Actor, string Action, string Environment,
     string Volume, string? BackupId, string Outcome)
 {
@@ -72,6 +75,7 @@ public sealed class HostedVolumeBackupService(
         await volumeGate.WaitAsync(cancellationToken);
         try
         {
+            await RetryPendingPruneAsync(project, key, cancellationToken);
             var now = clock.GetUtcNow();
             HostedVolumeBackup backup;
             try
@@ -108,10 +112,57 @@ public sealed class HostedVolumeBackupService(
             {
                 logger.LogWarning(ex, "Could not prune hosted volume archives for {Project}/{Environment}/{Volume}",
                     project, environment, volume);
+                await RecordCleanupErrorAsync(project, key, ex.Message);
             }
             return backup;
         }
         finally { volumeGate.Release(); }
+    }
+
+    private async Task RetryPendingPruneAsync(string project, HostedVolumeKey key, CancellationToken cancellationToken)
+    {
+        HostedVolumeSchedule schedule;
+        await _gate.WaitAsync(cancellationToken);
+        try { schedule = FindSchedule(ReadState(project), key); }
+        finally { _gate.Release(); }
+        if (schedule.CleanupError is null) return;
+        try
+        {
+            await engine.PruneBackupsAsync(key,
+                schedule.Backups.Select(item => item.Id).ToHashSet(StringComparer.Ordinal), cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await RecordCleanupErrorAsync(project, key, ex.Message);
+            await _gate.WaitAsync(CancellationToken.None);
+            try
+            {
+                var state = ReadState(project);
+                var blocked = FindSchedule(state, key) with
+                {
+                    LastAttemptAt = clock.GetUtcNow(),
+                    LastError = "Previous hosted volume archive cleanup is still pending.",
+                };
+                Save(project, state, blocked, new(clock.GetUtcNow(), "system", "backup", key.Environment,
+                    key.Volume, null, "failed"));
+            }
+            finally { _gate.Release(); }
+            throw new IOException("Previous hosted volume archive cleanup is still pending.", ex);
+        }
+        await RecordCleanupErrorAsync(project, key, null);
+    }
+
+    private async Task RecordCleanupErrorAsync(string project, HostedVolumeKey key, string? error)
+    {
+        await _gate.WaitAsync(CancellationToken.None);
+        try
+        {
+            var state = ReadState(project);
+            var schedule = FindSchedule(state, key) with { CleanupError = error };
+            Save(project, state, schedule, new(clock.GetUtcNow(), "system", "prune", key.Environment,
+                key.Volume, null, error is null ? "succeeded" : "failed"));
+        }
+        finally { _gate.Release(); }
     }
 
     public async Task RestoreAsync(string project, string environment, string volume, string backupId,

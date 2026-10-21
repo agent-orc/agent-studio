@@ -1,5 +1,7 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentStudio.Projects;
@@ -34,7 +36,8 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
     private readonly string _backupRoot;
     private readonly ILogger<LocalHostedVolumeBackupEngine> _logger;
     private readonly Action<string> _deletePrevious;
-    private readonly Func<string, Stream> _openSource;
+    private readonly Func<string, Stream>? _openSource;
+    private readonly Action<string>? _beforeOpenSource;
     private readonly TimeProvider _clock;
     internal static readonly TimeSpan BackupTimeout = TimeSpan.FromMinutes(10);
 
@@ -45,14 +48,15 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
 
     internal LocalHostedVolumeBackupEngine(string volumeRoot, string backupRoot,
         ILogger<LocalHostedVolumeBackupEngine> logger, Action<string> deletePrevious, TimeProvider? clock = null,
-        Func<string, Stream>? openSource = null)
+        Func<string, Stream>? openSource = null, Action<string>? beforeOpenSource = null)
     {
         _volumeRoot = volumeRoot;
         _backupRoot = backupRoot;
         _logger = logger;
         _deletePrevious = deletePrevious;
         _clock = clock ?? TimeProvider.System;
-        _openSource = openSource ?? (path => new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true));
+        _openSource = openSource;
+        _beforeOpenSource = beforeOpenSource;
         RecoverPendingRestores();
     }
 
@@ -67,7 +71,7 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         token.ThrowIfCancellationRequested();
         var source = VolumePath(key);
         if (!Directory.Exists(source)) throw new DirectoryNotFoundException("Declared volume is absent on the host.");
-        EnsureNoLinks(source, token);
+        if (!OperatingSystem.IsLinux()) EnsureNoLinks(source, token);
         var id = Guid.NewGuid().ToString("N");
         var directory = Path.Combine(_backupRoot, Segment(key.Project), Segment(key.Environment), Segment(key.Volume));
         Directory.CreateDirectory(directory);
@@ -78,20 +82,10 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
             await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
             using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: false))
             {
-                foreach (var path in Directory.EnumerateFileSystemEntries(source, "*", SearchOption.AllDirectories))
-                {
-                    token.ThrowIfCancellationRequested();
-                    var relative = Path.GetRelativePath(source, path).Replace('\\', '/');
-                    if (Directory.Exists(path))
-                    {
-                        zip.CreateEntry(relative + "/");
-                        continue;
-                    }
-                    var entry = zip.CreateEntry(relative, CompressionLevel.Optimal);
-                    await using var input = _openSource(path);
-                    await using var compressed = entry.Open();
-                    await input.CopyToAsync(compressed, token);
-                }
+                if (OperatingSystem.IsLinux())
+                    await WriteContainedEntriesAsync(zip, key, source, token);
+                else
+                    await WriteCheckedEntriesAsync(zip, source, token);
             }
             token.ThrowIfCancellationRequested();
             var digest = await Digest(temporary, token);
@@ -107,6 +101,113 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         {
             if (File.Exists(temporary)) File.Delete(temporary);
         }
+    }
+
+    private async Task WriteContainedEntriesAsync(ZipArchive zip, HostedVolumeKey key, string source,
+        CancellationToken token)
+    {
+        using var root = OpenDirectory(_volumeRoot);
+        using var project = OpenDirectory(root, Segment(key.Project));
+        using var environment = OpenDirectory(project, Segment(key.Environment));
+        using var volume = OpenDirectory(environment, Segment(key.Volume));
+        await WriteDirectoryAsync(zip, volume, source, "", token);
+    }
+
+    private async Task WriteDirectoryAsync(ZipArchive zip, SafeFileHandle directory, string source,
+        string prefix, CancellationToken token)
+    {
+        var directoryPath = $"/proc/self/fd/{directory.DangerousGetHandle()}";
+        foreach (var path in Directory.EnumerateFileSystemEntries(directoryPath))
+        {
+            token.ThrowIfCancellationRequested();
+            var name = Path.GetFileName(path);
+            var relative = prefix + name;
+            _beforeOpenSource?.Invoke(relative);
+            if (TryOpenDirectory(directory, name, out var child))
+            {
+                using (child)
+                {
+                    zip.CreateEntry(relative + "/");
+                    await WriteDirectoryAsync(zip, child, source, relative + "/", token);
+                }
+                continue;
+            }
+            using var file = OpenFile(directory, name);
+            var entry = zip.CreateEntry(relative, CompressionLevel.Optimal);
+            await using var input = _openSource?.Invoke(Path.Combine(source, relative))
+                ?? new FileStream(file, FileAccess.Read, 81920, isAsync: false);
+            await using var compressed = entry.Open();
+            await input.CopyToAsync(compressed, token);
+        }
+    }
+
+    private async Task WriteCheckedEntriesAsync(ZipArchive zip, string source, CancellationToken token)
+    {
+        foreach (var path in Directory.EnumerateFileSystemEntries(source, "*", SearchOption.AllDirectories))
+        {
+            token.ThrowIfCancellationRequested();
+            var relative = Path.GetRelativePath(source, path).Replace('\\', '/');
+            if (Directory.Exists(path))
+            {
+                zip.CreateEntry(relative + "/");
+                continue;
+            }
+            var entry = zip.CreateEntry(relative, CompressionLevel.Optimal);
+            await using var input = _openSource?.Invoke(path)
+                ?? new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
+            await using var compressed = entry.Open();
+            await input.CopyToAsync(compressed, token);
+        }
+    }
+
+    private const int OpenReadOnly = 0;
+    private const int OpenNonBlock = 0x800;
+    private const int OpenDirectoryFlag = 0x10000;
+    private const int OpenNoFollow = 0x20000;
+    private const int OpenCloseOnExec = 0x80000;
+    private const int NotDirectory = 20;
+
+    [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+    private static extern int OpenNative(string path, int flags);
+
+    [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
+    private static extern int OpenAtNative(int directory, string name, int flags);
+
+    private static SafeFileHandle OpenDirectory(string path)
+    {
+        var fd = OpenNative(path, OpenReadOnly | OpenDirectoryFlag | OpenNoFollow | OpenCloseOnExec);
+        if (fd < 0) throw new IOException($"Cannot open declared volume root: {Marshal.GetLastPInvokeError()}");
+        return new SafeFileHandle((IntPtr)fd, ownsHandle: true);
+    }
+
+    private static SafeFileHandle OpenDirectory(SafeFileHandle parent, string name)
+    {
+        if (!TryOpenDirectory(parent, name, out var directory))
+            throw new InvalidDataException("A declared volume identity path is not a directory or is a symbolic link.");
+        return directory;
+    }
+
+    private static bool TryOpenDirectory(SafeFileHandle parent, string name, out SafeFileHandle directory)
+    {
+        var fd = OpenAtNative(parent.DangerousGetHandle().ToInt32(), name,
+            OpenReadOnly | OpenDirectoryFlag | OpenNoFollow | OpenCloseOnExec);
+        if (fd >= 0)
+        {
+            directory = new SafeFileHandle((IntPtr)fd, ownsHandle: true);
+            return true;
+        }
+        var error = Marshal.GetLastPInvokeError();
+        if (error != NotDirectory) throw new IOException($"Cannot open declared volume directory entry: {error}");
+        directory = null!;
+        return false;
+    }
+
+    private static SafeFileHandle OpenFile(SafeFileHandle parent, string name)
+    {
+        var fd = OpenAtNative(parent.DangerousGetHandle().ToInt32(), name,
+            OpenReadOnly | OpenNonBlock | OpenNoFollow | OpenCloseOnExec);
+        if (fd < 0) throw new IOException($"Cannot open declared volume file without following links: {Marshal.GetLastPInvokeError()}");
+        return new SafeFileHandle((IntPtr)fd, ownsHandle: true);
     }
 
     public Task PruneBackupsAsync(HostedVolumeKey key, IReadOnlySet<string> retainedIds, CancellationToken cancellationToken)
@@ -132,6 +233,13 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         var destination = VolumePath(key);
         var parent = Path.GetDirectoryName(destination)!;
         Directory.CreateDirectory(parent);
+        var pending = MarkerPath(destination);
+        if (File.Exists(pending))
+        {
+            RecoverPendingRestore(pending);
+            if (File.Exists(pending))
+                throw new IOException("Previous volume restore cleanup is still pending.");
+        }
         var restoreId = Guid.NewGuid().ToString("N");
         var staging = destination + ".restore-" + restoreId;
         var previous = destination + ".previous-" + restoreId;
@@ -183,8 +291,8 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
         {
             try
             {
-                File.Delete(MarkerPath(destination));
                 _deletePrevious(previous);
+                File.Delete(MarkerPath(destination));
             }
             catch (Exception ex)
             {
@@ -244,13 +352,13 @@ public sealed class LocalHostedVolumeBackupEngine : IHostedVolumeBackupEngine
             if (!Directory.Exists(previous)) throw new InvalidDataException("Pending volume restore has no live or previous directory.");
             Directory.Move(previous, destination);
         }
-        File.Delete(marker);
         if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
         if (Directory.Exists(previous))
         {
             try { _deletePrevious(previous); }
             catch (Exception ex) { _logger.LogWarning(ex, "Recovered volume, but could not remove previous directory {Previous}", previous); }
         }
+        if (!Directory.Exists(previous)) File.Delete(marker);
     }
 
     private static string MarkerPath(string destination) => destination + ".restore-pending";
