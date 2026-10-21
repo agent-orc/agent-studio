@@ -8,6 +8,7 @@ const json = (body: unknown) => ({ status: 200, contentType: 'application/json',
 const oneTimeSecret = ['api', 'one', 'time-value'].join('.');
 
 test('owner manages access from Settings and sees each created token once', async ({ page }) => {
+  let denyUsers = false;
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.route('**/hubs/v1/studio/negotiate?*', route => route.fulfill(json({
     negotiateVersion: 1, connectionId: 'access-e2e', connectionToken: 'access-e2e',
@@ -26,9 +27,9 @@ test('owner manages access from Settings and sees each created token once', asyn
     profile: 'networked', bootstrapRequired: false, authenticated: true,
     user: { id: 'usr_owner', username: 'owner', displayName: 'Owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
   })));
-  await page.route('**/api/auth/users', route => route.fulfill(json([
-    { id: 'usr_owner', username: 'owner', displayName: 'Owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
-  ])));
+  await page.route('**/api/auth/users', route => route.fulfill(denyUsers
+    ? { status: 403, contentType: 'application/json', body: JSON.stringify({ message: 'Denied Access' }) }
+    : json([{ id: 'usr_owner', username: 'owner', displayName: 'Owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false }])));
   await page.route('**/api/auth/api-tokens', route => route.fulfill(json(route.request().method() === 'POST'
     ? { token: { id: 'tok_1', name: 'build bot' }, secret: oneTimeSecret }
     : [])));
@@ -55,4 +56,15 @@ test('owner manages access from Settings and sees each created token once', asyn
   await expect(page.getByTestId('access-one-time-secret')).toContainText(oneTimeSecret);
   await page.getByRole('button', { name: 'Dismiss' }).click();
   await expect(access).not.toContainText(oneTimeSecret);
+
+  denyUsers = true;
+  await page.getByTestId('access-token-name').fill('another bot');
+  await access.getByRole('button', { name: 'Create token' }).click();
+  await expect(access.getByRole('alert')).toContainText('Denied Access');
+  await expect(access.getByTestId('access-user-usr_owner')).toHaveCount(0);
+  await expect(page.getByTestId('access-one-time-secret')).toHaveCount(0);
+  await setTheme(page, 'light');
+  await page.screenshot({ path: join(resultDir, 'access-denied-light.png'), fullPage: true });
+  await setTheme(page, 'dark');
+  await page.screenshot({ path: join(resultDir, 'access-denied-dark.png'), fullPage: true });
 });
