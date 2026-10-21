@@ -144,19 +144,35 @@ public class RunnerOptionsTests
     }
 
     [Fact]
-    public void Durable_state_defaults_below_the_configured_work_directory()
+    public void Durable_state_requires_an_explicit_root_without_a_service_environment()
     {
-        var work = Path.Combine("runner", "persistent-work");
+        var error = Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(
+            ["--poll", "--workdir", Path.Combine("runner", "persistent-work")], _ => null));
+        Assert.Contains("state root is required", error.Message);
+    }
 
-        var (options, _, _, _) = RunnerOptions.Parse(["--poll", "--workdir", work]);
+    [Fact]
+    [Trait("Category", "Guard")]
+    public void Test_process_state_root_is_under_its_temporary_home()
+    {
+        var (options, _, _, _) = RunnerOptions.Parse(["--poll"]);
+        Assert.StartsWith(Path.GetFullPath(Path.GetTempPath()), Path.GetFullPath(options.StateDir));
+    }
 
-        Assert.Equal(Path.Combine(work, ".runner-state"), options.StateDir);
+    [Fact]
+    [Trait("Category", "Guard")]
+    public void Test_process_rejects_a_state_root_outside_its_temporary_home()
+    {
+        var outside = Path.Combine(Path.GetPathRoot(Path.GetTempPath())!, "runner-live-state");
+        Assert.Throws<InvalidOperationException>(() => RunnerOptions.Parse(
+            ["--poll", "--state-dir", outside]));
+        Assert.Throws<InvalidOperationException>(() => new RuntimeCapacityCache(outside));
     }
 
     [Fact]
     public void Durable_state_directory_can_be_configured_separately()
     {
-        var state = Path.Combine("runner", "persistent-state");
+        var state = Path.Combine(Path.GetTempPath(), "persistent-state");
 
         var (options, _, _, _) = RunnerOptions.Parse(["--poll", "--state-dir", state]);
 

@@ -569,7 +569,10 @@ unreported claim expires with its lease and is queued again.
   only). The Coding daemon caches the last accepted version under
   `RUNNER_STATE_DIR/configuration/runtime-capacity.json`, reports the exact
   applied version on claim polls, and never treats registration delivery alone
-  as an acknowledgement. The Task Server audits the first exact value/version
+  as an acknowledgement. A cache entry for another host is discarded; the first
+  valid server response replaces a cached version even when that cached version
+  is higher. Runner startup requires an explicit state root, and detached workers
+  do not inherit its environment variable. The Task Server audits the first exact value/version
   confirmation. It then uses fenced leases + heartbeat, per-task linked git
   worktrees, log/artifact upload, and fenced normal completion into auto-review.
   Host project access is also versioned in the Task Server, but is enforced
