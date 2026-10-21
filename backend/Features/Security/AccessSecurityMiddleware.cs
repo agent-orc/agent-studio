@@ -146,6 +146,15 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
+        // The OTLP intake authenticates its own per-environment ingest token
+        // (TelemetryIntakeService). A Studio session or Runner credential
+        // grants nothing there, and the intake needs neither.
+        if (IsTelemetryIntake(context.Request.Method, path))
+        {
+            await _next(context);
+            return;
+        }
+
         if (path.Equals("/api/clients/register", StringComparison.OrdinalIgnoreCase))
         {
             await Reject(context, 404, "registration-disabled", "Open client registration is disabled in the networked profile.");
@@ -534,6 +543,10 @@ public sealed class AccessSecurityMiddleware
         => path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/drain", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase);
+    private static bool IsTelemetryIntake(string method, string path)
+        => HttpMethods.IsPost(method)
+           && (path.Equals("/api/telemetry/otlp/v1/metrics", StringComparison.OrdinalIgnoreCase)
+               || path.Equals("/api/telemetry/otlp/v1/logs", StringComparison.OrdinalIgnoreCase));
     private static bool IsOpenAuth(string path)
         => path.Equals("/api/auth/status", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/api/auth/bootstrap", StringComparison.OrdinalIgnoreCase)
