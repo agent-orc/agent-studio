@@ -1,7 +1,7 @@
 namespace AgentStudio.Shared;
 
 /// <summary>
-/// Task execution mode - orthogonal to <see cref="TaskKinds"/> (task|epic). It
+/// Task execution mode - orthogonal to <see cref="TaskKinds"/>. It
 /// describes how a leaf task's run behaves:
 /// <list type="bullet">
 /// <item><c>coding</c> (default) - mutates source, runs the full git pipeline.</item>

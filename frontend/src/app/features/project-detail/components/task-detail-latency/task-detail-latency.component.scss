@@ -1,0 +1,6 @@
+.task-latency {
+  display: flex; gap: var(--studio-spacing-3); flex-wrap: wrap; align-items: baseline;
+  margin-bottom: var(--studio-spacing-3); padding: var(--studio-spacing-2) var(--studio-spacing-3);
+  background: var(--studio-card-muted-bg); border: 1px solid var(--studio-card-muted-border);
+  border-radius: 6px; font-variant-numeric: tabular-nums;
+}

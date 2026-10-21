@@ -1915,7 +1915,7 @@ public sealed partial class TaskServerStoreTests
             """);
         await File.WriteAllTextAsync(Path.Combine(ready, "task.json"), """
             {
-              "id":"epic-cutover","key":"AGT-1","title":"Cutover epic","state":"2-ready","kind":"epic",
+              "id":"task-cutover","key":"AGT-1","title":"Cutover task","state":"2-ready","kind":"task",
               "tags":["integrationpending"],
               "commits":[{"sha":"1111111"},{"sha":"2222222"}],
               "integrationRecords":[{"id":"integration-1","classification":"integrated-verified"}],
@@ -1973,7 +1973,6 @@ public sealed partial class TaskServerStoreTests
         var request = new LegacyMigrationRequest(source.Path, "Workspace", true, RequireAttemptAuthority: true);
         var inventory = await service.InventoryAsync(request, default);
         Assert.Equal(2, inventory.Tasks);
-        Assert.Equal(1, inventory.Epics);
         Assert.Equal(1, inventory.Dossiers);
         Assert.Equal(1, inventory.OrchestratorSessions);
         Assert.Equal(2, inventory.ContextChats);

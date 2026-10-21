@@ -52,13 +52,6 @@
       Review round {{ budget.delivered }} of {{ budget.maximum }} @if (budget.spentBy) { · {{ budget.spentBy }} spent the budget }
     </div> }
   }
-  @if (detail().info.epicId && detail().info.kind !== 'epic') {
-    <app-epic-membership-banner
-      [epicId]="detail().info.epicId!"
-      [watchPath]="detail().info.watchPath"
-      (openEpic)="openEpicRequested.emit($event)" />
-  }
-
   <!-- AGT-2816: the park is the authoritative statement about why the card is
        not moving, so it renders ABOVE the derived escalation headline. -->
   <app-parked-blocker [detail]="detail()" />
@@ -105,22 +98,6 @@
     [gitTooltip]="gitToggleTooltip()"
     (toggleRequest)="togglePane($event)"
     (openInVsCode)="openInVsCode()" />
-
-  @if (detail().info.kind === 'epic') {
-    <app-epic-rollup-pane
-      [epicId]="detail().info.id"
-      [watchPath]="detail().info.watchPath"
-      [job]="detail().info"
-      [promptMarkdown]="detail().promptMarkdown || ''"
-      [availableModels]="availableModels()"
-      [isRunning]="isRunning()"
-      [selectedSubTaskId]="selectedSubTaskId()"
-      (openSubTask)="openSubTaskRequested.emit($event)"
-      (saveTitle)="saveTitleValue($event)"
-      (saveDescription)="saveFileContent('prompt.md', $event)"
-      (referencesChanged)="fileSaved.emit()"
-      (agentConfigCommit)="onAgentConfigCommit($event)" />
-  }
 
   <div class="detail__panes" [class.detail__panes--maximized]="!!maximizedPane()" data-testid="detail-panes">
     @if (isPaneRendered('prompt')) {

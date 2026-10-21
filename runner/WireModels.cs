@@ -395,19 +395,6 @@ public sealed record ChatExecutionContext(
     string State,
     DateTime CapturedAt);
 
-public sealed record RemoteEpicPlanningPromptRequest(
-    string TaskKey,
-    string LeaseId,
-    long FencingToken,
-    string RunnerId,
-    string WorkingDirectory);
-
-public sealed record RemoteEpicPlanningPromptResponse(
-    string Prompt,
-    string? CliType,
-    string? Model,
-    string? ThinkingLevel);
-
 /// <summary>Runner -> Server: fenced normal completion after the remote CLI exits.</summary>
 public sealed record RemoteRunCompletionRequest(
     string TaskKey,
@@ -431,9 +418,6 @@ public sealed record RemoteRunCompletionRequest(
     string? SalvageAuthoritativeBaseBranch = null,
     string? SalvageAuthoritativeBaseSha = null,
     string? Repository = null,
-    // AGT-2178: additive Epic-planning fields; salvage fields above stay intact.
-    IReadOnlyList<string>? OutputLines = null,
-    bool SourceMutated = false,
     string? AttemptId = null,
     long? AuthorityEpoch = null,
     string? IdempotencyKey = null,
