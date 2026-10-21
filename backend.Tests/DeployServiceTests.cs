@@ -257,6 +257,28 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void PagedReads_ClampTheSliceAndFilterBeforeCounting()
+    {
+        var (deploy, environments, _) = Build();
+        var commit = Head();
+        var release = CreateRelease(deploy, Artifact('a'), commit);
+        Report(deploy, environments, "stage-host", healthy: false);
+        CreateRelease(deploy, Artifact('a'), commit);
+
+        var releases = deploy.ReleasePage("demo", 0, 100)!;
+        Assert.Equal((0, 50, 1), (releases.Offset, releases.Limit, releases.Total));
+        Assert.Equal(release.Id, Assert.Single(releases.Items).Id);
+        Assert.Empty(deploy.ReleasePage("demo", 1, 25)!.Items);
+
+        var failed = deploy.DeploymentPage("demo", "stage", DeploymentStates.Failed, null, 0, 1)!;
+        Assert.Equal(1, failed.Total);
+        Assert.Equal(DeploymentStates.Failed, Assert.Single(failed.Items).State);
+        Assert.Equal(2, deploy.DeploymentPage("demo", "stage", null, null, 0, 1)!.Total);
+        Assert.Single(deploy.DeploymentPage("demo", "stage", null, null, 1, 1)!.Items);
+        Assert.Empty(deploy.DeploymentPage("demo", "stage", null, _clock.GetUtcNow().UtcDateTime.AddMinutes(1), 0, 25)!.Items);
+    }
+
+    [Fact]
     public void Release_IncludesOnlyCardsIntegratedSincePreviousRelease()
     {
         var (deploy, _, _) = Build();
@@ -915,6 +937,13 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal("staging", staging.GetProperty("environment").GetProperty("kind").GetString());
         Assert.Equal(0, staging.GetProperty("environment").GetProperty("order").GetInt32());
         Assert.Equal(JsonValueKind.Null, staging.GetProperty("currentRelease").ValueKind);
+        using var releasePage = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/releases/page?offset=0&limit=1"));
+        Assert.Equal(1, releasePage.RootElement.GetProperty("total").GetInt32());
+        Assert.Single(releasePage.RootElement.GetProperty("items").EnumerateArray());
+        using var runPage = JsonDocument.Parse(await client.GetStringAsync(
+            "/api/projects/demo/deploy/deployments/page?environmentId=stage&state=queued&offset=0&limit=1"));
+        Assert.Equal(1, runPage.RootElement.GetProperty("total").GetInt32());
+        Assert.Equal("queued", runPage.RootElement.GetProperty("items")[0].GetProperty("state").GetString());
         Assert.Equal(releaseId, staging.GetProperty("newerRelease").GetProperty("id").GetString());
         Assert.Equal("unknown", staging.GetProperty("health").GetString());
         var run = staging.GetProperty("currentDeployment");
