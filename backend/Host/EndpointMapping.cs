@@ -2,6 +2,7 @@
 using AgentStudio.Deploy;
 using AgentStudio.Search;
 using AgentStudio.Proposals;
+using AgentStudio.Quota;
 using AgentStudio.Telemetry;
 
 namespace AgentStudio.Host;
@@ -89,6 +90,7 @@ public static class EndpointMapping
         }
         app.MapWorkspaceEndpoints();
         app.MapWorkspaceSettingsEndpoints();
+        app.MapWorkspaceQuotaEndpoints();
         app.MapProjectSettingsEndpoints();
         app.MapProjectCheckoutEndpoints();
         app.MapCrashRecoveryEndpoints();

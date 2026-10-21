@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Security.Cryptography;
 using System.Text;
 using AgentStudio.Pipeline;
@@ -333,6 +334,247 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal(_artifact, service.Claim("prod-host")!.Artifact);
     }
 
+    [Fact]
+    public void Hosting_slots_admit_deploys_meter_jobs_and_free_on_stop()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var stage = service.Claim("stage-host")!;
+        Assert.True(stage.ReservedSlot);
+        _clock.Advance(TimeSpan.FromMinutes(3));
+        Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+        var running = quota.Snapshot(workspaceId);
+        Assert.Equal(1, running.Usage.HostingSlots);
+        Assert.Equal(0.05m, running.Usage.ComputeCoreHours);
+
+        // Production is not running yet and the only slot is taken by stage.
+        var refused = Assert.Throws<DeployQuotaRefusedException>(() => service.Decide("demo", _artifact, true, "operator"));
+        Assert.Contains("All 1 hosting slots are in use", refused.Message, StringComparison.Ordinal);
+        Assert.Equal("pending", Assert.Single(service.Read("demo")!.Promotions).Status);
+
+        Assert.True(service.Stop("demo", "stage", "operator"));
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Equal("stopped", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+        Assert.True(service.Decide("demo", _artifact, true, "operator"));
+        var production = service.Claim("prod-host")!;
+        Assert.True(service.Report("demo", production.Id, new(production.LeaseToken!, true, "health-ok")));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    [Fact]
+    public void Reconciliation_keeps_a_successful_deploy_slot_until_the_environment_stops()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var stage = service.Claim("stage-host")!;
+        Assert.True(stage.ReservedSlot);
+        Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+
+        service.ReconcileHostingSlots();
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.False(Assert.Single(service.Read("demo")!.Jobs).ReservedSlot);
+
+        Assert.True(service.Stop("demo", "stage", "operator"));
+        service.ReconcileHostingSlots();
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Stop_during_a_claimed_redeploy_keeps_the_hosting_slot_until_the_claim_settles(bool healthy)
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var first = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", first.Id, new(first.LeaseToken!, true, "health-ok")));
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        Assert.NotNull(service.QueueDeployment("demo", stage, _artifact, "operator", rollback: false));
+        var redeploy = service.Claim("stage-host")!;
+        Assert.False(redeploy.ReservedSlot);
+
+        Assert.False(service.Stop("demo", "stage", "operator"));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Equal("healthy", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+        Assert.Throws<InvalidOperationException>(() => quota.ReserveProjectEnvironment("demo", "website"));
+
+        Assert.True(service.Report("demo", redeploy.Id, new(redeploy.LeaseToken!, healthy,
+            healthy ? "health-ok" : "health-http-failed")));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.True(service.Stop("demo", "stage", "operator"));
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    [Fact]
+    public void Stop_settles_an_abandoned_redeploy_claim_as_host_lost_and_frees_the_slot()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var first = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", first.Id, new(first.LeaseToken!, true, "health-ok")));
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        Assert.NotNull(service.QueueDeployment("demo", stage, _artifact, "operator", rollback: false));
+        var redeploy = service.Claim("stage-host")!;
+
+        // The host never reports or reclaims, and nothing reads the
+        // environments, so only the stop itself can settle the claim.
+        _clock.Advance(ProjectEnvironmentService.LeaseDuration);
+        service.ReconcileHostingSlots();
+        Assert.False(service.Stop("demo", "stage", "operator"));
+        _clock.Advance(ProjectEnvironmentService.HostLostAfter - ProjectEnvironmentService.LeaseDuration);
+        Assert.True(service.Stop("demo", "stage", "operator"));
+
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.False(service.Report("demo", redeploy.Id, new(redeploy.LeaseToken!, true, "health-ok")));
+        var view = service.Read("demo")!;
+        Assert.Equal("stopped", view.Environments.Single(item => item.Declaration.Id == "stage").Health);
+        var lost = view.Jobs.Single(item => item.Id == redeploy.Id);
+        Assert.Equal("failed", lost.Status);
+        Assert.Equal("host-lost", lost.Evidence);
+    }
+
+    [Fact]
+    public void Reconciliation_does_not_release_a_newer_healthy_deploys_slot_after_an_older_claim_fails()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var older = service.Claim("stage-host")!;
+        Assert.True(older.ReservedSlot);
+        var newerArtifact = "registry.example/app@sha256:" + new string('b', 64);
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        Assert.NotNull(service.QueueDeployment("demo", stage, newerArtifact, "operator", rollback: false));
+
+        _clock.Advance(ProjectEnvironmentService.HostLostAfter + TimeSpan.FromSeconds(1));
+        var newer = service.Claim("stage-host")!;
+        Assert.Equal(newerArtifact, newer.Artifact);
+        Assert.True(newer.ReservedSlot);
+        Assert.False(service.Read("demo")!.Jobs.Single(job => job.Id == older.Id).ReservedSlot);
+        Assert.True(service.Report("demo", newer.Id, new(newer.LeaseToken!, true, "health-ok")));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+
+        // A durable queue written before reservation handoff can still name
+        // the older job as owner. Reconciliation must honor the newer result.
+        var queueFile = Path.Combine(_root, "workspace", "deployments", "demo.json");
+        var queue = JsonNode.Parse(File.ReadAllText(queueFile))!;
+        var jobs = queue["jobs"]!.AsArray();
+        jobs.Single(item => item!["id"]!.GetValue<string>() == older.Id)!["reservedSlot"] = true;
+        jobs.Single(item => item!["id"]!.GetValue<string>() == newer.Id)!["reservedSlot"] = false;
+        File.WriteAllText(queueFile, queue.ToJsonString());
+
+        service.ReconcileHostingSlots();
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.False(service.Read("demo")!.Jobs.Single(job => job.Id == older.Id).ReservedSlot);
+    }
+
+    [Fact]
+    public void Deploy_claim_waits_at_the_slot_boundary_and_a_failed_first_deploy_returns_its_slot()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        // Another deploy takes the last slot between queueing and claiming.
+        Assert.True(quota.ReserveProjectEnvironment("demo", "website"));
+
+        Assert.Null(service.Claim("stage-host"));
+        Assert.Equal("queued", Assert.Single(service.Read("demo")!.Jobs).Status);
+
+        quota.SetProjectEnvironment("demo", "website", false);
+        var stage = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, false, "health-http-failed")));
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    [Fact]
+    public void Expired_unreported_deploy_claim_gives_its_slot_back_and_reading_changes_no_slot()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        Assert.True(service.Claim("stage-host")!.ReservedSlot);
+        // A slot of a declaration that no longer exists stays until the reconciliation, not the GET read.
+        quota.SetProjectEnvironment("demo", ProjectEnvironmentService.SlotKey("retired"), true);
+
+        service.Read("demo");
+        Assert.Equal(2, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        service.ReconcileHostingSlots();
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+
+        // The deploy host never reports; after the five-minute lease the reservation is released.
+        _clock.Advance(TimeSpan.FromMinutes(6));
+        service.ReconcileHostingSlots();
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.False(Assert.Single(service.Read("demo")!.Jobs).ReservedSlot);
+        // A later claim of the same job reserves the slot again.
+        Assert.True(service.Claim("stage-host")!.ReservedSlot);
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    private WebApplicationFactory<Program> QuotaFactory() => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+    {
+        builder.UseEnvironment("Test");
+        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "quota-workspace"), ["PublicDemo:Enabled"] = "false",
+        }));
+        builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<TimeProvider>();
+            services.AddSingleton<TimeProvider>(_clock);
+        });
+    });
+
+    private (AgentStudio.Quota.WorkspaceQuotaService Quota, string WorkspaceId) QuotaFor(
+        WebApplicationFactory<Program> factory, AgentStudio.Quota.QuotaLimits limits)
+    {
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var storage = Path.Combine(_root, "quota-workspace", "projects", "demo");
+        Directory.CreateDirectory(storage);
+        services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>()
+            .EnsureProjectForStorage(storage, "demo", workspace.Id, _clock);
+        var quota = services.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>();
+        quota.SetLimits(workspace.Id, null, limits);
+        return (quota, workspace.Id);
+    }
+
     private bool QueueGateRelease(ProjectEnvironmentService service, string artifact, string commit)
     {
         WriteReleaseEvidence("demo", artifact, commit);
@@ -360,7 +602,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false,
-        string project = "demo")
+        string project = "demo", AgentStudio.Quota.WorkspaceQuotaService? quota = null)
     {
         var repo = Path.Combine(_root, "repo");
         var watch = Path.Combine(_root, "workspace", "projects", project);
@@ -398,7 +640,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
-        return (new(config, scanner, git, settings, _clock), repo, watch);
+        return (new(config, scanner, git, settings, _clock, quota), repo, watch);
     }
 
     private string Git(string directory, params string[] arguments)

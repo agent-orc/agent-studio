@@ -226,6 +226,7 @@ public static class StepCostMeasurement
             StartedAt = row.StartedAt,
             CompletedAt = row.CompletedAt,
             DurationMs = row.DurationMs,
+            GrantedCores = row.GrantedCores,
             Model = row.Model,
             ThinkingLevel = row.ThinkingLevel,
             ModelSource = row.ModelSource,

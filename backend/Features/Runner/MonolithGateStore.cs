@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Tasks;
 using GateFailureClasses = AgentStudio.TaskServer.Contracts.GateFailureClasses;
 
 namespace AgentStudio.Runner;
@@ -49,19 +50,26 @@ public sealed class MonolithGateStore
     private readonly string? _directory;
     private readonly TimeProvider _time;
     private readonly IGateExecutorDirectory _executors;
+    private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
+    private readonly TaskScannerService? _scanner;
     private readonly Dictionary<string, MonolithGateRecord> _subjects = new(StringComparer.Ordinal);
     private int _portCursor = 23992;
 
-    public MonolithGateStore(IConfiguration configuration, TimeProvider time, IGateExecutorDirectory executors)
+    public MonolithGateStore(IConfiguration configuration, TimeProvider time, IGateExecutorDirectory executors,
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null, TaskScannerService? scanner = null)
         : this(string.IsNullOrWhiteSpace(configuration["TaskRepository"])
             ? null
-            : Path.Combine(configuration["TaskRepository"]!, ".gate-subjects"), time, executors) { }
+            : Path.Combine(configuration["TaskRepository"]!, ".gate-subjects"), time, executors,
+            workspaceQuota, scanner) { }
 
-    public MonolithGateStore(string? directory, TimeProvider time, IGateExecutorDirectory executors)
+    public MonolithGateStore(string? directory, TimeProvider time, IGateExecutorDirectory executors,
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null, TaskScannerService? scanner = null)
     {
         _directory = directory;
         _time = time;
         _executors = executors;
+        _workspaceQuota = workspaceQuota;
+        _scanner = scanner;
         if (directory is null) return;
         Directory.CreateDirectory(directory);
         foreach (var file in Directory.EnumerateFiles(directory, "gsub_*.json"))
@@ -141,6 +149,7 @@ public sealed class MonolithGateStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(request.ExecutorId);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.InstanceId);
+        var verdicts = QuotaVerdicts();
         lock (_gate)
         {
             ReconcileTimeouts();
@@ -153,11 +162,23 @@ public sealed class MonolithGateStore
             if (_subjects.Values.SelectMany(item => item.Attempts).Any(item =>
                     item.Attempt.HostId == hostId && IsActive(item.Attempt.State)))
                 return new GateClaimResponse("empty", Message: "Gate host slot is occupied.");
+            string? quotaReason = null;
             foreach (var (record, candidate) in _subjects.Values
                          .SelectMany(record => record.Attempts.Select(attempt => (record, attempt)))
                          .Where(item => item.attempt.Attempt.State == GateStates.Queued)
                          .OrderBy(item => item.attempt.Attempt.CreatedAt).Take(32).ToArray())
             {
+                AgentStudio.Quota.QuotaAdmission? admission = null;
+                if (verdicts is not null)
+                {
+                    // A subject queued after the verdicts were read waits for the next poll.
+                    if (!verdicts.TryGetValue(record.Subject.TaskId, out admission))
+                    {
+                        quotaReason = "Gate quota admission is pending for this subject.";
+                        continue;
+                    }
+                    if (!admission.Allowed) { quotaReason = admission.Message; continue; }
+                }
                 var number = candidate.Attempt.AttemptNumber;
                 // A same-SHA infrastructure retry needs a different healthy host.
                 if (number > 1 && record.Attempts.FirstOrDefault(item =>
@@ -190,10 +211,47 @@ public sealed class MonolithGateStore
                 };
                 var updated = Replace(record, claimed) with { LastFence = fence };
                 Save(updated);
-                return new GateClaimResponse("claimed", updated.Subject, claimed.Attempt, Lease(claimed));
+                return new GateClaimResponse("claimed", updated.Subject, claimed.Attempt, Lease(claimed),
+                    admission is { MeterUnavailable: true } ? admission.Message : null);
             }
-            return new GateClaimResponse("empty", Message: "No eligible gate subject is queued.");
+            return new GateClaimResponse("empty", Message: quotaReason ?? "No eligible gate subject is queued.");
         }
+    }
+
+    /// <summary>
+    /// Quota verdicts per queued subject task, read before the claim lock: one
+    /// task index read and at most one admission per project. Null when no
+    /// quota limit exists, so claims do no quota work at all.
+    /// </summary>
+    private Dictionary<string, AgentStudio.Quota.QuotaAdmission>? QuotaVerdicts()
+    {
+        if (_workspaceQuota is null || !_workspaceQuota.HasLimits()) return null;
+        string[] taskIds;
+        lock (_gate)
+            taskIds = _subjects.Values.Where(record => record.Attempts.Any(item =>
+                    item.Attempt.State == GateStates.Queued))
+                .Select(record => record.Subject.TaskId).Distinct(StringComparer.Ordinal).ToArray();
+        var verdicts = new Dictionary<string, AgentStudio.Quota.QuotaAdmission>(StringComparer.Ordinal);
+        if (taskIds.Length == 0) return verdicts;
+        var projects = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var task in _scanner?.ScanAllJobsWithArchive() ?? [])
+            foreach (var alias in new[] { task.Id, task.Key, task.TaskKey })
+                if (!string.IsNullOrWhiteSpace(alias)) projects.TryAdd(alias, task.ProjectName);
+        var byProject = new Dictionary<string, AgentStudio.Quota.QuotaAdmission>(StringComparer.OrdinalIgnoreCase);
+        foreach (var taskId in taskIds)
+        {
+            if (!projects.TryGetValue(taskId, out var project))
+            {
+                // Like an unregistered project: admitted, and the meter gap is named on the claim.
+                verdicts[taskId] = new(true,
+                    $"Gate card '{taskId}' could not be resolved to a project; quota admission is off for it.", true);
+                continue;
+            }
+            if (!byProject.TryGetValue(project, out var admission))
+                byProject[project] = admission = _workspaceQuota.Admit(project);
+            verdicts[taskId] = admission;
+        }
+        return verdicts;
     }
 
     public GateLease Renew(string attemptId, GateRenewRequest request)
