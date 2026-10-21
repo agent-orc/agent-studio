@@ -961,7 +961,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
 | `RUNNER_REVIEW_GIT_CREDENTIALS_FILE` | `--review-git-credentials-file` | (none) | Review role only. Owner-only `git credential-store` file with one read-only, repository-scoped `https://` credential per private repository. Registers `review:repository-read:<host>/<owner>/<repo>` and is used only by the review clone and fetch processes; see [Private repositories](#private-repositories). |
 | `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Floor for the hang watchdog on review commands. A command's whole process tree must burn at least one percent of one core within the *effective* window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. The effective window is `max(this value, 50%` of that command's own budget`)` (AGT-2851), so a legitimately quiet suite with a large budget is not killed for sitting near 0% CPU during a real test wait. `0` disables the watchdog outright, ignoring the budget-derived floor. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |
-| `RUNNER_STATE_DIR` | `--state-dir` | `$RUNNER_WORKDIR/.runner-state` | Durable slot, attempt, PID, worker result, and file-backed output state used for planned restart reattachment. Keep it on persistent local storage. |
+| `RUNNER_STATE_DIR` | `--state-dir` | `$RUNNER_WORKDIR/.runner-state` | Durable slot, attempt, PID, worker result, and file-backed output state used for planned restart reattachment. Keep it on persistent local storage. The daemon removes this variable and its `AGENT_HOST_STATE_DIR` alias from coding and review child processes. |
 | `AGENT_STUDIO_CLEAN_CONTEXT_ROOT` | none | `$XDG_STATE_HOME/agent-studio/clean-context` or `~/.local/state/agent-studio/clean-context` | Persistent non-temporary root for task-isolated Claude and Codex homes. Keep it on host-local storage. The same task reuses its marker-validated home across attempts and daemon restarts; inactive homes expire after seven days. |
 | `RUNNER_CLI_TYPE` | `--cli-type` | `claude` | Default coding provider. Accepted values are `claude` and `codex`; a card-level typed run spec may select either available provider. |
 | `RUNNER_CLAUDE_CLI_BIN` | `--claude-cli` | `claude` | Claude binary used for Claude-pinned cards when the primary CLI is Codex. The native setup flow writes the discovered path. |
@@ -2195,20 +2195,6 @@ leaves the card in `2-ready`. A successful result is cached for following
 cards. Changing the project's repository registration or integration branch
 invalidates it automatically.
 
-Ready Epic containers are eligible for a special remote planning claim. They
-consume one slot and use the normal lease, heartbeat, telemetry, drain, and
-cancellation lifecycle. The server supplies the same rendered Epic
-decomposition prompt used by the local runner. The daemon creates a bounded,
-detached checkout for read-only repository inspection and removes it after the
-run without creating or pushing a runner branch. A valid plan creates child
-coding cards and sends the Epic to human review; a planning run owns no
-Result-SHA, so it never enters the auto-review code-review lane. Empty or
-invalid output, or any attempted source mutation, returns the Epic to Backlog.
-
-Epic planning uses the same repository-specific delivery preflight as coding
-claims. A failure blocks only that project's claim and does not reduce the
-host's slots for unrelated projects.
-
 At startup the daemon reads `RUNNER_STATE_DIR` before registration or a new
 claim. Each live worker directory contains a durable `lease-authority.json`
 with the last server-issued expiry, a stop-before deadline one heartbeat before
@@ -2267,9 +2253,9 @@ response safe. Task Server restart is different from transport recovery: it
 quarantines the attempt as `process-unknown` and requires positive containment
 proof before a higher-fenced replacement can start.
 
-The per-project probe additionally gates the first claim, including an Epic
-planning claim, because a project must have a proven delivery path before the
-host takes any of its work. After a daemon interruption, the next claim requeues
+The per-project probe additionally gates the first claim because a project
+must have a proven delivery path before the host takes any of its work. After a
+daemon interruption, the next claim requeues
 assigned Progress work once its lease is free and issues a higher fencing token.
 
 ### systemd deployment

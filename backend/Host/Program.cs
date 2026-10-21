@@ -3,6 +3,7 @@
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.HttpOverrides;
+using AgentStudio.Telemetry;
 using Serilog;
 using Serilog.Events;
 
@@ -48,6 +49,7 @@ Log.Logger = new LoggerConfiguration()
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddSingleton<TaskDetailLatencyMetrics>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunRepositoryProbe>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunGitSetup>();
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();
@@ -425,6 +427,7 @@ builder.Services.AddSingleton<LaneMutexRegistry>();
 // See backend/Services/Jobs/TaskChangeNotifier.cs.
 builder.Services.AddSingleton<TaskChangeNotifier>();
 builder.Services.AddSingleton<TaskStateMachine>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.TaskGateCancellationRegistry>();
 builder.Services.AddSingleton<TaskMutationService>();
 builder.Services.AddSingleton<ITaskHistoryGitRunner, ProcessTaskHistoryGitRunner>();
 builder.Services.AddSingleton<TaskFileHistoryService>();
@@ -524,6 +527,11 @@ builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<AgentStudio.Deploy.CardPreviewSweep>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<AgentStudio.Deploy.DeploymentInterventionWorker>();
 builder.Services.AddSingleton<ProjectPipelineDefinitionService>();
 // IP-14: environment health checks run here, in the control plane, not on the app host.
 builder.Services.AddHttpClient(NetworkHealthCheckProbe.HttpClientName, client =>
@@ -747,6 +755,8 @@ builder.Services.AddSingleton<ICliUsageParser, CodexUsageParser>();
 builder.Services.AddSingleton<CliUsageParserRegistry>();
 builder.Services.AddSingleton<BusAggregationCache>();
 builder.Services.AddTokenUsage();
+// IP-15: OTLP intake and the built-in metrics and logs store per project environment.
+builder.Services.AddTelemetryIntake();
 // Central step-call dispatch: the concrete Claude runner is wrapped by the
 // PromptLoggingCliOneShot decorator so every one-shot step prompt (aspects,
 // code-review-grade, orchestrator-decision, drift, ...) is captured raw into
@@ -1766,6 +1776,11 @@ try
     store.OnAppended = (workspace, msg) =>
     {
         try { cache.OnAppended(workspace, msg); } catch (Exception ex) { SilentCatch.Note(ex, "BusAggregationCache.OnAppended"); }
+        if (msg.Kind == "token-usage" && !string.IsNullOrWhiteSpace(msg.JobId))
+        {
+            try { app.Services.GetRequiredService<AgentStudio.Tokens.TaskTokenUsageCache>().OnTokenUsageAppended(msg); }
+            catch (Exception ex) { SilentCatch.Note(ex, "TaskTokenUsageCache.OnTokenUsageAppended"); }
+        }
         try
         {
             var recipients = projectScopedSignalRProfile

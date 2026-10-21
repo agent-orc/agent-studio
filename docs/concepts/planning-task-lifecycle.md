@@ -8,14 +8,14 @@
 
 ## What a planning task is
 
-A task's **execution mode** (`mode` field in `task.json`, orthogonal to the
-`kind` epic/task container taxonomy) is one of `coding` (default, writes source),
+A task's **execution mode** (`mode` field in `task.json`, independent of the
+`kind` task/decision taxonomy) is one of `coding` (default, writes source),
 `planning`, or `research`. Planning and research are **read-only**: they analyse
 the codebase and produce a report; they skip the git pre/post pipeline (no
-worktree, no commit, no merge). See
-[docs/concepts/planning-research-task-kinds-2026-05.md](./planning-research-task-kinds-2026-05.md)
-for the taxonomy and [`TaskModes`](../../backend/Shared/Models/TaskModes.cs) for
-the carrier.
+worktree, no commit, no merge). See the
+[historical planning and research proposal](./planning-research-task-kinds-2026-05.md)
+for the mode's origin and [`TaskModes`](../../backend/Shared/Models/TaskModes.cs)
+for the current carrier.
 
 A **planning task** answers "what should we build next in this codebase?" Its
 deliverable is a concept plus the concrete follow-up work it proposes. The

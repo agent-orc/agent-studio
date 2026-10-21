@@ -145,6 +145,100 @@ public sealed class DeployHostCommandTests
     }
 
     [Fact]
+    public async Task StaticPreviewJob_UsesRunZoneBoundaryAndReportsScreenshotThenRemoval()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "static-preview-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var tokenFile = Path.Combine(root, "token");
+        await File.WriteAllTextAsync(tokenFile, $"test-{Guid.NewGuid():N}");
+        var commit = new string('a', 40);
+        var png = Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC");
+        var zone = new StaticPreviewZone(root, png);
+        var handler = new PreviewTransport(commit, root);
+        try
+        {
+            using (var first = new HttpClient(handler, disposeHandler: false)
+                { BaseAddress = new Uri("https://studio.test/") })
+                Assert.Equal(0, await DeployHostCommand.RunAsync(
+                    ["https://studio.test", "preview-host", tokenFile, root], CancellationToken.None, first,
+                    previewZone: zone));
+            Assert.Equal(commit, zone.DeployedCommit);
+            Assert.True(File.Exists(Path.Combine(root, "deployed", "index.html")));
+            Assert.Equal(Convert.ToBase64String(png), handler.Reports[0].GetProperty("screenshotBase64").GetString());
+            using (var second = new HttpClient(handler, disposeHandler: false)
+                { BaseAddress = new Uri("https://studio.test/") })
+                Assert.Equal(0, await DeployHostCommand.RunAsync(
+                    ["https://studio.test", "preview-host", tokenFile, root], CancellationToken.None, second,
+                    previewZone: zone));
+            Assert.False(File.Exists(Path.Combine(root, "deployed", "index.html")));
+            Assert.True(zone.Removed);
+            Assert.Equal(2, handler.Reports.Count);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private sealed class StaticPreviewZone(string root, byte[] png) : IPreviewRunZone
+    {
+        public string? DeployedCommit { get; private set; }
+        public bool Removed { get; private set; }
+
+        public Task<PreviewRunZoneResult> DeployAsync(PreviewRunZoneJob job, CancellationToken cancellationToken)
+        {
+            Assert.Equal("static", job.Template);
+            Assert.Equal("dist", job.ArtifactPath);
+            Assert.Equal(job.SourceCommit, job.SourceRef);
+            Assert.Equal(root, job.SourceRepository);
+            Assert.Equal(["npm run build"], job.BuildCommands);
+            Assert.Empty(job.SecretRefs);
+            DeployedCommit = job.SourceCommit;
+            Directory.CreateDirectory(Path.Combine(root, "deployed"));
+            File.WriteAllText(Path.Combine(root, "deployed", "index.html"), "<h1>Preview</h1>");
+            return Task.FromResult(new PreviewRunZoneResult(true, png));
+        }
+
+        public Task RemoveAsync(PreviewRunZoneJob job, CancellationToken cancellationToken)
+        {
+            File.Delete(Path.Combine(root, "deployed", "index.html"));
+            Removed = true;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class PreviewTransport(string commit, string root) : HttpMessageHandler
+    {
+        private int _claims;
+        public List<JsonElement> Reports { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/claim", StringComparison.Ordinal))
+            {
+                var kind = Interlocked.Increment(ref _claims) == 1 ? "preview" : "preview-remove";
+                return new(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new
+                    {
+                        id = kind, project = "demo", environmentId = "preview-agt-3180",
+                        hostId = "preview-host", artifact = "source:" + commit,
+                        template = "static", destination = Path.Combine(root, "deployed"),
+                        healthUrl = (string?)null, secretRefs = Array.Empty<string>(), containerPort = 8080,
+                        previousArtifact = (string?)null, status = "claimed", leaseToken = "lease-1",
+                        kind, cardKey = "agt-3180", sourceCommit = commit,
+                        sourceRepository = root, sourceRef = commit, artifactPath = "dist", dockerfile = (string?)null,
+                        address = "https://agt-3180.demo.preview.internal",
+                        buildCommands = new[] { "npm run build" },
+                    }),
+                };
+            }
+            using var document = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+            Reports.Add(document.RootElement.Clone());
+            return new(HttpStatusCode.OK);
+        }
+    }
+
+    [Fact]
     [Trait("Category", "MachineBound")]
     public async Task RealServer_Claim_Deploy_HealthCheck_AndReport_LocalContainer()
     {

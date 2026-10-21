@@ -211,6 +211,8 @@ public sealed class MergeService
             _audit.Append(record);
 
             _scanner.InvalidateCache();
+            _scanner.RemoveCore(secondary);
+            _scanner.PublishCoreFromKnownFolder(primary.FolderPath);
 
             // Re-resolve the primary so the response carries the latest
             // mtime / lane / timeline counters.
@@ -282,6 +284,8 @@ public sealed class MergeService
             };
             _audit.Append(record);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(primary.FolderPath);
+            _scanner.PublishCoreFromKnownFolder(secondary.FolderPath);
 
             var refreshed = _scanner.FindJob(primary.Id, primary.WatchPath) ?? primary;
             return new MergeOutcome(MergeStatus.Success, new MergeResponse
@@ -397,6 +401,13 @@ public sealed class MergeService
 
         _audit.AppendUndo(record, now, who);
         _scanner.InvalidateCache();
+        var secondaryProject = _scanner.GetWatchPaths().FirstOrDefault(path =>
+            WatchPathComparison.PathsEqual(path.Path, record.SecondaryWatchPath))?.Name
+            ?? Path.GetFileName(record.SecondaryWatchPath);
+        _scanner.PublishCoreFromFolder(record.SecondaryOriginalFolderPath,
+            record.SecondaryWatchPath, secondaryProject,
+            record.SecondaryOriginalState);
+        _scanner.PublishCoreFromKnownFolder(record.PrimaryFolderPath);
 
         return new MergeUndoOutcome(MergeUndoStatus.Success, new MergeUndoResponse
         {
@@ -427,6 +438,8 @@ public sealed class MergeService
         });
         _audit.AppendUndo(record, now, who);
         _scanner.InvalidateCache();
+        _scanner.PublishCoreFromKnownFolder(record.PrimaryFolderPath);
+        _scanner.PublishCoreFromKnownFolder(record.SecondaryOriginalFolderPath);
         return new MergeUndoOutcome(MergeUndoStatus.Success, new MergeUndoResponse
         {
             Restored = true,

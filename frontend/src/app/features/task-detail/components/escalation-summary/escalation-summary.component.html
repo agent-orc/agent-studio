@@ -71,6 +71,7 @@
 
     @if (!collapsed()) {
       <div class="escalation__body" id="escalation-body" data-testid="escalation-body">
+        <app-gate-queue-release [info]="detail().info" />
         @if (detail().info.needsInput; as needsInput) {
           <section class="escalation__needs-input" data-testid="needs-input-question" aria-label="Agent question">
             <div class="escalation__needs-input-meta">

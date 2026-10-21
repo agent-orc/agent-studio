@@ -1,13 +1,13 @@
 # Workflow-Sized Task Cutting
 
 Use one leaf card for one independently deliverable and reviewable unit. A card
-may reference a larger Epic, Dossier, or recommendation list for context, but
+may reference a larger Dossier or recommendation list for context, but
 its acceptance boundary must fit one delivery.
 
 ## Card boundary
 
 - Cut one card per implementation slice.
-- Use an Epic or another parent card when several slices share one outcome.
+- Use a Dossier to group slices that share one outcome.
 - Put dependencies between slice cards when ordering matters.
 - Do not create one leaf card that says `implement all recommendations`,
   `complete the Dossier`, or another open-ended equivalent.
@@ -62,8 +62,8 @@ ledger; see [the task domain](../system/domains/tasks.md#decision-cards).
 
 ## Acceptance scope contract
 
-The card stores its review boundary in `job.json` as `acceptanceScope`. Task and
-Epic creation APIs accept the same field:
+The card stores its review boundary in `job.json` as `acceptanceScope`. Task
+creation APIs accept the field:
 
 ```json
 {

@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
 using AgentStudio.Pipeline;
+using AgentStudio.Deploy;
 using AgentStudio.Projects;
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
@@ -41,6 +42,84 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal(["stage", "production"], declarations!.Select(item => item.Id));
         Assert.Equal(["DATABASE_URL"], declarations[1].SecretRefs);
         Assert.DoesNotContain("sensitive-value", JsonSerializer.Serialize(service.Read("demo")));
+    }
+
+    [Fact]
+    public void PreviewDeclarationCanSpecifyItsOwnHostAndSecretReferences()
+    {
+        var (service, repo, _) = Build();
+        var file = Path.Combine(repo, "docs", "deployments", "environments", "preview.json");
+        File.WriteAllText(file, JsonSerializer.Serialize(new
+        {
+            id = "preview", name = "Preview", kind = "preview", targetHostId = "preview-host",
+            address = "https://preview.internal", template = "static",
+            destination = "/srv/agent-studio/previews", secretRefs = new[] { "TEST_DATA" },
+        }));
+        Git(repo, "add", "docs/deployments/environments/preview.json");
+        Git(repo, "commit", "-m", "declare preview");
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        var preview = Assert.Single(service.DeclarationsAtCommit("demo", commit)!,
+            declaration => declaration.Kind == "preview");
+        Assert.Equal("preview-host", preview.TargetHostId);
+        Assert.Equal(["TEST_DATA"], preview.SecretRefs);
+        Assert.Equal("static", preview.Template);
+    }
+
+    [Fact]
+    public void PreviewJobUsesTheNormalLeaseAndRequiresScreenshotAfterDeploy()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        var spec = new PreviewJobSpec("demo", "agt-3180", commit, "preview-host",
+            "https://agt-3180.demo.preview.internal", "static", "/srv/agent-studio/previews/demo/agt-3180",
+            ["npm run build"], ["TEST_DATA"], 8080)
+        { SourceRepository = repo, SourceRef = commit, ArtifactPath = "dist" };
+        var queued = service.QueuePreview(spec);
+        Assert.Equal("preview", queued.Kind);
+        Assert.Equal(commit, queued.SourceCommit);
+        Assert.Equal(["TEST_DATA"], queued.SecretRefs);
+        var claimed = service.Claim("preview-host")!;
+        Assert.Equal(queued.Id, claimed.Id);
+        Assert.False(service.Report("demo", claimed.Id, new DeployReportRequest(claimed.LeaseToken!, true, "health-ok")));
+        var png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC";
+        Assert.True(service.Report("demo", claimed.Id,
+            new DeployReportRequest(claimed.LeaseToken!, true, "health-ok", ScreenshotBase64: png)));
+        var ready = service.PreviewJob("demo", claimed.Id)!;
+        Assert.Equal("healthy", ready.Status);
+        Assert.NotNull(ready.ScreenshotUrl);
+        Assert.NotNull(service.PreviewScreenshotPath("demo", "agt-3180"));
+        var removal = service.QueuePreviewRemoval(spec);
+        Assert.Empty(removal.SecretRefs);
+        var removalClaim = service.Claim("preview-host")!;
+        Assert.Equal(removal.Id, removalClaim.Id);
+        Assert.True(service.Report("demo", removal.Id,
+            new DeployReportRequest(removalClaim.LeaseToken!, true, "health-ok")));
+        Assert.Null(service.PreviewScreenshotPath("demo", "agt-3180"));
+    }
+
+    [Fact]
+    public void PreviewJobsCannotBeQueuedOrClaimedOnAProductionHost()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        PreviewJobSpec Spec(string host) => new("demo", "agt-3180", commit, host,
+            "https://agt-3180.demo.preview.internal", "static",
+            "/srv/agent-studio/previews/demo/agt-3180", ["npm run build"], [], 8080)
+        { SourceRepository = repo, SourceRef = commit, ArtifactPath = "dist" };
+
+        Assert.Throws<InvalidOperationException>(() => service.QueuePreview(Spec("prod-host")));
+        Assert.Throws<InvalidOperationException>(() => service.QueuePreviewRemoval(Spec("prod-host")));
+
+        var queued = service.QueuePreview(Spec("preview-host"));
+        var declaration = Path.Combine(repo, "docs", "deployments", "environments", "production.json");
+        using var production = JsonDocument.Parse(File.ReadAllText(declaration));
+        var values = production.RootElement.EnumerateObject()
+            .ToDictionary(property => property.Name, property => (object?)property.Value.Clone());
+        values["targetHostId"] = "preview-host";
+        File.WriteAllText(declaration, JsonSerializer.Serialize(values));
+
+        Assert.Null(service.Claim("preview-host"));
+        Assert.Equal("queued", service.PreviewJob("demo", queued.Id)!.Status);
     }
 
     [Fact]
@@ -317,6 +396,34 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
             Assert.True(service.Report("demo", production.Id,
                 new(production.LeaseToken!, !failProduction, "raw-host-secret=sensitive-value")));
         }
+    }
+
+    [Fact]
+    public void OlderGuidedFailure_DoesNotQueueRollbackAfterNewerManualRollbackCompleted()
+    {
+        var (service, _, _) = Build();
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        var first = "registry.example/app@sha256:" + new string('b', 64);
+        var initial = service.QueueDeployment("demo", stage, first, "owner", rollback: false)!;
+        var initialClaim = service.Claim("stage-host")!;
+        Assert.Equal(initial.Id, initialClaim.Id);
+        Assert.True(service.Report("demo", initial.Id, new(initialClaim.LeaseToken!, true, "health-ok")));
+
+        var failed = service.QueueDeployment("demo", stage with { GuidedFailure = true }, _artifact,
+            "owner", rollback: false)!;
+        var failedClaim = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", failed.Id,
+            new(failedClaim.LeaseToken!, false, "health-http-failed")));
+        var manual = service.QueueDeployment("demo", stage, first, "owner", rollback: true)!;
+        var manualClaim = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", manual.Id, new(manualClaim.LeaseToken!, true, "health-ok")));
+
+        Assert.True(service.RollbackFailedJob("demo", failed.Id));
+        Assert.Null(service.Claim("stage-host"));
+        var jobs = service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage");
+        Assert.Equal(first, jobs.DeployedArtifact);
+        Assert.Null(jobs.PendingArtifact);
+        Assert.Equal("rolled-back", jobs.History[0].Status);
     }
 
     [Fact]
