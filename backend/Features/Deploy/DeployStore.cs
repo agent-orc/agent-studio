@@ -12,6 +12,8 @@ public sealed class DeployStore
 {
     private const int MaxLogLinesRead = 2000;
     private readonly IConfiguration _configuration;
+    // Deployment and runbook services hold separate per-service locks but share audit.jsonl.
+    private readonly object _auditGate = new();
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly JsonSerializerOptions _line = new(JsonSerializerDefaults.Web);
 
@@ -116,18 +118,24 @@ public sealed class DeployStore
         var lines = entries.Select(item => JsonSerializer.Serialize(item, _line)).ToArray();
         if (lines.Length == 0) return;
         var root = ProjectRoot(project);
-        Directory.CreateDirectory(root);
-        File.AppendAllLines(Path.Combine(root, "audit.jsonl"), lines);
+        lock (_auditGate)
+        {
+            Directory.CreateDirectory(root);
+            File.AppendAllLines(Path.Combine(root, "audit.jsonl"), lines);
+        }
     }
 
     /// <summary>Newest first.</summary>
     public IReadOnlyList<DeployAuditEntry> ReadAudit(string project, int limit)
     {
         var path = Path.Combine(ProjectRoot(project), "audit.jsonl");
-        if (!File.Exists(path)) return [];
-        return File.ReadLines(path).Where(line => line.Length > 0)
-            .Select(line => JsonSerializer.Deserialize<DeployAuditEntry>(line, _line)!)
-            .Reverse().Take(limit).ToArray();
+        lock (_auditGate)
+        {
+            if (!File.Exists(path)) return [];
+            return File.ReadLines(path).Where(line => line.Length > 0)
+                .Select(line => JsonSerializer.Deserialize<DeployAuditEntry>(line, _line)!)
+                .Reverse().Take(limit).ToArray();
+        }
     }
 
     private ReleaseRecord ReadRelease(string path)

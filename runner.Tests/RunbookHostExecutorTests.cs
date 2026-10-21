@@ -117,4 +117,73 @@ public sealed class RunbookHostExecutorTests
             Directory.Delete(root, true);
         }
     }
+
+    [Fact]
+    public async Task Host_cancellation_stops_a_child_in_its_own_session_that_holds_output_and_keeps_writing()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), "runbook-session-" + Guid.NewGuid().ToString("N"));
+        var scripts = Path.Combine(root, "scripts", "demo");
+        Directory.CreateDirectory(scripts);
+        var marker = Path.Combine(root, "child-writes");
+        // The child leaves the script's session and process group, keeps stdout open and appends forever.
+        File.WriteAllText(Path.Combine(scripts, "backup.sh"),
+            "setsid sh -c 'while :; do printf x >> \"$MARKER\"; sleep 0.05; done' &\nexit 0\n");
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var execution = RunbookHostExecutor.ExecuteAsync("demo", "stage", "8081", ["backup"],
+                new Dictionary<string, string> { ["MARKER"] = marker },
+                new Dictionary<string, string>(), [], Path.Combine(root, "scripts"), root, cancellation.Token);
+            for (var attempt = 0; attempt < 250 && !File.Exists(marker); attempt++)
+                await Task.Delay(20);
+            Assert.True(File.Exists(marker), "The session child did not start.");
+            Assert.False(execution.IsCompleted, "The session child did not keep an output pipe open.");
+
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution.WaitAsync(TimeSpan.FromSeconds(3)));
+            var written = new FileInfo(marker).Length;
+            await Task.Delay(500);
+            Assert.Equal(written, new FileInfo(marker).Length);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Theory]
+    [InlineData("LD_PRELOAD")]
+    [InlineData("LD_LIBRARY_PATH")]
+    [InlineData("PATH")]
+    [InlineData("BASH_ENV")]
+    public async Task Refuses_loader_and_shell_variables_before_starting_a_script(string name)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "runbook-loader-" + Guid.NewGuid().ToString("N"));
+        var scripts = Path.Combine(root, "scripts", "demo");
+        Directory.CreateDirectory(scripts);
+        var marker = Path.Combine(root, "started");
+        File.WriteAllText(Path.Combine(scripts, "backup.sh"), $"printf started > '{marker}'\n");
+        File.WriteAllText(Path.Combine(root, name.ToLowerInvariant()), "/tmp/evil.so");
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => RunbookHostExecutor.ExecuteAsync(
+                "demo", "stage", "8081", ["backup"], new Dictionary<string, string> { [name] = "/tmp/evil.so" },
+                new Dictionary<string, string>(), [], Path.Combine(root, "scripts"), root, CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => RunbookHostExecutor.ExecuteAsync(
+                "demo", "stage", "8081", ["backup"], new Dictionary<string, string>(),
+                new Dictionary<string, string> { [name] = name.ToLowerInvariant() }, [],
+                Path.Combine(root, "scripts"), root, CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => RunbookHostExecutor.ExecuteAsync(
+                "demo", "stage", "8081", ["backup"], new Dictionary<string, string>(),
+                new Dictionary<string, string>(), [name.ToLowerInvariant()],
+                Path.Combine(root, "scripts"), root, CancellationToken.None));
+            Assert.False(File.Exists(marker), "A script started with a loader or shell variable.");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
 }

@@ -368,6 +368,23 @@ public sealed class ProjectDefinitionSchemaTwoTests
     }
 
     [Theory]
+    [InlineData("LD_PRELOAD")]
+    [InlineData("ld_library_path")]
+    [InlineData("DYLD_INSERT_LIBRARIES")]
+    [InlineData("PATH")]
+    [InlineData("BASH_ENV")]
+    [InlineData("ENV")]
+    [InlineData("GCONV_PATH")]
+    public void Loader_and_shell_variable_names_are_reserved(string name)
+    {
+        var yaml = Replace(Valid, "  - name: LOG_LEVEL\n    value: info\n", $"  - name: {name}\n    value: /tmp/x\n");
+
+        var result = ProjectDefinitionReader.Parse(yaml);
+
+        Assert.Contains(result.Issues, issue => issue.Code == "variable-name-reserved" && issue.Path == "variables[0].name");
+    }
+
+    [Theory]
     [InlineData("TOKEN_TTL", "3600")]
     [InlineData("PASSWORD_MIN_LENGTH", "12")]
     [InlineData("KEYBOARD_LAYOUT", "de")]

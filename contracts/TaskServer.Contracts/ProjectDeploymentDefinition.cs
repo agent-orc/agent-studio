@@ -92,6 +92,20 @@ public static class ProjectDeploymentVocabulary
     public static readonly IReadOnlyList<string> StepKinds =
         ["static-site", "container", "publish-static", "start-container", "run", "health", "approval"];
     public const int MaxHealthTimeoutSeconds = 900;
+    private static readonly string[] LoaderAndShellPrefixes = ["LD_", "DYLD_", "GLIBC_", "MALLOC_", "BASH_FUNC_"];
+    private static readonly HashSet<string> LoaderAndShellNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "PATH", "ENV", "BASH_ENV", "SHELLOPTS", "BASHOPTS", "IFS", "PS4", "CDPATH",
+        "GCONV_PATH", "LOCPATH", "NLSPATH", "HOSTALIASES", "RES_OPTIONS", "LOCALDOMAIN",
+    };
+
+    /// <summary>
+    /// Names that steer the dynamic loader or the shell that starts operator-installed
+    /// host scripts. project.yml cannot set them, and the deploy host refuses them again.
+    /// </summary>
+    public static bool IsReservedVariableName(string name)
+        => LoaderAndShellNames.Contains(name)
+           || LoaderAndShellPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Artifact names, deploy host ids, and compose services; the JSON schema's <c>identifier</c>.</summary>
     public const string IdentifierPattern = "^[a-z0-9][a-z0-9._-]{0,63}$";
@@ -529,6 +543,9 @@ public static partial class ProjectDefinitionValidator
             var path = $"variables[{i}]";
             if (!EnvironmentName().IsMatch(variable.Name))
                 issues.Add(new($"{path}.name", "variable-name-invalid", "Variable names must be portable shell identifiers."));
+            else if (ProjectDeploymentVocabulary.IsReservedVariableName(variable.Name))
+                issues.Add(new($"{path}.name", "variable-name-reserved",
+                    "Variable names that control the loader or shell, such as LD_PRELOAD or PATH, are reserved."));
             if ((variable.Value is null) == (variable.Secret is null))
                 issues.Add(new(path, "variable-source-invalid", "A variable has either a value or a secret name, not both."));
             if (variable.Secret is not null && !SecretReference().IsMatch(variable.Secret))

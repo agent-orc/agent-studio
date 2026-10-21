@@ -2185,8 +2185,15 @@ remaining steps. The host drains output locally and reports only step success
 or failure, so logs do not expose secret values. A step times out after nine
 minutes, and the whole run after ten. On Linux, `setsid` gives each script its
 own process group; timeout or host cancellation also applies while draining
-output after the script exits, kills that group and waits for its output streams
-to close. Install scripts on the assigned deploy host before
+output after the script exits. It kills that group and every process that
+carries the step's inherited `AGENT_STUDIO_RUNBOOK_RUN` marker or descends from
+one, so a child that starts its own session stops too. Waiting for exit and for
+the output streams is bounded to five seconds each. Variable names that steer
+the dynamic loader or the shell (`LD_*`, `DYLD_*`, `GLIBC_*`, `MALLOC_*`,
+`PATH`, `ENV`, `BASH_ENV`, `IFS` and similar, see
+`ProjectDeploymentVocabulary.IsReservedVariableName`) fail `project.yml`
+validation with `variable-name-reserved`, and the host refuses them again
+before it starts a script. Install scripts on the assigned deploy host before
 invoking the runbook.
 
 ## Verification
