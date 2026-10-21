@@ -28,7 +28,7 @@ async function clickCardAndWaitForDetail(page: Page, jobId: string): Promise<voi
   await page.getByTestId('task-card').filter({ hasText: jobId }).first().click();
   await expect(page).toHaveURL(/#\/tasks\/[^/?]+/, { timeout: 10_000 });
   await expect(page.getByRole('tab', { name: jobId })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByTestId('detail-state-select')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('task-core')).toHaveAttribute('data-core-id', jobId, { timeout: 10_000 });
 }
 
 async function waitForFixtureCards(page: Page, ids: ReadonlyArray<string>): Promise<void> {
@@ -58,7 +58,7 @@ test.describe('External lane change keeps task in view', () => {
       const selectedUrl = page.url();
       if (process.env.JOB_RESULTS_DIR)
         await page.screenshot({ path: `${process.env.JOB_RESULTS_DIR}/task-detail-ready.png` });
-      const count = page.getByTestId('lane-pager-count');
+      const count = page.getByRole('navigation', { name: 'Task pager' }).locator('span');
       await expect(count).toContainText(/^\d+ \/ \d+$/, { timeout: 5_000 });
       const initial = (await count.textContent())!.trim();
       const [, totalStr] = initial.split('/').map(s => s.trim());
@@ -72,22 +72,22 @@ test.describe('External lane change keeps task in view', () => {
 
       // The detail view must STAY on the same task (ids[2]).
       // Wait for the pager to reflect the change (poll cycle + effect).
-      await expect(count).toContainText(new RegExp(`— \\/ ${startTotal - 1}`), { timeout: 15_000 });
+      await expect(count).toContainText(new RegExp(`^\\d+ \\/ ${startTotal - 1}$`), { timeout: 15_000 });
 
       // URL still points at the same job.
       await expect(page).toHaveURL(selectedUrl);
       await expect(page.getByRole('tab', { name: ids[2] })).toHaveAttribute('aria-selected', 'true');
 
-      // The lane dropdown now shows the new state (3-progress).
-      await expect(page.getByTestId('detail-state-select')).toHaveValue('3-progress', { timeout: 10_000 });
+      // The immediately painted core now shows the new state.
+      await expect(page.getByTestId('task-core-state')).toContainText('In Progress', { timeout: 10_000 });
 
       // Subtle toast visible.
       const toast = page.locator('.notification', { hasText: /still viewing this task/i });
       await expect(toast).toBeVisible({ timeout: 10_000 });
 
       // Prev/Next buttons are still functional (navigate remaining peers).
-      const nextBtn = page.getByTestId('lane-pager-next');
-      const prevBtn = page.getByTestId('lane-pager-prev');
+      const nextBtn = page.getByTestId('task-core-next');
+      const prevBtn = page.getByTestId('task-core-prev');
       // At least one of prev/next should be enabled since there are 4+ remaining peers.
       const nextDisabled = await nextBtn.isDisabled();
       const prevDisabled = await prevBtn.isDisabled();
@@ -120,6 +120,7 @@ test.describe('External lane change keeps task in view', () => {
       await page.goto(projectBoardUrl(wp.name));
       await waitForFixtureCards(page, ids);
       await clickCardAndWaitForDetail(page, ids[0]);
+      await expect(page.getByTestId('studio-triage-overflow-btn')).toBeVisible({ timeout: 60_000 });
       const selectedUrl = page.url();
 
       const count = page.getByTestId('lane-pager-count');
