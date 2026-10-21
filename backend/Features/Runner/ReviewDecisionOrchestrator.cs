@@ -1187,12 +1187,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             if (ct.IsCancellationRequested) return;
             if (job.State is TaskStates.Completed or TaskStates.Archive) continue;
             if (job.State != TaskStates.HumanReview) continue;
-            // An Epic planning completion is verdict-less by construction, not
-            // by legacy: it owns no Result-SHA, so no automated review can ever
-            // run for it and it will never gain a ReviewDecisionLog record.
-            // Escalating it would move the dead end one lane over instead of
-            // letting the operator accept or park the plan.
-            if (TaskKinds.IsEpic(job.Kind)) continue;
             if (HasLatestOperatorLaneVerdict(job)) continue;
             if (string.IsNullOrWhiteSpace(job.ProjectName)) continue;
             if (DateTime.UtcNow - job.CreatedAt < VerdictlessBackfillMinimumAge) continue;
@@ -2073,6 +2067,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var movedFolderPath = move.NewFolderPath ?? current.FolderPath;
         var moved = current with { FolderPath = movedFolderPath, State = TaskStates.Ready };
         _scanner.InvalidateCache();
+        _scanner.PublishCoreFromKnownFolder(movedFolderPath);
 
         var title = string.IsNullOrWhiteSpace(moved.Title) ? moved.Id : moved.Title;
         _chatLog.AppendSupervisor(moved, "requeued-unworked",
@@ -2438,6 +2433,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             EngineDecisionWaitMarker.Write(current.FolderPath, waitingGate.Run.RunId);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(current.FolderPath);
             return;
         }
         _statusSnapshot.SetCurrentStep(
@@ -2506,6 +2502,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             {
                 EngineDecisionWaitMarker.Write(current.FolderPath, occurrence.RunId);
                 _scanner.InvalidateCache();
+                _scanner.PublishCoreFromKnownFolder(current.FolderPath);
                 return;
             }
             if (gateMode == OrchestrationExecutionMode.Engine
@@ -4917,6 +4914,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             _wikiTaskCrossReferences.LinkAuto(root!, current,
                 ResolveLatestRunChangedFiles(current, entry.Path) ?? Array.Empty<string>());
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(current.FolderPath);
         }
         catch (Exception ex)
         {
@@ -7509,7 +7507,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             details["followUpPrompt"] = Truncate(followUpPrompt!.Trim(), 4000);
         }
-        // Epic ASS-776: when the steering context is known, also carry the
+        // ASS-776: when the steering context is known, also carry the
         // resume-vs-fresh mode, the resumed session, the considered commits, and
         // the prior re-issue counter so the FE renders a structured "Context"
         // block alongside the prompt. All optional and forward-compatible: an
@@ -8441,6 +8439,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // would strip the colon from.
         ConcernTagWriter.MergeConcernTags(moved.FolderPath, new[] { ReissueTagId }, _logger);
         _scanner.InvalidateCache();
+        _scanner.PublishCoreFromKnownFolder(moved.FolderPath);
         return moved;
     }
 

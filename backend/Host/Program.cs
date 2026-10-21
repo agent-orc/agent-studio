@@ -49,6 +49,7 @@ Log.Logger = new LoggerConfiguration()
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddSingleton<TaskDetailLatencyMetrics>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunRepositoryProbe>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunGitSetup>();
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();
@@ -529,6 +530,8 @@ builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<AgentStudio.Deploy.DeploymentInterventionWorker>();
 builder.Services.AddSingleton<ProjectPipelineDefinitionService>();
 // IP-14: environment health checks run here, in the control plane, not on the app host.
 builder.Services.AddHttpClient(NetworkHealthCheckProbe.HttpClientName, client =>
@@ -1773,6 +1776,11 @@ try
     store.OnAppended = (workspace, msg) =>
     {
         try { cache.OnAppended(workspace, msg); } catch (Exception ex) { SilentCatch.Note(ex, "BusAggregationCache.OnAppended"); }
+        if (msg.Kind == "token-usage" && !string.IsNullOrWhiteSpace(msg.JobId))
+        {
+            try { app.Services.GetRequiredService<AgentStudio.Tokens.TaskTokenUsageCache>().OnTokenUsageAppended(msg); }
+            catch (Exception ex) { SilentCatch.Note(ex, "TaskTokenUsageCache.OnTokenUsageAppended"); }
+        }
         try
         {
             var recipients = projectScopedSignalRProfile

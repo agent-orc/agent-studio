@@ -340,60 +340,6 @@
       line-height: var(--studio-card-title-lh);
       color: var(--studio-fg);
     }
-    .task-card__epic-toggle {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 18px;
-      height: 18px;
-      margin: 0 var(--studio-spacing-1) 0 0;
-      padding: 0;
-      border: 1px solid var(--studio-border);
-      border-radius: 5px;
-      background: var(--studio-bg-surface);
-      color: var(--studio-fg-muted);
-      cursor: pointer;
-      vertical-align: middle;
-      line-height: 1;
-    }
-    .task-card__epic-toggle span {
-      display: inline-block;
-      transform: rotate(0deg);
-      transition: transform 0.15s ease;
-    }
-    .task-card__epic-toggle--open span {
-      transform: rotate(90deg);
-    }
-    .task-card__epic-toggle:disabled {
-      cursor: default;
-      opacity: 0.45;
-    }
-    .task-card__epic-toggle:not(:disabled):hover,
-    .task-card__epic-toggle:not(:disabled):focus-visible {
-      color: var(--studio-fg);
-      border-color: var(--studio-border-strong);
-      background: var(--studio-bg-hover);
-    }
-    // Epic container badge: a loud accent pill so an epic card is obvious in a
-    // lane mixed with ordinary tasks. Sub-task chip is the quiet inverse - a
-    // dashed, muted "↳ epic" marker that says "this belongs to an epic" without
-    // competing with the title.
-    .task-card__epic-badge {
-      display: inline-block;
-      min-height: var(--studio-card-pill-height);
-      padding: 0 var(--studio-card-pill-padding-x);
-      border-radius: 3px;
-      font-size: var(--studio-card-meta-size);
-      font-weight: 800;
-      letter-spacing: 0.06em;
-      color: var(--studio-on-accent);
-      background: var(--studio-accent);
-      border: 1px solid var(--studio-accent);
-      vertical-align: middle;
-      margin-right: 4px;
-      user-select: none;
-      white-space: nowrap;
-    }
     // AGT-2795: decision kind badge. A pending decision waits on a person, an
     // acute state, so it reads in the warn register as a full tint (R1: no
     // accent bar); a decided card is history and calms to the muted tone (R4).
@@ -435,85 +381,6 @@
       margin-right: 4px;
       user-select: none;
       white-space: nowrap;
-    }
-    .task-card__epic-subtasks {
-      margin: var(--studio-spacing-2) 0 var(--studio-spacing-1);
-      padding: var(--studio-spacing-1);
-      border: 1px solid var(--studio-border);
-      border-radius: 6px;
-      background: color-mix(in srgb, var(--studio-bg-surface) 72%, transparent);
-      // Calm reveal on expand: a short compositor-only fade+slide so the
-      // sub-task block eases in instead of snapping the card taller. The
-      // card still grows to fit (no fixed-height reservation), the motion
-      // just takes the "jump" out of the open. Persisted expand state means
-      // this only plays on a real user toggle, never on every poll.
-      transform-origin: top;
-      animation: task-card-epic-reveal 160ms cubic-bezier(0, 0, 0.2, 1);
-    }
-    @keyframes task-card-epic-reveal {
-      from { opacity: 0; transform: translateY(-2px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .task-card__epic-subtasks { animation: none; }
-    }
-    .task-card__epic-subtask-list {
-      display: flex;
-      flex-direction: column;
-      gap: var(--studio-spacing-1);
-      margin: 0;
-      padding: 0;
-      list-style: none;
-    }
-    .task-card__epic-subtask-btn {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: center;
-      gap: var(--studio-spacing-2);
-      width: 100%;
-      padding: var(--studio-spacing-1) var(--studio-spacing-2);
-      border: 1px solid transparent;
-      border-radius: 5px;
-      background: transparent;
-      color: var(--studio-fg);
-      text-align: left;
-      cursor: pointer;
-    }
-    .task-card__epic-subtask-btn:hover,
-    .task-card__epic-subtask-btn:focus-visible {
-      border-color: var(--studio-border);
-      background: var(--studio-bg-hover);
-    }
-    .task-card__epic-subtask-title {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 12px;
-      font-weight: 550;
-    }
-    .task-card__epic-subtask-meta {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--studio-spacing-1);
-      color: var(--studio-fg-muted);
-      font-size: 11px;
-      white-space: nowrap;
-    }
-    .task-card__epic-subtask-lane,
-    .task-card__epic-subtask-verdict {
-      font-variant-numeric: tabular-nums;
-    }
-    .task-card__epic-subtask-verdict::before {
-      content: "/";
-      padding-right: var(--studio-spacing-1);
-      color: var(--studio-fg-dim);
-    }
-    .task-card__epic-subtasks-empty {
-      color: var(--studio-fg-muted);
-      font-size: 12px;
-      font-style: italic;
-      padding: var(--studio-spacing-1) var(--studio-spacing-2);
     }
     .task-card__badges {
       display: flex;
@@ -1532,7 +1399,6 @@
     .task-card--compact .task-card__badges,
     .task-card--compact .task-card__meta,
     .task-card--compact .task-card__pipeline,
-    .task-card--compact .task-card__epic-subtasks,
     .task-card--compact .task-card__git,
     .task-card--compact .task-card__change-context,
     .task-card--compact .task-card__commits,

@@ -15,7 +15,8 @@ public static class DeployHostCommand
     private sealed record Claim(string HostId);
     private sealed record Job(string Id, string Project, string EnvironmentId, string HostId,
         string Artifact, string Template, string Destination, string? HealthUrl,
-        string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken);
+        string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken,
+        string? RetryStep);
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
         HttpClient? transport = null)
@@ -38,11 +39,15 @@ public static class DeployHostCommand
         try
         {
             var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
-            if (job.Template == "container")
-                await DeployContainer(job, secretRoot, cancellationToken);
-            else if (job.Template == "static")
-                await DeployStatic(job, args[3], cancellationToken);
-            else throw new InvalidOperationException("Unknown template.");
+            if (job.RetryStep is null)
+            {
+                if (job.Template == "container")
+                    await DeployContainer(job, secretRoot, cancellationToken);
+                else if (job.Template == "static")
+                    await DeployStatic(job, args[3], cancellationToken);
+                else throw new InvalidOperationException("Unknown template.");
+            }
+            else if (job.RetryStep != "health") throw new InvalidOperationException("Unknown retry step.");
             evidence = "health-http-failed";
             healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
             if (healthy) evidence = "health-ok";

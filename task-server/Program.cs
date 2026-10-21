@@ -314,7 +314,7 @@ static void PrintInventoryTable(LegacyMigrationInventory inventory, TextWriter w
         writer.WriteLine($"{project.Project} | {state.Key} | {state.Value}");
     writer.WriteLine($"TOTAL | all | {inventory.Tasks}");
     writer.WriteLine(
-        $"Epics {inventory.Epics}; dossiers {inventory.Dossiers}; events {inventory.Events}; artifacts {inventory.Artifacts}; " +
+        $"Dossiers {inventory.Dossiers}; events {inventory.Events}; artifacts {inventory.Artifacts}; " +
         $"sessions {inventory.OrchestratorSessions}; chats {inventory.ContextChats}/{inventory.ContextChatTurns} turns");
     writer.WriteLine(
         $"Authority {inventory.AttemptAuthorityRecords} attempts/{inventory.Leases} leases; " +

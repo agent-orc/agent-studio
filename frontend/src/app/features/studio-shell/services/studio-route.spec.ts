@@ -52,25 +52,17 @@ describe('Studio route contract', () => {
       kind: 'workbenches',
       projectSlug: null,
     });
+    expect(parseStudioRoute('#/epics')).toEqual({
+      kind: 'workbenches', projectSlug: null, legacy: true,
+    });
+    expect(parseStudioRoute('#/projects/agent-studio/epics')).toEqual({
+      kind: 'workbenches', projectSlug: 'agent-studio', legacy: true,
+    });
     expect(parseStudioRoute('#/tasks/AGT-2291?view=timeline%3Aactivity')).toEqual({
       kind: 'task',
       reference: 'AGT-2291',
       tab: 'timeline',
       inspector: 'activity',
-    });
-    expect(parseStudioRoute('#/projects/agent-studio/epics')).toEqual({
-      kind: 'workbenches',
-      projectSlug: 'agent-studio',
-      legacy: true,
-    });
-    expect(parseStudioRoute('#/epics')).toEqual({
-      kind: 'workbenches',
-      projectSlug: null,
-      legacy: true,
-    });
-    expect(parseStudioRoute('#/epics/AGT-2200')).toEqual({
-      kind: 'epic',
-      reference: 'AGT-2200',
     });
     expect(parseStudioRoute('#/workspace/settings/task-server')).toEqual({
       kind: 'workspace-settings',
@@ -98,7 +90,6 @@ describe('Studio route contract', () => {
       [{ kind: 'workbenches', projectName: null }, null, '/workbenches'],
       [{ kind: 'workbenches', projectName: 'Agent Studio' }, null, '/projects/agent-studio/workbenches'],
       [{ kind: 'task', taskKey: 'private::task' }, 'AGT-2291', '/tasks/AGT-2291'],
-      [{ kind: 'epic', epicKey: 'private::epic' }, 'AGT-2200', '/epics/AGT-2200'],
     ];
     for (const [tab, reference, expected] of cases) {
       expect(studioRouteForTab(tab, reference)).toBe(expected);

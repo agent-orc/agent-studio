@@ -20,6 +20,7 @@ import {
   ProductRuntimeLevel,
   RuntimeEventParseWarning,
 } from '../../../../models/product-runtime.model';
+import { TaskDetailLatencyComponent } from '../task-detail-latency/task-detail-latency.component';
 
 interface FilterState {
   level: ProductRuntimeLevel | '';
@@ -124,7 +125,6 @@ const DOMAIN_TIMELINE_ALLOW_PREFIXES = ['order.', 'payment.', 'render.', 'job.',
  *  - Counters per (subsystem, event) with warn/error split.
  *  - Domain timeline: filtered to product-shaped events (order.*, payment.*,
  *    render.*, job.*, http.request.*) ordered chronologically.
- *  - Malformed-line warnings, kept compact and only when present.
  *
  * Read-only by contract: nothing on this panel mutates state, runs an
  * agent, or moves a job; runtime events are pure output.
@@ -132,7 +132,7 @@ const DOMAIN_TIMELINE_ALLOW_PREFIXES = ['order.', 'payment.', 'render.', 'job.',
 @Component({
   selector: 'app-project-product-runtime-panel',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, TaskDetailLatencyComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-product-runtime-panel.component.html',
   styleUrl: './project-product-runtime-panel.component.scss',

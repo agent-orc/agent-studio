@@ -239,11 +239,10 @@ export interface TaskDeliveryClaimAnswer {
 }
 
 /**
- * Card kind: `epic` is a container for sub-tasks; `task` is an ordinary card;
- * `decision` (AGT-2795) is a decision request the named decider resolves by
+ * Card kind: `task` is an ordinary card; `decision` (AGT-2795) is a request the named decider resolves by
  * choosing an option. A decision card never enters a runner lane.
  */
-export type TaskKind = 'task' | 'epic' | 'decision';
+export type TaskKind = 'task' | 'decision';
 
 /**
  * Lifecycle of a decision card. Mirrors backend `DecisionStatuses`: the card
@@ -482,7 +481,7 @@ export interface PickupHoldStatus {
   /** Dependency liveness: `satisfiable-soon`, `stalled`, or `unsatisfiable`. */
   classification?: 'satisfiable-soon' | 'stalled' | 'unsatisfiable' | string;
   /**
-   * `dependency-gate` | `dispatch-rejection` | `epic-container` |
+   * `dependency-gate` | `dispatch-rejection` |
    * `crash-backoff` | `pickup-policy`.
    */
   mechanism: string;
@@ -678,16 +677,9 @@ export interface TaskInfo {
     reason: string;
   } | null;
   /**
-   * Card kind. `epic` cards are containers for sub-tasks; `task` (the default
-   * when omitted) is an ordinary card. See backend `TaskKinds`.
+   * Card kind. `task` is the default. See backend `TaskKinds`.
    */
   kind?: TaskKind;
-  /**
-   * Parent epic id when this card is a sub-task of an epic, else null/absent.
-   * Set at create time (way 1), post-hoc via PUT /api/tasks/{id}/epic (way 2),
-   * or by an epic's decomposition run (way 3).
-   */
-  epicId?: string | null;
   /** One primary Dossier; other Dossiers remain ordinary reference links. */
   dossier?: { path: string; section?: string | null; decision?: string | null; implementationIndex?: number | null } | null;
   /**
@@ -975,7 +967,7 @@ export interface TaskInfo {
    * (non-null) only on planning-mode cards. Mirrors backend
    * `TaskInfo.PlanningSpawn`. Drives the spawn chips / "no follow-up cards"
    * warning on the planning task's detail and the accept-dialog guard against
-   * the AGT-1915 trap. Null on every coding / research / epic card.
+   * the AGT-1915 trap. Null on every coding or research card.
    */
   planningSpawn?: PlanningSpawnSummary | null;
   /** Concept dossier link or deliberate no-dossier decision. Null outside concept mode. */
@@ -1701,10 +1693,8 @@ export interface CreateTaskRequest {
   taskType?: string;
   /** Workspace tag ids to attach on create. */
   tags?: string[];
-  /** Card kind: `task` (default) or `epic`. */
+  /** Card kind: `task` (default) or `decision`. */
   kind?: TaskKind;
-  /** Parent epic id (assignment way 1: created as a sub-task of this epic). */
-  epicId?: string;
   /** Execution mode. Defaults to `coding` server-side. */
   mode?: TaskMode;
   /** Explicitly declare that this task expects no delivery branch. */
@@ -1771,49 +1761,6 @@ export interface PromotedConceptTask {
 export interface PromoteConceptTasksResponse {
   source: ConceptSourceDocument;
   created: PromotedConceptTask[];
-}
-
-/**
- * One epic + its live sub-task rollup, from GET /api/epics. Progress is derived
- * from the sub-tasks' lanes server-side, so it always matches the board.
- */
-export interface EpicRollup {
-  id: string;
-  /** Stable human key of the epic (e.g. "ASS-597"); null on epics minted before keys existed. */
-  key?: string | null;
-  title: string;
-  projectName: string;
-  watchPath: string;
-  state: string;
-  subTaskTotal: number;
-  completed: number;
-  inProgress: number;
-  open: number;
-  /** Latest lane-entry timestamp among all members once the epic is complete. */
-  completedAt?: string | null;
-  byState: Record<string, number>;
-  subTasks: EpicSubTaskRef[];
-}
-
-export interface EpicSubTaskRef {
-  id: string;
-  title: string;
-  state: string;
-  order: number;
-  orchestratorVerdict?: 'pending' | 'reissue' | 'escalate' | 'accept' | null;
-}
-
-/** Body for POST /api/epics/{id}/sub-tasks (assignment way 3, deterministic half). */
-export interface CreateEpicSubTasksRequest {
-  subTasks: EpicSubTaskSpec[];
-}
-
-export interface EpicSubTaskSpec {
-  title: string;
-  promptMarkdown?: string;
-  cliType?: CliType;
-  model?: string;
-  thinkingLevel?: string;
 }
 
 /**
