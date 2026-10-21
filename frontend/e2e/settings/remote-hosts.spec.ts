@@ -49,7 +49,12 @@ async function stubBackgroundApis(page: Page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
   await page.route('**/api/tasks', json([]));
-  await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, json({
+    backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
+    failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
+    escalated: [], review: [], completed: [], archive: [],
+    gitStateAt: null, stale: false,
+  }));
   await page.route('**/api/v1/studio/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
   await page.route('**/api/v1/management/credential-inventory', json({ generatedAt: new Date().toISOString(), items: [] }));
   await page.route('**/api/crash-recovery/pending', json({ pending: [] }));
