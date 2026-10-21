@@ -95,7 +95,7 @@ export class StudioTabActionsComponent {
 
   /** Board tab actions. */
   readonly boardActionsVisible = input.required<boolean>();
-  readonly groupByEpic = input.required<boolean>();
+  readonly groupByDossier = input.required<boolean>();
 
   /** Blocks every mutating action while an update is in flight. */
   readonly mutationsBlocked = input.required<boolean>();
@@ -113,7 +113,7 @@ export class StudioTabActionsComponent {
   readonly triage = input.required<StudioTabTriage>();
 
   readonly navigateDocumentHistory = output<1 | -1>();
-  readonly toggleGroupByEpic = output<void>();
+  readonly toggleGroupByDossier = output<void>();
   readonly addTask = output<void>();
   readonly togglePane = output<'prompt' | 'protocol' | 'git'>();
   readonly previousTask = output<void>();

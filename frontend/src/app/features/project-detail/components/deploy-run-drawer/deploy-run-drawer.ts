@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterNextRender, computed, inject, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, afterNextRender, computed, effect, inject, input, output, signal } from '@angular/core';
 import { ModalStackService } from '../../../../services/modal-stack.service';
 import { SidesheetComponent } from '../../../../components/sidesheet/sidesheet.component';
 import {
@@ -21,7 +21,9 @@ export interface DeployRunActionState {
   error: string | null;
 }
 
-const ACTION_LABEL: Record<DeployRunAction, string> = { approve: 'Approve', reject: 'Reject', cancel: 'Abort run' };
+const ACTION_LABEL: Record<DeployRunAction, string> = {
+  approve: 'Approve', reject: 'Reject', cancel: 'Abort run', retry: 'Retry step', skip: 'Skip step', abort: 'Abort run',
+};
 
 /** Detail drawer of one AGT-3201 deploy run: facts, approval, steps with their log. Escape closes it. */
 @Component({
@@ -34,10 +36,13 @@ const ACTION_LABEL: Record<DeployRunAction, string> = { approve: 'Approve', reje
 })
 export class DeployRunDrawerComponent {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private lastRunId: string | null = null;
   readonly run = input.required<DeployRun>();
   readonly log = input.required<DeployPanel<DeploymentLogLine[]>>();
   readonly action = input<DeployRunActionState>({ busy: null, error: null });
   readonly act = output<DeployRunAction>();
+  readonly skip = output<string>();
+  readonly skipReason = signal('');
   readonly closeRequest = output<void>();
 
   readonly title = computed(() => `${triggerLabel(this.run().trigger)} to ${this.run().environmentName}`);
@@ -64,6 +69,10 @@ export class DeployRunDrawerComponent {
   protected readonly stepKindLabel = stepKindLabel;
 
   constructor() {
+    effect(() => {
+      const id = this.run().id;
+      if (id !== this.lastRunId) { this.lastRunId = id; this.skipReason.set(''); }
+    });
     // Escape goes through the shared modal stack, so the drawer closes before any surface below it.
     inject(ModalStackService).pushUntilDestroyed('deploy-run-drawer', () => this.closeRequest.emit(), inject(DestroyRef));
     // Move focus into the drawer so keyboard users land on its controls.

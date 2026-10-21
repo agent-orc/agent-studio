@@ -1,0 +1,22 @@
+@if (preview(); as item) {
+  <section class="preview" [class.preview--card]="variant() === 'card'"
+           [class.preview--detail]="variant() === 'detail'"
+           [class.preview--chat]="variant() === 'chat'"
+           [attr.data-testid]="variant() === 'card' ? 'task-card-preview' : variant() === 'chat' ? 'activity-chat-preview' : 'task-detail-preview'"
+           aria-label="Card preview">
+    <div class="preview__copy">
+      <strong>Preview · {{ item.status }}</strong>
+      <span>Delivery {{ item.deliverySha.substring(0, 12) }}</span>
+      @if (item.status === 'ready') {
+        <a [href]="item.address" target="_blank" rel="noopener noreferrer"
+           [attr.aria-label]="variant() === 'card' ? 'Open preview for ' + taskKey() : null"
+           (click)="$event.stopPropagation()">{{ item.address }}</a>
+      } @else {
+        <span>{{ item.address }}</span>
+      }
+    </div>
+    @if (variant() !== 'chat' && item.screenshotUrl && item.status === 'ready') {
+      <img [src]="item.screenshotUrl" alt="Screenshot of the deployed card preview" />
+    }
+  </section>
+}

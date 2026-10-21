@@ -214,6 +214,12 @@ public class TaskScannerService : ITaskScanner
             0));
     }
 
+    public T ReadPublishedGeneration<T>(string name, long version,
+        Func<TaskIndexPublication, T> build) where T : class
+        => _indexCache is null
+            ? ReadPerGeneration(name, version, build)
+            : _indexCache.GetDerivedPublished(name, version, build);
+
     private sealed class NoPin : IDisposable
     {
         public static readonly NoPin Instance = new();
@@ -225,12 +231,16 @@ public class TaskScannerService : ITaskScanner
     {
         if (_indexCache is null) return;
         var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
-        var updated = ScanJobFolder(folder, entry, state);
-        if (updated is not null) _indexCache.PublishCore(updated);
-        else _indexCache.RemoveCoreByFolder(folder);
+        _indexCache.PublishCoreFromFolder(folder, () => ScanJobFolder(folder, entry, state, bypassMemo: true));
     }
 
     public void RemoveCore(TaskInfo info) => _indexCache?.RemoveCore(info);
+
+    public void RemoveCoreByFolder(string folder) => _indexCache?.RemoveCoreByFolder(folder);
+
+    public TaskInfo? FindPublishedJob(string jobId, string? watchPath = null)
+        => _indexCache is null ? FindJob(jobId, watchPath)
+            : _indexCache.GetDetailFacts(jobId, watchPath).Info;
 
     public void PublishCoreFromKnownFolder(string folder)
     {
@@ -241,11 +251,23 @@ public class TaskScannerService : ITaskScanner
 
     public void MoveCoreFromKnownFolder(string sourceFolder, string targetFolder,
         string watchPath, string state)
+        => MoveCoreFromFolder(sourceFolder, targetFolder, watchPath,
+            _indexCache?.GetCoreByFolder(sourceFolder)?.ProjectName ?? Path.GetFileName(watchPath), state);
+
+    public Action BeginCoreMove(TaskInfo source) =>
+        _indexCache?.BeginCoreMove(source) ?? (() => { });
+
+    public void MoveCoreFromFolder(string sourceFolder, string targetFolder,
+        string watchPath, string projectName, string state)
     {
-        var known = _indexCache?.GetCoreByFolder(sourceFolder);
-        _indexCache?.RemoveCoreByFolder(sourceFolder);
-        PublishCoreFromFolder(targetFolder, watchPath,
-            known?.ProjectName ?? Path.GetFileName(watchPath), state);
+        _indexCache?.MoveCoreFromFolder(sourceFolder, targetFolder, () =>
+        {
+            var entry = new WatchPathEntry
+            {
+                Name = projectName, Path = watchPath
+            };
+            return ScanJobFolder(targetFolder, entry, state, bypassMemo: true);
+        });
     }
 
     private static string? ReadArchiveState(string jobDir)
@@ -541,6 +563,11 @@ public class TaskScannerService : ITaskScanner
     /// Production reads reuse the graph published by <see cref="TaskIndexCache"/>
     /// instead of rebuilding it on every claim poll or endpoint request.
     /// </summary>
+    public TaskReferenceIndex GetCoreReferenceIndex() =>
+        _indexCache?.GetCoreReferenceIndex() ?? GetReferenceIndex();
+
+    public long CoreDependencyGeneration => _indexCache?.CoreDependencyGeneration ?? 0;
+
     public TaskReferenceIndex GetReferenceIndex()
     {
         return _indexCache?.GetReferenceIndex()
@@ -667,7 +694,8 @@ public class TaskScannerService : ITaskScanner
         return jobs;
     }
 
-    public TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state)
+    public TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
+        bool bypassMemo = false)
     {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         // One stat for existence + length + mtime. FileInfo caches the probe, so
@@ -678,7 +706,7 @@ public class TaskScannerService : ITaskScanner
 
         try
         {
-            if (_archivedFolders.TryGetValue(jobDir, out var archived)
+            if (!bypassMemo && _archivedFolders.TryGetValue(jobDir, out var archived)
                 && archived.TaskJsonLength == taskJsonInfo.Length
                 && archived.TaskJsonWriteUtc == taskJsonInfo.LastWriteTimeUtc
                 && archived.ArchiveManifestLength == (archiveManifestInfo.Exists ? archiveManifestInfo.Length : -1L)
@@ -692,7 +720,7 @@ public class TaskScannerService : ITaskScanner
             // parsed TaskInfo is reusable. Only the un-fingerprinted marker files
             // (see ApplyVolatileMarkers) are re-read, keeping quota-wait / park /
             // steer / lifecycle / intent chips live even on a hit.
-            if (_liveFolders.TryGetValue(jobDir, out var live)
+            if (!bypassMemo && _liveFolders.TryGetValue(jobDir, out var live)
                 && live.Fingerprint == ComputeLiveFingerprint(jobDir, taskJsonInfo))
             {
                 return ApplyVolatileMarkers(live.Task, jobDir);
@@ -770,6 +798,13 @@ public class TaskScannerService : ITaskScanner
 
             var info = new TaskInfo
             {
+                TaskJsonLength = taskJsonInfo.Length,
+                TaskJsonWriteTicks = taskJsonInfo.LastWriteTimeUtc.Ticks,
+                TokenReceiptStamp = raw.TryGetProperty("tokenSummary", out var receipt)
+                    && receipt.ValueKind == JsonValueKind.Object
+                        ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                            JsonSerializer.SerializeToUtf8Bytes(receipt)))
+                        : "none",
                 Id = resolvedId,
                 TaskKey = TaskIdentity.CreateKey(entry.Path, resolvedId),
                 Key = ReadReferenceKey(raw),
@@ -816,8 +851,8 @@ public class TaskScannerService : ITaskScanner
                 QuotaWait = QuotaWaitMarker.ToStatus(QuotaWaitMarker.TryRead(jobDir, _logger)),
                 CauseWait = CauseWaitMarker.ToStatus(CauseWaitMarker.TryRead(jobDir, _logger)),
                 QuotaFallback = AgentStudio.Cli.QuotaFallbackMarker.ToStatus(AgentStudio.Cli.QuotaFallbackMarker.TryRead(jobDir, _logger)),
-                Kind = TaskKinds.Normalize(raw.TryGetProperty("kind", out var kd) ? kd.GetString() : null),
-                EpicId = raw.TryGetProperty("epicId", out var ep) && !string.IsNullOrWhiteSpace(ep.GetString()) ? ep.GetString() : null,
+                Kind = RetiredContainerTask.NormalizeForRead(
+                    raw.TryGetProperty("kind", out var kd) ? kd.GetString() : null),
                 Dossier = raw.TryGetProperty("dossier", out var dossier) && dossier.ValueKind == JsonValueKind.Object
                     ? JsonSerializer.Deserialize<TaskDossier>(dossier.GetRawText(), TaskJsonFile.ReadOpts)
                     : null,
@@ -865,7 +900,8 @@ public class TaskScannerService : ITaskScanner
                 Provenance = ReadProvenance(raw),
                 ExternalCompletion = ReadExternalCompletion(raw),
                 RemoteDispatchRejection = ReadRemoteDispatchRejection(raw),
-                Decision = ReadDecision(raw)
+                Decision = ReadDecision(raw),
+                Preview = AgentStudio.Deploy.CardPreviewStore.Read(jobDir)?.Preview
             };
             // Re-stat first so a self-heal this scan performed itself (the
             // divergent-id repair above, the ownerClientId migration below) is
@@ -995,7 +1031,12 @@ public class TaskScannerService : ITaskScanner
     {
         var info = FindJob(jobId, watchPath);
         if (info == null) return null;
+        return GetJobDetailFromInfo(info);
+    }
 
+    /// <summary>Hydrates sidecars for a card already resolved by the keyed index.</summary>
+    public TaskDetail GetJobDetailFromInfo(TaskInfo info)
+    {
         var dir = info.FolderPath;
         var statusMd = TaskSwitchTrace.Run("sidecar.status", () => ReadFileOrNull(Path.Combine(dir, "status.md")));
         var generated = TaskSwitchTrace.Run("sidecar.other", () => _fileGenerationIndex?.ReadForJob(dir)
@@ -2357,6 +2398,7 @@ public class TaskScannerService : ITaskScanner
             SteerPendingSince = ReadSteerPendingSince(jobDir, cached.State),
             ParkedBlocker = ReadParkedBlocker(jobDir, cached.State),
             NeedsInput = ReadNeedsInput(jobDir, cached.State),
+            Preview = AgentStudio.Deploy.CardPreviewStore.Read(jobDir)?.Preview,
         };
 
     private static DateTime GetLastActivityTime(string dir)

@@ -50,6 +50,7 @@ public sealed class RemoteDispatchRejectionStore
         EnsureLaneEntryAnchor(task);
         TaskJsonFile.UpdateFieldOrThrow(task.FolderPath, FieldName, next);
         _scanner?.InvalidateCache();
+        _scanner?.PublishCoreFromKnownFolder(task.FolderPath);
         _logger.LogWarning(
             "remote-dispatch-rejected project={Project} task={TaskKey} runner={Runner} code={Code} reason={Reason}",
             task.ProjectName,
@@ -63,7 +64,10 @@ public sealed class RemoteDispatchRejectionStore
     public void Clear(TaskInfo task)
     {
         if (TaskJsonFile.RemoveField(task.FolderPath, FieldName, _logger))
+        {
             _scanner?.InvalidateCache();
+            _scanner?.PublishCoreFromKnownFolder(task.FolderPath);
+        }
     }
 
     internal static RemoteDispatchRejection? Read(string folderPath)

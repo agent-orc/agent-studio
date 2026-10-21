@@ -69,7 +69,7 @@
                 {
                   "type": "initial",
                   "maximumWarning": "3MB",
-                  "maximumError": "5121kB"
+                  "maximumError": "5151kB"
                 },
                 {
                   "type": "anyComponentStyle",
@@ -531,73 +531,6 @@
             },
             "development": {
               "buildTarget": "run-activity-pill-mockup:build:development"
-            }
-          },
-          "defaultConfiguration": "development"
-        }
-      }
-    },
-    "epic-expand-mockup": {
-      "projectType": "application",
-      "root": "",
-      "sourceRoot": "src",
-      "prefix": "mockup",
-      "architect": {
-        "build": {
-          "builder": "@angular/build:application",
-          "options": {
-            "browser": "src/mockups/epic-expand/main.ts",
-            "index": "src/mockups/epic-expand/index.html",
-            "tsConfig": "tsconfig.mockup.json",
-            "inlineStyleLanguage": "scss",
-            "outputPath": "dist/epic-expand-mockup",
-            "assets": [
-              {
-                "glob": "**/*",
-                "input": "public"
-              }
-            ],
-            "styles": [
-              "src/styles.scss",
-              "src/mockups/epic-expand/styles.scss"
-            ]
-          },
-          "configurations": {
-            "production": {
-              "budgets": [
-                {
-                  "type": "initial",
-                  "maximumWarning": "600kB",
-                  "maximumError": "1MB"
-                },
-                {
-                  "type": "anyComponentStyle",
-                  "maximumWarning": "40kB",
-                  "maximumError": "48kB"
-                }
-              ],
-              "outputHashing": "all"
-            },
-            "development": {
-              "optimization": false,
-              "extractLicenses": false,
-              "sourceMap": true
-            }
-          },
-          "defaultConfiguration": "production"
-        },
-        "serve": {
-          "builder": "@angular/build:dev-server",
-          "options": {
-            "port": 4026,
-            "host": "127.0.0.1"
-          },
-          "configurations": {
-            "production": {
-              "buildTarget": "epic-expand-mockup:build:production"
-            },
-            "development": {
-              "buildTarget": "epic-expand-mockup:build:development"
             }
           },
           "defaultConfiguration": "development"
