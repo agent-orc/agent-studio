@@ -673,7 +673,11 @@ public sealed class AccessSecurityTests : IDisposable
         context.Request.Method = method;
         context.Request.Path = path;
         context.Request.Scheme = scheme;
-        if (sessionToken is not null) context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={sessionToken}");
+        if (sessionToken is not null)
+        {
+            context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={sessionToken}");
+            context.Request.Headers["Sec-Fetch-Site"] = "same-origin";
+        }
         if (csrf is not null) context.Request.Headers["X-CSRF-Token"] = new StringValues(csrf);
         if (bearer is not null) context.Request.Headers.Authorization = new StringValues("Bearer " + bearer);
         context.Response.Body = new MemoryStream();
