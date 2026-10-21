@@ -383,6 +383,7 @@ test.describe('Execution Hosts settings section', () => {
         const item = bar.getByTestId(id);
         await expect(item).toHaveCSS('white-space', 'nowrap');
       }
+      if (width === 390) await expect(bar.getByTestId('status-bar-review')).toBeHidden();
       await page.screenshot({ path: join(output, `environment-responsive-${width}-light.png`), animations: 'disabled' });
       await setTheme(page, 'dark');
       await page.screenshot({ path: join(output, `environment-responsive-${width}-dark.png`), animations: 'disabled' });
