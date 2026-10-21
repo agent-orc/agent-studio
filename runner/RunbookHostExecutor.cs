@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
@@ -14,8 +16,11 @@ public sealed record RunbookHostResult(bool Success, IReadOnlyList<RunbookHostSt
 public static class RunbookHostExecutor
 {
     private const int SigKill = 9;
+    private const int MaxKillRounds = 100;
+    private const string StepMarkerVariable = "AGENT_STUDIO_RUNBOOK_STEP";
     private static readonly TimeSpan StepTimeout = TimeSpan.FromMinutes(9);
     private static readonly TimeSpan RunTimeout = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(10);
 
     public static async Task<RunbookHostResult> ExecuteAsync(string project, string environment,
         string destination, IReadOnlyList<string> steps, IReadOnlyDictionary<string, string> variables,
@@ -35,13 +40,15 @@ public static class RunbookHostExecutor
         };
         foreach (var (name, value) in variables)
         {
-            if (!VariableName(name) || name.StartsWith("AGENT_STUDIO_", StringComparison.Ordinal))
+            if (!VariableName(name) || name.StartsWith("AGENT_STUDIO_", StringComparison.Ordinal)
+                || ProjectDeploymentVocabulary.IsProcessControlVariable(name))
                 throw new InvalidOperationException("Invalid runbook variable name.");
             values[name] = value;
         }
         foreach (var (name, secret) in secretVariables)
         {
             if (!VariableName(name) || name.StartsWith("AGENT_STUDIO_", StringComparison.Ordinal)
+                || ProjectDeploymentVocabulary.IsProcessControlVariable(name)
                 || !SecretIdentifier(secret) || values.ContainsKey(name))
                 throw new InvalidOperationException("Invalid runbook secret reference.");
             values[name] = (await File.ReadAllTextAsync(Path.Combine(secretRoot, secret), cancellationToken))
@@ -51,6 +58,8 @@ public static class RunbookHostExecutor
         {
             if (!SecretIdentifier(secret)) throw new InvalidOperationException("Invalid environment secret reference.");
             var name = secret.Replace('-', '_').Replace('.', '_').ToUpperInvariant();
+            if (ProjectDeploymentVocabulary.IsProcessControlVariable(name))
+                throw new InvalidOperationException("Invalid environment secret reference.");
             if (values.ContainsKey(name)) continue;
             values[name] = (await File.ReadAllTextAsync(Path.Combine(secretRoot, secret), cancellationToken))
                 .TrimEnd('\r', '\n');
@@ -74,19 +83,24 @@ public static class RunbookHostExecutor
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
             timeout.CancelAfter(StepTimeout);
             // A separate session lets cancellation signal descendants even if the shell exits first.
-            var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "sh" : "setsid")
+            // Absolute launcher paths keep the inherited PATH away from the shell choice.
+            var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "sh" : SetsidPath())
             {
                 CreateNoWindow = true,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            if (!OperatingSystem.IsWindows()) start.ArgumentList.Add("sh");
+            if (!OperatingSystem.IsWindows()) start.ArgumentList.Add("/bin/sh");
             start.ArgumentList.Add(script);
             foreach (var (name, value) in values) start.Environment[name] = value;
+            // Every descendant inherits the marker, including one that starts its own session.
+            var marker = Guid.NewGuid().ToString("N");
+            start.Environment[StepMarkerVariable] = marker;
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Runbook step could not start.");
-            var output = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
-            var error = process.StandardError.BaseStream.CopyToAsync(Stream.Null);
+            using var drainStop = new CancellationTokenSource();
+            var output = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null, drainStop.Token);
+            var error = process.StandardError.BaseStream.CopyToAsync(Stream.Null, drainStop.Token);
             try
             {
                 await process.WaitForExitAsync(timeout.Token);
@@ -96,16 +110,18 @@ public static class RunbookHostExecutor
             }
             catch (OperationCanceledException)
             {
-                if (OperatingSystem.IsWindows())
+                Terminate(process, marker);
+                using var cleanup = new CancellationTokenSource(CleanupTimeout);
+                try
                 {
-                    if (!process.HasExited) process.Kill(entireProcessTree: true);
+                    await process.WaitForExitAsync(cleanup.Token);
+                    await Task.WhenAll(output, error).WaitAsync(cleanup.Token);
                 }
-                else if (SendSignal(-process.Id, SigKill) != 0 && !process.HasExited)
+                catch (OperationCanceledException) when (cleanup.IsCancellationRequested)
                 {
-                    process.Kill(entireProcessTree: true);
+                    // A holder that survived the kill rounds must not block the host; abandon its pipes.
+                    drainStop.Cancel();
                 }
-                await process.WaitForExitAsync(CancellationToken.None);
-                await Task.WhenAll(output, error);
                 cancellationToken.ThrowIfCancellationRequested();
                 results.Add(new(index, false));
             }
@@ -113,6 +129,61 @@ public static class RunbookHostExecutor
         }
         return new(results.Count == steps.Count && results.All(result => result.Success), results);
     }
+
+    private static void Terminate(Process process, string marker)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            return;
+        }
+        if (SendSignal(-process.Id, SigKill) != 0 && !process.HasExited) process.Kill(entireProcessTree: true);
+        if (!OperatingSystem.IsLinux()) return;
+        // A descendant that called setsid left the process group; find it by the inherited marker.
+        // Repeat until a scan finds none, so a child forked during a round is caught by the next.
+        var entry = Encoding.ASCII.GetBytes($"{StepMarkerVariable}={marker}");
+        for (var round = 0; round < MaxKillRounds; round++)
+        {
+            var found = MarkedProcesses(entry);
+            if (found.Count == 0) return;
+            foreach (var id in found) SendSignal(id, SigKill);
+        }
+    }
+
+    private static List<int> MarkedProcesses(byte[] entry)
+    {
+        var found = new List<int>();
+        foreach (var directory in Directory.EnumerateDirectories("/proc"))
+        {
+            if (!int.TryParse(Path.GetFileName(directory), out var id) || id == Environment.ProcessId) continue;
+            var environment = ReadEnvironment(directory);
+            if (environment is not null && HasEntry(environment, entry)) found.Add(id);
+        }
+        return found;
+    }
+
+    /// <summary>Null when the process exited or belongs to another user; a zombie reads empty.</summary>
+    private static byte[]? ReadEnvironment(string directory)
+    {
+        try
+        {
+            return File.ReadAllBytes(Path.Combine(directory, "environ"));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static bool HasEntry(ReadOnlySpan<byte> environment, ReadOnlySpan<byte> entry)
+    {
+        foreach (var range in environment.Split((byte)0))
+            if (environment[range].SequenceEqual(entry)) return true;
+        return false;
+    }
+
+    private static string SetsidPath()
+        => File.Exists("/usr/bin/setsid") ? "/usr/bin/setsid" : "/bin/setsid";
 
     private static bool Identifier(string value)
         => value.Length is > 0 and <= 64 && value[0] is >= 'a' and <= 'z'

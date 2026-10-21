@@ -99,6 +99,23 @@ public static class ProjectDeploymentVocabulary
     /// <summary>A secret-provider entry name; the JSON schema's <c>variables[].secret</c>.</summary>
     public const string SecretReferencePattern = "^[A-Za-z][A-Za-z0-9._-]{0,63}$";
 
+    private static readonly string[] ProcessControlPrefixes = ["LD_", "DYLD_", "BASH_FUNC_"];
+    private static readonly HashSet<string> ProcessControlNames = new(StringComparer.Ordinal)
+    {
+        "PATH", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "IFS", "PS4", "CDPATH",
+        "GLIBC_TUNABLES", "GCONV_PATH", "LOCPATH", "NLSPATH", "HOSTALIASES",
+        "MALLOC_CHECK_", "MALLOC_PERTURB_", "MALLOC_TRACE",
+    };
+
+    /// <summary>
+    /// Names that steer the dynamic loader, the C library or the shell that starts an
+    /// operator-installed host script. A repository variable must never set them; the
+    /// project validator and the deploy host both refuse them.
+    /// </summary>
+    public static bool IsProcessControlVariable(string name)
+        => ProcessControlNames.Contains(name)
+           || ProcessControlPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.Ordinal));
+
     /// <summary>
     /// The P1 base directory of every SSH destination. A later executor hands
     /// these paths to the remote shell and to <c>rsync --delete</c>, so they stay
@@ -529,6 +546,9 @@ public static partial class ProjectDefinitionValidator
             var path = $"variables[{i}]";
             if (!EnvironmentName().IsMatch(variable.Name))
                 issues.Add(new($"{path}.name", "variable-name-invalid", "Variable names must be portable shell identifiers."));
+            else if (ProjectDeploymentVocabulary.IsProcessControlVariable(variable.Name))
+                issues.Add(new($"{path}.name", "variable-name-reserved",
+                    $"Variable '{variable.Name}' controls the loader or shell of host scripts and cannot be set from project.yml."));
             if ((variable.Value is null) == (variable.Secret is null))
                 issues.Add(new(path, "variable-source-invalid", "A variable has either a value or a secret name, not both."));
             if (variable.Secret is not null && !SecretReference().IsMatch(variable.Secret))
