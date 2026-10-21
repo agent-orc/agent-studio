@@ -127,6 +127,8 @@ restoring it alone does not restore the secret values or their key. No value,
 lease token, or resolved version is stored in a binding.
 
 The claim response gives the host only references and preflight problems.
+Health-only retries of an already deployed container skip secret preflight and
+resolution because they run the health check without starting a new container.
 The host fails a job with missing references before touching its artifact.
 The queue stores the declaration's secret names and environment kind with each
 job. Claim preflight and workload issuance use that snapshot even if the live

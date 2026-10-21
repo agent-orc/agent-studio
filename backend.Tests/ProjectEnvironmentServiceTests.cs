@@ -188,6 +188,22 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Health_only_retry_skips_secret_preflight()
+    {
+        var (environments, _, _) = Build();
+        var target = environments.Declarations("demo")!.Single(item => item.Kind == "production");
+        Assert.NotNull(environments.QueueDeployment("demo", target, _artifact, "owner", false, retryStep: "health"));
+        var job = environments.Claim("prod-host")!;
+        var bindings = new ProjectSecretBindings(SecretConfig(), new FailingListingProvider(), environments, _clock);
+
+        var result = await ProjectOperatorDashboardEndpoints.CompleteClaimAsync(job, _ => { }, bindings, CancellationToken.None);
+        var returned = Assert.IsType<Ok<DeployJob>>(result).Value!;
+        Assert.Equal("health", returned.RetryStep);
+        Assert.Null(returned.MissingSecretRefs);
+        Assert.Null(returned.SecretBindings);
+    }
+
+    [Fact]
     public void ProjectNameWithSpaces_PersistsAndReadsEnvironmentState()
     {
         var (service, repo, _) = Build(project: "Operator Demo");

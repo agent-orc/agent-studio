@@ -41,18 +41,18 @@ public static class DeployHostCommand
         var healthy = false;
         try
         {
-            if (job.MissingSecretRefs is { Length: > 0 })
-            {
-                evidence = "secret-reference-missing";
-                throw new InvalidOperationException("Secret preflight failed.");
-            }
-            if (SecretEnvironmentVariable.HasCollision(job.SecretRefs))
-            {
-                evidence = "secret-reference-collision";
-                throw new InvalidOperationException("Secret references map to the same container variable.");
-            }
             if (job.RetryStep is null)
             {
+                if (job.MissingSecretRefs is { Length: > 0 })
+                {
+                    evidence = "secret-reference-missing";
+                    throw new InvalidOperationException("Secret preflight failed.");
+                }
+                if (SecretEnvironmentVariable.HasCollision(job.SecretRefs))
+                {
+                    evidence = "secret-reference-collision";
+                    throw new InvalidOperationException("Secret references map to the same container variable.");
+                }
                 if (job.Template == "container")
                     await DeployContainer(job, client, cancellationToken);
                 else if (job.Template == "static")
