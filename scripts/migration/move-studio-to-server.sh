@@ -255,11 +255,21 @@ server_rehearse() {
   host=move-rehearsal.studio.test
   [ -d "$root/move-staging/workspace/.git" ] || fail 'staging is empty; the transfer pass did not run'
   compose() { docker compose -p "$rehearsal_project" -f "$stack/compose.yaml" -f "$rehearsal/compose.override.yaml" --env-file "$rehearsal/.env" "$@"; }
+  stop_rehearsal() {
+    compose down --remove-orphans >/dev/null 2>&1 || return 1
+    remaining=$(compose ps --status running --status restarting --status paused --quiet) || return 1
+    [ -z "$remaining" ]
+  }
   teardown() {
     result=$?
+    trap - EXIT
     if [ -f "$rehearsal/.env" ]; then
       [ "$result" -eq 0 ] || compose logs --tail 80 >"$root/move-bin/rehearsal-failure.log" 2>&1 || true
-      compose down --remove-orphans >/dev/null 2>&1 || true
+      if ! stop_rehearsal; then
+        compose logs --tail 80 >"$root/move-bin/rehearsal-failure.log" 2>&1 || true
+        echo "rehearsal: shutdown failed; copy kept at $rehearsal; logs in $root/move-bin/rehearsal-failure.log" >&2
+        exit 1
+      fi
     fi
     as_service_owner "$(id -u):$(id -g)" "$rehearsal" /site >/dev/null 2>&1 || true
     rm -rf "$rehearsal"
@@ -267,6 +277,8 @@ server_rehearse() {
     exit "$result"
   }
   if [ -e "$rehearsal" ]; then
+    [ -f "$rehearsal/.env" ] || fail "prior rehearsal copy lacks .env; inspect $rehearsal before replacing it"
+    stop_rehearsal || fail "prior rehearsal stack did not stop; copy kept at $rehearsal"
     as_service_owner "$(id -u):$(id -g)" "$rehearsal" /site >/dev/null 2>&1 || true
     rm -rf "$rehearsal"
   fi

@@ -33,10 +33,18 @@ cat >"$work/bin/docker" <<'DOCKER'
 printf '%s\n' "$*" >>"$FAKE_LOG"
 case "$*" in *' ps --status '*' --quiet') [ -z "${FAKE_DOCKER_RUNNING:-}" ] || echo "$FAKE_DOCKER_RUNNING" ;; esac
 case "$*" in
+  *'-p studio-move-rehearsal '*' down --remove-orphans'*)
+    [ "${FAKE_REHEARSE_DOWN_FAIL:-0}" != 1 ] || exit 48
+    rm -f "$FAKE_SERVER_ROOT/rehearsal-active" ;;
+  *'-p studio-move-rehearsal '*' ps --status '*' --quiet'*)
+    [ "${FAKE_REHEARSE_PS_STUCK:-0}" != 1 ] || echo stuck-container
+    [ ! -f "$FAKE_SERVER_ROOT/rehearsal-active" ] || echo rehearsal-container ;;
   *'-p studio-move-rehearsal '*' up -d'*)
+    [ ! -f "$FAKE_SERVER_ROOT/rehearsal-active" ] || exit 49
     [ -f "$FAKE_SERVER_ROOT/move-rehearsal/data/projects/.task-storage/PROJ-004/AGT-4/task.md" ] || exit 45
     [ -f "$FAKE_SERVER_ROOT/move-rehearsal/data/projects/.task-storage/PROJ-011/AGT-11/new.md" ] || exit 46
-    [ "${FAKE_REHEARSE_UP_FAIL:-0}" != 1 ] || exit 47 ;;
+    [ "${FAKE_REHEARSE_UP_FAIL:-0}" != 1 ] || exit 47
+    touch "$FAKE_SERVER_ROOT/rehearsal-active" ;;
 esac
 DOCKER
 cat >"$work/bin/curl" <<'CURL'
@@ -283,6 +291,30 @@ FAKE_REHEARSE_UP_FAIL=1 run_fails --rehearse
 check grep -q -- '-p studio-move-rehearsal .* logs --tail 80' "$FAKE_LOG"
 check grep -q -- '-p studio-move-rehearsal .* down --remove-orphans' "$FAKE_LOG"
 [ ! -e "$work/server/move-rehearsal" ] || fail 'failed rehearsal copy was not torn down'
+
+# A teardown failure must report failure, keep its copy, and leave the old
+# stack for the next rehearsal to stop before touching that copy.
+: >"$FAKE_LOG"
+FAKE_REHEARSE_DOWN_FAIL=1 run_fails --rehearse
+check grep -q 'rehearsal: shutdown failed; copy kept' "$work/out"
+! grep -q 'rehearsal: torn down' "$work/out" || fail 'failed teardown claimed success'
+[ -e "$work/server/move-rehearsal/.env" ] || fail 'failed teardown discarded the rehearsal copy'
+check test -f "$work/server/rehearsal-active"
+: >"$FAKE_LOG"
+run --rehearse
+check grep -q 'rehearsal: torn down' "$work/out"
+[ ! -e "$work/server/rehearsal-active" ] || fail 'prior rehearsal stack was not stopped'
+[ ! -e "$work/server/move-rehearsal" ] || fail 'prior rehearsal copy was not removed'
+check test "$(grep -c -- '-p studio-move-rehearsal .* down --remove-orphans' "$FAKE_LOG")" -eq 2
+down_line=$(grep -n -- '-p studio-move-rehearsal .* down --remove-orphans' "$FAKE_LOG" | head -n 1 | cut -d: -f1)
+up_line=$(grep -n -- '-p studio-move-rehearsal .* up -d' "$FAKE_LOG" | head -n 1 | cut -d: -f1)
+[ "$down_line" -lt "$up_line" ] || fail 'prior rehearsal was removed before its stack stopped'
+
+# A successful Compose down response is insufficient if a container remains.
+FAKE_REHEARSE_PS_STUCK=1 run_fails --rehearse
+check grep -q 'rehearsal: shutdown failed; copy kept' "$work/out"
+[ -e "$work/server/move-rehearsal/.env" ] || fail 'running-container failure discarded the copy'
+run --rehearse
 
 # Apply. Stable scripts record what ran; the guard and the maintenance marker
 # live in the devspace, where api.sh and the watchdog look, not beside the workspace.
