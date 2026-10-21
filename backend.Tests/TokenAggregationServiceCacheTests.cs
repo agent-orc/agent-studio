@@ -229,7 +229,37 @@ public sealed class TokenAggregationServiceCacheTests : IDisposable
     }
 
     [Fact]
-    public void DetailUsageCache_DuplicateLaneIdKeepsFirstReceipt()
+    public async Task DetailUsageCache_DuplicateLaneIdUsesAliasWinnerAndTerminates()
+    {
+        var config = BuildConfig();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        WriteReceipt("AGT-1", 5500, 5000, 500);
+        WriteReceipt("AGT-1", 99000, 90000, 9000, TaskStates.Ready);
+        var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config,
+            () => scanner.ScanAllJobsRaw()
+                .OrderByDescending(task => Array.IndexOf(TaskStates.All, task.State)).ToList());
+        scanner.SetIndexCache(index);
+        index.GetSnapshot();
+        Assert.Equal(2, index.GetAllResidentTasks().Count(task => task.Id == "AGT-1"));
+        Assert.Equal(TaskStates.Progress, index.GetAllResidentTasks().First(task => task.Id == "AGT-1").State);
+        Assert.Equal(TaskStates.Ready, index.GetDetailFacts("AGT-1", _watchPath).Info?.State);
+        var ledger = new ProjectTokenLedger(new AgentMessageBusStore(), config,
+            new ProjectTokenReceiptReader(), index);
+        var walks = 0;
+        var usage = new TaskTokenUsageCache(ledger, TokenTestServices.Pricing(), index,
+            new FakeTimeProvider(), beforeProjectWalk: () =>
+            {
+                if (Interlocked.Increment(ref walks) > 2)
+                    throw new InvalidOperationException("Duplicate receipts caused repeated ledger walks.");
+            });
+
+        Assert.NotNull(await usage.GetAsync(ProjectName, _watchPath, "AGT-1"));
+        Assert.InRange(usage.ProjectLoadCount(ProjectName, _watchPath), 1, 2);
+    }
+
+    [Fact]
+    public async Task DetailUsageCache_BusAdvancesOnEveryWalkReturnsAfterOneFollowUp()
     {
         var config = BuildConfig();
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
@@ -237,19 +267,27 @@ public sealed class TokenAggregationServiceCacheTests : IDisposable
         var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
         scanner.SetIndexCache(index);
         WriteReceipt("AGT-1", 5500, 5000, 500);
-        var duplicate = Path.Combine(_watchPath, TaskStates.Ready, "AGT-1");
-        Directory.CreateDirectory(duplicate);
-        File.Copy(Path.Combine(_watchPath, TaskStates.Progress, "AGT-1", "task.json"),
-            Path.Combine(duplicate, "task.json"));
         index.GetSnapshot();
-        Assert.Equal(2, index.GetAllResidentTasks().Count(task => task.Id == "AGT-1"));
         var ledger = new ProjectTokenLedger(new AgentMessageBusStore(), config,
             new ProjectTokenReceiptReader(), index);
-        var usage = new TaskTokenUsageCache(ledger, TokenTestServices.Pricing(), index,
-            new FakeTimeProvider());
+        var walks = 0;
+        TaskTokenUsageCache? usage = null;
+        usage = new TaskTokenUsageCache(ledger, TokenTestServices.Pricing(), index,
+            new FakeTimeProvider(), beforeProjectWalk: () =>
+            {
+                var walk = Interlocked.Increment(ref walks);
+                if (walk > 2)
+                    throw new InvalidOperationException("A later bus revision caused repeated ledger walks.");
+                usage!.OnTokenUsageAppended(new AgentMessage
+                {
+                    Id = "change-" + walk, Kind = "token-usage", Project = ProjectName,
+                    JobId = "AGT-1", CreatedAt = new DateTime(2026, 10, 21, 8, 0, 0, DateTimeKind.Utc),
+                    ParticipantId = "agent:codex", Role = "actor",
+                });
+            });
 
-        Assert.NotNull(usage.Get(ProjectName, _watchPath, "AGT-1"));
-        Assert.Equal(1, usage.ProjectLoadCount(ProjectName, _watchPath));
+        Assert.NotNull(await usage.GetAsync(ProjectName, _watchPath, "AGT-1"));
+        Assert.InRange(usage.ProjectLoadCount(ProjectName, _watchPath), 1, 2);
     }
 
     [Fact]
@@ -292,15 +330,16 @@ public sealed class TokenAggregationServiceCacheTests : IDisposable
             })
             .Build();
 
-    private void WriteReceipt(string id, long totalTokens, long inputTokens, long outputTokens)
+    private void WriteReceipt(string id, long totalTokens, long inputTokens, long outputTokens,
+        string state = TaskStates.Progress)
     {
-        var dir = Path.Combine(_watchPath, "3-progress", id);
+        var dir = Path.Combine(_watchPath, state, id);
         Directory.CreateDirectory(dir);
         var payload = new
         {
             id,
             title = id,
-            state = "3-progress",
+            state,
             order = 1,
             tokenSummary = new
             {
