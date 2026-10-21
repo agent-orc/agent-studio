@@ -2,9 +2,9 @@ using System.Text;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -499,20 +499,26 @@ public sealed class AccessSecurityTests : IDisposable
     [Fact]
     public async Task Large_distinct_login_usernames_do_not_grow_retained_throttle_keys()
     {
-        var (store, _, clock) = NewStore(new Dictionary<string, string?>
+        var clock = new MutableTimeProvider(DateTimeOffset.Parse("2026-07-13T12:00:00Z"));
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(host =>
         {
-            ["Security:LoginThrottle:MaxTrackedKeys"] = "8"
+            host.UseEnvironment("Test");
+            host.ConfigureTestServices(services => services.AddSingleton<TimeProvider>(clock));
+            host.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = Path.Combine(_root, "http-login"),
+                ["Security:Profile"] = "networked",
+                ["Security:LoginThrottle:MaxTrackedKeys"] = "8",
+                ["AllowedHosts"] = "studio.test"
+            }));
         });
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
-
-        var builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(store);
-        await using var app = builder.Build();
-        app.MapAccessSecurityEndpoints();
-        await app.StartAsync();
-        using var client = app.GetTestClient();
-        client.BaseAddress = new Uri("https://localhost");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://studio.test"), HandleCookies = false
+        });
+        client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
 
         var field = typeof(AccessSecurityStore).GetField("_loginAttempts",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
@@ -546,7 +552,6 @@ public sealed class AccessSecurityTests : IDisposable
         Assert.Equal(HttpStatusCode.Unauthorized, afterExpiry.StatusCode);
         Assert.Single(attempts);
         Assert.All(attempts.Keys.Cast<string>(), key => Assert.Equal(64, key.Length));
-        await app.StopAsync();
     }
 
     [Theory]
