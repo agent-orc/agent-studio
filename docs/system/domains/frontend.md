@@ -380,6 +380,8 @@ occur. It is not a claim about tunnel transfer time.
   filtered `total`. The server caps each page at 50 items, and the UI requests
   25. Run pages also accept `environmentId`, `state`, and `sinceUtc`, so history
   filters apply before paging. The unpaged routes remain for existing clients.
+  Status-card run actions resolve the current deployment from environment
+  status, including when that run falls outside the loaded history pages.
   Each source has its own loading or error state, so a failed deploy route
   leaves declared environment cards visible. A route 404 without an error body
   means the route is unavailable; a 404 with `{ error }` is shown as a server

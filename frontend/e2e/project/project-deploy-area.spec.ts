@@ -191,6 +191,24 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(production.getByRole('button', { name: 'Review the pending approval for Production' })).toBeFocused();
   });
 
+  test('status-card actions open runs beyond the loaded deployment page', async ({ page }) => {
+    const sample = deployDeploymentsFixture()[0];
+    const runs = Array.from({ length: 30 }, (_, index) => ({
+      ...sample, id: `other-run-${index}`, environmentId: 'other',
+      createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    }));
+    await openDeploy(page, fullMocks({ deployments: runs }));
+    const drawer = page.getByTestId('deploy-run-drawer');
+
+    await page.getByRole('button', { name: 'Open last run for Staging' }).click();
+    await expect(drawer).toContainText('Redeploy to Staging');
+    await drawer.getByTestId('sidesheet-close').click();
+    await page.getByRole('button', { name: 'Review the pending approval for Production' }).click();
+    await expect(drawer).toContainText('Deploy to Production');
+    await expect(drawer.getByTestId('deploy-run-approve')).toBeVisible();
+    await capture(page, 'deploy-status-run-outside-page-1280-light');
+  });
+
   test('history filters AGT-3201 runs; the drawer shows steps with their log and acts on a waiting approval', async ({ page }) => {
     const calls: string[] = [];
     let deployments = deployDeploymentsFixture();
