@@ -66,12 +66,15 @@ their first deploy. A release, an approved promotion, and a rollback are
 admitted with a hosting slot when the target environment is not running yet;
 a refusal answers `409` with the reason. A deploy job claim reserves the slot
 atomically; a refused job stays queued for the next claim. A healthy report
-marks the environment running, a failed first deploy returns the slot, and
-`POST /api/projects/{project}/environments/{environmentId}/stop` records an
-operator-confirmed stop and frees the slot. The minute reconciliation frees the
-slot of a removed declaration and the slot a claimed deploy job reserved when
-its five-minute lease expired without a report; a later claim of that job
-reserves it again. Reading the environments changes no slot. A timed promotion
+marks the environment running and settles the reservation, and a failed first
+deploy returns the slot. `POST /api/projects/{project}/environments/{environmentId}/stop`
+answers `202` and queues a stop job for the environment's host; the
+environment stays running and keeps its slot until that host claims the job
+and reports the stop with its lease token. A lost, failed, or never claimed
+stop leaves the slot taken. The minute reconciliation frees the slot of a
+removed declaration and the slot of an unsettled claim (its five-minute lease
+expired without a report, the host was lost, or the deploy was aborted); a
+later claim of that job reserves it again. A healthy deploy keeps its slot. Reading the environments changes no slot. A timed promotion
 that quota refuses stays pending.
 
 Status is derived from tokens and core-hours: `warning` at 80% and `blocked`
