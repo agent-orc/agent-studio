@@ -127,6 +127,17 @@ public class TaskScannerService : ITaskScanner
     /// </summary>
     public void SetIndexCache(TaskIndexCache cache) => _indexCache = cache;
 
+    private AgentStudio.Runner.MonolithOrchestrationStore? _orchestration;
+
+    public void SetOrchestrationStore(AgentStudio.Runner.MonolithOrchestrationStore store)
+        => _orchestration = store;
+
+    private bool IsWaitingForEngine(string folder, string projectId, string taskId, string state)
+    {
+        var runId = EngineDecisionWaitMarker.Read(folder);
+        return runId is not null && (_orchestration?.CanBlockCard(runId, projectId, taskId, state) ?? true);
+    }
+
     /// <summary>
     /// Version stamp of the currently published index snapshot, or 0 when no
     /// cache is wired (test fixtures on the direct disk-walk path). Read it
@@ -830,7 +841,7 @@ public class TaskScannerService : ITaskScanner
                 CodeActivityDetected = DetectCodeActivity(raw, jobDir, scanSessionLog: !isArchive),
                 SessionChain = ReadSessionChain(raw),
                 PendingIntent = ReadPendingIntent(jobDir),
-                WaitingForEngineDecision = EngineDecisionWaitMarker.Read(jobDir) is not null,
+                WaitingForEngineDecision = IsWaitingForEngine(jobDir, entry.Name, resolvedId, resolvedState),
                 OlderBriefDelivery = OlderBriefDeliveryStore.Read(jobDir),
                 OutcomeIssue = isArchive ? null : ResolveOutcomeIssue(jobDir, resolvedState),
                 Fixture = raw.TryGetProperty("fixture", out var fix)
@@ -2340,7 +2351,7 @@ public class TaskScannerService : ITaskScanner
             CauseWait = CauseWaitMarker.ToStatus(CauseWaitMarker.TryRead(jobDir, _logger)),
             QuotaFallback = AgentStudio.Cli.QuotaFallbackMarker.ToStatus(AgentStudio.Cli.QuotaFallbackMarker.TryRead(jobDir, _logger)),
             PendingIntent = ReadPendingIntent(jobDir),
-            WaitingForEngineDecision = EngineDecisionWaitMarker.Read(jobDir) is not null,
+            WaitingForEngineDecision = IsWaitingForEngine(jobDir, cached.ProjectName, cached.Id, cached.State),
             OlderBriefDelivery = OlderBriefDeliveryStore.Read(jobDir),
             PostProcessingChecks = ReadPostProcessingChecks(jobDir, cached.State),
             SteerPendingSince = ReadSteerPendingSince(jobDir, cached.State),

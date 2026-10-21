@@ -43,6 +43,7 @@ public sealed class TaskTransitionService
     private readonly BranchReclaimTriggerService? _branchReclaim;
     private readonly AgentStudio.Pipeline.BatchGateStore? _batchGateStore;
     private readonly AgentStudio.Pipeline.FailureInterventionService? _failureInterventions;
+    private readonly IServiceProvider? _services;
     private readonly TimeProvider _time;
     private readonly bool _guardedDelivery;
     private long _resultScaffoldCreatedCount;
@@ -92,7 +93,8 @@ public sealed class TaskTransitionService
         TimeProvider? timeProvider = null,
         IConfiguration? configuration = null,
         AgentStudio.Pipeline.BatchGateStore? batchGateStore = null,
-        AgentStudio.Pipeline.FailureInterventionService? failureInterventions = null)
+        AgentStudio.Pipeline.FailureInterventionService? failureInterventions = null,
+        IServiceProvider? services = null)
     {
         _scanner = scanner;
         _states = states;
@@ -117,6 +119,7 @@ public sealed class TaskTransitionService
         _branchReclaim = branchReclaim;
         _batchGateStore = batchGateStore;
         _failureInterventions = failureInterventions;
+        _services = services;
         _time = timeProvider ?? TimeProvider.System;
         _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
@@ -547,10 +550,19 @@ public sealed class TaskTransitionService
             if (acceptanceWrite.Appended) _mutations.RemoveIntegrationRecordOnFolder(info.FolderPath, operatorAcceptance!.Id);
             return new MoveJobOutcome(MoveJobStatus.Failure, "The engine continuation base could not be staged.");
         }
-        var outcome = _reviewAttemptLifecycle is not null
-                      && targetState is TaskStates.Completed or TaskStates.Archive
-            ? _reviewAttemptLifecycle.ExecuteTerminalTransition(info, targetState, MoveCore)
-            : MoveCore();
+        MoveJobOutcome MoveWithTerminalLifecycle()
+            => _reviewAttemptLifecycle is not null
+                && targetState is TaskStates.Completed or TaskStates.Archive
+                ? _reviewAttemptLifecycle.ExecuteTerminalTransition(info, targetState, MoveCore)
+                : MoveCore();
+        var occurrenceStore = cause is "engine-decision" or "engine-review-decision"
+            ? null : _services?.GetService<AgentStudio.Runner.MonolithOrchestrationStore>();
+        if (occurrenceStore?.IsApplyingCard(projectName, info.Id) == true)
+            occurrenceStore = null;
+        var outcome = occurrenceStore is null || fromState == targetState
+            ? MoveWithTerminalLifecycle()
+            : await occurrenceStore.WithCardMoveAsync(projectName, info.Id, fromState, targetState,
+                () => Task.FromResult(MoveWithTerminalLifecycle()), ct);
         if (engineContinuationBase is not null && outcome.Status != MoveJobStatus.Success)
         {
             if (priorContinuationBase is null)

@@ -12,6 +12,8 @@ namespace AgentStudio.Shared;
 /// </summary>
 public static class TimelineEventKinds
 {
+    /// <summary>An engine occurrence lost its source lane before its decision could apply.</summary>
+    public const string OrchestrationDecisionSuperseded = "orchestration_decision_superseded";
     public const string ReviewPriorityChanged = "review_priority_changed";
     /// <summary>Task prompt was created on disk.</summary>
     public const string PromptCreated = "prompt_created";
