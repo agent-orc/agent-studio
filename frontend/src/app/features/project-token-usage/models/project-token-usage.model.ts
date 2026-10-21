@@ -118,6 +118,31 @@ export interface ProjectJobTokenDetail {
   fetchedAt: string;
 }
 
+export interface ReviewObservationAggregate {
+  model: string;
+  reasoningLevel: string;
+  reviews: number;
+  blockers: number;
+  approved: number;
+  missEligibleApprovals: number;
+  misses: number;
+  realFindings: number | null;
+  costUsd: number | null;
+  costPerReview: number | null;
+  blockerRate: number;
+  missRate: number | null;
+  costPerRealFinding: number | null;
+}
+
+export interface ReviewObservationReport {
+  project: string;
+  generatedAt: string;
+  method: string;
+  reviews: { id: string; jobId: string; level: string; verdict: string; evidenceRef: string }[];
+  laterEvidence: { id: string; reviewId: string; source: string; evidenceRef: string; summary: string }[];
+  byModelAndReasoning: ReviewObservationAggregate[];
+}
+
 /**
  * Per-step-kind pipeline cost over time. Mirrors backend
  * `ProjectPipelineCostTimeline`: the "how it develops over time" view that

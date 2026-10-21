@@ -475,6 +475,8 @@ public sealed class AspectRunnerService
                 Kind = StepKind.Aspect,
                 Model = callUsage?.Model ?? model,
                 ThinkingLevel = callUsage?.ThinkingLevel ?? thinkingLevel,
+                ReviewedResultSha = inputs.ReviewedResultSha,
+                ExecutionAttemptId = inputs.ReviewRoundId,
                 ModelSource = modelSource,
                 EvidenceRef = $"aspect-{def.Id}.md",
                 // An infra crash (dead reviewer, no verdict after the retry) is a
@@ -491,6 +493,13 @@ public sealed class AspectRunnerService
                 CacheCreationTokens = spentCacheCreation,
                 InputIncludesCached = callUsage?.InputIncludesCached,
                 Verdict = verdict.IsInfraFailure ? "environmental" : AspectVerdictParsing.StatusToken(verdict.Status),
+                ReviewFindings = verdict.IsInfraFailure ? null : verdict.Status switch
+                {
+                    AspectStatus.Block => new AgentStudio.Review.ReviewFindingCounts(Blocker: 1),
+                    AspectStatus.Concerns => new AgentStudio.Review.ReviewFindingCounts(Major: 1),
+                    _ => new AgentStudio.Review.ReviewFindingCounts(),
+                },
+                ReviewCli = cliBinary,
                 Reason = verdict.IsInfraFailure
                     ? "aspect-runner-infra-crash"
                     : ok ? null : "aspect-runner-exception",
@@ -845,6 +854,10 @@ public sealed record AspectRunInputs(
     /// authoritative over broader Dossier or wishlist text in the task body.
     /// </summary>
     public string AcceptanceScope { get; init; } = string.Empty;
+
+    /// <summary>Exact frozen delivery checked by this local aspect, when available.</summary>
+    public string? ReviewedResultSha { get; init; }
+    public string? ReviewRoundId { get; init; }
 }
 
 /// <summary>
