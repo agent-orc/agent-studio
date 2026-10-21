@@ -280,6 +280,78 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
             .Claim("stage-host", requireVerifiedRelease: true)?.Project);
     }
 
+    [Theory]
+    [InlineData("local")]
+    [InlineData("networked")]
+    public async Task ArtifactRoute_RequiresTheDeployCredentialInEveryProfile(string profile)
+    {
+        var (_, repo, watch) = Build();
+        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = Path.Combine(_root, "workspace"),
+                    ["Deploy:ReleaseEvidenceRoot"] = Path.Combine(_root, "release-evidence"),
+                    ["WatchPaths:0:Name"] = "demo", ["WatchPaths:0:Path"] = watch,
+                    ["WatchPaths:0:RootPath"] = repo, ["WatchPaths:0:RepositoryPath"] = repo,
+                    ["Security:Profile"] = profile,
+                    ["AllowedHosts"] = "studio.test",
+                    ["Logging:BackendFile:LogDirectory"] = Path.Combine(_root, "logs"),
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(_clock);
+            });
+        });
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var deploy = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest("deploy-host",
+            [RunnerScopes.Deploy], null, null)).Code);
+        var release = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest("release-builder",
+            [RunnerScopes.Release], null, null)).Code);
+        // The networked profile binds the credential to the job's host.
+        var stage = Path.Combine(repo, "docs", "deployments", "environments", "stage.json");
+        File.WriteAllText(stage, File.ReadAllText(stage).Replace("stage-host", deploy.Runner.Id, StringComparison.Ordinal));
+        Git(repo, "add", ".");
+        Git(repo, "commit", "-m", "declarations");
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        WriteReleaseEvidence("demo", _artifact, commit);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test") });
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", release.Secret);
+        using (var accepted = await client.PostAsJsonAsync("/api/deploy/gate-releases",
+                   new GateArtifactRequest("demo", _artifact, commit)))
+            Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        var job = factory.Services.GetRequiredService<ProjectEnvironmentService>()
+            .Claim(deploy.Runner.Id, requireVerifiedRelease: true);
+        Assert.NotNull(job);
+
+        async Task<HttpResponseMessage> Artifact(string? bearer)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/deploy/jobs/demo/{job!.Id}/artifact");
+            request.Headers.Add("X-Deploy-Lease", job.LeaseToken);
+            if (bearer is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+            client.DefaultRequestHeaders.Authorization = null;
+            return await client.SendAsync(request);
+        }
+
+        using (var anonymous = await Artifact(null))
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        using (var invalid = await Artifact("invalid-credential"))
+            Assert.Equal(HttpStatusCode.Unauthorized, invalid.StatusCode);
+        using (var wrongScope = await Artifact(release.Secret))
+            Assert.Equal(HttpStatusCode.Forbidden, wrongScope.StatusCode);
+        using var verified = await Artifact(deploy.Secret);
+        Assert.Equal(HttpStatusCode.OK, verified.StatusCode);
+        using var provenance = JsonDocument.Parse(await verified.Content.ReadAsStringAsync());
+        Assert.Equal(_artifact, provenance.RootElement.GetProperty("artifact").GetString());
+        Assert.Equal(new string('a', 64), provenance.RootElement.GetProperty("digest").GetString());
+        Assert.Equal(commit, provenance.RootElement.GetProperty("commit").GetString());
+    }
+
     [Fact]
     public void StageDeclaration_RequiresHealthUrl()
     {

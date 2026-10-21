@@ -87,8 +87,11 @@ fails the job.
 
 The host contract is `GET /api/deploy/jobs/{project}/{jobId}/artifact` with
 `Authorization: Bearer <runner.deploy token>` and
-`X-Deploy-Lease: <leaseToken from the claimed job>`. In networked profiles,
-the credential's runner identity must equal the job's `hostId`. The lease must
+`X-Deploy-Lease: <leaseToken from the claimed job>`. Every profile, the local
+profile included, requires the `runner.deploy` credential: a missing or invalid
+credential gets 401 and a credential without that scope gets 403 before the
+lease is read. In networked profiles, the credential's runner identity must
+equal the job's `hostId`. The lease must
 still be current and the job claimed. The response is a JSON provenance record
 with `project`, `commit`, `artifact`, `digest`, `gateRunId`, `template`,
 `builderIdentity`, `location`, `sourceDigest`, and its server signature. The
