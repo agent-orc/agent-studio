@@ -1,6 +1,13 @@
 using System.Text;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 using Xunit;
@@ -422,6 +429,7 @@ public sealed class AccessSecurityTests : IDisposable
             Assert.InRange(clients.Count + budgets.Count, 0, 8);
         }
         Assert.Equal(8, clients.Count);
+        Assert.All(clients.Keys.Cast<string>(), key => Assert.Equal(64, key.Length));
         Assert.Empty(budgets);
         Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
             store.Login("guessed.user.0", "wrong password", "unknown|0")).Status);
@@ -437,6 +445,59 @@ public sealed class AccessSecurityTests : IDisposable
         Assert.Single(budgets);
         Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
             store.Login("first.owner", "correct horse battery staple!", "owner|new-address")).Status);
+    }
+
+    [Fact]
+    public async Task Large_distinct_login_usernames_do_not_grow_retained_throttle_keys()
+    {
+        var (store, _, clock) = NewStore(new Dictionary<string, string?>
+        {
+            ["Security:LoginThrottle:MaxTrackedKeys"] = "8"
+        });
+        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(store);
+        await using var app = builder.Build();
+        app.MapAccessSecurityEndpoints();
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+        client.BaseAddress = new Uri("https://localhost");
+
+        var field = typeof(AccessSecurityStore).GetField("_loginAttempts",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var attempts = Assert.IsAssignableFrom<System.Collections.IDictionary>(field!.GetValue(store));
+        for (var index = 0; index < 16; index++)
+        {
+            var username = $"guessed.{index}." + new string('x', 2000);
+            using var response = await client.PostAsJsonAsync("/api/auth/login", new { username, password = "wrong password" });
+            Assert.Equal(index < 8 ? HttpStatusCode.Unauthorized : HttpStatusCode.TooManyRequests, response.StatusCode);
+            if (index < 8)
+            {
+                var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+                Assert.Equal("invalid-credentials", body.GetProperty("error").GetString());
+            }
+            Assert.InRange(attempts.Count, 0, 8);
+            Assert.All(attempts.Keys.Cast<string>(), key => Assert.Equal(64, key.Length));
+        }
+
+        using var oversized = await client.PostAsJsonAsync("/api/auth/login", new
+        {
+            username = new string('y', 5000), password = "wrong password"
+        });
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, oversized.StatusCode);
+        Assert.Equal(8, attempts.Count);
+
+        clock.Advance(TimeSpan.FromMinutes(16));
+        using var afterExpiry = await client.PostAsJsonAsync("/api/auth/login", new
+        {
+            username = "guessed.after-expiry." + new string('z', 2000), password = "wrong password"
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, afterExpiry.StatusCode);
+        Assert.Single(attempts);
+        Assert.All(attempts.Keys.Cast<string>(), key => Assert.Equal(64, key.Length));
+        await app.StopAsync();
     }
 
     [Theory]

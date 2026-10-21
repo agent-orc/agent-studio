@@ -1,10 +1,13 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace AgentStudio.Security;
 
 public static class AccessSecurityEndpoints
 {
+    private const int MaxLoginPayloadBytes = 4 * 1024;
+
     public static void MapAccessSecurityEndpoints(this WebApplication app)
     {
         var auth = app.MapGroup("/api/auth");
@@ -37,14 +40,35 @@ public static class AccessSecurityEndpoints
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken));
             }));
 
-        auth.MapPost("/login", (LoginRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
-            Execute(() =>
+        auth.MapPost("/login", async (HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
+        {
+            if (!context.Request.HasJsonContentType()) return Results.StatusCode(StatusCodes.Status415UnsupportedMediaType);
+            if (context.Request.ContentLength > MaxLoginPayloadBytes) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+
+            // Bound the body before JSON binding, including requests without Content-Length.
+            var body = new byte[MaxLoginPayloadBytes + 1];
+            var length = 0;
+            while (length < body.Length)
+            {
+                var read = await context.Request.Body.ReadAsync(body.AsMemory(length), context.RequestAborted);
+                if (read == 0) break;
+                length += read;
+            }
+            if (length > MaxLoginPayloadBytes) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+
+            LoginRequest? request;
+            try { request = JsonSerializer.Deserialize<LoginRequest>(body.AsSpan(0, length), JsonSerializerOptions.Web); }
+            catch (JsonException) { return Results.BadRequest(); }
+            if (request is null) return Results.BadRequest();
+
+            return Execute(() =>
             {
                 var key = $"{(request.Username ?? string.Empty).Trim().ToLowerInvariant()}|{LoginThrottleKeys.Client(context.Connection.RemoteIpAddress)}";
                 var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken));
-            }));
+            });
+        });
 
         auth.MapPost("/invite/accept", (AcceptInvitationRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
             Execute(() =>
