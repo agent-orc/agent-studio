@@ -475,7 +475,7 @@ public static class TaskCrudEndpoints
             var tokenSummary = tokenCache.GetCached(detail.Info, out var tokenReady);
             context.Response.Headers["X-Task-Token-Freshness"] = tokenReady ? "ready" : "warming";
             IReadOnlyDictionary<string, TaskTokenSummary>? tokenLookup = tokenSummary is null
-                ? null : new Dictionary<string, TaskTokenSummary> { [detail.Info.Id] = tokenSummary };
+                ? null : new Dictionary<string, TaskTokenSummary> { [detail.Info.TaskKey] = tokenSummary };
             var verdictLookup = TaskSwitchTrace.Run("runtime", () => BuildOrchestratorVerdictLookup(new[] { detail.Info }, configuration));
             var needsDependencyProjection = detail.Info.References.DependsOn.Count > 0
                 || detail.Info.State == TaskStates.HumanReview;

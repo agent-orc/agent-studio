@@ -69,14 +69,14 @@ public static class TaskDetailResources
             return Reply(context, core, lookup.ProjectId!, runtime, "git", state, data, reason, freshness.GitStateAt?.UtcDateTime);
         });
 
-        group.MapGet("/{jobId}/details/usage", (string jobId, string? project, long? generation,
+        group.MapGet("/{jobId}/details/usage", async (string jobId, string? project, long? generation,
             HttpContext context, ProjectRegistry projects, TaskIndexCache index,
             ITaskCoreRuntime runtime, TaskScannerService scanner, TaskTokenUsageCache tokens) =>
         {
             var lookup = Resolve(jobId, project, generation, context, projects, index);
             if (lookup.Error is not null) return lookup.Error;
             var core = lookup.Core!;
-            var summary = tokens.Get(core.ProjectName, core.WatchPath, core.Id);
+            var summary = await tokens.GetAsync(core.ProjectName, core.WatchPath, core.Id);
             var data = new TaskUsageResource(summary, core.LastUsage,
                 scanner.ReadContextUsage(core.FolderPath));
             return Reply(context, core, lookup.ProjectId!, runtime, "usage", "ready", data, null,

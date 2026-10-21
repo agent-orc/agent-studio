@@ -844,7 +844,7 @@ export class TaskService {
     );
   }
 
-  getDetail(jobId: string, watchPath?: string, project?: string): Observable<TaskDetail> {
+  getDetail(jobId: string, watchPath?: string, project?: string, attempt = 0): Observable<TaskDetail> {
     let params = this.withWatchPath(watchPath).params ?? new HttpParams();
     if (project) params = params.set('project', project);
     const projectId = project?.trim() || UNSCOPED_TASK_PROJECT;
@@ -852,7 +852,10 @@ export class TaskService {
       this.taskV1Url(jobId, projectId),
       { params, observe: 'response' },
     ).pipe(switchMap(response => response.status === 202
-      ? timer(100).pipe(switchMap(() => this.getDetail(jobId, watchPath, project)))
+      ? attempt < 20
+        ? timer(100 + 50 * attempt)
+          .pipe(switchMap(() => this.getDetail(jobId, watchPath, project, attempt + 1)))
+        : throwError(() => new Error('Task still warming'))
       : [response.body!]));
   }
 

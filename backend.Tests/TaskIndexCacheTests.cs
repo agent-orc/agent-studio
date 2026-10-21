@@ -23,6 +23,19 @@ public class TaskIndexCacheTests : IDisposable
     private readonly TaskIndexCache _cache;
 
     [Fact]
+    public void AbsentCardOnDirtySnapshot_DoesNotRemainWarming()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "Present");
+        _cache.GetSnapshot();
+        _cache.Invalidate();
+
+        var missing = _cache.GetDetailFacts("card-gone", _watchPath);
+
+        Assert.Null(missing.Info);
+        Assert.False(missing.Warming);
+    }
+
+    [Fact]
     public async Task DetailFacts_DoNotWaitForUnrelatedRefresh_AndKeepOwnPublication()
     {
         WriteJob(TaskStates.Ready, "card-a", "First");

@@ -81,9 +81,11 @@ public sealed class TaskIndexCache
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private TaskReferenceIndex _coreReferences = TaskReferenceIndex.Build([]);
     private readonly Dictionary<string, long> _coreRevisionByKey = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, long> _coreRevisionVersions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PendingCorePublication> _pendingCorePublications =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _removedCoreKeys = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, long> _removedCoreKeyVersions = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, TaskCoreRecord> _coreByFolder = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly HashSet<string> _staleCoreFolders = new(
@@ -97,6 +99,13 @@ public sealed class TaskIndexCache
     private readonly Dictionary<string, TaskCoreSourceStamp> _coreTaskStamps = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private long _coreWriteGeneration;
+    private long _coreScanSequence;
+    public event Action<long, IReadOnlyList<TaskInfo>>? CoreRescanCompleted;
+
+    public long CoreScanSequence
+    {
+        get { lock (_lock) return _coreScanSequence; }
+    }
     private int _coreHydrationQueued;
     private DateTimeOffset _snapshotAt = DateTimeOffset.MinValue;
     private bool _dirty = true;
@@ -351,11 +360,13 @@ public sealed class TaskIndexCache
                 return new TaskCoreLookup(record, stale);
             }
             if (_removedCoreKeys.Contains(key)) return new TaskCoreLookup(null, false);
-            if (!_hasSnapshot || _dirty || _time.GetUtcNow() - _snapshotAt >= _safetyTtl)
+            if (!_hasSnapshot || _pendingCorePublications.ContainsKey(key))
             {
                 QueueCoreHydration();
                 return new TaskCoreLookup(null, true);
             }
+            if (_dirty || _time.GetUtcNow() - _snapshotAt >= _safetyTtl)
+                QueueCoreHydration();
             return new TaskCoreLookup(null, false);
         }
     }
@@ -391,8 +402,12 @@ public sealed class TaskIndexCache
                 ? _removedCoreKeys.Any(key => key.EndsWith("::" + identity,
                     StringComparison.OrdinalIgnoreCase))
                 : _removedCoreKeys.Contains(CoreKey(watchPath, identity));
+            var pending = string.IsNullOrWhiteSpace(watchPath)
+                ? _pendingCorePublications.Keys.Any(key => key.EndsWith("::" + identity,
+                    StringComparison.OrdinalIgnoreCase))
+                : _pendingCorePublications.ContainsKey(CoreKey(watchPath, identity));
             return (info, _coreReferences, stale,
-                info is null && !removed && (!_hasSnapshot || _dirty));
+                info is null && !removed && (!_hasSnapshot || pending));
         }
     }
 
@@ -597,16 +612,17 @@ public sealed class TaskIndexCache
                     var key = CoreKey(info.WatchPath, info.Id);
                     _coreRevisionByKey[key] = _coreRevisionByKey.GetValueOrDefault(key) + 1;
                     _coreFolderVersions[info.FolderPath] = ++_coreWriteGeneration;
+                    _coreRevisionVersions[key] = _coreWriteGeneration;
                     _coreTaskStamps[info.FolderPath] = SourceStamp(info);
                     foreach (var old in removedFolders)
                     {
                         _coreFolderVersions[old] = ++_coreWriteGeneration;
                         _coreTaskStamps.Remove(old);
                     }
-                    _removedCoreKeys.Remove(CoreKey(info.WatchPath, info.Id));
-                    _removedCoreKeys.Remove(CoreKey(info.WatchPath, info.TaskKey));
+                    ClearCoreTombstone(CoreKey(info.WatchPath, info.Id));
+                    ClearCoreTombstone(CoreKey(info.WatchPath, info.TaskKey));
                     if (!string.IsNullOrWhiteSpace(info.Key))
-                        _removedCoreKeys.Remove(CoreKey(info.WatchPath, info.Key));
+                        ClearCoreTombstone(CoreKey(info.WatchPath, info.Key));
                     _staleCoreFolders.Remove(info.FolderPath);
                 }
             }
@@ -642,9 +658,14 @@ public sealed class TaskIndexCache
             lock (_corePublicationLock)
             {
                 var target = read();
-                RemoveCoreByFolder(sourceFolder);
+                // PublishCore replaces the old folder for this task in one
+                // facts publication. Removing first exposed a brief 404.
                 if (target is not null) PublishCore(target);
-                else RemoveCoreByFolder(targetFolder);
+                else
+                {
+                    RemoveCoreByFolder(sourceFolder);
+                    RemoveCoreByFolder(targetFolder);
+                }
             }
         }
         finally { EndCorePublication(pending); }
@@ -676,6 +697,19 @@ public sealed class TaskIndexCache
         }
     }
 
+    // Caller holds _lock. A tombstone survives scans that started before it.
+    private void MarkCoreTombstone(string key)
+    {
+        _removedCoreKeys.Add(key);
+        _removedCoreKeyVersions[key] = _coreWriteGeneration + 1;
+    }
+
+    private void ClearCoreTombstone(string key)
+    {
+        _removedCoreKeys.Remove(key);
+        _removedCoreKeyVersions.Remove(key);
+    }
+
     public void RemoveCore(TaskInfo info)
     {
         lock (_corePublicationLock)
@@ -686,16 +720,16 @@ public sealed class TaskIndexCache
             {
                 facts = new Dictionary<string, TaskInfo>(_coreFactsByFolder, _coreFactsByFolder.Comparer);
                 records = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer);
-                _removedCoreKeys.Add(CoreKey(info.WatchPath, info.Id));
+                MarkCoreTombstone(CoreKey(info.WatchPath, info.Id));
                 if (!string.IsNullOrWhiteSpace(info.TaskKey))
-                    _removedCoreKeys.Add(CoreKey(info.WatchPath, info.TaskKey));
+                    MarkCoreTombstone(CoreKey(info.WatchPath, info.TaskKey));
                 if (!string.IsNullOrWhiteSpace(info.Key))
-                    _removedCoreKeys.Add(CoreKey(info.WatchPath, info.Key));
+                    MarkCoreTombstone(CoreKey(info.WatchPath, info.Key));
                 foreach (var key in _core.Where(pair =>
                     WatchPathComparison.PathsEqual(pair.Value.WatchPath, info.WatchPath)
                     && (pair.Value.TaskKey == info.TaskKey || pair.Value.Id == info.Id))
                     .Select(pair => pair.Key))
-                    _removedCoreKeys.Add(key);
+                    MarkCoreTombstone(key);
             }
             facts.Remove(info.FolderPath);
             records.Remove(info.FolderPath);
@@ -936,6 +970,7 @@ public sealed class TaskIndexCache
             long genBefore;
             long mutationGenBefore;
             long coreWriteGenBefore;
+            long coreScanSequence;
             Dictionary<string, TaskCoreRecord> previousCoreByFolder;
             lock (_lock)
             {
@@ -946,6 +981,7 @@ public sealed class TaskIndexCache
                 genBefore = _invalidationGen;
                 mutationGenBefore = _requiredMutationGen;
                 coreWriteGenBefore = _coreWriteGeneration;
+                coreScanSequence = ++_coreScanSequence;
                 previousCoreByFolder = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer);
             }
             var refreshTimer = System.Diagnostics.Stopwatch.StartNew();
@@ -981,6 +1017,7 @@ public sealed class TaskIndexCache
                 factsByFolder[job.FolderPath] = job;
             }
             var push = false;
+            IReadOnlyList<TaskInfo> completedCoreFacts = [];
             lock (_corePublicationLock)
             {
                 Dictionary<string, TaskInfo> mergedFacts;
@@ -1011,6 +1048,7 @@ public sealed class TaskIndexCache
                 }
                 var mergedReferences = TaskReferenceIndex.Build(mergedFacts.Values);
                 PublishCoreFacts(mergedFacts, mergedRecords, mergedReferences);
+                completedCoreFacts = mergedFacts.Values.ToArray();
                 var stamps = adopted.ToDictionary(folder => folder,
                     folder => SourceStamp(factsByFolder[folder]),
                     mergedFacts.Comparer);
@@ -1037,11 +1075,29 @@ public sealed class TaskIndexCache
                     // writes. A card that reappears releases only its aliases.
                     foreach (var record in mergedRecords.Values)
                     {
-                        _removedCoreKeys.Remove(CoreKey(record.WatchPath, record.Id));
-                        _removedCoreKeys.Remove(CoreKey(record.WatchPath, record.TaskKey));
+                        ClearCoreTombstone(CoreKey(record.WatchPath, record.Id));
+                        ClearCoreTombstone(CoreKey(record.WatchPath, record.TaskKey));
                         if (!string.IsNullOrWhiteSpace(record.Key))
-                            _removedCoreKeys.Remove(CoreKey(record.WatchPath, record.Key));
+                            ClearCoreTombstone(CoreKey(record.WatchPath, record.Key));
                     }
+                    // A completed scan that started after a direct publication
+                    // has absorbed its ordering marker. Keep newer markers for
+                    // scans that were already in flight when a card changed.
+                    foreach (var folder in _coreFolderVersions
+                        .Where(pair => pair.Value <= coreWriteGenBefore)
+                        .Select(pair => pair.Key).ToArray())
+                        _coreFolderVersions.Remove(folder);
+                    foreach (var key in _coreRevisionVersions
+                        .Where(pair => pair.Value <= coreWriteGenBefore && !_core.ContainsKey(pair.Key))
+                        .Select(pair => pair.Key).ToArray())
+                    {
+                        _coreRevisionVersions.Remove(key);
+                        _coreRevisionByKey.Remove(key);
+                    }
+                    foreach (var key in _removedCoreKeyVersions
+                        .Where(pair => pair.Value <= coreWriteGenBefore)
+                        .Select(pair => pair.Key).ToArray())
+                        ClearCoreTombstone(key);
                     _snapshotAt = _time.GetUtcNow();
                     _hasSnapshot = true;
                     _publishedMutationGen = Math.Max(_publishedMutationGen, mutationGenBefore);
@@ -1062,6 +1118,8 @@ public sealed class TaskIndexCache
             // Arm the push before releasing waiters, so a reader that resumes
             // on this publication already has the push it implies scheduled.
             if (push) SchedulePush();
+            try { CoreRescanCompleted?.Invoke(coreScanSequence, completedCoreFacts); }
+            catch (Exception ex) { _logger.LogWarning(ex, "task-core-rescan-listener-failed"); }
             completion.TrySetResult(true);
         }
         catch (Exception ex)

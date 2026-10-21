@@ -156,6 +156,67 @@ public sealed class TokenAggregationServiceCacheTests : IDisposable
         Assert.Equal(3, usage.ProjectLoadCount(ProjectName, _watchPath));
     }
 
+    [Fact]
+    public async Task DetailUsageCache_ConcurrentCardChangesShareOneProjectLoad()
+    {
+        var config = BuildConfig();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
+        scanner.SetIndexCache(index);
+        var ledger = new ProjectTokenLedger(new AgentMessageBusStore(), config,
+            new ProjectTokenReceiptReader(), index);
+        var usage = new TaskTokenUsageCache(ledger, TokenTestServices.Pricing(), index,
+            new FakeTimeProvider());
+        WriteReceipt("AGT-1", 5500, 5000, 500);
+        WriteReceipt("AGT-2", 2200, 2000, 200);
+        index.GetSnapshot();
+        Assert.NotNull(usage.Get(ProjectName, _watchPath, "AGT-1"));
+        Assert.Equal(1, usage.ProjectLoadCount(ProjectName, _watchPath));
+
+        foreach (var id in new[] { "AGT-1", "AGT-2" })
+            usage.OnTokenUsageAppended(new AgentMessage
+            {
+                Id = "change-" + id, Kind = "token-usage", Project = ProjectName,
+                JobId = id, CreatedAt = new DateTime(2026, 10, 21, 8, 0, 0, DateTimeKind.Utc),
+                ParticipantId = "agent:codex", Role = "actor",
+            });
+        var reads = await Task.WhenAll(
+            Task.Run(() => usage.Get(ProjectName, _watchPath, "AGT-1")),
+            Task.Run(() => usage.Get(ProjectName, _watchPath, "AGT-2")));
+        Assert.All(reads, Assert.NotNull);
+        Assert.Equal(2, usage.ProjectLoadCount(ProjectName, _watchPath));
+    }
+
+    [Fact]
+    public void DetailUsageCache_PrunesAbsentCardAfterLaterCompletedRescan()
+    {
+        var config = BuildConfig();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
+        scanner.SetIndexCache(index);
+        var ledger = new ProjectTokenLedger(new AgentMessageBusStore(), config,
+            new ProjectTokenReceiptReader(), index);
+        var usage = new TaskTokenUsageCache(ledger, TokenTestServices.Pricing(), index,
+            new FakeTimeProvider());
+        index.GetSnapshot();
+        usage.Get(ProjectName, _watchPath, "AGT-gone");
+        usage.OnTokenUsageAppended(new AgentMessage
+        {
+            Id = "gone-usage", Kind = "token-usage", Project = ProjectName,
+            JobId = "AGT-gone", CreatedAt = new DateTime(2026, 10, 21, 8, 0, 0, DateTimeKind.Utc),
+            ParticipantId = "agent:codex", Role = "actor",
+        });
+        Assert.Equal(1, usage.EntryCount);
+        Assert.Equal(1, usage.BusRevisionCount);
+
+        index.ForceRefresh();
+
+        Assert.Equal(0, usage.EntryCount);
+        Assert.Equal(0, usage.BusRevisionCount);
+    }
+
     private IConfiguration BuildConfig()
         => new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>

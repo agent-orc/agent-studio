@@ -17,7 +17,7 @@ public sealed class TaskTokenUsageCache
     private readonly ILogger<TaskTokenUsageCache>? _logger;
     private readonly ConcurrentDictionary<(string Project, string Path), ProjectEntry> _projectsCache = new();
     private readonly ConcurrentDictionary<(string Project, string Path, string Id), Entry> _entries = new();
-    private readonly ConcurrentDictionary<(string Project, string Id), long> _busRevisions = new();
+    private readonly ConcurrentDictionary<(string Project, string Id), BusRevision> _busRevisions = new();
 
     public TaskTokenUsageCache(ProjectTokenLedger ledger, ITokenPricing pricing,
         TaskIndexCache index, TimeProvider clock, ProjectRegistry? projects = null,
@@ -29,80 +29,100 @@ public sealed class TaskTokenUsageCache
         _clock = clock;
         _projects = projects;
         _logger = logger;
+        _index.CoreRescanCompleted += PruneAbsentEntries;
     }
 
     public TaskTokenSummary? Get(string projectName, string watchPath, string jobId)
+        => GetAsync(projectName, watchPath, jobId).GetAwaiter().GetResult();
+
+    public async Task<TaskTokenSummary?> GetAsync(string projectName, string watchPath, string jobId)
     {
         var key = (projectName, watchPath, jobId);
-        var entry = _entries.GetOrAdd(key, _ => new Entry());
-        lock (entry)
-        {
-            var receipt = ReceiptStamp(_index.GetDetailFacts(jobId, watchPath).Info);
-            var bus = _busRevisions.GetValueOrDefault((projectName, jobId));
-            if (entry.Loaded && entry.Receipt == receipt && entry.Bus == bus
-                && entry.ExpiresAt > _clock.GetUtcNow()) return entry.Summary;
+        var entry = _entries.GetOrAdd(key, _ => new Entry(_index.CoreScanSequence));
+        var receipt = ReceiptStamp(_index.GetDetailFacts(jobId, watchPath).Info);
+        var bus = _busRevisions.GetValueOrDefault((projectName, jobId)).Version;
+        var last = Volatile.Read(ref entry.Last);
+        if (last is not null && last.Receipt == receipt && last.Bus == bus
+            && last.ExpiresAt > _clock.GetUtcNow()) return last.Summary;
 
-            var project = _projectsCache.GetOrAdd((projectName, watchPath), _ => new ProjectEntry());
+        var project = _projectsCache.GetOrAdd((projectName, watchPath), _ => new ProjectEntry());
+        Task<ProjectSnapshot> load;
+        lock (project)
+        {
+            var current = project.Current;
+            if (current is not null && current.ExpiresAt > _clock.GetUtcNow()
+                && (current.ReceiptStamps.GetValueOrDefault(jobId) ?? "none") == receipt
+                && current.BusRevisions.GetValueOrDefault(jobId) == bus)
+                load = Task.FromResult(current);
+            else
+                load = project.Loading ??= Task.Run(() => LoadProject(projectName, watchPath, project));
+        }
+        var snapshot = await load.ConfigureAwait(false);
+        // A change during the walk starts another load on the next request.
+        // Publish the summary that was actually captured by this walk.
+        var summary = snapshot.Summaries.GetValueOrDefault(jobId);
+        Volatile.Write(ref entry.Last, new CardSnapshot(
+            snapshot.ReceiptStamps.GetValueOrDefault(jobId) ?? "none",
+            snapshot.BusRevisions.GetValueOrDefault(jobId), snapshot.ExpiresAt, summary));
+        return summary;
+    }
+
+    private ProjectSnapshot LoadProject(string projectName, string watchPath, ProjectEntry project)
+    {
+        try
+        {
+            // Capture versions before the ledger walk. An append or receipt
+            // publication during the walk must cause the next read to reload.
+            var resident = _index.GetAllResidentTasks();
+            var receiptStamps = resident
+                .Where(task => task.ProjectName == projectName && task.WatchPath == watchPath)
+                .ToDictionary(task => task.Id, ReceiptStamp, StringComparer.Ordinal);
+            var busRevisions = _busRevisions
+                .Where(pair => pair.Key.Project == projectName)
+                .ToDictionary(pair => pair.Key.Id, pair => pair.Value.Version, StringComparer.Ordinal);
+            var ledger = _ledger.LoadFreshSnapshot(projectName, watchPath);
+            var result = new ProjectSnapshot(TaskTokenSummaryFold.PerJob(_pricing.Price(ledger.Entries)),
+                receiptStamps, busRevisions, _clock.GetUtcNow() + Ttl);
             lock (project)
             {
-                if (!project.Loaded || project.ExpiresAt <= _clock.GetUtcNow()
-                    || project.ReceiptStamps.GetValueOrDefault(jobId) != receipt
-                    || entry.Bus != bus)
-                {
-                    var snapshot = _ledger.LoadFreshSnapshot(projectName, watchPath);
-                    project.Summaries = TaskTokenSummaryFold.PerJob(_pricing.Price(snapshot.Entries));
-                    project.ReceiptStamps = _index.GetAllResidentTasks()
-                        .Where(task => task.ProjectName == projectName
-                            && task.WatchPath == watchPath)
-                        .ToDictionary(task => task.Id, ReceiptStamp, StringComparer.Ordinal);
-                    project.ReceiptStamps[jobId] = receipt;
-                    project.ExpiresAt = _clock.GetUtcNow() + Ttl;
-                    project.Loaded = true;
-                    project.LoadCount++;
-                }
-                entry.Summary = project.Summaries.GetValueOrDefault(jobId);
+                project.Current = result;
+                project.Loading = null;
+                project.LoadCount++;
             }
-            entry.Receipt = receipt;
-            entry.Bus = bus;
-            entry.ExpiresAt = _clock.GetUtcNow() + Ttl;
-            entry.Loaded = true;
-            return entry.Summary;
+            return result;
+        }
+        catch
+        {
+            lock (project) project.Loading = null;
+            throw;
         }
     }
 
     /// <summary>Never reads the ledger on the detail request. An absent value warms in the background.</summary>
     public TaskTokenSummary? GetCached(TaskInfo info, out bool ready)
     {
-        var entry = _entries.GetOrAdd((info.ProjectName, info.WatchPath, info.Id), _ => new Entry());
+        var entry = _entries.GetOrAdd((info.ProjectName, info.WatchPath, info.Id),
+            _ => new Entry(_index.CoreScanSequence));
         var stamp = ReceiptStamp(info);
-        var bus = _busRevisions.GetValueOrDefault((info.ProjectName, info.Id));
-        if (!Monitor.TryEnter(entry))
+        var bus = _busRevisions.GetValueOrDefault((info.ProjectName, info.Id)).Version;
+        var last = Volatile.Read(ref entry.Last);
+        ready = last is not null && last.Receipt == stamp && last.Bus == bus
+            && last.ExpiresAt > _clock.GetUtcNow();
+        if (!ready && Interlocked.CompareExchange(ref entry.Warming, 1, 0) == 0)
         {
-            ready = false;
-            return null;
-        }
-        try
-        {
-            ready = entry.Loaded && entry.Receipt == stamp && entry.Bus == bus
-                && entry.ExpiresAt > _clock.GetUtcNow();
-            if (!ready && !entry.Warming)
+            void StartWarm() => _ = Task.Run(async () =>
             {
-                entry.Warming = true;
-                void StartWarm() => _ = Task.Run(() =>
-                {
-                    try { Get(info.ProjectName, info.WatchPath, info.Id); }
-                    catch (Exception ex) { _logger?.LogWarning(ex, "task-token-cache-warm-failed"); }
-                    finally { lock (entry) entry.Warming = false; }
-                });
-                if (ExecutionContext.IsFlowSuppressed()) StartWarm();
-                else
-                {
-                    using (ExecutionContext.SuppressFlow()) StartWarm();
-                }
+                try { await GetAsync(info.ProjectName, info.WatchPath, info.Id).ConfigureAwait(false); }
+                catch (Exception ex) { _logger?.LogWarning(ex, "task-token-cache-warm-failed"); }
+                finally { Volatile.Write(ref entry.Warming, 0); }
+            });
+            if (ExecutionContext.IsFlowSuppressed()) StartWarm();
+            else
+            {
+                using (ExecutionContext.SuppressFlow()) StartWarm();
             }
-            return entry.Summary;
         }
-        finally { Monitor.Exit(entry); }
+        return last?.Summary;
     }
 
     public void OnTokenUsageAppended(AgentMessage message)
@@ -118,30 +138,59 @@ public sealed class TaskTokenUsageCache
             .Append(message.JobId)
             .Distinct(StringComparer.OrdinalIgnoreCase);
         foreach (var id in ids)
-            _busRevisions.AddOrUpdate((projectName, id), 1, (_, old) => old + 1);
+        {
+            var generation = _index.CoreScanSequence;
+            _busRevisions.AddOrUpdate((projectName, id),
+                new BusRevision(1, generation), (_, old) => new BusRevision(old.Version + 1, generation));
+        }
+    }
+
+    private void PruneAbsentEntries(long completedScanSequence, IReadOnlyList<TaskInfo> resident)
+    {
+        // A scan may have started before an entry was written. Only a later
+        // scan has proven that a missing card is still absent.
+        var present = resident.Select(info => (info.ProjectName, info.WatchPath, info.Id)).ToHashSet();
+        foreach (var (key, entry) in _entries)
+            if (completedScanSequence > entry.BornScanSequence && !present.Contains(key))
+                ((ICollection<KeyValuePair<(string Project, string Path, string Id), Entry>>)_entries)
+                    .Remove(new KeyValuePair<(string Project, string Path, string Id), Entry>(key, entry));
+        var presentIds = resident.Select(info => (info.ProjectName, info.Id)).ToHashSet();
+        foreach (var (key, revision) in _busRevisions)
+            if (completedScanSequence > revision.Generation && !presentIds.Contains(key))
+                ((ICollection<KeyValuePair<(string Project, string Id), BusRevision>>)_busRevisions)
+                    .Remove(new KeyValuePair<(string Project, string Id), BusRevision>(key, revision));
     }
 
     internal long ProjectLoadCount(string projectName, string watchPath) =>
         _projectsCache.TryGetValue((projectName, watchPath), out var project) ? project.LoadCount : 0;
 
+    internal int EntryCount => _entries.Count;
+    internal int BusRevisionCount => _busRevisions.Count;
+
     private static string ReceiptStamp(TaskInfo? info) => info?.TokenReceiptStamp ?? "none";
 
     private sealed class ProjectEntry
     {
-        public bool Loaded;
-        public DateTimeOffset ExpiresAt;
-        public Dictionary<string, TaskTokenSummary> Summaries = new(StringComparer.Ordinal);
-        public Dictionary<string, string> ReceiptStamps = new(StringComparer.Ordinal);
+        public ProjectSnapshot? Current;
+        public Task<ProjectSnapshot>? Loading;
         public long LoadCount;
     }
 
-    private sealed class Entry
+    private sealed record ProjectSnapshot(
+        IReadOnlyDictionary<string, TaskTokenSummary> Summaries,
+        IReadOnlyDictionary<string, string> ReceiptStamps,
+        IReadOnlyDictionary<string, long> BusRevisions,
+        DateTimeOffset ExpiresAt);
+
+    private sealed record CardSnapshot(string Receipt, long Bus, DateTimeOffset ExpiresAt,
+        TaskTokenSummary? Summary);
+
+    private readonly record struct BusRevision(long Version, long Generation);
+
+    private sealed class Entry(long bornScanSequence)
     {
-        public bool Loaded;
-        public bool Warming;
-        public string Receipt = "";
-        public long Bus;
-        public DateTimeOffset ExpiresAt;
-        public TaskTokenSummary? Summary;
+        public long BornScanSequence { get; } = bornScanSequence;
+        public CardSnapshot? Last;
+        public int Warming;
     }
 }

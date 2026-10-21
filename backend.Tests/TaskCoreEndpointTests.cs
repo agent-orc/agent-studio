@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -15,6 +16,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using AgentStudio.Review;
 using AgentStudio.Security;
+using AgentStudio.Tokens;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -69,6 +71,41 @@ public sealed class TaskCoreEndpointTests : IDisposable
         latency.EnsureSuccessStatusCode();
         using var measurement = JsonDocument.Parse(await latency.Content.ReadAsStringAsync());
         Assert.True(measurement.RootElement.GetProperty("count").GetInt32() >= 2);
+    }
+
+    [Fact]
+    public async Task LegacyDetail_RetainsWarmedReceiptTokenSummary()
+    {
+        Seed("AGT-tokens", TaskStates.Ready);
+        var taskJson = Path.Combine(Jobs, TaskStates.Ready, "AGT-tokens", "task.json");
+        var task = JsonNode.Parse(File.ReadAllText(taskJson))!;
+        task["tokenSummary"] = JsonSerializer.SerializeToNode(new
+        {
+            calls = 1, inputTokens = 5000, outputTokens = 500,
+            cacheReadTokens = 0, cacheCreationTokens = 0, totalTokens = 5500,
+            allModelsPriced = true, lastModel = "claude-opus-4-8",
+            lastUpdate = "2026-10-21T08:00:00Z",
+            entries = new[] { new {
+                ts = "2026-10-21T08:00:00Z", model = "claude-opus-4-8",
+                participantId = "agent:claude", inputTokens = 5000,
+                outputTokens = 500, cacheReadTokens = 0,
+                cacheCreationTokens = 0, modelPriced = true,
+            } },
+        });
+        File.WriteAllText(taskJson, task.ToJsonString());
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        await WarmIndexAsync(factory, "AGT-tokens");
+        var tokens = factory.Services.GetRequiredService<TaskTokenUsageCache>();
+        Assert.True(tokens.Get(project.DisplayName, Jobs, "AGT-tokens")?.TotalTokens > 0);
+
+        using var response = await client.GetAsync($"/api/tasks/AGT-tokens?project={project.Id}");
+        response.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.True(body.RootElement.GetProperty("info").GetProperty("tokenSummary")
+            .GetProperty("totalTokens").GetInt64() > 0);
     }
 
     [Fact]
@@ -257,6 +294,8 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Assert.True(p95 < 300, $"Card detail p95 {p95:F1} ms exceeds 300 ms.");
         Assert.Equal(2800, index.GetAllResidentTasks().Count);
         serverDurations.Sort();
+        Assert.True(serverDurations[56] < 300,
+            $"Traced task-op p95 {serverDurations[56]:F1} ms exceeds 300 ms.");
         _output.WriteLine("Traced detail Server-Timing task-op: p50={0:F1} ms, p95={1:F1} ms, max={2:F1} ms (60 reads, 2800 cards).",
             serverDurations[29], serverDurations[56], serverDurations[^1]);
     }
@@ -360,7 +399,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Assert.Equal(TaskStates.Archive, archived.RootElement.GetProperty("lane").GetString());
 
         using var unknown = await client.GetAsync($"/api/tasks/AGT-unknown/core?project={project.Id}");
-        Assert.Equal(HttpStatusCode.Accepted, unknown.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
     }
 
     [Fact]
@@ -414,7 +453,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
     }
 
     [Fact]
-    public async Task DetailResources_VersionHashesTheWireData_AndWarmingIsNotMissing()
+    public async Task DetailResources_VersionHashesTheWireData_AndDirtyMissingIsNotWarming()
     {
         Seed("AGT-core", TaskStates.Ready);
         var refreshEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -456,24 +495,19 @@ public sealed class TaskCoreEndpointTests : IDisposable
             Encoding.UTF8.GetBytes(data.GetRawText()))).ToLowerInvariant();
         Assert.Equal(hash, body.RootElement.GetProperty("version").GetString());
 
-        // A task the re-hydrating index cannot place yet answers 202 like the
-        // core route, so the client keeps the selection instead of revoking it.
+        // A missing task in an already published snapshot stays missing while
+        // an unrelated invalidation refreshes the index.
         Volatile.Write(ref holdRefresh, 1);
         try
         {
             index.Invalidate();
-            Assert.True(index.GetCore("AGT-unknown", Jobs).Warming);
+            Assert.False(index.GetCore("AGT-unknown", Jobs).Warming);
             await refreshEntered.Task.WaitAsync(TimeSpan.FromSeconds(30),
                 factory.Services.GetRequiredService<TimeProvider>());
             using var warming = await client.GetAsync($"/api/tasks/AGT-unknown/details/usage?project={project.Id}");
-            Assert.Equal(HttpStatusCode.Accepted, warming.StatusCode);
-            using var warmingBody = JsonDocument.Parse(await warming.Content.ReadAsStringAsync());
-            Assert.Equal("warming", warmingBody.RootElement.GetProperty("state").GetString());
-            Assert.Equal("task-index-warming", warmingBody.RootElement.GetProperty("reason").GetString());
+            Assert.Equal(HttpStatusCode.NotFound, warming.StatusCode);
             using var detail = await client.GetAsync($"/api/tasks/AGT-unknown?project={project.Id}");
-            Assert.Equal(HttpStatusCode.Accepted, detail.StatusCode);
-            using var detailBody = JsonDocument.Parse(await detail.Content.ReadAsStringAsync());
-            Assert.Equal("warming", detailBody.RootElement.GetProperty("state").GetString());
+            Assert.Equal(HttpStatusCode.NotFound, detail.StatusCode);
         }
         finally
         {

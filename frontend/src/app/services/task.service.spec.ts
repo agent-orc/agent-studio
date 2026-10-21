@@ -105,6 +105,25 @@ describe('TaskService', () => {
     }
   });
 
+  it('stops retrying a detail that never leaves warming', () => {
+    vi.useFakeTimers();
+    try {
+      let failure: Error | undefined;
+      service.getDetail('AGT-1').subscribe({ error: error => { failure = error; } });
+      const url = '/api/v1/projects/-/tasks/AGT-1';
+      for (let attempt = 0; attempt <= 20; attempt++) {
+        http.expectOne(url).flush({ state: 'warming' },
+          { status: 202, statusText: 'Accepted' });
+        if (attempt < 20)
+          vi.advanceTimersByTime(100 + 50 * attempt);
+      }
+      expect(failure?.message).toContain('still warming');
+      expect(http.match(url)).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('decodes job file content from UTF-8 bytes', () => {
     const expected = 'Lücken / gehört / für / „Anführung"';
     let actual = '';
