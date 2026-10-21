@@ -10,7 +10,7 @@ namespace AgentStudio.Security;
 /// enrollment, API token, and Runner credential hashes only. Plaintext credentials are
 /// returned once by the operation that creates them and are never persisted.
 /// </summary>
-public sealed class AccessSecurityStore
+public sealed partial class AccessSecurityStore
 {
     public const string SessionCookieName = "__Host-agentstudio-session";
     // __Host- verlangt Secure+HTTPS; im lokalen HTTP-Dev-Betrieb verwirft der
@@ -104,8 +104,11 @@ public sealed class AccessSecurityStore
             var valid = user is not null && !user.Disabled && passwordMatches;
             if (!valid)
             {
-                RegisterLoginFailureLocked(boundedKey, now);
+                // Count an existing account before the client-key table can reject
+                // a new key at capacity. Rotating addresses must still spend the
+                // account's failure budget during saturation.
                 if (user is not null) RegisterUsernameFailureLocked(normalized, now);
+                RegisterLoginFailureLocked(boundedKey, now);
                 throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
             }
 
