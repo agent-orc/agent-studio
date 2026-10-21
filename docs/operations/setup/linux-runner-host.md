@@ -2195,20 +2195,6 @@ leaves the card in `2-ready`. A successful result is cached for following
 cards. Changing the project's repository registration or integration branch
 invalidates it automatically.
 
-Ready Epic containers are eligible for a special remote planning claim. They
-consume one slot and use the normal lease, heartbeat, telemetry, drain, and
-cancellation lifecycle. The server supplies the same rendered Epic
-decomposition prompt used by the local runner. The daemon creates a bounded,
-detached checkout for read-only repository inspection and removes it after the
-run without creating or pushing a runner branch. A valid plan creates child
-coding cards and sends the Epic to human review; a planning run owns no
-Result-SHA, so it never enters the auto-review code-review lane. Empty or
-invalid output, or any attempted source mutation, returns the Epic to Backlog.
-
-Epic planning uses the same repository-specific delivery preflight as coding
-claims. A failure blocks only that project's claim and does not reduce the
-host's slots for unrelated projects.
-
 At startup the daemon reads `RUNNER_STATE_DIR` before registration or a new
 claim. Each live worker directory contains a durable `lease-authority.json`
 with the last server-issued expiry, a stop-before deadline one heartbeat before
@@ -2267,9 +2253,9 @@ response safe. Task Server restart is different from transport recovery: it
 quarantines the attempt as `process-unknown` and requires positive containment
 proof before a higher-fenced replacement can start.
 
-The per-project probe additionally gates the first claim, including an Epic
-planning claim, because a project must have a proven delivery path before the
-host takes any of its work. After a daemon interruption, the next claim requeues
+The per-project probe additionally gates the first claim because a project
+must have a proven delivery path before the host takes any of its work. After a
+daemon interruption, the next claim requeues
 assigned Progress work once its lease is free and issues a higher fencing token.
 
 ### systemd deployment

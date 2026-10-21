@@ -146,13 +146,6 @@ html[data-studio-theme='light'] {
       0 0 0 1px var(--studio-card-state-border),
       var(--studio-card-shadow-hover);
   }
-  .epic-board__subtask-button {
-    background: var(--studio-card-bg);
-    border-color: var(--studio-card-state-border);
-    box-shadow:
-      0 0 0 1px var(--studio-card-state-border),
-      var(--studio-card-shadow);
-  }
   .task-card__title, .task-card__meta, .task-card__id, .task-card__heading,
   .task-card__footer, .task-card__metric, .task-card__chip {
     color: #1a1a1a;

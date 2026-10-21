@@ -1849,7 +1849,7 @@ Human Review remains the quality decision after the code is already integrated.
 
 The named deviations are narrow. Local worktree coding integrates during local
 finalization before its Auto Review gate, but still before Human Review.
-Planning, research, concept, Epic, and other deliveries without repository
+Planning, research, concept, and other deliveries without repository
 changes have `not-applicable` integration status. Actual repository changes
 always require integration, regardless of card title or configured class.
 Remote Review infrastructure failures remain in Auto Review while their retry
@@ -2103,7 +2103,7 @@ operator changes cause the step to fail before its writer runs.
   `workbench.json.implementationTasks` entry carries, or is normalized to, a
   `bounded-slice` acceptance scope. Promotion rejects a single open-ended
   `implement all recommendations` entry. Multi-slice work uses separate entries
-  or an Epic parent with one child per slice; see
+  in the Dossier with one card per slice; see
   [workflow-sized task cutting](../../operations/workflow-sized-task-cutting.md).
 - `PipelineHealthService` is the visibility-only sensor for pipeline-wide
   failure modes. `BuildTestGateRunner` reports acquired/completed pairs into
@@ -2560,6 +2560,35 @@ new fact even when its operator-facing summary is unchanged.
   `backend.Tests/Architecture/RunTimeoutContinuationBreakerTest.cs`.
 
 ## Project deployment definition (P1)
+
+### Card previews
+
+The preview environment kind is per card, outside the ordered Staging and
+Production release lifecycle. A matching passed Remote Review build for the
+card's current immutable delivery SHA queues a preview job. The job carries
+that commit, the project build commands, a static or container template, and
+an address under `Preview:BaseDomain` (default `preview.internal`).
+`Preview:HostId` defaults to `preview-host`. The same deploy host claim, lease,
+and report queue handles preview creation, updates, and removal. The run zone
+implements `IPreviewRunZone` to build, route, check health, and capture a PNG;
+the ordinary stage and production executor does not process preview source
+commits. A preview is ready only after a healthy host report with a PNG.
+
+A project may declare a `preview` environment under
+`docs/deployments/environments/` for its host, template, and preview-only
+secret references. Preview references must be disjoint from Staging and
+Production references. Preview jobs never inherit their secret references.
+The deploy queue rejects a preview host used by any project's current
+Production declaration. Host claims also refuse queued preview and removal
+jobs if that host later becomes a Production host.
+The card's `card-preview.json` sidecar records its delivery, job, address,
+screenshot, and seven-day idle expiry. Reconciliation queues removal after
+integration, archive rejection, or expiry. `Hosting:MaxEnvironments` is the
+shared capacity limit when configured; otherwise `Preview:MaxActive` defaults
+to 20. The run zone is responsible for removing the hosted route and files
+before reporting a removal job healthy.
+After removal, the sidecar keeps the removed delivery as a tombstone. A new
+green delivery can replace an expired preview; the same SHA cannot recreate it.
 
 `.agent-studio/project.yml` schema 1 remains valid for preparation and verification.
 Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,

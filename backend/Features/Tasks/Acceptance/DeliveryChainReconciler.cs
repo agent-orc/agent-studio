@@ -181,6 +181,7 @@ public sealed class DeliveryChainReconciler : BackgroundService, IAiOperatorEffe
                 TaskJsonFile.UpdateField(returned.FolderPath, "phase",
                     LifecyclePhases.Integrating, _logger);
                 _scanner.InvalidateCache();
+                _scanner.PublishCoreFromKnownFolder(returned.FolderPath);
             }
             return Applied.Moved;
         }

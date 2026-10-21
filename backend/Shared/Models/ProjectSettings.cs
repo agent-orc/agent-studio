@@ -352,41 +352,13 @@ public record ProjectSettings
     public Dictionary<string, string>? CliContextModes { get; init; }
 
     /// <summary>
-    /// Model the epic planning/decomposition run uses (way 3): when a
-    /// <see cref="TaskKinds.Epic"/> card is picked up, the runner runs a
-    /// planning step that authors the sub-task list instead of a coding run.
-    /// Null means "use the epic card's own <see cref="TaskInfo.Model"/>"; set
-    /// it to bias decomposition toward a stronger (or cheaper) model than the
-    /// sub-tasks themselves will run on. Persisted in
-    /// <c>project-settings.json</c>.
-    /// </summary>
-    public string? EpicPlanningModel { get; init; }
-
-    /// <summary>
-    /// Thinking / reasoning level for epic decomposition runs. Null means use
-    /// the selected planning model's default capability level.
-    /// </summary>
-    public string? EpicPlanningThinkingLevel { get; init; }
-
-    /// <summary>
-    /// Where an epic decomposition run's generated sub-tasks land. False /
-    /// null (default) lands them in <c>0-backlog</c> for human triage, exactly
-    /// like the deterministic <c>POST /api/epics/{id}/sub-tasks</c> path. True
-    /// lands them straight in <c>2-ready</c> so an auto-pickup project starts
-    /// executing the plan without a manual triage pass. Persisted in
-    /// <c>project-settings.json</c>.
-    /// </summary>
-    public bool? EpicSubTasksToReady { get; init; }
-
-    /// <summary>
     /// AGT-2028: per-project configuration for the opt-in <c>post-task-spawner</c>
     /// pipeline step. When set (and the step is enabled via
     /// <see cref="PipelineSteps"/>), a completed task whose change set the best
     /// available model judges relevant spawns a follow-up card in
     /// <see cref="TaskSpawnerConfig.TargetProject"/>. Null means "no spawn target
     /// configured" - the step records a skipped row and never fires. Kept a
-    /// dedicated typed object (mirroring <see cref="BuildProfile"/> /
-    /// <see cref="EpicPlanningModel"/>) rather than overloading the shared
+    /// dedicated typed object rather than overloading the shared
     /// <see cref="PipelineStepSetting"/>, because the spawn target + lane + policy
     /// are specific to this step. The step's enablement, model, and CLI still flow
     /// through the standard <see cref="PipelineSteps"/> resolver. Persisted in
