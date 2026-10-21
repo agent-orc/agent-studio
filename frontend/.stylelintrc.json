@@ -196,6 +196,7 @@
         "src/app/features/project-detail/components/project-pipeline-definition/project-pipeline-definition.scss",
         "src/app/features/project-detail/components/project-pipeline-diagram/project-pipeline-diagram.scss",
         "src/app/features/usage-cockpit/**/*.scss",
+        "src/app/features/token-analysis/**/*.scss",
         "src/app/components/async-feedback/loading-surface/loading-surface.component.scss",
         "src/app/components/cli-model-selector/cli-model-selector.component.scss",
         "src/app/components/model-level-indicator/model-level-indicator.component.scss",

@@ -1,0 +1,81 @@
+@use '../../token-analysis' as ta;
+
+:host { display: block; min-width: 0; }
+.dist { @include ta.panel; }
+.dist__head { @include ta.panel-head; }
+.dist__legend { @include ta.legend; }
+.dist__swatch { @include ta.swatch; }
+.dist__num { @include ta.numeric; text-align: right; }
+.dist__note { margin: 0; color: var(--studio-fg-muted); font-size: 0.7rem; }
+.dist__mix { display: flex; flex-direction: column; gap: var(--studio-spacing-2); }
+
+.dist__mix-bar {
+  display: flex;
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- 2px surface gap between chart fills */
+  gap: 2px;
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- bar thickness, not spacing */
+  height: 14px;
+  overflow: hidden;
+  border-radius: 4px;
+}
+
+.dist__mix-part { flex-basis: 0; min-width: 2px; }
+
+.dist__table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--studio-fg);
+  font-size: 0.72rem;
+
+  caption {
+    margin-bottom: var(--studio-spacing-1);
+    color: var(--studio-fg-dim);
+    font-weight: 600;
+    text-align: left;
+  }
+
+  th,
+  td {
+    padding: var(--studio-spacing-1) var(--studio-spacing-2);
+    border-bottom: 1px solid var(--studio-border-muted);
+    white-space: nowrap;
+  }
+
+  thead th {
+    color: var(--studio-fg-muted);
+    font-weight: 600;
+    text-align: left;
+  }
+
+  tbody th {
+    overflow: hidden;
+    max-width: 160px;
+    font-weight: 500;
+    text-align: left;
+    text-overflow: ellipsis;
+  }
+}
+
+.dist__bar-col {
+  position: relative;
+  width: 40%;
+  min-width: 80px;
+}
+
+.dist__bar {
+  display: inline-block;
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- bar thickness */
+  height: 8px;
+  max-width: calc(100% - 48px);
+  margin-right: var(--studio-spacing-1);
+  border-radius: 0 4px 4px 0;
+  background: var(--studio-series-1);
+  vertical-align: middle;
+}
+
+@media (max-width: 600px) {
+  .dist__table th:nth-child(5),
+  .dist__table td:nth-child(5),
+  .dist__table th:nth-child(6),
+  .dist__table td:nth-child(6) { display: none; }
+}

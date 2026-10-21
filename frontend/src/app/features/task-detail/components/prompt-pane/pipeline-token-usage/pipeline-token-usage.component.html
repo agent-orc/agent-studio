@@ -147,5 +147,9 @@
         }
       </div>
     }
+    @if (analysisProject() && analysisJobId()) {
+      <button type="button" class="ptu__analysis" data-testid="pipeline-token-usage-analysis-link"
+              (click)="openAnalysis()">Where did this card spend its tokens?</button>
+    }
   </section>
 }
