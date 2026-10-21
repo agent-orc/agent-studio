@@ -166,6 +166,52 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Saving_blank_limits_stays_a_strict_admission_no_op_with_an_unreadable_ledger()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "blank"), "Blank", workspace.Id, _clock);
+        var job = Path.Combine(project.StorageLocation, TaskStates.Ready, "blank-card");
+        Directory.CreateDirectory(job);
+        File.WriteAllText(Path.Combine(job, "task.json"), "{invalid-json");
+        await Bus(services, project.DisplayName, "01HX0000000000000000000033",
+            new AgentMessageTokens(Input: 10, Output: 5, Model: "gpt-5.6-sol"));
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+
+        // The settings form sends every field blank for the workspace and the project.
+        quota.SetLimits(workspace.Id, null, new QuotaLimits(null, null, null));
+        quota.SetLimits(workspace.Id, project.Id, new QuotaLimits(null, null, null));
+
+        Assert.False(quota.HasLimits());
+        foreach (var admission in new[] { quota.Admit(project.Id), quota.Admit(project.Id, hosting: true) })
+        {
+            Assert.True(admission.Allowed);
+            Assert.Null(admission.Message);
+            Assert.False(admission.MeterUnavailable);
+        }
+        Assert.Null(quota.Snapshot(workspace.Id).Limits);
+
+        // A settings file written before the normalization is read the same way.
+        var path = Path.Combine(_root, ".metadata", "workspace-quotas.json");
+        var legacy = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        legacy["Workspaces"] = new System.Text.Json.Nodes.JsonObject
+        {
+            [workspace.Id] = new System.Text.Json.Nodes.JsonObject
+            { ["ModelTokensPerWeek"] = null, ["ComputeCoreHoursPerWeek"] = null, ["HostingSlots"] = null },
+        };
+        File.WriteAllText(path, legacy.ToJsonString());
+        var reloaded = ActivatorUtilities.CreateInstance<WorkspaceQuotaService>(services);
+        Assert.False(reloaded.HasLimits());
+        var legacyAdmission = reloaded.Admit(project.Id);
+        Assert.True(legacyAdmission.Allowed);
+        Assert.Null(legacyAdmission.Message);
+        Assert.False(legacyAdmission.MeterUnavailable);
+    }
+
+    [Fact]
     public void Unreadable_state_keeps_the_last_good_limits_and_reports_the_meter()
     {
         Directory.CreateDirectory(_root);
