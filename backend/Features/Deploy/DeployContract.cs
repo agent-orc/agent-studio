@@ -18,8 +18,9 @@ public static class DeploymentStates
     public const string Failed = "failed";
     public const string Cancelled = "cancelled";
     public const string AwaitingApproval = "awaiting-approval";
+    public const string WaitingForIntervention = "waiting-for-intervention";
 
-    public static bool IsActive(string state) => state is Queued or Running or AwaitingApproval;
+    public static bool IsActive(string state) => state is Queued or Running or AwaitingApproval or WaitingForIntervention;
     public static bool IsFinished(string state) => state is Succeeded or Failed or Cancelled;
 }
 
@@ -74,11 +75,17 @@ public sealed record DeploymentStep(string Name, string State, DateTime? Started
 public sealed record Deployment(
     string Id, string ReleaseId, string EnvironmentId, string State,
     DateTime? StartedAtUtc, DateTime? FinishedAtUtc, string? ApprovedBy,
-    IReadOnlyList<DeploymentStep> Steps, string Trigger, string? RequestedBy, DateTime CreatedAtUtc);
+    IReadOnlyList<DeploymentStep> Steps, string Trigger, string? RequestedBy, DateTime CreatedAtUtc,
+    DateTime? InterventionExpiresAtUtc = null, string? FailedStep = null, string? InterventionDecidedBy = null,
+    string? InterventionDecision = null);
 
 public sealed record EnvironmentStatus(
     DeployEnvironment Environment, Release? CurrentRelease, Deployment? CurrentDeployment,
-    Release? NewerRelease, IReadOnlyList<string> CardsSinceLastDeploy, string Health);
+    Release? NewerRelease, IReadOnlyList<string> CardsSinceLastDeploy, string Health,
+    InterventionSummary? Intervention = null);
+
+public sealed record InterventionSummary(string DeploymentId, string FailedStep, DateTime? ExpiresAtUtc,
+    string? Decision, string? DecidedBy);
 
 public sealed record ReleaseDetailResponse(Release Release, IReadOnlyList<Deployment> Deployments);
 
@@ -97,9 +104,13 @@ public sealed record DeployMatrixRow(string ProjectId, IReadOnlyList<Environment
 /// <summary>Workspace dashboard: projects as rows, environment kinds as columns.</summary>
 public sealed record DeployMatrixResponse(IReadOnlyList<string> EnvironmentKinds, IReadOnlyList<DeployMatrixRow> Projects);
 
-public sealed record DeploymentRequest(string EnvironmentId, bool Approve = false);
+public sealed record DeploymentRequest(string EnvironmentId, bool Approve = false, bool? GuidedFailure = null);
 
-public sealed record EnvironmentActionRequest(bool Approve = false);
+public sealed record EnvironmentActionRequest(bool Approve = false, bool? GuidedFailure = null);
+
+public sealed record InterventionDecisionRequest(string Action, string? Reason = null);
+
+public sealed record DeploymentApprovalRequest(bool? GuidedFailure = null);
 
 /// <summary>Who asks, and whether they hold the Owner or Maintainer approval for the project.</summary>
 public sealed record DeployActor(string Id, bool IsApprover);
