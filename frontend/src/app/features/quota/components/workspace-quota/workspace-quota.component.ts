@@ -1,8 +1,9 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { DatePipe, DecimalPipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { AuthSessionState } from '../../../../services/auth.service';
+import { formatUsdExact } from '../../../usage-cockpit/usage-chip.util';
 import type { WorkspaceQuotaStatus } from '../../state/workspace-quota-board-state.service';
 
 interface QuotaLimits {
@@ -29,7 +30,7 @@ const STATE_LABELS: Record<WorkspaceQuotaStatus, string> = {
 @Component({
   selector: 'app-workspace-quota',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [DatePipe, DecimalPipe, FormsModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-quota.component.html',
   styleUrl: './workspace-quota.component.scss',
@@ -45,6 +46,7 @@ export class WorkspaceQuotaComponent {
   readonly saving = signal(false);
   readonly limits = signal<QuotaLimits>(NO_LIMITS);
   readonly overrideReason = signal('');
+  readonly formatUsd = formatUsdExact;
   /** Header state: the override, else the status; a scope without any limit reads "No limit". */
   readonly stateLabel = computed(() => {
     const quota = this.snapshot();

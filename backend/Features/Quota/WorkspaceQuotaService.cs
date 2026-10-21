@@ -595,7 +595,7 @@ public sealed class WorkspaceQuotaService
                 : ledger.Freshness.Warning ?? $"The token ledger is {ledger.Freshness.Status}.";
             foreach (var entry in ledger.Entries.Where(e => e.TokenUsage is not null))
             {
-                var at = AsUtc(entry.Ts);
+                var at = UsageCockpitProjection.AsUtc(entry.Ts);
                 if (at < start || at >= end) continue;
                 var usage = entry.TokenUsage!;
                 var count = WorkspaceQuotaPolicy.ModelTokens(usage.InputTokens, usage.OutputTokens,
@@ -639,17 +639,17 @@ public sealed class WorkspaceQuotaService
             var attempt = attempts[index];
             var current = index == 0;
             var live = current && liveCard && !attempt.IsComplete;
-            var attemptEnd = attempt.CompletedAt is { } completed ? AsUtc(completed)
-                : current ? (DateTime?)null : AsUtc(attempts[index - 1].StartedAt);
+            var attemptEnd = attempt.CompletedAt is { } completed ? UsageCockpitProjection.AsUtc(completed)
+                : current ? (DateTime?)null : UsageCockpitProjection.AsUtc(attempts[index - 1].StartedAt);
             foreach (var step in attempt.Steps)
             foreach (var (startedAt, completedAt, cores, latest) in new[] { (step.StartedAt, step.CompletedAt, step.GrantedCores, true) }
                          .Concat(step.EarlierRuns?.Select(run => (run.StartedAt, run.CompletedAt, run.GrantedCores, false))
                              ?? Enumerable.Empty<(DateTime?, DateTime?, int?, bool)>()))
             {
                 if (startedAt is not { } from) continue;
-                var stepStart = AsUtc(from);
+                var stepStart = UsageCockpitProjection.AsUtc(from);
                 // An earlier run of a step was replaced by a later run, so it is never live.
-                var until = WorkspaceQuotaPolicy.StepEnd(stepStart, completedAt is { } done ? AsUtc(done) : null,
+                var until = WorkspaceQuotaPolicy.StepEnd(stepStart, completedAt is { } done ? UsageCockpitProjection.AsUtc(done) : null,
                     live && latest, attemptEnd, lastWrite, _clock);
                 var hours = AddCoreHours(daily, start, end, stepStart, until, Math.Max(1, cores ?? 1));
                 if (hours > 0) yield return hours;
@@ -697,13 +697,6 @@ public sealed class WorkspaceQuotaService
 
     private static string CardId(TaskInfo task)
         => !string.IsNullOrWhiteSpace(task.Key) ? task.Key! : task.Id;
-
-    private static DateTime AsUtc(DateTime value) => value.Kind switch
-    {
-        DateTimeKind.Utc => value,
-        DateTimeKind.Unspecified => DateTime.SpecifyKind(value, DateTimeKind.Utc),
-        _ => value.ToUniversalTime(),
-    };
 
     private static IEnumerable<string> ProjectTaskFolders(string projectRoot)
     {

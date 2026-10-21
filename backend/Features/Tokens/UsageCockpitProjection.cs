@@ -26,7 +26,7 @@ public sealed record UsageCostInput(string? ProjectId, string Name,
 /// <summary>Calendar and accounting rules shared by the endpoint and contract fixtures.</summary>
 public static class UsageCockpitProjection
 {
-    private static DateTime AsUtc(DateTime value) => value.Kind switch
+    internal static DateTime AsUtc(DateTime value) => value.Kind switch
     {
         DateTimeKind.Utc => value,
         DateTimeKind.Unspecified => DateTime.SpecifyKind(value, DateTimeKind.Utc),

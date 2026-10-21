@@ -7,12 +7,12 @@
   </header>
   @if (error(); as problem) { <p role="alert">{{ problem }}</p> }
   @if (snapshot(); as quota) {
-    <p>Current UTC week ends {{ quota.weekEndUtc | slice:0:10 }}. {{ quota.message }}</p>
+    <p>Current UTC week ends {{ quota.weekEndUtc | date:'yyyy-MM-dd':'UTC' }}. {{ quota.message }}</p>
     @if (quota.limits && !quota.meterComplete) { <p role="status" data-testid="workspace-quota-meter">Some usage records are unavailable. Admission waits for the meter.</p> }
     <div class="workspace-quota__metrics">
       <div><strong>{{ quota.usage.modelTokens | number }}</strong> tokens used
         @if (quota.limits?.modelTokensPerWeek !== null && quota.limits?.modelTokensPerWeek !== undefined) { / {{ quota.limits?.modelTokensPerWeek | number }} limit, {{ quota.remaining.modelTokens | number }} left }
-        <small>{{ quota.usage.modelCostUsd | currency:'USD' }} at catalogue prices</small></div>
+        <small>{{ formatUsd(quota.usage.modelCostUsd) }} at catalogue prices</small></div>
       <div><strong>{{ quota.usage.computeCoreHours | number:'1.0-2' }}</strong> core hours used
         @if (quota.limits?.computeCoreHoursPerWeek !== null && quota.limits?.computeCoreHoursPerWeek !== undefined) { / {{ quota.limits?.computeCoreHoursPerWeek }} limit, {{ quota.remaining.computeCoreHours | number:'1.0-2' }} left }</div>
       <div><strong>{{ quota.usage.hostingSlots }}</strong> running environments
@@ -22,7 +22,7 @@
       <summary>Daily trend and biggest consumers</summary>
       <div class="workspace-quota__trend">
         @for (day of trend(); track day.date) {
-          <span><time [attr.datetime]="day.date | slice:0:10">{{ day.date | date:'EEE d MMM':'UTC' }}</time>: {{ day.modelTokens | number }} tokens, {{ day.computeCoreHours | number:'1.0-2' }} core hours</span>
+          <span><time [attr.datetime]="day.date | date:'yyyy-MM-dd':'UTC'">{{ day.date | date:'EEE d MMM':'UTC' }}</time>: {{ day.modelTokens | number }} tokens, {{ day.computeCoreHours | number:'1.0-2' }} core hours</span>
         }
       </div>
       <ul>

@@ -1,0 +1,10 @@
+@use '../../../../../styles/mixins' as m;
+
+:host {
+  display: grid;
+  gap: var(--studio-spacing-1);
+}
+
+.workspace-quota-list__toggle {
+  @include m.disclosure-control;
+}

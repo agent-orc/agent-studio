@@ -14,7 +14,8 @@ import {
 
 import { MenuComponent } from '../../../../components/menu/menu.component';
 import type { MenuItem, MenuItemClickEvent } from '../../../../components/menu/menu.types';
-import { WorkspaceQuotaBannerComponent } from '../../../quota';
+// Direct path (not the quota barrel) so the deferred banner stays a lazy chunk.
+import { WorkspaceQuotaBannerComponent } from '../../../quota/components/workspace-quota-banner/workspace-quota-banner';
 import type { UsageCockpitResponse } from '../../models/usage-cockpit.model';
 import { cliDisplayName } from '../../usage-chip.util';
 import { UsageAlarmStateService } from '../../state/usage-alarm-state.service';

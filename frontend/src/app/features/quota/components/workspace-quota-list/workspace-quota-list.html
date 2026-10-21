@@ -1,0 +1,12 @@
+@for (ws of workspaces(); track ws.id) {
+  <button type="button" class="workspace-quota-list__toggle" [attr.data-testid]="'settings-workspace-quota-' + ws.id"
+          [attr.aria-expanded]="activeWorkspaceId() === ws.id" (click)="toggle(ws.id)">
+    <app-disclosure-marker [open]="activeWorkspaceId() === ws.id" />
+    <span>{{ ws.displayName }} quota</span>
+  </button>
+  @if (activeWorkspaceId() === ws.id) {
+    @defer {
+      <app-workspace-quota [workspaceId]="ws.id" />
+    }
+  }
+}

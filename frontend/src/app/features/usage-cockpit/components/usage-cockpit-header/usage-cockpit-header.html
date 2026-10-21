@@ -73,7 +73,7 @@
   }
 </div>
 <app-usage-alarm-status />
-<app-workspace-quota-banner class="cockpit-header__quota" />
+@defer (on idle) { <app-workspace-quota-banner class="cockpit-header__quota" /> }
 
 
 <!-- Off-screen, inert copies of every chip variant. Their widths drive the

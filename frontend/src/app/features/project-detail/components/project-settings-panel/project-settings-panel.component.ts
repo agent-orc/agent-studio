@@ -12,7 +12,7 @@ import { ProjectDetailComponent } from '../project-detail/project-detail';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { ClientDefaultsService } from '../../../../services/client-defaults.service';
-import { QuotaApiService, WorkspaceQuotaComponent, type ProjectCliQuotaWaitPolicy } from '../../../../features/quota';
+import { QuotaApiService, type ProjectCliQuotaWaitPolicy } from '../../../../features/quota';
 // Service-only direct import avoids evaluating the heavy shell component barrel,
 // which closes a runtime cycle when Project Settings mounts in Project Hub.
 import { WorkspaceOverlaysService } from '../../../shell/state/workspace-overlays.service';
@@ -37,6 +37,8 @@ import { RetentionRulesTableComponent } from '../../../retention/components/rete
 import { ProjectExecutionDefinitionComponent } from '../project-execution-definition/project-execution-definition';
 import { BatchSettingsComponent } from '../../../batch-gate/batch-settings/batch-settings';
 import { AUTONOMY_STOPS } from '../autonomy-slider/autonomy-slider';
+// Direct path (not the quota barrel) so the deferred quota editor stays a lazy chunk.
+import { WorkspaceQuotaComponent } from '../../../quota/components/workspace-quota/workspace-quota.component';
 
 const STORAGE_DEFAULT_CLI = 'defaultCliType';
 const STORAGE_DEFAULT_MODEL_PREFIX = 'defaultModel:';

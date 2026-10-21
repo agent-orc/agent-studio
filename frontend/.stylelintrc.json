@@ -307,6 +307,7 @@
         "src/app/features/board/components/task-card-decision-chips/task-card-decision-chips.component.scss",
         "src/app/features/quota/components/task-card-quota-notice/task-card-quota-notice.scss",
         "src/app/features/quota/components/workspace-quota-banner/workspace-quota-banner.scss",
+        "src/app/features/quota/components/workspace-quota-list/workspace-quota-list.scss",
         "src/app/features/task-detail/components/escalation-summary/_escalation-summary-actions.scss",
         "src/app/features/remote-hosts/components/deployment-checkpoints/deployment-checkpoints.scss",
         "src/app/features/task-detail/components/prompt-pane/pipeline-run-history/pipeline-run-history.component.scss",
