@@ -1,0 +1,49 @@
+<article class="env-card" [attr.aria-labelledby]="headingId()" [attr.data-testid]="'deploy-environment-' + environment().id">
+  <header class="env-card__head">
+    <h3 [id]="headingId()">{{ environment().name }}</h3>
+    <p class="env-card__health"><span class="env-card__sr">Health: </span><span class="env-card__badge" [attr.data-tone]="health().tone" data-testid="deploy-environment-health">{{ health().label }}</span></p>
+  </header>
+  @if (environment().address; as address) { <p class="env-card__address">{{ address }}</p> }
+  <dl class="env-card__facts">
+    <dt>Release</dt>
+    <dd data-testid="deploy-environment-release">
+      @if (release(); as release) {
+        <span class="env-card__release" [title]="environment().artifact ?? ''">{{ release }}</span>
+      } @else { Nothing deployed yet }
+    </dd>
+    <dt>Deployed</dt>
+    <dd data-testid="deploy-environment-age">
+      @if (age(); as age) {
+        <time [attr.datetime]="environment().deployedAt" [title]="environment().deployedAt | date:'medium'">{{ age }}</time>
+      } @else { Never }
+    </dd>
+    <dt>Cards</dt>
+    <dd data-testid="deploy-environment-cards">
+      <span [class.env-card__muted]="!cards().known">{{ cards().text }}</span>
+    </dd>
+    <dt>Last run</dt>
+    <dd data-testid="deploy-environment-last-run">
+      @if (environment().lastRun; as run) {
+        <span class="env-card__badge" [attr.data-tone]="run.state">{{ lastRunLabel() }}</span>&ngsp;<span class="env-card__muted env-card__numeric">{{ lastRunAge() }}</span>
+      } @else { No runs yet }
+    </dd>
+  </dl>
+  @if (newer(); as newer) { <p class="env-card__muted env-card__newer" data-testid="deploy-environment-newer">{{ newer }}</p> }
+  @if (environment().awaitingApproval; as approval) {
+    <p class="env-card__note" data-testid="deploy-environment-approval">
+      Awaiting approval: {{ approval.subject }}@if (approval.requestedBy) { <span class="env-card__muted">, requested by {{ approval.requestedBy }}</span> }
+    </p>
+  }
+  <div class="env-card__actions">
+    @if (environment().lastRun?.deploymentId; as runId) {
+      <button type="button" data-testid="deploy-environment-open-run"
+              [attr.aria-label]="'Open last run for ' + environment().name"
+              (click)="openRun.emit(runId)">Open last run</button>
+    }
+    @if (environment().awaitingApproval) {
+      <button type="button" data-testid="deploy-environment-review-approval"
+              [attr.aria-label]="'Review the pending approval for ' + environment().name"
+              (click)="reviewApproval()">Review approval</button>
+    }
+  </div>
+</article>

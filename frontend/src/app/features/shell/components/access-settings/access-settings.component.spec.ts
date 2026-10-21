@@ -72,4 +72,55 @@ describe('AccessSettingsComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('Sign in as the installation owner');
     TestBed.inject(HttpTestingController).expectNone('/api/auth/users');
   });
+
+  it.each([401, 403])('clears cached account data when a reload is denied with %i', async status => {
+    await TestBed.configureTestingModule({
+      imports: [AccessSettingsComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+    TestBed.inject(AuthService).status.set(owner);
+    const http = TestBed.inject(HttpTestingController);
+    const fixture = TestBed.createComponent(AccessSettingsComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/auth/users').flush([{
+      id: 'usr_2', username: 'colleague', displayName: 'Colleague', role: 'operator',
+      projects: [], disabled: false, mustChangePassword: false,
+    }]);
+    http.expectOne('/api/auth/api-tokens').flush([{
+      id: 'tok_1', name: 'Cached token', role: 'operator', projects: [], createdBy: 'usr_owner',
+      createdAt: '', expiresAt: '', lastUsedAt: null, revokedAt: null,
+    }]);
+    http.expectOne('/api/auth/runner-enrollments').flush([{
+      id: 'enr_1', name: 'Cached enrollment', scopes: [], createdAt: '', expiresAt: '', usedAt: null,
+    }]);
+    http.expectOne('/api/auth/runners').flush([{
+      id: 'run_1', name: 'Cached runner', createdAt: '', revokedAt: null, credentials: [],
+    }]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('Colleague');
+    expect(fixture.nativeElement.textContent).toContain('Cached token');
+
+    const component = fixture.componentInstance;
+    component.edit(component.users()[0]);
+    component.oneTime.set({ label: 'Temporary password', value: 'one-time-value' });
+    component.refresh();
+    http.expectOne('/api/auth/users').flush({ message: 'Denied Access' },
+      { status, statusText: 'Denied Access' });
+    http.match(() => true);
+    fixture.detectChanges();
+
+    expect(component.users()).toEqual([]);
+    expect(component.tokens()).toEqual([]);
+    expect(component.enrollments()).toEqual([]);
+    expect(component.runners()).toEqual([]);
+    expect(component.editId()).toBeNull();
+    expect(component.oneTime()).toBeNull();
+    expect(fixture.nativeElement.textContent).toContain('Denied Access');
+    expect(fixture.nativeElement.textContent).not.toContain('Colleague');
+    expect(fixture.nativeElement.textContent).not.toContain('Cached token');
+    expect(fixture.nativeElement.textContent).not.toContain('Cached enrollment');
+    expect(fixture.nativeElement.textContent).not.toContain('Cached runner');
+    expect(fixture.nativeElement.textContent).not.toContain('one-time-value');
+    http.verify();
+  });
 });

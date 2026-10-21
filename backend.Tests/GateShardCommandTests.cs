@@ -136,4 +136,46 @@ public sealed class GateShardCommandTests
         Assert.Equal(["AgentStudio.Tests.LegacyTests"], GateShardTestCatalog.DeclaredTestClasses(block));
         Assert.Empty(GateShardTestCatalog.DeclaredTestClasses(helper));
     }
+
+    [Fact]
+    public void The_catalog_skips_cyclic_directory_links_and_returns_a_stable_fallback()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "gate-shard-catalog-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var nested = Path.Combine(root, "nested");
+            Directory.CreateDirectory(nested);
+            File.WriteAllText(Path.Combine(nested, "ZTests.cs"),
+                "namespace Product.Tests;\npublic sealed class ZTests { [Fact] public void Pass() {} }");
+            if (OperatingSystem.IsWindows()) return;
+            Directory.CreateSymbolicLink(Path.Combine(nested, "cycle"), root);
+
+            Assert.Equal(["Product.Tests.ZTests"], GateShardTestCatalog.Classes(root));
+            Assert.Equal(GateShardTestCatalog.Classes(root), GateShardTestCatalog.Classes(root));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void An_oversized_source_catalog_falls_back_to_the_complement_shard()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "gate-shard-catalog-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "LargeTests.cs"),
+                "namespace Product.Tests;\npublic sealed class LargeTests { [Fact] public void Pass() {} }\n"
+                + new string(' ', 1024 * 1024));
+
+            Assert.Empty(GateShardTestCatalog.Classes(root));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }
