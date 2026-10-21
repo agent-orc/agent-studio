@@ -1,30 +1,29 @@
-import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
-import { DatePipe } from '@angular/common';
-import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
-import type { ProjectDeploySnapshot, EnvironmentStatus } from '../../services/project-deploy-data.service';
+import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
+import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
+import { DeployEnvironmentCardComponent } from '../deploy-environment-card/deploy-environment-card';
+import type { DeployPanel, EnvironmentCardView } from '../../state/deploy-area.model';
 
+/** Overview: one status card per declared environment. */
 @Component({
   selector: 'app-project-deploy-overview',
   standalone: true,
-  imports: [DatePipe, DisclosureMarkerComponent],
+  imports: [EmptyStateComponent, LoadingSurfaceComponent, DeployEnvironmentCardComponent],
   templateUrl: './project-deploy-overview.html',
-  styleUrl: '../project-deploy-area/project-deploy-area.scss',
+  styleUrl: './project-deploy-overview.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ProjectDeployOverviewComponent {
-  readonly snapshot = input.required<ProjectDeploySnapshot>();
+  /** Environment panel state; cards are only read once it is ready. */
+  readonly panel = input.required<DeployPanel<unknown>>();
+  readonly cards = input.required<readonly EnvironmentCardView[]>();
+  readonly now = input.required<number>();
+  readonly openRun = output<string>();
   readonly openTools = output<void>();
-  readonly openReleases = output<void>();
-  readonly logEnvironmentId = signal<string | null>(null);
 
-  toggleLog(id: string): void {
-    this.logEnvironmentId.update(current => current === id ? null : id);
-  }
-
-  age(status: EnvironmentStatus): string {
-    const finished = status.currentDeployment?.finishedAtUtc;
-    if (!finished) return 'No deployment yet';
-    const hours = Math.max(0, Math.floor((Date.now() - Date.parse(finished)) / 3_600_000));
-    return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
-  }
+  readonly errorBody = computed(() => {
+    const panel = this.panel();
+    const reason = panel.status === 'error' ? panel.message : '';
+    return `${reason} The other Deploy views still work; try Refresh.`.trim();
+  });
 }

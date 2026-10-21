@@ -12,7 +12,6 @@
     "src/app/components/section-header/section-header.component.html",
     "src/app/features/cli/components/cli-models-panel/cli-models-panel.html",
     "src/app/features/project-detail/components/project-branch-sweep/project-branch-sweep.component.html",
-    "src/app/features/project-detail/components/project-deploy-overview/project-deploy-overview.html",
     "src/app/features/project-detail/components/project-runbooks/project-runbooks.html",
     "src/app/features/project-detail/components/workbench-overview/workbench-overview.component.html",
     "src/app/features/remote-hosts/components/host-credentials/host-credentials.html",
