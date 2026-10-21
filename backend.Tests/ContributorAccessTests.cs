@@ -189,7 +189,7 @@ public sealed class ContributorAccessTests : IDisposable
         {
             Id = "unassigned-component", Component = "Unassigned component",
             ObservedSurfaces = ["Unassigned surface"], PrimaryProjectId = destination.Id,
-            AllowedTicketPrefix = "OTHER", Confidence = 1,
+            AllowedTicketPrefix = destination.ShortCode, Confidence = 1,
         });
         using var crossProject = await SendAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, new
         {
