@@ -6,10 +6,10 @@ using Microsoft.Data.Sqlite;
 namespace AgentStudio.TaskServer;
 
 /// <summary>
-/// G2 "project meta" P1 bundle: epics, tags, per-project autonomy and
+/// G2 "project meta" P1 bundle: tags, per-project autonomy and
 /// execution-runner settings, and thin pipeline projections on top of the
 /// existing orchestration flow definition (<c>TaskServerOrchestrationStore.cs</c>).
-/// New tables owned here: <c>epics</c>, <c>epic_tasks</c>, <c>tags</c>,
+/// New tables owned here: <c>tags</c>,
 /// <c>task_tags</c>, <c>project_studio_settings</c>. <c>task_tags</c> is the
 /// canonical join table for task &lt;-&gt; tag membership; the sibling
 /// G4_TaskMetadata slice reaches it exclusively through
@@ -25,22 +25,6 @@ public sealed partial class TaskServerStore
     internal async Task ApplyStudioProjectMetaMigrationAsync(SqliteConnection connection, CancellationToken ct)
     {
         await ExecuteAsync(connection, """
-            CREATE TABLE IF NOT EXISTS epics(
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL REFERENCES projects(id),
-                title TEXT NOT NULL,
-                state TEXT NOT NULL,
-                version INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS ix_epics_project_state ON epics(project_id, state);
-            CREATE TABLE IF NOT EXISTS epic_tasks(
-                epic_id TEXT NOT NULL REFERENCES epics(id),
-                task_id TEXT NOT NULL REFERENCES tasks(id),
-                created_at TEXT NOT NULL,
-                PRIMARY KEY(epic_id, task_id)
-            );
             CREATE TABLE IF NOT EXISTS tags(
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
@@ -62,159 +46,8 @@ public sealed partial class TaskServerStore
                 updated_at TEXT NOT NULL
             );
             """, ct);
-    }
-
-    // ----------------------------------------------------------------
-    // Epics
-    // ----------------------------------------------------------------
-
-    /// <summary>
-    /// Not exposed by any P1 route (the frontend inventory has no epic-create
-    /// call) - kept public so tests and a future authoring route can seed
-    /// epics without reaching into the schema directly.
-    /// </summary>
-    public async Task<EpicDto> CreateEpicAsync(string projectId, CreateEpicRequest request, string actorId, CancellationToken ct)
-    {
-        RequireWritable();
-        if (string.IsNullOrWhiteSpace(request.Title))
-            throw new ArgumentException("Epic title is required.");
-        await RequireProjectAsync(projectId, ct);
-        var epicId = StableOrGeneratedId(request.EpicId, "epc");
-        var state = string.IsNullOrWhiteSpace(request.State) ? EpicStates.Open : request.State.Trim();
-        EpicDto? created = null;
-        await InWriteTransactionAsync(async (connection, transaction) =>
-        {
-            var now = Iso(UtcNow);
-            await ExecuteAsync(connection, """
-                INSERT INTO epics(id, project_id, title, state, version, created_at, updated_at)
-                VALUES ($id, $project, $title, $state, 1, $now, $now);
-                """, ct, transaction,
-                ("$id", epicId), ("$project", projectId), ("$title", request.Title.Trim()),
-                ("$state", state), ("$now", now));
-            await AuditAsync(connection, transaction, actorId, "epic.created", "epic", epicId,
-                JsonSerializer.Serialize(new { projectId, request.Title, state }), ct);
-            created = new EpicDto(epicId, projectId, request.Title.Trim(), state, 1, Parse(now), Parse(now));
-        }, ct);
-        return created!;
-    }
-
-    public async Task<IReadOnlyList<EpicDto>> ListEpicsAsync(string? projectIdentity, string? status, CancellationToken ct)
-    {
-        await using var connection = await OpenReadyAsync(ct);
-        var projectFilter = await ResolveOptionalProjectFilterAsync(connection, projectIdentity, ct);
-        await using var command = Command(connection, """
-            SELECT id, project_id, title, state, version, created_at, updated_at
-              FROM epics
-             WHERE ($project IS NULL OR project_id = $project)
-               AND ($status IS NULL OR state = $status)
-             ORDER BY created_at, id;
-            """, ("$project", projectFilter), ("$status", string.IsNullOrWhiteSpace(status) ? null : status.Trim()));
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        var epics = new List<EpicDto>();
-        while (await reader.ReadAsync(ct)) epics.Add(ReadEpic(reader));
-        return epics;
-    }
-
-    public async Task<EpicDetailDto?> GetEpicAsync(string epicId, CancellationToken ct)
-    {
-        await using var connection = await OpenReadyAsync(ct);
-        var epic = await ReadEpicCoreAsync(connection, null, epicId, ct);
-        if (epic is null) return null;
-
-        var tasks = new List<EpicTaskSummaryDto>();
-        await using (var taskCommand = Command(connection, """
-            SELECT t.id, t.task_key, t.title, t.state
-              FROM epic_tasks et
-              JOIN tasks t ON t.id = et.task_id
-             WHERE et.epic_id = $epic
-             ORDER BY et.created_at, t.task_key;
-            """, ("$epic", epicId)))
-        await using (var taskReader = await taskCommand.ExecuteReaderAsync(ct))
-        {
-            while (await taskReader.ReadAsync(ct))
-                tasks.Add(new EpicTaskSummaryDto(
-                    taskReader.GetString(0), taskReader.GetString(1), taskReader.GetString(2), taskReader.GetString(3)));
-        }
-        return new EpicDetailDto(epic, tasks.Count, tasks);
-    }
-
-    /// <summary>
-    /// Creates a real task via the shared <see cref="CreateTaskAsync"/> and
-    /// links it into the epic's <c>epic_tasks</c> join row. These are two
-    /// separate write transactions, not one atomic SQL transaction: reusing
-    /// <see cref="CreateTaskAsync"/> as-is (rather than duplicating task-insert
-    /// SQL inside this store's own transaction) means the task-creation
-    /// commit and the join-row commit are sequential. If the process crashes
-    /// between them, the task exists without its epic link; nothing else
-    /// depends on the two being atomic, and no caller can observe a task
-    /// that both exists and is silently unlinked without the epic-detail
-    /// projection surfacing it as missing from the epic's task list.
-    /// </summary>
-    public async Task<EpicSubTaskResponse> CreateEpicSubTaskAsync(
-        string epicId, CreateTaskRequest request, string actorId, CancellationToken ct)
-    {
-        RequireWritable();
-        EpicDto? epic;
-        await using (var connection = await OpenReadyAsync(ct))
-            epic = await ReadEpicCoreAsync(connection, null, epicId, ct);
-        if (epic is null) throw new KeyNotFoundException("Epic was not found.");
-
-        var task = await CreateTaskAsync(epic.ProjectId, request, actorId, ct);
-        await InWriteTransactionAsync(async (connection, transaction) =>
-        {
-            await ExecuteAsync(connection, """
-                INSERT INTO epic_tasks(epic_id, task_id, created_at) VALUES ($epic, $task, $now)
-                ON CONFLICT(epic_id, task_id) DO NOTHING;
-                """, ct, transaction, ("$epic", epicId), ("$task", task.TaskId), ("$now", Iso(UtcNow)));
-            await AuditAsync(connection, transaction, actorId, "epic.sub-task-linked", "epic", epicId,
-                JsonSerializer.Serialize(new { taskId = task.TaskId }), ct);
-        }, ct);
-        return new EpicSubTaskResponse(epic, task);
-    }
-
-    public async Task<int> CountCompletedEpicsAsync(string? projectIdentity, CancellationToken ct)
-    {
-        await using var connection = await OpenReadyAsync(ct);
-        var projectFilter = await ResolveOptionalProjectFilterAsync(connection, projectIdentity, ct);
-        var count = await ScalarAsync(connection, """
-            SELECT count(*) FROM epics WHERE state = $state AND ($project IS NULL OR project_id = $project);
-            """, ct, ("$state", EpicStates.Done), ("$project", projectFilter));
-        return Convert.ToInt32(count ?? 0L, CultureInfo.InvariantCulture);
-    }
-
-    /// <summary>
-    /// Resolves an optional <c>project</c> query filter (id or name, per the
-    /// legacy route's query shape) to a project id best-effort: an absent
-    /// filter disables filtering (returns null), while an unresolvable
-    /// filter value matches zero rows rather than being silently ignored or
-    /// erroring the whole request.
-    /// </summary>
-    private static async Task<string?> ResolveOptionalProjectFilterAsync(
-        SqliteConnection connection, string? identity, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(identity)) return null;
-        await using var command = Command(connection, """
-            SELECT id FROM projects WHERE id = $identity OR name = $identity COLLATE NOCASE LIMIT 1;
-            """, ("$identity", identity.Trim()));
-        var id = Convert.ToString(await command.ExecuteScalarAsync(ct), CultureInfo.InvariantCulture);
-        return string.IsNullOrWhiteSpace(id) ? UnresolvableProjectFilterSentinel : id;
-    }
-
-    private const string UnresolvableProjectFilterSentinel = "__unresolvable-project-filter__";
-
-    private static EpicDto ReadEpic(SqliteDataReader reader)
-        => new(
-            reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
-            reader.GetInt64(4), Parse(reader.GetString(5)), Parse(reader.GetString(6)));
-
-    private static async Task<EpicDto?> ReadEpicCoreAsync(
-        SqliteConnection connection, SqliteTransaction? transaction, string epicId, CancellationToken ct)
-    {
-        await using var command = Command(connection, """
-            SELECT id, project_id, title, state, version, created_at, updated_at FROM epics WHERE id = $id;
-            """, transaction, ("$id", epicId));
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct) ? ReadEpic(reader) : null;
+        // Remove retired container tables from stores created by older releases.
+        await ExecuteAsync(connection, "DROP TABLE IF EXISTS epic_tasks; DROP TABLE IF EXISTS epics;", ct);
     }
 
     // ----------------------------------------------------------------

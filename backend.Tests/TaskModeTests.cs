@@ -6,7 +6,7 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 /// <summary>
-/// Task execution mode (coding|planning|research|concept) - orthogonal to the epic
+/// Task execution mode (coding|planning|research|concept)
 /// kind. Foundation slice: the field round-trips through task.json + the scanner
 /// and the web-access default is mode-derived. Pipeline behaviour (read-only
 /// git-step skip) + the create-modal + promote flow are separate slices.
@@ -114,15 +114,15 @@ public class TaskModeTests : IDisposable
     }
 
     [Fact]
-    public void Mode_IsOrthogonalToKind()
+    public void ExplicitTaskKind_DefaultsToCodingMode()
     {
         var (_, scanner, mutations) = Build();
-        // an epic with no mode -> defaults coding; kind + mode are independent fields
-        mutations.CreateJob(new CreateTaskRequest { Id = "the-epic", Title = "Epic", Kind = TaskKinds.Epic, WatchPath = _watchPath, TargetState = TaskStates.Ready });
+        // an explicit task kind with no mode defaults to coding
+        mutations.CreateJob(new CreateTaskRequest { Id = "explicit-task", Title = "Task", Kind = TaskKinds.Task, WatchPath = _watchPath, TargetState = TaskStates.Ready });
 
-        var info = scanner.FindJob("the-epic", _watchPath);
+        var info = scanner.FindJob("explicit-task", _watchPath);
         Assert.NotNull(info);
-        Assert.Equal(TaskKinds.Epic, info!.Kind);
+        Assert.Equal(TaskKinds.Task, info!.Kind);
         Assert.Equal(TaskModes.Coding, info.Mode);
     }
 

@@ -142,7 +142,6 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `add-task-generate-title.spec.ts` | Add Task - Generate title button |
 | `add-task-legacy.spec.ts` | Add Task dialog legacy guidance |
 | `add-task-mode-picker.spec.ts` | Add Task - mode picker |
-| `add-task-parent-epic-picker.spec.ts` | Add Task - parent epic picker |
 | `add-task.spec.ts` | Add Task - model selection |
 | `create-job-with-screenshot.spec.ts` | Add Task dialog - drop + paste screenshot uploads |
 | `promote-planning-to-coding.spec.ts` | Promote planning result -> coding task |
@@ -158,7 +157,6 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `auto-pickup-toggle.spec.ts` | Auto-pickup toggle |
 | `auto-review-multi-aspect.spec.ts` | Auto-review multi-aspect surface |
 | `backlog-lane-and-tags.spec.ts` | Backlog lane + task types + tags |
-| `board-hides-epics.spec.ts` | Board hides epics (tasks-only lanes) |
 | `board-search-screenshots.spec.ts` | board search - empty + filtered states |
 | `board-search.spec.ts` | Board search (header icon) |
 | `bug-cross-project-counter.spec.ts` | project chip strip: single-select switch |
@@ -180,9 +178,6 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `done-decide-escalated-card.spec.ts` | Done & Decide - escalated cards do not look like Done |
 | `effective-model-on-card.spec.ts` | job-card effective model |
 | `effective-model-screenshots.spec.ts` | effective model screenshots |
-| `epic-detail-editable.spec.ts` | Epic detail: editable title + properties (Edit & Status) |
-| `epic-detail-rollup-board.spec.ts` | Epic detail: rollup board + in-place sub-task swap |
-| `epic-rollup-tight-viewport.spec.ts` | Epic rollup: tight viewport / resize keeps lanes enclosed and reachable |
 | `execution-location-badge.spec.ts` | shows each concurrent task owner and limits warnings to the stale remote run |
 | `explorer-collapse-screenshots.spec.ts` | F27 visual evidence |
 | `explorer-collapse.spec.ts` | F27: Explorer-tree folder headers are all collapsible |
@@ -483,7 +478,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `activity-bar-board-removed.spec.ts` | studio-shell · All-projects board opens only via Explorer header |
 | `activity-bar-single-active.spec.ts` | studio-shell · Activity Bar marks exactly one active item |
 | `empty-state-refresh.spec.ts` | studio-shell · refreshed empty state |
-| `explorer-project-board-and-view-links.spec.ts` | Explorer · project links to Board / Deck / Wiki / Epics |
+| `explorer-project-board-and-view-links.spec.ts` | Explorer · project links to Board / Deck / Wiki / Dossiers |
 | `header-toolbar-polish.spec.ts` | Header toolbar polish |
 | `hub-project-wiki-switch.spec.ts` | Project ⇄ Wiki switch with the Hub tab already open (AGT-2023) |
 | `navigation-no-deadend.spec.ts` | studio-shell · navigation has no dead end |
@@ -546,8 +541,6 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `detail-view-lane-pager.spec.ts` | Detail view - lane pager |
 | `detail-view-refresh.spec.ts` | Job detail view - F5 / page refresh |
 | `detail-view-status-dropdown.spec.ts` | Detail view - status dropdown (discoverability) |
-| `epic-membership-banner.spec.ts` | Task-detail epic-membership banner |
-| `epic-model-picker-clipping.spec.ts` | Epic detail - model picker is not clipped |
 | `escalation-gave-up.spec.ts` | DtC step 6 - GaveUpToHuman escalation reason |
 | `escalation-summary.spec.ts` | Escalation summary panel - collapsible + compact |
 | `external-lane-change-keeps-task.spec.ts` | External lane change keeps task in view |

@@ -503,7 +503,10 @@ public sealed class TaskTransitionService
                     archived.WatchPath, "system", expectedSourceState: TaskStates.Archive,
                     archiveOverrideRollback: true);
                 if (restored.Status == MoveJobStatus.Success)
+                {
                     _scanner.InvalidateCache();
+                    _scanner.PublishCoreFromKnownFolder(restored.NewFolderPath ?? archived.FolderPath);
+                }
                 else
                     _logger.LogCritical("archive-override-rollback-failed task={TaskKey} status={Status}",
                         info.TaskKey, restored.Status);
@@ -589,6 +592,7 @@ public sealed class TaskTransitionService
                 reason,
                 cause!);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(movedFolder);
         }
         if (supersedeFailedDelivery)
         {

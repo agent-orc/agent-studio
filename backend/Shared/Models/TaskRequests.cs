@@ -271,6 +271,9 @@ public record BatchMoveItemResult
 
 public record CreateTaskRequest
 {
+    // One-version compatibility for clients that still send removed fields.
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public Dictionary<string, System.Text.Json.JsonElement>? CompatibilityFields { get; init; }
     public string Id { get; init; } = "";
     public string Title { get; init; } = "";
     public int Order { get; init; } = 999;
@@ -298,7 +301,7 @@ public record CreateTaskRequest
     public string? PromptMarkdown { get; init; }
     /// <summary>
     /// Optional structured delivery boundary used by requirement-fit review.
-    /// Use <c>bounded-slice</c> for one independently shippable Dossier or Epic
+    /// Use <c>bounded-slice</c> for one independently shippable Dossier
     /// slice; omit it when the whole task body must be delivered together.
     /// </summary>
     public TaskAcceptanceScope? AcceptanceScope { get; init; }
@@ -314,7 +317,7 @@ public record CreateTaskRequest
     public string? TargetState { get; init; }
     /// <summary>Optional CLI backend (claude|codex|gemini). Defaults to claude when omitted.</summary>
     public string? CliType { get; init; }
-    /// <summary>Card kind: <c>task</c> (default), <c>epic</c>, or <c>decision</c>. See <see cref="TaskKinds"/>.</summary>
+    /// <summary>Card kind: <c>task</c> (default) or <c>decision</c>. See <see cref="TaskKinds"/>.</summary>
     public string? Kind { get; init; }
 
     /// <summary>
@@ -323,8 +326,6 @@ public record CreateTaskRequest
     /// <see cref="TaskKinds.Decision"/>; ignored for every other kind.
     /// </summary>
     public DecisionContent? Decision { get; init; }
-    /// <summary>Optional parent epic id (assignment way 1: at create time). The new card is created as a sub-task of this epic.</summary>
-    public string? EpicId { get; init; }
     /// <summary>The one Dossier that owns this card and its source location.</summary>
     public TaskDossier? Dossier { get; init; }
     /// <summary>Execution mode: <c>coding</c> (default) | <c>planning</c> | <c>research</c> | <c>concept</c>. See <see cref="TaskModes"/>.</summary>
@@ -729,19 +730,6 @@ public record SetOrchestratorModelRequest
 }
 
 /// <summary>
-/// Body for <c>PUT /api/projects/{name}/epic-planning</c>. Tunes the epic
-/// decomposition (planning) run: which model authors the sub-task list, and
-/// whether the generated sub-tasks land in <c>2-ready</c> instead of
-/// <c>0-backlog</c>. Null/absent fields leave that knob on its default.
-/// </summary>
-public record SetEpicPlanningRequest
-{
-    public string? Model { get; init; }
-    public string? ThinkingLevel { get; init; }
-    public bool? SubTasksToReady { get; init; }
-}
-
-/// <summary>
 /// Body for <c>PUT /api/projects/{name}/autonomy</c>. The integer level is
 /// clamped to <c>0..4</c> server-side. See ADR-0026.
 /// </summary>
@@ -829,12 +817,6 @@ public record SetJobCliTypeRequest
 public record SetJobTitleRequest
 {
     public string Title { get; init; } = "";
-}
-
-/// <summary>Body for <c>PUT /api/tasks/{id}/epic</c>: the parent epic id, or null/empty to detach.</summary>
-public record SetJobEpicRequest
-{
-    public string? EpicId { get; init; }
 }
 
 public record SetRunnerModeRequest
