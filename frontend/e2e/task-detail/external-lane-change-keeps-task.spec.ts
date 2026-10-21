@@ -41,6 +41,9 @@ test.describe('External lane change keeps task in view', () => {
     }
 
     try {
+      await expect.poll(async () =>
+        (await api<Array<{ id: string }>>('/api/tasks?includeFixtures=true')).map(job => job.id),
+      { timeout: 15_000 }).toContain(ids[0]);
       await page.goto('/');
       await waitForFixtureCards(page, ids);
 
