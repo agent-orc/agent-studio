@@ -53,6 +53,18 @@ without restarting the host. OrchestratorPrep, MetaCycle, and AutoIntervention
 continue to run in the monolith when other profiles select Engine; they have
 no engine occurrences yet.
 
+AGT-3234: every real gate outcome of a batch-deferred review is one
+`GateResult` occurrence: a batch release (`batch-result:`), a per-task gate
+pass, a containment or an already-integrated member (`batch-fallback:`), and a
+red per-task gate (`batch-fallback-red:`). A red batch run ends for each member
+in one of these, through isolation or the per-task gate. A red per-task gate
+states a card round budget of zero, because the batch route grants no
+automatic fix round, so the monolith's escalation and the engine's decision
+compare on the same facts. In Engine mode the red outcome waits for the engine
+like a release; the applier then moves the card and, for a decision that does
+not release the member, resolves its queue entry and removes its batch
+ownership, as the monolith's escalation does.
+
 The review worker rechecks the current owner after long gate work and before
 each lane move. A monolith-owned resume checks again at integration dequeue,
 at the publication fence, and before its final lane move. An ownership deferral

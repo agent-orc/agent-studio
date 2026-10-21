@@ -105,6 +105,13 @@ export class AccessSettingsComponent implements OnInit {
   }
   private failed(err: unknown): void {
     this.busy.set(false);
+    const status = (err as { status?: number })?.status;
+    if (status === 401 || status === 403) {
+      this.users.set([]); this.tokens.set([]);
+      this.enrollments.set([]); this.runners.set([]);
+      this.oneTime.set(null);
+      this.editId.set(null);
+    }
     this.error.set((err as { error?: { message?: string }; message?: string })?.error?.message
       ?? (err as { message?: string })?.message ?? 'Access request failed.');
   }

@@ -108,7 +108,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | AutoReviewPostProcessingRecoveryService | loop | apply-recover | Authority |
 | RemoteReviewEvidenceProjectionWorker | loop | apply-recover | Authority |
 | RemoteReviewSettlementReconciler | loop | apply-recover | Authority |
-| BatchGatePilotHostedService | loop | decide, switched | `GateResult` profile for the batch gate result (`HoldForEngineBatchDecision`). Batch forming, closing and the advisor move with AGT-3055. |
+| BatchGatePilotHostedService | loop | decide, switched | `GateResult` profile for every batch gate outcome, releases and red per-task gates (`HoldForEngineBatchDecision`, AGT-3234). Batch forming, closing and the advisor move with AGT-3055. |
 | IntakeHostedService | !PD, per project | decide, operator | AI Operator decider `intake-routing` (`IntakeRoutingPolicy`): an already-done card goes to a person in Human Review. Effect: `IntakeRoutingEffect`. |
 | GitInventoryRefreshHostedService | !PD | infra | Authority host |
 | ProjectRepositoryVisibilitySync | always | infra | Authority host. Copies project visibility settings to registered Task Server repositories. |
@@ -138,6 +138,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | TaskWatcherService | always | infra | Authority host |
 | TaskRunnerService | !PD | decide, local | Monolith: local execution (`RunOutcomePolicy`). Claimable work runs on runner hosts (D16 A); the local runner retires with I11. |
 | SourceWatcher | always | infra | Authority host |
+| TelemetryWriter | always | infra | Authority host. Single writer of the OTLP telemetry store (IP-15): drains the intake queue, masks, stores, applies retention and the minute-bucket cap; no lane move. |
 | CompanionSyncService | !PD | infra | Authority host (relays operator commands) |
 
 ## Decisions outside hosted services

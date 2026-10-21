@@ -2,6 +2,7 @@
 using AgentStudio.Deploy;
 using AgentStudio.Search;
 using AgentStudio.Proposals;
+using AgentStudio.Telemetry;
 
 namespace AgentStudio.Host;
 
@@ -115,6 +116,7 @@ public static class EndpointMapping
         app.MapDeployEndpoints();
         app.MapProjectPipelineDefinitionEndpoints();
         app.MapEnvironmentHealthEndpoints();
+        app.MapTelemetryEndpoints();
         app.MapProjectCycleTimeEndpoints();
         app.MapTestRunEndpoints();
         app.MapProjectGraphEndpoints();

@@ -3,6 +3,7 @@
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.HttpOverrides;
+using AgentStudio.Telemetry;
 using Serilog;
 using Serilog.Events;
 
@@ -748,6 +749,8 @@ builder.Services.AddSingleton<ICliUsageParser, CodexUsageParser>();
 builder.Services.AddSingleton<CliUsageParserRegistry>();
 builder.Services.AddSingleton<BusAggregationCache>();
 builder.Services.AddTokenUsage();
+// IP-15: OTLP intake and the built-in metrics and logs store per project environment.
+builder.Services.AddTelemetryIntake();
 // Central step-call dispatch: the concrete Claude runner is wrapped by the
 // PromptLoggingCliOneShot decorator so every one-shot step prompt (aspects,
 // code-review-grade, orchestrator-decision, drift, ...) is captured raw into
@@ -902,7 +905,12 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PullGateTransport>();
-builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.ConventionalGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.ConventionalGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.GateShardTimingStore>();
+// AGT-3232: the conventional pull-or-SSH transport stays the primary gate host;
+// a subject that declares a sharded suite also spreads shards across
+// RemoteGate:ShardHosts (SSH) with a free slot.
+builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.ShardedRemoteGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
     AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();
