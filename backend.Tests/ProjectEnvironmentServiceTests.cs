@@ -224,6 +224,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal(["TEST_DATA"], queued.SecretRefs);
         var claimed = service.Claim("preview-host")!;
         Assert.Equal(queued.Id, claimed.Id);
+        Assert.Equal("preview", claimed.EnvironmentKind);
         Assert.False(service.Report("demo", claimed.Id, new DeployReportRequest(claimed.LeaseToken!, true, "health-ok")));
         var png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC";
         Assert.True(service.Report("demo", claimed.Id,
