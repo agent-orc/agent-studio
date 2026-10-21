@@ -50,7 +50,7 @@ public sealed class RunTargetHostState
     /// <summary>Revisions whose Docker teardown failed after they stopped being an app slot.</summary>
     public List<RunTargetSlot> PendingCleanup { get; set; } = [];
 
-    /// <summary>Replaced revisions that Docker has not yet confirmed stopped.</summary>
+    /// <summary>Replaced or failed restored revisions that Docker has not yet confirmed stopped.</summary>
     public List<RunTargetSlot> PendingStops { get; set; } = [];
 
     /// <summary>Domain to app key. The first app that routed a domain keeps it (<see cref="RunTargetCaddyfile.ClaimDomains"/>).</summary>

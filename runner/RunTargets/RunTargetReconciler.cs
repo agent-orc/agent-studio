@@ -541,8 +541,18 @@ public sealed class RunTargetReconciler(
             return;
         }
         var stopped = await docker.ComposeStopAsync(candidate.ComposeProject, candidate.ComposeFile, ct);
-        if (stopped.Ok) secretFiles.Remove(candidate.ComposeProject);
-        else log($"run-target: could not stop revision {candidate.Revision}: {stopped.Detail}");
+        if (stopped.Ok)
+        {
+            secretFiles.Remove(candidate.ComposeProject);
+            state.PendingStops.RemoveAll(item => item.ComposeProject == candidate.ComposeProject);
+        }
+        else
+        {
+            log($"run-target: could not stop revision {candidate.Revision}: {stopped.Detail}");
+            if (!state.PendingStops.Any(item => item.ComposeProject == candidate.ComposeProject))
+                state.PendingStops.Add(candidate);
+        }
+        store.Save(state);
     }
 
     private async Task RemoveOrQueueAsync(RunTargetSlot slot, RunTargetHostState state, CancellationToken ct)

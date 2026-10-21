@@ -178,6 +178,34 @@ public sealed class RunTargetReconcilerTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedStopOfUnhealthyRestoredRevision_IsRetriedWhileStudioIsOffline()
+    {
+        var first = Spec(First);
+        var second = Spec(Second, jobId: "job-2");
+        await Converge(first);
+        await Converge(second);
+        _docker.UnhealthyProjects.Add(Slot(first));
+        _docker.StopFailsFor.Add(Slot(first));
+
+        var result = await Converge(Spec(First, jobId: "rollback-1", rollback: true));
+
+        Assert.False(Assert.Single(result.JobReports).Healthy);
+        Assert.Equal((Second, First), (_store.Load().Apps[Key].Current?.Artifact,
+            _store.Load().Apps[Key].Previous?.Artifact));
+        Assert.Equal(Slot(first), Assert.Single(_store.Load().PendingStops).ComposeProject);
+        Assert.True(Directory.Exists(SecretDirectory(first)));
+
+        _docker.StopFailsFor.Clear();
+        var calls = _docker.Calls.Count;
+        await Assert.ThrowsAsync<HttpRequestException>(() => OutageDaemon().CycleAsync(CancellationToken.None));
+
+        Assert.Contains("stop " + Slot(first), _docker.Calls.Skip(calls));
+        Assert.Empty(_store.Load().PendingStops);
+        Assert.False(Directory.Exists(SecretDirectory(first)));
+        Assert.Equal(Second, _store.Load().Apps[Key].Current?.Artifact);
+    }
+
+    [Fact]
     public async Task FailedHealthCheck_KeepsTheOldRevisionServing_AndRemovesTheCandidate()
     {
         var first = Spec(First);

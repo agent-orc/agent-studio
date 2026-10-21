@@ -211,7 +211,7 @@ revisions down, each slot cleared as soon as it is gone, so a retry continues
 where a failure stopped. It then removes the app network and confirms with an
 observation in state `removed` only after Docker confirms network removal.
 Failed candidate and replaced-revision teardown stays in the host's durable
-`pendingCleanup` list; failed stops of replaced revisions stay in `pendingStops`.
+`pendingCleanup` list; failed stops of replaced or failed restored revisions stay in `pendingStops`.
 Every reconciliation pass retries them, including passes
 while Studio is unreachable. A revision awaiting teardown cannot be started
 again until cleanup succeeds. Studio drops the placement and keeps the last
