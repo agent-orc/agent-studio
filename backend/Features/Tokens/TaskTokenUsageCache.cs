@@ -18,6 +18,7 @@ public sealed class TaskTokenUsageCache
     private readonly ConcurrentDictionary<(string Project, string Path), ProjectEntry> _projectsCache = new();
     private readonly ConcurrentDictionary<(string Project, string Path, string Id), Entry> _entries = new();
     private readonly ConcurrentDictionary<(string Project, string Id), BusRevision> _busRevisions = new();
+    internal Action? BeforeProjectWalk { get; set; }
 
     public TaskTokenUsageCache(ProjectTokenLedger ledger, ITokenPricing pricing,
         TaskIndexCache index, TimeProvider clock, ProjectRegistry? projects = null,
@@ -35,51 +36,114 @@ public sealed class TaskTokenUsageCache
     public TaskTokenSummary? Get(string projectName, string watchPath, string jobId)
         => GetAsync(projectName, watchPath, jobId).GetAwaiter().GetResult();
 
-    public async Task<TaskTokenSummary?> GetAsync(string projectName, string watchPath, string jobId)
+    public async Task<TaskTokenSummary?> GetAsync(string projectName, string watchPath, string jobId,
+        CancellationToken cancellationToken = default)
     {
         var key = (projectName, watchPath, jobId);
         var entry = _entries.GetOrAdd(key, _ => new Entry(_index.CoreScanSequence));
-        var receipt = ReceiptStamp(_index.GetDetailFacts(jobId, watchPath).Info);
-        var bus = _busRevisions.GetValueOrDefault((projectName, jobId)).Version;
-        var last = Volatile.Read(ref entry.Last);
-        if (last is not null && last.Receipt == receipt && last.Bus == bus
-            && last.ExpiresAt > _clock.GetUtcNow()) return last.Summary;
-
         var project = _projectsCache.GetOrAdd((projectName, watchPath), _ => new ProjectEntry());
-        Task<ProjectSnapshot> load;
-        lock (project)
+        while (true)
         {
-            var current = project.Current;
-            if (current is not null && current.ExpiresAt > _clock.GetUtcNow()
-                && (current.ReceiptStamps.GetValueOrDefault(jobId) ?? "none") == receipt
-                && current.BusRevisions.GetValueOrDefault(jobId) == bus)
-                load = Task.FromResult(current);
-            else
-                load = project.Loading ??= Task.Run(() => LoadProject(projectName, watchPath, project));
+            cancellationToken.ThrowIfCancellationRequested();
+            var receipt = ReceiptStamp(_index.GetDetailFacts(jobId, watchPath).Info);
+            var bus = _busRevisions.GetValueOrDefault((projectName, jobId)).Version;
+            var last = Volatile.Read(ref entry.Last);
+            if (last is not null && last.Receipt == receipt && last.Bus == bus
+                && last.ExpiresAt > _clock.GetUtcNow()) return last.Summary;
+
+            Task<ProjectSnapshot> load;
+            lock (project)
+            {
+                var current = project.Current;
+                if (Matches(current, jobId, receipt, bus, _clock.GetUtcNow()))
+                    load = Task.FromResult(current!);
+                else if (project.Loading is not null
+                    && MatchesLoading(project, jobId, receipt, bus))
+                    load = project.Loading;
+                else if (project.FollowUp is not null)
+                    load = project.FollowUp;
+                else if (project.Loading is { } preceding)
+                    load = project.FollowUp = Task.Run(() => LoadAfterAsync(projectName,
+                        watchPath, project, preceding, jobId, receipt, bus));
+                else
+                    load = StartLoad(projectName, watchPath, project);
+            }
+            var snapshot = await load.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (!Matches(snapshot, jobId, receipt, bus, _clock.GetUtcNow())) continue;
+            var summary = snapshot.Summaries.GetValueOrDefault(jobId);
+            lock (entry)
+            {
+                // A later request may have finished while this continuation was waiting.
+                var latestReceipt = ReceiptStamp(_index.GetDetailFacts(jobId, watchPath).Info);
+                var latestBus = _busRevisions.GetValueOrDefault((projectName, jobId)).Version;
+                if (latestReceipt != receipt || latestBus != bus) continue;
+                var published = Volatile.Read(ref entry.Last);
+                if (published is not null && published.Receipt == receipt && published.Bus == bus
+                    && published.ExpiresAt > snapshot.ExpiresAt) return published.Summary;
+                Volatile.Write(ref entry.Last, new CardSnapshot(receipt, bus, snapshot.ExpiresAt, summary));
+            }
+            return summary;
         }
-        var snapshot = await load.ConfigureAwait(false);
-        // A change during the walk starts another load on the next request.
-        // Publish the summary that was actually captured by this walk.
-        var summary = snapshot.Summaries.GetValueOrDefault(jobId);
-        Volatile.Write(ref entry.Last, new CardSnapshot(
-            snapshot.ReceiptStamps.GetValueOrDefault(jobId) ?? "none",
-            snapshot.BusRevisions.GetValueOrDefault(jobId), snapshot.ExpiresAt, summary));
-        return summary;
     }
 
-    private ProjectSnapshot LoadProject(string projectName, string watchPath, ProjectEntry project)
+    private static bool Matches(ProjectSnapshot? snapshot, string id, string receipt, long bus,
+        DateTimeOffset now) => snapshot is not null && snapshot.ExpiresAt > now
+            && (snapshot.ReceiptStamps.GetValueOrDefault(id) ?? "none") == receipt
+            && snapshot.BusRevisions.GetValueOrDefault(id) == bus;
+
+    private static bool MatchesLoading(ProjectEntry project, string id, string receipt, long bus) =>
+        (project.LoadingReceipts?.GetValueOrDefault(id) ?? "none") == receipt
+        && project.LoadingBuses?.GetValueOrDefault(id) == bus;
+
+    // Called with the project lock. The versions are frozen before starting the walk.
+    private Task<ProjectSnapshot> StartLoad(string projectName, string watchPath, ProjectEntry project)
+    {
+        var receipts = CaptureReceiptStamps(_index.GetAllResidentTasks(), projectName, watchPath);
+        var buses = _busRevisions
+            .Where(pair => pair.Key.Project == projectName)
+            .ToDictionary(pair => pair.Key.Id, pair => pair.Value.Version, StringComparer.Ordinal);
+        project.LoadingReceipts = receipts;
+        project.LoadingBuses = buses;
+        return project.Loading = Task.Run(() => LoadProject(projectName, watchPath, project,
+            receipts, buses));
+    }
+
+    private async Task<ProjectSnapshot> LoadAfterAsync(string projectName, string watchPath,
+        ProjectEntry project, Task<ProjectSnapshot> preceding, string id, string receipt, long bus)
     {
         try
         {
+            try { await preceding.ConfigureAwait(false); }
+            catch (Exception ex) { _logger?.LogWarning(ex, "task-token-prior-load-failed"); }
+            Task<ProjectSnapshot> next;
+            lock (project)
+            {
+                if (Matches(project.Current, id, receipt, bus, _clock.GetUtcNow()))
+                    return project.Current!;
+                next = project.Loading ?? StartLoad(projectName, watchPath, project);
+            }
+            return await next.ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (project) project.FollowUp = null;
+        }
+    }
+
+    internal static IReadOnlyDictionary<string, string> CaptureReceiptStamps(
+        IEnumerable<TaskInfo> resident, string projectName, string watchPath) => resident
+        .Where(task => task.ProjectName == projectName && task.WatchPath == watchPath)
+        .GroupBy(task => task.Id, StringComparer.Ordinal)
+        .ToDictionary(group => group.Key, group => ReceiptStamp(group.First()), StringComparer.Ordinal);
+
+    private ProjectSnapshot LoadProject(string projectName, string watchPath, ProjectEntry project,
+        IReadOnlyDictionary<string, string> receiptStamps, IReadOnlyDictionary<string, long> busRevisions)
+    {
+        try
+        {
+            BeforeProjectWalk?.Invoke();
             // Capture versions before the ledger walk. An append or receipt
             // publication during the walk must cause the next read to reload.
-            var resident = _index.GetAllResidentTasks();
-            var receiptStamps = resident
-                .Where(task => task.ProjectName == projectName && task.WatchPath == watchPath)
-                .ToDictionary(task => task.Id, ReceiptStamp, StringComparer.Ordinal);
-            var busRevisions = _busRevisions
-                .Where(pair => pair.Key.Project == projectName)
-                .ToDictionary(pair => pair.Key.Id, pair => pair.Value.Version, StringComparer.Ordinal);
             var ledger = _ledger.LoadFreshSnapshot(projectName, watchPath);
             var result = new ProjectSnapshot(TaskTokenSummaryFold.PerJob(_pricing.Price(ledger.Entries)),
                 receiptStamps, busRevisions, _clock.GetUtcNow() + Ttl);
@@ -87,13 +151,20 @@ public sealed class TaskTokenUsageCache
             {
                 project.Current = result;
                 project.Loading = null;
+                project.LoadingReceipts = null;
+                project.LoadingBuses = null;
                 project.LoadCount++;
             }
             return result;
         }
         catch
         {
-            lock (project) project.Loading = null;
+            lock (project)
+            {
+                project.Loading = null;
+                project.LoadingReceipts = null;
+                project.LoadingBuses = null;
+            }
             throw;
         }
     }
@@ -173,6 +244,9 @@ public sealed class TaskTokenUsageCache
     {
         public ProjectSnapshot? Current;
         public Task<ProjectSnapshot>? Loading;
+        public Task<ProjectSnapshot>? FollowUp;
+        public IReadOnlyDictionary<string, string>? LoadingReceipts;
+        public IReadOnlyDictionary<string, long>? LoadingBuses;
         public long LoadCount;
     }
 

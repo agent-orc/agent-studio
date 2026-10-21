@@ -14,6 +14,9 @@ The separate task usage resource reads this merged ledger after the core card
 has painted. One single-flight priced fold per project supplies per-card
 summaries. A change to that card's receipt bytes or a matching token bus append
 invalidates its summary; heartbeat-only core publications leave it cached.
+An in-flight fold records the receipt and bus versions it captured. A reader
+that observes newer versions awaits one shared follow-up fold before returning
+ready totals, even when project bus appends keep a fold in progress.
 The full-detail response returns a cached summary when available and starts a
 background warm when it is missing. It never folds the ledger on the request.
 

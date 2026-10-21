@@ -328,6 +328,7 @@ public class TaskStateMachine
                 $"A non-folder path named '{targetSlug}' already exists in {targetState}.");
         }
 
+        using var corePublication = _scanner.BeginMoveCorePublication(recheck);
         try
         {
             var moveFailure = MoveDirectoryWithRetry(

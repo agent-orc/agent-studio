@@ -10,6 +10,42 @@ public sealed class TaskCoreCacheTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "task-core-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task MovePublication_KeepsDetailResidentWhileSourceFolderVanished()
+    {
+        var task = MakeTask("AGT-moving", TaskStates.Ready);
+        File.WriteAllText(Path.Combine(task.FolderPath, "task.json"),
+            "{\"id\":\"AGT-moving\",\"state\":\"2-ready\"}");
+        var cache = Cache(() => [task]);
+        cache.GetSnapshot();
+        var destination = Path.Combine(_root, "moved", task.Id);
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        using (cache.BeginMoveCorePublication(task))
+        {
+            Directory.Move(task.FolderPath, destination);
+            var read = cache.GetDetailFactsAsync(task.Id, _root, CancellationToken.None).AsTask();
+            Assert.False(read.IsCompleted);
+            Assert.Equal(task.Id, cache.GetCore(task.Id, _root).Record?.Id);
+            cache.MoveCoreFromFolder(task.FolderPath, destination,
+                () => task with { FolderPath = destination, State = TaskStates.Progress });
+            Assert.Equal(destination, (await read).Info?.FolderPath);
+        }
+    }
+
+    [Fact]
+    public void CrossProjectMove_RemovesSourceFromSameCoreFactsSwap()
+    {
+        var task = MakeTask("AGT-transfer", TaskStates.Ready);
+        var cache = Cache(() => [task]);
+        cache.GetSnapshot();
+        var destination = Path.Combine(_root, "other", task.Id);
+        cache.MoveCoreFromFolder(task.FolderPath, destination,
+            () => task with { FolderPath = destination, WatchPath = Path.Combine(_root, "other") });
+        Assert.Null(cache.GetCore(task.Id, _root).Record);
+        Assert.NotNull(cache.GetCore(task.Id, Path.Combine(_root, "other")).Record);
+        Assert.Single(cache.GetAllResidentTasks());
+    }
+
+    [Fact]
     public void WarmDirtyAndArchivedCore_NeverCallScannerOnLookup()
     {
         var live = MakeTask("AGT-1", "2-ready");
