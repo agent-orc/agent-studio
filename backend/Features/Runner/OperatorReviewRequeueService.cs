@@ -19,24 +19,28 @@ public sealed class OperatorReviewRequeueService
 
     private readonly string? _workspaceRoot;
     private readonly TimelineLog? _timeline;
+    private readonly ReviewEffectivenessService? _reviewEffectiveness;
     private readonly ILogger<OperatorReviewRequeueService> _logger;
 
     public OperatorReviewRequeueService(
         IConfiguration configuration,
         ILogger<OperatorReviewRequeueService> logger,
-        TimelineLog? timeline = null)
-        : this(configuration["TaskRepository"], logger, timeline)
+        TimelineLog? timeline = null,
+        ReviewEffectivenessService? reviewEffectiveness = null)
+        : this(configuration["TaskRepository"], logger, timeline, reviewEffectiveness)
     {
     }
 
     internal OperatorReviewRequeueService(
         string? workspaceRoot,
         ILogger<OperatorReviewRequeueService> logger,
-        TimelineLog? timeline = null)
+        TimelineLog? timeline = null,
+        ReviewEffectivenessService? reviewEffectiveness = null)
     {
         _workspaceRoot = workspaceRoot;
         _logger = logger;
         _timeline = timeline;
+        _reviewEffectiveness = reviewEffectiveness;
     }
 
     public static bool IsOperatorRequeue(
@@ -145,6 +149,23 @@ public sealed class OperatorReviewRequeueService
             _logger.LogWarning(ex,
                 "operator-requeue: failed to append timeline event for {Project}/{JobId}",
                 project, jobId);
+        }
+
+        // Every review let a Human Review delivery through, so sending it back
+        // is later defect evidence against those approvals (AGT-3269).
+        if (_reviewEffectiveness is not null
+            && string.Equals(fromState, TaskStates.HumanReview, StringComparison.Ordinal))
+        {
+            try
+            {
+                _reviewEffectiveness.RecordOperatorRequeue(project, jobId, normalizedReason, actor);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "operator-requeue: failed to record review-effectiveness evidence for {Project}/{JobId}",
+                    project, jobId);
+            }
         }
 
         return new OperatorReviewRequeueResult(epoch, rotated, normalizedReason);

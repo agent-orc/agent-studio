@@ -126,6 +126,25 @@ async function stubBackgroundApis(page: Page) {
     })), projects: [], fetchedAt: new Date().toISOString(), disclaimer: 'stubbed',
   }));
   await page.route('**/api/workspace/tokens/expensive-jobs*', json({ jobs: [] }));
+  // AGT-3269: review effectiveness per review level, model and reasoning level.
+  const reviewRow = (level: string, model: string, reasoningLevel: string, overrides: Record<string, unknown>) => ({
+    level, model, reasoningLevel, reviews: 40, approvals: 36, blocks: 4, blockerRate: 0.1,
+    missedApprovals: 3, missRate: 3 / 36, missesBySource: { gate: 2, operator: 1 },
+    inputTokens: 1_200_000, outputTokens: 90_000, cacheReadTokens: 400_000, cacheCreationTokens: 20_000,
+    pricedReviews: 40, totalCostUsd: 8, costPerReviewUsd: 0.2,
+    findings: { blocker: 4, major: 9, minor: 14, nit: 6, unclassified: 3 }, realFindings: 27,
+    costPerRealFindingUsd: 0.2963, averageDurationMs: 95_000, ...overrides,
+  });
+  await page.route('**/api/review-effectiveness?*', json({
+    generatedAtUtc: new Date().toISOString(), sinceUtc: new Date(Date.now() - 30 * 86400_000).toISOString(),
+    rows: [
+      reviewRow('aspect', 'gpt-6-luna', 'high', { costPerReviewUsd: 0.03, totalCostUsd: 1.2, missRate: 0.1667, missedApprovals: 6 }),
+      reviewRow('grade', 'gpt-6-sol', 'high', {}),
+      reviewRow('grade', 'gpt-6-sol', 'xhigh', { costPerReviewUsd: 0.61, totalCostUsd: 24.4, missRate: 0.0833 }),
+      reviewRow('deep', 'claude-opus-5-5', 'max', { reviews: 6, approvals: 2, blocks: 4, blockerRate: 0.6667, missRate: null, missedApprovals: 0, pricedReviews: 0, totalCostUsd: null, costPerReviewUsd: null, costPerRealFindingUsd: null }),
+    ],
+    coverage: { reviews: 126, pricedReviews: 120, reviewsWithTokens: 126, reviewsWithModel: 126, evidence: 11, misses: 12 },
+  }));
   await page.route('**/api/workspace/screenshots*', json({ windowHours: 72, projectFilter: null, screenshots: [] }));
   await page.route('**/api/v1/workspaces*', json([]));
   await page.route('**/api/cli/working-memory*', json({ available: false, root: null, capturedAt: new Date().toISOString(), entries: [] }));
@@ -262,7 +281,7 @@ test.describe('Workspace settings home (Dach)', () => {
     }
 
     await page.getByTestId('token-usage-nav-codex').click();
-    await expect(page).toHaveURL(/#\/workspace\/tokens\/codex$/);
+    await expect(page).toHaveURL(/#\/workspace\/settings\/tokens\/codex$/);
     await expect(page.getByTestId('cli-window-analysis-codex')).toContainText('Codex usage windows');
     await page.getByTestId('cli-window-period-7d').click();
     await expect(page.getByTestId('cli-window-period-7d')).toHaveAttribute('aria-pressed', 'true');
@@ -273,6 +292,34 @@ test.describe('Workspace settings home (Dach)', () => {
     await expect(page.getByTestId('cli-usage-detail-trend')).toBeVisible();
     await expect(page.getByTestId('cli-usage-detail-headroom')).toHaveCount(0);
     await expect(page.getByTestId('cli-usage-detail-cli-claude')).toHaveCount(0);
+  });
+
+  test('Token usage shows review effectiveness per route in both themes', async ({ page }) => {
+    const resultsDir = process.env.TOKEN_USAGE_RESULTS_DIR ?? SHOT_DIR;
+    mkdirSync(resultsDir, { recursive: true });
+    await page.goto('/#/workspace/settings/tokens/reviews');
+    const panel = page.getByTestId('review-effectiveness');
+    await expect(panel).toBeVisible();
+    await expect(page.getByTestId('token-usage-nav-reviews')).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByTestId('review-effectiveness-coverage')).toContainText('126 reviews');
+    await expect(panel.locator('[data-testid^="review-effectiveness-row-"]')).toHaveCount(4);
+    await expect(page.getByTestId('review-effectiveness-row-grade|gpt-6-sol|xhigh')).toContainText('$0.610');
+    await expect(page.getByTestId('review-effectiveness-row-deep|claude-opus-5-5|max')).toContainText('n/a');
+
+    await page.setViewportSize({ width: 1800, height: 1000 });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.getByTestId('workspace-tokens-overlay').screenshot({
+        path: join(resultsDir, `token-usage-review-effectiveness--mocked-${theme}.png`),
+      });
+    }
+
+    await page.getByTestId('review-effectiveness-level-grade').click();
+    await expect(panel.locator('[data-testid^="review-effectiveness-row-"]')).toHaveCount(2);
+    await page.getByTestId('token-usage-nav-workspace').click();
+    await expect(page.getByTestId('workspace-token-timeline')).toBeVisible();
+    await page.getByTestId('token-usage-nav-reviews').click();
+    await expect(page).toHaveURL(/#\/workspace\/settings\/tokens\/reviews$/);
   });
 
   test('deep-link #/workspace/settings opens the home on the overview', async ({ page }) => {

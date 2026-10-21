@@ -750,6 +750,8 @@ builder.Services.AddSingleton<BusAggregationCache>();
 builder.Services.AddTokenUsage();
 // IP-15: OTLP intake and the built-in metrics and logs store per project environment.
 builder.Services.AddTelemetryIntake();
+// AGT-3269: review observations, later defect evidence and miss attribution.
+builder.Services.AddReviewEffectiveness();
 // Central step-call dispatch: the concrete Claude runner is wrapped by the
 // PromptLoggingCliOneShot decorator so every one-shot step prompt (aspects,
 // code-review-grade, orchestrator-decision, drift, ...) is captured raw into

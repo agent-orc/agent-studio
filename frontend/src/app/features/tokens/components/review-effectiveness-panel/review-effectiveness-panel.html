@@ -1,0 +1,76 @@
+<section class="rev" data-testid="review-effectiveness">
+  <div class="rev__controls">
+    <div class="rev__group" role="group" aria-label="Window">
+      @for (window of windows; track window) {
+        <button type="button" class="rev__chip" [class.rev__chip--active]="days() === window"
+                [attr.aria-pressed]="days() === window" [attr.data-testid]="'review-effectiveness-days-' + window"
+                (click)="setDays(window)">{{ window }} days</button>
+      }
+    </div>
+    <div class="rev__group" role="group" aria-label="Review level">
+      @for (option of levels; track option) {
+        <button type="button" class="rev__chip" [class.rev__chip--active]="level() === option"
+                [attr.aria-pressed]="level() === option" [attr.data-testid]="'review-effectiveness-level-' + option"
+                (click)="setLevel(option)">{{ levelLabel(option) }}</button>
+      }
+    </div>
+    <a class="rev__export" [href]="exportUrl()" download="review-effectiveness.json"
+       data-testid="review-effectiveness-export">Export Token Economy evidence</a>
+  </div>
+
+  @if (error(); as message) {
+    <p class="rev__note rev__note--warn" role="alert" data-testid="review-effectiveness-error">{{ message }}</p>
+  } @else if (summary(); as s) {
+    <p class="rev__note" data-testid="review-effectiveness-coverage">
+      {{ s.coverage.reviews }} reviews, {{ s.coverage.pricedReviews }} priced,
+      {{ s.coverage.evidence }} defect evidence records, {{ s.coverage.misses }} misses.
+      A miss is an approval of a delivery that a later review, the gate, an operator or production found defective.
+    </p>
+    @if (rows().length === 0) {
+      <p class="rev__note" data-testid="review-effectiveness-empty">No reviews recorded in this window.</p>
+    } @else {
+      <div class="rev__scroll">
+      <table class="rev__tab" data-testid="review-effectiveness-table">
+        <thead>
+          <tr>
+            <th>Level</th>
+            <th>Model</th>
+            <th>Reasoning</th>
+            <th class="rev__num">Reviews</th>
+            <th class="rev__num">Blocker rate</th>
+            <th class="rev__num">Miss rate</th>
+            <th class="rev__num">Cost / review</th>
+            <th class="rev__num">Cost / real finding</th>
+            <th class="rev__num">Findings B/M/m/n</th>
+            <th class="rev__num">Tokens</th>
+            <th class="rev__num">Avg time</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of rows(); track rowKey(row)) {
+            <tr [attr.data-testid]="'review-effectiveness-row-' + rowKey(row)">
+              <td>{{ levelLabel(row.level) }}</td>
+              <td>{{ row.model }}</td>
+              <td>{{ row.reasoningLevel }}</td>
+              <td class="rev__num">{{ row.reviews }}</td>
+              <td class="rev__num">{{ percent(row.blockerRate) }}</td>
+              <td class="rev__num" [attr.title]="missSources(row)" data-testid="review-effectiveness-miss-rate">
+                {{ percent(row.missRate) }} <span class="rev__sub">{{ row.missedApprovals }}/{{ row.approvals }}</span>
+              </td>
+              <td class="rev__num">{{ usd(row.costPerReviewUsd) }}</td>
+              <td class="rev__num">{{ usd(row.costPerRealFindingUsd) }}</td>
+              <td class="rev__num">
+                {{ row.findings.blocker }}/{{ row.findings.major }}/{{ row.findings.minor }}/{{ row.findings.nit }}
+              </td>
+              <td class="rev__num">{{ formatTokens(totalTokens(row)) }}</td>
+              <td class="rev__num">{{ duration(row.averageDurationMs) }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+      </div>
+    }
+  } @else if (loading()) {
+    <p class="rev__note" data-testid="review-effectiveness-loading">Loading review effectiveness...</p>
+  }
+</section>

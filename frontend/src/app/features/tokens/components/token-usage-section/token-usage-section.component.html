@@ -17,12 +17,30 @@
             data-testid="token-usage-nav-codex" (click)="pageChange.emit('codex')">
       <strong>Codex</strong><span>Account quota windows and burn</span>
     </button>
+    <div class="token-usage__tree-group">Analysis</div>
+    <button type="button" [class.token-usage__tree-item--active]="page() === 'reviews'"
+            [attr.aria-current]="page() === 'reviews' ? 'page' : null"
+            data-testid="token-usage-nav-reviews" (click)="pageChange.emit('reviews')">
+      <strong>Review effectiveness</strong><span>Cost, blockers and misses per review route</span>
+    </button>
   </aside>
 
   <div class="token-usage__page">
   @if (ledgerScopeLabel(); as scope) {
     <p class="token-usage__scope" data-testid="token-usage-ledger-scope">Opened from usage. {{ scope }}</p>
   }
+  @if (page() === 'reviews') {
+    <header class="token-usage__page-head">
+      <span class="token-usage__eyebrow">Analysis</span>
+      <h2>Review effectiveness</h2>
+      <p>Per review level, model and reasoning level: what a review costs, how often it blocks, and how often later evidence contradicted its approval.</p>
+    </header>
+    @defer {
+      <app-review-effectiveness-panel />
+    } @placeholder {
+      <p class="token-usage__hint" data-testid="review-effectiveness-deferred">Loading review effectiveness...</p>
+    }
+  } @else {
   @if (page() !== 'workspace' && ledgerScope()) {
     <app-workspace-token-timeline [scope]="ledgerScope()" />
   }
@@ -67,6 +85,7 @@
       [refreshing]="usage.refreshing()[cliPage()]"
       (refresh)="usage.refreshOne(cliPage())" />
     }
+  }
   }
   </div>
 </section>

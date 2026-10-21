@@ -1,6 +1,6 @@
 # Review Domain Map
 
-Version: 2026-10-12
+Version: 2026-10-21
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Review host placement (D19 A, AGT-3069)
@@ -1026,6 +1026,57 @@ the Result-SHA against the integration ref directly, so all three freeze the
 same no-change decision. The replan no longer diffs the result ref, which
 usually exists only under `refs/remotes/origin` in the Studio checkout.
 
+## Review effectiveness ledger (AGT-3269)
+
+Studio records what each review cost and whether later evidence contradicted
+its approval, so review depth and reasoning level can be chosen from measured
+misses instead of opinion.
+
+- **Observation.** Every fresh aspect verdict and every code-review grade that
+  `PipelineExecutionLog.RecordStep` writes reaches
+  `ReviewEffectivenessService` through `IPipelineStepObserver`. It records
+  level (`aspect`, `grade`, `deep`), model, reasoning level, the four token
+  counters, duration, the step's Token Economy cost, verdict, and findings by
+  severity. An aspect block counts as one blocker and aspect concerns as one
+  minor finding; grade findings are classified by their leading tag
+  (`[major] ...`). Carried-over aspect rows and failed aspect rows
+  (environmental crash, CLI error, fail-closed block after a failed command)
+  are not reviews.
+  Deep reviews run outside the plan are recorded with
+  `POST /api/review-effectiveness/reviews`.
+- **Delivery.** One pipeline attempt of a task and the coding round inside it
+  (the `core-agent-run` run count). A reissue or a bounded fix round is a new
+  delivery, and evidence never crosses deliveries.
+- **Later evidence and misses.** A failed build/test gate (`fail`,
+  `cached-fail`, or a failed remote tool gate), an operator send-back from
+  Human Review, a blocking review of another level, and operator, production
+  incident or rollback records from `POST /api/review-effectiveness/evidence`
+  are defect evidence. `ReviewMissAttributionPolicy` attributes a miss to every
+  approval (pass, concerns, grade A-C) of the same delivery; a blocking review
+  only counts against the other levels. Misses are stored once per approval
+  and evidence pair, so replays never double count.
+- **Aggregates.** `GET /api/review-effectiveness?days=30` groups by level,
+  model and reasoning level: cost per review, blocker rate, miss rate (missed
+  approvals divided by approvals), misses by source, cost per real finding
+  (blocker, major, minor), tokens, and average duration. Unpriced reviews
+  stay in coverage and out of cost figures. The Token usage view shows it
+  under Analysis, Review effectiveness (`#/workspace/settings/tokens/reviews`).
+- **Review depth.** `GET /api/review-effectiveness/depth-advice?level=grade&model=...&reasoning=xhigh`
+  returns `ReviewDepthAdvisor`'s pure advice: insufficient evidence below 20
+  approvals, a deep review when the miss rate reaches 15 percent, a cheaper
+  reasoning level of the same model when it has enough approvals, a priced
+  cost per review below the current one, and a miss rate within 2 points.
+  The advice is evidence for the orchestrator and never lowers a routing
+  correctness floor.
+- **Export.** `GET /api/review-effectiveness/export` writes the cohorts in the
+  Token Economy evidence layout: `schemaVersion`, `generatedAt`, source
+  window, stated method, coverage, and validity warnings, marked
+  `evidenceClass: observational`, `evidenceSource: ObservedRun`, and
+  `publishedFact: false`. It carries no prices or catalogue facts and is
+  imported apart from Token Economy's published data.
+- **Storage.** `{TaskRepository}/review-effectiveness/review-effectiveness.sqlite`,
+  or `ReviewEffectiveness:StoreRoot`. Without either, recording is off.
+
 ## Key code and tests
 
 - `runner/RemoteReviewWorkspace.cs`: exact checkout, integration-ref fetch,
@@ -1064,6 +1115,10 @@ usually exists only under `refs/remotes/origin` in the Studio checkout.
   host-global build servers left behind by concurrent attempts.
 - `backend.Tests/ReviewGradingPolicyTests.cs`: uncited-block downgrade and cited
   block preservation.
+- `backend/Features/Review/Effectiveness/` with
+  `backend.Tests/ReviewEffectivenessPolicyTests.cs` and
+  `backend.Tests/ReviewEffectivenessRecordingTests.cs`: the review-effectiveness
+  ledger, miss attribution, aggregates, depth advice, and export.
 - `backend/Features/Review/ReviewFindingDataBlock.cs` and
   `backend.Tests/ReviewFindingDataBoundaryTests.cs`: the nonce-fenced data
   boundary for reviewer findings, tested with instruction-like finding text.

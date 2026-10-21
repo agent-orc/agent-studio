@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TestBed } from '@angular/core/testing';
+import { DeferBlockState, TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
@@ -38,6 +38,28 @@ describe('TokenUsageSectionComponent (smoke)', () => {
     expect(params.get('projectId')).toBe('PROJ-002');
     expect(fixture.nativeElement.querySelector('[data-testid="token-usage-ledger-scope"]')?.textContent)
       .toContain('workspace ws-2');
+    fixture.destroy();
+  });
+  it('renders the review effectiveness analysis on its own page and asks for it from the tree', async () => {
+    await TestBed.configureTestingModule({
+      imports: [TokenUsageSectionComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TokenUsageSectionComponent);
+    const emitted: string[] = [];
+    fixture.componentInstance.pageChange.subscribe(page => emitted.push(page));
+    fixture.componentRef.setInput('page', 'reviews');
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    // The panel is deferred out of the initial bundle; render its loaded state.
+    const [deferred] = await fixture.getDeferBlocks();
+    await deferred.render(DeferBlockState.Complete);
+
+    expect(el.querySelector('app-review-effectiveness-panel')).not.toBeNull();
+    expect(el.querySelector('app-workspace-token-timeline')).toBeNull();
+    expect(el.querySelector('[data-testid="token-usage-nav-reviews"]')?.getAttribute('aria-current')).toBe('page');
+    (el.querySelector('[data-testid="token-usage-nav-workspace"]') as HTMLButtonElement).click();
+    expect(emitted).toEqual(['workspace']);
     fixture.destroy();
   });
   it('compiles + instantiates without throwing', async () => {

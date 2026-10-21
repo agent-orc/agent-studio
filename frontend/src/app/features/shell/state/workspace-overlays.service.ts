@@ -45,7 +45,7 @@ export type WorkspaceSettingsSection =
   | 'tokens'
   | 'screenshots';
 
-export type WorkspaceTokenUsagePage = 'workspace' | 'claude' | 'codex';
+export type WorkspaceTokenUsagePage = 'workspace' | 'claude' | 'codex' | 'reviews';
 
 /**
  * Shell-feature service: open/close state + URL-hash sync for the consolidated
@@ -215,6 +215,7 @@ export class WorkspaceOverlaysService {
       case '/workspace/settings/tokens': return 'tokens';
       case '/workspace/settings/tokens/claude': return 'tokens';
       case '/workspace/settings/tokens/codex': return 'tokens';
+      case '/workspace/settings/tokens/reviews': return 'tokens';
       case '/workspace/screenshots': return 'screenshots';
       case '/workspace/settings/screenshots': return 'screenshots';
       case '/workspace/settings/caps':
@@ -254,6 +255,7 @@ export class WorkspaceOverlaysService {
     if (route === '/workspace/tokens/codex' || route === '/workspace/settings/tokens/codex') {
       return 'codex';
     }
+    if (route === '/workspace/settings/tokens/reviews') return 'reviews';
     return 'workspace';
   }
 

@@ -85,6 +85,17 @@ describe('WorkspaceOverlaysService canonical settings routes', () => {
     expect(window.location.hash).toBe('#/workspace/settings/environment');
   });
 
+  it('opens the review effectiveness page from its deep link and keeps it canonical', () => {
+    history.replaceState(null, '', '/#/workspace/settings/tokens/reviews');
+    const service = new WorkspaceOverlaysService();
+
+    service.syncFromHash();
+
+    expect(service.section()).toBe('tokens');
+    expect(service.tokenUsagePage()).toBe('reviews');
+    expect(window.location.hash).toBe('#/workspace/settings/tokens/reviews');
+  });
+
   it('reads legacy loose routes and republishes the canonical path', () => {
     history.replaceState(null, '', '/#/workspace/tokens/claude');
     const service = new WorkspaceOverlaysService();

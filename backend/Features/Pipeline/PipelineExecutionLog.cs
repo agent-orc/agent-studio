@@ -53,11 +53,16 @@ public sealed class PipelineExecutionLog
     private readonly ConcurrentDictionary<string, ReadCacheEntry> _readCache =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly AsyncLocal<AttemptFence?> _attemptFence = new();
+    private readonly IPipelineStepObserver? _stepObserver;
 
-    public PipelineExecutionLog(ITokenPricing pricing, ILogger<PipelineExecutionLog> logger)
+    public PipelineExecutionLog(
+        ITokenPricing pricing,
+        ILogger<PipelineExecutionLog> logger,
+        IPipelineStepObserver? stepObserver = null)
     {
         _pricing = pricing;
         _logger = logger;
+        _stepObserver = stepObserver;
     }
 
     /// <summary>
@@ -283,6 +288,7 @@ public sealed class PipelineExecutionLog
     /// </summary>
     public void RecordStep(string jobFolderPath, PipelineStepExecution stepResult)
     {
+        PipelineExecutionRecord recorded;
         var lockObj = _locks.GetOrAdd(NormalizeKey(jobFolderPath), _ => new object());
         lock (lockObj)
         {
@@ -318,9 +324,30 @@ public sealed class PipelineExecutionLog
                 }
             }
             if (!replaced)
-                updatedSteps.Add(Measure(jobFolderPath, StepCostMeasurement.CarryRuns(_pricing, null, stepResult)));
+            {
+                stepResult = Measure(jobFolderPath, StepCostMeasurement.CarryRuns(_pricing, null, stepResult));
+                updatedSteps.Add(stepResult);
+            }
 
-            WriteAtomic(jobFolderPath, current with { Steps = updatedSteps });
+            recorded = current with { Steps = updatedSteps };
+            WriteAtomic(jobFolderPath, recorded);
+        }
+        NotifyObserver(jobFolderPath, recorded, stepResult);
+    }
+
+    private void NotifyObserver(string jobFolderPath, PipelineExecutionRecord record, PipelineStepExecution step)
+    {
+        if (_stepObserver is null) return;
+        try
+        {
+            _stepObserver.StepRecorded(jobFolderPath, record, step);
+        }
+        catch (Exception ex)
+        {
+            // Observers are read models; a failure never undoes the step write.
+            _logger.LogWarning(ex,
+                "PipelineExecutionLog: step observer failed for {Folder}/{StepId}",
+                jobFolderPath, step.StepId);
         }
     }
 

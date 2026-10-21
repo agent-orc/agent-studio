@@ -4,8 +4,9 @@ import type { CliType } from '../../../../models/task.model';
 import { CliUsageStore } from '../../services/cli-usage.store';
 import { CliUsageDetailComponent } from '../cli-usage-detail/cli-usage-detail';
 import { CliWindowAnalysisComponent } from '../cli-window-analysis/cli-window-analysis';
+import { ReviewEffectivenessPanelComponent } from '../review-effectiveness-panel/review-effectiveness-panel';
 
-type WorkspaceTokenUsagePage = 'workspace' | 'claude' | 'codex';
+type WorkspaceTokenUsagePage = 'workspace' | 'claude' | 'codex' | 'reviews';
 import { WorkspaceTokenTimelineComponent } from '../workspace-token-timeline/workspace-token-timeline';
 
 /**
@@ -26,7 +27,7 @@ import { WorkspaceTokenTimelineComponent } from '../workspace-token-timeline/wor
 @Component({
   selector: 'app-token-usage-section',
   standalone: true,
-  imports: [WorkspaceTokenTimelineComponent, CliUsageDetailComponent, CliWindowAnalysisComponent],
+  imports: [WorkspaceTokenTimelineComponent, CliUsageDetailComponent, CliWindowAnalysisComponent, ReviewEffectivenessPanelComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './token-usage-section.component.html',
   styleUrl: './token-usage-section.component.scss',

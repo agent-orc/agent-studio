@@ -105,6 +105,7 @@ public static class EndpointMapping
         app.MapUsageCockpitEndpoints();
         app.MapPipelineHealthEndpoints();
         app.MapGateEconomicsEndpoints();
+        app.MapReviewEffectivenessEndpoints();
         app.MapOperatorSweepEndpoints();
         app.MapFailureInterventionEndpoints();
         app.MapCauseBreakerEndpoints();
