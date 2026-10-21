@@ -19,6 +19,11 @@ function uid(suffix: string) {
   return `e2e-extlane-${suffix}-${Date.now()}-${Math.floor(Math.random() * 9999)}`;
 }
 
+function projectBoardUrl(name: string): string {
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return `/#/projects/${slug}/board`;
+}
+
 async function clickCardAndWaitForDetail(page: Page, jobId: string): Promise<void> {
   await page.locator('[data-testid="job-card"]', { hasText: jobId }).first().click();
   await expect(page).toHaveURL(new RegExp(`job=${encodeURIComponent(jobId)}`), { timeout: 10_000 });
@@ -44,7 +49,7 @@ test.describe('External lane change keeps task in view', () => {
       await expect.poll(async () =>
         (await api<Array<{ id: string }>>('/api/tasks?includeFixtures=true')).map(job => job.id),
       { timeout: 15_000 }).toContain(ids[0]);
-      await page.goto('/');
+      await page.goto(projectBoardUrl(wp.name));
       await waitForFixtureCards(page, ids);
 
       // Open the third job. Pager captures the 2-ready lane.
@@ -109,7 +114,7 @@ test.describe('External lane change keeps task in view', () => {
     }
 
     try {
-      await page.goto('/');
+      await page.goto(projectBoardUrl(wp.name));
       await waitForFixtureCards(page, ids);
       await clickCardAndWaitForDetail(page, ids[0]);
 
