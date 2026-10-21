@@ -205,6 +205,8 @@ public sealed record BuildTestGateResult(
     public string GateId { get; init; } = PipelineCatalogue.BuildTestGateStepId;
     public string? Repository { get; init; }
     public string? ExpectedSha { get; init; }
+    /// <summary>Whether the delivery was integrated before this gate started.</summary>
+    public bool DeliveryIntegratedAtStart { get; init; }
     public string? TestedSha { get; init; }
     public string? AttemptChainId { get; init; }
     public string? Executor { get; init; }

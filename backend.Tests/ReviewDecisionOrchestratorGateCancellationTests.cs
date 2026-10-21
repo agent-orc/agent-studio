@@ -58,6 +58,42 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
             Assert.False(fixRoundGate.IsCancellationRequested);
     }
 
+    [Fact]
+    public async Task Reopen_during_completion_callback_clears_the_gate_tombstone()
+    {
+        const string slug = "reopen-during-completion";
+        var registry = new TaskGateCancellationRegistry();
+        SeedReviewJobWithDone(slug, "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
+        BuildOrchestrator(new CountingAspect().Cli, 0, timeProvider: new CancellationClock(),
+            gateCancellation: registry);
+        Assert.Equal(MoveJobStatus.Success,
+            _cancellationStateMachine!.MoveJob(slug, TaskStates.HumanReview, _watchPath).Status);
+        TaskJsonFile.UpdateField(Path.Combine(_watchPath, TaskStates.HumanReview, slug), "requiresIntegration",
+            false, NullLogger<TaskTransitionService>.Instance);
+        _cancellationScanner!.InvalidateCache();
+        var reopened = false;
+        _cancellationTransitions!.OnJobMoved += (_, movedId, _, target) =>
+        {
+            if (movedId != slug || target != TaskStates.Completed) return;
+            Assert.True(registry.HasCompletionTombstone(Project, slug));
+            Assert.Equal(MoveJobStatus.Success,
+                _cancellationStateMachine.MoveJob(slug, TaskStates.HumanReview, _watchPath).Status);
+            reopened = true;
+        };
+
+        var accepted = await _cancellationTransitions.MoveAsync(slug, TaskStates.Completed, _watchPath,
+            cause: "operator:test", reason: "Accepted the reviewed result.", operatorOverride: true)
+            .WaitAsync(AsyncTestDeadline);
+
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        Assert.True(reopened);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, slug)));
+        Assert.False(registry.HasCompletionTombstone(Project, slug));
+        using var nextGate = new CancellationTokenSource();
+        using (registry.Register(Project, slug, nextGate))
+            Assert.False(nextGate.IsCancellationRequested);
+    }
+
     private async Task AcceptReviewedCardAsync(string slug, TaskGateCancellationRegistry registry)
     {
         SeedReviewJobWithDone(slug, "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
@@ -171,6 +207,68 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests
 
         Assert.True(aspect.Invocations > 0);
         Assert.Equal(1, transport.Calls);
+    }
+
+    [Fact]
+    public async Task Gate_failure_for_delivery_integrated_at_start_reaches_failure_decision()
+    {
+        const string slug = "integrated-before-failure";
+        SeedReviewJobWithDone(slug, "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
+        WriteRemoteSubject(slug, new string('a', 40), "already-integrated");
+        var transport = new CancellationTransport(request =>
+        {
+            Assert.True(request.DeliveryIntegratedAtStart);
+            return new BuildTestGateResult(BuildTestGateVerdict.Fail, 1, 10,
+                "dotnet test failed", "test failure", true, false)
+            {
+                ExpectedSha = request.ExpectedSha,
+                TestedSha = request.ExpectedSha,
+                GateId = request.GateId,
+                FailureKind = BuildTestGateFailureKind.Code,
+            };
+        });
+        var orchestrator = BuildOrchestrator(new CountingAspect().Cli, 0,
+            new RemoteBuildTestGateRunner(transport, NullLogger<RemoteBuildTestGateRunner>.Instance),
+            new CancellationClock());
+        orchestrator.GateDeliveryIntegratedProbe = _ => true;
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None).WaitAsync(AsyncTestDeadline);
+
+        var folder = Path.Combine(_watchPath, TaskStates.Escalated, slug);
+        Assert.True(Directory.Exists(folder));
+        Assert.DoesNotContain(new TimelineLog(NullLogger<TimelineLog>.Instance).ReadAll(folder),
+            item => item.Kind == "gate-result-superseded");
+        Assert.Contains(ReviewDecisionLog.ReadAll(_workspace, Project),
+            item => item.JobId == slug && item.Kind == ReviewDecisionKind.Escalate);
+    }
+
+    [Fact]
+    public async Task Shutdown_of_gate_integrated_at_start_schedules_infrastructure_retry()
+    {
+        const string slug = "integrated-before-shutdown";
+        var sha = new string('a', 40);
+        SeedReviewJobWithDone(slug, "## Summary\nDone.\n\nResult: Success\n\n## Open Items\nNone\n");
+        WriteRemoteSubject(slug, sha, "already-integrated");
+        using var shutdown = new CancellationTokenSource();
+        var transport = new CancellationTransport(request =>
+        {
+            Assert.True(request.DeliveryIntegratedAtStart);
+            shutdown.Cancel();
+            throw new OperationCanceledException(shutdown.Token);
+        });
+        var clock = new CancellationClock();
+        var orchestrator = BuildOrchestrator(new CountingAspect().Cli, 3,
+            new RemoteBuildTestGateRunner(transport, NullLogger<RemoteBuildTestGateRunner>.Instance),
+            clock);
+        orchestrator.GateDeliveryIntegratedProbe = _ => true;
+
+        await orchestrator.TickOnceAsync(_workspace, shutdown.Token).WaitAsync(AsyncTestDeadline);
+
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, slug);
+        Assert.True(Directory.Exists(folder));
+        Assert.IsType<GateCancellationRetry>(GateCancellationRetry.Read(folder, sha, "already-integrated"));
+        Assert.Equal("shutdown", Assert.Single(new TimelineLog(NullLogger<TimelineLog>.Instance)
+            .ReadAll(folder), item => item.Kind == "gate-cancelled").Details!["reason"]);
     }
 
     [Fact]

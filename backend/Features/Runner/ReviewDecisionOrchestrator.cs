@@ -4542,7 +4542,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (MonolithTransitionAdapter.GateCancellationOwnsResult(result.ExpectedSha, liveSubject?.Sha,
                 result.AttemptChainId, liveSubject?.AttemptChainId,
                 reviewed.State, live?.State, live?.PendingIntent is not null)
-            && !IsGateDeliveryIntegrated(live))
+            && (result.DeliveryIntegratedAtStart || !IsGateDeliveryIntegrated(live)))
             return false;
 
         // An intervention can invalidate the scanner index while the operator
@@ -4777,6 +4777,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 GateId = request.GateId,
                 Repository = result.Repository ?? repoPath,
                 ExpectedSha = result.ExpectedSha ?? subject.Sha,
+                DeliveryIntegratedAtStart = request.DeliveryIntegratedAtStart,
                 AttemptChainId = result.AttemptChainId ?? subject.AttemptChainId,
                 Executor = result.Executor ?? subject.Executor,
                 FailureKind = normalizedKind,
@@ -4826,7 +4827,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 var cancellationReason = MonolithTransitionAdapter.GateCancellation(subject.Sha, liveSha,
                     current.State, live?.State, live?.PendingIntent is not null,
                     ct.IsCancellationRequested, result.CancellationReason);
-                if (IsGateDeliveryIntegrated(live))
+                if (!request.DeliveryIntegratedAtStart && IsGateDeliveryIntegrated(live))
                     cancellationReason = GateCancellationReasons.Superseded;
                 result = GateCancellationResultProjector.Apply(result, cancellationReason);
                 var folder = live?.FolderPath ?? current.FolderPath;
