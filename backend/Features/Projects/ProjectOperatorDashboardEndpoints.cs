@@ -64,8 +64,9 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapPost("/api/projects/{projectName}/environments/{environmentId}/stop", (
             HttpContext context, string projectName, string environmentId, ProjectEnvironmentService environments) =>
+            // The host stops the environment; it stays running and counted until the host acknowledges.
             environments.Stop(projectName, environmentId, DeployEndpoints.Actor(context, projectName).Id)
-                ? Results.Ok() : Results.Conflict(new { error = "The environment is not deployed or is already stopped." }))
+                ? Results.Accepted() : Results.Conflict(new { error = "The environment is not deployed, is already stopped or has a stop pending." }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         app.MapPost("/api/deploy/jobs/claim", (HttpContext context, DeployClaimRequest request,

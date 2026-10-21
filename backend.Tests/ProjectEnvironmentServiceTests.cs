@@ -358,6 +358,11 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal("pending", Assert.Single(service.Read("demo")!.Promotions).Status);
 
         Assert.True(service.Stop("demo", "stage", "operator"));
+        // The stop waits for the stage host; until it acknowledges, the environment keeps its slot.
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        var stop = service.Claim("stage-host")!;
+        Assert.True(stop.IsStop);
+        Assert.True(service.Report("demo", stop.Id, new(stop.LeaseToken!, true, "stop-ok")));
         Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
         Assert.Equal("stopped", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
         Assert.True(service.Decide("demo", _artifact, true, "operator"));
@@ -386,6 +391,68 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var stage = service.Claim("stage-host")!;
         Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, false, "health-http-failed")));
         Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    [Fact]
+    public void Healthy_deploy_keeps_its_slot_through_the_minute_reconciliation()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var stage = service.Claim("stage-host")!;
+        Assert.True(stage.ReservedSlot);
+        Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+
+        // The report settled the reservation; the running environment now holds the slot.
+        Assert.False(Assert.Single(service.Read("demo")!.Jobs).ReservedSlot);
+        for (var minute = 0; minute < 10; minute++)
+        {
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            service.ReconcileHostingSlots();
+        }
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Equal("healthy", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+    }
+
+    [Fact]
+    public void Unconfirmed_stop_leaves_the_environment_running_and_its_slot_occupied()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var stage = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+
+        Assert.True(service.Stop("demo", "stage", "operator"));
+        Assert.False(service.Stop("demo", "stage", "operator"));
+        // Another host cannot claim the stop, and an unclaimed stop changes nothing.
+        Assert.Null(service.Claim("prod-host"));
+        service.ReconcileHostingSlots();
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Equal("healthy", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+
+        // The host fails the stop: still running and counted.
+        var failed = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", failed.Id, new(failed.LeaseToken!, false, "stop-failed")));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Equal("healthy", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+
+        // A claimed stop whose host never reports is lost without stopping anything.
+        Assert.True(service.Stop("demo", "stage", "operator"));
+        Assert.True(service.Claim("stage-host")!.IsStop);
+        _clock.Advance(ProjectEnvironmentService.HostLostAfter + TimeSpan.FromMinutes(1));
+        service.ReconcileHostingSlots();
+        Assert.Null(service.Claim("stage-host"));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Equal("healthy", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
     }
 
     [Fact]
