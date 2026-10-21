@@ -833,6 +833,7 @@ public sealed class TaskAccessService : ITaskAccess, ITaskAccessHost
         try
         {
             Directory.Delete(folder, recursive: true);
+            _scanner.RemoveCoreByFolder(folder);
             _scanner.InvalidateCache();
         }
         catch (IOException ioex)
