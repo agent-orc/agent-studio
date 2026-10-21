@@ -16,13 +16,17 @@ using Microsoft.Extensions.Time.Testing;
 using AgentStudio.Review;
 using AgentStudio.Security;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace AgentStudio.Tests;
 
 public sealed class TaskCoreEndpointTests : IDisposable
 {
+    private readonly ITestOutputHelper _output;
     private readonly string _root = Path.Combine(Path.GetTempPath(), "task-core-http-" + Guid.NewGuid().ToString("N"));
     private string Jobs => Path.Combine(_root, "jobs");
+
+    public TaskCoreEndpointTests(ITestOutputHelper output) => _output = output;
 
     [Fact]
     public async Task LegacyDetail_UsesPublishedCardWhileOtherCardsAreDirty_WithoutTokenFold()
@@ -192,7 +196,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
             var folder = Path.Combine(Jobs, TaskStates.Ready, $"AGT-fixture-{i}");
             Directory.CreateDirectory(folder);
             File.WriteAllText(Path.Combine(folder, "task.json"),
-                JsonSerializer.Serialize(new { id = $"AGT-fixture-{i}", title = "Fixture",
+                JsonSerializer.Serialize(new { id = $"AGT-fixture-{i}", key = $"CP-{10000 + i}", title = "Fixture",
                     state = TaskStates.Ready, order = i, ownerClientId = "local-default",
                     fixture = true }));
         }
@@ -202,6 +206,21 @@ public sealed class TaskCoreEndpointTests : IDisposable
             {
                 services.RemoveAll<TimeProvider>();
                 services.AddSingleton<TimeProvider>(clock);
+                services.RemoveAll<TaskIndexCache>();
+                services.AddSingleton(provider =>
+                {
+                    var scanner = provider.GetRequiredService<TaskScannerService>();
+                    return new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance,
+                        provider.GetRequiredService<IConfiguration>(), () =>
+                        {
+                            // A request-path full scan spends a deterministic 500 ms
+                            // of the injected latency budget. Background drift scans
+                            // have no request trace and do not charge this budget.
+                            if (TaskSwitchTrace.Current is not null)
+                                clock.Advance(TimeSpan.FromMilliseconds(500));
+                            return scanner.ScanAllJobsRaw();
+                        }, timeProvider: clock);
+                });
             }));
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
@@ -210,6 +229,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         var index = factory.Services.GetRequiredService<TaskIndexCache>();
         index.GetSnapshot();
         var durations = new List<double>();
+        var serverDurations = new List<double>();
         for (var i = 0; i < 60; i++)
         {
             if (i % 10 == 0)
@@ -226,6 +246,9 @@ public sealed class TaskCoreEndpointTests : IDisposable
             response.EnsureSuccessStatusCode();
             Assert.Equal("0", response.Headers.GetValues("X-Task-Detail-Workspace-Scans").Single());
             durations.Add(clock.GetElapsedTime(started).TotalMilliseconds);
+            var timing = response.Headers.GetValues("Server-Timing").SelectMany(value => value.Split(','))
+                .Select(value => value.Trim()).First(value => value.StartsWith("task-op;dur=", StringComparison.Ordinal));
+            serverDurations.Add(double.Parse(timing["task-op;dur=".Length..], CultureInfo.InvariantCulture));
         }
         durations.Sort();
         var p50 = durations[(int)Math.Ceiling(durations.Count * 0.5) - 1];
@@ -233,6 +256,9 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Assert.True(p50 < 100, $"Card detail p50 {p50:F1} ms exceeds 100 ms.");
         Assert.True(p95 < 300, $"Card detail p95 {p95:F1} ms exceeds 300 ms.");
         Assert.Equal(2800, index.GetAllResidentTasks().Count);
+        serverDurations.Sort();
+        _output.WriteLine("Traced detail Server-Timing task-op: p50={0:F1} ms, p95={1:F1} ms, max={2:F1} ms (60 reads, 2800 cards).",
+            serverDurations[29], serverDurations[56], serverDurations[^1]);
     }
 
     [Theory]

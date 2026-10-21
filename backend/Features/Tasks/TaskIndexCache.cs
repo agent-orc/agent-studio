@@ -985,16 +985,18 @@ public sealed class TaskIndexCache
             {
                 Dictionary<string, TaskInfo> mergedFacts;
                 Dictionary<string, TaskCoreRecord> mergedRecords;
+                Dictionary<string, long> currentFolderVersions;
                 lock (_lock)
                 {
                     mergedFacts = new Dictionary<string, TaskInfo>(_coreFactsByFolder, _coreFactsByFolder.Comparer);
                     mergedRecords = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer);
+                    currentFolderVersions = new Dictionary<string, long>(_coreFolderVersions, _coreFolderVersions.Comparer);
                 }
                 var adopted = new List<string>();
                 var removed = new List<string>();
                 foreach (var (folder, scanned) in factsByFolder)
                 {
-                    if (_coreFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore) continue;
+                    if (currentFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore) continue;
                     mergedFacts[folder] = scanned;
                     mergedRecords[folder] = byFolder[folder];
                     adopted.Add(folder);
@@ -1002,7 +1004,7 @@ public sealed class TaskIndexCache
                 foreach (var folder in mergedFacts.Keys.ToArray())
                 {
                     if (factsByFolder.ContainsKey(folder)
-                        || _coreFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore) continue;
+                        || currentFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore) continue;
                     mergedFacts.Remove(folder);
                     mergedRecords.Remove(folder);
                     removed.Add(folder);
@@ -1020,12 +1022,16 @@ public sealed class TaskIndexCache
                     foreach (var folder in adopted)
                     {
                         _coreTaskStamps[folder] = stamps[folder];
-                        _staleCoreFolders.Remove(folder);
+                        if (_coreFolderVersions.GetValueOrDefault(folder)
+                            == currentFolderVersions.GetValueOrDefault(folder))
+                            _staleCoreFolders.Remove(folder);
                     }
                     foreach (var folder in removed)
                     {
                         _coreTaskStamps.Remove(folder);
-                        _staleCoreFolders.Remove(folder);
+                        if (_coreFolderVersions.GetValueOrDefault(folder)
+                            == currentFolderVersions.GetValueOrDefault(folder))
+                            _staleCoreFolders.Remove(folder);
                     }
                     // Tombstones for absent cards survive unrelated scans and
                     // writes. A card that reappears releases only its aliases.

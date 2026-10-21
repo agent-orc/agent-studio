@@ -68,6 +68,42 @@ public class TaskIndexCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task Rescan_DoesNotClearWatcherStalenessForAChangedFolder()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "Before");
+        var clock = new FakeTimeProvider();
+        var scanned = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scans = 0;
+        var cache = new TaskIndexCache(_scanner, NullLogger<TaskIndexCache>.Instance, _config,
+            () =>
+            {
+                var facts = _scanner.ScanAllJobsRaw();
+                if (Interlocked.Increment(ref scans) > 1)
+                {
+                    scanned.TrySetResult(true);
+                    release.Task.GetAwaiter().GetResult();
+                }
+                return facts;
+            }, timeProvider: clock);
+        _scanner.SetIndexCache(cache);
+        cache.GetSnapshot();
+        cache.Invalidate();
+        _ = cache.GetDetailFacts("card-a", _watchPath);
+        try
+        {
+            await scanned.Task;
+            WriteJob(TaskStates.Ready, "card-a", "After changed");
+            cache.NotifyCoreFileChanged(Path.Combine(_watchPath, TaskStates.Ready, "card-a", "task.json"));
+        }
+        finally { release.TrySetResult(true); }
+        if (cache.RefreshInFlight is { } refresh) await refresh;
+        var detail = cache.GetDetailFacts("card-a", _watchPath);
+        Assert.Equal("Before", detail.Info?.Title);
+        Assert.True(detail.Stale);
+    }
+
+    [Fact]
     public async Task DetailFacts_WaitsForItsPublication_AndMarksABoundedTimeout()
     {
         WriteJob(TaskStates.Ready, "card-a", "Before");
