@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Security.Cryptography;
+using AgentStudio.Secrets;
 
 namespace AgentStudio.Projects;
 
@@ -23,7 +24,10 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     string Artifact, string Template, string Destination, string? HealthUrl,
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
-    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0);
+    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0,
+    IReadOnlyDictionary<string, string>? SecretBindings = null,
+    IReadOnlyList<AgentStudio.Secrets.MissingSecretReference>? MissingSecretRefs = null,
+    string? EnvironmentKind = null);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -187,6 +191,8 @@ public sealed class ProjectEnvironmentService
         if (!Identifier.IsMatch(id) || !Identifier.IsMatch(host) || kind is not ("stage" or "production" or "other")
             || template is not ("container" or "static") || secrets.Any(item => !SecretIdentifier.IsMatch(item)))
             throw new JsonException($"Environment {Path.GetFileName(file)} has invalid identifiers, kind, template or secret refs.");
+        if (SecretEnvironmentVariable.HasCollision(secrets))
+            throw new JsonException($"Environment {Path.GetFileName(file)} has secret refs that map to the same container variable.");
         var destination = Required("destination");
         if (template == "static" && (!Path.IsPathFullyQualified(destination) || destination.Contains("..", StringComparison.Ordinal)))
             throw new JsonException("Static destination must be an absolute path without traversal.");
@@ -510,6 +516,7 @@ public sealed class ProjectEnvironmentService
                 var claimed = job with
                 {
                     Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N"), Claims = job.Claims + 1,
+                    EnvironmentKind = SnapshotKind(job, state),
                 };
                 state.Jobs[state.Jobs.IndexOf(job)] = claimed;
                 Save(project, state);
@@ -526,10 +533,12 @@ public sealed class ProjectEnvironmentService
             return null;
         lock (_gate)
         {
-            var job = Load(project).Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
+            var state = Load(project);
+            var job = state.Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
                 && item.LeaseToken is not null && CryptographicOperations.FixedTimeEquals(
                     System.Text.Encoding.UTF8.GetBytes(item.LeaseToken), System.Text.Encoding.UTF8.GetBytes(leaseToken)));
-            return job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration ? null : job;
+            return job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration
+                ? null : job with { EnvironmentKind = SnapshotKind(job, state) };
         }
     }
 
@@ -629,6 +638,7 @@ public sealed class ProjectEnvironmentService
             {
                 Template = deployed.Template, Destination = deployed.Destination,
                 HealthUrl = deployed.HealthUrl, SecretRefs = deployed.SecretRefs, ContainerPort = deployed.ContainerPort,
+                Kind = SnapshotKind(deployed, state),
             }
             : current;
 
@@ -652,6 +662,16 @@ public sealed class ProjectEnvironmentService
     private static bool IsDeclared(IReadOnlyList<EnvironmentDeclaration>? declarations, string environmentId)
         => declarations?.Any(item => item.Id == environmentId) == true;
 
+    // Queue files written before EnvironmentKind existed recover it from the
+    // promotion. When there is no reliable snapshot, require production approval.
+    private static string SnapshotKind(DeployJob job, State state)
+    {
+        if (job.EnvironmentKind is not null) return job.EnvironmentKind;
+        var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact);
+        return promotion?.ProductionId == job.EnvironmentId ? "production"
+            : promotion?.StageId == job.EnvironmentId ? "stage" : "production";
+    }
+
     private DeployJob Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
         bool rollback = false, string? actor = null)
     {
@@ -662,7 +682,7 @@ public sealed class ProjectEnvironmentService
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
-            IsRollback: rollback, RequestedBy: actor);
+            IsRollback: rollback, RequestedBy: actor, EnvironmentKind: declaration.Kind);
         state.Jobs.Add(job);
         return job;
     }

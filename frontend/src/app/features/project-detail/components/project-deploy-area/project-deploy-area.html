@@ -9,8 +9,9 @@
     <button type="button" data-testid="deploy-tab-pipeline" [attr.aria-current]="view() === 'pipeline' ? 'page' : null" (click)="show('pipeline')">Pipeline</button>
     <button type="button" data-testid="deploy-tab-history" [attr.aria-current]="view() === 'history' ? 'page' : null" (click)="show('history')">History</button>
     <button type="button" data-testid="deploy-tab-steps" [attr.aria-current]="view() === 'steps' ? 'page' : null" (click)="show('steps')">Run steps</button>
-    <button type="button" disabled title="Planned for P2">Variables · P2</button>
-    <button type="button" disabled title="Planned for P2">Runbooks · P2</button>
+    <button type="button" data-testid="deploy-tab-secrets" [attr.aria-current]="view() === 'secrets' ? 'page' : null" (click)="show('secrets')">Secrets</button>
+    <button type="button" disabled>Variables · P2</button>
+    <button type="button" disabled>Runbooks · P2</button>
     <button type="button" data-testid="deploy-tab-operations" [attr.aria-current]="view() === 'operations' ? 'page' : null" (click)="show('operations')">Operations</button>
   </nav>
   @if (notices().length) {
@@ -27,23 +28,24 @@
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
             [now]="now()" [selectedFilter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
             (filterChange)="changeHistoryFilter($event)" (pageChange)="changeHistoryPage($event)" (openRun)="openRun($event)" /> }
-          @placeholder { <p>Loading deploy history…</p> }
-          <p class="deploy-area__tools-link">Deploy commands and the AGT-3176 promotion and rollback controls live in the
-            <button type="button" class="deploy-area__link" data-testid="deploy-open-tools" (click)="show('tools')">existing deployment tools</button>.</p>
+          @placeholder { <p>Loading history…</p> }
+          <p class="deploy-area__tools-link">Find promotion, rollback and deploy commands in
+            <button type="button" class="deploy-area__link" data-testid="deploy-open-tools" (click)="show('tools')">deployment tools</button>.</p>
         }
         @case ('releases') { <app-project-deploy-releases [panel]="releasePanel()" [environments]="cards()" [now]="now()"
           [total]="releaseTotal()" [offset]="releaseOffset()" (pageChange)="changeReleasePage($event)" /> }
-        @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading pipeline…</p> } }
+        @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading…</p> } }
         @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" /> }
         @case ('operations') { <app-environment-health-panel [projectName]="projectName()" /> }
+        @case ('secrets') { @defer { <app-project-secrets-page [projectName]="projectName()" /> } }
         @case ('history') {
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
             [now]="now()" [selectedFilter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"
             (filterChange)="changeHistoryFilter($event)" (pageChange)="changeHistoryPage($event)" (openRun)="openRun($event)" /> }
-          @placeholder { <p>Loading deploy history…</p> }
+          @placeholder { <p>Loading history…</p> }
         }
         @case ('tools') {
-          <section class="deploy-section"><button type="button" (click)="show('overview')">Back to overview</button><h2>Deployment tools and history</h2><p class="deploy-muted">Existing deployment commands and history remain available here.</p></section>
+          <section class="deploy-section"><button type="button" (click)="show('overview')">Back to overview</button><h2>Deployment tools</h2></section>
           <app-project-deployment-panel [projectName]="projectName()" />
         }
       }
@@ -51,7 +53,7 @@
     @if (selectedRun(); as run) {
       @defer { <app-deploy-run-drawer class="deploy-area__drawer" [run]="run" [log]="logPanel()" [action]="actionState()"
         (act)="act($event)" (closeRequest)="closeRun()" /> }
-      @placeholder { <p>Loading run details…</p> }
+      @placeholder { <p>Loading details…</p> }
     }
   </div>
 </div>

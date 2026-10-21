@@ -347,3 +347,73 @@ test.describe('Project Deploy area (mocked)', () => {
     await capture(page, 'deploy-history-empty-light');
   });
 });
+
+test('Project Secrets shows approval for a custom-id Production environment and keeps values write-only', async ({ page }) => {
+  const environments = deployEnvironmentsFixture();
+  environments.environments[1].declaration.id = 'live-eu';
+  await openDeploy(page, fullMocks({ environments }));
+  await page.route('**/api/secrets', route => route.fulfill({ json: {
+    store: 'builtin', keySource: 'key-file', canWriteWorkspace: true, secrets: [], unreadable: [],
+  } }));
+  await page.route(/\/api\/projects\/[^/]+\/secret-bindings\/[^/]+$/, async route => {
+    const url = new URL(route.request().url());
+    const environment = url.pathname.split('/')[5];
+    const reference = `secret://${PROJECT}/live-eu/DATABASE_URL`;
+    await route.fulfill({ json: {
+      project: PROJECT, environment, ready: environment !== 'live-eu', bindings: [],
+      missing: environment === 'live-eu'
+        ? [{ name: 'DATABASE_URL', reference, scope: `${PROJECT}/live-eu`, reason: 'not-bound' }] : [],
+    } });
+  });
+  await page.getByTestId('deploy-tab-secrets').click();
+  const secrets = page.getByTestId('project-secrets-page');
+  await expect(secrets).toBeVisible();
+  await secrets.getByTestId('project-secrets-environment').selectOption('live-eu');
+  await expect(secrets.getByTestId('project-secrets-missing')).toContainText('not-bound');
+  await secrets.getByRole('button', { name: 'Bind DATABASE_URL' }).click();
+  await secrets.getByTestId('project-secrets-approve').check();
+  await expect(secrets.getByTestId('project-secrets-reference')).toHaveValue(`secret://${PROJECT}/live-eu/DATABASE_URL`);
+  await expect(secrets.getByTestId('project-secrets-bind')).toBeEnabled();
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await capture(page, `deploy-secrets-${theme}`);
+  }
+});
+
+test('Project Secrets keeps stage bindings when the preview preflight arrives late', async ({ page }) => {
+  await openDeploy(page, fullMocks());
+  await page.route('**/api/secrets', route => route.fulfill({ json: {
+    store: 'builtin', keySource: 'key-file', canWriteWorkspace: true, secrets: [], unreadable: [],
+  } }));
+  let previewStarted!: () => void;
+  const previewRequest = new Promise<void>(resolve => { previewStarted = resolve; });
+  let releasePreview!: () => void;
+  const previewGate = new Promise<void>(resolve => { releasePreview = resolve; });
+  await page.route(/\/api\/projects\/[^/]+\/secret-bindings\/[^/]+$/, async route => {
+    const environment = new URL(route.request().url()).pathname.split('/').at(-1);
+    if (environment === 'preview') {
+      previewStarted();
+      await previewGate;
+    }
+    await route.fulfill({ json: {
+      project: PROJECT, environment, ready: true, missing: [],
+      bindings: [{ name: environment === 'preview' ? 'OLD' : 'CURRENT',
+        reference: `secret://${PROJECT}/${environment}/${environment === 'preview' ? 'OLD' : 'CURRENT'}`,
+        approvedBy: null }],
+    } });
+  });
+  await page.getByTestId('deploy-tab-secrets').click();
+  await previewRequest;
+  const secrets = page.getByTestId('project-secrets-page');
+  await secrets.getByTestId('project-secrets-environment').selectOption('stage');
+  await expect(secrets.getByText(`secret://${PROJECT}/stage/CURRENT`)).toBeVisible();
+  const staleResponse = page.waitForResponse(response => response.url().endsWith('/secret-bindings/preview'));
+  releasePreview();
+  await staleResponse;
+  await expect(secrets.getByText(`secret://${PROJECT}/stage/CURRENT`)).toBeVisible();
+  await expect(secrets.getByText(`secret://${PROJECT}/preview/OLD`)).toHaveCount(0);
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await capture(page, `deploy-secrets-stale-preflight-${theme}`);
+  }
+});
