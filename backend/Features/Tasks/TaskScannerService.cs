@@ -805,8 +805,8 @@ public class TaskScannerService : ITaskScanner
                 QuotaWait = QuotaWaitMarker.ToStatus(QuotaWaitMarker.TryRead(jobDir, _logger)),
                 CauseWait = CauseWaitMarker.ToStatus(CauseWaitMarker.TryRead(jobDir, _logger)),
                 QuotaFallback = AgentStudio.Cli.QuotaFallbackMarker.ToStatus(AgentStudio.Cli.QuotaFallbackMarker.TryRead(jobDir, _logger)),
-                Kind = TaskKinds.Normalize(raw.TryGetProperty("kind", out var kd) ? kd.GetString() : null),
-                EpicId = raw.TryGetProperty("epicId", out var ep) && !string.IsNullOrWhiteSpace(ep.GetString()) ? ep.GetString() : null,
+                Kind = RetiredContainerTask.NormalizeForRead(
+                    raw.TryGetProperty("kind", out var kd) ? kd.GetString() : null),
                 Dossier = raw.TryGetProperty("dossier", out var dossier) && dossier.ValueKind == JsonValueKind.Object
                     ? JsonSerializer.Deserialize<TaskDossier>(dossier.GetRawText(), TaskJsonFile.ReadOpts)
                     : null,

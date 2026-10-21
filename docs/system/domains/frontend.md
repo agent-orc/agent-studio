@@ -359,12 +359,12 @@ occur. It is not a claim about tunnel transfer time.
   excludes Deploy, Deployment, Pipeline, and Observability. Agent-work panels
   stay in the Deck as the Insight rail Agent activity: the message bus panel,
   token summary, supervisor and meta-cycle sections, and analysis reports.
-  Legacy `observability` sections open Operations. The Epic overview and Epic
-  grouping controls are retired from navigation (the board groups by Dossier
-  instead). Legacy `#/epics` and `#/projects/<project>/epics` routes and
-  restored Epics tabs open the Dossiers overview tab and rewrite to its URL;
-  legacy Epic data and API behavior remain until the separate data-removal
-  card.
+  Legacy `observability` sections open Operations. The board groups cards by
+  Dossier. Task detail and board surfaces no longer expose parent-card rollups
+  or assignment controls. Legacy `#/epics` and `#/projects/<project>/epics`
+  routes and restored Epics tabs open the Dossiers overview tab and rewrite to
+  its URL; parent-card data and assignment routes are retired. Incoming
+  `epicId` is ignored with a deprecation warning for one API version.
 - The Deploy overview reads declared environments from AGT-3176 and status,
   releases, deploy runs, and step logs from `/api/projects/<project>/deploy`.
   Release and run lists request `/releases/page` and `/deployments/page` with

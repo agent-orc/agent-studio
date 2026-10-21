@@ -337,32 +337,6 @@ public sealed class HumanReviewVerdictBackfillTests : IDisposable
         Assert.Empty(_timeline.ReadAll(card.FolderPath));
     }
 
-    [Fact]
-    public void Backfill_LeavesAPlanningCompletedEpicInHumanReview()
-    {
-        // An Epic planning completion parks in 5-human-review by design: it
-        // owns no Result-SHA, so no automated code review can ever run for it
-        // and it will never carry a ReviewDecisionLog record. That is not the
-        // legacy verdict-less park this sweep repairs - escalating it would
-        // just move the dead end one lane over.
-        WriteJob(
-            TaskStates.HumanReview,
-            "planned-epic",
-            createdAt: DateTime.UtcNow.AddDays(-30),
-            hasRun: true,
-            kind: TaskKinds.Epic);
-
-        _orchestrator.BackfillVerdictlessHumanReview(_workspaceRoot, CancellationToken.None);
-
-        Assert.True(Directory.Exists(
-            Path.Combine(_watchPath, TaskStates.HumanReview, "planned-epic")));
-        Assert.False(Directory.Exists(
-            Path.Combine(_watchPath, TaskStates.Escalated, "planned-epic")));
-        Assert.DoesNotContain(
-            ReviewDecisionLog.ReadAll(_workspaceRoot, ProjectName),
-            r => r.JobId == "planned-epic");
-    }
-
     private void WriteJob(
         string state,
         string slug,

@@ -121,8 +121,6 @@ async function installRoutes(
     if (pathname === '/api/v1/studio/board') return json(route, EMPTY_GROUPED);
     if (pathname === '/api/tasks/archive') return json(route, { items: [], total: 0 });
     if (pathname === '/api/tasks/reference-status') return json(route, { items: [] });
-    if (pathname === '/api/epics') return json(route, []);
-    if (pathname === '/api/epics/completed/count') return json(route, { count: 0 });
     if (/\/api\/projects\/[^/]+\/workbenches$/.test(pathname)) {
       return json(route, {
         projectName: PROJECT, includesHistory: false, count: 1, items: [WORKBENCH_LIST_ITEM],
