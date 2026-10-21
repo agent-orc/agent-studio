@@ -32,11 +32,8 @@ public sealed class MonolithOrchestrationApplier(
 
     public void RecordSuperseded(MonolithOrchestrationOccurrence occurrence, string? observedState)
     {
-        scanner.InvalidateCache();
-        var task = scanner.ScanAllJobsWithArchive().FirstOrDefault(candidate =>
-            candidate.ProjectName == occurrence.Run.ProjectId
-            && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId));
-        if (task is null) return;
+        var task = scanner.FindPublishedJob(occurrence.Run.TaskId);
+        if (task?.ProjectName != occurrence.Run.ProjectId) return;
         EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
         timeline.Append(task.FolderPath, new TimelineEvent
         {
@@ -53,7 +50,6 @@ public sealed class MonolithOrchestrationApplier(
                 ["reason"] = occurrence.CancellationReason ?? "superseded",
             },
         });
-        scanner.InvalidateCache();
         scanner.PublishCoreFromKnownFolder(task.FolderPath);
     }
 

@@ -445,9 +445,10 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         }
     }
 
-    internal void RecoverOnce()
+    internal void RecoverOnce(Action? afterTaskSnapshot = null)
     {
         var tasks = scanner.ScanAllJobs();
+        afterTaskSnapshot?.Invoke();
         // Of the card state this pass writes, the scanner projects only the wait
         // marker. A pass that wrote or removed none must not invalidate the task
         // index: a mutation invalidation makes the next freshness reader, task
@@ -464,12 +465,11 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         {
             try
             {
-                var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
-                    && item.ProjectName == occurrence.Run.ProjectId)
-                    ?? scanner.ScanAllJobsWithArchive().FirstOrDefault(item =>
-                        item.Id == occurrence.Run.TaskId && item.ProjectName == occurrence.Run.ProjectId);
-                if (card?.State != occurrence.ExpectedSourceState)
-                    store.Supersede(occurrence.Run.RunId, card?.State, includeApplying: false);
+                store.SupersedeStaleLaneDecisionAsync(occurrence.Run.RunId, () =>
+                {
+                    var card = scanner.FindPublishedJob(occurrence.Run.TaskId);
+                    return card?.ProjectName == occurrence.Run.ProjectId ? card.State : null;
+                }).GetAwaiter().GetResult();
             }
             catch (Exception exception)
             {

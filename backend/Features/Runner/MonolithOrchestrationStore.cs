@@ -75,6 +75,26 @@ public sealed class MonolithOrchestrationStore
         => item.Run.CurrentStage is not (OrchestrationStage.BatchPlan
             or OrchestrationStage.OperatorDecision or OrchestrationStage.OperatorSweep);
 
+    /// <summary>Recheck a lane decision under the same gate used by card moves and completion.</summary>
+    public async Task SupersedeStaleLaneDecisionAsync(string runId,
+        Func<string?> observeState, CancellationToken ct = default)
+    {
+        var occurrence = GetOccurrence(runId);
+        if (occurrence is null || !IsLaneDecision(occurrence)) return;
+        var gate = CardGate(occurrence.Run.ProjectId, occurrence.Run.TaskId);
+        await gate.WaitAsync(ct);
+        try
+        {
+            occurrence = GetOccurrence(runId);
+            if (occurrence is null || !IsLaneDecision(occurrence)
+                || occurrence.Run.Status is not ("pending" or "leased")) return;
+            var observedState = observeState();
+            if (observedState != occurrence.ExpectedSourceState)
+                Supersede(runId, observedState, includeApplying: false);
+        }
+        finally { gate.Release(); }
+    }
+
     private static bool IsSuperseded(MonolithOrchestrationOccurrence item)
         => item.Run.Status == "cancelled"
             && item.CancellationReason?.StartsWith("superseded:", StringComparison.Ordinal) == true;
