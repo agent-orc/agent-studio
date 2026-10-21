@@ -1,6 +1,13 @@
+using System.Net;
+using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 using Xunit;
@@ -437,6 +444,74 @@ public sealed class AccessSecurityTests : IDisposable
         Assert.Single(budgets);
         Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
             store.Login("first.owner", "correct horse battery staple!", "owner|new-address")).Status);
+    }
+
+    [Fact]
+    public async Task Large_http_login_usernames_keep_throttle_keys_and_state_bounded()
+    {
+        var (store, config, clock) = NewStore(new Dictionary<string, string?>
+        {
+            ["Security:LoginThrottle:MaxTrackedKeys"] = "8"
+        });
+        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        var field = typeof(AccessSecurityStore).GetField("_loginAttempts",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var attempts = Assert.IsAssignableFrom<System.Collections.IDictionary>(field!.GetValue(store));
+
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(config);
+        builder.Services.AddSingleton(store);
+        await using var app = builder.Build();
+        app.Use((context, next) =>
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Parse(context.Request.Headers["X-Test-Remote"]!);
+            return next();
+        });
+        app.MapAccessSecurityEndpoints();
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+
+        for (var index = 0; index < 16; index++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login")
+            {
+                Content = JsonContent.Create(new LoginRequest($"guess{index}." + new string('x', 3000), "wrong password"))
+            };
+            request.Headers.Add("X-Test-Remote", $"198.51.100.{index + 1}");
+            using var response = await client.SendAsync(request);
+            Assert.Equal(index < 8 ? HttpStatusCode.Unauthorized : HttpStatusCode.TooManyRequests, response.StatusCode);
+            Assert.InRange(attempts.Count, 0, 8);
+        }
+        Assert.Equal(8, attempts.Count);
+        foreach (string key in attempts.Keys) Assert.Equal(64, key.Length);
+
+        foreach (var chunked in new[] { false, true })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login")
+            {
+                Content = JsonContent.Create(new LoginRequest("oversized." + new string('z', 5000), "wrong password"))
+            };
+            request.Headers.Add("X-Test-Remote", "198.51.100.200");
+            request.Headers.TransferEncodingChunked = chunked;
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal("invalid-credentials", payload.RootElement.GetProperty("error").GetString());
+            Assert.Equal("Username or password is incorrect.", payload.RootElement.GetProperty("message").GetString());
+            Assert.Equal(8, attempts.Count);
+        }
+
+        clock.Advance(TimeSpan.FromMinutes(16));
+        using var validRequest = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login")
+        {
+            Content = JsonContent.Create(new LoginRequest("first.owner", "correct horse battery staple!"))
+        };
+        validRequest.Headers.Add("X-Test-Remote", "198.51.100.201");
+        using var valid = await client.SendAsync(validRequest);
+        Assert.Equal(HttpStatusCode.OK, valid.StatusCode);
+        Assert.Empty(attempts);
+        await app.StopAsync();
     }
 
     [Theory]

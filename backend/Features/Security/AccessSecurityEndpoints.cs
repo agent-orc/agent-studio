@@ -1,10 +1,13 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace AgentStudio.Security;
 
 public static class AccessSecurityEndpoints
 {
+    private const int MaxLoginPayloadBytes = 4096;
+
     public static void MapAccessSecurityEndpoints(this WebApplication app)
     {
         var auth = app.MapGroup("/api/auth");
@@ -37,9 +40,10 @@ public static class AccessSecurityEndpoints
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken));
             }));
 
-        auth.MapPost("/login", (LoginRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
-            Execute(() =>
+        auth.MapPost("/login", (HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
+            ExecuteAsync(async () =>
             {
+                var request = await ReadLoginRequestAsync(context.Request);
                 var key = $"{(request.Username ?? string.Empty).Trim().ToLowerInvariant()}|{LoginThrottleKeys.Client(context.Connection.RemoteIpAddress)}";
                 var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
@@ -242,6 +246,31 @@ public static class AccessSecurityEndpoints
         try { return operation(); }
         catch (SecurityOperationException ex) { return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status); }
     }
+
+    private static async Task<IResult> ExecuteAsync(Func<Task<IResult>> operation)
+    {
+        try { return await operation(); }
+        catch (SecurityOperationException ex) { return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status); }
+    }
+
+    private static async Task<LoginRequest> ReadLoginRequestAsync(HttpRequest request)
+    {
+        if (request.ContentLength > MaxLoginPayloadBytes) throw InvalidCredentials();
+        var buffer = new byte[MaxLoginPayloadBytes + 1];
+        var length = 0;
+        while (length < buffer.Length)
+        {
+            var read = await request.Body.ReadAsync(buffer.AsMemory(length));
+            if (read == 0) break;
+            length += read;
+        }
+        if (length > MaxLoginPayloadBytes) throw InvalidCredentials();
+        try { return JsonSerializer.Deserialize<LoginRequest>(buffer.AsSpan(0, length), JsonSerializerOptions.Web) ?? throw InvalidCredentials(); }
+        catch (JsonException) { throw InvalidCredentials(); }
+    }
+
+    private static SecurityOperationException InvalidCredentials()
+        => new(401, "invalid-credentials", "Username or password is incorrect.");
 
     private static ApiTokenResponse ToApiTokenResponse(StudioApiToken token)
         => new(token.Id, token.Name, token.Role, token.Projects, token.CreatedBy,
