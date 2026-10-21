@@ -25,14 +25,14 @@ function projectBoardUrl(name: string): string {
 }
 
 async function clickCardAndWaitForDetail(page: Page, jobId: string): Promise<void> {
-  await page.locator('[data-testid="job-card"]', { hasText: jobId }).first().click();
+  await page.getByTestId('task-card').filter({ hasText: jobId }).first().click();
   await expect(page).toHaveURL(new RegExp(`job=${encodeURIComponent(jobId)}`), { timeout: 10_000 });
   await expect(page.getByTestId('detail-state-select')).toBeVisible({ timeout: 10_000 });
 }
 
 async function waitForFixtureCards(page: Page, ids: ReadonlyArray<string>): Promise<void> {
   for (const id of ids) {
-    await expect(page.locator('[data-testid="job-card"]', { hasText: id }).first())
+    await expect(page.getByTestId('task-card').filter({ hasText: id }).first())
       .toBeVisible({ timeout: 15_000 });
   }
 }
