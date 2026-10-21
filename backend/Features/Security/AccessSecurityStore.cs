@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace AgentStudio.Security;
 
@@ -81,13 +83,15 @@ public sealed class AccessSecurityStore
     public (StudioUser User, string SessionToken, string CsrfToken) Login(string username, string password, string throttleKey)
     {
         var normalized = NormalizeUsername(username ?? string.Empty);
+        // Retain a fixed-size key even if a direct caller supplies a long name.
+        var boundedThrottleKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(throttleKey.ToLowerInvariant())));
         lock (_gate)
         {
             var now = Now;
             PruneExpiredLoginAttemptsLocked(now);
             var state = StateLocked();
             var user = state.Users.FirstOrDefault(x => x.Username == normalized);
-            if ((_loginAttempts.TryGetValue(throttleKey, out var attempt) && attempt.LockedUntil > now)
+            if ((_loginAttempts.TryGetValue(boundedThrottleKey, out var attempt) && attempt.LockedUntil > now)
                 || (user is not null && UsernameBudgetSpentLocked(normalized, now)))
                 throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
 
@@ -99,12 +103,12 @@ public sealed class AccessSecurityStore
             var valid = user is not null && !user.Disabled && passwordMatches;
             if (!valid)
             {
-                RegisterLoginFailureLocked(throttleKey, now);
+                RegisterLoginFailureLocked(boundedThrottleKey, now);
                 if (user is not null) RegisterUsernameFailureLocked(normalized, now);
                 throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
             }
 
-            _loginAttempts.Remove(throttleKey);
+            _loginAttempts.Remove(boundedThrottleKey);
             var created = CreateSessionLocked(state, user!);
             SaveLocked(state);
             return (user!, created.Token, created.Csrf);

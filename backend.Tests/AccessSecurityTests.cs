@@ -1,6 +1,13 @@
 using System.Text;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 using Xunit;
@@ -437,6 +444,60 @@ public sealed class AccessSecurityTests : IDisposable
         Assert.Single(budgets);
         Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
             store.Login("first.owner", "correct horse battery staple!", "owner|new-address")).Status);
+    }
+
+    [Fact]
+    public async Task Large_login_names_over_http_keep_retained_throttle_keys_bounded()
+    {
+        var clock = new MutableTimeProvider(DateTimeOffset.Parse("2026-07-13T12:00:00Z"));
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureTestServices(services => services.AddSingleton<TimeProvider>(clock));
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = Path.Combine(_root, "http-login"),
+                ["Security:Profile"] = "networked",
+                ["Security:LoginThrottle:MaxTrackedKeys"] = "4",
+                ["AllowedHosts"] = "studio.test"
+            }));
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://studio.test"), HandleCookies = false
+        });
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var field = typeof(AccessSecurityStore).GetField("_loginAttempts",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var attempts = Assert.IsAssignableFrom<System.Collections.IDictionary>(field!.GetValue(store));
+
+        async Task<(HttpStatusCode Status, string Error)> TryLogin(string username)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login")
+            {
+                Content = JsonContent.Create(new { username, password = "wrong password" })
+            };
+            request.Headers.Add("Origin", "https://studio.test");
+            using var response = await client.SendAsync(request);
+            var error = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()!;
+            return (response.StatusCode, error);
+        }
+
+        var oversized = await TryLogin(new string('x', 5000));
+        Assert.Equal((HttpStatusCode.Unauthorized, "invalid-credentials"), oversized);
+        Assert.Empty(attempts);
+
+        for (var index = 0; index < 12; index++)
+        {
+            var result = await TryLogin(new string((char)('a' + index), 2500));
+            Assert.Equal(index < 4 ? HttpStatusCode.Unauthorized : HttpStatusCode.TooManyRequests, result.Status);
+            Assert.InRange(attempts.Count, 0, 4);
+            Assert.All(attempts.Keys.Cast<string>(), key => Assert.Equal(64, key.Length));
+        }
+        Assert.Equal(4, attempts.Count);
+        clock.Advance(TimeSpan.FromMinutes(16));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await TryLogin(new string('z', 2500))).Status);
+        Assert.Single(attempts);
     }
 
     [Theory]
