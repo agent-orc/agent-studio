@@ -32,7 +32,9 @@ public sealed class ManagementModeMiddleware(RequestDelegate next)
         if (state.Mode == "normal"
             || path.StartsWith("/api/v1/management", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth", StringComparison.OrdinalIgnoreCase)
-            || DrainSafeWrites.Contains(path, StringComparer.OrdinalIgnoreCase))
+            || DrainSafeWrites.Contains(path, StringComparer.OrdinalIgnoreCase)
+            // Application telemetry writes only the telemetry store, never task state.
+            || path.StartsWith("/api/telemetry/otlp/", StringComparison.OrdinalIgnoreCase))
         {
             await next(context);
             return;
