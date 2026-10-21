@@ -30,7 +30,7 @@ Options:
                                      from the gated release package.
   --deploy-image-ref <image>        Registry tag to build and push from the gated checkout.
   --deploy-dockerfile <path>        Dockerfile within the gated checkout for that image.
-  --deploy-artifact-store <dir>     Shared static artifact store mounted by the deploy host.
+  --deploy-artifact-store <dir>     Deprecated compatibility option; static bytes enter the built-in registry.
   --prefer-develop-conflicts        Deprecated compatibility option; exact-SHA promotion never merges.
   --remote <name>                   Git remote (default: origin).
   --project <name>                  Agent Studio project name. After a successful push, calls
@@ -291,13 +291,14 @@ write_record() {
   local error=${6:-}
   local gate_blob
   gate_blob=$(git -C "$repo" hash-object "$gate_script")
-  printf '{"schemaVersion":1,"status":"%s","mode":"%s","remote":"%s","developSha":"%s","previousMainSha":"%s","candidateSha":"%s","releaseTag":"%s","requiredAncestor":"%s","conflictPolicy":"%s","conflicts":"%s","gate":"%s","gateScriptBlob":"%s","atomicPush":%s,"error":"%s","releasePackage":%s%s,"createdAtUtc":"%s"}\n' \
+  printf '{"schemaVersion":1,"status":"%s","mode":"%s","remote":"%s","developSha":"%s","previousMainSha":"%s","candidateSha":"%s","releaseTag":"%s","gateRunId":"%s","requiredAncestor":"%s","conflictPolicy":"%s","conflicts":"%s","gate":"%s","gateScriptBlob":"%s","atomicPush":%s,"error":"%s","releasePackage":%s%s,"createdAtUtc":"%s"}\n' \
     "$(json_escape "$status")" \
     "$(json_escape "$mode")" \
     "$(json_escape "$remote")" \
     "$(json_escape "$develop_sha")" \
     "$(json_escape "$main_sha")" \
     "$(json_escape "$candidate_sha")" \
+    "$(json_escape "$tag_name")" \
     "$(json_escape "$tag_name")" \
     "$(json_escape "$required_ancestor")" \
     exact-sha \
@@ -635,17 +636,6 @@ if [[ "$release_rc" == 0 && -n "$project" && -n "$deploy_token_file" && ( -n "$r
       || { log 'deploy image metadata has an invalid digest'; exit 9; }
     deploy_artifact="${deploy_image_ref%@*}@$image_digest"
   else
-    [[ -n "$deploy_artifact_store" ]] || { log 'static stage requires --deploy-artifact-store'; exit 9; }
-    mkdir -p "$deploy_artifact_store" || { log 'static artifact store is not writable'; exit 9; }
-    if [[ ! -f "$deploy_artifact_store/$deploy_digest" ]]; then
-      deploy_tmp="$(mktemp "$deploy_artifact_store/.${deploy_digest}.XXXXXX")"
-      cp "$release_target/release.tar.gz" "$deploy_tmp"
-      [[ "$(sha256sum "$deploy_tmp" | cut -d ' ' -f1)" == "$deploy_digest" ]] \
-        || { rm -f "$deploy_tmp"; log 'static artifact digest changed during transfer'; exit 9; }
-      mv -T "$deploy_tmp" "$deploy_artifact_store/$deploy_digest"
-    fi
-    [[ "$(sha256sum "$deploy_artifact_store/$deploy_digest" | cut -d ' ' -f1)" == "$deploy_digest" ]] \
-      || { log 'static artifact store contains a digest mismatch'; exit 9; }
     deploy_artifact="release-package@sha256:$deploy_digest"
   fi
   printf '{"project":"%s","commit":"%s","artifact":"%s","sourceSha256":"%s"}\n' \

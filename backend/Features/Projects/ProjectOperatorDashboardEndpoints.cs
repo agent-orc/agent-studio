@@ -13,12 +13,18 @@ public static class ProjectOperatorDashboardEndpoints
 
         // BD-1: a green integration build becomes an immutable release and
         // starts the automatic Staging phase of the standard lifecycle.
-        app.MapPost("/api/deploy/gate-releases", (GateArtifactRequest request,
-            ProjectEnvironmentService environments, DeployService deploy) =>
-            environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit)
+        app.MapPost("/api/deploy/gate-releases", (HttpContext context, GateArtifactRequest request,
+            ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration,
+            AccessSecurityStore security) =>
+        {
+            var builder = RunnerCredential(context, configuration, security);
+            if (builder is null || !builder.Scopes.Contains(RunnerScopes.Release))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit, builder.RunnerId)
                 ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate"),
                     "Gate artifact or environment declarations are invalid.")
-                : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." }))
+                : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." });
+        })
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapGet("/api/projects/{projectName}/environments", (string projectName,
@@ -69,7 +75,7 @@ public static class ProjectOperatorDashboardEndpoints
                 (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
                  || principal.RunnerId != request.HostId))
                 return Results.Forbid();
-            var job = environments.Claim(request.HostId);
+            var job = environments.Claim(request.HostId, requireVerifiedRelease: true);
             if (job is not null) deploy.SyncAfterHostCall(job.Project);
             return Results.Ok(job);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
@@ -77,10 +83,48 @@ public static class ProjectOperatorDashboardEndpoints
         app.MapPost("/api/deploy/jobs/{project}/{jobId}/report", (string project, string jobId,
             DeployReportRequest request, ProjectEnvironmentService environments, DeployService deploy) =>
         {
-            if (!environments.Report(project, jobId, request)) return Results.Conflict();
+            if (!environments.Report(project, jobId, request, requireVerifiedRelease: true)) return Results.Conflict();
             deploy.SyncAfterHostCall(project);
             return Results.Ok();
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
+        app.MapGet("/api/deploy/jobs/{project}/{jobId}/artifact", (HttpContext context, string project, string jobId,
+            ProjectEnvironmentService environments, DeployStore releases, ReleaseArtifactRegistry registry,
+            IConfiguration configuration, AccessSecurityStore security) =>
+        {
+            var principal = RunnerCredential(context, configuration, security);
+            if (principal is null || !principal.Scopes.Contains(RunnerScopes.Deploy))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            var lease = context.Request.Headers["X-Deploy-Lease"].ToString();
+            var claim = environments.FindClaimedJobVerification(project, jobId, lease, requireVerifiedRelease: true);
+            if (claim.Retryable) return RegistryUnavailable();
+            var job = claim.Job;
+            if (job is null || SecurityProfiles.IsNetworked(configuration) && principal.RunnerId != job.HostId)
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            try
+            {
+                var record = releases.ReadReleaseRecords(project).SingleOrDefault(item =>
+                    item.Release.Id == job.ReleaseId
+                    && item.Release.ArtifactDigests.Contains(job.Artifact, StringComparer.Ordinal)
+                    && item.Environments.Any(environment => environment.Id == job.EnvironmentId
+                        && environment.Template == job.Template));
+                if (record is null) return Results.Conflict(new { error = "The deploy job has no release." });
+                var provenance = registry.VerifiedForDeployment(project, record.Release.CommitSha, job.Artifact,
+                    job.Template);
+                if (provenance is null) return Results.Conflict(new { error = "Artifact provenance is unverified." });
+                if (context.Request.Query.ContainsKey("content"))
+                {
+                    var path = registry.VerifiedBlob(provenance);
+                    return path is null ? Results.Conflict(new { error = "Artifact content is unavailable." })
+                        : Results.File(path, "application/octet-stream");
+                }
+                return Results.Ok(provenance);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return RegistryUnavailable();
+            }
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         app.MapGet("/api/projects/{projectName}/throughput", (
             string projectName,
@@ -165,4 +209,18 @@ public static class ProjectOperatorDashboardEndpoints
     private static IResult ApprovalRequired() => Results.Json(
         new { error = $"Production approval requires the {StandardLifecyclePolicy.ApprovalRoles} role." },
         statusCode: StatusCodes.Status403Forbidden);
+
+    private static IResult RegistryUnavailable() => Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+
+    private static RunnerPrincipal? RunnerCredential(HttpContext context, IConfiguration configuration,
+        AccessSecurityStore security)
+    {
+        if (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is RunnerPrincipal principal)
+            return principal;
+        if (SecurityProfiles.IsNetworked(configuration)) return null;
+        var authorization = context.Request.Headers.Authorization;
+        if (authorization.Count != 1 || authorization[0] is not { } bearer
+            || !bearer.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return null;
+        return security.AuthenticateRunner(bearer["Bearer ".Length..].Trim());
+    }
 }
