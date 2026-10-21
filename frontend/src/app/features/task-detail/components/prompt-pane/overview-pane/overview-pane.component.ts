@@ -636,7 +636,7 @@ export class OverviewPaneComponent {
 
   /**
    * The latest orchestrator steering step, projected from the shared
-   * task-timeline ledger (Epic ASS-776). The orchestrator review / decision
+   * task-timeline ledger (ASS-776). The orchestrator review / decision
    * steps render this as a collapsible structured block (verdict + reason +
    * steer prompt + context) so the Steps surface shows the same steering
    * trace as the Timeline, not just the bare verdict token. Null until the

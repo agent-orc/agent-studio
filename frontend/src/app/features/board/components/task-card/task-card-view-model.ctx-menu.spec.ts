@@ -3,13 +3,11 @@ import {
   buildCardCtxMenuItems,
   DELETE_ID,
   REVIEW_FIRST_ID,
-  EPIC_ASSIGN_PREFIX,
-  EPIC_DETACH_ID,
   MOVE_PREFIX,
   cardMoveTarget,
 } from './task-card-view-model';
 import { TaskState } from '../../../../models/task.model';
-import type { TaskInfo, EpicRollup } from '../../../../models/task.model';
+import type { TaskInfo } from '../../../../models/task.model';
 import type { MenuItem, MenuRow } from '../../../../components/menu';
 
 /**
@@ -49,13 +47,9 @@ function isRow(item: MenuItem): item is MenuRow {
   return item.kind === 'row';
 }
 
-function deleteRow(items: MenuItem[]): MenuRow | undefined {
-  return items.filter(isRow).find((r) => r.id === DELETE_ID);
-}
-
 describe('buildCardCtxMenuItems — delete row (AGT-2020)', () => {
   it('appends a destructive "Delete task" row at the very end of a task card menu', () => {
-    const items = buildCardCtxMenuItems(makeJob(), false, [], null);
+    const items = buildCardCtxMenuItems(makeJob());
     const last = items[items.length - 1];
     const beforeLast = items[items.length - 2];
 
@@ -66,43 +60,18 @@ describe('buildCardCtxMenuItems — delete row (AGT-2020)', () => {
     expect(beforeLast.kind).toBe('separator');
   });
 
-  it('labels the row "Delete epic" on an epic card and is still the only-needed action', () => {
-    const items = buildCardCtxMenuItems(makeJob({ kind: 'epic' }), true, [], null);
-    const row = deleteRow(items);
-    expect(row).toBeTruthy();
-    expect(row!.label).toBe('Delete epic');
-    expect(row!.danger).toBe(true);
-    // Even when the epic card has no epic-assignment section, delete is present.
-    expect(items[items.length - 1]).toBe(row);
-  });
-
-  it('keeps the delete row present alongside epic-assignment rows', () => {
-    const epics: EpicRollup[] = [
-      { id: 'epic-9', title: 'Big Epic', watchPath: '/tmp/watch' } as EpicRollup,
-    ];
-    const items = buildCardCtxMenuItems(makeJob(), false, epics, null);
-    // Delete is still last, after the epic section.
-    expect(deleteRow(items)).toBeTruthy();
-    expect(items[items.length - 1]).toBe(deleteRow(items));
-  });
-
   it('disables mutation rows in read-only mode while copy rows stay available', () => {
-    const epics = [
-      { id: 'epic-9', title: 'Big Epic', watchPath: '/tmp/watch' } as EpicRollup,
-    ];
-    const rows = buildCardCtxMenuItems(makeJob(), false, epics, 'epic-9', true).filter(isRow);
+    const rows = buildCardCtxMenuItems(makeJob(), true).filter(isRow);
 
     expect(rows.find(item => item.id === 'copy-name')?.disabled).not.toBe(true);
-    expect(rows.find(item => item.id === `${EPIC_ASSIGN_PREFIX}epic-9`)?.disabled).toBe(true);
-    expect(rows.find(item => item.id === EPIC_DETACH_ID)?.disabled).toBe(true);
     expect(rows.find(item => item.id === DELETE_ID)?.disabled).toBe(true);
   });
 
   it('offers Review first and Normal review order on auto-review cards', () => {
-    const normal = buildCardCtxMenuItems(makeJob({ state: TaskState.AutoReview }), false, [], null).filter(isRow);
+    const normal = buildCardCtxMenuItems(makeJob({ state: TaskState.AutoReview })).filter(isRow);
     expect(normal.find(item => item.id === REVIEW_FIRST_ID)?.disabled).not.toBe(true);
     expect(normal.find(item => item.id === 'review-normal')?.disabled).toBe(true);
-    const urgent = buildCardCtxMenuItems(makeJob({ state: TaskState.AutoReview, reviewPriority: 'urgent' }), false, [], null).filter(isRow);
+    const urgent = buildCardCtxMenuItems(makeJob({ state: TaskState.AutoReview, reviewPriority: 'urgent' })).filter(isRow);
     expect(urgent.find(item => item.id === REVIEW_FIRST_ID)?.disabled).toBe(true);
     expect(urgent.find(item => item.id === 'review-normal')?.disabled).not.toBe(true);
   });
@@ -110,7 +79,7 @@ describe('buildCardCtxMenuItems — delete row (AGT-2020)', () => {
 
 describe('card move rows', () => {
   const moves = (state: string, blocked = false, visible?: readonly string[]) =>
-    buildCardCtxMenuItems(makeJob({ state }), false, [], null, blocked, visible)
+    buildCardCtxMenuItems(makeJob({ state }), blocked, visible)
       .filter(isRow).filter((row) => row.id.startsWith(MOVE_PREFIX));
 
   it('uses visible manual neighbours and removes duplicate shortcuts', () => {

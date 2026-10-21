@@ -88,6 +88,7 @@ public sealed class ZonePolicyCapabilityTests : IDisposable
         {
             ["RUNNER_ZONE_POLICY_STATE"] = runnerVariable,
             ["AGENT_HOST_ZONE_POLICY_STATE"] = hostVariable,
+            ["RUNNER_STATE_DIR"] = Path.Combine(Path.GetTempPath(), "zone-policy-test-state"),
         };
 
         var (options, _, _, _) = RunnerOptions.Parse(["AGT-3231"], name => environment.GetValueOrDefault(name));

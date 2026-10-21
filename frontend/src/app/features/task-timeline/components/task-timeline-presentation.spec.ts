@@ -85,7 +85,7 @@ describe('task timeline presentation', () => {
     expect(timelineEventSummary(recovery)).toBe('Rebase task/AGT-2412 onto develop.');
   });
 
-  it('folds generated review, step, and decomposition summaries into their titles', () => {
+  it('folds generated review and step summaries into their titles', () => {
     const preStep = event({
       kind: TIMELINE_KIND.preStepFinished,
       summary: 'Context retrieval completed',
@@ -96,18 +96,11 @@ describe('task timeline presentation', () => {
       summary: 'Human review accepted the delivery',
       details: { decision: 'accept', reviewer: 'robert@example.com' },
     });
-    const epic = event({
-      kind: TIMELINE_KIND.epicDecomposed,
-      summary: 'Epic decomposed into 3 tasks',
-      details: { created: '3', targetState: '1-backlog' },
-    });
 
     expect(timelineEventTitle(preStep)).toBe('Pre-step finished · Context retrieval');
     expect(timelineEventSummary(preStep)).toBeNull();
     expect(timelineEventTitle(review)).toBe('Human review accepted');
     expect(timelineEventSummary(review)).toBeNull();
-    expect(timelineEventTitle(epic)).toBe('Epic decomposed · 3 tasks');
-    expect(timelineEventSummary(epic)).toBeNull();
   });
 
   it.each([
