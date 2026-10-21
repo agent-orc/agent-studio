@@ -13,7 +13,8 @@ Imports via `from './features/quota'`. See [`index.ts`](./index.ts).
 - `QuotaForecastPanelComponent`: CLI Management "Quota forecast" section (AGT-3001): per CLI the 48 h weekly curve, the 3-hour rate, the time of 100 %, the reset, a session gauge, and the armed fallback when 100 % comes first. Data from `/api/cli/quota/history`.
 - `QuotaCurveComponent`: the SVG weekly curve used by the forecast panel, with a hover crosshair and a visually hidden table view.
 - `WorkspaceQuotaBannerComponent` (`app-workspace-quota-banner`): workspace quota warning (80 %), stop (100 %), or all hosting slots in use, as a row of the Studio header; hidden at normal use and under an owner override.
-- `WorkspaceQuotaComponent` (`app-workspace-quota`): workspace or project quota usage, limits, dated daily trend, and the owner editor and override.
+- `WorkspaceQuotaComponent` (`app-workspace-quota`): workspace or project quota usage, limits, dated daily trend, and the owner editor and override. Not in the barrel: hosts import it by path inside `@defer`, so it stays out of the initial bundle.
+- `WorkspaceQuotaDisclosureComponent` (`app-workspace-quota-disclosure`): one workspace's quota editor behind a disclosure row in Settings; the editor loads on first open.
 - `TaskCardQuotaNoticeComponent` (`app-task-card-quota-notice`): the project or workspace refusal on a board card that still waits for admission.
 
 **State**: `WorkspaceQuotaBoardState` reads the workspace and every project admission in one request (`/api/workspaces/{id}/quota/admission`); the Studio header cockpit calls `load()` on workspace change and every minute ([docs/concepts/workspace-quotas.md](../../../../../docs/concepts/workspace-quotas.md)).
