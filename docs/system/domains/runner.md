@@ -23,12 +23,23 @@ clear the instructions. Each runner keeps its own native credential store;
 neither Task Server nor Studio distributes ChatGPT login files.
 
 The coding host also probes the small set of primary and fallback model ids
-with a real request in an isolated scratch context. Each verdict is bound to
-the local credential generation and advertised as `model-acceptance:<provider>:<model>`.
+with a real request in an isolated scratch context. It adds the configured
+routes that the capability snapshot names in `modelAcceptanceCandidates`:
+Studio's primary and fallback routes, including operator overrides, and Task
+Server's card model pins and quota routes. Each verdict is bound to the local
+credential generation and advertised as `model-acceptance:<provider>:<model>`
+with a process-local probe sequence (`model-probe:<n>`) as evidence.
 The quota view lists accepted models by host. A launch-time model refusal with
 no salvage marks that host model unavailable and puts the card back in Ready.
-Claim admission holds a refused primary until a later accepted probe. A refused
-fallback does not hold the card once quota admission can use its primary route.
+Task Server claims and host permit offers and acceptances require a fresh
+accepted verdict from the claiming runner instance for the effective named
+model: a mechanical route, an explicit continuation selection, a provider
+fallback, or the card's primary model. A blank model uses the CLI default and
+needs no model verdict. The permit acceptance rechecks this in the transaction
+that creates the lease. A refusal hold ends only when the same runner process
+advertises an accepted verdict with a larger probe sequence than its own
+refusal verdict; runner and server clocks are never compared for this. A
+restarted runner process rebinds the hold to its first advertised verdict.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable

@@ -51,6 +51,27 @@ public static class CapabilityProtocol
 
     public static string ModelAcceptance(string provider, string model)
         => $"model-acceptance:{provider.Trim().ToLowerInvariant()}:{model.Trim().ToLowerInvariant()}";
+
+    /// <summary>
+    /// A model-acceptance verdict carries the runner's process-local probe
+    /// sequence as evidence. Servers order verdicts of one runner instance by
+    /// this counter, never by comparing the runner clock with their own.
+    /// </summary>
+    public static string ModelProbeEvidence(long sequence) => $"model-probe:{sequence}";
+
+    public static long? ModelProbeSequence(string? evidenceId)
+        => evidenceId is not null
+           && evidenceId.StartsWith("model-probe:", StringComparison.Ordinal)
+           && long.TryParse(evidenceId["model-probe:".Length..], System.Globalization.NumberStyles.None,
+               System.Globalization.CultureInfo.InvariantCulture, out var sequence)
+            ? sequence : null;
+
+    /// <summary>Operator and card model ids are probed only when they look like a model id.</summary>
+    public static bool IsProbeableModelId(string? model)
+        => !string.IsNullOrWhiteSpace(model)
+           && model.Trim().Length <= 80
+           && char.IsAsciiLetterOrDigit(model.Trim()[0])
+           && model.Trim().All(item => char.IsAsciiLetterOrDigit(item) || item is '.' or '-' or '_');
 }
 
 public static class CapabilityHealthStates
@@ -367,7 +388,8 @@ public sealed record RunnerCapabilitySnapshotDto(
     IReadOnlyList<InstalledCliDto>? InstalledClis = null,
     HostCliUpdateDto? CliUpdate = null,
     RunnerReleaseIdentityDto? Release = null,
-    int ActiveGateCount = 0);
+    int ActiveGateCount = 0,
+    IReadOnlyList<string>? ModelAcceptanceCandidates = null);
 
 public static class InstalledCliProjection
 {

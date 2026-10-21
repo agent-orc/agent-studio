@@ -13,6 +13,10 @@ internal sealed class RunnerModelAcceptanceProbe
     private readonly object _sync = new();
     private readonly SemaphoreSlim _refresh = new(1, 1);
     private readonly Dictionary<string, ModelVerdict> _verdicts = new(StringComparer.Ordinal);
+    private IReadOnlyList<(string Provider, string Model)> _configured = [];
+    // Orders this process's verdicts for the servers. A rejection takes a
+    // sequence too, so only a probe completed after it carries a larger one.
+    private long _sequence;
     private Func<string, string, CancellationToken, Task<ProcessResult>>? _launch;
     private Func<string, string?> _generation = _ => null;
     private Func<DateTimeOffset> _clock = () => DateTimeOffset.UtcNow;
@@ -47,7 +51,8 @@ internal sealed class RunnerModelAcceptanceProbe
                     Identity: $"{provider}/{model}",
                     Detail: current ? verdict!.Detail : "Model acceptance has not been checked for this login.",
                     CredentialGeneration: currentGeneration,
-                    CredentialObservedAt: current ? verdict!.ObservedAt.UtcDateTime : null);
+                    CredentialObservedAt: current ? verdict!.ObservedAt.UtcDateTime : null,
+                    EvidenceId: current ? CapabilityProtocol.ModelProbeEvidence(verdict!.Sequence) : null);
             }).ToArray();
         }
     }
@@ -57,7 +62,34 @@ internal sealed class RunnerModelAcceptanceProbe
         var generation = _generation(provider);
         lock (_sync)
             _verdicts[CapabilityProtocol.ModelAcceptance(provider, model)] = new ModelVerdict(
-                generation, "unavailable", "The provider refused this model for the host login.", _clock());
+                generation, "unavailable", "The provider refused this model for the host login.", _clock(),
+                ++_sequence);
+    }
+
+    /// <summary>
+    /// Adopts the server's configured primary and fallback routes
+    /// (<c>provider/model</c>), so an operator override outside the curated
+    /// list is probed too. Invalid entries are ignored.
+    /// </summary>
+    internal void AdoptConfiguredCandidates(IEnumerable<string>? entries)
+    {
+        if (entries is null) return;
+        var parsed = entries
+            .Select(entry => entry?.Split('/', 2, StringSplitOptions.TrimEntries))
+            .Where(parts => parts is { Length: 2 }
+                            && CliSelection.NormalizeCliType(parts[0]) is not null
+                            && CapabilityProtocol.IsProbeableModelId(parts[1]))
+            .Select(parts => (CliSelection.NormalizeCliType(parts![0])!, parts[1].ToLowerInvariant()))
+            .Distinct()
+            .Take(32)
+            .ToArray();
+        lock (_sync) _configured = parsed;
+    }
+
+    internal IReadOnlyList<string> ConfiguredModels(string provider)
+    {
+        lock (_sync)
+            return _configured.Where(item => item.Provider == provider).Select(item => item.Model).ToArray();
     }
 
     internal async Task RefreshAsync(
@@ -111,7 +143,7 @@ internal sealed class RunnerModelAcceptanceProbe
                         status == "ready" ? "A real request was accepted for this model."
                             : status == "unavailable" ? "The provider refused this model for the host login."
                             : "The model acceptance probe could not verify this route.",
-                        _clock());
+                        _clock(), ++_sequence);
                 }
             }
         }
@@ -124,5 +156,6 @@ internal sealed class RunnerModelAcceptanceProbe
                string.Join('\n', result.StdOut, result.StdErr), out var rejection)
            && ProviderRequestRejectionClassifier.IsModelUnavailable(rejection, model);
 
-    private sealed record ModelVerdict(string? Generation, string Status, string Detail, DateTimeOffset ObservedAt);
+    private sealed record ModelVerdict(
+        string? Generation, string Status, string Detail, DateTimeOffset ObservedAt, long Sequence);
 }

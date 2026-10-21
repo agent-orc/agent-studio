@@ -1380,6 +1380,7 @@ public sealed class TaskServerClient : IDisposable
             request,
             ct);
         AdoptRoleMaxParallelism(snapshot?.RoleMaxParallelism);
+        RunnerModelAcceptanceProbe.Shared.AdoptConfiguredCandidates(snapshot?.ModelAcceptanceCandidates);
     }
 
     /// <summary>

@@ -18,6 +18,50 @@ public sealed partial class TaskServerStore
         CapabilityProtocol.TaskServerAuthority,
     };
 
+    /// <summary>
+    /// Applies <see cref="ModelRejectionRecoveryPolicy"/> to an open launch
+    /// rejection hold. Only the runner's own probe sequence orders verdicts;
+    /// the advertised observation time is runner clock and proves nothing here.
+    /// </summary>
+    private static async Task<string> ObserveModelRejectionHoldAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CapabilityAdvertisementRequest request,
+        string key,
+        string advertisedStatus,
+        long? sequence,
+        CancellationToken ct)
+    {
+        ModelRejectionRecoveryPolicy.Hold? hold = null;
+        await using (var command = Command(connection, """
+            SELECT instance_id, confirmed_sequence FROM model_capability_holds
+             WHERE runner_id = $runner AND capability_key = $key;
+            """, transaction, ("$runner", request.RunnerId), ("$key", key)))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            if (await reader.ReadAsync(ct))
+                hold = new ModelRejectionRecoveryPolicy.Hold(
+                    reader.IsDBNull(0) ? null : reader.GetString(0),
+                    reader.IsDBNull(1) ? null : reader.GetInt64(1));
+        }
+        if (hold is null) return advertisedStatus;
+        var next = ModelRejectionRecoveryPolicy.Observe(hold, request.InstanceId, advertisedStatus, sequence);
+        if (next is null)
+        {
+            await ExecuteAsync(connection, """
+                DELETE FROM model_capability_holds WHERE runner_id = $runner AND capability_key = $key;
+                """, ct, transaction, ("$runner", request.RunnerId), ("$key", key));
+            return advertisedStatus;
+        }
+        await ExecuteAsync(connection, """
+            UPDATE model_capability_holds
+               SET instance_id = $instance, confirmed_sequence = $sequence
+             WHERE runner_id = $runner AND capability_key = $key;
+            """, ct, transaction, ("$runner", request.RunnerId), ("$key", key),
+            ("$instance", next.InstanceId), ("$sequence", next.ConfirmedSequence));
+        return "unavailable";
+    }
+
     public async Task<RunnerCapabilitySnapshotDto> AdvertiseCapabilitiesAsync(
         CapabilityAdvertisementRequest request,
         string actorId,
@@ -91,21 +135,10 @@ public sealed partial class TaskServerStore
                     throw new TaskServerConflictException("stale-capability-advertisement",
                         $"A newer credential observation already exists for {key}.");
                 var advertisedStatus = capability.Status.Trim().ToLowerInvariant();
-                if (key.StartsWith("model-acceptance:", StringComparison.Ordinal)
-                    && advertisedStatus == "ready")
-                {
-                    var rejectionAt = await ScalarAsync(connection, """
-                        SELECT MAX(held.occurred_at) FROM events held
-                         WHERE held.kind = 'execution.model-capability-held'
-                           AND json_extract(held.payload_json, '$.runnerId') = $runner
-                           AND 'model-acceptance:' || json_extract(held.payload_json, '$.provider')
-                               || ':' || json_extract(held.payload_json, '$.model') = $key;
-                        """, ct, transaction, ("$runner", request.RunnerId), ("$key", key));
-                    if (rejectionAt is string rejectedAt
-                        && (capability.CredentialObservedAt is not { } observedAt
-                            || observedAt.ToUniversalTime() <= Parse(rejectedAt)))
-                        advertisedStatus = "unavailable";
-                }
+                if (key.StartsWith("model-acceptance:", StringComparison.Ordinal))
+                    advertisedStatus = await ObserveModelRejectionHoldAsync(
+                        connection, transaction, request, key, advertisedStatus,
+                        CapabilityProtocol.ModelProbeSequence(capability.EvidenceId), ct);
                 var advertisedDetail = advertisedStatus == "unavailable" &&
                                        string.Equals(capability.Status, "ready", StringComparison.OrdinalIgnoreCase)
                     ? "The provider refused this model for the host login."
@@ -301,7 +334,71 @@ public sealed partial class TaskServerStore
         }, ct);
         await EvaluateHostCliPolicyAsync(request.RunnerId, actorId, ct);
         return (await ListRunnerCapabilitySnapshotsAsync(ct))
-            .Single(item => string.Equals(item.RunnerId, request.RunnerId, StringComparison.Ordinal));
+            .Single(item => string.Equals(item.RunnerId, request.RunnerId, StringComparison.Ordinal))
+            with { ModelAcceptanceCandidates = await ReadConfiguredModelRoutesAsync(ct) };
+    }
+
+    /// <summary>
+    /// Named models a claim may launch: card primary pins on open cards and
+    /// the configured quota routes, including operator overrides. Runners
+    /// probe these beside their curated list.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> ReadConfiguredModelRoutesAsync(CancellationToken ct)
+    {
+        await using var connection = await OpenReadyAsync(ct);
+        var routes = new List<(string? Cli, string? Model)>();
+        await using (var command = Command(connection, """
+            SELECT DISTINCT COALESCE(NULLIF(lower(trim(fields.cli_type)), ''), 'claude'), lower(trim(fields.model))
+              FROM task_studio_fields fields
+              JOIN tasks task ON task.id = fields.task_id
+             WHERE task.state IN ('2-ready', '3-progress') AND NULLIF(trim(fields.model), '') IS NOT NULL
+             LIMIT 32;
+            """))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct))
+                routes.Add((reader.GetString(0), reader.GetString(1)));
+        var routesJson = Convert.ToString(await ScalarAsync(connection,
+            "SELECT quota_model_routes_json FROM studio_cli_settings WHERE id = 1;", ct),
+            CultureInfo.InvariantCulture);
+        if (!string.IsNullOrWhiteSpace(routesJson))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(routesJson);
+                var profiles = document.RootElement.ValueKind == JsonValueKind.Array
+                    ? document.RootElement.EnumerateArray().ToArray()
+                    : document.RootElement.ValueKind == JsonValueKind.Object
+                        ? document.RootElement.EnumerateObject().Select(item => item.Value).ToArray()
+                        : [];
+                foreach (var profile in profiles.Where(item => item.ValueKind == JsonValueKind.Object))
+                {
+                    var cli = Text(profile, "cliType");
+                    routes.Add((cli, Text(profile, "primaryModel")));
+                    routes.Add((Text(profile, "fallbackCliType") ?? cli, Text(profile, "fallbackModel")));
+                }
+            }
+            catch (JsonException)
+            {
+                // An unreadable route document adds no probe candidates; the
+                // curated runner list and card pins still apply.
+                return Candidates(routes);
+            }
+        }
+        return Candidates(routes);
+
+        static IReadOnlyList<string> Candidates(IEnumerable<(string? Cli, string? Model)> routes)
+            => routes
+                .Where(route => route.Cli is "claude" or "codex" && CapabilityProtocol.IsProbeableModelId(route.Model))
+                .Select(route => $"{route.Cli}/{route.Model!.Trim().ToLowerInvariant()}")
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+
+        static string? Text(JsonElement profile, string name)
+            => profile.EnumerateObject()
+                .FirstOrDefault(item => string.Equals(item.Name, name, StringComparison.OrdinalIgnoreCase))
+                .Value is { ValueKind: JsonValueKind.String } value
+                ? value.GetString()?.Trim().ToLowerInvariant()
+                : null;
     }
 
     private static void ValidateCredentialCapability(

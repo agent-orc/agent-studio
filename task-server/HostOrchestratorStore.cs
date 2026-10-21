@@ -103,7 +103,8 @@ public sealed partial class TaskServerStore
             if (_mode == TaskServerMode.Normal)
                 await RefreshAvailablePermitsAsync(connection, transaction, ct);
             var permits = _mode == TaskServerMode.Normal
-                ? await ReadAvailablePermitsAsync(connection, transaction, request.HostId, runnerId, ct)
+                ? await ReadAvailablePermitsAsync(
+                    connection, transaction, request.HostId, runnerId, request.InstanceId, ct)
                 : [];
             response = new HostReportResponse(
                 status,
@@ -239,6 +240,17 @@ public sealed partial class TaskServerStore
                 throw new TaskServerConflictException(
                     "work-permit-" + placementRefusal,
                     $"Project '{projectId}' refuses runner '{request.RunnerId}': {placementRefusal}.");
+            // The offer was filtered when it was read; a rejection or an
+            // expired acceptance verdict since then is rechecked here, in the
+            // transaction that creates the lease.
+            var permitTask = await ReadTaskAsync(connection, transaction, UnscopedProjectToken, taskId, ct)
+                             ?? throw new KeyNotFoundException("Work permit task was not found.");
+            var modelRefusal = await ModelAdmissionRefusalAsync(
+                connection, transaction, permitTask, request.RunnerId, request.InstanceId, ct);
+            if (modelRefusal is not null)
+                throw new TaskServerConflictException(
+                    "work-permit-model-unaccepted",
+                    $"Runner '{request.RunnerId}' cannot accept permit '{permitId}': {modelRefusal}.");
             if (expiresAt <= UtcNow)
                 throw new TaskServerConflictException("work-permit-expired", $"Permit '{permitId}' has expired.");
             if (!string.Equals(taskState, "2-ready", StringComparison.Ordinal))
@@ -563,6 +575,7 @@ public sealed partial class TaskServerStore
         SqliteTransaction transaction,
         string hostId,
         string runnerId,
+        string instanceId,
         CancellationToken ct)
     {
         var permits = await ReadHostPolicyPermitsAsync(connection, transaction, hostId, ct);
@@ -573,7 +586,9 @@ public sealed partial class TaskServerStore
             if (!refusals.TryGetValue(permit.Task.ProjectId, out var refusal))
                 refusals[permit.Task.ProjectId] = refusal = await PermitPlacementRefusalAsync(
                     connection, transaction, permit.Task.ProjectId, runnerId, ct);
-            if (refusal is null) admitted.Add(permit);
+            if (refusal is null && await ModelAdmissionRefusalAsync(
+                    connection, transaction, permit.Task, runnerId, instanceId, ct) is null)
+                admitted.Add(permit);
         }
         return admitted;
     }

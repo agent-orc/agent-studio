@@ -39,23 +39,35 @@ internal static class RunnerCapabilityProbe
     }
 
     internal static IReadOnlyList<(string Provider, string Model)> ModelCandidates(RunnerOptions options)
+        => ModelCandidates(options, RunnerModelAcceptanceProbe.Shared,
+            binary => InspectCli(binary) is { } installation ? CodexModels(installation) : null);
+
+    // The curated routes are filtered by the Codex catalogue. Configured
+    // primary and fallback routes from the server are probed as given: an
+    // operator override is exactly the route a claim will use.
+    internal static IReadOnlyList<(string Provider, string Model)> ModelCandidates(
+        RunnerOptions options,
+        RunnerModelAcceptanceProbe probe,
+        Func<string, IReadOnlyList<string>?> codexCatalogue)
         => CodingCliBinaries(options).SelectMany(item =>
         {
+            var configured = probe.ConfiguredModels(item.CliType);
             if (item.CliType == CliSelection.CodexCli)
             {
-                var installation = InspectCli(item.Binary);
                 string[] routes = ["gpt-6-sol", "gpt-6.1-sol", "gpt-5.6-sol",
                     "gpt-5.5", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna",
                     "gpt-6-astra"];
-                var offered = installation is null ? null : CodexModels(installation);
+                var offered = codexCatalogue(item.Binary);
                 return routes.Where(model => offered is null
                         || offered.Contains(model, StringComparer.OrdinalIgnoreCase))
+                    .Concat(configured)
                     .Select(model => (item.CliType, model));
             }
             return new[] { "claude-opus-5", "claude-sonnet-5", "claude-opus-5-5",
                     "claude-sonnet-5-5", "claude-fable-5-1", "claude-sonnet-4-6",
                     "claude-sonnet-4-5", "claude-opus-4-8", "claude-opus-4-7",
                     "claude-opus-4-6", "claude-opus-4-5", "claude-haiku-4-5" }
+                .Concat(configured)
                 .Select(model => (item.CliType, model));
         }).Distinct().ToArray();
     public static IReadOnlyList<AdvertisedCapabilityDto> Advertise(

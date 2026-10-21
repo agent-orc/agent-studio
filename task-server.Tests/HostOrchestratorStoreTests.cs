@@ -29,7 +29,14 @@ public sealed class HostOrchestratorStoreTests
             "Resolve the conflict.", "Run focused tests.");
         await first.UpdateTaskAsync(project.ProjectId, task.TaskKey,
             new UpdateTaskRequest(null, null, "2-ready", task.Version, delta), "test", default);
-        await first.RegisterRunnerAsync("runner-a", Runner("instance-a"), "runner-a", default);
+        var registered = await first.RegisterRunnerAsync("runner-a", Runner("instance-a"), "runner-a", default);
+        // The mechanical route names a model, so the host must have accepted it.
+        await first.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "runner-a", "instance-a", 2, registered.LastSeenAt, 900, 1,
+            [new AdvertisedCapabilityDto(
+                CapabilityProtocol.ModelAcceptance("codex", "gpt-5.6-terra"), "model-acceptance", "ready",
+                CredentialGeneration: "login-1", CredentialObservedAt: registered.LastSeenAt,
+                EvidenceId: CapabilityProtocol.ModelProbeEvidence(1))]), "runner-a", default);
 
         var report1 = Report(
             sequence: 1,

@@ -185,7 +185,8 @@ public static class V1ReviewPlaneEndpoints
             Contract.CapabilityAdvertisementRequest request,
             V1ReviewExecutorRegistry registry,
             AdaptiveReviewParallelismAdvisor reviewParallelism,
-            AgentStudio.Clients.ClientIdentityStore clients) =>
+            AgentStudio.Clients.ClientIdentityStore clients,
+            CliQuotaFallbackService routes) =>
         {
             if (!RunnerMatches(context, runnerId))
                 return Results.Unauthorized();
@@ -195,7 +196,10 @@ public static class V1ReviewPlaneEndpoints
                     "Route and capability runner ids differ."));
             try
             {
-                var snapshot = registry.AdvertiseCapabilities(runnerId, request);
+                var snapshot = registry.AdvertiseCapabilities(runnerId, request) with
+                {
+                    ModelAcceptanceCandidates = ConfiguredModelRoutes(routes),
+                };
                 clients.RecordSeen(runnerId);
                 // AGT-2820: the review plane's parallelism recommendation used to
                 // be an unread number on a diagnostics endpoint - it answered
@@ -3262,6 +3266,25 @@ public static class V1ReviewPlaneEndpoints
         => context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
            || string.Equals(principal.RunnerId, runnerId, StringComparison.Ordinal);
 
+    /// <summary>
+    /// Configured primary and fallback routes, including operator overrides,
+    /// as <c>provider/model</c>. Runners probe these beside their curated list.
+    /// </summary>
+    internal static IReadOnlyList<string> ConfiguredModelRoutes(CliQuotaFallbackService routes)
+        => new[] { CliTypes.Claude, CliTypes.Codex }
+            .Select(routes.GetEffectiveProfile)
+            .Concat(routes.GetAll().Values)
+            .SelectMany(profile => new[]
+            {
+                (Cli: profile.CliType, Model: profile.PrimaryModel),
+                (Cli: profile.FallbackCliType ?? profile.CliType, Model: profile.FallbackModel),
+            })
+            .Where(route => !string.IsNullOrWhiteSpace(route.Cli)
+                            && Contract.CapabilityProtocol.IsProbeableModelId(route.Model))
+            .Select(route => $"{route.Cli.Trim().ToLowerInvariant()}/{route.Model!.Trim().ToLowerInvariant()}")
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
     private static string? ReviewArtifactTail(
         IReadOnlyList<Contract.ReviewArtifactEvidenceDto> artifacts,
         string? sha256)
@@ -3662,15 +3685,17 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 if (!capability.Key.StartsWith("model-acceptance:", StringComparison.Ordinal))
                     return capability;
                 var rejectedKey = $"{runnerId}|{capability.Key}";
-                if (!_rejectedModels.TryGetValue(rejectedKey, out var rejectedAt))
+                if (!_rejectedModels.TryGetValue(rejectedKey, out var rejection))
                     return capability;
-                if (string.Equals(capability.AdvertisedStatus, "ready", StringComparison.Ordinal)
-                    && capability.CredentialObservedAt is { } observedAt
-                    && observedAt.ToUniversalTime() > rejectedAt)
+                var next = Contract.ModelRejectionRecoveryPolicy.Observe(
+                    rejection, request.InstanceId, capability.AdvertisedStatus,
+                    Contract.CapabilityProtocol.ModelProbeSequence(capability.EvidenceId));
+                if (next is null)
                 {
                     _rejectedModels.Remove(rejectedKey);
                     return capability;
                 }
+                _rejectedModels[rejectedKey] = next;
                 return capability with
                 {
                     AdvertisedStatus = "unavailable",
@@ -4322,14 +4347,16 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 ? registration.InstanceId : null;
     }
 
-    private readonly Dictionary<string, DateTime> _rejectedModels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Contract.ModelRejectionRecoveryPolicy.Hold> _rejectedModels = new(StringComparer.Ordinal);
 
     public void MarkModelRejected(string runnerId, string cliType, string model)
     {
         var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
         lock (_gate)
         {
-            _rejectedModels[$"{runnerId}|{key}"] = _time.GetUtcNow().UtcDateTime;
+            _rejectedModels[$"{runnerId}|{key}"] = new Contract.ModelRejectionRecoveryPolicy.Hold(
+                _registrations.TryGetValue(runnerId, out var registration) ? registration.InstanceId : null,
+                ConfirmedSequence: null);
             if (!_capabilityStates.TryGetValue(runnerId, out var state)) return;
             _capabilityStates[runnerId] = state with
             {

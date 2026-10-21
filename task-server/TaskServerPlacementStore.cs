@@ -147,39 +147,16 @@ public sealed partial class TaskServerStore
         SqliteConnection connection,
         SqliteTransaction transaction,
         string hostId,
-        string runnerId,
-        DateTime now,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        // A rejected fallback must not hold the card after quota admission
-        // returns to its primary route. The quota planner checks acceptance
-        // after resolving the effective route.
         await using var command = Command(connection, """
             SELECT t.id, t.project_id, t.task_key, t.title, t.state, t.version, t.created_at, t.updated_at, t.body,
                    t.archive_state, t.archived_at
               FROM tasks t
-              LEFT JOIN task_studio_fields primary_route ON primary_route.task_id = t.id
              WHERE t.state = '2-ready'
                AND NOT EXISTS (
                    SELECT 1 FROM leases l
                     WHERE l.task_id = t.id AND l.status IN ('active', 'process-unknown'))
-               AND NOT EXISTS (
-                   SELECT 1 FROM events held
-                    WHERE held.task_id = t.id
-                      AND held.kind = 'execution.model-capability-held'
-                      AND json_extract(held.payload_json, '$.runnerId') = $runner
-                      AND COALESCE(NULLIF(lower(primary_route.cli_type), ''), 'claude') =
-                          lower(json_extract(held.payload_json, '$.provider'))
-                      AND lower(primary_route.model) = lower(json_extract(held.payload_json, '$.model'))
-                      AND NOT EXISTS (
-                          SELECT 1 FROM runner_capabilities recovery
-                           WHERE recovery.runner_id = $runner
-                             AND recovery.capability_key =
-                                 'model-acceptance:' || json_extract(held.payload_json, '$.provider')
-                                 || ':' || json_extract(held.payload_json, '$.model')
-                             AND recovery.advertised_status = 'ready'
-                             AND recovery.credential_observed_at > held.occurred_at
-                             AND recovery.fresh_until > $now))
                AND (
                    NOT EXISTS (
                        SELECT 1 FROM host_project_policies policy
@@ -193,10 +170,121 @@ public sealed partial class TaskServerStore
                         WHERE allowed.host_id = $host
                           AND allowed.project_id = t.project_id))
              ORDER BY t.created_at, t.task_key;
-            """, transaction, ("$host", hostId), ("$runner", runnerId), ("$now", Iso(now)));
+            """, transaction, ("$host", hostId));
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
             yield return ReadTask(reader);
+    }
+
+    /// <summary>
+    /// Ready tasks whose effective named model this runner instance currently
+    /// accepts. A refused fallback therefore stops holding the card once the
+    /// claim would use another route.
+    /// </summary>
+    private async IAsyncEnumerable<TaskDto> WhereModelAdmittedAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IAsyncEnumerable<TaskDto> tasks,
+        string runnerId,
+        string instanceId,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        await foreach (var task in tasks.WithCancellation(ct))
+            if (await ModelAdmissionRefusalAsync(connection, transaction, task, runnerId, instanceId, ct) is null)
+                yield return task;
+    }
+
+    /// <summary>
+    /// Both durable coding claim paths call this inside their write
+    /// transaction before they create a lease. A blank model runs the CLI
+    /// default route, which provider authentication already proves. A named
+    /// model needs a fresh accepted verdict from this runner instance and no
+    /// open launch-rejection hold.
+    /// </summary>
+    private async Task<string?> ModelAdmissionRefusalAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        TaskDto task,
+        string runnerId,
+        string instanceId,
+        CancellationToken ct)
+    {
+        var (cliType, model) = await ReadEffectiveClaimRouteAsync(connection, transaction, task, ct);
+        if (string.IsNullOrWhiteSpace(model)) return null;
+        var key = CapabilityProtocol.ModelAcceptance(cliType, model);
+        var accepted = await ScalarAsync(connection, """
+            SELECT 1 FROM runner_capabilities accepted
+             WHERE accepted.runner_id = $runner
+               AND accepted.capability_key = $key
+               AND accepted.advertised_status = 'ready'
+               AND accepted.fresh_until > $now
+               AND (accepted.advertised_instance_id IS NULL OR accepted.advertised_instance_id = $instance)
+               AND NOT EXISTS (
+                   SELECT 1 FROM model_capability_holds hold
+                    WHERE hold.runner_id = accepted.runner_id
+                      AND hold.capability_key = accepted.capability_key);
+            """, ct, transaction, ("$runner", runnerId), ("$key", key),
+            ("$now", Iso(UtcNow)), ("$instance", instanceId));
+        return accepted is null ? $"model-acceptance-unverified: {key}" : null;
+    }
+
+    /// <summary>
+    /// The route the runner will launch, in the precedence the claim response
+    /// applies: a mechanical fresh route, an explicit continuation selection,
+    /// a provider-refusal fallback, then the card's primary fields.
+    /// </summary>
+    private async Task<(string CliType, string? Model)> ReadEffectiveClaimRouteAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        TaskDto task,
+        CancellationToken ct)
+    {
+        string primaryCli;
+        string? primaryModel;
+        await using (var command = Command(connection, """
+            SELECT COALESCE(NULLIF(lower(trim(cli_type)), ''), 'claude'), NULLIF(trim(model), '')
+              FROM task_studio_fields WHERE task_id = $task;
+            """, transaction, ("$task", task.TaskId)))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            var found = await reader.ReadAsync(ct);
+            primaryCli = found ? reader.GetString(0) : "claude";
+            primaryModel = found && !reader.IsDBNull(1) ? reader.GetString(1) : null;
+        }
+        var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
+        var previousSession = await ReadPreviousSessionAsync(connection, transaction, task.TaskId, ct);
+        if (await ReadMechanicalFreshRouteAsync(
+                connection, transaction, task.TaskId, mechanicalDelta, previousSession, ct) is { } mechanical)
+            return (mechanical.CliType, mechanical.Model);
+        if (await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct) is
+            { Receipt.ExplicitSelection: true } intent)
+        {
+            var fields = intent.Selection;
+            var cli = fields is null || fields.CliType || fields.Model || fields.ThinkingLevel
+                ? intent.CliType?.Trim().ToLowerInvariant() : null;
+            var model = fields is null || fields.Model ? intent.Model : null;
+            return (string.IsNullOrWhiteSpace(cli) ? primaryCli : cli,
+                model ?? (string.IsNullOrWhiteSpace(cli) || cli == primaryCli ? primaryModel : null));
+        }
+        if ((await ReadProviderFallbackForClaimAsync(connection, transaction, task, ct))?.Fallback is { } fallback)
+            return (fallback.CliType.Trim().ToLowerInvariant(), fallback.To);
+        return (primaryCli, primaryModel);
+    }
+
+    private static async Task<SessionContinuationLedgerEntry?> ReadPreviousSessionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string taskId,
+        CancellationToken ct)
+    {
+        var priorSessionJson = Convert.ToString(await ScalarAsync(connection, """
+            SELECT payload_json FROM events
+             WHERE task_id = $task AND kind = 'session.continuation'
+             ORDER BY rowid DESC LIMIT 1;
+            """, ct, transaction, ("$task", taskId)), CultureInfo.InvariantCulture);
+        if (string.IsNullOrWhiteSpace(priorSessionJson)) return null;
+        try { return JsonSerializer.Deserialize<SessionContinuationLedgerEntry>(priorSessionJson); }
+        catch (JsonException) { return null; /* Corrupt evidence never authorizes a resume. */ }
     }
 
     /// <summary>

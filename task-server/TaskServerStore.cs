@@ -1510,8 +1510,9 @@ public sealed partial class TaskServerStore
             // evaluation and one admission receipt rather than one per task.
             var verdicts = new List<ClaimPlacementVerdict>();
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
-                ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId,
-                    request.RunnerId, UtcNow, ct),
+                WhereModelAdmittedAsync(connection, transaction,
+                    ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
+                    request.RunnerId, request.InstanceId, ct),
                 async projectId =>
                 {
                     var verdict = await EvaluateProjectAsync(projectId);
@@ -1543,17 +1544,7 @@ public sealed partial class TaskServerStore
                 connection, transaction, task, ct);
             var continuationIntent = await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct);
             var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
-            SessionContinuationLedgerEntry? previousSession = null;
-            var priorSessionJson = Convert.ToString(await ScalarAsync(connection, """
-                SELECT payload_json FROM events
-                 WHERE task_id = $task AND kind = 'session.continuation'
-                 ORDER BY rowid DESC LIMIT 1;
-                """, ct, transaction, ("$task", task.TaskId)), CultureInfo.InvariantCulture);
-            if (!string.IsNullOrWhiteSpace(priorSessionJson))
-            {
-                try { previousSession = JsonSerializer.Deserialize<SessionContinuationLedgerEntry>(priorSessionJson); }
-                catch (JsonException) { /* Corrupt evidence never authorizes a resume. */ }
-            }
+            var previousSession = await ReadPreviousSessionAsync(connection, transaction, task.TaskId, ct);
             var mechanicalFreshRoute = await ReadMechanicalFreshRouteAsync(
                 connection, transaction, task.TaskId, mechanicalDelta, previousSession, ct);
             var mechanicalBase = MechanicalFallbackBase(previousSession);
@@ -2215,13 +2206,24 @@ public sealed partial class TaskServerStore
                 var cli = request.OutcomeDecision?.RawFacts.EffectiveCliType?.Trim().ToLowerInvariant();
                 if (!string.IsNullOrWhiteSpace(cli))
                 {
+                    // The hold is bound to the runner instance that launched
+                    // the run. Its own later probe verdicts end it.
                     await ExecuteAsync(connection, """
                         UPDATE runner_capabilities
                            SET advertised_status = 'unavailable',
                                detail = 'The provider refused this model for the host login.'
                          WHERE runner_id = $runner AND capability_key = $key;
+                        INSERT INTO model_capability_holds(
+                            runner_id, capability_key, instance_id, confirmed_sequence, held_at)
+                        VALUES ($runner, $key, $instance, NULL, $now)
+                        ON CONFLICT(runner_id, capability_key) DO UPDATE SET
+                            instance_id = excluded.instance_id,
+                            confirmed_sequence = NULL,
+                            held_at = excluded.held_at;
                         """, ct, transaction,
                         ("$runner", request.RunnerId),
+                        ("$instance", request.InstanceId),
+                        ("$now", Iso(UtcNow)),
                         ("$key", CapabilityProtocol.ModelAcceptance(cli, providerRecovery.Model)));
                     await AppendLifecycleEventAsync(connection, transaction, runId, lease.TaskId,
                         lease.Fence, "execution.model-capability-held", new
@@ -4292,7 +4294,14 @@ public sealed partial class TaskServerStore
                 ON orchestrator_context_turns(context_key, sequence);
             CREATE INDEX IF NOT EXISTS ix_leases_task_status ON leases(task_id, status);
             CREATE INDEX IF NOT EXISTS ix_events_run_cursor ON events(run_id, cursor);
-            CREATE INDEX IF NOT EXISTS ix_events_kind_occurred ON events(kind, occurred_at);
+            CREATE TABLE IF NOT EXISTS model_capability_holds(
+                runner_id TEXT NOT NULL,
+                capability_key TEXT NOT NULL,
+                instance_id TEXT,
+                confirmed_sequence INTEGER,
+                held_at TEXT NOT NULL,
+                PRIMARY KEY(runner_id, capability_key)
+            );
             CREATE INDEX IF NOT EXISTS ix_artifacts_run ON artifacts(run_id);
             CREATE INDEX IF NOT EXISTS ix_legacy_entities_migration_kind
                 ON legacy_migration_entities(migration_id, entity_kind);
