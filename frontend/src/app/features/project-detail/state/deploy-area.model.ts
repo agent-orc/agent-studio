@@ -299,6 +299,13 @@ function hostReportOf(view: CardBase['view']): ProjectEnvironments['environments
     && (!view.deployedArtifact || row.artifact === view.deployedArtifact)) ?? null;
 }
 
+function deployedArtifactOf(view: CardBase['view'], status: EnvironmentStatus | null | undefined): string | null {
+  const releaseDigest = status?.currentRelease?.artifactDigests[0] ?? null;
+  return status?.intervention?.decision === 'skip'
+    ? view?.history.find(row => digestOf(row.artifact) === digestOf(releaseDigest ?? ''))?.artifact ?? releaseDigest
+    : view?.deployedArtifact ?? releaseDigest;
+}
+
 /**
  * Host artifacts whose release AGT-3201 status does not name, such as a migrated
  * host or an automatic rollback to an older artifact. Each resolves with one
@@ -307,8 +314,8 @@ function hostReportOf(view: CardBase['view']): ProjectEnvironments['environments
 export function artifactReleaseLookups(sources: Pick<DeploySources, 'environments' | 'statuses'>): ArtifactReleaseLookup[] {
   const lookups = new Map<string, ArtifactReleaseLookup>();
   for (const view of sources.environments?.environments ?? []) {
-    const artifact = view.deployedArtifact;
     const status = sources.statuses?.find(item => item.environment.id === view.declaration.id);
+    const artifact = deployedArtifactOf(view, status);
     if (!artifact || carriesArtifact(status?.currentRelease, artifact)) continue;
     const notAfterUtc = hostReportOf(view)?.at ?? null;
     const key = artifactLookupKey(artifact, notAfterUtc);
@@ -390,10 +397,7 @@ export function buildEnvironmentCards(sources: DeploySources): EnvironmentCardVi
       ? [...pageRuns, ...(statusRun && !pageRuns.some(item => item.id === statusRun.id) ? [statusRun] : [])].sort(newestFirst)
       : null;
     const report = hostReportOf(base.view);
-    const releaseDigest = status?.currentRelease?.artifactDigests[0] ?? null;
-    const artifact = status?.intervention?.decision === 'skip'
-      ? base.view?.history.find(row => digestOf(row.artifact) === digestOf(releaseDigest ?? ''))?.artifact ?? releaseDigest
-      : base.view?.deployedArtifact ?? releaseDigest;
+    const artifact = deployedArtifactOf(base.view, status);
     // The release of the latest successful run names the deployment; a digest
     // match on a visible release page could name another release with the same digest.
     const lookup = artifact ? sources.artifactReleases?.get(artifactLookupKey(artifact, report?.at ?? null)) : undefined;

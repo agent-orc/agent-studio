@@ -264,6 +264,7 @@ describe('deploy area model', () => {
         health: { status: 'reported', state: 'unhealthy' },
         intervention: { deploymentId: 'skipped-health', decision: 'skip', decidedBy: 'local.owner' },
       });
+      expect(artifactReleaseLookups(sources)).toEqual([]);
     });
 
     it('uses currentDeployment when host history is absent, and host history when release runs are empty', () => {
