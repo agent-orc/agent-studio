@@ -12,6 +12,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using AgentStudio.Review;
 using AgentStudio.Security;
 using Xunit;
@@ -22,6 +23,217 @@ public sealed class TaskCoreEndpointTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "task-core-http-" + Guid.NewGuid().ToString("N"));
     private string Jobs => Path.Combine(_root, "jobs");
+
+    [Fact]
+    public async Task LegacyDetail_UsesPublishedCardWhileOtherCardsAreDirty_WithoutTokenFold()
+    {
+        Seed("AGT-target", TaskStates.Ready);
+        Seed("AGT-other", TaskStates.Ready);
+        var tokenReader = new FakeTokenAggregator(new Dictionary<string, Dictionary<string, TaskTokenSummary>>());
+        await using var factory = Factory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<ITokenAggregator>();
+                services.AddSingleton<ITokenAggregator>(tokenReader);
+            }));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        client.DefaultRequestHeaders.Add("X-Task-Switch-Trace", "1");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        await WarmIndexAsync(factory, "AGT-target");
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        var other = index.GetDetailFacts("AGT-other", Jobs).Info!;
+        index.Invalidate();
+        index.PublishCore(other with { Title = "Other changed" });
+
+        using var detail = await client.GetAsync($"/api/tasks/AGT-target?project={project.Id}");
+        detail.EnsureSuccessStatusCode();
+        Assert.Equal("ready", detail.Headers.GetValues("X-Task-Detail-Freshness").Single());
+        Assert.Equal("0", detail.Headers.GetValues("X-Task-Detail-Workspace-Scans").Single());
+        Assert.Empty(tokenReader.Calls);
+        using var body = JsonDocument.Parse(await detail.Content.ReadAsStringAsync());
+        Assert.Equal("AGT-target", body.RootElement.GetProperty("info").GetProperty("id").GetString());
+
+        var target = index.GetDetailFacts("AGT-target", Jobs).Info!;
+        index.PublishCore(target with { Title = "Target changed" });
+        using var after = await client.GetAsync($"/api/tasks/AGT-target?project={project.Id}");
+        after.EnsureSuccessStatusCode();
+        using var changed = JsonDocument.Parse(await after.Content.ReadAsStringAsync());
+        Assert.Equal("Target changed", changed.RootElement.GetProperty("info").GetProperty("title").GetString());
+
+        using var latency = await client.GetAsync("/api/runtime/task-detail-latency");
+        latency.EnsureSuccessStatusCode();
+        using var measurement = JsonDocument.Parse(await latency.Content.ReadAsStringAsync());
+        Assert.True(measurement.RootElement.GetProperty("count").GetInt32() >= 2);
+    }
+
+    [Fact]
+    public async Task DurableMutations_AreVisibleToTheNextDetailRequest()
+    {
+        Seed("AGT-edit", TaskStates.Ready);
+        Seed("AGT-move", TaskStates.Backlog);
+        Seed("AGT-delete", TaskStates.Ready);
+        Seed("AGT-primary", TaskStates.Ready);
+        Seed("AGT-secondary", TaskStates.Ready);
+        Seed("AGT-archive", TaskStates.Completed, requiresIntegration: false);
+        Directory.CreateDirectory(Path.Combine(Jobs, TaskStates.Preparation));
+        Directory.CreateDirectory(Path.Combine(Jobs, TaskStates.Archive));
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        await WarmIndexAsync(factory, "AGT-edit");
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+
+        using (var put = await client.PutAsJsonAsync(
+            $"/api/tasks/AGT-edit/title?project={project.Id}", new { title = "Edited" }))
+            put.EnsureSuccessStatusCode();
+        using (var detail = await client.GetAsync($"/api/tasks/AGT-edit?project={project.Id}"))
+        {
+            detail.EnsureSuccessStatusCode();
+            using var body = JsonDocument.Parse(await detail.Content.ReadAsStringAsync());
+            Assert.Equal("Edited", body.RootElement.GetProperty("info").GetProperty("title").GetString());
+        }
+
+        using (var move = await client.PostAsJsonAsync(
+            $"/api/tasks/AGT-move/move?project={project.Id}",
+            new { targetState = TaskStates.Preparation }))
+            move.EnsureSuccessStatusCode();
+        using (var detail = await client.GetAsync($"/api/tasks/AGT-move?project={project.Id}"))
+        {
+            detail.EnsureSuccessStatusCode();
+            using var body = JsonDocument.Parse(await detail.Content.ReadAsStringAsync());
+            Assert.Equal(TaskStates.Preparation,
+                body.RootElement.GetProperty("info").GetProperty("state").GetString());
+        }
+
+        using (var delete = await client.DeleteAsync($"/api/tasks/AGT-delete?project={project.Id}"))
+            delete.EnsureSuccessStatusCode();
+        using (var detail = await client.GetAsync($"/api/tasks/AGT-delete?project={project.Id}"))
+            Assert.Equal(HttpStatusCode.NotFound, detail.StatusCode);
+
+        string restoreToken;
+        using (var merge = await client.PostAsJsonAsync(
+            $"/api/tasks/AGT-primary/merge?project={project.Id}",
+            new { secondaryId = "AGT-secondary", mode = MergeModes.Consolidate }))
+        {
+            merge.EnsureSuccessStatusCode();
+            using var body = JsonDocument.Parse(await merge.Content.ReadAsStringAsync());
+            restoreToken = body.RootElement.GetProperty("restoreToken").GetString()!;
+        }
+        using (var detail = await client.GetAsync($"/api/tasks/AGT-secondary?project={project.Id}"))
+            Assert.Equal(HttpStatusCode.NotFound, detail.StatusCode);
+        index.Invalidate();
+        index.GetSnapshot();
+        using (var detail = await client.GetAsync($"/api/tasks/AGT-secondary?project={project.Id}"))
+            Assert.Equal(HttpStatusCode.NotFound, detail.StatusCode);
+        using (var undo = await client.PostAsJsonAsync(
+            "/api/tasks/AGT-primary/merge/undo", new { restoreToken }))
+            undo.EnsureSuccessStatusCode();
+        using (var restored = await client.GetAsync($"/api/tasks/AGT-secondary?project={project.Id}"))
+            restored.EnsureSuccessStatusCode();
+
+        using (var archive = await client.PostAsJsonAsync(
+            $"/api/tasks/AGT-archive/move?project={project.Id}",
+            new { targetState = TaskStates.Archive }))
+            archive.EnsureSuccessStatusCode();
+        using (var detail = await client.GetAsync($"/api/tasks/AGT-archive?project={project.Id}"))
+        {
+            detail.EnsureSuccessStatusCode();
+            using var body = JsonDocument.Parse(await detail.Content.ReadAsStringAsync());
+            Assert.Equal(TaskStates.Archive,
+                body.RootElement.GetProperty("info").GetProperty("state").GetString());
+        }
+    }
+
+    [Fact]
+    public async Task ChangeProject_PublishesTheDestinationBeforeTheNextDetail()
+    {
+        Seed("AGT-transfer", TaskStates.Ready);
+        var destination = Path.Combine(_root, "destination-jobs");
+        Directory.CreateDirectory(destination);
+        await using var factory = Factory().WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, config) =>
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["WatchPaths:1:Name"] = "Destination Project",
+                    ["WatchPaths:1:Path"] = destination,
+                    ["WatchPaths:1:RootPath"] = _root,
+                })));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var source = registry.FindByStorageLocation(Jobs)!;
+        var target = registry.EnsureProjectForStorage(destination,
+            "Destination Project", DefaultWorkspace.Id);
+        await WarmIndexAsync(factory, "AGT-transfer");
+
+        using (var move = await client.PostAsJsonAsync(
+            $"/api/tasks/AGT-transfer/change-project?project={source.Id}",
+            new { targetProject = target.Id }))
+            move.EnsureSuccessStatusCode();
+        using (var old = await client.GetAsync($"/api/tasks/AGT-transfer?project={source.Id}"))
+            Assert.Equal(HttpStatusCode.NotFound, old.StatusCode);
+        using (var moved = await client.GetAsync($"/api/tasks/AGT-transfer?project={target.Id}"))
+        {
+            moved.EnsureSuccessStatusCode();
+            using var body = JsonDocument.Parse(await moved.Content.ReadAsStringAsync());
+            Assert.Equal(destination, body.RootElement.GetProperty("info")
+                .GetProperty("watchPath").GetString());
+        }
+    }
+
+    [Fact]
+    public async Task DetailReads_MeetFleetMutationP95Budget()
+    {
+        for (var i = 0; i < 10; i++) Seed($"AGT-load-{i}", TaskStates.Progress);
+        for (var i = 0; i < 2790; i++)
+        {
+            var folder = Path.Combine(Jobs, TaskStates.Ready, $"AGT-fixture-{i}");
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "task.json"),
+                JsonSerializer.Serialize(new { id = $"AGT-fixture-{i}", title = "Fixture",
+                    state = TaskStates.Ready, order = i, ownerClientId = "local-default",
+                    fixture = true }));
+        }
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 21, 8, 0, 0, TimeSpan.Zero));
+        await using var factory = Factory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(clock);
+            }));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        client.DefaultRequestHeaders.Add("X-Task-Switch-Trace", "1");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        index.GetSnapshot();
+        var durations = new List<double>();
+        for (var i = 0; i < 60; i++)
+        {
+            if (i % 10 == 0)
+            {
+                // Six writes per injected minute, spread over ten active cards.
+                var identity = $"AGT-load-{i / 10}";
+                using var write = await client.PutAsJsonAsync(
+                    $"/api/tasks/{identity}/title?project={project.Id}", new { title = $"Write {i}" });
+                write.EnsureSuccessStatusCode();
+            }
+            clock.Advance(TimeSpan.FromSeconds(1));
+            var started = clock.GetTimestamp();
+            using var response = await client.GetAsync($"/api/tasks/AGT-load-{i % 10}?project={project.Id}");
+            response.EnsureSuccessStatusCode();
+            Assert.Equal("0", response.Headers.GetValues("X-Task-Detail-Workspace-Scans").Single());
+            durations.Add(clock.GetElapsedTime(started).TotalMilliseconds);
+        }
+        durations.Sort();
+        var p50 = durations[(int)Math.Ceiling(durations.Count * 0.5) - 1];
+        var p95 = durations[(int)Math.Ceiling(durations.Count * 0.95) - 1];
+        Assert.True(p50 < 100, $"Card detail p50 {p50:F1} ms exceeds 100 ms.");
+        Assert.True(p95 < 300, $"Card detail p95 {p95:F1} ms exceeds 300 ms.");
+        Assert.Equal(2800, index.GetAllResidentTasks().Count);
+    }
 
     [Theory]
     [InlineData(200, "AGT-2993")]
@@ -232,6 +444,10 @@ public sealed class TaskCoreEndpointTests : IDisposable
             using var warmingBody = JsonDocument.Parse(await warming.Content.ReadAsStringAsync());
             Assert.Equal("warming", warmingBody.RootElement.GetProperty("state").GetString());
             Assert.Equal("task-index-warming", warmingBody.RootElement.GetProperty("reason").GetString());
+            using var detail = await client.GetAsync($"/api/tasks/AGT-unknown?project={project.Id}");
+            Assert.Equal(HttpStatusCode.Accepted, detail.StatusCode);
+            using var detailBody = JsonDocument.Parse(await detail.Content.ReadAsStringAsync());
+            Assert.Equal("warming", detailBody.RootElement.GetProperty("state").GetString());
         }
         finally
         {
@@ -528,13 +744,16 @@ public sealed class TaskCoreEndpointTests : IDisposable
             }));
         });
 
-    private void Seed(string id, string state, string? gatedTarget = null, string? key = null)
+    private void Seed(string id, string state, string? gatedTarget = null, string? key = null,
+        bool? requiresIntegration = null)
     {
         var folder = Path.Combine(Jobs, state, id);
         Directory.CreateDirectory(Path.Combine(folder, "logs"));
         File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
         {
             id, key = key ?? id, title = "Task core contract", state, order = 10,
+            requiresIntegration,
+            ownerClientId = "local-default",
             enteredLaneAt = DateTime.UtcNow,
             mode = "coding", modelExplicit = true, thinkingLevelExplicit = true,
             references = new

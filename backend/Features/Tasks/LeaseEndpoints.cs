@@ -1267,6 +1267,7 @@ public static class LeaseEndpoints
                 // Publish the new lane synchronously instead of waiting for
                 // the filesystem watcher's debounce window.
                 scanner.InvalidateCache();
+                scanner.PublishCoreFromKnownFolder(candidate.FolderPath);
                 logger.LogInformation(
                     "remote-runner-task-claimed project={Project} projectId={ProjectId} task={TaskKey} runner={Runner} lease={LeaseId} token={FencingToken} repositorySource={RepositorySource} defaultBranch={DefaultBranch}",
                     candidate.ProjectName, repository.ProjectId, taskKey, req.RunnerName, acquire.Lease.LeaseId,
@@ -1778,6 +1779,7 @@ public static class LeaseEndpoints
                         ["currentBriefVersion"] = currentBriefVersion,
                     });
                 scanner.InvalidateCache();
+                scanner.PublishCoreFromKnownFolder(offerFolder);
                 return Results.Ok(new RemoteRunCompletionResponse(
                     req.TaskKey, reportedOutcome, TaskStates.Escalated,
                     "Delivered against an older brief; operator decision required.",
@@ -2632,6 +2634,7 @@ public static class LeaseEndpoints
                             req.FencingToken, epoch, timeoutSignal));
                         EngineDecisionWaitMarker.Write(task.FolderPath, occurrence.RunId);
                         scanner.InvalidateCache();
+                        scanner.PublishCoreFromKnownFolder(task.FolderPath);
                         return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
                             task.State, "Waiting for engine decision.", RunAttemptId: attemptId));
                     }
@@ -2645,6 +2648,7 @@ public static class LeaseEndpoints
                     if (submission.WaitsForEngine)
                     {
                         scanner.InvalidateCache();
+                        scanner.PublishCoreFromKnownFolder(task.FolderPath);
                         return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
                             task.State, "Waiting for engine decision.", RunAttemptId: attemptId));
                     }
@@ -2830,6 +2834,7 @@ public static class LeaseEndpoints
                 if (occurrenceIsEngine)
                 {
                     scanner.InvalidateCache();
+                    scanner.PublishCoreFromKnownFolder(task.FolderPath);
                     return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
                         task.State, "Waiting for engine decision.", RunAttemptId: attemptId,
                         ReviewAttemptId: reviewAttempt?.AttemptId,

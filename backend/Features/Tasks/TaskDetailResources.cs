@@ -27,7 +27,8 @@ public static class TaskDetailResources
             var lookup = Resolve(jobId, project, generation, context, projects, index);
             if (lookup.Error is not null) return lookup.Error;
             var core = lookup.Core!;
-            var task = scanner.FindJob(core.Id, core.WatchPath);
+            var facts = index.GetDetailFacts(core.Id, core.WatchPath);
+            var task = facts.Info;
             if (task is null || task.TaskKey != core.TaskKey) return Results.NotFound();
             var data = new TaskOverviewResource(task.Decision,
                 TaskEndpointHelpers.BuildPlanningSpawnSummary(task),
@@ -35,7 +36,7 @@ public static class TaskDetailResources
                 task.OlderBriefDelivery, task.RelatedWikiPages, task.CreationSource,
                 task.CompletionClaim, task.ParkedBlocker, task.NeedsInput,
                 task.References, task.References.DependsOn.Count > 0
-                    ? scanner.GetReferenceIndex().EvaluateWaitsOn(task) : null,
+                    ? facts.References.EvaluateWaitsOn(task) : null,
                 // AGT-3096: the core-first detail needs the same acceptance
                 // lineage gap the legacy full-detail read projects.
                 AcceptanceAttemptLineagePolicy.ReadGap(task, attemptAuthority),
@@ -61,7 +62,7 @@ public static class TaskDetailResources
             var data = new TaskGitResource(
                 snapshot.Merge.GetValueOrDefault(key), snapshot.Integration.GetValueOrDefault(key),
                 snapshot.Publish.GetValueOrDefault(key), snapshot.TestRuns.GetValueOrDefault(key),
-                core.Commit, core.Commits, scanner.FindJob(core.Id, core.WatchPath)?.Provenance);
+                core.Commit, core.Commits, index.GetDetailFacts(core.Id, core.WatchPath).Info?.Provenance);
             var state = freshness.GitStateAt is null ? "unavailable" : freshness.Stale ? "stale" : "ready";
             var reason = state == "unavailable" ? "git-snapshot-pending" :
                 state == "stale" ? "git-snapshot-refreshing" : null;
@@ -70,13 +71,12 @@ public static class TaskDetailResources
 
         group.MapGet("/{jobId}/details/usage", (string jobId, string? project, long? generation,
             HttpContext context, ProjectRegistry projects, TaskIndexCache index,
-            ITaskCoreRuntime runtime, TaskScannerService scanner, ITokenAggregator tokens) =>
+            ITaskCoreRuntime runtime, TaskScannerService scanner, TaskTokenUsageCache tokens) =>
         {
             var lookup = Resolve(jobId, project, generation, context, projects, index);
             if (lookup.Error is not null) return lookup.Error;
             var core = lookup.Core!;
-            var summary = tokens.WorkspacePerJob(core.ProjectName, core.WatchPath)
-                .GetValueOrDefault(core.Id);
+            var summary = tokens.Get(core.ProjectName, core.WatchPath, core.Id);
             var data = new TaskUsageResource(summary, core.LastUsage,
                 scanner.ReadContextUsage(core.FolderPath));
             return Reply(context, core, lookup.ProjectId!, runtime, "usage", "ready", data, null,
