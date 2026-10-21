@@ -494,6 +494,7 @@ public sealed class AccessSecurityTests : IDisposable
             store.Login("first.owner", "correct horse battery staple!", "owner|new-address")).Status);
 
         clock.Advance(TimeSpan.FromMinutes(16));
+        Assert.Equal("first.owner", store.Login("first.owner", "correct horse battery staple!", "owner|fresh").User.Username);
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddSingleton(store);
