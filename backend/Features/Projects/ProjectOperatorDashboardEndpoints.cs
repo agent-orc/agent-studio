@@ -82,7 +82,7 @@ public static class ProjectOperatorDashboardEndpoints
                 return Results.BadRequest(new { error = "Every suffix must be a domain such as example.com." });
             settings.SetRunTargetDomainSuffixes(projectName, suffixes);
             return Results.Ok(new { suffixes });
-        });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapPost("/api/deploy/jobs/claim", (HttpContext context, DeployClaimRequest request,
             ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration) =>
