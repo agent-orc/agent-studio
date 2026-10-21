@@ -99,17 +99,19 @@ to the Studio installation's stable working directory under local application
 data. `RemoteGate:InstallationRoot` can select that stable path explicitly.
 Versioned prebuilt release directories do not affect the scope. First-time id
 publication is atomic across Studio processes; contenders read the same
-persisted id. Startup and the
+persisted id. Registry IO failures are logged without stopping the gate host;
+recovery resumes when a later process can open the registry. Startup and the
 one-minute recovery sweep touch the worker's `cancel` marker only after the
 owning process is gone. Recovery is scoped to
 the installation id and recorded host/root; the primary and every configured
-SSH shard host are swept. A different Studio installation sharing a gate host
+SSH shard host are swept. A startup sweep failure is logged and does not stop
+the periodic sweep. A different Studio installation sharing a gate host
 is left alone. The record is removed after the remote run
 directory is removed under the worker lock and confirmed gone. A run that never
 started is removed by the same recovery path.
 
 The transport refreshes a per-run heartbeat every ten seconds. The worker
-cancels gate execution when that heartbeat is absent or older than 35 seconds,
+cancels gate execution when that heartbeat is absent or older than five minutes,
 then releases its worker lock; recovery removes its remote directory after the
 lock becomes available. On session loss the worker removes its own directory.
 Cancelled workers report `REMOTE_GATE_SLOT <runId> release`, and recovery logs

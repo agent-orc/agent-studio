@@ -11,7 +11,7 @@ namespace AgentStudio.Pipeline;
 /// </summary>
 public static class RemoteGateWorker
 {
-    internal static readonly TimeSpan HeartbeatTimeout = TimeSpan.FromSeconds(35);
+    internal static readonly TimeSpan HeartbeatTimeout = TimeSpan.FromMinutes(5);
     internal static readonly TimeSpan HeartbeatPollInterval = TimeSpan.FromSeconds(2);
 
     public static async Task<int> RunAsync(string requestPath,

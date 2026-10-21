@@ -16,6 +16,7 @@ internal sealed class RemoteGateRunRegistry
     private static readonly string CurrentProcessInstance = Guid.NewGuid().ToString("N");
     private readonly string _root;
     private readonly TimeProvider _time;
+    private readonly bool _disabled;
     internal string InstallationId { get; }
     internal string ProcessInstance { get; }
     internal int ProcessId { get; }
@@ -34,17 +35,29 @@ internal sealed class RemoteGateRunRegistry
         ProcessStartTicks = processStartTicks ?? process.StartTime.ToUniversalTime().Ticks;
     }
 
+    private RemoteGateRunRegistry(TimeProvider time)
+    {
+        _root = string.Empty;
+        _time = time;
+        _disabled = true;
+        InstallationId = Guid.NewGuid().ToString("N");
+        ProcessInstance = CurrentProcessInstance;
+    }
+
+    internal static RemoteGateRunRegistry Disabled(TimeProvider time) => new(time);
+
     internal RemoteGateRunRecord Record(string runId, string host, string remoteRoot,
         string? project = null, string? watchPath = null)
     {
         var record = new RemoteGateRunRecord(runId, host, remoteRoot, _time.GetUtcNow(),
             ProcessInstance, InstallationId, ProcessId, ProcessStartTicks, project, watchPath);
-        Write(record);
+        if (!_disabled) Write(record);
         return record;
     }
 
     internal IReadOnlyList<RemoteGateRunRecord> ReadAll()
     {
+        if (_disabled) return [];
         lock (Locks.GetOrAdd(_root, _ => new object()))
         {
             if (!Directory.Exists(_root)) return [];
@@ -68,6 +81,7 @@ internal sealed class RemoteGateRunRegistry
 
     internal void Remove(string runId)
     {
+        if (_disabled) return;
         lock (Locks.GetOrAdd(_root, _ => new object()))
         {
             var path = Path.Combine(_root, runId + ".json");
@@ -131,15 +145,20 @@ internal sealed class RemoteGateOrphanSweepService(RemoteGateTransport transport
     ShardedRemoteGateTransport sharded,
     ILogger<RemoteGateOrphanSweepService> logger, TimeProvider time) : BackgroundService
 {
-    private async Task SweepAsync(CancellationToken ct)
+    internal async Task SweepAsync(CancellationToken ct)
     {
-        await transport.CancelOrphanedRunsAsync(ct);
-        await sharded.CancelOrphanedRunsAsync(ct);
+        try { await transport.CancelOrphanedRunsAsync(ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception exception) { logger.LogWarning(exception, "remote_gate_orphan_sweep_failed host=primary"); }
+        try { await sharded.CancelOrphanedRunsAsync(ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception exception) { logger.LogWarning(exception, "remote_gate_orphan_sweep_failed host=shard"); }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await SweepAsync(stoppingToken);
+        try { await SweepAsync(stoppingToken); }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), time);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {

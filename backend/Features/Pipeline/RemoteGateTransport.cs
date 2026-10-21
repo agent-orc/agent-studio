@@ -54,7 +54,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         : this(configuration, logger, timeProvider ?? TimeProvider.System,
             Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport"),
             WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage,
-            runRegistry: CreateDefaultRegistry(timeProvider ?? TimeProvider.System, configuration),
+            runRegistry: CreateDefaultRegistrySafe(timeProvider ?? TimeProvider.System, configuration, logger),
             activity: activity, scanner: scanner)
     {
     }
@@ -70,7 +70,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         : this(configuration, logger, timeProvider ?? TimeProvider.System,
             Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport"),
             WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage,
-            runRegistry: CreateDefaultRegistry(timeProvider ?? TimeProvider.System, configuration),
+            runRegistry: CreateDefaultRegistrySafe(timeProvider ?? TimeProvider.System, configuration, logger),
             activity: activity, scanner: scanner)
     {
         _section = section;
@@ -91,6 +91,8 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         _time = timeProvider;
         _localRoot = localRoot;
         _runs = runRegistry ?? new RemoteGateRunRegistry(localRoot + ".run-records", timeProvider);
+        if (!Regex.IsMatch(_runs.InstallationId, "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"))
+            throw new InvalidDataException("Remote gate installation id is invalid.");
         _deleteDirectory = deleteDirectory;
         _slotUsage = slotUsage ?? new GateSlotUsageTracker(clock: timeProvider);
         _runProcess = runProcess ?? RemoteGateProcess.RunAsync;
@@ -245,7 +247,6 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         }
         finally
         {
-            LiveRuns.TryRemove(_runs.ProcessInstance + ":" + runId, out _);
             _slotUsage.Released(runId);
             if (remoteCreationAttempted)
             {
@@ -255,7 +256,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                 var cleanup = CleanupCommand(remote);
                 try
                 {
-                    await Ssh(options, local, cleanup, TimeSpan.FromSeconds(20), CancellationToken.None);
+                    await Ssh(options, local, cleanup, TimeSpan.FromSeconds(50), CancellationToken.None);
                     await Ssh(options, local, "test ! -e " + Quote(remote), TimeSpan.FromSeconds(10), CancellationToken.None);
                     _runs.Remove(runId);
                 }
@@ -266,6 +267,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             }
             else if (_runs.ReadAll().Any(record => record.RunId == runId))
                 _runs.Remove(runId);
+            LiveRuns.TryRemove(_runs.ProcessInstance + ":" + runId, out _);
             DeleteLocalRunFolder(local, runId);
         }
     }
@@ -329,6 +331,18 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                 _logger.LogWarning(exception, "remote_gate_orphan_cancel_pending run_id={RunId} host={Host}",
                     record.RunId, record.Host);
             }
+        }
+    }
+
+    internal static RemoteGateRunRegistry CreateDefaultRegistrySafe(TimeProvider time,
+        IConfiguration configuration, ILogger<RemoteGateTransport> logger,
+        string? installationDirectory = null, string? dataDirectory = null)
+    {
+        try { return CreateDefaultRegistry(time, configuration, installationDirectory, dataDirectory); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            logger.LogWarning(exception, "remote_gate_registry_unavailable");
+            return RemoteGateRunRegistry.Disabled(time);
         }
     }
 

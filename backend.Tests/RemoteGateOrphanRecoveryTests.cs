@@ -340,8 +340,73 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
     {
         var now = _clock.GetUtcNow();
 
-        Assert.False(RemoteGateWorker.IsHeartbeatStale(now, now - TimeSpan.FromSeconds(34)));
-        Assert.True(RemoteGateWorker.IsHeartbeatStale(now, now - TimeSpan.FromSeconds(36)));
+        Assert.False(RemoteGateWorker.IsHeartbeatStale(now, now - TimeSpan.FromMinutes(4) - TimeSpan.FromSeconds(59)));
+        Assert.True(RemoteGateWorker.IsHeartbeatStale(now, now - TimeSpan.FromMinutes(5) - TimeSpan.FromSeconds(1)));
+    }
+
+    [Fact]
+    public void Worker_keeps_a_live_session_through_two_connect_timeouts()
+    {
+        var now = _clock.GetUtcNow();
+        Assert.False(RemoteGateWorker.IsHeartbeatStale(now, now - TimeSpan.FromSeconds(35)));
+        Assert.False(RemoteGateWorker.IsHeartbeatStale(now, now - TimeSpan.FromMinutes(3)));
+        Assert.True(RemoteGateWorker.IsHeartbeatStale(now, now - TimeSpan.FromMinutes(5) - TimeSpan.FromSeconds(1)));
+    }
+
+    [Fact]
+    public async Task Startup_sweep_failure_does_not_disable_later_recovery()
+    {
+        var previous = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('b', 32));
+        previous.Record(new string('c', 32), "gate-a", "/srv/gates");
+        var current = new RemoteGateRunRegistry(_root, _clock, new string('a', 32), new string('d', 32));
+        var attempts = 0;
+        Task Run(string fileName, IReadOnlyList<string> args, string cwd, TimeSpan timeout,
+            CancellationToken ct, Action<string>? output)
+        {
+            attempts++;
+            if (attempts == 1) throw new System.ComponentModel.Win32Exception("ssh missing");
+            return Task.CompletedTask;
+        }
+        var transport = Transport(current, Run);
+        var slots = new GateSlotUsageTracker(clock: _clock);
+        var sharded = new ShardedRemoteGateTransport(
+            new GateShardHost("gate-a", transport, slots), [],
+            new GateShardTimingStore(Path.Combine(_root, "timings"), _clock),
+            NullLogger<ShardedRemoteGateTransport>.Instance, _clock);
+        var service = new RemoteGateOrphanSweepService(transport, sharded,
+            NullLogger<RemoteGateOrphanSweepService>.Instance, _clock);
+
+        await service.StartAsync(CancellationToken.None);
+        Assert.True(SpinWait.SpinUntil(() => attempts == 1, TimeSpan.FromSeconds(5)));
+        Assert.Single(current.ReadAll());
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.True(SpinWait.SpinUntil(() => current.ReadAll().Count == 0, TimeSpan.FromSeconds(5)));
+        await service.StopAsync(CancellationToken.None);
+        Assert.True(attempts >= 2);
+    }
+
+    [Fact]
+    public void Invalid_installation_id_is_rejected_before_dispatch()
+    {
+        var registry = new RemoteGateRunRegistry(_root, _clock, "invalid id");
+        Assert.Throws<InvalidDataException>(() => Transport(registry,
+            (_, _, _, _, _, _) => Task.CompletedTask));
+    }
+
+    [Fact]
+    public void Registry_io_failure_does_not_prevent_transport_construction()
+    {
+        var blocked = Path.Combine(_root, "blocked");
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(blocked, "not a directory");
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["RemoteGate:InstallationRoot"] = blocked,
+        }).Build();
+        var registry = RemoteGateTransport.CreateDefaultRegistrySafe(_clock, config,
+            NullLogger<RemoteGateTransport>.Instance, dataDirectory: blocked);
+        Assert.Empty(registry.ReadAll());
+        Assert.Matches("^[0-9a-f]{32}$", registry.InstallationId);
     }
 
     [Fact]
@@ -351,7 +416,7 @@ public sealed class RemoteGateOrphanRecoveryTests : IDisposable
         Directory.CreateDirectory(directory);
         var heartbeat = Path.Combine(directory, "heartbeat");
         File.WriteAllText(heartbeat, "");
-        File.SetLastWriteTimeUtc(heartbeat, (_clock.GetUtcNow() - TimeSpan.FromSeconds(36)).UtcDateTime);
+        File.SetLastWriteTimeUtc(heartbeat, (_clock.GetUtcNow() - TimeSpan.FromMinutes(5) - TimeSpan.FromSeconds(1)).UtcDateTime);
         using var execution = new CancellationTokenSource();
         using var stopWatcher = new CancellationTokenSource();
 
