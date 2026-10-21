@@ -22,6 +22,52 @@ public class TaskIndexCacheTests : IDisposable
     private readonly TaskScannerService _scanner;
     private readonly TaskIndexCache _cache;
 
+    [Fact]
+    public async Task DetailFacts_DoNotWaitForUnrelatedRefresh_AndKeepOwnPublication()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "First");
+        WriteJob(TaskStates.Ready, "card-b", "Second");
+        var clock = new FakeTimeProvider();
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scans = 0;
+        var cache = new TaskIndexCache(_scanner, NullLogger<TaskIndexCache>.Instance, _config,
+            () =>
+            {
+                if (Interlocked.Increment(ref scans) > 1)
+                {
+                    entered.TrySetResult(true);
+                    release.Task.GetAwaiter().GetResult();
+                }
+                return _scanner.ScanAllJobsRaw();
+            }, timeProvider: clock);
+        _scanner.SetIndexCache(cache);
+        cache.GetSnapshot();
+        cache.Invalidate();
+        try
+        {
+            var first = cache.GetDetailFacts("card-a", _watchPath);
+            Assert.Equal("First", first.Info?.Title);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(30), clock);
+
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var unrelated = cache.GetDetailFacts("card-a", _watchPath);
+            var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+            Assert.Equal("First", unrelated.Info?.Title);
+            Assert.True(elapsed < TimeSpan.FromMilliseconds(100));
+
+            cache.PublishCore(first.Info! with { Title = "Published A" });
+            Assert.Equal("Published A", cache.GetDetailFacts("card-a", _watchPath).Info?.Title);
+        }
+        finally
+        {
+            release.TrySetResult(true);
+        }
+        if (cache.RefreshInFlight is { } refresh)
+            await refresh.WaitAsync(TimeSpan.FromSeconds(30), clock);
+        Assert.Equal("Published A", cache.GetDetailFacts("card-a", _watchPath).Info?.Title);
+    }
+
     public TaskIndexCacheTests()
     {
         _watchPath = Path.Combine(Path.GetTempPath(), "atp-cache-" + Guid.NewGuid().ToString("N"));

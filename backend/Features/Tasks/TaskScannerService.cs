@@ -984,7 +984,12 @@ public class TaskScannerService : ITaskScanner
     {
         var info = FindJob(jobId, watchPath);
         if (info == null) return null;
+        return GetJobDetailFromInfo(info);
+    }
 
+    /// <summary>Hydrates sidecars for a card already resolved by the keyed index.</summary>
+    public TaskDetail GetJobDetailFromInfo(TaskInfo info)
+    {
         var dir = info.FolderPath;
         var statusMd = TaskSwitchTrace.Run("sidecar.status", () => ReadFileOrNull(Path.Combine(dir, "status.md")));
         var generated = TaskSwitchTrace.Run("sidecar.other", () => _fileGenerationIndex?.ReadForJob(dir)

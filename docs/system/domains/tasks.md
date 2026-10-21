@@ -1712,6 +1712,17 @@ filesystem paths. The existing `task-op` Server-Timing duration and background
 `git-index-run` rollups retain their distinct boundaries. The capture and
 offline reducer protocol is in [measurement.md](../../task-switch-performance/measurement.md).
 
+The full-detail route resolves its card and dependency graph from published
+per-card facts. Other cards' mutations cannot make it wait for `EnsureFresh`;
+a safety-TTL or watcher repair runs in the background. It emits
+`X-Task-Detail-Freshness: ready|stale|warming`; a cold, unindexed lookup returns
+`202` while hydration starts. Durable task writes publish the affected core
+before acknowledging the write. Token usage loads through the independent
+`/details/usage` resource and does not fold the project ledger in the
+full-detail request. The trace stages remain available. Completed full-detail
+response latencies, including serialization, feed a rolling five-minute
+p50/p95/max view at `GET /api/runtime/task-detail-latency`.
+
 ## Bounded task core read (AGT-2953)
 
 `GET /api/tasks/{jobId}/core?project=PROJ-002` is an additive task-switch

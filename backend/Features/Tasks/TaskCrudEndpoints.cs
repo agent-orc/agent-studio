@@ -448,24 +448,40 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
+        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail",
                 loggerFactory.CreateLogger("TaskDetail"), includeNested: true);
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var detail = scanner.GetJobDetail(jobId, watchPath);
-            if (detail is null) return Results.NotFound();
+            var facts = await index.GetDetailFactsAsync(jobId, watchPath, context.RequestAborted);
+            if (facts.Info is null)
+            {
+                if (facts.Warming)
+                {
+                    context.Response.Headers["X-Task-Detail-Freshness"] = "warming";
+                    return Results.Accepted();
+                }
+                return Results.NotFound();
+            }
+            context.Response.Headers["X-Task-Detail-Freshness"] = facts.Stale ? "stale" : "ready";
+            var detail = scanner.GetJobDetailFromInfo(facts.Info);
             // Detail and the Git resource consume the same completed repository
             // snapshot. A stale result for an older task attempt is withheld.
             var gitFacts = TaskSwitchTrace.Run("index.lookup", () => gitProjection.ReadTask(detail.Info).Data);
             if (gitFacts?.ReconstructedCommits is { } commits)
                 detail = detail with { Info = detail.Info with { Commits = commits.ToList() } };
-            var tokenLookup = TaskSwitchTrace.Run("tokens", () => BuildTokenLookup(new[] { detail.Info }, tokens));
+            // Usage is loaded through the independent /details/usage resource.
+            // A card detail request must never synchronously fold the project ledger.
+            IReadOnlyDictionary<string, TaskTokenSummary>? tokenLookup = null;
             var verdictLookup = TaskSwitchTrace.Run("runtime", () => BuildOrchestratorVerdictLookup(new[] { detail.Info }, configuration));
-            var eligibleWaiters = ProjectAccessAuthorization
-                .FilterTasks(context, scanner.ScanAllJobs(), projects)
-                .Where(job => !job.Fixture);
-            var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority));
+            var needsDependencyProjection = detail.Info.References.DependsOn.Count > 0
+                || detail.Info.State == TaskStates.HumanReview;
+            var eligibleWaiters = needsDependencyProjection
+                ? ProjectAccessAuthorization.FilterTasks(context, index.GetResidentTasks(), projects)
+                    .Where(job => !job.Fixture)
+                : Enumerable.Empty<TaskInfo>();
+            var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(
+                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority, facts.References));
             var withRuntime = WithRuntime(pricing, detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
             withRuntime = TaskSwitchTrace.Run("runtime", () => withRuntime with
             {

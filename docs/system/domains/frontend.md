@@ -355,7 +355,9 @@ occur. It is not a claim about tunnel transfer time.
   the run pipeline panel; old `pipeline` routes open Run steps. Operations reads
   `GET /api/projects/<project>/environments` and shows the recorded health of
   each declared environment, plus the existing Product Runtime observability
-  panel; without environments it invites setup in Deploy. The Deck rail
+  panel. Product Runtime also shows a rolling five-minute p50 and p95 for
+  completed card detail responses from the current backend process; without
+  environments it invites setup in Deploy. The Deck rail
   excludes Deploy, Deployment, Pipeline, and Observability. Agent-work panels
   stay in the Deck as the Insight rail Agent activity: the message bus panel,
   token summary, supervisor and meta-cycle sections, and analysis reports.

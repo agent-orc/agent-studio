@@ -12,6 +12,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using AgentStudio.Review;
 using AgentStudio.Security;
 using Xunit;
@@ -22,6 +23,87 @@ public sealed class TaskCoreEndpointTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "task-core-http-" + Guid.NewGuid().ToString("N"));
     private string Jobs => Path.Combine(_root, "jobs");
+
+    [Fact]
+    public async Task LegacyDetail_UsesPublishedCardWhileOtherCardsAreDirty_WithoutTokenFold()
+    {
+        Seed("AGT-target", TaskStates.Ready);
+        Seed("AGT-other", TaskStates.Ready);
+        var tokenReader = new FakeTokenAggregator(new Dictionary<string, Dictionary<string, TaskTokenSummary>>());
+        await using var factory = Factory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<ITokenAggregator>();
+                services.AddSingleton<ITokenAggregator>(tokenReader);
+            }));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        await WarmIndexAsync(factory, "AGT-target");
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        var other = index.GetDetailFacts("AGT-other", Jobs).Info!;
+        index.Invalidate();
+        index.PublishCore(other with { Title = "Other changed" });
+
+        using var detail = await client.GetAsync($"/api/tasks/AGT-target?project={project.Id}");
+        detail.EnsureSuccessStatusCode();
+        Assert.Equal("ready", detail.Headers.GetValues("X-Task-Detail-Freshness").Single());
+        Assert.Empty(tokenReader.Calls);
+        using var body = JsonDocument.Parse(await detail.Content.ReadAsStringAsync());
+        Assert.Equal("AGT-target", body.RootElement.GetProperty("info").GetProperty("id").GetString());
+
+        var target = index.GetDetailFacts("AGT-target", Jobs).Info!;
+        index.PublishCore(target with { Title = "Target changed" });
+        using var after = await client.GetAsync($"/api/tasks/AGT-target?project={project.Id}");
+        after.EnsureSuccessStatusCode();
+        using var changed = JsonDocument.Parse(await after.Content.ReadAsStringAsync());
+        Assert.Equal("Target changed", changed.RootElement.GetProperty("info").GetProperty("title").GetString());
+
+        using var latency = await client.GetAsync("/api/runtime/task-detail-latency");
+        latency.EnsureSuccessStatusCode();
+        using var measurement = JsonDocument.Parse(await latency.Content.ReadAsStringAsync());
+        Assert.True(measurement.RootElement.GetProperty("count").GetInt32() >= 2);
+    }
+
+    [Fact]
+    public async Task DetailReads_MeetFleetMutationP95Budget()
+    {
+        for (var i = 0; i < 10; i++) Seed($"AGT-load-{i}", TaskStates.Ready);
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 21, 8, 0, 0, TimeSpan.Zero));
+        await using var factory = Factory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(clock);
+            }));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        await WarmIndexAsync(factory, "AGT-load-0");
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        var durations = new List<double>();
+        for (var i = 0; i < 60; i++)
+        {
+            if (i % 10 == 0)
+            {
+                // Six writes per injected minute, spread over ten active cards.
+                var identity = $"AGT-load-{i / 10}";
+                var task = index.GetDetailFacts(identity, Jobs).Info!;
+                index.Invalidate();
+                index.PublishCore(task with { Title = $"Write {i}" });
+            }
+            clock.Advance(TimeSpan.FromSeconds(1));
+            var started = Stopwatch.GetTimestamp();
+            using var response = await client.GetAsync($"/api/tasks/AGT-load-{i % 10}?project={project.Id}");
+            response.EnsureSuccessStatusCode();
+            durations.Add(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        }
+        durations.Sort();
+        var p50 = durations[(int)Math.Ceiling(durations.Count * 0.5) - 1];
+        var p95 = durations[(int)Math.Ceiling(durations.Count * 0.95) - 1];
+        Assert.True(p50 < 100, $"Card detail p50 {p50:F1} ms exceeds 100 ms.");
+        Assert.True(p95 < 300, $"Card detail p95 {p95:F1} ms exceeds 300 ms.");
+    }
 
     [Theory]
     [InlineData(200, "AGT-2993")]

@@ -49,6 +49,7 @@ Log.Logger = new LoggerConfiguration()
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddSingleton<TaskDetailLatencyMetrics>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunRepositoryProbe>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunGitSetup>();
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();
@@ -1769,6 +1770,11 @@ try
     store.OnAppended = (workspace, msg) =>
     {
         try { cache.OnAppended(workspace, msg); } catch (Exception ex) { SilentCatch.Note(ex, "BusAggregationCache.OnAppended"); }
+        if (msg.Kind == "token-usage" && !string.IsNullOrWhiteSpace(msg.JobId))
+        {
+            try { app.Services.GetRequiredService<AgentStudio.Tokens.TaskTokenUsageCache>().OnTokenUsageAppended(msg); }
+            catch (Exception ex) { SilentCatch.Note(ex, "TaskTokenUsageCache.OnTokenUsageAppended"); }
+        }
         try
         {
             var recipients = projectScopedSignalRProfile
