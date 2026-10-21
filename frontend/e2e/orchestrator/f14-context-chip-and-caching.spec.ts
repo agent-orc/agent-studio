@@ -73,7 +73,7 @@ async function stubProjectsAndJobs(page: Page) {
   await page.route(/\/api\//, async (route) => {
     const requestPath = new URL(route.request().url()).pathname;
     let body = '{}';
-    if (/\/api\/(?:tags|v1\/workspaces|v1\/projects|clients|epics)\/?$/.test(requestPath)) body = '[]';
+    if (/\/api\/(?:tags|v1\/workspaces|v1\/projects|clients)\/?$/.test(requestPath)) body = '[]';
     if (requestPath === '/api/v1/studio/runner/status') body = '{"projects":{}}';
     if (requestPath === '/api/cli/quota') body = '{"snapshots":[]}';
     if (requestPath.startsWith('/api/tasks/archive')) body = '{"items":[],"total":0,"offset":0,"limit":50}';

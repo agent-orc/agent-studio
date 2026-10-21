@@ -124,7 +124,7 @@ public sealed class WaitsOnPickupGateTests : IDisposable
         WriteJob(_appWatch, TaskStates.Ready, "a-early", "APP-2", order: 1);
         WriteJob(_appWatch, TaskStates.Ready, "blocked", "APP-3", order: 2, dependsOn: new[] { "LIB-1" });
         WriteJob(_appWatch, TaskStates.Ready, "fulfilled", "APP-4", order: 3, dependsOn: new[] { "LIB-2" });
-        WriteJob(_appWatch, TaskStates.Ready, "epic-card", "APP-5", order: 4, extraJson: ",\"kind\":\"epic\"");
+        WriteJob(_appWatch, TaskStates.Ready, "decision-card", "APP-5", order: 4, extraJson: ",\"kind\":\"decision\"");
         WriteJob(_appWatch, TaskStates.Ready, "fixture-card", "APP-6", order: 0, extraJson: ",\"fixture\":true");
         WriteJob(_appWatch, TaskStates.Ready, "gated", "APP-7", order: 5, dependsOn: new[] { "LIB-2" }, releaseGate: true);
 

@@ -3,7 +3,7 @@
 namespace AgentStudio.Tasks;
 
 /// <summary>
-/// Owns the task commit-provenance record (ASS-1724, epic ASS-1720): the
+/// Owns the task commit-provenance record (ASS-1724): the
 /// append-only <c>provenance</c> block on <c>task.json</c> plus the read-time
 /// projection (<see cref="TaskProvenanceView"/>) that the board uses to answer
 /// "where does this work live" across the worktree -&gt; develop -&gt; main path.

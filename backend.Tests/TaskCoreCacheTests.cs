@@ -43,6 +43,19 @@ public sealed class TaskCoreCacheTests : IDisposable
     }
 
     [Fact]
+    public void UnknownIdentity_OnDirtyPublishedSnapshot_IsMissing()
+    {
+        var cache = Cache(() => []);
+        cache.GetSnapshot();
+        cache.Invalidate();
+
+        var unknown = cache.GetCore("unknown", _root);
+
+        Assert.Null(unknown.Record);
+        Assert.False(unknown.Warming);
+    }
+
+    [Fact]
     public async Task BackgroundHydration_DoesNotInheritCoreRequestTrace()
     {
         using var scanned = new ManualResetEventSlim();

@@ -33,7 +33,6 @@ import {
   flattenGrouped,
   type BoardLane,
   type BoardLaneGroup,
-  excludeEpics,
   projectAutoInfo,
   projectRunnerIndicator,
 } from './features/board';
@@ -46,7 +45,6 @@ import {
   TaskSelectionService,
   TriageController,
   LanePagerService,
-  LANE_LABELS,
   overflowActionsFor,
   primaryActionFor,
   mergeAcceptViewFor,
@@ -284,27 +282,6 @@ export class App implements OnInit, OnDestroy {
     const info = freshestRunInfo(detail.info, this.jobService.jobs());
     return buildRunActivityBadge(info, this.nowTick());
   });
-  readonly epicTabTaskDetail = signal<TaskDetail | null>(null);
-  readonly epicTabSubTaskPeers = computed<TaskInfo[]>(() => {
-    const epic = this.selectedJob();
-    if (this.studioTabState.activeTab()?.kind !== 'epic') return [];
-    if (!epic) return [];
-    const laneRank = new Map(Object.keys(LANE_LABELS).map((state, index) => [state, index]));
-    return this.jobService.jobs()
-      .filter((job) =>
-        job.kind !== 'epic' &&
-        job.epicId === epic.info.id &&
-        job.watchPath === epic.info.watchPath
-      )
-      .sort((a, b) => {
-        const stateDelta = (laneRank.get(a.state) ?? 999) - (laneRank.get(b.state) ?? 999);
-        if (stateDelta !== 0) return stateDelta;
-        const orderDelta = a.order - b.order;
-        if (orderDelta !== 0) return orderDelta;
-        return (a.title || a.id).localeCompare(b.title || b.id);
-      });
-  });
-
   @ViewChild('jobDetail') private jobDetailRef?: TaskDetailComponent;
   @ViewChild('orchSideSheet') private orchSideSheetRef?: OrchestratorSideSheetComponent;
   private readonly jobDetailSig = viewChild<TaskDetailComponent>('jobDetail');
@@ -456,9 +433,9 @@ export class App implements OnInit, OnDestroy {
    * `displayGrouped` feed (via `dossierBoardTasks`) so search + filters apply to
    * both shapes identically. Persisted in UiPreferencesService.
    */
-  readonly groupByEpic = this.uiPrefs.groupByEpic;
-  toggleGroupByEpic(): void {
-    this.uiPrefs.toggleGroupByEpic();
+  readonly groupByDossier = this.uiPrefs.groupByDossier;
+  toggleGroupByDossier(): void {
+    this.uiPrefs.toggleGroupByDossier();
   }
   /**
    * Flat, de-duplicated task list for the Dossier groups. Sourced from the visible
@@ -467,8 +444,6 @@ export class App implements OnInit, OnDestroy {
    * is counted twice.
    */
   readonly dossierBoardTasks = computed(() => flattenGrouped(this.displayGrouped()));
-  /** Existing lane cards still use the full filtered feed for their Epic subtask details. */
-  readonly epicBoardTasks = computed(() => flattenGrouped(this.filteredGrouped()));
 
   /**
    * Card density was abolished (AGT-2035): job cards always render full. This
@@ -574,11 +549,7 @@ export class App implements OnInit, OnDestroy {
   // ProjectRunner.GetNextReadyJob picks by. Keeping a single source of truth
   // here means "what's at the top of Ready runs first" is structurally true,
   // not just usually true.
-  // Board display contract: epics are containers, not board work-items, so the
-  // flat lane board (focusGroups / laneGroups) renders tasks only. The
-  // Dossier grouping uses the same tasks-only feed, so Epic containers stay out
-  // of the board. See `excludeEpics`.
-  readonly displayGrouped = computed(() => excludeEpics(this.filteredGrouped()));
+  readonly displayGrouped = this.filteredGrouped;
 
   /**
    * AGT-2819: the lane ordering rules live in `buildFocusLanes` /
@@ -816,7 +787,7 @@ export class App implements OnInit, OnDestroy {
     // for EVERY project-bound tab kind, not just boards. Without this the
     // filter/count surfaces (filteredTaskCount, the filter panel, the
     // projected lanes) kept the previous scope when the user opened a
-    // Hub / Backlog / Epics / Task tab, leaking foreign-project elements
+    // Deck / Backlog / Task tab, leaking foreign-project elements
     // and an all-projects total (e.g. "193") while the breadcrumb named
     // the selected project. setSoleProject is idempotent so repeated tab
     // activations don't toggle the filter off.
@@ -898,7 +869,7 @@ export class App implements OnInit, OnDestroy {
       if (revision === 0 || !this.featureFlags.vsCodeLayout()) return;
       untracked(() => {
         const tab = this.studioTabState.activeTab();
-        if (tab?.kind === 'task' || tab?.kind === 'epic') {
+        if (tab?.kind === 'task') {
           this.studioTabState.activateAllProjectsBoard();
         }
       });
@@ -942,13 +913,9 @@ export class App implements OnInit, OnDestroy {
           this.studioActiveTabWasTask = true;
           if (selected?.info.taskKey === tab.taskKey || this.detailPreview()?.taskKey === tab.taskKey) return;
           this.jobSelection.openDetailByTaskKey(tab.taskKey);
-        } else if (tab?.kind === 'epic') {
-          this.studioActiveTabWasTask = true;
-          this.loadEpicTabDetail(tab.epicKey, tab.viewTaskKey ?? null);
         } else {
           const cameFromTask = this.studioActiveTabWasTask;
           this.studioActiveTabWasTask = false;
-          this.epicTabTaskDetail.set(null);
           if (selected || cameFromTask) {
             this.jobSelection.clearSelectionForTabSwitch();
           }
@@ -964,7 +931,7 @@ export class App implements OnInit, OnDestroy {
       // canonical identity is the immutable registry id, not a display slug.
       if (tab.kind === 'hub') return;
       let publicTaskReference: string | null = null;
-      if (tab.kind === 'task' || tab.kind === 'epic') {
+      if (tab.kind === 'task') {
         const selected = this.selectedJob();
         if (selected) publicTaskReference = selected.info.key?.trim() || selected.info.displayKey?.trim() || selected.info.id;
       }
@@ -1090,7 +1057,6 @@ export class App implements OnInit, OnDestroy {
       }
       const studioHandled = this.syncStudioRouteFromHash(fromHistory);
       if (!studioHandled) this.applyProjectShellHash(fromHistory);
-      this.syncEpicsTabFromHash();
     };
     applyHash();
     this.firstRunLaunch.maybeOpen(() => this.openWorkspaceSettingsInStudio('first-run'));
@@ -1179,10 +1145,6 @@ export class App implements OnInit, OnDestroy {
   }
 
   openDetail(job: TaskInfo) {
-    if (job.kind === 'epic') {
-      this.openEpicAsTab(job);
-      return;
-    }
     this.onTaskDetailTabChange(null);
     this.routeInspectorTab.set(null);
     if (this.featureFlags.vsCodeLayout()) {
@@ -1668,59 +1630,12 @@ export class App implements OnInit, OnDestroy {
     this.jobSelection.selectResolvedDetail(detail, 'push');
   }
 
-  private openEpicAsTab(job: TaskInfo, viewTaskKey?: string): void {
-    this.studioTabState.open({ kind: 'epic', epicKey: job.taskKey, viewTaskKey });
-    this.jobService.getDetail(job.id, job.watchPath).subscribe({
-      next: (detail) => {
-        if (detail.info.kind === 'epic') {
-          const token = this.jobSelection.bumpOpenDetailToken();
-          this.jobSelection.setSelectedFromAdvance(detail, token);
-        }
-      },
-      error: (err) => this.errorDialog.show(err, { title: 'Failed to open epic', source: `task ${job.id}` }),
-    });
-  }
-
-  private openEpicDetailAsTab(detail: TaskDetail, viewTaskKey?: string): void {
-    this.epicTabTaskDetail.set(null);
-    this.studioTabState.open({ kind: 'epic', epicKey: detail.info.taskKey, viewTaskKey });
-    const token = this.jobSelection.bumpOpenDetailToken();
-    this.jobSelection.setSelectedFromAdvance(detail, token);
-  }
-
-  private loadEpicTabDetail(epicKey: string, viewTaskKey: string | null): void {
-    if (this.selectedJob()?.info.taskKey !== epicKey) {
-      this.jobSelection.openDetailByTaskKey(epicKey);
-    }
-    if (viewTaskKey) {
-      this.fetchDetailByTaskKey(viewTaskKey, (detail) => this.selectEpicTabSubTask(detail));
-    } else {
-      this.epicTabTaskDetail.set(null);
-    }
-  }
-
-  private fetchDetailByTaskKey(taskKey: string, onDetail: (detail: TaskDetail) => void): void {
-    const sep = taskKey.lastIndexOf('::');
-    if (sep < 0) return;
-    const watchPath = taskKey.slice(0, sep);
-    const jobId = taskKey.slice(sep + 2);
-    if (!jobId || !watchPath) return;
-    this.jobService.getDetail(jobId, watchPath).subscribe({
-      next: onDetail,
-      error: (err) => this.errorDialog.show(err, { title: 'Failed to open task', source: `task ${jobId}` }),
-    });
-  }
-
-  /** Target-aware open helper. Epic targets become inline epic tabs. */
+  /** Open a related task in the detail view. */
   openRelatedJob(event: { jobId: string; watchPath: string }): void {
     const requestToken = ++this.relatedOpenToken;
     this.jobService.getDetail(event.jobId, event.watchPath).subscribe({
       next: (detail) => {
         if (requestToken !== this.relatedOpenToken) return;
-        if (detail.info.kind === 'epic') {
-          this.openEpicDetailAsTab(detail);
-          return;
-        }
         this.selectFetchedDetail(detail);
       },
       error: (err) => {
@@ -1734,44 +1649,10 @@ export class App implements OnInit, OnDestroy {
   }
 
   /**
-   * Slice E: route a click on the bug-confirmation card's "Open task"
-   * action to the kanban detail panel. Epic targets open as inline epic
-   * tabs instead of modal overlays.
+   * Route a click on the bug-confirmation card's "Open task" action to the detail panel.
    */
   onOpenJobDetailFromSheet(event: { jobId: string; watchPath: string }): void {
     this.openRelatedJob(event);
-  }
-
-  onOpenEpicFromTaskAnchor(currentTask: TaskInfo, event: { jobId: string; watchPath: string }): void {
-    const requestToken = ++this.relatedOpenToken;
-    this.jobService.getDetailByProject(
-      event.jobId,
-      currentTask.projectName,
-      event.watchPath,
-    ).subscribe({
-      next: (detail) => {
-        if (requestToken !== this.relatedOpenToken) return;
-        if (detail.info.kind !== 'epic') {
-          this.errorDialog.show(
-            new Error(`Task ${event.jobId} is not an epic.`),
-            {
-              title: 'Failed to open epic',
-              fallbackMessage: 'The selected parent is not an epic.',
-              source: `task ${event.jobId}`,
-            },
-          );
-          return;
-        }
-        this.openEpicDetailFromTaskAnchor(detail);
-      },
-      error: (err) => {
-        if (requestToken !== this.relatedOpenToken) return;
-        this.errorDialog.show(err, {
-          title: 'Failed to open epic',
-          source: `task ${event.jobId}`,
-        });
-      },
-    });
   }
 
   /**
@@ -1792,114 +1673,10 @@ export class App implements OnInit, OnDestroy {
    * decision is unit-testable without driving the full app lifecycle.
    */
   private mirrorSelectionToStudioTab(selected: TaskInfo, retargetNav: boolean): void {
-    if (selected.kind === 'epic') {
-      const key = `epic:${selected.taskKey}`;
-      const present = this.studioTabState.tabs().some(
-        (t) => t.kind === 'epic' && t.epicKey === selected.taskKey,
-      );
-      if (!present) {
-        this.studioTabState.open({ kind: 'epic', epicKey: selected.taskKey });
-      } else {
-        this.studioTabState.select(key);
-      }
-      return;
-    }
     this.studioTabState.open(
       { kind: 'task', taskKey: selected.taskKey },
       retargetNav ? 'replace-current' : 'new',
     );
-  }
-
-  private openEpicDetailFromTaskAnchor(detail: TaskDetail): void {
-    this.epicTabTaskDetail.set(null);
-    const target = { kind: 'epic' as const, epicKey: detail.info.taskKey };
-    this.studioTabState.open(target);
-
-    const token = this.jobSelection.bumpOpenDetailToken();
-    this.jobSelection.setSelectedFromAdvance(detail, token);
-  }
-
-  onEpicTabOpenSubTask(event: { jobId: string; watchPath: string }): void {
-    const tab = this.studioTabState.activeTab();
-    const epic = this.selectedJob();
-    if (tab?.kind !== 'epic') return;
-    if (!epic) return;
-    const requestToken = ++this.relatedOpenToken;
-    this.jobService.getDetail(event.jobId, event.watchPath).subscribe({
-      next: (detail) => {
-        if (requestToken !== this.relatedOpenToken) return;
-        if (
-          detail.info.kind === 'epic' ||
-          detail.info.epicId !== epic.info.id ||
-          detail.info.watchPath !== epic.info.watchPath
-        ) {
-          this.errorDialog.show(new Error('The selected task is not part of this epic.'), {
-            title: 'Failed to open sub-task',
-            source: `task ${event.jobId}`,
-          });
-          return;
-        }
-        if (tab.viewTaskKey) {
-          const taskKey = `task:${detail.info.taskKey}`;
-          if (this.studioTabState.tabs().some(t => studioTabKey(t) === taskKey)) {
-            this.studioTabState.select(taskKey);
-            return;
-          }
-          this.studioTabState.retarget(studioTabKey(tab), {
-            kind: 'epic',
-            epicKey: tab.epicKey,
-            viewTaskKey: detail.info.taskKey,
-          });
-        }
-        this.selectEpicTabSubTask(detail);
-      },
-      error: (err) => {
-        if (requestToken !== this.relatedOpenToken) return;
-        this.errorDialog.show(err, {
-          title: 'Failed to open sub-task',
-          source: `task ${event.jobId}`,
-        });
-      },
-    });
-  }
-
-  private selectEpicTabSubTask(detail: TaskDetail): void {
-    this.epicTabTaskDetail.set(detail);
-    this.captureEpicTabPager(detail);
-  }
-
-  private captureEpicTabPager(detail: TaskDetail): void {
-    const peers = this.epicTabSubTaskPeers();
-    if (peers.length === 0) return;
-    this.lanePager.capture('epic', peers, detail.info.taskKey);
-  }
-
-  closeEpicTabTaskDetail(): void {
-    this.epicTabTaskDetail.set(null);
-  }
-
-  onEpicTabNavigateLane(targetState: string): void {
-    const next = this.epicTabSubTaskPeers().find((job) => job.state === targetState);
-    if (!next) return;
-    this.onEpicTabOpenSubTask({ jobId: next.id, watchPath: next.watchPath });
-  }
-
-  onEpicTabNextSubTask(info: TaskInfo): void {
-    this.openAdjacentEpicTabSubTask(info, 1);
-  }
-
-  onEpicTabPrevSubTask(info: TaskInfo): void {
-    this.openAdjacentEpicTabSubTask(info, -1);
-  }
-
-  private openAdjacentEpicTabSubTask(info: TaskInfo, delta: -1 | 1): void {
-    const peers = this.epicTabSubTaskPeers();
-    if (peers.length === 0) return;
-    const idx = peers.findIndex((job) => job.taskKey === info.taskKey);
-    const nextIdx = idx < 0 ? 0 : idx + delta;
-    if (nextIdx < 0 || nextIdx >= peers.length || nextIdx === idx) return;
-    const next = peers[nextIdx];
-    this.onEpicTabOpenSubTask({ jobId: next.id, watchPath: next.watchPath });
   }
 
   /**
@@ -2059,7 +1836,11 @@ export class App implements OnInit, OnDestroy {
         break;
       case 'workbenches':
         this.studioTabState.open({ kind: 'workbenches', projectName });
-        if (route.legacy) replaceStudioRoute(studioRouteForTab({ kind: 'workbenches', projectName })!);
+        if (route.legacy) {
+          replaceStudioRoute(projectName
+            ? `/projects/${studioProjectSlug(projectName)}/workbenches`
+            : '/workbenches');
+        }
         break;
       case 'deployment-dashboard':
         this.studioTabState.open({ kind: 'deployment-dashboard' });
@@ -2067,10 +1848,6 @@ export class App implements OnInit, OnDestroy {
       case 'task':
         this.routeDetailTab.set(route.tab);
         this.routeInspectorTab.set(route.inspector);
-        this.pendingStudioTaskReference = route.reference;
-        this.jobSelection.restoreFromUrl(fromHistory);
-        return true;
-      case 'epic':
         this.pendingStudioTaskReference = route.reference;
         this.jobSelection.restoreFromUrl(fromHistory);
         return true;
@@ -2095,16 +1872,6 @@ export class App implements OnInit, OnDestroy {
   onTaskInspectorTabChange(tab: TaskInspectorRouteTab): void {
     this.routeInspectorTab.set(tab);
   }
-  private syncEpicsTabFromHash(): void {
-    const rawHash = window.location.hash || '';
-    if (!rawHash.startsWith('#epics')) return;
-    const rawProject = rawHash.startsWith('#epics:')
-      ? decodeURIComponent(rawHash.slice('#epics:'.length))
-      : '';
-    const projectName = rawProject || null;
-    this.studioTabState.open({ kind: 'workbenches', projectName });
-  }
-
   /**
    * AGT-2067 — settings-gear on the embedded URL preview deep-links to the
    * Project Settings, where URL Preview quick setup is the first section.

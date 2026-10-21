@@ -274,6 +274,34 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void OlderGuidedFailure_DoesNotQueueRollbackAfterNewerManualRollbackCompleted()
+    {
+        var (service, _, _) = Build();
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        var first = "registry.example/app@sha256:" + new string('b', 64);
+        var initial = service.QueueDeployment("demo", stage, first, "owner", rollback: false)!;
+        var initialClaim = service.Claim("stage-host")!;
+        Assert.Equal(initial.Id, initialClaim.Id);
+        Assert.True(service.Report("demo", initial.Id, new(initialClaim.LeaseToken!, true, "health-ok")));
+
+        var failed = service.QueueDeployment("demo", stage with { GuidedFailure = true }, _artifact,
+            "owner", rollback: false)!;
+        var failedClaim = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", failed.Id,
+            new(failedClaim.LeaseToken!, false, "health-http-failed")));
+        var manual = service.QueueDeployment("demo", stage, first, "owner", rollback: true)!;
+        var manualClaim = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", manual.Id, new(manualClaim.LeaseToken!, true, "health-ok")));
+
+        Assert.True(service.RollbackFailedJob("demo", failed.Id));
+        Assert.Null(service.Claim("stage-host"));
+        var jobs = service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage");
+        Assert.Equal(first, jobs.DeployedArtifact);
+        Assert.Null(jobs.PendingArtifact);
+        Assert.Equal("rolled-back", jobs.History[0].Status);
+    }
+
+    [Fact]
     public void Reject_PreventsProductionClaim_AndManualRollbackUsesPreviousDigest()
     {
         var (service, repo, watch) = Build();

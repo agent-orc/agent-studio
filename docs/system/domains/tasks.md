@@ -135,7 +135,7 @@ diagnostic; it does not make Git or scanner work permissible on a core read.
   relates them to the source concept. Each `implementationTasks` entry is one
   independently reviewable slice and becomes one card with a bounded
   `acceptanceScope`. Promotion rejects an open-ended entry such as `implement
-  all recommendations`; use one entry per slice or an Epic with slice children.
+  all recommendations`; use one entry per slice.
 - `POST /api/tasks/{id}/continue` on a `concept` or `planning` card refuses
   (`409`) a follow-up prompt that reads as a code-change request, naming the
   card's mode and the matching promotion path (`promote-concept` or
@@ -384,7 +384,7 @@ run recovered. Recovery is reserved for an outage with a completed successor.
 
 ## Decision cards
 
-The `decision` card kind is distinct from area and facet tags and from an Epic.
+The `decision` card kind is distinct from area and facet tags.
 `POST /api/tasks` accepts a `decision` object with a question, two to four
 structured options (`id`, `label`, `consequences`, `effort`, `risk`), an optional
 recommendation and reason, a decider, and an optional due date. The decider is a
@@ -566,7 +566,7 @@ by the migration-capable binary through the normal newer-schema guard.
 
 The saved inventory is the cutover contract. It records:
 
-- projects and per-project, per-state task totals, plus tasks, Epics, timeline
+- projects and per-project, per-state task totals, plus tasks, timeline
   events, result and attachment artifacts, attributed Git commits, historical
   and pending integration records, and delivery and result refs;
 - Dossier workbench descriptors, orchestrator sessions, context chats and
@@ -1355,39 +1355,18 @@ line (observations, cases updated, proposals created, comments appended,
 contingent-blocked count, analysis calls, last-run timestamp), the same shape
 as `acceptance-rail-run`.
 
-## Epic lifecycle
+## Dossier links and retired parent fields
 
-- Epics are `kind=epic` task records; membership is the child's `epicId`.
-- `GET /api/epics` is archive-inclusive. A finished epic remains queryable when
-  all of its children are in `6-completed` or `7-archive`.
-- The Epic overview separates active and completed rollups, shows `x / y done`,
-  and expands to child lane status plus project identity.
-- Manual Epic creation requires a title and goal description. If a planning
-  run parses no sub-tasks, the runner records the failed decomposition and
-  returns the Epic to `0-backlog` instead of leaving an empty completion.
-- A remotely assigned Ready Epic is claimable for planning even though local
-  auto-pickup still skips Epic containers. Local and remote completion both use
-  `EpicDecompositionLifecycle`, `EpicDecompositionParser`, and
-  `EpicSubTaskFactory`. Valid plans create child coding cards with the Epic's
-  project, `epicId`, CLI, and model defaults, append
-  `.metadata/spawned-tasks.jsonl` planning-spawn evidence, and move the Epic to
-  `5-human-review`. Empty, invalid, or source-mutating plans record a failed
-  decomposition and return the Epic to `0-backlog`.
-- A planning run is source-read-only and therefore never carries a Result-SHA,
-  so no ReviewAttempt can be minted for it. `4-auto-review` is consequently not
-  a legal planning-completion lane: an Epic parked there waits forever on a code
-  review of a subject that does not exist, and the report-only exception in the
-  decision engine does not apply because the card is `mode=coding`. The lane is
-  a pure decision in `EpicRunPolicy.PlanningCompletionLane`.
-- Two Human Review behaviours follow from an Epic owning no delivery branch.
-  Accepting it to `6-completed` skips the transactional merge, which would
-  otherwise return `NoTaskBranch` and bounce the card back on every accept. The
-  boot-time verdict-less backfill also leaves it alone: an Epic is verdict-less
-  by construction, not by legacy, so escalating it would only move the dead end
-  one lane over.
-- Empty Epic cleanup uses the Task API to move records to `7-archive`; it never
-  deletes the task folder. Archived zero-member cleanup records are omitted
-  from the overview, while completed Epics with historical children remain.
+Tasks use `task` or `decision` kind. Dossier membership is the card's
+`dossier.path`, which can be assigned through the Task API. A planning card may
+still create independently reviewable follow-up cards through its spawn ledger.
+The former parent-card routes and rollups are removed. For one API version,
+`POST /api/tasks` and the Task Server creation endpoints accept an incoming
+`epicId`, ignore it, and return `Deprecation: true` with a `Warning` header.
+Existing Task Server databases drop the former parent tables and metadata field
+on startup. Archived historical task files are left intact and their retired
+fields are ignored by the active model. Historical parent cards are excluded
+from completion backfill, cycle time, throughput, and environment flow metrics.
 
 ## Key Code
 
@@ -1423,7 +1402,7 @@ as `acceptance-rail-run`.
   types): the P1 "task detail and host control" Studio route bundle
   (AGT-2756) - task history/attempts/runs, task-owned files/attachments/
   artifacts/screenshots/results, code review and the regression radar,
-  pipeline detail, per-field task metadata, epics and tags, remote-host
+  pipeline detail, per-field task metadata and tags, remote-host
   lifecycle, orchestrator chat/log/token projections, and workspace
   aggregates. Every group's schema migration runs from
   `TaskServerStore.ApplyMigrationsAsync` and every group's endpoints are
@@ -1712,6 +1691,19 @@ filesystem paths. The existing `task-op` Server-Timing duration and background
 `git-index-run` rollups retain their distinct boundaries. The capture and
 offline reducer protocol is in [measurement.md](../../task-switch-performance/measurement.md).
 
+The full-detail route resolves its card and dependency graph from published
+per-card facts. Other cards' mutations cannot make it wait for `EnsureFresh`;
+a safety-TTL or watcher repair runs in the background. It emits
+`X-Task-Detail-Freshness: ready|stale|warming`; a cold, unindexed lookup returns
+`202` while the first snapshot or that card's publication is pending; a card
+absent from an otherwise populated but dirty snapshot returns `404`.
+Durable task writes publish the affected core
+before acknowledging the write. Token usage loads through the independent
+`/details/usage` resource and does not fold the project ledger in the
+full-detail request. The trace stages remain available. Completed full-detail
+response latencies, including serialization, feed a rolling five-minute
+p50/p95/max view at `GET /api/runtime/task-detail-latency`.
+
 ## Bounded task core read (AGT-2953)
 
 `GET /api/tasks/{jobId}/core?project=PROJ-002` is an additive task-switch
@@ -1746,6 +1738,20 @@ resident task facts and republish dependent blocker fields and core versions
 before acknowledgment. This includes release, reference edits, moves and
 deletion; an unrelated dirty task does not force a core request to scan. The
 sidecar watcher refreshes changed heads outside HTTP requests.
+
+The legacy full-detail route reads the resident per-card facts without waiting
+for a workspace scan. A folder move swaps its old and new core locations under
+one publication lock. Background scans merge per folder, retaining cards
+published after the scan began and adopting unrelated scanned changes. A
+changed or missing task.json is repaired from that card's folder on read.
+During cold hydration the route returns a JSON 202 warming reply, which the
+client retries with a bounded backoff before exposing a TaskDetail. Successful
+detail replies carry
+`X-Task-Detail-Freshness` and `X-Task-Token-Freshness`; token usage is served
+from a nonblocking card cache. The separate usage resource awaits one shared
+background project ledger load asynchronously and returns the completed summary.
+The detail live-status overlay derives runner queue positions from the last
+published board generation, so it never enters the global freshness gate.
 
 This contract is the D1 and D3 recommendation in
 [the task-switch performance dossier](../../task-switch-performance/index.html).
@@ -1793,7 +1799,7 @@ cannot reappear behind a new path.
     is `ready`, `stale` (`git-snapshot-refreshing`) or `unavailable`
     (`git-snapshot-pending`). Clients show the reason and keep core usable.
   - `usage`: the token summary, last session usage and context usage. Always
-    `ready`.
+    `ready`; concurrent requests share one background project ledger load.
   - `review`: the cached review projection. With `evidence=true` it also
     returns the latest review evidence per id. The state is `ready`, `stale`
     or `warming` (`review-projection-pending`).

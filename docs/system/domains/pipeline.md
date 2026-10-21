@@ -1849,7 +1849,7 @@ Human Review remains the quality decision after the code is already integrated.
 
 The named deviations are narrow. Local worktree coding integrates during local
 finalization before its Auto Review gate, but still before Human Review.
-Planning, research, concept, Epic, and other deliveries without repository
+Planning, research, concept, and other deliveries without repository
 changes have `not-applicable` integration status. Actual repository changes
 always require integration, regardless of card title or configured class.
 Remote Review infrastructure failures remain in Auto Review while their retry
@@ -2103,7 +2103,7 @@ operator changes cause the step to fail before its writer runs.
   `workbench.json.implementationTasks` entry carries, or is normalized to, a
   `bounded-slice` acceptance scope. Promotion rejects a single open-ended
   `implement all recommendations` entry. Multi-slice work uses separate entries
-  or an Epic parent with one child per slice; see
+  in the Dossier with one card per slice; see
   [workflow-sized task cutting](../../operations/workflow-sized-task-cutting.md).
 - `PipelineHealthService` is the visibility-only sensor for pipeline-wide
   failure modes. `BuildTestGateRunner` reports acquired/completed pairs into
