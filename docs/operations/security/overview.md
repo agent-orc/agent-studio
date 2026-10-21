@@ -59,16 +59,16 @@ that is already allowed to edit that project's checkout.
 - The first successful HTTPS bootstrap creates the sole initial owner and then
   closes permanently.
 - Human passwords are stored as versioned salted PBKDF2-SHA512 hashes with
-  600,000 iterations. Login is throttled twice: per username and client (IPv6
-  clients grouped by /64; default 5 failures, then a 15-minute lockout) and per
-  username across all addresses (default 20 failures per 15 minutes,
-  `Security:LoginThrottle:MaxFailuresPerUsername` and `UsernameWindowMinutes`).
-  The per-client key table expires old entries and holds at most 4,096 keys
-  (`Security:LoginThrottle:MaxTrackedKeys`, capped at 4,096). When full, new
-  failed login keys receive 429 until entries expire; existing keys retain
-  their lockout counters.
-  Password resets create a temporary
-  password, revoke existing sessions, and force a change at the next login.
+  600,000 iterations. Login requests accept at most 4 KiB of JSON and return
+  generic invalid credentials for larger bodies. Login failures are limited per
+  client key (IPv6 grouped by /64; default 5 failures, then a 15-minute lockout)
+  and per existing username across client keys (default 20 failures per 15
+  minutes). The per-client table stores fixed-size key hashes, expires old
+  entries, and holds at most 4,096 keys (`Security:LoginThrottle:MaxTrackedKeys`
+  can lower the cap). When full, failed logins from new keys return 429 and
+  still count against an existing username's budget. Throttle settings are
+  under `Security:LoginThrottle`. Password resets create a temporary password,
+  revoke existing sessions, and force a change at the next login.
 - Human sessions use a random opaque token stored only as a SHA-256 hash on the
   server. The cookie is `Secure`, `HttpOnly`, `SameSite=Strict`, host-only, and
   has idle plus absolute expiry. Browser mutations require the matching CSRF
