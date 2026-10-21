@@ -68,6 +68,26 @@ describe('AccessService', () => {
     expect(service.error()).toBe('Your account cannot view access settings.');
   });
 
+  it.each([401, 403])('clears cached access data when a reload is denied with %i', async status => {
+    const initial = service.load();
+    await flushLoad();
+    await initial;
+    expect(service.overview()).not.toBeNull();
+
+    const reloading = service.load();
+    http.expectOne('/api/auth/iam').flush({ message: 'Denied Access' }, { status, statusText: 'Denied Access' });
+    http.expectOne('/api/projects').flush([]);
+    http.expectOne('/api/auth/runner-enrollments').flush([]);
+    http.expectOne('/api/auth/runners').flush([]);
+    await reloading;
+
+    expect(service.state()).toBe('denied');
+    expect(service.overview()).toBeNull();
+    expect(service.projects()).toEqual([]);
+    expect(service.enrollments()).toEqual([]);
+    expect(service.runners()).toEqual([]);
+  });
+
   it('invites through the existing invitation route with explicit bindings and reloads', async () => {
     const grant = { role: 'developer', scope: { kind: 'project' as const, project: 'PROJ-001' } };
     const invited = service.invite('new.user', 'New User', [grant]);

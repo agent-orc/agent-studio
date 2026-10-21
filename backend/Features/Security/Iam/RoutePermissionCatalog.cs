@@ -237,6 +237,16 @@ public static class RoutePermissionCatalog
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
             "/api/projects/{}/deploy/environments/{}/rollback", null, "environmentId");
 
+        // OTLP intake checks its own environment token. Studio reads require
+        // project access; issuing or revoking an ingest token changes project
+        // configuration and is reserved to a project administrator.
+        Add("POST", IamPermissions.Anonymous,
+            "/api/telemetry/otlp/v1/metrics", "/api/telemetry/otlp/v1/logs");
+        Add("R", IamPermissions.ProjectRead, "/api/projects/{}/environments/{}/telemetry/**");
+        Add("W", IamPermissions.ProjectSettingsWrite,
+            "/api/projects/{}/environments/{}/telemetry/tokens",
+            "/api/projects/{}/environments/{}/telemetry/tokens/{}");
+
         // --- Secrets: write without read; no human route returns a value ----
         // Only a Runner credential bound to a live lease resolves a value.
         Add("POST", IamPermissions.RunnerService, "/api/runner/secrets/resolve");

@@ -108,6 +108,12 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("POST", "/api/runner/secrets/resolve", IamPermissions.RunnerService)]
     [InlineData("POST", "/api/projects/{projectName}/pipeline-definition/migration", IamPermissions.ProjectSettingsWrite)]
     [InlineData("GET", "/api/bus/{project}/messages", IamPermissions.ProjectRead)]
+    [InlineData("POST", "/api/telemetry/otlp/v1/metrics", IamPermissions.Anonymous)]
+    [InlineData("POST", "/api/telemetry/otlp/v1/logs", IamPermissions.Anonymous)]
+    [InlineData("GET", "/api/projects/{projectName}/environments/{environmentId}/telemetry/logs", IamPermissions.ProjectRead)]
+    [InlineData("GET", "/api/projects/{projectName}/environments/{environmentId}/telemetry/tokens", IamPermissions.ProjectRead)]
+    [InlineData("POST", "/api/projects/{projectName}/environments/{environmentId}/telemetry/tokens", IamPermissions.ProjectSettingsWrite)]
+    [InlineData("DELETE", "/api/projects/{projectName}/environments/{environmentId}/telemetry/tokens/{tokenId}", IamPermissions.ProjectSettingsWrite)]
     [InlineData("GET", "/api/orchestration/decision-receipts/{receiptId}", IamPermissions.ProjectRead)]
     [InlineData("POST", "/api/orchestration/decision-receipts/{receiptId}/operator-intent", IamPermissions.ProjectRunsOperate)]
     public void Representative_routes_resolve_to_their_permission(string method, string pattern, string permission)

@@ -419,6 +419,32 @@ public sealed class IamHandlerAccessTests : IDisposable
         Assert.Equal(HttpStatusCode.Forbidden, foreign.StatusCode);
     }
 
+    [Fact]
+    public async Task Telemetry_queries_and_ingest_token_management_follow_project_permissions()
+    {
+        using var factory = BuildFactory();
+        WriteEnvironmentDeclaration("alpha", "stage", "stage");
+        WriteEnvironmentDeclaration("beta", "stage", "stage");
+        using var developer = Client(factory, Invite(factory, "telemetry.dev",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+        using var admin = Client(factory, Invite(factory, "telemetry.admin",
+            new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))));
+
+        using var alphaRead = await developer.GetAsync("/api/projects/alpha/environments/stage/telemetry/metrics/names");
+        Assert.Equal(HttpStatusCode.OK, alphaRead.StatusCode);
+        using var betaRead = await developer.GetAsync("/api/projects/beta/environments/stage/telemetry/metrics/names");
+        Assert.Equal(HttpStatusCode.Forbidden, betaRead.StatusCode);
+        using var developerWrite = await developer.PostAsJsonAsync(
+            "/api/projects/alpha/environments/stage/telemetry/tokens", new { name = "collector", signals = new[] { "logs" } });
+        Assert.Equal(HttpStatusCode.Forbidden, developerWrite.StatusCode);
+        using var adminWrite = await admin.PostAsJsonAsync(
+            "/api/projects/alpha/environments/stage/telemetry/tokens", new { name = "collector", signals = new[] { "logs" } });
+        Assert.Equal(HttpStatusCode.OK, adminWrite.StatusCode);
+        using var foreignWrite = await admin.PostAsJsonAsync(
+            "/api/projects/beta/environments/stage/telemetry/tokens", new { name = "collector", signals = new[] { "logs" } });
+        Assert.Equal(HttpStatusCode.Forbidden, foreignWrite.StatusCode);
+    }
+
     private HttpRequestMessage OrphanFolderDelete() => new(HttpMethod.Delete, "/api/tasks/orphan-folder")
     {
         Content = JsonContent.Create(new { watchPath = ProjectPath("alpha"), lane = TaskStates.Archive, folder = "no-such-folder" }),

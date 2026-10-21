@@ -53,6 +53,25 @@ describe('AccessAreaComponent', () => {
     expect(element.querySelector('[data-testid="access-user-first.owner"]')?.textContent).toContain('Owner · Workspace');
   });
 
+  it('does not show a cached temporary password after access is denied and restored', async () => {
+    const access = fakeAccessService();
+    const element = await render(access);
+    const row = element.querySelector('[data-testid="access-user-dev.user"]') as HTMLElement;
+    (Array.from(row.querySelectorAll('button')).find(button => button.textContent?.includes('Reset password')) as HTMLButtonElement).click();
+    await Promise.resolve();
+    await Promise.resolve();
+    TestBed.tick();
+    expect(element.querySelector('[data-testid="access-temporary-password"]')).not.toBeNull();
+
+    access.overview.set(null);
+    access.state.set('denied');
+    TestBed.tick();
+    access.overview.set(accessOverview());
+    access.state.set('ready');
+    TestBed.tick();
+    expect(element.querySelector('[data-testid="access-temporary-password"]')).toBeNull();
+  });
+
   it('shows the error of a denied account instead of the sections', async () => {
     const access = fakeAccessService(null);
     access.state.set('denied');
