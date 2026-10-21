@@ -33,7 +33,7 @@ const STORAGE_KEY_TASK_NAV = 'taskNavCollapsed';
 // a live preference; the key is proactively cleared on boot (see constructor).
 const STORAGE_KEY_COMPACT_CARDS = 'compactCards';
 const STORAGE_KEY_SIDE_SHEET_WIDTH = 'sideSheetWidth';
-const STORAGE_KEY_GROUP_BY_EPIC = 'boardGroupByDossier';
+const STORAGE_KEY_GROUP_BY_DOSSIER = 'boardGroupByDossier';
 const STORAGE_KEY_OPEN_PROJECT_CHAT_ON_ENTRY = 'atp.studio.openProjectChatOnEntry.v1';
 const STORAGE_KEY_CHAT_METADATA = 'atp.studio.chatMetadata.enabled.v1';
 // AGT-1812: the standalone Orchestrator-settings modal was retired into the
@@ -69,7 +69,7 @@ export class UiPreferencesService {
    * instead of the lane columns. Persisted
    * so the operator's preferred board shape survives reloads.
    */
-  readonly groupByEpic = signal<boolean>(localStorage.getItem(STORAGE_KEY_GROUP_BY_EPIC) === '1');
+  readonly groupByDossier = signal<boolean>(localStorage.getItem(STORAGE_KEY_GROUP_BY_DOSSIER) === '1');
 
   private resizing = false;
 
@@ -106,8 +106,8 @@ export class UiPreferencesService {
         this.sideSheetWidth.set(Number.isFinite(parsed) ? parsed : 280);
         return;
       }
-      case STORAGE_KEY_GROUP_BY_EPIC:
-        this.groupByEpic.set(e.newValue === '1');
+      case STORAGE_KEY_GROUP_BY_DOSSIER:
+        this.groupByDossier.set(e.newValue === '1');
         return;
       case STORAGE_KEY_OPEN_PROJECT_CHAT_ON_ENTRY:
         this.openProjectChatOnEntry.set(e.newValue !== '0');
@@ -140,10 +140,10 @@ export class UiPreferencesService {
     localStorage.setItem(STORAGE_KEY_CHAT_METADATA, enabled ? '1' : '0');
   }
 
-  toggleGroupByEpic(): void {
-    const value = !this.groupByEpic();
-    this.groupByEpic.set(value);
-    localStorage.setItem(STORAGE_KEY_GROUP_BY_EPIC, value ? '1' : '0');
+  toggleGroupByDossier(): void {
+    const value = !this.groupByDossier();
+    this.groupByDossier.set(value);
+    localStorage.setItem(STORAGE_KEY_GROUP_BY_DOSSIER, value ? '1' : '0');
   }
 
 

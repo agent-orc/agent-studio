@@ -1,6 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { Observable, Subject } from 'rxjs';
-import { CliType, CLI_TYPES, ComponentRoutingRequest, ComponentRoutingResolution, PromoteToCodingResponse, TaskKind, TaskMode, TaskState, WatchPathEntry } from '../../../models/task.model';
+import { CliType, CLI_TYPES, ComponentRoutingRequest, ComponentRoutingResolution, PromoteToCodingResponse, TaskMode, TaskState, WatchPathEntry } from '../../../models/task.model';
 import type { CliModelInfo } from '../../../features/cli';
 import type { PendingAttachment } from '../components/create-task-dialog/create-task-dialog.component';
 import { TaskService } from '../../../services/task.service';
@@ -49,10 +49,6 @@ export class CreateTaskFormService {
   newTargetState: string = TaskState.Preparation;
   newTaskType = 'chore';
   newTags: string[] = [];
-  /** Card kind: `task` (default) or `epic`. */
-  newKind: TaskKind = 'task';
-  /** Assignment way 1: optional parent epic id for a `kind=task` create. */
-  newEpicId = '';
   /** Execution mode (coding | planning | research). Defaults to coding. */
   newMode: TaskMode = 'coding';
   /** Web access. Default-by-mode lives in the picker (research = on, else off). */
@@ -188,7 +184,6 @@ export class CreateTaskFormService {
       '',
       instruction,
     ].join('\n');
-    this.newKind = 'task';
     this.newMode = 'coding';
     this.loadCreateModels(this.newCliType);
     this.refreshPolicySuggestion();
@@ -257,7 +252,6 @@ export class CreateTaskFormService {
     this.newPrompt = payload.promptMarkdown;
     this.newWatchPath = payload.watchPath;
     this.newMode = 'coding';
-    this.newKind = 'task';
     this.newTargetState = (CreateTaskFormService.ALLOWED_TARGET_STATES as readonly string[]).includes(payload.targetState)
       ? payload.targetState
       : TaskState.Preparation;
@@ -320,8 +314,6 @@ export class CreateTaskFormService {
     this.newTaskType = 'chore';
     this.newTags = [];
     this.newTargetState = TaskState.Preparation;
-    this.newKind = 'task';
-    this.newEpicId = '';
     this.newMode = 'coding';
     this.newAllowWebAccess = false;
     this.newCliType = readDefaultCliPref();
@@ -376,9 +368,7 @@ export class CreateTaskFormService {
       thinkingLevelExplicit: this.modelSelectionExplicit,
       taskType: this.newTaskType,
       tags: this.newTags.length > 0 ? [...this.newTags] : undefined,
-      kind: this.newKind,
-      // Way 1 only applies to a task; an epic has no parent epic.
-      epicId: this.newKind === 'task' && this.newEpicId ? this.newEpicId : undefined,
+      kind: 'task',
       mode: this.newMode,
       allowWebAccess: this.newAllowWebAccess,
       routing: this.routingRequest ?? undefined,

@@ -295,7 +295,7 @@ internal static class TaskEndpointHelpers
     /// </summary>
     internal static PlanningSpawnSummary? BuildPlanningSpawnSummary(TaskInfo job)
     {
-        if (!PlanningCompletionGate.Applies(job.Mode) && !TaskKinds.IsEpic(job.Kind)) return null;
+        if (!PlanningCompletionGate.Applies(job.Mode)) return null;
         if (string.IsNullOrWhiteSpace(job.FolderPath)) return new PlanningSpawnSummary();
 
         var spawned = SpawnedTaskLedger.Read(job.FolderPath)

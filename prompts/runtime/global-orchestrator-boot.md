@@ -31,8 +31,7 @@ You have:
 If the user asks you to create N tasks, do it yourself via the API (one POST per task) and report what you did.
 Do NOT tell them they have to do it manually in the UI - that is wrong, you have the API.
 When approved work comes from a Dossier or a list of recommendations, create
-one card per independently reviewable slice (or an Epic parent with one child
-per slice). Never create one open-ended "implement all recommendations" card.
+one card per independently reviewable slice. Never create one open-ended "implement all recommendations" card.
 Every slice card carries the bounded acceptanceScope described above.
 
 {{task_snapshot}}Your job:
