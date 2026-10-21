@@ -767,6 +767,38 @@ public sealed class RunTargetReconcilerTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedStopOfUnhealthyRestoredRevision_IsPersistedAndRetried()
+    {
+        var first = Spec(First, jobId: null);
+        await Converge(first);
+        await Converge(Spec(Second, jobId: "job-2"));
+        var running = Spec(Second, jobId: null);
+        var crashing = Slot(running);
+        _docker.UnhealthyProjects.Add(Slot(first));
+        _docker.StopFailsFor.Add(Slot(first));
+        _docker.Crash(crashing);
+        await Converge(running);
+        _clock.Advance(TimeSpan.FromSeconds(15));
+        _docker.Crash(crashing);
+
+        await Converge(running);
+
+        Assert.Equal(Slot(first), Assert.Single(_store.Load().PendingStops).ComposeProject);
+        Assert.True(Directory.Exists(SecretDirectory(first)));
+        Assert.Equal(Second, _store.Load().Apps[Key].Current?.Artifact);
+
+        // A later cycle retries the persisted stop even when Studio is unavailable.
+        _docker.StopFailsFor.Clear();
+        var calls = _docker.Calls.Count;
+        await _reconciler.SuperviseOnlyAsync("offline", CancellationToken.None);
+
+        Assert.Contains("stop " + Slot(first), _docker.Calls.Skip(calls));
+        Assert.Empty(_store.Load().PendingStops);
+        Assert.False(Directory.Exists(SecretDirectory(first)));
+        Assert.Equal(Second, _store.Load().Apps[Key].Current?.Artifact);
+    }
+
+    [Fact]
     public async Task StudioOutage_StillRestartsACrashedApp()
     {
         var spec = Spec(First, jobId: null);
