@@ -1,6 +1,8 @@
 
+using AgentStudio.Deploy;
 using AgentStudio.Search;
 using AgentStudio.Proposals;
+using AgentStudio.Telemetry;
 
 namespace AgentStudio.Host;
 
@@ -20,6 +22,7 @@ public static class EndpointMapping
         var mapsLocalV1 = MapsLocalV1(app.Configuration);
         if (!mapsLocalV1) app.MapTaskServerPlaneProxy();
         app.MapAccessSecurityEndpoints();
+        app.MapSecretEndpoints();
         app.MapPullGateEndpoints();
         var tasks = app.MapGroup("/api/tasks")
             .AddEndpointFilter<TaskOperationTimingFilter>();
@@ -69,7 +72,10 @@ public static class EndpointMapping
             app.MapMonolithOrchestrationEndpoints();
             app.MapMonolithGateEndpoints();
         }
-        app.MapOrchestratorDecisionEndpoints(mapsEngineRoutes: mapsLocalV1);
+        // Studio keeps the decision receipt plane in both profiles. With a
+        // standalone Task Server, rule and host-occurrence routes refuse with 409.
+        app.MapOrchestratorDecisionEndpoints(proxyProfile: !mapsLocalV1);
+        app.MapDecisionRuleEndpoints(proxyProfile: !mapsLocalV1);
         app.MapIntegrationLeaseEndpoints();
         app.MapLogIngestionEndpoints();
         app.MapRunnerEventIngestionEndpoints();
@@ -107,6 +113,10 @@ public static class EndpointMapping
         app.MapReviewDecisionsEndpoints();
         app.MapProjectSnapshotEndpoints();
         app.MapProjectOperatorDashboardEndpoints();
+        app.MapDeployEndpoints();
+        app.MapProjectPipelineDefinitionEndpoints();
+        app.MapEnvironmentHealthEndpoints();
+        app.MapTelemetryEndpoints();
         app.MapProjectCycleTimeEndpoints();
         app.MapTestRunEndpoints();
         app.MapProjectGraphEndpoints();

@@ -1,11 +1,12 @@
 import { Injectable, effect, inject, signal, untracked } from '@angular/core';
 import {
-  DEFAULT_PROJECT_RAIL_KEY,
+  DEPLOY_STEPS_QUERY,
+  isDeployStepsQuery,
   isProjectHubRoute,
-  isProjectRailKey,
   parseProjectHubRoute,
   projectHubRoute,
   type ProjectHubRouteProject,
+  resolveProjectSection,
   withProjectHubRoute,
 } from '../../project-detail';
 import { WorkspaceManagerService } from '../../shell';
@@ -105,7 +106,7 @@ export class ProjectHubUrlService {
       return false;
     }
 
-    if (target.legacySlug) {
+    if (target.legacySlug || target.legacySection) {
       const canonicalRoute = target.section === 'workbenches'
         ? projectDossierRoute(target.project.id, target.workbenchId) + target.query
         : projectHubRoute(target.project.id, target.section) + target.query;
@@ -124,10 +125,12 @@ export class ProjectHubUrlService {
     } else if (target.section === 'workbenches') {
       this.tabs.open({ kind: 'workbenches', projectName: target.project.displayName });
     } else {
+      // The hub tab keeps Deploy's Run steps view as its `pipeline` section.
+      const runSteps = target.section === 'deploy' && isDeployStepsQuery(target.query);
       openRouteTab({
         kind: 'hub',
         projectName: target.project.displayName,
-        section: target.section,
+        section: runSteps ? 'pipeline' : target.section,
         ...(target.section === 'wiki' ? { wikiTarget: wikiTargetFromQuery(target.query) } : {}),
       });
     }
@@ -153,11 +156,13 @@ export class ProjectHubUrlService {
     if (tab?.kind === 'hub') {
       const project = this.projects().find(candidate => candidate.displayName === tab.projectName);
       if (!project) return;
-      const section = isProjectRailKey(tab.section) ? tab.section : DEFAULT_PROJECT_RAIL_KEY;
+      const { rail: section, deployView } = resolveProjectSection(tab.section);
       const sameDestination = current?.project.id === project.id && current.section === section;
       const query = section === 'wiki'
         ? wikiTargetQuery(tab.wikiTarget)
-        : (sameDestination ? current.query : '');
+        : section === 'deploy'
+          ? (deployView === 'steps' ? DEPLOY_STEPS_QUERY : '')
+          : (sameDestination ? current.query : '');
       const sameTarget = sameDestination && current?.query === query;
       const next = withProjectHubRoute(window.location.hash, project.id, section, query);
       this.writeHash(next, sameTarget && current?.legacySlug ? 'replace' : 'push');

@@ -46,19 +46,6 @@
       }
     </button>
   }
-  <!-- Epic overview destination. Hidden when no epics exist (hide-when-empty),
-       so it never adds clutter for projects that don't use epics. Opens the
-       read-only rollup as a normal editor tab. -->
-  @if (hasEpics()) {
-    <button type="button"
-            class="studio-ab__btn studio-ab__btn--epics"
-            [class.studio-ab__btn--active]="activeKey() === 'epics'"
-            cacTooltip="Open epic overview"
-            data-testid="studio-ab-epics"
-            (click)="openEpicsRequest.emit()">
-      <app-studio-icon name="epic" [size]="22"></app-studio-icon>
-    </button>
-  }
   <button type="button"
           class="studio-ab__btn"
           [class.studio-ab__btn--active]="activeKey() === 'chats'"

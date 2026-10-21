@@ -18,6 +18,7 @@ interface Mismatch {
 interface ShadowDecision {
   receiptId: string;
   taskId: string | null;
+  actor?: string;
   profile: string;
   chosenAction: string;
   deterministicAction: string;

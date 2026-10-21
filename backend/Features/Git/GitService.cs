@@ -4579,12 +4579,7 @@ public partial class GitService
     /// branch before dropping it, so unmerged conflict work is never discarded.
     /// </summary>
     public bool IsAncestor(string repoRoot, string ancestor, string descendant)
-    {
-        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return false;
-        if (!IsLikelyBranchName(ancestor) || !IsLikelyBranchName(descendant)) return false;
-        var (_, _, code) = RunGitArgs(repoRoot, "merge-base", "--is-ancestor", ancestor, descendant);
-        return code == 0;
-    }
+        => TryIsAncestor(repoRoot, ancestor, descendant) == true;
 
     /// <summary>
     /// The merge-base (fork point) SHA of two refs, or null when either ref is
@@ -8151,6 +8146,69 @@ public partial class GitService
 
         var (output, _, code) = RunGitArgs(root, "show", $"{sha}:{repoRelPath.Replace('\\', '/')}");
         return code == 0 ? output : null;
+    }
+
+    /// <summary>
+    /// BD-1: the commits reachable from <paramref name="tip"/> but not from
+    /// <paramref name="exclusiveBase"/>, newest first and at most
+    /// <paramref name="maxCount"/>. A release uses them to find the cards it
+    /// adds. Empty when a revision is invalid or unknown.
+    /// </summary>
+    public IReadOnlyList<string> ListRevisions(string repoRoot, string tip, string? exclusiveBase, int maxCount)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || string.IsNullOrWhiteSpace(tip) || !IsLikelyShaOrRef(tip)
+            || tip.StartsWith('-')) return [];
+        if (exclusiveBase is not null && (!IsLikelyShaOrRef(exclusiveBase) || exclusiveBase.StartsWith('-'))) return [];
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        if (!Directory.Exists(root)) return [];
+        var arguments = new List<string> { "rev-list", $"--max-count={Math.Max(1, maxCount)}", tip };
+        if (exclusiveBase is not null) arguments.Add("^" + exclusiveBase);
+        arguments.Add(RevisionsOnly);
+        var (output, _, code) = RunGitArgs(root, [.. arguments]);
+        return code == 0
+            ? output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : [];
+    }
+
+    /// <summary>
+    /// BD-1: whether <paramref name="ancestor"/> is an ancestor of
+    /// <paramref name="descendant"/>, or null when git cannot answer. Unlike
+    /// <see cref="IsAncestor"/>, only exit code 1 of
+    /// <c>merge-base --is-ancestor</c> reads as "not an ancestor"; an unknown
+    /// commit, a git error, a timeout or an exhausted process budget is null,
+    /// so a release order check can refuse instead of failing open.
+    /// </summary>
+    public bool? TryIsAncestor(string repoRoot, string ancestor, string descendant)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)) return null;
+        if (!IsLikelyBranchName(ancestor) || !IsLikelyBranchName(descendant)) return null;
+        var (_, _, code) = RunGitArgs(repoRoot, "merge-base", "--is-ancestor", ancestor, descendant);
+        return code switch { 0 => true, 1 => false, _ => null };
+    }
+
+    /// <summary>
+    /// BD-1: repository-relative paths of the files (blobs) directly inside
+    /// <paramref name="directory"/> at <paramref name="sha"/>. A release reads
+    /// its environment declarations this way, at the release commit. The
+    /// listing is NUL-separated, so git neither quotes nor escapes a path.
+    /// Empty when the directory does not exist there; null when the commit
+    /// cannot be read.
+    /// </summary>
+    public IReadOnlyList<string>? ListFilesAtCommit(string repoRoot, string sha, string directory)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || string.IsNullOrWhiteSpace(sha) || !IsLikelyShaOrRef(sha)
+            || sha.StartsWith('-') || string.IsNullOrWhiteSpace(directory)) return null;
+        var root = ResolveGitToplevel(repoRoot) ?? repoRoot;
+        if (!Directory.Exists(root)) return null;
+        var (output, _, code) = RunGitArgs(root, "ls-tree", "-z", sha, RevisionsOnly,
+            directory.Replace('\\', '/').TrimEnd('/') + "/");
+        if (code != 0) return null;
+        // Each entry is "<mode> <type> <object>\t<path>".
+        return output.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Select(entry => entry.Split('\t', 2))
+            .Where(parts => parts.Length == 2 && parts[0].Split(' ') is [_, "blob", _])
+            .Select(parts => parts[1])
+            .ToArray();
     }
 
     /// <summary>

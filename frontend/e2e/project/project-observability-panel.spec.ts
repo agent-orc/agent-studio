@@ -4,12 +4,13 @@ import * as path from 'path';
 import { api } from '../helpers/api';
 
 /**
- * Project Observability panel: surfaces the Agent Message Bus for one
+ * Deck Agent activity rail: surfaces the Agent Message Bus for one
  * project as a dense operational view. The panel is fixture-backed so
  * a project with no live bus traffic still renders every surface (the
  * prompt explicitly allows the fixture path while the bus bridge is in
  * flight). This spec covers:
  *   1. Rail entry routes to the custom panel and the empty state shows.
+ *      The legacy `observability` section opens Operations instead.
  *   2. Loading the fixture dataset paints counters, timeline, matrix,
  *      heatmap, message table.
  *   3. Filters narrow the message table (kind=intervention).
@@ -44,7 +45,7 @@ function slugFor(name: string): string {
 }
 
 async function openObservability(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto(`/#/projects/${slugFor(projectName)}/observability`);
+  await page.goto(`/#/projects/${slugFor(projectName)}/agent-activity`);
   await expect(page.getByTestId('project-shell')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId('project-observability-panel')).toBeVisible({ timeout: 10_000 });
 }
@@ -52,7 +53,8 @@ async function openObservability(page: import('@playwright/test').Page): Promise
 test('rail entry opens the observability panel and shows empty state when no bus traffic', async ({ page }) => {
   await openObservability(page);
 
-  await expect(page.getByTestId('project-shell-rail-observability')).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId('project-shell-rail-agent-activity')).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId('project-shell-rail-observability')).toHaveCount(0);
   await expect(page.getByTestId('observability-source')).toBeVisible();
 
   // The panel exposes either the populated surfaces (live bus has data)
@@ -66,6 +68,13 @@ test('rail entry opens the observability panel and shows empty state when no bus
     path: path.join(SCREENSHOT_DIR, '01-observability-default.png'),
     fullPage: true,
   });
+});
+
+test('the legacy observability section opens Operations, not the Deck', async ({ page }) => {
+  await page.goto(`/#/projects/${slugFor(projectName)}/observability`);
+  await expect(page.getByTestId('project-operations-area')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('project-shell')).toHaveCount(0);
+  await expect(page.getByTestId('project-observability-panel')).toHaveCount(0);
 });
 
 test('fixture dataset paints every surface', async ({ page }) => {

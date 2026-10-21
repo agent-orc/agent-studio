@@ -3,6 +3,7 @@ import {
   DEFAULT_PROJECT_RAIL_KEY,
   isProjectRailKey,
   type ProjectRailKey,
+  resolveProjectSection,
   toProjectSlug,
 } from '../components/project-shell/project-shell.config';
 
@@ -21,9 +22,19 @@ export interface ProjectHubRouteTarget {
   query: string;
   /** Exact Dossier detail when the route extends the workbenches rail. */
   workbenchId: string | null;
+  /** Retired section (`deployment`, `pipeline`, `observability`); writers emit the new area. */
+  legacySection?: true;
 }
 
 const PROJECTS_PREFIX = '/projects/';
+const RETIRED_SECTIONS: ReadonlySet<string> = new Set(['deployment', 'pipeline', 'observability']);
+
+/** Deploy-owned query that keeps the Run steps view in the route. */
+export const DEPLOY_STEPS_QUERY = '?view=steps';
+
+export function isDeployStepsQuery(query: string): boolean {
+  return new URLSearchParams(query.startsWith('?') ? query.slice(1) : query).get('view') === 'steps';
+}
 
 /** Canonical route segment for a Project Hub rail. */
 export function projectHubRoute(projectId: string, section: ProjectRailKey): string {
@@ -65,15 +76,19 @@ export function parseProjectHubRoute(
   if (parts.length === 3 && (parts[1] !== 'workbenches' || !parts[2])) return null;
   const workbenchId = parts.length === 3 ? safeDecode(parts[2]) : null;
   if (parts.length === 3 && !workbenchId) return null;
-  // Old Deployment bookmarks now land on the Deploy area.
-  const rawSection = parts[1] === 'deployment' ? 'deploy' : (parts[1] || DEFAULT_PROJECT_RAIL_KEY);
+  // Retired Deployment, Pipeline, and Observability bookmarks land on the
+  // Deploy and Operations areas; Pipeline opens Deploy on its Run steps view.
+  const requested = parts[1] || DEFAULT_PROJECT_RAIL_KEY;
+  const retired = RETIRED_SECTIONS.has(requested) ? resolveProjectSection(requested) : null;
+  const rawSection = retired?.rail ?? requested;
   if (rawSection !== 'workbenches' && !isProjectRailKey(rawSection)) return null;
   return {
     project,
     section: rawSection,
     legacySlug: byId == null,
-    query,
+    query: retired ? (retired.deployView === 'steps' ? DEPLOY_STEPS_QUERY : '') : query,
     workbenchId,
+    ...(retired ? { legacySection: true as const } : {}),
   };
 }
 

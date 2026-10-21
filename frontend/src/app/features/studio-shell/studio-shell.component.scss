@@ -440,6 +440,15 @@
   grid-template-columns: var(--studio-activitybar-w) 1fr auto !important;
 }
 
+@media (max-width: 600px) {
+  // The Explorer track otherwise leaves a project pane only about 100 px wide
+  // on a phone. Keep the activity bar available and give the editor the rest.
+  .studio-body, .studio--sidebar-hidden .studio-body {
+    grid-template-columns: var(--studio-activitybar-w) minmax(0, 1fr) auto !important;
+  }
+  .studio-sidebar { display: none; }
+}
+
 // Mirror layout when the user puts the activity bar on the right.
 // Re-uses the same DOM order; CSS Grid `order` swaps the visual sides.
 .studio--activitybar-right {

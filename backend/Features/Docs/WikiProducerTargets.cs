@@ -63,6 +63,7 @@ public static class WikiProducerTargets
         "docs/quality/",    // design-principles + the project style guide the reviewers read
         "docs/operations/", // security archive, git commit/push doctrine, learnings, common-problems
         "docs/start/",      // the README entry point the intake runner steers agents to
+        "docs/deployments/", // project environment declarations Studio reads from each project repository (AGT-3176, AGT-3201)
     };
 
     /// <summary>

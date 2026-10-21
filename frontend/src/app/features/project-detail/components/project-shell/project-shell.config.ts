@@ -12,6 +12,7 @@ export type ProjectRailGroup = 'insight' | 'quality' | 'context' | 'config';
 export type ProjectRailKey =
   | 'overview'
   | 'deploy'
+  | 'operations'
   | 'project-urls'
   | 'git'
   | 'integration'
@@ -24,6 +25,7 @@ export type ProjectRailKey =
   | 'test-quality'
   | 'token-usage'
   | 'cycle-time'
+  | 'agent-activity'
   | 'observability'
   | 'steering'
   | 'wiki'
@@ -68,7 +70,7 @@ export interface ProjectRailItem {
 export const PROJECT_RAIL_ITEMS: readonly ProjectRailItem[] = [
   // ---- INSIGHT: what the project IS / does ----
   // Order matches the current Deck IA:
-  // Overview · Visual Evidence · Drift · Observability · Token Usage.
+  // Overview · Visual Evidence · Drift · Agent activity · Token Usage.
   // Architecture used to live here; it now sits in Context (ASS-1711)
   // because it is thematically a doc surface, not a live-health surface.
   {
@@ -90,16 +92,6 @@ export const PROJECT_RAIL_ITEMS: readonly ProjectRailItem[] = [
     empty: 'No URLs configured yet. Add one to see it here and as a row in the Explorer tree.',
     icon: '◍',
     railIcon: 'link',
-  },
-  {
-    key: 'deploy',
-    group: 'config',
-    label: 'Deploy',
-    panelTitle: 'Deploy',
-    description: 'Environments, releases, pipeline, and deployment history',
-    empty: 'No deployment data is available for this project.',
-    icon: '⇧',
-    railIcon: 'activity',
   },
   {
     key: 'integration',
@@ -142,11 +134,13 @@ export const PROJECT_RAIL_ITEMS: readonly ProjectRailItem[] = [
     railIcon: 'diff',
   },
   {
-    key: 'observability',
+    // Agent-work observability stays in the Deck; application health moved
+    // to the project-level Operations area.
+    key: 'agent-activity',
     group: 'insight',
-    label: 'Observability',
-    panelTitle: 'Observability',
-    description: 'Agent communication on the message bus: timeline, participants, kinds, token usage',
+    label: 'Agent activity',
+    panelTitle: 'Agent activity',
+    description: 'Agent communication on the message bus, token summary, supervisor and meta-cycle activity, and analysis reports',
     empty: 'No bus messages for this project yet. Once the orchestrator, an agent, or the supervisor speaks, the timeline and counters fill in here.',
     icon: '⌁',
     railIcon: 'activity',
@@ -271,19 +265,7 @@ export const PROJECT_RAIL_ITEMS: readonly ProjectRailItem[] = [
   },
 
   // ---- CONFIG: how the project is set up ----
-  // Target navigation (Zielbild §F2): Board · Context · Pipeline · Workflow ·
-  // Einstellungen at project level. Pipeline / Workflow are real content
-  // moved out of Project Settings; Settings keeps its inherited defaults tree.
-  {
-    key: 'pipeline',
-    group: 'config',
-    label: 'Pipeline',
-    panelTitle: 'Pipeline',
-    description: 'Run pipeline steps (pre / core / post): activation, order, per-step model and prompt binding, and cost.',
-    empty: 'Pipeline shell — navigation only. Step 2 (T5b) moves the pipeline sections currently in Project Settings here unchanged: per-step activation and order, model + prompt binding (→ Prompts), and token/cost view. Step 3 (T4a) then redesigns this page.',
-    icon: '⫶',
-    railIcon: 'sliders',
-  },
+  // Workflow and Settings remain in Deck Config; Pipeline moved to Deploy.
   {
     key: 'workflow',
     group: 'config',
@@ -356,7 +338,12 @@ export const PROJECT_RAIL_PARENT_KEYS: readonly ProjectRailKey[] = Array.from(
   new Set(PROJECT_RAIL_ITEMS.filter(i => i.parent).map(i => i.parent as ProjectRailKey)),
 );
 
-const RAIL_KEY_SET = new Set<string>(PROJECT_RAIL_ITEMS.map(i => i.key));
+// These remain valid bookmark destinations while their panels live in the
+// project-level Deploy and Operations areas instead of the Deck rail.
+const RAIL_KEY_SET = new Set<string>([
+  ...PROJECT_RAIL_ITEMS.map(i => i.key),
+  'deploy', 'operations', 'pipeline', 'observability',
+]);
 
 export function isProjectRailKey(value: string | null | undefined): value is ProjectRailKey {
   return !!value && RAIL_KEY_SET.has(value);
@@ -364,8 +351,30 @@ export function isProjectRailKey(value: string | null | undefined): value is Pro
 
 export const DEFAULT_PROJECT_RAIL_KEY: ProjectRailKey = 'overview';
 
+/** Deck rail and Deploy view that a requested section opens. */
+export interface ProjectSectionTarget {
+  rail: ProjectRailKey;
+  /** `steps` opens the Run steps view of the Deploy area. */
+  deployView: 'overview' | 'steps';
+}
+
+/**
+ * Resolve a requested section, including retired names, to the area that
+ * now hosts it: `deployment` and `pipeline` open Deploy (`pipeline` on its
+ * Run steps view), and `observability` opens Operations.
+ */
+export function resolveProjectSection(section: string | null | undefined): ProjectSectionTarget {
+  if (section === 'deploy' || section === 'deployment' || section === 'pipeline') {
+    return { rail: 'deploy', deployView: section === 'pipeline' ? 'steps' : 'overview' };
+  }
+  if (section === 'observability') return { rail: 'operations', deployView: 'overview' };
+  return { rail: isProjectRailKey(section) ? section : DEFAULT_PROJECT_RAIL_KEY, deployView: 'overview' };
+}
+
 /** Canonical user-facing label for a Deck rail section. */
 export function projectRailLabel(section: string | null | undefined): string {
+  if (section === 'deploy' || section === 'deployment' || section === 'pipeline') return 'Deploy';
+  if (section === 'operations' || section === 'observability') return 'Operations';
   const key = isProjectRailKey(section) ? section : DEFAULT_PROJECT_RAIL_KEY;
   return PROJECT_RAIL_ITEMS.find(item => item.key === key)?.label ?? 'Overview';
 }

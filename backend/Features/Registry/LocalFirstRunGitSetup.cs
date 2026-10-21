@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
+using AgentStudio.Security;
 
 namespace AgentStudio.Registry;
 
@@ -301,15 +302,18 @@ public static class LocalFirstRunGitSetupEndpoints
 {
     public static void MapLocalFirstRunGitSetupEndpoints(this WebApplication app)
     {
-        app.MapPost("/api/first-run/git-setups", async (LocalGitSetupRequest request,
+        // Matches the Task Server runner-git-setups routes: Owner only when networked.
+        var setups = app.MapGroup("/api/first-run/git-setups")
+            .RequireStudioRole(StudioRoles.Owner);
+        setups.MapPost("", async (LocalGitSetupRequest request,
             LocalFirstRunGitSetup setup, CancellationToken ct) =>
         {
             try { return Results.Ok(await setup.StartAsync(request, ct)); }
             catch (ArgumentException) { return Results.BadRequest(); }
         });
-        app.MapGet("/api/first-run/git-setups/{id}", (string id, LocalFirstRunGitSetup setup)
+        setups.MapGet("/{id}", (string id, LocalFirstRunGitSetup setup)
             => setup.Get(id) is { } status ? Results.Ok(status) : Results.NotFound());
-        app.MapPost("/api/first-run/git-setups/{id}/verify", async (
+        setups.MapPost("/{id}/verify", async (
             string id, LocalFirstRunGitSetup setup, CancellationToken ct)
             => await setup.VerifyAsync(id, ct) is { } status ? Results.Ok(status) : Results.NotFound());
     }

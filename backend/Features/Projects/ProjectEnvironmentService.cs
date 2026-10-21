@@ -7,7 +7,11 @@ namespace AgentStudio.Projects;
 public sealed record EnvironmentDeclaration(
     string Id, string Name, string Kind, string TargetHostId, string Address,
     string Template, string Destination, string? HealthUrl, string Approval,
-    IReadOnlyList<string> SecretRefs, int ContainerPort);
+    IReadOnlyList<string> SecretRefs, int ContainerPort,
+    IReadOnlyList<HealthCheckDefinition>? HealthChecks = null, bool HealthChecksAllowPrivateNetwork = false);
+
+/// <summary>One declaration file: the parsed environment, or the error that makes it unusable.</summary>
+public sealed record EnvironmentDeclarationFile(string EnvironmentId, EnvironmentDeclaration? Declaration, string? Error);
 
 public sealed record DeploymentHistoryItem(DateTime At, string Status, string Artifact, string? PreviousArtifact,
     string? Evidence);
@@ -19,7 +23,7 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     string Artifact, string Template, string Destination, string? HealthUrl,
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
-    string? RequestedBy = null);
+    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0);
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -40,10 +44,17 @@ public sealed record GateArtifactRequest(string Project, string Artifact, string
 /// <summary>Repository declarations and a separate, durable host-deploy queue.</summary>
 public sealed class ProjectEnvironmentService
 {
+    public const string DeclarationDirectory = "docs/deployments/environments";
+    /// <summary>After this, the claiming host may claim its job again (it restarted).</summary>
+    public static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(5);
+    /// <summary>A claim without report or reclaim for this long fails as <c>host-lost</c>.</summary>
+    public static readonly TimeSpan HostLostAfter = TimeSpan.FromMinutes(15);
     private static readonly Regex Identifier = new("^[a-z0-9][a-z0-9._-]{0,63}$", RegexOptions.Compiled);
     private static readonly Regex SecretIdentifier = new("^[A-Za-z][A-Za-z0-9._-]{0,63}$", RegexOptions.Compiled);
     private static readonly Regex Commit = new(@"\A[0-9a-f]{40}\z", RegexOptions.Compiled);
     private static readonly Regex Digest = new(@"\A[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}\z", RegexOptions.Compiled);
+    private const string HostLostEvidence = "host-lost";
+    private const string AbortedEvidence = "deploy-aborted";
     private readonly object _gate = new();
     private readonly IConfiguration _configuration;
     private readonly TaskScannerService _scanner;
@@ -64,52 +75,139 @@ public sealed class ProjectEnvironmentService
 
     public IReadOnlyList<EnvironmentDeclaration>? Declarations(string project)
     {
-        if (!_scanner.GetWatchPaths().Any(item => string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase)))
-            return null;
+        var files = DeclarationFiles(project);
+        if (files is null) return null;
+        if (files.FirstOrDefault(item => item.Error is not null) is { Error: { } error }) throw new JsonException(error);
+        return files.Select(item => item.Declaration!).ToArray();
+    }
+
+    /// <summary>
+    /// Every declaration file of a project, each parsed on its own: a broken file carries its error
+    /// instead of failing the others, so health monitoring (IP-14) keeps watching the valid ones.
+    /// </summary>
+    public IReadOnlyList<EnvironmentDeclarationFile>? DeclarationFiles(string project)
+    {
+        if (!IsWatched(project)) return null;
         var root = _git.ResolveRepoRootForProject(project);
         if (root is null) return [];
         var directory = Path.Combine(root, "docs", "deployments", "environments");
         if (!Directory.Exists(directory)) return [];
-        var result = new List<EnvironmentDeclaration>();
-        foreach (var file in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
+        return ParseDeclarationFiles(Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
+            .Select(file => (Path.GetFileName(file), File.ReadAllText(file))));
+    }
+
+    /// <summary>
+    /// BD-1 release snapshot: the declarations as committed at
+    /// <paramref name="commit"/>, not as the working tree has them now. Null
+    /// when the project, the commit or any declaration file cannot be read:
+    /// release ids are deterministic, so a partial snapshot could never be
+    /// repaired later. A committed declaration that does not parse throws
+    /// <see cref="JsonException"/>.
+    /// </summary>
+    public IReadOnlyList<EnvironmentDeclaration>? DeclarationsAtCommit(string project, string commit)
+    {
+        if (!IsWatched(project) || !Commit.IsMatch(commit)) return null;
+        var root = _git.ResolveRepoRootForProject(project);
+        if (root is null) return null;
+        var paths = _git.ListFilesAtCommit(root, commit, DeclarationDirectory);
+        if (paths is null) return null;
+        var files = new List<(string Name, string Json)>();
+        foreach (var path in paths.Where(item => item.EndsWith(".json", StringComparison.Ordinal)))
         {
-            using var document = JsonDocument.Parse(File.ReadAllText(file));
-            var value = document.RootElement;
-            string Required(string name) => value.GetProperty(name).GetString()
-                ?? throw new JsonException($"Environment {Path.GetFileName(file)} requires {name}.");
-            string? Optional(string name) => value.TryGetProperty(name, out var property) ? property.GetString() : null;
-            var id = Required("id");
-            var kind = Required("kind");
-            var host = Required("targetHostId");
-            var template = Required("template");
-            var secrets = value.TryGetProperty("secretRefs", out var refs)
-                ? refs.EnumerateArray().Select(item => item.GetString() ?? "").ToArray() : [];
-            if (!Identifier.IsMatch(id) || !Identifier.IsMatch(host) || kind is not ("stage" or "production" or "other")
-                || template is not ("container" or "static") || secrets.Any(item => !SecretIdentifier.IsMatch(item)))
-                throw new JsonException($"Environment {Path.GetFileName(file)} has invalid identifiers, kind, template or secret refs.");
-            var destination = Required("destination");
-            if (template == "static" && (!Path.IsPathFullyQualified(destination) || destination.Contains("..", StringComparison.Ordinal)))
-                throw new JsonException("Static destination must be an absolute path without traversal.");
-            if (template == "container" && (!int.TryParse(destination, out var port) || port is < 1 or > 65535))
-                throw new JsonException("Container destination must be a local proxy port.");
-            var healthUrl = Optional("healthUrl");
-            if (kind is "stage" or "production" && healthUrl is null)
-                throw new JsonException("Stage and production require a health URL.");
-            if (healthUrl is not null && (!Uri.TryCreate(healthUrl, UriKind.Absolute, out var uri)
-                || uri.Scheme is not ("http" or "https")))
-                throw new JsonException("Health URL must use HTTP or HTTPS.");
-            var approval = Optional("approval") ?? "person";
-            if (approval is not ("person" or "stage-healthy-10m")) throw new JsonException("Unknown approval rule.");
-            var containerPort = value.TryGetProperty("containerPort", out var containerPortValue)
-                ? containerPortValue.GetInt32() : 8080;
-            if (containerPort is < 1 or > 65535) throw new JsonException("Invalid container port.");
-            result.Add(new(id, Required("name"), kind, host, Required("address"), template,
-                destination, healthUrl, approval, secrets, containerPort));
+            if (_git.GetFileAtCommit(root, commit, path) is not { } json) return null;
+            files.Add((Path.GetFileName(path), json));
         }
-        if (result.GroupBy(item => item.Id, StringComparer.Ordinal).Any(group => group.Count() > 1))
-            throw new JsonException("Environment ids must be unique within a project.");
-        return result.OrderBy(item => item.Kind == "stage" ? 0 : item.Kind == "production" ? 1 : 2)
-            .ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
+        var parsed = ParseDeclarationFiles(files);
+        if (parsed.FirstOrDefault(item => item.Error is not null) is { Error: { } error }) throw new JsonException(error);
+        return parsed.Select(item => item.Declaration!).ToArray();
+    }
+
+    private bool IsWatched(string project)
+        => _scanner.GetWatchPaths().Any(item => string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase));
+
+    private static IReadOnlyList<EnvironmentDeclarationFile> ParseDeclarationFiles(IEnumerable<(string Name, string Json)> files)
+    {
+        var result = new List<EnvironmentDeclarationFile>();
+        foreach (var (file, json) in files)
+        {
+            try
+            {
+                var declaration = ParseDeclaration(file, json);
+                result.Add(new(declaration.Id, declaration, null));
+            }
+            catch (JsonException ex)
+            {
+                result.Add(new(Path.GetFileNameWithoutExtension(file), null, $"{file}: {ex.Message}"));
+            }
+        }
+        var duplicates = result.Where(item => item.Declaration is not null).GroupBy(item => item.EnvironmentId, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1).Select(group => group.Key).ToHashSet(StringComparer.Ordinal);
+        return result.Select(item => item.Declaration is not null && duplicates.Contains(item.EnvironmentId)
+                ? item with { Declaration = null, Error = "Environment ids must be unique within a project." } : item)
+            .OrderBy(item => item.Declaration?.Kind switch { null => 3, "stage" => 0, "production" => 1, _ => 2 })
+            .ThenBy(item => item.EnvironmentId, StringComparer.Ordinal).ToArray();
+    }
+
+    /// <summary>
+    /// Parses one declaration. Every malformed input surfaces as <see cref="JsonException"/>, so one
+    /// broken project never turns a release, the deploy matrix or health monitoring into a 500.
+    /// </summary>
+    private static EnvironmentDeclaration ParseDeclaration(string file, string json)
+    {
+        try
+        {
+            return ParseDeclarationCore(file, json);
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            throw new JsonException($"Environment {file} is malformed: {ex.Message}", ex);
+        }
+    }
+
+    private static EnvironmentDeclaration ParseDeclarationCore(string file, string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var value = document.RootElement;
+        if (value.ValueKind != JsonValueKind.Object)
+            throw new JsonException($"Environment {Path.GetFileName(file)} must be a JSON object.");
+        // A missing or mistyped property is a broken declaration (JsonException), never a server error.
+        string Required(string name) => Optional(name)
+            ?? throw new JsonException($"Environment {Path.GetFileName(file)} requires {name}.");
+        string? Optional(string name) => !value.TryGetProperty(name, out var property) || property.ValueKind == JsonValueKind.Null
+            ? null : property.ValueKind == JsonValueKind.String ? property.GetString()
+            : throw new JsonException($"Environment {Path.GetFileName(file)} {name} must be a string.");
+        var id = Required("id");
+        var kind = Required("kind");
+        var host = Required("targetHostId");
+        var template = Required("template");
+        var secrets = !value.TryGetProperty("secretRefs", out var refs) ? []
+            : refs.ValueKind == JsonValueKind.Array && refs.EnumerateArray().All(item => item.ValueKind == JsonValueKind.String)
+                ? refs.EnumerateArray().Select(item => item.GetString()!).ToArray()
+                : throw new JsonException($"Environment {Path.GetFileName(file)} secretRefs must be an array of strings.");
+        if (!Identifier.IsMatch(id) || !Identifier.IsMatch(host) || kind is not ("stage" or "production" or "other")
+            || template is not ("container" or "static") || secrets.Any(item => !SecretIdentifier.IsMatch(item)))
+            throw new JsonException($"Environment {Path.GetFileName(file)} has invalid identifiers, kind, template or secret refs.");
+        var destination = Required("destination");
+        if (template == "static" && (!Path.IsPathFullyQualified(destination) || destination.Contains("..", StringComparison.Ordinal)))
+            throw new JsonException("Static destination must be an absolute path without traversal.");
+        if (template == "container" && (!int.TryParse(destination, out var port) || port is < 1 or > 65535))
+            throw new JsonException("Container destination must be a local proxy port.");
+        var healthUrl = Optional("healthUrl");
+        if (kind is "stage" or "production" && healthUrl is null)
+            throw new JsonException("Stage and production require a health URL.");
+        if (healthUrl is not null && (!Uri.TryCreate(healthUrl, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https")))
+            throw new JsonException("Health URL must use HTTP or HTTPS.");
+        var approval = Optional("approval") ?? "person";
+        if (approval is not ("person" or "stage-healthy-10m")) throw new JsonException("Unknown approval rule.");
+        var containerPort = !value.TryGetProperty("containerPort", out var containerPortValue) ? 8080
+            : containerPortValue.ValueKind == JsonValueKind.Number && containerPortValue.TryGetInt32(out var parsedPort)
+                ? parsedPort : throw new JsonException("Invalid container port.");
+        if (containerPort is < 1 or > 65535) throw new JsonException("Invalid container port.");
+        return new(id, Required("name"), kind, host, Required("address"), template,
+            destination, healthUrl, approval, secrets, containerPort,
+            HealthCheckDeclarations.Parse(value, Path.GetFileName(file)),
+            HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)));
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -119,7 +217,7 @@ public sealed class ProjectEnvironmentService
             var declarations = Declarations(project);
             if (declarations is null) return null;
             var state = Load(project);
-            AdvanceTimedPromotions(project, declarations, state);
+            AdvanceQueue(state);
             Save(project, state);
             return new(project, declarations.Select(item =>
             {
@@ -140,6 +238,14 @@ public sealed class ProjectEnvironmentService
     }
 
     public bool QueueRelease(string project, string artifact, string commit)
+        => CanQueueRelease(project, artifact, commit) && QueueReleaseJob(project, artifact, commit) is not null;
+
+    /// <summary>
+    /// The gate-built artifact may start a release: the gate recorded it for
+    /// the commit, the commit is on the integration branch, and no promotion of
+    /// the artifact is open.
+    /// </summary>
+    public bool CanQueueRelease(string project, string artifact, string commit)
     {
         if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit)) return false;
         if (!HasBuiltArtifact(project, artifact, commit)) return false;
@@ -151,14 +257,91 @@ public sealed class ProjectEnvironmentService
             return false;
         lock (_gate)
         {
-            var declarations = Declarations(project);
+            return !HasOpenPromotion(Load(project), artifact);
+        }
+    }
+
+    /// <summary>
+    /// Queues stage for a gate-built artifact and returns the stage job. The
+    /// caller has passed <see cref="CanQueueRelease"/> (its git checks stay
+    /// outside the caller's lock); only the recorded artifact and the queue
+    /// state are checked again here. With <paramref name="snapshot"/> (a BD-1
+    /// release) the job and the promotion use the declarations stored in the
+    /// release; the environments must still be declared, and the job goes to
+    /// the host the current declaration names (<see cref="RouteToCurrentHost"/>).
+    /// </summary>
+    public DeployJob? QueueReleaseJob(string project, string artifact, string commit,
+        IReadOnlyList<EnvironmentDeclaration>? snapshot = null)
+    {
+        if (!Digest.IsMatch(artifact) || !Commit.IsMatch(commit) || !HasBuiltArtifact(project, artifact, commit))
+            return null;
+        lock (_gate)
+        {
+            var current = Declarations(project);
+            var declarations = snapshot ?? current;
             var stage = declarations?.FirstOrDefault(item => item.Kind == "stage");
             var production = declarations?.FirstOrDefault(item => item.Kind == "production");
-            if (stage is null || production is null) return false;
+            if (stage is null || production is null || !IsDeclared(current, stage.Id) || !IsDeclared(current, production.Id))
+                return null;
             var state = Load(project);
-            if (state.Promotions.Any(item => item.Artifact == artifact && item.Status is not ("rejected" or "failed"))) return false;
+            if (HasOpenPromotion(state, artifact)) return null;
             state.Promotions.Add(new(artifact, stage.Id, production.Id, DateTime.MinValue, "stage-queued"));
-            Queue(project, stage, artifact, state, actor: "release-gate");
+            var job = Queue(project, RouteToCurrentHost(stage, current!), artifact, state, actor: "release-gate");
+            Save(project, state);
+            return job;
+        }
+    }
+
+    /// <summary>
+    /// Queues an already released artifact into one environment with the
+    /// release's snapshot of its declaration, on the host the current
+    /// declaration names. The caller (the BD-1 lifecycle) has decided that the
+    /// deployment may start.
+    /// </summary>
+    public DeployJob? QueueDeployment(string project, EnvironmentDeclaration target, string artifact, string actor,
+        bool rollback)
+    {
+        if (!Digest.IsMatch(artifact)) return null;
+        lock (_gate)
+        {
+            var current = Declarations(project);
+            if (!IsDeclared(current, target.Id)) return null;
+            var state = Load(project);
+            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor);
+            Save(project, state);
+            return job;
+        }
+    }
+
+    /// <summary>
+    /// Stops a job before its host reports and closes its promotion. A queued
+    /// job never starts. With <paramref name="abortClaimed"/> a claimed job is
+    /// aborted: its lease is revoked, so a late report is refused, and the
+    /// environment records the interrupted deploy as failed.
+    /// </summary>
+    public bool CancelJob(string project, string jobId, string actor, bool abortClaimed)
+    {
+        lock (_gate)
+        {
+            var state = Load(project);
+            var job = state.Jobs.FirstOrDefault(item => item.Id == jobId
+                && (item.Status == "queued" || abortClaimed && item.Status == "claimed"));
+            if (job is null) return false;
+            var now = _clock.GetUtcNow().UtcDateTime;
+            var aborted = job.Status == "claimed";
+            state.Jobs[state.Jobs.IndexOf(job)] = job with
+            {
+                Status = "cancelled", LeaseToken = null, FinishedAt = now,
+                Evidence = aborted ? AbortedEvidence : null,
+            };
+            if (aborted)
+                state.History.Add(new(job.EnvironmentId, now,
+                    new(now, "failed", job.Artifact, job.PreviousArtifact, AbortedEvidence)));
+            var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact
+                && (item.Status == "stage-queued" && item.StageId == job.EnvironmentId
+                    || item.Status == "production-queued" && item.ProductionId == job.EnvironmentId));
+            if (promotion is not null)
+                state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with { Status = "cancelled", Actor = actor };
             Save(project, state);
             return true;
         }
@@ -238,26 +421,45 @@ public sealed class ProjectEnvironmentService
             artifact[(artifact.LastIndexOf("@sha256:", StringComparison.Ordinal) + 8)..] + ".txt");
 
     public bool Decide(string project, string artifact, bool approve, string actor)
+        => DecidePromotion(project, artifact, approve, actor).Decided;
+
+    /// <summary>
+    /// Decides a pending promotion; an approval returns the production job.
+    /// With <paramref name="target"/> (the BD-1 release snapshot of the
+    /// production declaration) the job deploys that snapshot on the host the
+    /// current declaration names.
+    /// </summary>
+    public (bool Decided, DeployJob? Job) DecidePromotion(string project, string artifact, bool approve, string actor,
+        EnvironmentDeclaration? target = null)
     {
         lock (_gate)
         {
             var declarations = Declarations(project);
-            if (declarations is null) return false;
+            if (declarations is null) return (false, null);
             var state = Load(project);
             var promotion = state.Promotions.LastOrDefault(item => item.Artifact == artifact && item.Status == "pending");
             if (promotion is null || promotion.ExpiresAt is null
-                || promotion.ExpiresAt <= _clock.GetUtcNow().UtcDateTime) return false;
+                || promotion.ExpiresAt <= _clock.GetUtcNow().UtcDateTime) return (false, null);
             var production = declarations.FirstOrDefault(item => item.Id == promotion.ProductionId);
-            if (production is null) return false;
+            if (production is null || target is not null && target.Id != production.Id) return (false, null);
             state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with
             { Status = approve ? "production-queued" : "rejected", Actor = actor };
-            if (approve) Queue(project, production, artifact, state, actor: actor);
+            var job = approve
+                ? Queue(project, target is null ? production : RouteToCurrentHost(target, declarations), artifact, state,
+                    actor: actor)
+                : null;
             Save(project, state);
-            return true;
+            return (true, job);
         }
     }
 
-    public bool Rollback(string project, string environmentId, string actor)
+    /// <summary>
+    /// Queues a rollback to the last healthy artifact in the environment's
+    /// history that differs from the current one. BD-1 passes
+    /// <paramref name="acceptTarget"/> so the history rollback never redeploys
+    /// an artifact that belongs to a release; the lifecycle owns those.
+    /// </summary>
+    public bool Rollback(string project, string environmentId, string actor, Func<string, bool>? acceptTarget = null)
     {
         lock (_gate)
         {
@@ -268,34 +470,47 @@ public sealed class ProjectEnvironmentService
             var previous = state.History.LastOrDefault(row => row.EnvironmentId == environmentId
                 && (row.Item.Status is "healthy" or "rolled-back")
                 && row.Item.Artifact != currentArtifact);
-            if (previous is null) return false;
-            Queue(project, declaration, previous.Item.Artifact, state, rollback: true, actor: actor);
+            if (previous is null || acceptTarget?.Invoke(previous.Item.Artifact) == false) return false;
+            Queue(project, DeployedSpec(state, declaration, previous.Item.Artifact), previous.Item.Artifact, state,
+                rollback: true, actor: actor);
             Save(project, state);
             return true;
         }
     }
 
+    /// <summary>
+    /// Hands the host its next job. A host whose lease expired (it restarted)
+    /// claims its own job again; every claim counts in <see cref="DeployJob.Claims"/>
+    /// so the run log records each reclaim. Claims older than
+    /// <see cref="HostLostAfter"/> fail as <c>host-lost</c> first.
+    /// </summary>
     public DeployJob? Claim(string hostId)
     {
         lock (_gate)
         {
             var root = StoreRoot();
             if (!Directory.Exists(root)) return null;
-            var files = Directory.EnumerateFiles(root, "*.json").ToArray();
             var now = _clock.GetUtcNow().UtcDateTime;
-            if (files.Any(file => Load(Path.GetFileNameWithoutExtension(file)).Jobs.Any(job =>
-                job.HostId == hostId && job.Status == "claimed" && job.ClaimedAt >= now.AddMinutes(-5))))
-                return null;
-            foreach (var file in files)
+            var states = new List<(string Project, State State)>();
+            foreach (var file in Directory.EnumerateFiles(root, "*.json").Order(StringComparer.Ordinal))
             {
                 var project = Uri.UnescapeDataString(Path.GetFileNameWithoutExtension(file));
                 var state = Load(project);
-                var declarations = Declarations(project);
-                if (declarations is not null) AdvanceTimedPromotions(project, declarations, state);
+                if (AdvanceQueue(state)) Save(project, state);
+                states.Add((project, state));
+            }
+            if (states.Any(item => item.State.Jobs.Any(job =>
+                    job.HostId == hostId && job.Status == "claimed" && job.ClaimedAt > now - LeaseDuration)))
+                return null;
+            foreach (var (project, state) in states)
+            {
                 var job = state.Jobs.FirstOrDefault(item => item.HostId == hostId &&
-                    (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt < now.AddMinutes(-5)));
+                    (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration));
                 if (job is null) continue;
-                var claimed = job with { Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N") };
+                var claimed = job with
+                {
+                    Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N"), Claims = job.Claims + 1,
+                };
                 state.Jobs[state.Jobs.IndexOf(job)] = claimed;
                 Save(project, state);
                 return claimed;
@@ -304,76 +519,152 @@ public sealed class ProjectEnvironmentService
         }
     }
 
+    /// <summary>A claimed job whose lease token matches and has not gone stale, for secret issuance.</summary>
+    public DeployJob? FindClaimedJob(string project, string jobId, string leaseToken)
+    {
+        if (string.IsNullOrWhiteSpace(project) || project is "." or ".." || project.IndexOfAny(['/', '\\', '\0']) >= 0)
+            return null;
+        lock (_gate)
+        {
+            var job = Load(project).Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
+                && item.LeaseToken is not null && CryptographicOperations.FixedTimeEquals(
+                    System.Text.Encoding.UTF8.GetBytes(item.LeaseToken), System.Text.Encoding.UTF8.GetBytes(leaseToken)));
+            return job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration ? null : job;
+        }
+    }
+
+    /// <summary>
+    /// Accepts the host's result while its lease token is valid. The token
+    /// changes on a reclaim and is cleared when the claim fails as
+    /// <c>host-lost</c> or is aborted, so only the current claim reports.
+    /// </summary>
     public bool Report(string project, string jobId, DeployReportRequest report)
     {
         lock (_gate)
         {
             var state = Load(project);
+            var advanced = AdvanceQueue(state);
             var job = state.Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
                 && item.LeaseToken == report.LeaseToken);
-            if (job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime.AddMinutes(-5)) return false;
+            if (job is null)
+            {
+                if (advanced) Save(project, state);
+                return false;
+            }
             var now = _clock.GetUtcNow().UtcDateTime;
             var success = report.Healthy;
-            state.Jobs[state.Jobs.IndexOf(job)] = job with { Status = success ? "healthy" : "failed", LeaseToken = null };
             // Host output is deliberately not accepted as an audit string. Keep a bounded status code only.
             var evidence = report.Evidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
                 ? report.Evidence : success ? "health-ok" : "deploy-step-failed";
+            state.Jobs[state.Jobs.IndexOf(job)] = job with
+            { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence };
             var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
-            var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact);
-            if (promotion is not null)
-            {
-                var index = state.Promotions.IndexOf(promotion);
-                if (promotion.StageId == job.EnvironmentId && promotion.Status == "stage-queued")
-                    state.Promotions[index] = promotion with
-                    { Status = success ? "pending" : "failed", StageHealthyAt = now,
-                        ExpiresAt = success ? now.AddHours(24) : null };
-                if (promotion.ProductionId == job.EnvironmentId && promotion.Status == "production-queued")
-                    state.Promotions[index] = promotion with { Status = success ? "deployed" : "failed" };
-            }
-            if (!success && !job.IsRollback && job.PreviousArtifact is not null)
+            ClosePromotionForResult(state, job, success, now);
+            // A job already queued for the environment replaces the failed
+            // one; a rollback queued behind it would replace a newer release.
+            if (!success && !job.IsRollback && job.PreviousArtifact is not null
+                && !state.Jobs.Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "queued"))
             {
                 var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == job.EnvironmentId);
-                if (declaration is not null) Queue(project, declaration, job.PreviousArtifact, state,
-                    rollback: true, actor: "automatic-rollback");
+                if (declaration is not null) Queue(project, DeployedSpec(state, declaration, job.PreviousArtifact),
+                    job.PreviousArtifact, state, rollback: true, actor: "automatic-rollback");
             }
             Save(project, state);
             return true;
         }
     }
 
-    private void AdvanceTimedPromotions(string project, IReadOnlyList<EnvironmentDeclaration> declarations, State state)
+    private static void ClosePromotionForResult(State state, DeployJob job, bool success, DateTime now)
     {
-        foreach (var promotion in state.Promotions.Where(item => item.Status == "pending").ToArray())
-        {
-            if (promotion.ExpiresAt <= _clock.GetUtcNow().UtcDateTime)
-            {
-                state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with { Status = "expired" };
-                continue;
-            }
-            var production = declarations.FirstOrDefault(item => item.Id == promotion.ProductionId);
-            if (production?.Approval != "stage-healthy-10m" ||
-                !state.History.Any(row => row.EnvironmentId == production.Id
-                    && (row.Item.Status is "healthy" or "rolled-back")) ||
-                _clock.GetUtcNow().UtcDateTime - promotion.StageHealthyAt < TimeSpan.FromMinutes(10)) continue;
-            state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with
-            { Status = "production-queued", Actor = "stage-health-rule" };
-            Queue(project, production, promotion.Artifact, state, actor: "stage-health-rule");
-        }
+        var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact);
+        if (promotion is null) return;
+        var index = state.Promotions.IndexOf(promotion);
+        if (promotion.StageId == job.EnvironmentId && promotion.Status == "stage-queued")
+            state.Promotions[index] = promotion with
+            { Status = success ? "pending" : "failed", StageHealthyAt = now,
+                ExpiresAt = success ? now.AddHours(24) : null };
+        if (promotion.ProductionId == job.EnvironmentId && promotion.Status == "production-queued")
+            state.Promotions[index] = promotion with { Status = success ? "deployed" : "failed" };
     }
 
-    private void Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
+    /// <summary>
+    /// Expires pending promotions and fails claims whose host stopped
+    /// reporting. Production always waits for a person: the
+    /// <c>stage-healthy-10m</c> rule never queues it (BD-1). A lost host gets
+    /// no automatic rollback, because the rollback would go to the same host.
+    /// </summary>
+    private bool AdvanceQueue(State state)
+    {
+        var now = _clock.GetUtcNow().UtcDateTime;
+        var changed = false;
+        foreach (var promotion in state.Promotions.Where(item => item.Status == "pending" && item.ExpiresAt <= now).ToArray())
+        {
+            state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with { Status = "expired" };
+            changed = true;
+        }
+        foreach (var job in state.Jobs.Where(item => item.Status == "claimed" && item.ClaimedAt <= now - HostLostAfter).ToArray())
+        {
+            var lost = job with { Status = "failed", LeaseToken = null, FinishedAt = now, Evidence = HostLostEvidence };
+            state.Jobs[state.Jobs.IndexOf(job)] = lost;
+            state.History.Add(new(job.EnvironmentId, now,
+                new(now, "failed", job.Artifact, job.PreviousArtifact, HostLostEvidence)));
+            ClosePromotionForResult(state, lost, success: false, now);
+            changed = true;
+        }
+        return changed;
+    }
+
+    /// <summary>
+    /// The declaration the artifact last deployed healthy with, so a rollback
+    /// repeats exactly that deploy, on the host the environment declares now
+    /// (a retired host would never claim it). History from before jobs carried
+    /// the declaration falls back to the current one.
+    /// </summary>
+    private static EnvironmentDeclaration DeployedSpec(State state, EnvironmentDeclaration current, string artifact)
+        => state.Jobs.LastOrDefault(job => job.EnvironmentId == current.Id && job.Artifact == artifact
+                && job.Status == "healthy") is { } deployed
+            ? current with
+            {
+                Template = deployed.Template, Destination = deployed.Destination,
+                HealthUrl = deployed.HealthUrl, SecretRefs = deployed.SecretRefs, ContainerPort = deployed.ContainerPort,
+            }
+            : current;
+
+    /// <summary>
+    /// BD-1: the release snapshot decides what is deployed (template,
+    /// destination, health check, secrets); the current declaration decides
+    /// where. After an environment moves to another host, a rollback or a late
+    /// approval of an older release goes to the new host instead of waiting
+    /// for a retired host that never claims.
+    /// </summary>
+    private static EnvironmentDeclaration RouteToCurrentHost(EnvironmentDeclaration snapshot,
+        IReadOnlyList<EnvironmentDeclaration> current)
+        => current.FirstOrDefault(item => item.Id == snapshot.Id) is { } declared
+            ? snapshot with { TargetHostId = declared.TargetHostId }
+            : snapshot;
+
+    private static bool HasOpenPromotion(State state, string artifact)
+        => state.Promotions.Any(item => item.Artifact == artifact
+            && item.Status is not ("rejected" or "failed" or "cancelled"));
+
+    private static bool IsDeclared(IReadOnlyList<EnvironmentDeclaration>? declarations, string environmentId)
+        => declarations?.Any(item => item.Id == environmentId) == true;
+
+    private DeployJob Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
         bool rollback = false, string? actor = null)
     {
         var previous = state.History.Where(row => row.EnvironmentId == declaration.Id
             && (row.Item.Status is "healthy" or "rolled-back"))
             .LastOrDefault()?.Item.Artifact;
-        state.Jobs.Add(new(Guid.NewGuid().ToString("N"), project, declaration.Id,
+        var job = new DeployJob(Guid.NewGuid().ToString("N"), project, declaration.Id,
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
-            IsRollback: rollback, RequestedBy: actor));
+            IsRollback: rollback, RequestedBy: actor);
+        state.Jobs.Add(job);
+        return job;
     }
 
     private string StoreRoot() => Path.Combine(_configuration["TaskRepository"] ??
@@ -382,7 +673,7 @@ public sealed class ProjectEnvironmentService
     {
         return Path.Combine(StoreRoot(), SafeProjectName(project) + ".json");
     }
-    private static string SafeProjectName(string project)
+    internal static string SafeProjectName(string project)
     {
         if (string.IsNullOrWhiteSpace(project) || project is "." or ".." ||
             project.IndexOfAny(['/', '\\', '\0']) >= 0)

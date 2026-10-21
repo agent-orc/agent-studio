@@ -85,8 +85,10 @@ public sealed partial class BatchGatePilotServiceTests
 
         var lane = cancelHostToken ? TaskStates.AutoReview : TaskStates.Escalated;
         var folder = Path.Combine(_watchPath, lane, member.Key);
+        // The cancelled tick stops waiting; the fallback flight still records
+        // its cancellation before it leaves the flight registry.
         if (cancelHostToken)
-            await WaitForAsync(() => timeline.ReadAll(folder).Any(e => e.Kind == "gate-cancelled"));
+            await pilot.WaitForFlightsAsync(includeFallbacks: true, CancellationToken.None);
         Assert.Equal(1, _gate.FallbackRuns);
         AssertLane(member.Key, lane);
         Assert.Equal(expectedReason, Assert.Single(timeline.ReadAll(folder),
