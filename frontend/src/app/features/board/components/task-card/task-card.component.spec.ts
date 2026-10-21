@@ -623,7 +623,9 @@ describe('TaskCardComponent (smoke)', () => {
     const pill = fixture.nativeElement.querySelector('[data-testid="task-card-outcome-issue"]') as HTMLElement | null;
     expect(pill?.textContent).toContain('Task branch unpushed');
     expect(pill?.className).toContain('task-card__issue-pill--warn');
-  }); // ── Mode badge (planning / research recognizable at a glance) ──────────
+  });
+
+  // Mode badges for planning and research cards.
 
   it('renders a mode pill naming the mode for a planning card', async () => {
     await TestBed.configureTestingModule({
