@@ -17,10 +17,11 @@ namespace AgentStudio.Pipeline;
 /// integration worktree rather than in the registered project checkout
 /// (<see cref="IntegrationWorktreeProvider"/>, AGT-2832), and records the outcome
 /// into the job's <c>pipeline-execution.json</c> so the deferred step flips from
-/// pending to passed / failed / skipped in place. A merge conflict is recorded
-/// <see cref="PipelineStepStatus.Failed"/> with the conflicted files in the
-/// verdict summary - made visible, never silently resolved - while the working
-/// tree is left clean (the merge is aborted). Only a successful result lets the
+/// pending to passed / failed / skipped in place. A conflict confined to
+/// declared card-report paths keeps the integration version. Other unresolved
+/// conflicts are recorded as <see cref="PipelineStepStatus.Failed"/> with the
+/// conflicted files in the verdict summary; the merge is aborted and the working
+/// tree is left clean. Only a successful result lets the
 /// acceptance worker move the task to Completed. Immediate Remote failures remain
 /// visible in Human Review and do not claim integration.
 /// </para>
@@ -480,6 +481,15 @@ public sealed partial class MergeIntoDevelopRunner
                     () => _git.MergeBranchIntoIntegration(repoRoot, taskBranch, branch, ct)).ConfigureAwait(false);
             }
 
+            if (synchronized.Success)
+            {
+                var reportTarget = lineage?.Mode == ImmediateIntegrationLineageMode.DevelopThenMain
+                    ? "develop" : branch;
+                if (fenceAnchors.TryGetValue(reportTarget, out var reportBaseSha))
+                    PreserveDeliveryReports(repoRoot, jobFolderPath, reportBaseSha,
+                        delivery.ExpectedResultSha ?? delivery.Ref);
+            }
+
             if (result.Outcome == MergeIntoIntegrationOutcome.NoTaskBranch
                 && TryResolveDirectDelivery(
                     jobFolderPath,
@@ -775,6 +785,43 @@ public sealed partial class MergeIntoDevelopRunner
             ' ',
             reason.Split(['\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         return collapsed.Length <= 300 ? collapsed : collapsed[..297] + "...";
+    }
+
+    private void PreserveDeliveryReports(
+        string repoRoot, string jobFolderPath, string integrationTip, string deliveryRef)
+    {
+        if (!DeliveryReportPathPolicy.IsEnabled(repoRoot)) return;
+        try
+        {
+            var changed = _git.ChangedPathsAgainstMergeBase(repoRoot, integrationTip, deliveryRef);
+            if (changed is null) return;
+            var deliverySha = _git.GetBranchTip(repoRoot, deliveryRef);
+            if (string.IsNullOrWhiteSpace(deliverySha)) return;
+            foreach (var path in changed.Where(DeliveryReportPathPolicy.IsReportPath))
+            {
+                var stem = path == "status.md" ? "legacy-repository-status" : "legacy-repository-results-status";
+                foreach (var oldSnapshot in Directory.EnumerateFiles(jobFolderPath, $"{stem}-*.md"))
+                    File.Delete(oldSnapshot);
+                var fallbackArtifact = Path.Combine(jobFolderPath, $"{stem}.md");
+                var runnerArtifact = Path.Combine(jobFolderPath, "results", $"{stem}.md");
+                if (File.Exists(runnerArtifact))
+                {
+                    if (File.Exists(fallbackArtifact)) File.Delete(fallbackArtifact);
+                    continue;
+                }
+                var content = _git.GetFileAtCommit(repoRoot, deliverySha, path);
+                if (content is null) continue;
+                const int reportLimit = 16 * 1024;
+                var bytes = System.Text.Encoding.UTF8.GetBytes(content);
+                var start = Math.Max(0, bytes.Length - reportLimit);
+                while (start < bytes.Length && (bytes[start] & 0xC0) == 0x80) start++;
+                File.WriteAllBytes(fallbackArtifact, bytes[start..]);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not preserve legacy delivery report for {JobFolder}", jobFolderPath);
+        }
     }
 
     private async Task MaybeRaiseInterventionAsync(

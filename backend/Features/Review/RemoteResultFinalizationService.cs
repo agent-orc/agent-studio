@@ -78,7 +78,8 @@ public sealed class RemoteResultFinalizationService
     /// </summary>
     public async Task<ResultAcknowledgementPlan> FinalizeForAcknowledgementAsync(
         TaskInfo task,
-        TerminalRunOutcome? runOutcome = null)
+        TerminalRunOutcome? runOutcome = null,
+        string? resultSha = null)
     {
         var admission = ResultFinalizationPolicy.Admit(
             finalizeRequested: true,
@@ -94,7 +95,7 @@ public sealed class RemoteResultFinalizationService
 
         // CancellationToken.None on purpose: the request may be aborted by the
         // runner's delivery timeout, and that must not cancel the summary.
-        var generation = Detached(task, runOutcome);
+        var generation = Detached(task, runOutcome, resultSha);
         using var budget = new CancellationTokenSource();
         var settled = await Task
             .WhenAny(
@@ -189,13 +190,14 @@ public sealed class RemoteResultFinalizationService
         return recovered;
     }
 
-    private Task<ResultFinalizationOutcome> Detached(TaskInfo task, TerminalRunOutcome? runOutcome)
+    private Task<ResultFinalizationOutcome> Detached(
+        TaskInfo task, TerminalRunOutcome? runOutcome, string? resultSha)
         => Task.Run(async () =>
         {
             try
             {
                 return await _summaries
-                    .FinalizeAsync(task, runOutcome, CancellationToken.None)
+                    .FinalizeAsync(task, runOutcome, CancellationToken.None, resultSha)
                     .ConfigureAwait(false);
             }
             catch (Exception ex)
