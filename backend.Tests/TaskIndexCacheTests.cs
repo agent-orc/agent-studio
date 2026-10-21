@@ -473,6 +473,24 @@ public class TaskIndexCacheTests : IDisposable
     }
 
     [Fact]
+    public void PublishCoreFromFolder_ReadsDiskWhenFolderFingerprintIsUnchanged()
+    {
+        WriteJob(TaskStates.Ready, "job-1", "Before");
+        SettleWriteTime(TaskStates.Ready, "job-1");
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, "job-1");
+        var taskJson = Path.Combine(folder, "task.json");
+        var stamp = File.GetLastWriteTimeUtc(taskJson);
+        Assert.Equal("Before", Assert.Single(_cache.GetSnapshot()).Title);
+
+        WriteJob(TaskStates.Ready, "job-1", "After!");
+        File.SetLastWriteTimeUtc(taskJson, stamp);
+
+        _scanner.PublishCoreFromFolder(folder, _watchPath, "cache-test", TaskStates.Ready);
+
+        Assert.Equal("After!", _cache.GetDetailFacts("job-1", _watchPath).Info?.Title);
+    }
+
+    [Fact]
     public void ReferenceIndex_IsReusedUntilSnapshotInvalidation()
     {
         WriteJob(TaskStates.Ready, "job-1", "First");

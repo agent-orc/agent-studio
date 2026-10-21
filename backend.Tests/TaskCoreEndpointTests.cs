@@ -644,7 +644,16 @@ public sealed class TaskCoreEndpointTests : IDisposable
         using var current = JsonDocument.Parse(await after.Content.ReadAsByteArrayAsync());
         var blocking = current.RootElement.GetProperty("blocking");
         Assert.Equal("ready", blocking.GetProperty("dependencyState").GetString());
-        Assert.False(blocking.GetProperty("dependencyBlocked").GetBoolean());
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        using var targetJson = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(Jobs, TaskStates.Archive, "AGT-target", "task.json")));
+        var diskReleased = targetJson.RootElement.TryGetProperty("released", out var releasedField)
+            && releasedField.GetBoolean();
+        var targetFact = index.GetDetailFacts("AGT-target", Jobs).Info?.Released;
+        var graphReleased = index.GetCoreReferenceIndex().Resolve("AGT-target")?.Released;
+        Assert.False(blocking.GetProperty("dependencyBlocked").GetBoolean(),
+            $"diskReleased={diskReleased} targetFact={targetFact} graphReleased={graphReleased} "
+            + $"coreGeneration={index.CoreDependencyGeneration}");
         Assert.True(blocking.GetProperty("dependencies")[0].GetProperty("fulfilled").GetBoolean());
         Assert.NotEqual(before.Headers.ETag, after.Headers.ETag);
         Assert.Equal("0", after.Headers.GetValues("X-Task-Core-Workspace-Scans").Single());

@@ -220,7 +220,7 @@ public class TaskScannerService : ITaskScanner
     {
         if (_indexCache is null) return;
         var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
-        _indexCache.PublishCoreFromFolder(folder, () => ScanJobFolder(folder, entry, state));
+        _indexCache.PublishCoreFromFolder(folder, () => ScanJobFolder(folder, entry, state, bypassMemo: true));
     }
 
     public void RemoveCore(TaskInfo info) => _indexCache?.RemoveCore(info);
@@ -255,7 +255,7 @@ public class TaskScannerService : ITaskScanner
             {
                 Name = projectName, Path = watchPath
             };
-            return ScanJobFolder(targetFolder, entry, state);
+            return ScanJobFolder(targetFolder, entry, state, bypassMemo: true);
         });
     }
 
@@ -683,7 +683,8 @@ public class TaskScannerService : ITaskScanner
         return jobs;
     }
 
-    public TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state)
+    public TaskInfo? ScanJobFolder(string jobDir, WatchPathEntry entry, string state,
+        bool bypassMemo = false)
     {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         // One stat for existence + length + mtime. FileInfo caches the probe, so
@@ -694,7 +695,7 @@ public class TaskScannerService : ITaskScanner
 
         try
         {
-            if (_archivedFolders.TryGetValue(jobDir, out var archived)
+            if (!bypassMemo && _archivedFolders.TryGetValue(jobDir, out var archived)
                 && archived.TaskJsonLength == taskJsonInfo.Length
                 && archived.TaskJsonWriteUtc == taskJsonInfo.LastWriteTimeUtc
                 && archived.ArchiveManifestLength == (archiveManifestInfo.Exists ? archiveManifestInfo.Length : -1L)
@@ -708,7 +709,7 @@ public class TaskScannerService : ITaskScanner
             // parsed TaskInfo is reusable. Only the un-fingerprinted marker files
             // (see ApplyVolatileMarkers) are re-read, keeping quota-wait / park /
             // steer / lifecycle / intent chips live even on a hit.
-            if (_liveFolders.TryGetValue(jobDir, out var live)
+            if (!bypassMemo && _liveFolders.TryGetValue(jobDir, out var live)
                 && live.Fingerprint == ComputeLiveFingerprint(jobDir, taskJsonInfo))
             {
                 return ApplyVolatileMarkers(live.Task, jobDir);
