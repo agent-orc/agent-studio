@@ -97,6 +97,10 @@ public static class GateShardCommand
 /// </summary>
 public static class GateShardTestCatalog
 {
+    private const int MaxDirectories = 4096;
+    private const int MaxFiles = 4096;
+    private const long MaxSourceBytes = 32 * 1024 * 1024;
+    private const long MaxFileBytes = 1024 * 1024;
     private static readonly string[] TestAttributes =
         ["[Fact", "[Theory", "[SkippableFact", "[SkippableTheory"];
 
@@ -115,11 +119,30 @@ public static class GateShardTestCatalog
 
     public static IReadOnlyList<string> Classes(string projectDirectory)
     {
+        try
+        {
+            if ((File.GetAttributes(projectDirectory) & FileAttributes.ReparsePoint) != 0) return [];
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "GateShardTestCatalog: unreadable project directory; all classes run in the complement shard");
+            return [];
+        }
         var classes = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var file in SourceFiles(projectDirectory))
+        var files = SourceFiles(projectDirectory);
+        if (files is null) return [];
+        long scannedBytes = 0;
+        foreach (var file in files)
         {
             string text;
-            try { text = File.ReadAllText(file); }
+            try
+            {
+                var info = new FileInfo(file);
+                if ((info.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+                if (info.Length > MaxFileBytes || scannedBytes + info.Length > MaxSourceBytes) return [];
+                scannedBytes += info.Length;
+                text = File.ReadAllText(file);
+            }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 SilentCatch.Note(ex, "GateShardTestCatalog: unreadable test source; its classes run in the complement shard");
@@ -156,31 +179,49 @@ public static class GateShardTestCatalog
         }
     }
 
-    private static IEnumerable<string> SourceFiles(string directory)
+    private static IReadOnlyList<string>? SourceFiles(string directory)
     {
         var pending = new Stack<string>([directory]);
+        var filesFound = new List<string>();
+        var directoriesSeen = 0;
         while (pending.Count > 0)
         {
             var current = pending.Pop();
-            IEnumerable<string> files;
-            IEnumerable<string> children;
+            if (++directoriesSeen > MaxDirectories) return null;
+            string[] files;
+            string[] children;
             try
             {
-                files = Directory.EnumerateFiles(current, "*.cs", SearchOption.TopDirectoryOnly).ToArray();
-                children = Directory.EnumerateDirectories(current).ToArray();
+                files = Directory.EnumerateFiles(current, "*.cs", SearchOption.TopDirectoryOnly)
+                    .Take(MaxFiles + 1).ToArray();
+                children = Directory.EnumerateDirectories(current)
+                    .Take(MaxDirectories + 1).ToArray();
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 SilentCatch.Note(ex, "GateShardTestCatalog: unreadable test directory; its classes run in the complement shard");
                 continue;
             }
-            foreach (var file in files) yield return file;
-            foreach (var child in children)
+            if (files.Length > MaxFiles || filesFound.Count + files.Length > MaxFiles
+                || children.Length > MaxDirectories) return null;
+            filesFound.AddRange(files);
+            foreach (var child in children.OrderByDescending(path => path, StringComparer.Ordinal))
             {
                 var name = Path.GetFileName(child);
                 if (name is "bin" or "obj" or "TestResults" || name.StartsWith('.')) continue;
+                try
+                {
+                    if ((File.GetAttributes(child) & FileAttributes.ReparsePoint) != 0) continue;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    SilentCatch.Note(ex, "GateShardTestCatalog: unreadable child directory; its classes run in the complement shard");
+                    continue;
+                }
                 pending.Push(child);
             }
         }
+        filesFound.Sort(StringComparer.Ordinal);
+        return filesFound;
     }
 }

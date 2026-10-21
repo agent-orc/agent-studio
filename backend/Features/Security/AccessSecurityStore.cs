@@ -10,7 +10,7 @@ namespace AgentStudio.Security;
 /// enrollment, API token, and Runner credential hashes only. Plaintext credentials are
 /// returned once by the operation that creates them and are never persisted.
 /// </summary>
-public sealed class AccessSecurityStore
+public sealed partial class AccessSecurityStore
 {
     public const string SessionCookieName = "__Host-agentstudio-session";
     // __Host- verlangt Secure+HTTPS; im lokalen HTTP-Dev-Betrieb verwirft der
@@ -29,8 +29,6 @@ public sealed class AccessSecurityStore
     private readonly object _gate = new();
     private const int MaxLoginAttemptEntries = 4096;
     private readonly Dictionary<string, LoginAttempt> _loginAttempts = new(StringComparer.OrdinalIgnoreCase);
-    // Failure times per normalized username, whatever the client address: a
-    // client that rotates addresses still spends one account budget (AGT-3230).
     private readonly Dictionary<string, Queue<DateTime>> _usernameFailures = new(StringComparer.Ordinal);
     private static readonly string DummyPasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken());
     private SecurityState? _state;
@@ -103,8 +101,11 @@ public sealed class AccessSecurityStore
             var valid = user is not null && !user.Disabled && passwordMatches;
             if (!valid)
             {
-                RegisterLoginFailureLocked(boundedKey, now);
+                // Count an existing account before the client-key table can reject
+                // a new key at capacity. Rotating addresses must still spend the
+                // account's failure budget during saturation.
                 if (user is not null) RegisterUsernameFailureLocked(normalized, now);
+                RegisterLoginFailureLocked(boundedKey, now);
                 throw new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.");
             }
 
@@ -690,8 +691,7 @@ public sealed class AccessSecurityStore
     {
         if (!_usernameFailures.TryGetValue(username, out var failures))
         {
-            // Only accounts in the security state reach this table. Prune
-            // expired budgets when the account set is unusually large.
+            // Only accounts in the security state reach this table.
             if (_usernameFailures.Count >= 4096)
                 foreach (var stale in _usernameFailures.Where(entry => now - entry.Value.Last() >= UsernameFailureWindow)
                              .Select(entry => entry.Key).ToList())

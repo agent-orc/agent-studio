@@ -59,29 +59,21 @@ that is already allowed to edit that project's checkout.
 - The first successful HTTPS bootstrap creates the sole initial owner and then
   closes permanently.
 - Human passwords are stored as versioned salted PBKDF2-SHA512 hashes with
-  600,000 iterations. Login is throttled twice: per username and client (IPv6
-  clients grouped by /64; default 5 failures, then a 15-minute lockout) and per
-  username across all addresses (default 20 failures per 15 minutes,
-  `Security:LoginThrottle:MaxFailuresPerUsername` and `UsernameWindowMinutes`).
-  The per-client key table expires old entries and holds at most 4,096 keys
-  (`Security:LoginThrottle:MaxTrackedKeys`, capped at 4,096). When full, new
-  failed login keys receive 429 until entries expire; existing keys retain
-  their lockout counters.
-  Password resets create a temporary
-  password, revoke existing sessions, and force a change at the next login.
+  600,000 iterations. Login reads at most 4 KiB and returns the generic
+  invalid-credentials response for oversized payloads. Failed-login keys
+  are SHA-256 digests, so usernames cannot expand retained key size.
+  Failures are limited per client key (IPv6 grouped by /64; 5 failures,
+  then a 15-minute lockout) and per existing username across client keys
+  (20 failures per 15 minutes). The client-key table holds at most 4,096
+  keys and expires old entries. When full, a failed login from a new key
+  returns 429 and still counts against the existing username's budget.
+  The settings are under `Security:LoginThrottle`. Password resets create
+  a temporary password, revoke existing sessions, and force a change at
+  the next login.
 - Human sessions use a random opaque token stored only as a SHA-256 hash on the
   server. The cookie is `Secure`, `HttpOnly`, `SameSite=Strict`, host-only, and
   has idle plus absolute expiry. Browser mutations require the matching CSRF
-  header. Because SameSite does not separate sibling hosts of one site, every
-  unsafe request that carries a session cookie, and every sign-in, bootstrap,
-  or invitation acceptance, must also carry a matching `Origin` or
-  `Sec-Fetch-Site: same-origin`. Event streams (`/hubs/*` and every WebSocket
-  upgrade) that carry a session cookie are checked on every method, because the
-  upgrade is a GET: a present `Origin` must match, a present `Sec-Fetch-Site`
-  must be `same-origin`, and `Origin: null` is refused. A stream request with
-  neither header (a non-browser client) stays allowed. Runner bearer and
-  enrollment-code requests carry no browser credential and are outside this
-  rule. Studio exposes an explicit sign-out action; a logout or API 401 tears
+  header. Studio exposes an explicit sign-out action; a logout or API 401 tears
   down browser polling and SignalR before returning to the login gate.
 - Roles are intentionally small: owner manages identities and all projects,
   operator reads and mutates allowed projects, contributor (shown as Product)
@@ -152,39 +144,6 @@ minimal `/healthz` liveness endpoint. It trusts one forwarded-header hop from a
 known proxy. The reference Caddy deployment owns ACME renewal, redirects HTTP,
 sets HSTS, caps request bodies, forwards WebSocket upgrades, and serves Angular
 from the same origin as `/api` and `/hubs`.
-
-Every networked response carries a Content-Security-Policy with
-`frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`,
-`Cross-Origin-Opener-Policy: same-origin`, a minimal `Permissions-Policy`,
-`X-Content-Type-Options: nosniff`, and HSTS with `includeSubDomains`. The API
-sets them in `StudioResponseHeaderPolicy`, registered directly after the
-forwarded-headers middleware so short-circuits, rejections, unmatched routes
-and exception-handler errors carry them too. API responses never get the shell
-policy:
-
-- Documents a browser can render (`text/html`, `application/xhtml+xml`,
-  `image/svg+xml`, `text/xml`, `application/xml`), such as agent-written task
-  files and wiki SVG assets, get
-  `sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'`.
-  Stored markup gets an opaque origin and runs no script.
-- Every other API response gets
-  `default-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'`.
-- The URL preview proxy and task result HTML keep their own sandbox policy and
-  get no `X-Frame-Options`, because Studio frames those opaque-origin documents
-  itself. The `/recovery` console has its own policy that allows only its
-  inline script and calls to the Studio API.
-
-The website stack's frontend Caddy sends the shell policy
-(`FrontendShellContentSecurityPolicy`) for the static Angular shell only. It
-keeps `'unsafe-inline'` in `script-src`: sandboxed `srcdoc` frames inherit the
-shell policy and run the inline scripts of repository HTML on their opaque
-origin. Serving that HTML from a separate origin would allow a stricter shell
-script policy.
-
-The first-owner bootstrap skips the installer code only for a direct loopback
-connection. The decision uses the connection peer captured before forwarded
-headers apply, so a forwarded `127.0.0.1` (for example a `CF-Connecting-IP`
-value) never counts as loopback.
 
 Anonymous API reads, mutations, client registration, Runner registration, hub
 negotiation, and reconnects fail closed. Debug, internal probe, and filesystem
