@@ -2,11 +2,11 @@ import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { HttpRequest, provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TaskService, orchestratorContextChatSegment } from './task.service';
 import { ErrorDialogService } from './error-dialog.service';
 import { JobsHubClient, type JobsHubHandlers } from './jobs-hub-client.service';
-import type { TaskInfo } from '../models/task.model';
+import type { TaskDetail, TaskInfo } from '../models/task.model';
 
 class ErrorDialogServiceStub {
   show(): void { return undefined; }
@@ -66,6 +66,25 @@ describe('TaskService', () => {
 
   afterEach(() => {
     http.verify();
+  });
+
+  it('retries a warming detail reply before delivering a TaskDetail', () => {
+    vi.useFakeTimers();
+    try {
+      let selected: TaskDetail | undefined;
+      service.getDetail('AGT-1', 'C:/watch').subscribe(detail => { selected = detail; });
+      const url = '/api/v1/projects/-/tasks/AGT-1';
+      http.expectOne(request => request.url === url && request.params.get('watchPath') === 'C:/watch')
+        .flush({ state: 'warming', reason: 'task-index-warming' },
+          { status: 202, statusText: 'Accepted' });
+      expect(selected).toBeUndefined();
+      vi.advanceTimersByTime(100);
+      http.expectOne(request => request.url === url && request.params.get('watchPath') === 'C:/watch')
+        .flush({ info: { id: 'AGT-1' } } as unknown as TaskDetail);
+      expect(selected?.info.id).toBe('AGT-1');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('decodes job file content from UTF-8 bytes', () => {

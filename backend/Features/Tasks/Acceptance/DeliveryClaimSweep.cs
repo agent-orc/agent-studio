@@ -351,7 +351,10 @@ public sealed class DeliveryClaimSweep
         }
 
         if (applied.Count > 0)
+        {
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(card.FolderPath);
+        }
         return applied;
     }
 

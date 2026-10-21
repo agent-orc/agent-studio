@@ -88,7 +88,13 @@ public sealed class TaskIndexCache
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly HashSet<string> _staleCoreFolders = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-    private readonly HashSet<string> _pendingCoreFolders = new(
+    private readonly Dictionary<string, int> _pendingCoreFolders = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    // Tombstones are retained so a scan started before a move cannot resurrect
+    // its old folder. Only direct publications advance these folder versions.
+    private readonly Dictionary<string, long> _coreFolderVersions = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly Dictionary<string, TaskCoreSourceStamp> _coreTaskStamps = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private long _coreWriteGeneration;
     private int _coreHydrationQueued;
@@ -361,20 +367,34 @@ public sealed class TaskIndexCache
                 && _core.TryGetValue(CoreKey(watchPath, identity), out var record))
                 _coreFactsByFolder.TryGetValue(record.FolderPath, out info);
             if (info is null && string.IsNullOrWhiteSpace(watchPath))
-                info = _coreFactsByFolder.Values.FirstOrDefault(task =>
-                    string.Equals(task.Id, identity, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(task.Key, identity, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(task.TaskKey, identity, StringComparison.OrdinalIgnoreCase));
+                info = _coreFactsByFolder.Values
+                    .Where(task => string.Equals(task.Id, identity, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(task.Key, identity, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(task.TaskKey, identity, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(task => Array.IndexOf(TaskStates.All, task.State))
+                    .ThenBy(task => task.FolderPath, StringComparer.Ordinal)
+                    .FirstOrDefault();
 
             var expired = _time.GetUtcNow() - _snapshotAt >= _safetyTtl;
             if (expired || _dirty || (!_hasSnapshot && info is null)) QueueCoreHydration();
             var stale = info is not null && (expired || _staleCoreFolders.Contains(info.FolderPath));
-            return (info, _coreReferences, stale, info is null && (!_hasSnapshot || _dirty));
+            var removed = string.IsNullOrWhiteSpace(watchPath)
+                ? _removedCoreKeys.Any(key => key.EndsWith("::" + identity,
+                    StringComparison.OrdinalIgnoreCase))
+                : _removedCoreKeys.Contains(CoreKey(watchPath, identity));
+            return (info, _coreReferences, stale,
+                info is null && !removed && (!_hasSnapshot || _dirty));
         }
     }
 
     /// <summary>Resident cards for permission-safe dependency projections.</summary>
     public IReadOnlyList<TaskInfo> GetResidentTasks()
+    {
+        lock (_lock) return _coreFactsByFolder.Values
+            .Where(task => task.State != TaskStates.Archive).ToArray();
+    }
+
+    public IReadOnlyList<TaskInfo> GetAllResidentTasks()
     {
         lock (_lock) return _coreFactsByFolder.Values.ToArray();
     }
@@ -392,9 +412,12 @@ public sealed class TaskIndexCache
         Task? pending;
         lock (_lock)
         {
-            pending = !string.IsNullOrWhiteSpace(watchPath)
-                && _pendingCorePublications.TryGetValue(CoreKey(watchPath, identity), out var publication)
-                ? publication.Completion.Task : null;
+            pending = string.IsNullOrWhiteSpace(watchPath)
+                ? _pendingCorePublications
+                    .Where(pair => pair.Key.EndsWith("::" + identity, StringComparison.OrdinalIgnoreCase))
+                    .Select(pair => pair.Value.Completion.Task).FirstOrDefault()
+                : _pendingCorePublications.TryGetValue(CoreKey(watchPath, identity), out var publication)
+                    ? publication.Completion.Task : null;
         }
         var timedOut = false;
         if (pending is not null)
@@ -411,7 +434,52 @@ public sealed class TaskIndexCache
             }
         }
         var facts = GetDetailFacts(identity, watchPath);
-        if (timedOut) QueueCoreHydration();
+        if (!timedOut && facts.Info is { } current)
+        {
+            var stamp = TaskCoreSourceStamp.Read(Path.Combine(current.FolderPath, "task.json"));
+            TaskCoreSourceStamp published;
+            bool folderStale;
+            lock (_lock)
+            {
+                published = _coreTaskStamps.GetValueOrDefault(current.FolderPath);
+                folderStale = _staleCoreFolders.Contains(current.FolderPath);
+            }
+            if (folderStale || stamp != published || stamp.Bytes < 0)
+            {
+                Task repair;
+                var repaired = false;
+                var repairKeys = BeginCorePublication(current);
+                void StartRepair() => repair = Task.Run(() =>
+                {
+                    try
+                    {
+                        _scanner.PublishCoreFromFolder(current.FolderPath, current.WatchPath,
+                            current.ProjectName, current.State);
+                        repaired = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "task-core-read-repair-failed folder={Folder}", current.FolderPath);
+                    }
+                    finally { EndCorePublication(repairKeys); }
+                });
+                repair = Task.CompletedTask;
+                if (ExecutionContext.IsFlowSuppressed()) StartRepair();
+                else
+                {
+                    using (ExecutionContext.SuppressFlow()) StartRepair();
+                }
+                try
+                {
+                    using (TaskSwitchTrace.Span("index.wait"))
+                        await repair.WaitAsync(TimeSpan.FromMilliseconds(25), _time, cancellationToken)
+                            .ConfigureAwait(false);
+                    facts = GetDetailFacts(identity, watchPath);
+                    if (!repaired) timedOut = true;
+                }
+                catch (TimeoutException) { timedOut = true; }
+            }
+        }
         return (facts.Info, facts.References, facts.Stale || timedOut,
             facts.Warming || (timedOut && facts.Info is null));
     }
@@ -475,6 +543,11 @@ public sealed class TaskIndexCache
     private static string CoreKey(string watchPath, string identity) =>
         $"{watchPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)}::{identity}";
 
+    private static TaskCoreSourceStamp SourceStamp(TaskInfo info) =>
+        info.TaskJsonLength >= 0
+            ? new TaskCoreSourceStamp(info.TaskJsonLength, info.TaskJsonWriteTicks)
+            : TaskCoreSourceStamp.Read(Path.Combine(info.FolderPath, "task.json"));
+
     /// <summary>Publish one durable write without a workspace walk.</summary>
     public void PublishCore(TaskInfo info)
     {
@@ -492,6 +565,7 @@ public sealed class TaskIndexCache
                 }
                 records.TryGetValue(info.FolderPath, out var previous);
                 // A move or project transfer may change the folder before publication.
+                var removedFolders = new List<string>();
                 foreach (var old in facts.Where(pair => pair.Value.TaskKey == info.TaskKey
                     || (pair.Value.Id == info.Id && WatchPathComparison.PathsEqual(pair.Value.WatchPath, info.WatchPath)))
                     .Select(pair => pair.Key).ToArray())
@@ -500,6 +574,7 @@ public sealed class TaskIndexCache
                     {
                         facts.Remove(old);
                         records.Remove(old);
+                        removedFolders.Add(old);
                     }
                 }
                 facts[info.FolderPath] = info;
@@ -511,6 +586,13 @@ public sealed class TaskIndexCache
                 {
                     var key = CoreKey(info.WatchPath, info.Id);
                     _coreRevisionByKey[key] = _coreRevisionByKey.GetValueOrDefault(key) + 1;
+                    _coreFolderVersions[info.FolderPath] = ++_coreWriteGeneration;
+                    _coreTaskStamps[info.FolderPath] = SourceStamp(info);
+                    foreach (var old in removedFolders)
+                    {
+                        _coreFolderVersions[old] = ++_coreWriteGeneration;
+                        _coreTaskStamps.Remove(old);
+                    }
                     _removedCoreKeys.Remove(CoreKey(info.WatchPath, info.Id));
                     _removedCoreKeys.Remove(CoreKey(info.WatchPath, info.TaskKey));
                     if (!string.IsNullOrWhiteSpace(info.Key))
@@ -522,12 +604,50 @@ public sealed class TaskIndexCache
         finally { EndCorePublication(pendingKeys); }
     }
 
+    /// <summary>Read and publish under one ordering lock, including watcher reads.</summary>
+    public void PublishCoreFromFolder(string folder, Func<TaskInfo?> read)
+    {
+        TaskInfo? previous;
+        lock (_lock) _coreFactsByFolder.TryGetValue(folder, out previous);
+        var pending = previous is null ? Array.Empty<string>() : BeginCorePublication(previous);
+        try
+        {
+            lock (_corePublicationLock)
+            {
+                var info = read();
+                if (info is null) RemoveCoreByFolder(folder);
+                else PublishCore(info);
+            }
+        }
+        finally { EndCorePublication(pending); }
+    }
+
+    public void MoveCoreFromFolder(string sourceFolder, string targetFolder, Func<TaskInfo?> read)
+    {
+        TaskInfo? source;
+        lock (_lock) _coreFactsByFolder.TryGetValue(sourceFolder, out source);
+        var pending = source is null ? Array.Empty<string>() : BeginCorePublication(source);
+        try
+        {
+            lock (_corePublicationLock)
+            {
+                var target = read();
+                RemoveCoreByFolder(sourceFolder);
+                if (target is not null) PublishCore(target);
+                else RemoveCoreByFolder(targetFolder);
+            }
+        }
+        finally { EndCorePublication(pending); }
+    }
+
     private void PublishCoreFacts(Dictionary<string, TaskInfo> facts,
         Dictionary<string, TaskCoreRecord> records, TaskReferenceIndex references)
     {
         var byFolder = new Dictionary<string, TaskCoreRecord>(records.Comparer);
         var aliases = new Dictionary<string, TaskCoreRecord>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (folder, task) in facts)
+        foreach (var (folder, task) in facts
+            .OrderByDescending(pair => Array.IndexOf(TaskStates.All, pair.Value.State))
+            .ThenByDescending(pair => pair.Key, StringComparer.Ordinal))
         {
             if (!records.TryGetValue(folder, out var record)) continue;
             var waitsOn = task.References.DependsOn.Count > 0 ? references.EvaluateWaitsOn(task) : null;
@@ -564,7 +684,12 @@ public sealed class TaskIndexCache
             facts.Remove(info.FolderPath);
             records.Remove(info.FolderPath);
             PublishCoreFacts(facts, records, TaskReferenceIndex.Build(facts.Values));
-            lock (_lock) _staleCoreFolders.Remove(info.FolderPath);
+            lock (_lock)
+            {
+                _coreFolderVersions[info.FolderPath] = ++_coreWriteGeneration;
+                _coreTaskStamps.Remove(info.FolderPath);
+                _staleCoreFolders.Remove(info.FolderPath);
+            }
         }
     }
 
@@ -594,22 +719,59 @@ public sealed class TaskIndexCache
             : Path.GetDirectoryName(path);
         if (folder is null) return;
         TaskCoreRecord? known;
+        var startWorker = false;
         lock (_lock)
         {
-            if (!_coreByFolder.TryGetValue(folder, out known)) return;
+            _coreByFolder.TryGetValue(folder, out known);
             _staleCoreFolders.Add(folder);
-            if (!_pendingCoreFolders.Add(folder)) return;
+            startWorker = !_pendingCoreFolders.ContainsKey(folder);
+            _pendingCoreFolders[folder] = _pendingCoreFolders.GetValueOrDefault(folder) + 1;
         }
+        if (!startWorker) return;
         _ = Task.Run(async () =>
         {
             try
             {
-                await Task.Delay(250);
-                _scanner.PublishCoreFromFolder(folder, known.WatchPath, known.ProjectName, known.State);
+                while (true)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(250), _time);
+                    int observed;
+                    lock (_lock) observed = _pendingCoreFolders[folder];
+                    var location = known is not null
+                        ? (known.WatchPath, known.ProjectName, known.State)
+                        : ResolveUnknownCoreFolder(folder);
+                    if (location is { } resolved)
+                        _scanner.PublishCoreFromFolder(folder, resolved.WatchPath,
+                            resolved.ProjectName, resolved.State);
+                    else QueueCoreHydration();
+                    lock (_lock)
+                    {
+                        if (_pendingCoreFolders[folder] != observed) continue;
+                        _pendingCoreFolders.Remove(folder);
+                        break;
+                    }
+                }
             }
-            catch (Exception ex) { _logger.LogWarning(ex, "task-core-sidecar-refresh-failed path={Path}", path); }
-            finally { lock (_lock) _pendingCoreFolders.Remove(folder); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "task-core-sidecar-refresh-failed path={Path}", path);
+                lock (_lock) _pendingCoreFolders.Remove(folder);
+            }
         });
+    }
+
+    private (string WatchPath, string ProjectName, string State)? ResolveUnknownCoreFolder(string folder)
+    {
+        foreach (var entry in _scanner.GetWatchPaths())
+        {
+            var relative = Path.GetRelativePath(entry.Path, folder);
+            if (relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                || relative == ".." || Path.IsPathRooted(relative)) continue;
+            var state = relative.Split(Path.DirectorySeparatorChar)[0];
+            if (TaskStates.All.Contains(state) || state == TaskStorageLayout.JobsDirName)
+                return (entry.Path, entry.Name, state);
+        }
+        return null;
     }
 
     private static void AddCoreAliases(Dictionary<string, TaskCoreRecord> core, TaskCoreRecord record)
@@ -786,7 +948,6 @@ public sealed class TaskIndexCache
             // instead of once per runner status read.
             var automationReferences = TaskReferenceIndex.Build(
                 board.Concat(archive).Where(task => !task.Fixture));
-            var projected = new Dictionary<string, TaskCoreRecord>(StringComparer.OrdinalIgnoreCase);
             var byFolder = new Dictionary<string, TaskCoreRecord>(
                 OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
             var factsByFolder = new Dictionary<string, TaskInfo>(byFolder.Comparer);
@@ -795,53 +956,75 @@ public sealed class TaskIndexCache
                 var waitsOn = job.References.DependsOn.Count > 0 ? referenceIndex.EvaluateWaitsOn(job) : null;
                 previousCoreByFolder.TryGetValue(job.FolderPath, out var previous);
                 var record = TaskCoreRecord.Create(job, waitsOn, previous);
-                AddCoreAliases(projected, record);
                 byFolder[record.FolderPath] = record;
                 factsByFolder[job.FolderPath] = job;
             }
-            AddLegacyCoreAliases(projected, byFolder.Values);
-
             var push = false;
             lock (_corePublicationLock)
-            lock (_lock)
             {
-                _publication = new TaskIndexPublication(
-                    board.ToImmutableList(),
-                    archive.ToImmutableList(),
-                    referenceIndex,
-                    automationReferences,
-                    _publication.Generation + 1);
-                // A targeted mutation may publish while the scan is running.
-                // Never overwrite that more recent publication with a torn scan.
-                if (_coreWriteGeneration == coreWriteGenBefore)
+                Dictionary<string, TaskInfo> mergedFacts;
+                Dictionary<string, TaskCoreRecord> mergedRecords;
+                bool hadConcurrentPublication;
+                lock (_lock)
                 {
-                    _core = projected;
-                    _coreByFolder = byFolder;
-                    _coreFactsByFolder = factsByFolder;
-                    _coreReferences = referenceIndex;
-                    _removedCoreKeys.Clear();
-                    _staleCoreFolders.Clear();
+                    mergedFacts = new Dictionary<string, TaskInfo>(_coreFactsByFolder, _coreFactsByFolder.Comparer);
+                    mergedRecords = new Dictionary<string, TaskCoreRecord>(_coreByFolder, _coreByFolder.Comparer);
+                    hadConcurrentPublication = _coreWriteGeneration != coreWriteGenBefore;
                 }
-                _snapshotAt = _time.GetUtcNow();
-                _hasSnapshot = true;
-                _publishedMutationGen = Math.Max(_publishedMutationGen, mutationGenBefore);
-                _dirty = _invalidationGen != genBefore;
-                // A TTL-only rescan captures the same invalidation generation
-                // as the previous publish and never pushes.
-                var followedInvalidation = genBefore != _publishedInvalidationGen;
-                _publishedInvalidationGen = genBefore;
-                if (followedInvalidation && (background || _staleServed))
+                var adopted = new List<string>();
+                var removed = new List<string>();
+                foreach (var (folder, scanned) in factsByFolder)
                 {
-                    _staleServed = false;
-                    push = true;
+                    if (_coreFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore) continue;
+                    mergedFacts[folder] = scanned;
+                    mergedRecords[folder] = byFolder[folder];
+                    adopted.Add(folder);
                 }
-                if (ReferenceEquals(_refreshCompletion, completion))
-                    _refreshCompletion = null;
-                Interlocked.Increment(ref Misses);
-                // A board read was served stale and this walk started before
-                // the invalidation that made it stale: catch up in the
-                // background rather than waiting for the next read.
-                if (!push && _staleServed && _dirty) StartBackgroundRefreshLocked();
+                foreach (var folder in mergedFacts.Keys.ToArray())
+                {
+                    if (factsByFolder.ContainsKey(folder)
+                        || _coreFolderVersions.GetValueOrDefault(folder) > coreWriteGenBefore) continue;
+                    mergedFacts.Remove(folder);
+                    mergedRecords.Remove(folder);
+                    removed.Add(folder);
+                }
+                var mergedReferences = TaskReferenceIndex.Build(mergedFacts.Values);
+                PublishCoreFacts(mergedFacts, mergedRecords, mergedReferences);
+                var stamps = adopted.ToDictionary(folder => folder,
+                    folder => SourceStamp(factsByFolder[folder]),
+                    mergedFacts.Comparer);
+                lock (_lock)
+                {
+                    _publication = new TaskIndexPublication(
+                        board.ToImmutableList(), archive.ToImmutableList(),
+                        referenceIndex, automationReferences, _publication.Generation + 1);
+                    foreach (var folder in adopted)
+                    {
+                        _coreTaskStamps[folder] = stamps[folder];
+                        _staleCoreFolders.Remove(folder);
+                    }
+                    foreach (var folder in removed)
+                    {
+                        _coreTaskStamps.Remove(folder);
+                        _staleCoreFolders.Remove(folder);
+                    }
+                    if (!hadConcurrentPublication) _removedCoreKeys.Clear();
+                    _snapshotAt = _time.GetUtcNow();
+                    _hasSnapshot = true;
+                    _publishedMutationGen = Math.Max(_publishedMutationGen, mutationGenBefore);
+                    _dirty = _invalidationGen != genBefore;
+                    var followedInvalidation = genBefore != _publishedInvalidationGen;
+                    _publishedInvalidationGen = genBefore;
+                    if (followedInvalidation && (background || _staleServed))
+                    {
+                        _staleServed = false;
+                        push = true;
+                    }
+                    if (ReferenceEquals(_refreshCompletion, completion))
+                        _refreshCompletion = null;
+                    Interlocked.Increment(ref Misses);
+                    if (!push && _staleServed && _dirty) StartBackgroundRefreshLocked();
+                }
             }
             // Arm the push before releasing waiters, so a reader that resumes
             // on this publication already has the push it implies scheduled.

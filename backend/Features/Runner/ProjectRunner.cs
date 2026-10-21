@@ -915,6 +915,7 @@ public class ProjectRunner
         // Make deletion visible synchronously so a recovered provider wait
         // cannot be re-read from a stale task snapshot on the next tick.
         scanner.InvalidateCache();
+        scanner.PublishCoreFromKnownFolder(info.FolderPath);
     }
 
     private ProviderLimitStatus? ActiveProviderLimit(string? cliType, DateTime utcNow)

@@ -83,19 +83,31 @@ public sealed class TokenAggregationServiceCacheTests : IDisposable
         var firstSummary = reader.Get(ProjectName, _watchPath, "AGT-1");
         var otherSummary = reader.Get(ProjectName, _watchPath, "AGT-2");
         Assert.NotNull(firstSummary);
+        Assert.Equal(1, reader.ProjectLoadCount(ProjectName, _watchPath));
         var firstTotal = firstSummary!.TotalTokens;
         Assert.True(firstTotal > 0);
+        var folder = Path.Combine(_watchPath, "3-progress", "AGT-1");
+        Assert.True(TaskJsonFile.UpdateField(folder, "heartbeatAt",
+            "2026-10-21T08:00:00Z", NullLogger.Instance));
+        scanner.PublishCoreFromKnownFolder(folder);
+        Assert.Same(firstSummary, reader.Get(ProjectName, _watchPath, "AGT-1"));
+        Assert.Equal(1, reader.ProjectLoadCount(ProjectName, _watchPath));
 
         // A disk rewrite alone does not invalidate the resident card entry.
         WriteReceipt("AGT-1", totalTokens: 99_000, inputTokens: 90_000, outputTokens: 9_000);
         var cached = reader.Get(ProjectName, _watchPath, "AGT-1");
         Assert.Equal(firstTotal, cached?.TotalTokens);
+        var heartbeat = indexCache.GetDetailFacts("AGT-1", _watchPath).Info!;
+        indexCache.PublishCore(heartbeat with { Title = "Heartbeat" });
+        Assert.Same(firstSummary, reader.Get(ProjectName, _watchPath, "AGT-1"));
+        Assert.Equal(1, reader.ProjectLoadCount(ProjectName, _watchPath));
 
         // The durable writer republishes only this card. No board rescan is
         // required before the separate usage resource sees the new receipt.
-        scanner.PublishCoreFromKnownFolder(Path.Combine(_watchPath, "3-progress", "AGT-1"));
+        scanner.PublishCoreFromKnownFolder(folder);
         var refreshed = reader.Get(ProjectName, _watchPath, "AGT-1");
         Assert.True(refreshed!.TotalTokens > firstTotal);
+        Assert.Equal(2, reader.ProjectLoadCount(ProjectName, _watchPath));
         Assert.Same(otherSummary, reader.Get(ProjectName, _watchPath, "AGT-2"));
     }
 

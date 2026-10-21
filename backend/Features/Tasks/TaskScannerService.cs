@@ -214,9 +214,7 @@ public class TaskScannerService : ITaskScanner
     {
         if (_indexCache is null) return;
         var entry = new WatchPathEntry { Name = projectName, Path = watchPath };
-        var updated = ScanJobFolder(folder, entry, state);
-        if (updated is not null) _indexCache.PublishCore(updated);
-        else _indexCache.RemoveCoreByFolder(folder);
+        _indexCache.PublishCoreFromFolder(folder, () => ScanJobFolder(folder, entry, state));
     }
 
     public void RemoveCore(TaskInfo info) => _indexCache?.RemoveCore(info);
@@ -230,11 +228,20 @@ public class TaskScannerService : ITaskScanner
 
     public void MoveCoreFromKnownFolder(string sourceFolder, string targetFolder,
         string watchPath, string state)
+        => MoveCoreFromFolder(sourceFolder, targetFolder, watchPath,
+            _indexCache?.GetCoreByFolder(sourceFolder)?.ProjectName ?? Path.GetFileName(watchPath), state);
+
+    public void MoveCoreFromFolder(string sourceFolder, string targetFolder,
+        string watchPath, string projectName, string state)
     {
-        var known = _indexCache?.GetCoreByFolder(sourceFolder);
-        _indexCache?.RemoveCoreByFolder(sourceFolder);
-        PublishCoreFromFolder(targetFolder, watchPath,
-            known?.ProjectName ?? Path.GetFileName(watchPath), state);
+        _indexCache?.MoveCoreFromFolder(sourceFolder, targetFolder, () =>
+        {
+            var entry = new WatchPathEntry
+            {
+                Name = projectName, Path = watchPath
+            };
+            return ScanJobFolder(targetFolder, entry, state);
+        });
     }
 
     private static string? ReadArchiveState(string jobDir)
@@ -759,6 +766,13 @@ public class TaskScannerService : ITaskScanner
 
             var info = new TaskInfo
             {
+                TaskJsonLength = taskJsonInfo.Length,
+                TaskJsonWriteTicks = taskJsonInfo.LastWriteTimeUtc.Ticks,
+                TokenReceiptStamp = raw.TryGetProperty("tokenSummary", out var receipt)
+                    && receipt.ValueKind == JsonValueKind.Object
+                        ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                            JsonSerializer.SerializeToUtf8Bytes(receipt)))
+                        : "none",
                 Id = resolvedId,
                 TaskKey = TaskIdentity.CreateKey(entry.Path, resolvedId),
                 Key = ReadReferenceKey(raw),

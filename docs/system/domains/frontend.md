@@ -396,6 +396,9 @@ occur. It is not a claim about tunnel transfer time.
   short code owns in a multi-project workspace, a pager entry outside every
   registered storage location, or a registry still loading after 3 s) is
   resolved server-side through the legacy detail route instead of failing.
+  A 202 warming reply from that route has a JSON body. TaskService retries it
+  before delivering a TaskDetail to any legacy caller, so no consumer receives
+  a null detail while the index hydrates.
   A revalidated core generation refreshes an already painted rich pane in
   place, and the expanded history or review tab reloads with it. If core
   revalidation finds the index warming, only the read retries: the selected

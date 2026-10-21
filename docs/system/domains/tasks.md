@@ -1758,6 +1758,16 @@ before acknowledgment. This includes release, reference edits, moves and
 deletion; an unrelated dirty task does not force a core request to scan. The
 sidecar watcher refreshes changed heads outside HTTP requests.
 
+The legacy full-detail route reads the resident per-card facts without waiting
+for a workspace scan. A folder move swaps its old and new core locations under
+one publication lock. Background scans merge per folder, retaining cards
+published after the scan began and adopting unrelated scanned changes. A
+changed or missing task.json is repaired from that card's folder on read.
+During cold hydration the route returns a JSON 202 warming reply, which the
+client retries before exposing a TaskDetail. Successful detail replies carry
+`X-Task-Detail-Freshness` and `X-Task-Token-Freshness`; token usage is served
+from a nonblocking card cache, while the separate usage resource can fill it.
+
 This contract is the D1 and D3 recommendation in
 [the task-switch performance dossier](../../task-switch-performance/index.html).
 Its legacy-handler 486 ms p50 and 2,183 ms p95 are the measured comparison

@@ -1,6 +1,6 @@
 import { Injectable, signal, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse, HttpHeaders, HttpParams } from '@angular/common/http';
-import { Subject, catchError, finalize, map, tap, throwError, type Observable } from 'rxjs';
+import { Subject, catchError, finalize, map, switchMap, tap, throwError, timer, type Observable } from 'rxjs';
 import type { TaskCore, TaskResource, ResourceName } from '../models/task-core.model';
 import type {
   ArchivedTasksResponse,
@@ -382,6 +382,11 @@ export class TaskService {
   private jobsHub = inject(JobsHubClient);
 
   private readonly baseUrl = '/api';
+
+  private taskV1Url(jobId: string, projectId = UNSCOPED_TASK_PROJECT): string {
+    return `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}`;
+  }
+
   private liveUpdateTimer: ReturnType<typeof setInterval> | null = null;
   private pushRefreshHandle: ReturnType<typeof setTimeout> | null = null;
   private groupedRefreshInFlight = false;
@@ -839,14 +844,16 @@ export class TaskService {
     );
   }
 
-  getDetail(jobId: string, watchPath?: string, project?: string) {
+  getDetail(jobId: string, watchPath?: string, project?: string): Observable<TaskDetail> {
     let params = this.withWatchPath(watchPath).params ?? new HttpParams();
     if (project) params = params.set('project', project);
     const projectId = project?.trim() || UNSCOPED_TASK_PROJECT;
     return this.http.get<TaskDetail>(
-      `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}`,
-      params.keys().length ? { params } : {},
-    );
+      this.taskV1Url(jobId, projectId),
+      { params, observe: 'response' },
+    ).pipe(switchMap(response => response.status === 202
+      ? timer(100).pipe(switchMap(() => this.getDetail(jobId, watchPath, project)))
+      : [response.body!]));
   }
 
   /**
@@ -877,7 +884,7 @@ export class TaskService {
     if (!projectId) return this.getDetail(jobId, fallbackWatchPath);
 
     const request = this.http.get<TaskDetail>(
-      `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}`,
+      this.taskV1Url(jobId, projectId),
       { params: new HttpParams().set('project', projectId) },
     );
     return fallbackWatchPath
@@ -887,7 +894,7 @@ export class TaskService {
 
   updateState(jobId: string, state: string, watchPath?: string, runIntent: 'revoke' | 'steer' = 'revoke') {
     return this.http.put(
-      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/state`,
+      `${this.taskV1Url(jobId)}/state`,
       { targetState: state, runIntent },
       this.withWatchPath(watchPath),
     );
@@ -913,7 +920,7 @@ export class TaskService {
     if (reason?.trim()) body.reason = reason.trim();
     if (operatorOverride) body.operatorOverride = true;
     return this.http.post(
-      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/move`,
+      `${this.taskV1Url(jobId)}/move`,
       body,
       this.withWatchPath(watchPath),
     ).pipe(this.afterMutation(jobId, watchPath, targetState));
@@ -921,7 +928,7 @@ export class TaskService {
 
   decideOlderBriefDelivery(jobId: string, decision: 'accept' | 'starting-point' | 'discard', watchPath?: string) {
     return this.http.post(
-      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/older-brief-delivery/decision`,
+      `${this.taskV1Url(jobId)}/older-brief-delivery/decision`,
       { decision },
       this.withWatchPath(watchPath),
     ).pipe(this.afterMutation(jobId, watchPath));
@@ -1649,7 +1656,7 @@ export class TaskService {
    */
   moveJobToTop(jobId: string, watchPath?: string) {
     return this.http.post<{ position: number }>(
-      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/move-to-top`,
+      `${this.taskV1Url(jobId)}/move-to-top`,
       null,
       this.withWatchPath(watchPath),
     ).pipe(this.afterMutation(jobId, watchPath));
@@ -1673,7 +1680,7 @@ export class TaskService {
 
   deleteJob(jobId: string, watchPath?: string) {
     return this.http.delete(
-      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}`,
+      this.taskV1Url(jobId),
       this.withWatchPath(watchPath),
     ).pipe(this.afterRemoval(jobId, watchPath));
   }
@@ -1991,7 +1998,7 @@ export class TaskService {
     if (cliType) body.cliType = cliType;
     if (thinkingLevel) body.thinkingLevel = thinkingLevel;
     return this.http.post<ContinueTaskResponse>(
-      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/start`,
+      `${this.taskV1Url(jobId)}/start`,
       body,
       this.withWatchPath(watchPath),
     );
@@ -2012,7 +2019,7 @@ export class TaskService {
     const base = this.withWatchPath(watchPath);
     const params = (base.params ?? new HttpParams()).set('reason', reason);
     return this.http.post(
-      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/stop`,
+      `${this.taskV1Url(jobId)}/stop`,
       {},
       { ...base, params },
     );
@@ -2045,7 +2052,7 @@ export class TaskService {
     if (modeOverride) body.modeOverride = modeOverride;
     if (reason) body.reason = reason;
     return this.http.post<ContinueTaskResponse>(
-      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/continue`,
+      `${this.taskV1Url(jobId)}/continue`,
       body,
       this.withWatchPath(watchPath),
     );
@@ -2053,7 +2060,7 @@ export class TaskService {
 
   sendPreviewFeedback(jobId: string, watchPath: string, data: FormData) {
     return this.http.post<ContinueTaskResponse>(
-      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/preview-feedback`,
+      `${this.taskV1Url(jobId)}/preview-feedback`,
       data,
       this.withWatchPath(watchPath),
     );

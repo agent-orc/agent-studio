@@ -448,7 +448,7 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
+        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail",
                 loggerFactory.CreateLogger("TaskDetail"), includeNested: true);
@@ -459,7 +459,7 @@ public static class TaskCrudEndpoints
                 if (facts.Warming)
                 {
                     context.Response.Headers["X-Task-Detail-Freshness"] = "warming";
-                    return Results.Accepted();
+                    return Results.Accepted(value: new { state = "warming", reason = "task-index-warming" });
                 }
                 return Results.NotFound();
             }
@@ -470,9 +470,12 @@ public static class TaskCrudEndpoints
             var gitFacts = TaskSwitchTrace.Run("index.lookup", () => gitProjection.ReadTask(detail.Info).Data);
             if (gitFacts?.ReconstructedCommits is { } commits)
                 detail = detail with { Info = detail.Info with { Commits = commits.ToList() } };
-            // Usage is loaded through the independent /details/usage resource.
-            // A card detail request must never synchronously fold the project ledger.
-            IReadOnlyDictionary<string, TaskTokenSummary>? tokenLookup = null;
+            // The ledger fold runs only in the usage resource or a background
+            // warm. Legacy detail consumers retain the last cached summary.
+            var tokenSummary = tokenCache.GetCached(detail.Info, out var tokenReady);
+            context.Response.Headers["X-Task-Token-Freshness"] = tokenReady ? "ready" : "warming";
+            IReadOnlyDictionary<string, TaskTokenSummary>? tokenLookup = tokenSummary is null
+                ? null : new Dictionary<string, TaskTokenSummary> { [detail.Info.Id] = tokenSummary };
             var verdictLookup = TaskSwitchTrace.Run("runtime", () => BuildOrchestratorVerdictLookup(new[] { detail.Info }, configuration));
             var needsDependencyProjection = detail.Info.References.DependsOn.Count > 0
                 || detail.Info.State == TaskStates.HumanReview;
