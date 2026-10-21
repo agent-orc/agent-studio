@@ -44,10 +44,11 @@ export class ProjectSecretsPageComponent {
   };
 
   constructor() {
-    effect(() => {
+    effect(onCleanup => {
       const project = this.projectName();
-      this.secrets.environments(project).subscribe(items =>
+      const subscription = this.secrets.environments(project).subscribe(items =>
         this.environments.set([{ id: 'preview', kind: 'preview' }, ...items.filter(item => item.id !== 'preview')]));
+      onCleanup(() => subscription.unsubscribe());
     });
     effect(() => this.refresh(this.projectName(), this.environment()));
   }

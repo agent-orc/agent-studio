@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, input, model, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import type { Observable } from 'rxjs';
 import { AuthSessionState } from '../../../services/auth.service';
@@ -24,12 +24,10 @@ export class SecretsPanelComponent {
   readonly service = inject(SecretsService);
   private readonly auth = inject(AuthSessionState, { optional: true });
   private readonly destroyRef = inject(DestroyRef);
-
   readonly projects = input<readonly WatchPathEntry[]>([]);
-  readonly fixedProject = input<string | null>(null);
-  readonly fixedEnvironment = input<string | null>(null);
-  readonly project = signal('');
-  readonly environment = signal('');
+  readonly fixedProject = input(false);
+  readonly project = model('');
+  readonly environment = model('');
   readonly environmentOptions = signal<readonly string[]>([]);
   readonly newName = signal('');
   readonly newValue = signal('');
@@ -68,23 +66,19 @@ export class SecretsPanelComponent {
 
   constructor() {
     this.service.load();
-    effect(() => {
-      const project = this.fixedProject();
-      if (project && project !== this.project()) this.selectProject(project);
-    });
-    effect(() => {
-      const environment = this.fixedEnvironment();
-      if (environment && this.project() && environment !== untracked(this.environment)) this.environment.set(environment);
+    effect(onCleanup => {
+      const project = this.project();
+      this.environmentOptions.set([]);
+      if (!project) return;
+      const subscription = this.service.environments(project).subscribe(options =>
+        this.environmentOptions.set(options.map(item => item.id)));
+      onCleanup(() => subscription.unsubscribe());
     });
   }
 
   selectProject(project: string): void {
     this.project.set(project);
     this.environment.set('');
-    this.environmentOptions.set([]);
-    if (!project) return;
-    this.service.environments(project).pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(options => this.environmentOptions.set(options.map(item => item.id)));
   }
 
   add(): void {

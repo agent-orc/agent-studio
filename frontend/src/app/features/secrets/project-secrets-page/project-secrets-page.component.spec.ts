@@ -1,13 +1,40 @@
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { of } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { signal } from '@angular/core';
 import { AuthSessionState } from '../../../services/auth.service';
 import { SecretsService } from '../secrets.service';
 import { ProjectSecretsPageComponent } from './project-secrets-page.component';
 
 describe('ProjectSecretsPageComponent', () => {
+  it('cancels the environment lookup when the project changes', () => {
+    const oldEnvironments = new Subject<readonly { id: string; kind: string }[]>();
+    TestBed.configureTestingModule({
+      imports: [ProjectSecretsPageComponent],
+      providers: [provideHttpClient(), provideHttpClientTesting(),
+        { provide: AuthSessionState, useValue: { status: signal({ user: { role: 'owner' } }) } },
+        { provide: SecretsService, useValue: {
+          environments: (project: string) => project === 'demo' ? oldEnvironments : of([{ id: 'stage', kind: 'stage' }]),
+          load: vi.fn(), overview: signal(null), state: signal('ready'), error: signal(null),
+        } },
+      ],
+    });
+    const http = TestBed.inject(HttpTestingController);
+    const fixture = TestBed.createComponent(ProjectSecretsPageComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    http.expectOne('/api/projects/demo/secret-bindings/preview');
+
+    fixture.componentRef.setInput('projectName', 'other');
+    fixture.detectChanges();
+    http.expectOne('/api/projects/other/secret-bindings/preview');
+    expect(oldEnvironments.observed).toBe(false);
+    expect(fixture.componentInstance.environments()).toEqual([
+      { id: 'preview', kind: 'preview' }, { id: 'stage', kind: 'stage' },
+    ]);
+  });
+
   it('ignores preflight responses from an earlier environment or request', () => {
     TestBed.configureTestingModule({
       imports: [ProjectSecretsPageComponent],
