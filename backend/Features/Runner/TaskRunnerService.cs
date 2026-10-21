@@ -701,8 +701,7 @@ public class TaskRunnerService : BackgroundService
 
         if (ProjectExecutionPolicy.IsLocalExecution(_projectSettings.Get(info.ProjectName))
             && !AllowsLocalCoding
-            && WorktreeRunPolicy.RequiresWorktree(info.Mode,
-                EpicRunPolicy.IsPlanningRun(info.Kind, RunIntent.ManualStart)))
+            && WorktreeRunPolicy.RequiresWorktree(info.Mode))
             throw new TaskOperationException(
                 RemoteExecutionRequirement.Code + ": " + RemoteExecutionRequirement.Message, 400);
 

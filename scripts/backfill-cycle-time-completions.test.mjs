@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import {
   buildPathEvidence,
@@ -9,10 +13,40 @@ import {
   hasLedgerCompletion,
   laneOf,
   parseNameStatusLog,
+  run,
   SOURCES,
 } from './backfill-cycle-time-completions.mjs';
 
 const P = 'projects/agent-taskboard';
+
+test('backfill skips archived historical parent cards even when git provides completion evidence', async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'cycle-backfill-'));
+  try {
+    const project = path.join(repo, 'projects', 'demo');
+    for (const [name, kind] of [['work', 'task'], ['parent', 'epic']]) {
+      const folder = path.join(project, '7-archive', name);
+      fs.mkdirSync(folder, { recursive: true });
+      fs.writeFileSync(path.join(folder, 'task.json'), JSON.stringify({
+        id: name, kind, state: '7-archive', enteredLaneAt: '2026-10-16T12:00:00Z',
+      }));
+    }
+    for (const args of [
+      ['init', '--quiet'], ['add', '.'],
+      ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--quiet', '-m', 'fixture'],
+    ]) {
+      const result = spawnSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true });
+      assert.equal(result.status, 0, result.stderr);
+    }
+
+    const result = await run({ project, repo, write: false, verbose: false }, { write: () => {} });
+
+    assert.deepEqual(Object.keys(result.entries), ['work']);
+    assert.equal(result.stats.retiredContainers, 1);
+    assert.equal(result.stats.candidates, 1);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
 
 test('parseNameStatusLog reads headers, adds, renames, and deletes; tolerates CRLF and blank lines', () => {
   const text = [

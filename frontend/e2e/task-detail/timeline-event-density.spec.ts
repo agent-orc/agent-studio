@@ -132,9 +132,6 @@ const EVENTS = [
   event('lane_changed', 'system', '2-ready → 3-progress', {
     from: '2-ready', to: '3-progress',
   }),
-  event('epic_decomposed', 'agent', 'Epic decomposed into 3 tasks', {
-    created: '3', targetState: '1-backlog',
-  }),
   event('task_spawned', 'orchestrator', 'Spawned WEB-123 in Website', {
     targetProject: 'Website', targetKey: 'WEB-123', targetJobId: 'website-follow-up',
     reason: 'The change belongs to the website project.',
@@ -254,10 +251,9 @@ async function stubApp(page: Page, activeEvent: () => (typeof EVENTS)[number]): 
     if (pathname === '/api/tasks' || pathname === '/api/v1/projects') return json(route, []);
     if (pathname === '/api/tags' || pathname === '/api/clients'
       || pathname === '/api/clients/' || pathname === '/api/agent-rules'
-      || pathname === '/api/epics' || pathname === '/api/git/summary') {
+      || pathname === '/api/git/summary') {
       return json(route, []);
     }
-    if (pathname === '/api/epics/completed/count') return json(route, { count: 0 });
     if (pathname.startsWith('/api/runner/token-summary-aggregate')) {
       return json(route, {
         projects: 0, orchestratorEntries: 0, orchestratorLlmCalls: 0,

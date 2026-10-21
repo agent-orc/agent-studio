@@ -5,7 +5,7 @@ import * as path from 'path';
  * Restart visibility: a re-run / re-issue is unmistakably a NEW run, and the
  * prior run's steps stay distinguishable from the current ones.
  *
- * Acceptance (Sub-Task von [EPIC] Pipeline-Tabelle, "Pipeline-Neustart
+ * Acceptance (Pipeline step, "Pipeline-Neustart
  * sichtbar machen"): "Wenn die Pipeline neu gestartet wurde (neuer
  * Run/Attempt), muss das in der Tabelle/Timeline ersichtlich sein ... ein
  * Re-Run ist klar als neuer Durchlauf erkennbar, alte und neue Step-Laeufe

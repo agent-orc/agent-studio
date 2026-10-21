@@ -328,6 +328,7 @@ public class TaskStateMachine
                 $"A non-folder path named '{targetSlug}' already exists in {targetState}.");
         }
 
+        var endCoreMove = _scanner.BeginCoreMove(recheck);
         try
         {
             var moveFailure = MoveDirectoryWithRetry(
@@ -375,6 +376,7 @@ public class TaskStateMachine
             _logger.LogError(ex, "Failed to move job {JobId} to {State}", jobId, targetState);
             return new MoveJobOutcome(MoveJobStatus.Failure, ex.Message);
         }
+        finally { endCoreMove(); }
     }
 
     private void ClearReviewPriorityOnExit(TaskInfo card, string targetState)

@@ -61,10 +61,6 @@ internal static class PromptUsageCatalog
         {
             new PromptUsageRef("ProjectRunner", "BuildReissuePlan", "Structured treatment arm for the finding-first reissue prompt experiment."),
         },
-        ["epic-decomposition.md"] = new[]
-        {
-            new PromptUsageRef("ProjectRunner", "BuildEpicDecompositionPlan", "Decomposes an epic-sized task into child tasks."),
-        },
         ["summary-protocol.md"] = new[]
         {
             new PromptUsageRef("SummaryGenerationService", "Generate", "Produces the run summary and the closing evidence assessment."),
