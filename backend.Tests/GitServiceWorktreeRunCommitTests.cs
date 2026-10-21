@@ -64,6 +64,10 @@ public class GitServiceWorktreeRunCommitTests : IDisposable
     public void WorktreeRunCommit_ExcludesRootStatusFromProductCommit()
     {
         var repoRoot = SeedRepo("Ada Lovelace", "ada@example.com");
+        Directory.CreateDirectory(Path.Combine(repoRoot, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repoRoot, DeliveryReportPathPolicy.OptInPath), "enabled\n");
+        RunGit(repoRoot, "add .agent-studio/legacy-status-reports");
+        RunGit(repoRoot, "commit -qm enable-reports");
         var worktree = Path.Combine(_tempDir, "report-worktree");
         RunGit(repoRoot, $"worktree add -q -b task/report {worktree}");
         var git = BuildGitService(repoRoot);
@@ -77,6 +81,21 @@ public class GitServiceWorktreeRunCommitTests : IDisposable
         Assert.Equal("feature", RunGitCapture(worktree, "show HEAD:feature.txt"));
         Assert.Equal("", RunGitCapture(worktree, "ls-tree --name-only HEAD -- status.md"));
         Assert.True(File.Exists(Path.Combine(worktree, "status.md")));
+    }
+
+    [Fact]
+    public void WorktreeRunCommit_PreservesRootStatusAsContentWithoutProjectOptIn()
+    {
+        var repoRoot = SeedRepo("Ada Lovelace", "ada@example.com");
+        var worktree = Path.Combine(_tempDir, "content-worktree");
+        RunGit(repoRoot, $"worktree add -q -b task/content {worktree}");
+        File.WriteAllText(Path.Combine(worktree, "status.md"), "product content\n");
+
+        var result = BuildGitService(repoRoot).WorktreeRunCommit("Proj", worktree,
+            "feat: update product status", taskId: "my-task", expectedBranch: "task/content");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal("product content", RunGitCapture(worktree, "show HEAD:status.md"));
     }
 
     [Fact]

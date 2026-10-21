@@ -5950,15 +5950,6 @@ public partial class GitService
                 error: $"Could not resolve the exact delivery tip of '{sourceRef}'.");
         }
 
-        var reportDiffArgs = new[] { "diff", "--name-only", "-z", $"{integrationTip}...{deliveryTip}", "--" }
-            .Concat(DeliveryReportPathPolicy.Paths).ToArray();
-        var (reportChanges, reportDiffError, reportDiffCode) = RunGitArgs(repoRoot, reportDiffArgs);
-        if (reportDiffCode != 0)
-            return MergeIntoIntegrationResult.Of(
-                MergeIntoIntegrationOutcome.Error,
-                error: $"Could not inspect delivery report paths: {reportDiffError.Trim()}");
-        var changedReports = reportChanges.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-
         var (_, directMergeError, directMergeCode) = RunGitArgs(
             repoRoot,
             "-c",
@@ -5969,12 +5960,15 @@ public partial class GitService
             "--no-edit",
             sourceRef);
         IReadOnlyList<string> directConflicts = directMergeCode == 0 ? [] : ListUnmergedFiles(repoRoot);
-        if (directMergeCode == 0 || DeliveryReportPathPolicy.AreOnlyReportConflicts(directConflicts))
+        var reportOnlyConflict = directMergeCode != 0
+            && DeliveryReportPathPolicy.IsEnabled(repoRoot)
+            && DeliveryReportPathPolicy.AreOnlyReportConflicts(directConflicts);
+        if (directMergeCode == 0 || reportOnlyConflict)
         {
-            if (changedReports.Length > 0)
+            if (reportOnlyConflict)
             {
                 var restoreArgs = new[] { "restore", "--source=HEAD", "--staged", "--worktree", "--" }
-                    .Concat(changedReports).ToArray();
+                    .Concat(directConflicts).ToArray();
                 var (_, restoreError, restoreCode) = RunGitArgs(repoRoot, restoreArgs);
                 if (restoreCode != 0)
                 {
@@ -6000,7 +5994,7 @@ public partial class GitService
             return MergeIntoIntegrationResult.Of(
                 MergeIntoIntegrationOutcome.Merged,
                 mergedSha: directMergedSha) with
-                { ConflictsResolved = directConflicts.Count > 0 || changedReports.Length > 0 };
+                { ConflictsResolved = reportOnlyConflict };
         }
 
         RunGitArgs(repoRoot, "merge", "--abort");
@@ -6225,6 +6219,10 @@ public partial class GitService
         if (replay.Success)
             return new BatchReplayResult(true, replay.RebasedTip, replay.Replacements, [], null,
                 BatchReplayRoute.Rebase);
+        if (replay.FailureKind == MechanicalRebaseFailureKind.Conflict
+            && DeliveryReportPathPolicy.IsEnabled(repoRoot)
+            && DeliveryReportPathPolicy.AreOnlyReportConflicts(replay.ConflictedFiles))
+            return MergeBatchMember(repoRoot, immutableResultRef, expectedResultSha, batchTip);
         return replay.FailureKind switch
         {
             MechanicalRebaseFailureKind.Conflict => BatchReplayResult.Conflict(
@@ -6287,12 +6285,31 @@ public partial class GitService
         if (mergeCode != 0)
         {
             var conflicted = ListUnmergedFiles(worktreePath);
+            if (DeliveryReportPathPolicy.IsEnabled(worktreePath)
+                && DeliveryReportPathPolicy.AreOnlyReportConflicts(conflicted))
+            {
+                var restoreArgs = new[] { "restore", "--source=HEAD", "--staged", "--worktree", "--" }
+                    .Concat(conflicted).ToArray();
+                var (_, restoreError, restoreCode) = RunGitArgs(worktreePath, restoreArgs);
+                if (restoreCode == 0)
+                {
+                    var (_, commitError, commitCode) = RunGitArgs(worktreePath, "commit", "--no-edit");
+                    if (commitCode == 0) return VerifyBatchMergeParents(worktreePath, resultSha, batchTip);
+                    mergeError = commitError;
+                }
+                else mergeError = restoreError;
+            }
             RunGitArgs(worktreePath, "merge", "--abort");
             return conflicted.Count > 0
-                ? BatchReplayResult.Conflict(conflicted, "Batch merge conflicted and was aborted.",
+                ? BatchReplayResult.Conflict(conflicted, $"Batch merge conflicted and was aborted: {mergeError.Trim()}",
                     BatchReplayRoute.Merge)
                 : BatchReplayResult.Infrastructure($"Batch merge failed: {mergeError.Trim()}");
         }
+        return VerifyBatchMergeParents(worktreePath, resultSha, batchTip);
+    }
+
+    private BatchReplayResult VerifyBatchMergeParents(string worktreePath, string resultSha, string batchTip)
+    {
         var (parents, parentsError, parentsCode) = RunGitArgs(
             worktreePath, "rev-list", "--parents", "-n", "1", "HEAD", RevisionsOnly);
         if (parentsCode != 0)

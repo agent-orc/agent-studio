@@ -275,7 +275,8 @@ public sealed class CommitCandidateGate
                     "Root scratch/debug artifact was excluded by deterministic policy.",
                     "policy", ExcludesCandidate: true));
             }
-            if (DeliveryReportPathPolicy.IsReportPath(normalized))
+            if (DeliveryReportPathPolicy.IsEnabled(root)
+                && DeliveryReportPathPolicy.IsReportPath(normalized))
             {
                 included = false;
                 exclusion = "card-report-artifact";

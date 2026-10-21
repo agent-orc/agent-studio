@@ -1084,10 +1084,17 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Assert.DoesNotContain("hint:", step.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
+    private static void EnableLegacyReports(string repo)
+    {
+        Directory.CreateDirectory(Path.Combine(repo, ".agent-studio"));
+        File.WriteAllText(Path.Combine(repo, ".agent-studio", "legacy-status-reports"), "enabled\n");
+    }
+
     [Fact]
     public void Run_RootStatusConflict_MergesCodeAndPreservesDeliveryReportOnCard()
     {
         var repo = SeedRepo("runner-status-conflict");
+        EnableLegacyReports(repo);
         File.WriteAllText(Path.Combine(repo, "status.md"), "base report\n");
         Commit(repo, "docs: seed report");
         RunGit(repo, "checkout -q -b develop");
@@ -1111,17 +1118,65 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal("integration report\n", File.ReadAllText(Path.Combine(repo, "status.md")));
         Assert.Equal("integration report\n", RunGit(repo, $"show {outcome.MergedSha}:status.md").Out);
         Assert.Equal("delivered feature\n", RunGit(repo, $"show {outcome.MergedSha}:feature.txt").Out);
-        var artifact = Path.Combine(jobFolder, "results", $"legacy-repository-status-{deliverySha[..12]}.md");
+        var artifact = Path.Combine(jobFolder, $"legacy-repository-status-{deliverySha[..12]}.md");
         Assert.Equal("delivery report\n", File.ReadAllText(artifact));
-        Assert.Equal("delivery report\n", File.ReadAllText(
-            Path.Combine(jobFolder, $"legacy-repository-status-{deliverySha[..12]}.md")));
+        Assert.False(File.Exists(Path.Combine(jobFolder, "results", Path.GetFileName(artifact))));
         Assert.Equal(PipelineStepStatus.Passed, ReadMergeStep(log, jobFolder)?.Status);
+    }
+
+    [Fact]
+    public void Run_NonConflictingRootStatus_KeepsDeliveryEditAndGateReuseEligibility()
+    {
+        var repo = SeedRepo("runner-status-clean-merge");
+        EnableLegacyReports(repo);
+        File.WriteAllText(Path.Combine(repo, "status.md"), "base report\n");
+        Commit(repo, "docs: seed report");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/68");
+        File.WriteAllText(Path.Combine(repo, "status.md"), "delivery report\n");
+        Commit(repo, "docs: update delivery report");
+        RunGit(repo, "checkout -q develop");
+
+        var (git, log) = Build(repo);
+        var jobFolder = BeginRun(log, repo, jobId: "68");
+        var outcome = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance)
+            .Run("Fixture", "68", jobFolder, repo, "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.False(outcome.ConflictsResolved);
+        Assert.Equal("delivery report\n", RunGit(repo, $"show {outcome.MergedSha}:status.md").Out);
+    }
+
+    [Fact]
+    public void Run_UnmanagedRootStatusConflict_RemainsARealConflict()
+    {
+        var repo = SeedRepo("runner-unmanaged-status-conflict");
+        File.WriteAllText(Path.Combine(repo, "status.md"), "base report\n");
+        Commit(repo, "docs: seed status content");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/69");
+        File.WriteAllText(Path.Combine(repo, "status.md"), "delivery content\n");
+        Commit(repo, "docs: edit status content");
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "status.md"), "integration content\n");
+        Commit(repo, "docs: edit integration content");
+
+        var (git, log) = Build(repo);
+        var jobFolder = BeginRun(log, repo, jobId: "69");
+        var outcome = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance)
+            .Run("Fixture", "69", jobFolder, repo, "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.AgentRoundRequired, outcome.Outcome);
+        Assert.Contains("status.md", outcome.ConflictedFiles);
     }
 
     [Fact]
     public void Run_RootStatusAndCodeConflict_LeavesIntegrationConflictVisible()
     {
         var repo = SeedRepo("runner-status-and-code-conflict");
+        EnableLegacyReports(repo);
         File.WriteAllText(Path.Combine(repo, "status.md"), "base report\n");
         File.WriteAllText(Path.Combine(repo, "feature.txt"), "base feature\n");
         Commit(repo, "chore: seed shared files");

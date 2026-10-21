@@ -4,6 +4,10 @@ namespace AgentStudio.Git;
 public static class DeliveryReportPathPolicy
 {
     public static readonly string[] Paths = ["status.md", "results/status.md"];
+    public const string OptInPath = ".agent-studio/legacy-status-reports";
+
+    public static bool IsEnabled(string repositoryRoot)
+        => File.Exists(Path.Combine(repositoryRoot, OptInPath));
 
     public static bool IsReportPath(string path)
         => Paths.Contains(path.Replace('\\', '/'), StringComparer.Ordinal);

@@ -14,6 +14,7 @@ public class RunOutcomeContractTests
             "# Status\n", sha);
 
         Assert.Contains($"- Immutable result SHA: `{sha}`", report);
+        Assert.Equal($"# Status\n\n- Immutable result SHA: `{sha}`\n", report);
         Assert.Equal(report,
             AgentStudio.Review.SummaryGenerationService.AppendImmutableResultSha(report, sha));
     }

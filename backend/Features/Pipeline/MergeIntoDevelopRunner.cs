@@ -790,6 +790,7 @@ public sealed partial class MergeIntoDevelopRunner
     private void PreserveDeliveryReports(
         string repoRoot, string jobFolderPath, string integrationTip, string deliveryRef)
     {
+        if (!DeliveryReportPathPolicy.IsEnabled(repoRoot)) return;
         try
         {
             var changed = _git.ChangedPathsAgainstMergeBase(repoRoot, integrationTip, deliveryRef);
@@ -800,13 +801,8 @@ public sealed partial class MergeIntoDevelopRunner
             {
                 var content = _git.GetFileAtCommit(repoRoot, deliverySha, path);
                 if (content is null) continue;
-                var results = Path.Combine(jobFolderPath, "results");
-                Directory.CreateDirectory(results);
                 var stem = path == "status.md" ? "legacy-repository-status" : "legacy-repository-results-status";
                 var name = $"{stem}-{deliverySha[..12]}.md";
-                File.WriteAllText(Path.Combine(results, name), content);
-                // The card's Files tab lists task-root Markdown. Keep a copy
-                // there so the older report is visible without a manual URL.
                 File.WriteAllText(Path.Combine(jobFolderPath, name), content);
             }
         }

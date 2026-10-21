@@ -721,8 +721,7 @@ public sealed class SummaryGenerationService
         if (!ReviewSubjectStore.IsValidResultSha(resultSha)) return markdown;
         var line = $"- Immutable result SHA: `{resultSha}`";
         if (markdown.Contains(line, StringComparison.Ordinal)) return markdown;
-        return markdown.TrimEnd('\r', '\n') + Environment.NewLine + Environment.NewLine
-            + line + Environment.NewLine;
+        return markdown.TrimEnd('\r', '\n') + "\n\n" + line + "\n";
     }
 
     public static string ApplyOutcomeResultLine(string markdown, string protocolResult)

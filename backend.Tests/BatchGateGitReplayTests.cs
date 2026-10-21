@@ -91,6 +91,65 @@ public sealed class BatchGateGitReplayTests : IDisposable
     }
 
     [Fact]
+    public void LegacyReportConflictMergesSecondMemberButRealConflictStillEjectsIt()
+    {
+        Directory.CreateDirectory(_root);
+        Git("init", "-q");
+        Git("config", "user.name", "Test");
+        Git("config", "user.email", "test@example.invalid");
+        Directory.CreateDirectory(Path.Combine(_root, ".agent-studio"));
+        File.WriteAllText(Path.Combine(_root, ".agent-studio", "legacy-status-reports"), "enabled\n");
+        File.WriteAllText(Path.Combine(_root, "status.md"), "base report\n");
+        File.WriteAllText(Path.Combine(_root, "shared.txt"), "base code\n");
+        Git("add", "--all");
+        Git("commit", "-qm", "base");
+        var baseSha = Git("rev-parse", "HEAD");
+
+        Git("checkout", "-qb", "first");
+        File.WriteAllText(Path.Combine(_root, "status.md"), "first report\n");
+        File.WriteAllText(Path.Combine(_root, "shared.txt"), "first code\n");
+        Git("commit", "-qam", "first");
+        var firstSha = Git("rev-parse", "HEAD");
+        var firstRef = "refs/heads/agent-studio/results/first/" + firstSha;
+        Git("update-ref", firstRef, firstSha);
+
+        Git("checkout", "-q", "--detach", baseSha);
+        Git("checkout", "-qb", "second");
+        File.WriteAllText(Path.Combine(_root, "status.md"), "second report\n");
+        File.WriteAllText(Path.Combine(_root, "second.txt"), "second code\n");
+        Git("add", "--all");
+        Git("commit", "-qm", "second");
+        var secondSha = Git("rev-parse", "HEAD");
+        var secondRef = "refs/heads/agent-studio/results/second/" + secondSha;
+        Git("update-ref", secondRef, secondSha);
+
+        var service = Service();
+        var first = service.ReplayBatchMember(_root, firstRef, firstSha, baseSha);
+        Assert.True(first.Success, first.Error);
+        var second = service.ReplayBatchMember(_root, secondRef, secondSha, firstSha);
+        Assert.True(second.Success, second.Error);
+        Assert.Equal(BatchReplayRoute.Merge, second.Route);
+        Assert.Equal($"{second.TipSha} {firstSha} {secondSha}",
+            Git("rev-list", "--parents", "-n", "1", second.TipSha!));
+        Assert.Equal("first report", Git("show", $"{second.TipSha}:status.md"));
+        Assert.Equal("second code", Git("show", $"{second.TipSha}:second.txt"));
+
+        Git("checkout", "-q", "--detach", baseSha);
+        Git("checkout", "-qb", "mixed");
+        File.WriteAllText(Path.Combine(_root, "status.md"), "mixed report\n");
+        File.WriteAllText(Path.Combine(_root, "shared.txt"), "mixed code\n");
+        Git("commit", "-qam", "mixed");
+        var mixedSha = Git("rev-parse", "HEAD");
+        var mixedRef = "refs/heads/agent-studio/results/mixed/" + mixedSha;
+        Git("update-ref", mixedRef, mixedSha);
+
+        var mixed = service.ReplayBatchMember(_root, mixedRef, mixedSha, firstSha);
+        Assert.False(mixed.Success);
+        Assert.Equal(BatchReplayFailure.Conflict, mixed.Failure);
+        Assert.Contains("shared.txt", mixed.ConflictedFiles);
+    }
+
+    [Fact]
     public void FixRoundWithAnIntegrationMergeIsMergedIntoTheCandidateWithExactParents()
     {
         Directory.CreateDirectory(_root);
