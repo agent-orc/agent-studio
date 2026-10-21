@@ -407,13 +407,21 @@ test.describe('Project Overview · operator dashboard', () => {
     fs.mkdirSync(results, { recursive: true });
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });
+      if (width === 390) await page.getByTestId('project-shell-splitter').click();
+      const placeholder = page.getByTestId('project-overview-review-placeholder');
+      if (await placeholder.isVisible()) await placeholder.scrollIntoViewIfNeeded();
       const stats = page.getByTestId('review-statistics');
       await expect(stats.getByTestId('review-tile-delivery-tokens')).toContainText('12,000');
+      await stats.evaluate(element => element.scrollIntoView({ block: 'start' }));
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.screenshot({ path: path.join(results, `review-economics-${width}-${theme}.png`), fullPage: true });
+      }
       await stats.getByTestId('review-tile-step-requirement-fit').click();
       await expect(stats.getByTestId('review-evidence')).toContainText('OPD-220');
       for (const theme of ['light', 'dark'] as const) {
         await setTheme(page, theme);
-        await stats.screenshot({ path: path.join(results, `review-economics-${width}-${theme}.png`) });
+        await page.screenshot({ path: path.join(results, `review-economics-evidence-${width}-${theme}.png`), fullPage: true });
       }
     }
   });

@@ -98,11 +98,20 @@ export class ReviewStatisticsComponent {
     if (unit === 'percent') return `${value.toFixed(1)}%`;
     return new Intl.NumberFormat('en-US', { maximumFractionDigits: unit === 'number' ? 1 : 0 }).format(value);
   }
-  trend(values: (number | null)[]): string {
+  trendPath(values: (number | null)[]): string {
     const known = values.filter((v): v is number => v != null);
-    if (!known.length) return 'No trend data';
-    const max = Math.max(...known, 1);
-    return values.map(v => v == null ? '·' : '▁▂▃▄▅▆▇█'[Math.min(7, Math.floor(v / max * 7))]).join('');
+    if (!known.length) return '';
+    const min = Math.min(...known);
+    const max = Math.max(...known);
+    let open = false;
+    return values.map((value, index) => {
+      if (value == null) { open = false; return ''; }
+      const x = (100 * index / Math.max(1, values.length - 1)).toFixed(1);
+      const y = (max === min ? 10 : 18 - 16 * (value - min) / (max - min)).toFixed(1);
+      const point = open ? `L${x} ${y}` : `M${(Number(x) - 0.5).toFixed(1)} ${y}L${(Number(x) + 0.5).toFixed(1)} ${y}`;
+      open = true;
+      return point;
+    }).join('');
   }
   reviewKey(row: ReviewUsageRow): string { return `${row.project}:${row.jobId}:${row.at}:${row.step}`; }
 }

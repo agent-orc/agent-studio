@@ -38,6 +38,7 @@ describe('ReviewStatisticsComponent', () => {
 
     const host = fixture.nativeElement as HTMLElement;
     expect(host.querySelector('[data-testid="review-tile-delivery-tokens"]')?.textContent).toContain('120');
+    expect(host.querySelector('[data-testid="review-tile-delivery-tokens"] svg path')?.getAttribute('d')).toContain('M');
     expect(host.querySelector('[data-testid="review-tile-rounds"]')?.textContent).toContain('2');
     host.querySelector<HTMLAnchorElement>('[data-testid="review-tile-step-requirement-fit"]')!.click();
     fixture.detectChanges();

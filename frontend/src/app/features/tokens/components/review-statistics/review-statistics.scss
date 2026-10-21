@@ -14,6 +14,9 @@
 .review-stats__value, .review-stats__num { font-variant-numeric: tabular-nums; }
 .review-stats__value { color: var(--studio-fg-strong); font-size: 1.2rem; }
 .review-stats__trends { display: grid; gap: .1rem; color: var(--studio-fg-muted); font-size: .72rem; white-space: nowrap; }
+.review-stats__trends > span { display: flex; align-items: center; gap: .35rem; }
+.review-stats__sparkline { width: 6rem; height: 1rem; max-width: 100%; overflow: visible; }
+.review-stats__sparkline path { fill: none; stroke: currentColor; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .review-stats__warning { color: var(--studio-fg-dim); }
 .review-stats__evidence { margin-top: .85rem; }
 .review-stats__evidence summary { cursor: pointer; }

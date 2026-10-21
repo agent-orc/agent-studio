@@ -50,7 +50,6 @@
           </dl>
         </article>
       </div>
-      @defer (on viewport) { <app-review-statistics [projectName]="projectName()" /> } @placeholder { <p class="operator-dashboard__empty">Review economics</p> }
     </section>
 
     <app-project-visual-evidence-queue
@@ -62,7 +61,7 @@
       [projectName]="projectName()"
       (openDetails)="openRail.emit('project-urls')"
       (openPreview)="openUrlPreview.emit($event)" />
-
+    @defer (on viewport) { <app-review-statistics class="operator-dashboard__review" [projectName]="projectName()" /> } @placeholder { <p class="operator-dashboard__empty operator-dashboard__review" data-testid="project-overview-review-placeholder">Review economics</p> }
     <section class="operator-dashboard__wiki" data-testid="project-overview-wiki">
       <header class="operator-dashboard__section-head">
         <div>

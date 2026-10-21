@@ -33,8 +33,8 @@
           <span class="review-stats__label">{{ tile.title }}</span>
           <strong class="review-stats__value">{{ format(tile.metric.median, tile.unit) }}</strong>
           <span class="review-stats__detail">Median · p90 {{ format(tile.metric.p90, tile.unit) }} · {{ tile.metric.samples }} samples</span>
-          <span class="review-stats__trends"><span title="Daily median, last 7 days">7d {{ trend(tile.metric.last7d) }}</span>
-            <span title="Daily median, last 30 days">30d {{ trend(tile.metric.last30d) }}</span></span>
+          <span class="review-stats__trends"><span title="Daily median, last 7 days">7d <svg class="review-stats__sparkline" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true"><path [attr.d]="trendPath(tile.metric.last7d)" /></svg></span>
+            <span title="Daily median, last 30 days">30d <svg class="review-stats__sparkline" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true"><path [attr.d]="trendPath(tile.metric.last30d)" /></svg></span></span>
         </a>
       }
     </div>
