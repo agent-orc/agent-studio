@@ -164,16 +164,20 @@ public static class DeployHostCommand
         string environment, string jobId, string leaseToken, IReadOnlyList<string> names,
         IReadOnlyDictionary<string, string>? bindings, CancellationToken ct)
     {
+        var variables = names.Select(name => name.Replace('-', '_').Replace('.', '_').ToUpperInvariant()).ToArray();
+        if (variables.Distinct(StringComparer.Ordinal).Count() != variables.Length)
+            throw new InvalidOperationException("Secret references collide as container variables.");
         var lines = new List<string>();
-        foreach (var name in names)
+        for (var index = 0; index < names.Count; index++)
         {
+            var name = names[index];
             if (name.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.')))
                 throw new InvalidOperationException("Invalid secret reference.");
             if (bindings is null || !bindings.TryGetValue(name, out var reference))
                 throw new InvalidOperationException("Secret binding missing.");
             var value = await ResolveSecret(client, project, environment, jobId, leaseToken, reference, ct);
             if (value.Contains('\n') || value.Contains('\r')) throw new InvalidOperationException("Secret must be single-line.");
-            lines.Add(name.Replace('-', '_').Replace('.', '_').ToUpperInvariant() + "=" + value);
+            lines.Add(variables[index] + "=" + value);
         }
         return lines;
     }
@@ -181,9 +185,12 @@ public static class DeployHostCommand
     private static async Task<string> ResolveSecret(HttpClient client, string project, string environment,
         string jobId, string leaseToken, string reference, CancellationToken ct)
     {
+        var purpose = environment.Length <= 57 ? "deploy:" + environment
+            : "deploy:" + environment[..40] + "-" + Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(environment)))[..16].ToLowerInvariant();
         using var response = await client.PostAsJsonAsync("api/runner/secrets/resolve", new
         {
-            reference, purpose = "deploy:" + environment,
+            reference, purpose,
             workload = new { kind = "deploy-job", project, jobId, leaseToken },
         }, ct);
         if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Secret resolution failed.");

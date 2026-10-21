@@ -49,6 +49,53 @@ public sealed class DeployHostCommandTests
         Assert.DoesNotContain(value, failure.ToString());
     }
 
+    [Fact]
+    public async Task Maximum_length_environment_id_has_a_valid_resolve_purpose()
+    {
+        var environment = "e" + new string('x', 63);
+        string? purpose = null;
+        using var client = new HttpClient(new ResolveHandler(async request =>
+        {
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+            purpose = body.RootElement.GetProperty("purpose").GetString();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = JsonContent.Create(new { value = "resolved" }) };
+        })) { BaseAddress = new Uri("https://studio.test/") };
+
+        var lines = await DeployHostCommand.ResolveEnvironmentAsync(client, "demo", environment, "job-1", "lease-1",
+            ["DATABASE_URL"], new Dictionary<string, string> { ["DATABASE_URL"] = "secret://demo/DATABASE_URL" },
+            CancellationToken.None);
+
+        Assert.Equal("DATABASE_URL=resolved", Assert.Single(lines));
+        Assert.StartsWith("deploy:", purpose);
+        Assert.True(SecretAccessPolicy.IsValidPurpose(purpose));
+    }
+
+    [Theory]
+    [InlineData("DATABASE-URL", "DATABASE_URL")]
+    [InlineData("DATABASE.URL", "DATABASE_URL")]
+    [InlineData("Database_URL", "DATABASE_URL")]
+    public async Task Queued_job_with_colliding_secret_names_fails_before_resolving_any_value(string first, string second)
+    {
+        var requests = 0;
+        using var client = new HttpClient(new ResolveHandler(_ =>
+        {
+            requests++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        })) { BaseAddress = new Uri("https://studio.test/") };
+        var bindings = new Dictionary<string, string>
+        {
+            [first] = "secret://demo/" + first,
+            [second] = "secret://demo/" + second,
+        };
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => DeployHostCommand.ResolveEnvironmentAsync(
+            client, "demo", "stage", "job-1", "lease-1", [first, second], bindings, CancellationToken.None));
+
+        Assert.Contains("collide", error.Message);
+        Assert.Equal(0, requests);
+    }
+
     private sealed class ResolveHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

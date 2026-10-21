@@ -190,6 +190,9 @@ public sealed class ProjectEnvironmentService
         if (!Identifier.IsMatch(id) || !Identifier.IsMatch(host) || kind is not ("stage" or "production" or "other")
             || template is not ("container" or "static") || secrets.Any(item => !SecretIdentifier.IsMatch(item)))
             throw new JsonException($"Environment {Path.GetFileName(file)} has invalid identifiers, kind, template or secret refs.");
+        if (secrets.Select(item => item.Replace('-', '_').Replace('.', '_').ToUpperInvariant())
+            .Distinct(StringComparer.Ordinal).Count() != secrets.Length)
+            throw new JsonException($"Environment {Path.GetFileName(file)} secret refs collide as container variables.");
         var destination = Required("destination");
         if (template == "static" && (!Path.IsPathFullyQualified(destination) || destination.Contains("..", StringComparison.Ordinal)))
             throw new JsonException("Static destination must be an absolute path without traversal.");
