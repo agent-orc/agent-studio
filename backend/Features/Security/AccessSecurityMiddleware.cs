@@ -217,6 +217,8 @@ public sealed class AccessSecurityMiddleware
             ?? (originalPath is null ? null : RequiredRunnerScope(context.Request.Method, NormalizePath(originalPath)));
         if (requiredRunnerScope is not null
             && (human is null || !(IsHumanSessionRead(context.Request.Method, path)
+                || (ContributorAccessPolicy.IsProductSession(human.User)
+                    && IsRunnerTaskFileRead(context.Request.Method, path))
                 || originalPath is not null && IsHumanSessionRead(context.Request.Method, NormalizePath(originalPath)))))
         {
             if (runner is null)

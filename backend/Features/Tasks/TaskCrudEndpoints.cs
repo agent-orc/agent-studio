@@ -1044,8 +1044,8 @@ public static class TaskCrudEndpoints
                         routing = resolvedRouting,
                     });
                 }
-                if (ContributorAccessPolicy.ProductSessionUser(ctx) is { } productUser
-                    && !ProjectAccessAuthorization.Allows(productUser, resolvedRouting.StorageProjectId, projects))
+                if (ContributorAccessPolicy.ProductSessionUser(ctx) is { } destinationUser
+                    && !ProjectAccessAuthorization.Allows(destinationUser, resolvedRouting.StorageProjectId, projects))
                     return Results.Json(new { error = "project-scope-denied", message = "This account is not a member of the destination project." },
                         statusCode: StatusCodes.Status403Forbidden);
                 if (!string.IsNullOrWhiteSpace(req.RequestedTaskPrefix)
