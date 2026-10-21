@@ -94,6 +94,11 @@ export class ProjectDeployAreaComponent {
     return sources.deployments ? buildDeployRuns(sources.deployments, environmentNames(sources), sources.releases) : [];
   });
   readonly historyRuns = computed(() => buildDeployRuns(this.historyDeployments(), environmentNames(this.sources()), ready(this.releasePanel())));
+  readonly statusRuns = computed(() => {
+    const sources = this.sources();
+    return buildDeployRuns((sources.statuses ?? []).flatMap(status => status.currentDeployment ? [status.currentDeployment] : []),
+      environmentNames(sources), sources.releases);
+  });
   readonly cards = computed(() => buildEnvironmentCards(this.sources()));
   /** The overview waits for the AGT-3176 environments, or for AGT-3201 status when those failed. */
   readonly overviewPanel = computed<DeployPanel<unknown>>(() => {
@@ -101,7 +106,8 @@ export class ProjectDeployAreaComponent {
     return environments.status === 'error' && this.statusPanel().status === 'ready' ? this.statusPanel() : environments;
   });
   readonly environmentOptions = computed(() => this.cards().map(card => ({ id: card.id, name: card.name })));
-  readonly selectedRun = computed(() => [...this.runs(), ...this.historyRuns()].find(run => run.id === this.selectedRunId()) ?? null);
+  readonly selectedRun = computed(() => [...this.runs(), ...this.historyRuns(), ...this.statusRuns()]
+    .find(run => run.id === this.selectedRunId()) ?? null);
   readonly notices = computed(() => {
     const notice = (name: string, panel: DeployPanel<unknown>) => panel.status === 'error' ? [`${name}: ${panel.message}`] : [];
     return [
