@@ -1,5 +1,12 @@
 # AGT-3228 role bindings, service accounts, and named route permissions status
 
+## Integration recovery, 21 October 2026
+
+- Result implementation SHA: `9e0d559006173255aba608e9772ced75dce8ea25`. The merge has delivery `4de40cd06bc35b82448e221f52118ba778e42abd` as its first parent and fetched `origin/develop` `8e3a6a8601e71915f8a76e5c966a677f37465844` as its second. Both ancestry checks passed; no delivery commit was rebased, squashed, split, or dropped.
+- The failed `merge-into-develop` stage at `7c36d3540` conflicted in `status.md`. The recovery retained both status histories. Current develop also conflicted in `AccessSecurityModels.cs` and three legacy Access UI files: the merge keeps the telemetry ingest model and the AGT-3228 Access area, including the later denial behavior. A denied reload clears cached access inventories and one-time secrets.
+- Telemetry intake declares its own-token route as public to IAM while still requiring the ingest token in its handler. Project telemetry queries require `project.read`; issuing and revoking ingest tokens require `project.settings.write`. A networked host test covers allowed and refused project scopes. The security overview records this permission split.
+- Verification on the merged tree: `dotnet build agent-taskboard.sln --no-restore` passed with zero errors. The focused IAM and telemetry class filter passed 285 tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests and found no matches in the other seven .NET test projects; it ran in all eight. The nine Access unit spec files passed 32 tests. `npm --prefix frontend run build`, `npm --prefix frontend run lint`, and `git diff --check` passed; the component size budgets hold. Logs are in `/home/agent/runner-work/tasks/AGT-3228/results`.
+
 ## Round 4: operator deep review of b27fde736 (20.10.2026)
 
 - Result SHA: `4e5c1c374` (fix commit on the merge `9d7d0afa2` of `origin/develop` `d29e11c4c` into the delivery `b27fde736`; no rebase or squash). This status entry is a separate commit on top of it. `git merge-base --is-ancestor origin/develop HEAD` holds.
