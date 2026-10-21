@@ -1,3 +1,8 @@
+## AGT-3176 branch-sync rerun, 21 October 2026
+
+- Result SHA: `87ffa17a205e74d13873ce8961fa477f764e2e59` (my last result, fence 18). I fetched `origin/develop` again and it is still `8e3a6a860`. `git merge origin/develop` reported already up to date, so there were no conflicts to resolve, and I did not rebase or squash. `git merge-base --is-ancestor origin/develop HEAD` passes. The only diff against develop is this status file. The AGT-3201, AGT-3221 and AGT-3223 behaviour stays as develop has it, and the test coverage from `a36648c10` stays in its adapted form on develop. This entry is a separate status commit on top.
+- Verification: `dotnet build agent-taskboard.sln --no-restore` passed with 0 errors. Backend filter `FullyQualifiedName~ProjectEnvironmentServiceTests|FullyQualifiedName~PublicDemoExecutionProfileTests|FullyQualifiedName~TestClockGuardTests` passed 25 tests. Runner filter `FullyQualifiedName~DeployHostCommandTests|FullyQualifiedName~RunnerHostRecordTests` passed 44 tests. Guard filter `FullyQualifiedName~.Architecture.|Category=Guard` passed 98 backend tests and matched no tests in the runner and task-server projects. `npm --prefix frontend run lint` passed. Logs (`*-r19.log`) are in `/home/agent/runner-work/tasks/AGT-3176/results`.
+
 ## AGT-3176 branch-sync follow-up, 21 October 2026
 
 - Result SHA: `f21444a241e5e32fd49453ce3a03e390cc23a616`, the merge of fetched `origin/develop` at `8e3a6a860` into my last result `475f37871` (the merge of develop into delivery `6e94afe17`). `git merge origin/develop` merged without conflicts and with no rebase or squash. `git merge-base --is-ancestor origin/develop HEAD` and `git merge-base --is-ancestor 475f37871 HEAD` both pass. This status entry is a separate commit on top.
