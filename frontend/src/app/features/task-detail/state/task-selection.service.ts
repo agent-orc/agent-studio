@@ -350,12 +350,7 @@ export class TaskSelectionService {
    */
   peersForLane(state: string): TaskInfo[] {
     const g = this.boardFilters.filteredGrouped();
-    // Epics are containers, not board work-items, so the flat lane board hides
-    // them (board `excludeEpics`, wired into `displayGrouped`). The pager must
-    // drop them too or its "N / M" total would exceed the lane-count badge and
-    // Prev/Next could surface an epic that has no card in the lane.
-    const tasksOnly = (jobs?: TaskInfo[]): TaskInfo[] =>
-      (jobs ?? []).filter((t) => t.kind !== 'epic');
+    const tasksOnly = (jobs?: TaskInfo[]): TaskInfo[] => jobs ?? [];
     switch (state) {
       case TaskState.Backlog:          return tasksOnly(g.backlog);
       case TaskState.Preparation:      return tasksOnly(g.preparation);

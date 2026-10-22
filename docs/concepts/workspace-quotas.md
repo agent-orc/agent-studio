@@ -68,6 +68,11 @@ publish panel refresh. Refresh and dispatch use the same lock so an older run
 cannot release a newer reservation. The reconciliation runs only while a quota
 limit exists.
 
+Card previews reserve a hosting slot when their deploy job is claimed. A
+successful preview keeps the slot until its removal succeeds; a failed first
+deploy returns it. Preview removal records a stop so reconciliation also frees
+the slot after a restart.
+
 Declared environments (`docs/deployments/environments/*.json`) take a slot on
 their first deploy. An environment runs when its latest successful deploy is
 not followed by a recorded stop; a failed deploy changes nothing. The minute

@@ -76,7 +76,7 @@ interface Overrides {
   canNavigateForward?: boolean;
   documentHistoryLength?: number;
   boardActionsVisible?: boolean;
-  groupByEpic?: boolean;
+  groupByDossier?: boolean;
   mutationsBlocked?: boolean;
   task?: TaskDetail | null;
   runActivity?: RunActivityBadge | null;
@@ -103,7 +103,7 @@ async function build(overrides: Overrides = {}) {
     canNavigateForward: false,
     documentHistoryLength: 0,
     boardActionsVisible: false,
-    groupByEpic: false,
+    groupByDossier: false,
     mutationsBlocked: false,
     task: null,
     runActivity: null,
@@ -156,19 +156,12 @@ describe('StudioTabActionsComponent - document history', () => {
 
 describe('StudioTabActionsComponent - board actions', () => {
   it('labels the grouping toggle by the view it switches to', async () => {
-    const lanes = await build({ boardActionsVisible: true, groupByEpic: false });
+    const lanes = await build({ boardActionsVisible: true, groupByDossier: false });
     expect(query(lanes, 'studio-board-dossier-toggle')?.textContent).toContain('Lanes');
-    const epics = await build({ boardActionsVisible: true, groupByEpic: true });
-    expect(query(epics, 'studio-board-dossier-toggle')?.textContent).toContain('Dossiers');
-    expect(query(epics, 'studio-board-dossier-toggle')?.getAttribute('aria-pressed')).toBe('true');
+    const dossiers = await build({ boardActionsVisible: true, groupByDossier: true });
+    expect(query(dossiers, 'studio-board-dossier-toggle')?.textContent).toContain('Dossiers');
+    expect(query(dossiers, 'studio-board-dossier-toggle')?.getAttribute('aria-pressed')).toBe('true');
   });
-
-  it('keeps the board action strip free of the retired epic grouping toggle', async () => {
-    const fixture = await build({ boardActionsVisible: true });
-    expect(query(fixture, 'studio-board-epic-toggle')).toBeNull();
-    expect(query(fixture, 'studio-board-add-task')).toBeTruthy();
-  });
-
   it('blocks Add task while mutations are blocked', async () => {
     const fixture = await build({ boardActionsVisible: true, mutationsBlocked: true });
     expect((query(fixture, 'studio-board-add-task') as HTMLButtonElement).disabled).toBe(true);

@@ -620,11 +620,17 @@ public class TaskRunnerService : BackgroundService
     }
 
     public RunnerStatus GetStatus()
+        => GetStatus(publishedOnly: false);
+
+    public RunnerStatus GetPublishedStatus()
+        => GetStatus(publishedOnly: true);
+
+    private RunnerStatus GetStatus(bool publishedOnly)
     {
         var projects = new Dictionary<string, ProjectRunnerStatus>();
         foreach (var (name, runner) in _runners)
         {
-            projects[name] = runner.GetStatus();
+            projects[name] = publishedOnly ? runner.GetPublishedStatus() : runner.GetStatus();
         }
         return new RunnerStatus { Projects = projects };
     }
@@ -699,8 +705,7 @@ public class TaskRunnerService : BackgroundService
 
         if (ProjectExecutionPolicy.IsLocalExecution(_projectSettings.Get(info.ProjectName))
             && !AllowsLocalCoding
-            && WorktreeRunPolicy.RequiresWorktree(info.Mode,
-                EpicRunPolicy.IsPlanningRun(info.Kind, RunIntent.ManualStart)))
+            && WorktreeRunPolicy.RequiresWorktree(info.Mode))
             throw new TaskOperationException(
                 RemoteExecutionRequirement.Code + ": " + RemoteExecutionRequirement.Message, 400);
 

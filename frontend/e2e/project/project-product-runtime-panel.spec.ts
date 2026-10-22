@@ -52,7 +52,13 @@ async function openRuntimePanel(page: import('@playwright/test').Page): Promise<
 }
 
 test('Operations opens the product runtime panel and shows empty state when no events', async ({ page }) => {
+  await page.route('**/api/runtime/task-detail-latency', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ count: 100, p50Ms: 44, p95Ms: 180, maxMs: 220 }),
+  }));
   await openRuntimePanel(page);
+
+  await expect(page.getByTestId('task-detail-latency')).toContainText('p95 180 ms');
 
   await expect(page.getByTestId('project-shell-rail-observability')).toHaveCount(0);
   await expect(page.getByTestId('product-runtime-source')).toBeVisible();

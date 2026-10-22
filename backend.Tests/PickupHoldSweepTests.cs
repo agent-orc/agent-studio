@@ -138,13 +138,10 @@ public sealed class PickupHoldSweepTests : IDisposable
         WriteJob(_libWatch, TaskStates.Archive, "parity-suite", "AGT-2372");
         WriteJob(_appWatch, TaskStates.Ready, "duplicate-cli-paths", "AGT-2373",
             dependsOn: "AGT-2372", releaseGate: true, enteredLaneAt: "2026-08-11T09:00:00Z");
-        WriteJob(_libWatch, TaskStates.Ready, "epic-container", "LIB-7",
-            kind: TaskKinds.Epic, enteredLaneAt: "2026-09-10T09:00:00Z");
 
         var held = Sweep();
 
-        Assert.Equal(new[] { "AGT-2373", "LIB-7" }, held.Select(card => card.Key).ToArray());
-        Assert.Equal(PickupHoldMechanisms.EpicContainer, held[1].Hold.Mechanism);
+        Assert.Equal(new[] { "AGT-2373" }, held.Select(card => card.Key).ToArray());
     }
 
     [Fact]

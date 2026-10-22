@@ -25,6 +25,19 @@ public static class ProjectOperatorDashboardEndpoints
             ProjectEnvironmentService environments) => environments.Read(projectName) is { } value
                 ? Results.Ok(value) : Results.NotFound());
 
+        app.MapGet("/api/projects/{projectName}/previews/{cardKey}/screenshot", (
+            HttpContext context, string projectName, string cardKey,
+            ProjectEnvironmentService environments, ProjectRegistry projects) =>
+        {
+            var project = projects.FindByIdOrDisplayName(projectName) ?? projects.FindByShortCode(projectName);
+            if (project is null) return Results.NotFound();
+            if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                && !ProjectAccessAuthorization.Allows(human.User, project.Id, projects))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return environments.PreviewScreenshotPath(projectName, cardKey) is { } path
+                ? Results.File(path, "image/png") : Results.NotFound();
+        });
+
         app.MapPost("/api/projects/{projectName}/environments/releases", (HttpContext context, string projectName,
             ReleaseArtifactRequest request, DeployService deploy) =>
             DeployEndpoints.QuotaRefusable(() => ReleaseCreated(deploy.CreateRelease(projectName, request.Artifact, request.Commit,

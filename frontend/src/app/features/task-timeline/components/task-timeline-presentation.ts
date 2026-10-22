@@ -38,7 +38,6 @@ const KIND_LABELS: Readonly<Record<string, string>> = {
   [TIMELINE_KIND.postAcceptanceReviewReportRecorded]: 'Post-acceptance review recorded',
   [TIMELINE_KIND.taskReleased]: 'Released for dependents',
   [TIMELINE_KIND.laneChanged]: 'Lane changed',
-  [TIMELINE_KIND.epicDecomposed]: 'Epic decomposed',
   [TIMELINE_KIND.mergedIn]: 'Merged in',
   [TIMELINE_KIND.readOnlyContainmentViolation]: 'Containment violation',
   [TIMELINE_KIND.executionContext]: 'Execution context',
@@ -152,11 +151,6 @@ export function timelineEventTitle(event: TaskTimelineEvent): string {
       : 'Released for dependents';
   }
 
-  if (event.kind === TIMELINE_KIND.epicDecomposed) {
-    const created = clean(event.details?.['created']);
-    return `Epic decomposed${created ? ` · ${created} task${created === '1' ? '' : 's'}` : ''}`;
-  }
-
   if (event.kind === TIMELINE_KIND.taskSpawned) {
     const key = clean(event.details?.['targetKey']);
     const project = clean(event.details?.['targetProject']);
@@ -214,10 +208,6 @@ export function timelineEventSummary(event: TaskTimelineEvent): string | null {
   }
   if (event.kind === TIMELINE_KIND.operatorRequeued
     && /^operator (?:reopened|requeued)\b/i.test(summary)) {
-    return null;
-  }
-  if (event.kind === TIMELINE_KIND.epicDecomposed
-    && /^epic decomposed\b/i.test(summary)) {
     return null;
   }
 

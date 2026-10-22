@@ -431,7 +431,7 @@ describe('ExplorerWorkspaceTreeComponent', () => {
 
   it('insets every project destination one level below the project row (AGT-2057 regression)', () => {
     // Explorer hierarchy is workspace -> project -> destinations. The project
-    // row is `level="root"`; its Board / Deck / Wiki / Epics (+ URL)
+    // row is `level="root"`; its Board / Deck / Wiki / Dossiers (+ URL)
     // destinations must be `level="child"` so they nest visibly one step in and
     // the project reads as clearly superordinate. AGT-2037 flattened them to
     // `level="root"`, so they rendered flush beside the project ("Kuddelmuddel",
@@ -496,28 +496,6 @@ describe('ExplorerWorkspaceTreeComponent', () => {
     wiki?.click();
     expect(emitted).toEqual(['Alpha']);
   });
-
-  it('opens Deploy and Operations without exposing an Epics destination', () => {
-    const fixture = mount();
-    fixture.componentRef.setInput('projectRows', [row('Alpha', { isActive: true })]);
-    fixture.componentRef.setInput('expandedProjects', new Set(['Alpha']));
-    fixture.detectChanges();
-    const opened: string[] = [];
-    fixture.componentInstance.openDeployRequest.subscribe(name => opened.push(`deploy:${name}`));
-    fixture.componentInstance.openOperationsRequest.subscribe(name => opened.push(`operations:${name}`));
-    const host = fixture.nativeElement as HTMLElement;
-    host.querySelector<HTMLElement>('[data-testid="studio-explorer-project-deploy-Alpha"]')!.click();
-    host.querySelector<HTMLElement>('[data-testid="studio-explorer-project-operations-Alpha"]')!.click();
-    expect(opened).toEqual(['deploy:Alpha', 'operations:Alpha']);
-    expect(host.querySelector('[data-testid="studio-explorer-project-epics-Alpha"]')).toBeNull();
-    // Deploy (send) and Operations (activity pulse) carry distinct glyphs.
-    const glyph = (surface: string) => host
-      .querySelector(`[data-testid="studio-explorer-project-${surface}-Alpha-glyph"]`)?.innerHTML ?? '';
-    expect(glyph('deploy')).toContain('points="3 12 21 4 13 21 11 13 3 12"');
-    expect(glyph('operations')).toContain('points="4 12 8 12 11 5 13 19 16 12 20 12"');
-    expect(glyph('deploy')).not.toEqual(glyph('operations'));
-  });
-
   it('highlights only the Wiki row when the active surface is the wiki rail', () => {
     const fixture = mount();
     fixture.componentRef.setInput('registryWorkspaces', []);
