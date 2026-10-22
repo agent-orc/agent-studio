@@ -92,6 +92,18 @@ describe('FirstRunChecklistComponent probes', () => {
     fixture.destroy();
   });
 
+  it('explains that the networked first-run journey needs the Task Server on a monolith', () => {
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/v1/installation').flush({}, { status: 404, statusText: 'Not Found' });
+    http.expectOne('/api/v1/projects').flush({}, { status: 404, statusText: 'Not Found' });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="first-run-task-server-unavailable"]')?.textContent)
+      .toContain('running without a Task Server connection');
+    expect(fixture.componentInstance.ownerReady()).toBe(false);
+    fixture.destroy();
+  });
+
   it('requires an admitted fresh repository proof from a connected host', () => {
     host.set([{ id: 'runner-a', clientId: 'runner-a', status: 'online',
       lastHeartbeatAt: new Date().toISOString() } as RemoteHost]);

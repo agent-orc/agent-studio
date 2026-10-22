@@ -98,10 +98,18 @@ that is already allowed to edit that project's checkout.
 - A mapped route can declare a minimum role (`StudioRoleRequirement`), which
   the networked profile enforces for sessions and API tokens. Every local
   first-run route (`/api/first-run/...`: Git setup and repository probe, read
-  and write) requires the owner, matching the Task Server runner Git setup
-  routes; others get `403 owner-required`. `AccessSecurityRouteInventory`
-  lists the owner-only route families, and its test fails for any route there
-  without the declaration. The local loopback profile is unchanged.
+  and write) is mapped only in the local profile and requires the owner,
+  matching the Task Server runner Git setup routes; others get
+  `403 owner-required`. A networked checklist uses the Task Server plane. When
+  the monolith has no Task Server connection, the checklist reports that the
+  plane is unavailable. `AccessSecurityRouteInventory` lists the owner-only
+  route families, and its test fails for any mapped route there without the
+  declaration. The local loopback profile is unchanged.
+- In the networked profile, creating, updating, removing, or reordering a
+  repository-identifying project URL requires the owner, including candidates
+  that are not currently selected. The project, actor, selected URL before and
+  after, candidate lists before and after, and timestamp are written with the
+  project mutation in `<TaskRepository>/.metadata/projects.json`.
 - Owners mint short-lived one-time Runner enrollment codes. Enrollment reveals
   one service credential once. The server stores only credential hashes.
   Credentials carry explicit scopes, optional expiry, last-use time, and
@@ -159,6 +167,9 @@ with owner-only permissions on Unix.
 Each authenticated API-token call appends its token id, creator, method, route,
 and response status to `<TaskRepository>/.security/api-token-audit.jsonl`.
 Token values and query strings are omitted from that audit.
+
+Networked project repository candidate changes are recorded in the registry's
+`RepositoryAudit` list in the same atomic write as the project URL records.
 
 Known credential shapes and named authorization, cookie, and password fields
 are redacted from Runner log ingestion. Production exceptions omit stack
