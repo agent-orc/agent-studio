@@ -10,7 +10,7 @@ services:
       HOME: /data/home
       Security__Profile: networked
       Security__BootstrapCode: ${STUDIO_BOOTSTRAP_CODE:?Run setup.sh}
-      Security__TrustedProxyAddresses: 172.30.83.3
+      Security__TrustedProxyAddresses: 172.30.83.3,172.30.83.2
       AllowedHosts: ${STUDIO_DOMAIN:?Set STUDIO_DOMAIN}
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
     volumes:

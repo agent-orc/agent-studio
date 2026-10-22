@@ -127,7 +127,13 @@ public sealed record ReviewPlanDto(
     // AGT-3077: sealed from the project's repository visibility. A private
     // repository is claimable only by an executor that registered the
     // repository-read capability for exactly this repository.
-    bool PrivateRepository = false);
+    bool PrivateRepository = false,
+    DeepReviewDecisionDto? DeepReviewDecision = null);
+
+/// <summary>Frozen engine decision visible with the review subject before any review command runs.</summary>
+public sealed record DeepReviewDecisionDto(string ReceiptId, string Mode, bool Selected,
+    bool Dispatched, string Model, string ThinkingLevel, IReadOnlyList<string> Grounds,
+    string? RuleVersionId = null);
 
 public sealed record ReviewSkippedAspectDto(string Aspect, string Reason);
 

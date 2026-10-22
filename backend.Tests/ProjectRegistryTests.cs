@@ -1,6 +1,10 @@
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
+using AgentStudio.Security;
+using AgentStudio.Tasks;
 
 using Xunit;
 
@@ -466,6 +470,57 @@ public class ProjectRegistryTests : IDisposable
         var reloaded = Build().FindById(project.Id)!;
         Assert.Equal("Before Failure", reloaded.DisplayName);
         Assert.Null(reloaded.Color);
+    }
+
+    [Fact]
+    public void Networked_repository_audit_is_atomic_and_uses_each_committed_prior_url()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+            ["Security:Profile"] = SecurityProfiles.Networked,
+        }).Build();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 12, 0, 0, TimeSpan.Zero));
+        var writer = new ControllableAtomicJsonFileWriter();
+        var workspaces = new WorkspaceRegistry(config, NullLogger<WorkspaceRegistry>.Instance);
+        workspaces.EnsureDefaultWorkspace();
+        var reg = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance, writer, clock);
+        var project = reg.EnsureProjectForStorage(Path.Combine(_root, "projects", "audit"),
+            "Audit Project", DefaultWorkspace.Id);
+        var owner = new StudioUser { Id = "usr_owner", Username = "owner", DisplayName = "Owner",
+            Role = StudioRoles.Owner, PasswordHash = "unused" };
+        var first = "https://example.test/first.git";
+        var second = "https://example.test/second.git";
+        var firstRecord = reg.Update(project.Id, new UpdateProjectRequest { RepositoryUrl = first },
+            workspaces, out var original, owner);
+        Assert.Equal(clock.GetUtcNow().UtcDateTime, reg.RepositoryAudit().Single().Timestamp);
+
+        var projectsFile = RegistryPaths.ProjectsFilePath(_root);
+        writer.ShouldFail = (path, _) => path == projectsFile;
+        Assert.Throws<ProjectPersistenceException>(() => reg.Update(project.Id,
+            new UpdateProjectRequest { RepositoryUrl = second }, workspaces, owner));
+        Assert.Equal(first, RemoteProjectRepositoryResolver.ResolveRepositoryUrl(reg.FindById(project.Id)));
+        Assert.Single(reg.RepositoryAudit());
+        writer.ShouldFail = null;
+        var renamed = reg.Update(project.Id, new UpdateProjectRequest { DisplayName = "Temporary Name" },
+            workspaces, out var beforeRename, owner);
+        reg.RollbackUpdate(renamed, beforeRename);
+        Assert.Single(reg.RepositoryAudit());
+
+        var urls = Enumerable.Range(0, 12).Select(index =>
+            $"https://example.test/concurrent-{index}.git").ToArray();
+        Parallel.ForEach(urls, url => reg.Update(project.Id,
+            new UpdateProjectRequest { RepositoryUrl = url }, workspaces, owner));
+        var rows = reg.RepositoryAudit().Where(row => row.ProjectId == project.Id).ToArray();
+        Assert.Equal(urls.Length + 1, rows.Length);
+        for (var index = 1; index < rows.Length; index++)
+            Assert.Equal(rows[index - 1].RepositoryUrl, rows[index].PreviousRepositoryUrl);
+        Assert.Equal(rows[^1].RepositoryUrl,
+            RemoteProjectRepositoryResolver.ResolveRepositoryUrl(reg.FindById(project.Id)));
+        Assert.Throws<InvalidOperationException>(() => reg.RollbackUpdate(firstRecord, original));
+        Assert.Equal(rows, reg.RepositoryAudit());
+        var reloaded = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+        Assert.Equal(JsonSerializer.Serialize(rows), JsonSerializer.Serialize(reloaded.RepositoryAudit()));
     }
 
     [Fact]

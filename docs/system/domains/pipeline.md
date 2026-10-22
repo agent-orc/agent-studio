@@ -37,6 +37,20 @@ branch still carries that tree and the card still names the same delivery.
 If the published branch loses the containing tree, verification is stale and
 normal acceptance recovery returns the card to Human Review.
 
+An operator candidate verification is an immutable, per-card
+`integrated-verified` record of a published candidate SHA, review attempt,
+verification host, suite totals, and log hash. The write route fetches origin
+and requires candidate ancestry in the refreshed branch. Patch-equivalent
+deliveries use the recorded review attempt and a containment check against
+the candidate tree for each current attributed commit. This keeps board
+status and integration reconciliation correct after late attribution. A later
+review attempt cannot inherit that mapping; a branch rewrite that removes
+the candidate invalidates it. Idempotency comparison and append share the
+task write lock, so concurrent posts with different evidence cannot both
+report success or replace the first record. An audit repair pass at startup
+fills a missing timeline event from each persisted receipt under the lane
+move mutex.
+
 Operators can attach an external suite result with
 `POST /api/projects/{project}/external-verifications`. The body supplies
 `candidateSha`, `verificationHost`, `suiteSummary`, and a SHA-256 `logHash`.
@@ -97,6 +111,36 @@ holds it. If admission still fails, the emergency per-task gate uses the host
 stopping token. A cancelled emergency gate while the host is running leaves the
 card in Auto Review and returns a retryable report error; only host shutdown
 is recorded as `Gate cancelled: shutdown`.
+
+### SSH remote gate worker recovery
+
+`RemoteGateTransport` writes a durable record for each dispatched SSH worker
+under local application data. The record includes the run id, host, remote
+root, start time, persistent installation id, and owning Studio process
+identity (PID and process start time). The id comes from `RemoteGate:InstallationId`,
+the configured connectivity manifest, or a generated id in a directory scoped
+to the Studio installation's stable working directory under local application
+data. `RemoteGate:InstallationRoot` can select that stable path explicitly.
+Versioned prebuilt release directories do not affect the scope. First-time id
+publication is atomic across Studio processes; contenders read the same
+persisted id. Registry IO failures are logged without stopping the gate host;
+recovery resumes when a later process can open the registry. Startup and the
+one-minute recovery sweep touch the worker's `cancel` marker only after the
+owning process is gone. Recovery is scoped to
+the installation id and recorded host/root; the primary and every configured
+SSH shard host are swept. A startup sweep failure is logged and does not stop
+the periodic sweep. A different Studio installation sharing a gate host
+is left alone. The record is removed after the remote run
+directory is removed under the worker lock and confirmed gone. A run that never
+started is removed by the same recovery path.
+
+The transport refreshes a per-run heartbeat every ten seconds. The worker
+cancels gate execution when that heartbeat is absent or older than five minutes,
+then releases its worker lock; recovery removes its remote directory after the
+lock becomes available. On session loss the worker removes its own directory.
+Cancelled workers report `REMOTE_GATE_SLOT <runId> release`, and recovery logs
+the typed `remote gate run orphaned and cancelled` event with the run id, host,
+and age. It also appends the event to the project's activity feed.
 
 ## Exact-SHA gate verdict cache
 
@@ -2629,14 +2673,14 @@ in
   and the standard lifecycle.
 - `lifecycles.standard`: Staging is automatic after integration; Production
   requires successful Staging and approval by Owner or Maintainer.
-- `deploy` steps in P1 (AGT-3221) are configuration only. Nothing executes
-  them yet; the SSH executor follows in a later card. `static-site` describes
+- `deploy` steps in P1 (AGT-3221) run from the release's committed schema 2
+  snapshot. `static-site` describes
   copying a static artifact to a `directory` on an SSH `target`. `container`
   describes pulling and restarting the compose `service` of a `composeFile` on
   an SSH `target`. Both need `healthUrl` (http or https, no credentials) and
   `healthTimeoutSeconds` (1 to 900), and may narrow `environments`. Because
   the executor will pass `directory` and `composeFile` through the remote shell
-  and use the directory as an `rsync --delete` target, both must lie strictly
+  and use the directory as an `scp` target, both must lie strictly
   below `/srv/`. They follow the artifact path segment rule: only letters,
   digits, `.`, `_`, and `-`, and no segment that is empty, `.`, or `..`, or
   starts with `-`. `composeFile` also ends in `.yml` or `.yaml`. `target` and
@@ -2645,16 +2689,16 @@ in
   and `dockerfile` must name a file there; only a container build context may
   be `.`.
   When the pipeline-definition API reads, validates, or migrates a file, it
-  checks each `target` against the hosts that the project's AGT-3176
-  declarations under `docs/deployments/environments/` register for every
-  environment the step deploys to. The deploy queue addresses jobs to those
-  hosts. A target missing from them is reported as
-  `deploy-target-unregistered`. An unreadable declaration set produces one
-  `declarations-unreadable` issue instead of target registration errors.
-  Preparation reads only the checkout and checks
+  checks each `target` against the project's effective environment hosts for
+  every environment the step deploys to. Schema 2 steps supply those hosts
+  when no legacy JSON declaration exists. A target missing from an existing
+  registration is reported as `deploy-target-unregistered`. An unreadable
+  declaration set produces one `declarations-unreadable` issue instead of
+  target registration errors. Preparation reads only the checkout and checks
   just the target's shape. The AGT-3198 steps `publish-static`,
   `start-container` (configuration placeholder), `run`, `health`, and
-  `approval` stay valid.
+  `approval` stay valid for the pipeline diagram, but a release with these
+  step kinds is refused until they have an executor.
 - `variables` hold either a plain `value` or a `secret` name for the secret
   provider, optionally scoped to `environments`. A plain value is refused as
   `secret-value-inline` in two cases. The first is a sensitive name: its last
@@ -2687,6 +2731,24 @@ come from the AGT-3176 declarations under `docs/deployments/environments/`, and
 every default the proposal had to choose is listed as a note.
 Static destinations outside `/srv/` stay quoted in the proposal and receive
 an explicit note that they must be changed before confirmation.
+The migration proposal is the one-time conversion of legacy declarations into
+schema 2. After migration, existing JSON declarations are checked for
+divergence; a project may run from schema 2 without JSON. project.yml owns
+hosts, protection, lifecycle, variables and
+SSH steps. Release creation compares the committed JSON declaration's host,
+template, health URL, static directory and secret names with project.yml and
+refuses divergence. The effective schema 2 definition is stored in the release
+snapshot and copied to each host job. The host checks SSH host keys strictly,
+copies static bundles to a version directory before switching `current`, or
+pins one compose service to the release artifact digest before pulling and
+starting it. It resolves secret names under the claimed job lease, sends step
+log messages to the deployment log, and records each step
+result. A failed deployment queues the previous healthy artifact for rollback.
+The deploy host needs OpenSSH and access to the artifact store; its SSH target
+needs Python 3, and container targets also need Docker Compose. The
+[deploy host API contract](../contracts/deploy-host-api.md) defines the claim,
+lease-bound step log and report payloads, failure responses, and secret
+resolution request.
 `POST .../migration` writes only through `ManagedRepositoryMutationService` as
 one path-scoped commit. The current file digest and the regenerated proposal
 digest must both still equal the dry run. That comparison is the mutation's

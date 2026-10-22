@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Security.Cryptography;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Projects;
 
@@ -9,7 +10,15 @@ public sealed record EnvironmentDeclaration(
     string Template, string Destination, string? HealthUrl, string Approval,
     IReadOnlyList<string> SecretRefs, int ContainerPort,
     IReadOnlyList<HealthCheckDefinition>? HealthChecks = null, bool HealthChecksAllowPrivateNetwork = false,
-    bool GuidedFailure = false, int InterventionTimeoutMinutes = 60);
+    bool GuidedFailure = false, int InterventionTimeoutMinutes = 60)
+{
+    public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
+    public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
+    public IReadOnlyList<ProjectArtifactDefinition> Artifacts { get; init; } = [];
+    public bool? Protected { get; init; }
+    public bool? Automatic { get; init; }
+    public string? Requires { get; init; }
+}
 
 /// <summary>One declaration file: the parsed environment, or the error that makes it unusable.</summary>
 public sealed record EnvironmentDeclarationFile(string EnvironmentId, EnvironmentDeclaration? Declaration, string? Error);
@@ -28,6 +37,10 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     bool GuidedFailure = false, bool GuidedResolved = false, string? RetryStep = null,
     string? RetryOfJobId = null)
 {
+    public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
+    public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
+    public IReadOnlyList<ProjectArtifactDefinition> Artifacts { get; init; } = [];
+    public IReadOnlyList<DeployStepResult> StepResults { get; init; } = [];
     /// <summary>Preview jobs share the normal claim, lease and report queue.</summary>
     public string Kind { get; init; } = "standard";
     public string? CardKey { get; init; }
@@ -40,6 +53,8 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     public IReadOnlyList<string> BuildCommands { get; init; } = [];
     public string? ScreenshotUrl { get; init; }
 }
+
+public sealed record DeployStepResult(string Name, bool Succeeded);
 
 public sealed record PreviewJobSpec(string Project, string CardKey, string SourceCommit,
     string HostId, string Address, string Template, string Destination,
@@ -62,7 +77,9 @@ public sealed record ProjectEnvironmentsResponse(string Project, IReadOnlyList<P
     IReadOnlyList<DeploymentFailureCard> FailureCards);
 
 public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string? Evidence,
-    string? ScreenshotBase64 = null);
+    IReadOnlyList<DeployStepResult>? Steps = null, string? ScreenshotBase64 = null);
+public sealed record DeployStepLogRequest(string LeaseToken, string Step, string Message);
+public sealed record DeployLeaseRequest(string LeaseToken);
 public sealed record DeployClaimRequest(string HostId);
 public sealed record ReleaseArtifactRequest(string Artifact, string Commit);
 public sealed record PromotionDecisionRequest(string Artifact);
@@ -118,10 +135,11 @@ public sealed class ProjectEnvironmentService
         var root = _git.ResolveRepoRootForProject(project);
         if (root is null) return [];
         var directory = Path.Combine(root, "docs", "deployments", "environments");
-        if (!Directory.Exists(directory)) return [];
         var readable = new List<(string Name, string Json)>();
         var failures = new List<EnvironmentDeclarationFile>();
-        foreach (var file in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
+        foreach (var file in Directory.Exists(directory)
+                     ? Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
+                     : Enumerable.Empty<string>())
         {
             try
             {
@@ -132,7 +150,14 @@ public sealed class ProjectEnvironmentService
                 failures.Add(new(Path.GetFileNameWithoutExtension(file), null, $"{Path.GetFileName(file)}: {ex.Message}"));
             }
         }
-        return [.. ParseDeclarationFiles(readable), .. failures];
+        IReadOnlyList<EnvironmentDeclarationFile> parsed = [.. ParseDeclarationFiles(readable), .. failures];
+        var yamlPath = Path.Combine(root, ProjectPreparationPaths.Definition);
+        if (!File.Exists(yamlPath)) return parsed;
+        try { return ApplyDefinition(parsed, File.ReadAllText(yamlPath)); }
+        catch (JsonException ex)
+        {
+            return parsed.Select(file => file with { Declaration = null, Error = ex.Message }).ToArray();
+        }
     }
 
     /// <summary>
@@ -158,7 +183,80 @@ public sealed class ProjectEnvironmentService
         }
         var parsed = ParseDeclarationFiles(files);
         if (parsed.FirstOrDefault(item => item.Error is not null) is { Error: { } error }) throw new JsonException(error);
-        return parsed.Select(item => item.Declaration!).ToArray();
+        var yaml = _git.GetFileAtCommit(root, commit, ProjectPreparationPaths.Definition);
+        var effective = yaml is null ? parsed : ApplyDefinition(parsed, yaml);
+        if (effective.FirstOrDefault(item => item.Error is not null) is { Error: { } mismatch }) throw new JsonException(mismatch);
+        return effective.Select(item => item.Declaration!).ToArray();
+    }
+
+    /// <summary>Schema 2 owns deploy behavior. JSON retains only host registration and legacy compatibility.</summary>
+    public static IReadOnlyList<EnvironmentDeclarationFile> ApplyDefinition(
+        IReadOnlyList<EnvironmentDeclarationFile> files, string yaml)
+    {
+        var read = ProjectDefinitionReader.Parse(yaml);
+        if (read.Parsed?.SchemaVersion != 2
+            && !Regex.IsMatch(yaml, @"(?m)^schemaVersion:[ ]*2[ ]*(?=\r?$)")) return files;
+        if (read.Parsed?.Deployment is null || read.Parsed.Deployment.Deploy.Count == 0)
+            throw new JsonException("Schema 2 project.yml must declare the deploy steps before a release can run.");
+        if (!read.IsValid || read.Definition?.Deployment is not { } definition)
+            throw new JsonException("Schema 2 project.yml is invalid: " + string.Join("; ", read.Issues.Select(item => item.Message)));
+        if (definition.Deploy.Any(item => item.Step is not ("static-site" or "container")))
+            throw new JsonException("Schema 2 release deployment only supports static-site and container SSH steps.");
+        var output = new List<EnvironmentDeclarationFile>();
+        foreach (var environment in definition.Environments.Where(item =>
+                     !files.Any(file => PipelineMigrationPolicy.EnvironmentFor(file.Declaration?.Kind ?? "") == item.Name)))
+        {
+            var steps = definition.Deploy.Where(item => item.Environments.Count == 0
+                || item.Environments.Contains(environment.Name, StringComparer.Ordinal)).ToArray();
+            if (steps.Length == 0 || steps.Select(item => item.Target).Distinct(StringComparer.Ordinal).Count() != 1)
+                throw new JsonException($"Schema 2 {environment.Name} requires deploy steps on one host.");
+            var first = steps[0];
+            var phase = definition.StandardLifecycle.First(item => item.Phase == environment.Name);
+            var variables = definition.Variables.Where(item => item.Environments.Count == 0
+                || item.Environments.Contains(environment.Name, StringComparer.Ordinal)).ToArray();
+            var id = environment.Name == "staging" ? "stage" : environment.Name;
+            var declaration = new EnvironmentDeclaration(id, environment.Name, id, first.Target!,
+                first.HealthUrl ?? "", first.Step == "static-site" ? "static" : "container",
+                first.Directory ?? "1", first.HealthUrl,
+                environment.Protected ? "person" : "stage-healthy-10m",
+                variables.Where(item => item.Secret is not null).Select(item => item.Secret!).ToArray(), 8080)
+            {
+                SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
+                Protected = environment.Protected, Automatic = phase.Automatic, Requires = phase.Requires,
+            };
+            output.Add(new(id, declaration, null));
+        }
+        foreach (var file in files)
+        {
+            if (file.Declaration is not { } legacy) { output.Add(file); continue; }
+            var name = PipelineMigrationPolicy.EnvironmentFor(legacy.Kind);
+            if (name is null) { output.Add(file); continue; }
+            var environment = definition.Environments.FirstOrDefault(item => item.Name == name);
+            var phase = definition.StandardLifecycle.FirstOrDefault(item => item.Phase == name);
+            var steps = definition.Deploy.Where(item => (item.Step is "static-site" or "container")
+                && (item.Environments.Count == 0 || item.Environments.Contains(name, StringComparer.Ordinal))).ToArray();
+            var variables = definition.Variables.Where(item => item.Environments.Count == 0
+                || item.Environments.Contains(name, StringComparer.Ordinal)).ToArray();
+            var secrets = variables.Where(item => item.Secret is not null).Select(item => item.Secret!).Order(StringComparer.Ordinal).ToArray();
+            var first = steps.FirstOrDefault();
+            if (environment is null || phase is null || first is null || steps.Any(item => item.Target != legacy.TargetHostId)
+                || first.Target != legacy.TargetHostId || legacy.Template != (first.Step == "static-site" ? "static" : "container")
+                || first.HealthUrl != legacy.HealthUrl
+                || first.Step == "static-site" && first.Directory != legacy.Destination
+                || !secrets.SequenceEqual(legacy.SecretRefs.Order(StringComparer.Ordinal)))
+            {
+                output.Add(file with { Declaration = null,
+                    Error = $"{file.EnvironmentId}.json diverges from schema 2 project.yml; migrate the declaration before deploying." });
+                continue;
+            }
+            output.Add(file with { Declaration = legacy with
+            {
+                SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
+                Protected = environment.Protected,
+                Automatic = phase.Automatic, Requires = phase.Requires,
+            } });
+        }
+        return output;
     }
 
     private bool IsWatched(string project)
@@ -694,6 +792,23 @@ public sealed class ProjectEnvironmentService
         }
     }
 
+    /// <summary>Extends a live claim without changing its fencing token.</summary>
+    public bool RenewClaim(string project, string jobId, string leaseToken)
+    {
+        if (string.IsNullOrWhiteSpace(leaseToken)) return false;
+        lock (_gate)
+        {
+            var job = FindClaimedJob(project, jobId, leaseToken);
+            if (job is null) return false;
+            var state = Load(project);
+            var index = state.Jobs.FindIndex(item => item.Id == jobId && item.LeaseToken == leaseToken);
+            if (index < 0) return false;
+            state.Jobs[index] = state.Jobs[index] with { ClaimedAt = _clock.GetUtcNow().UtcDateTime };
+            Save(project, state);
+            return true;
+        }
+    }
+
     public DeployJob? PreviewJob(string project, string jobId)
     {
         lock (_gate)
@@ -720,6 +835,14 @@ public sealed class ProjectEnvironmentService
                 return false;
             }
             var now = _clock.GetUtcNow().UtcDateTime;
+            if (job.ClaimedAt < now - LeaseDuration) return false;
+            var expectedSteps = job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}").ToArray();
+            var reportedSteps = report.Steps ?? [];
+            if (reportedSteps.Count > expectedSteps.Length || reportedSteps.Where((step, index) =>
+                    step.Name != expectedSteps[index]).Any() || reportedSteps.SkipLast(1).Any(step => !step.Succeeded)
+                || report.Healthy && (reportedSteps.Count != expectedSteps.Length
+                    || reportedSteps.Any(step => !step.Succeeded)))
+                return false;
             var success = report.Healthy;
             string? screenshotUrl = null;
             if (success && job.Kind == "preview")
@@ -733,8 +856,8 @@ public sealed class ProjectEnvironmentService
             var evidence = report.Evidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
                 ? report.Evidence : success ? "health-ok" : "deploy-step-failed";
             state.Jobs[state.Jobs.IndexOf(job)] = job with
-            { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now,
-                Evidence = evidence, ScreenshotUrl = screenshotUrl };
+            { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence,
+                StepResults = reportedSteps, ScreenshotUrl = screenshotUrl };
             var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
@@ -807,6 +930,7 @@ public sealed class ProjectEnvironmentService
             {
                 Template = deployed.Template, Destination = deployed.Destination,
                 HealthUrl = deployed.HealthUrl, SecretRefs = deployed.SecretRefs, ContainerPort = deployed.ContainerPort,
+                SshSteps = deployed.SshSteps, Variables = deployed.Variables, Artifacts = deployed.Artifacts,
             }
             : current;
 
@@ -838,15 +962,18 @@ public sealed class ProjectEnvironmentService
 
     /// <summary>
     /// BD-1: the release snapshot decides what is deployed (template,
-    /// destination, health check, secrets); the current declaration decides
-    /// where. After an environment moves to another host, a rollback or a late
-    /// approval of an older release goes to the new host instead of waiting
-    /// for a retired host that never claims.
+    /// destination, health check, secrets, SSH targets); the current declaration
+    /// decides which host claims the job. After a host move, an older schema 2
+    /// release retains its target so the executor refuses to run it on the new
+    /// host. Legacy jobs have no SSH target and can use the new host.
     /// </summary>
     private static EnvironmentDeclaration RouteToCurrentHost(EnvironmentDeclaration snapshot,
         IReadOnlyList<EnvironmentDeclaration> current)
         => current.FirstOrDefault(item => item.Id == snapshot.Id) is { } declared
-            ? snapshot with { TargetHostId = declared.TargetHostId }
+            ? snapshot with
+            {
+                TargetHostId = declared.TargetHostId,
+            }
             : snapshot;
 
     private static bool HasOpenPromotion(State state, string artifact)
@@ -867,7 +994,8 @@ public sealed class ProjectEnvironmentService
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
             IsRollback: rollback, RequestedBy: actor, GuidedFailure: declaration.GuidedFailure,
-            RetryStep: retryStep, RetryOfJobId: retryOfJobId);
+            RetryStep: retryStep, RetryOfJobId: retryOfJobId)
+        { SshSteps = declaration.SshSteps, Variables = declaration.Variables, Artifacts = declaration.Artifacts };
         state.Jobs.Add(job);
         return job;
     }

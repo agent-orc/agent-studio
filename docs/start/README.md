@@ -183,6 +183,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Wiki hosting options and recommendation (full networked Studio vs read-only service vs static export; AGT-2276) | [concepts/wiki-hosting-options-2026-07.html](../concepts/wiki-hosting-options-2026-07.html) |
 | Deployment as a first-class citizen (Deployment page, scenario templates, prompt-defined dynamic UI over CLI tasks; DEP-1..5) | [concept](../concepts/deployment-first-class.md) · [interactive mockup](../concepts/mockups/deployment-first-class.html) |
 | Project environment declaration schema | [schemas/project-environment.schema.json](../app/schemas/project-environment.schema.json) |
+| Deploy host API: claim, step logs, reports, lease and secret resolution | [contracts/deploy-host-api.md](../system/contracts/deploy-host-api.md) |
 | Environment health checks from the control plane: declared and derived checks, uptime and latency, incidents as Activity entries and cards, 30-day raw and hourly retention (IP-14) | [operations/environment-health-checks.md](../operations/environment-health-checks.md) |
 | Release semantics (integration vs acceptance vs release vs stable freeze; transparent watering-can model) | [concept](../concepts/release-semantics.md) |
 | Project Overview operator dashboard (metrics, Visual Evidence Queue, Project URLs, deployment summary, Wiki entry) | [mockup contract](../concepts/project-overview-dashboard/README.md) · [interactive mockup](../concepts/project-overview-dashboard/ui.html) |
