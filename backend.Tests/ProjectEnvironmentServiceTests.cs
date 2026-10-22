@@ -113,7 +113,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var deploy = service.Claim("preview-host")!;
         var png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC";
         Assert.True(service.Report("demo", deploy.Id,
-            new DeployReportRequest(deploy.LeaseToken!, true, "health-ok", png)));
+            new DeployReportRequest(deploy.LeaseToken!, true, "health-ok", ScreenshotBase64: png)));
         service.ReconcileHostingSlots();
         Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
 
