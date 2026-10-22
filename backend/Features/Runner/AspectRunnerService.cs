@@ -497,7 +497,7 @@ public sealed class AspectRunnerService
                 {
                     AspectStatus.Block => new AgentStudio.Review.ReviewFindingCounts(Blocker: 1),
                     AspectStatus.Concerns => new AgentStudio.Review.ReviewFindingCounts(Major: 1),
-                    _ => new AgentStudio.Review.ReviewFindingCounts(),
+                    _ => null,
                 },
                 ReviewCli = cliBinary,
                 Reason = verdict.IsInfraFailure

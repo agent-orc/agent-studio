@@ -1093,7 +1093,6 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
     [Fact]
     public void Run_CleanMerge_SucceedsWithFailingPreCommitHook()
     {
-        if (OperatingSystem.IsWindows()) return;
         var repo = SeedRepo("runner-merge-hook");
         RunGit(repo, "checkout -q -b develop");
         RunGit(repo, "checkout -q -b task/67");
@@ -1104,8 +1103,9 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Commit(repo, "feat: integration change");
         var hook = Path.Combine(repo, ".git", "hooks", "pre-commit");
         File.WriteAllText(hook, "#!/bin/sh\nexit 1\n");
-        File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite |
-            UnixFileMode.UserExecute);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                UnixFileMode.UserExecute);
 
         var (git, log) = Build(repo);
         var jobFolder = BeginRun(log, repo, jobId: "67");
@@ -1126,13 +1126,18 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Commit(repo, "docs: seed report");
         RunGit(repo, "checkout -q -b develop");
         RunGit(repo, "checkout -q -b task/66");
-        File.WriteAllText(Path.Combine(repo, "status.md"), new string('é', 10_000) + "delivery report\n");
+        File.WriteAllText(Path.Combine(repo, "status.md"), "newest delivery entry\n" + new string('é', 10_000) + "delivery report\n");
         File.WriteAllText(Path.Combine(repo, "feature.txt"), "delivered feature\n");
         Commit(repo, "feat: deliver feature and report");
         var deliverySha = RunGit(repo, "rev-parse task/66").Out.Trim();
         RunGit(repo, "checkout -q develop");
         File.WriteAllText(Path.Combine(repo, "status.md"), "integration report\n");
         Commit(repo, "docs: update integration report");
+        var hook = Path.Combine(repo, ".git", "hooks", "pre-commit");
+        File.WriteAllText(hook, "#!/bin/sh\nexit 1\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                UnixFileMode.UserExecute);
 
         var (git, log) = Build(repo);
         var jobFolder = BeginRun(log, repo, jobId: "66");
@@ -1148,6 +1153,7 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         var artifact = Path.Combine(jobFolder, "legacy-repository-status.md");
         Assert.True(new FileInfo(artifact).Length <= 16 * 1024);
         Assert.EndsWith("delivery report\n", File.ReadAllText(artifact));
+        Assert.StartsWith("newest delivery entry\n", File.ReadAllText(artifact));
         Assert.False(File.Exists(Path.Combine(jobFolder, "results", Path.GetFileName(artifact))));
         Assert.Equal(PipelineStepStatus.Passed, ReadMergeStep(log, jobFolder)?.Status);
     }

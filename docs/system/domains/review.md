@@ -1184,7 +1184,8 @@ Studio projects executed aspect and grade steps from each task's durable
 review observations. Each observation keeps the recorded model, thinking level,
 four token dimensions, duration, verdict, severity counts, historical list-price
 estimate and evidence reference. New local and remote aspect projections, grades,
-and product gate projections bind the exact delivered Result-SHA. Older rows without that SHA remain
+and product gate projections bind the exact delivered Result-SHA. Failed review
+commands are excluded from defect observations. Older rows without that SHA remain
 visible for cost analysis but cannot receive an automatic miss attribution.
 
 `POST /api/tasks/{jobId}/review-observations?project=...` records an externally
@@ -1195,8 +1196,9 @@ historical price catalogue at the review date if the model is priced.
 `POST /api/tasks/{jobId}/review-observations/{reviewId}/later-evidence?project=...`
 links a later review, gate, operator finding or production incident to an earlier
 approved review of the same SHA. The later evidence must be dated after approval
-and cite an artifact. A later blocking review or product-class remote gate on the
-same SHA supplies the link automatically. Replayed journal IDs do not duplicate
+and cite an artifact. A later blocking review on the same SHA and aspect supplies
+the link automatically. Gate findings without an aspect need an explicit cited
+observation to attribute a miss. Replayed journal IDs do not duplicate
 records.
 
 `POST /api/tasks/{jobId}/review-observations/{reviewId}/finding-outcomes?project=...`
@@ -1215,7 +1217,7 @@ Token Economy. `/export/{reviewId}` returns one importer-ready version-1
 review-run JSON document when that review has the required fields.
 Unpriced reviews retain null cost. Cost per real finding is null unless reported
 findings have an explicit confirmed count. When a model/reasoning cohort has at
-least five approvals and two cited misses with a miss rate of at least 20%, the
+least twenty approvals and three cited misses with a miss rate of at least 20%, the
 remote review plan runs every semantic aspect on a follow-up round instead of
 carrying previous verdicts over. This affects review depth only, not the task's
 acceptance or transition decision.

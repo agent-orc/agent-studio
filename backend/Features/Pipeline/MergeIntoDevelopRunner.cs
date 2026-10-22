@@ -900,9 +900,15 @@ public sealed partial class MergeIntoDevelopRunner
                 if (content is null) continue;
                 const int reportLimit = 16 * 1024;
                 var bytes = System.Text.Encoding.UTF8.GetBytes(content);
-                var start = Math.Max(0, bytes.Length - reportLimit);
-                while (start < bytes.Length && (bytes[start] & 0xC0) == 0x80) start++;
-                File.WriteAllBytes(fallbackArtifact, bytes[start..]);
+                if (bytes.Length > reportLimit)
+                {
+                    var firstEnd = reportLimit / 2;
+                    while (firstEnd > 0 && (bytes[firstEnd] & 0xC0) == 0x80) firstEnd--;
+                    var lastStart = bytes.Length - reportLimit / 2;
+                    while (lastStart < bytes.Length && (bytes[lastStart] & 0xC0) == 0x80) lastStart++;
+                    bytes = [.. bytes[..firstEnd], .. bytes[lastStart..]];
+                }
+                File.WriteAllBytes(fallbackArtifact, bytes);
             }
         }
         catch (Exception ex)

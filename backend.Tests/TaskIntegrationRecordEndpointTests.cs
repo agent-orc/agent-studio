@@ -48,6 +48,15 @@ public sealed class TaskIntegrationRecordEndpointTests : IDisposable
     }
 
     [Fact]
+    public void AppendPolicy_ReservesOperatorCandidateIds()
+    {
+        var result = TaskIntegrationRecordAppendPolicy.Validate(TaskStates.HumanReview,
+            Request() with { Id = "operator-candidate-forged" });
+        Assert.False(result.Allowed);
+        Assert.Contains("reserved", result.Error);
+    }
+
+    [Fact]
     public void AppendPolicy_CuratedMappingRequiresExactShaPairAndEpochInAutoReview()
     {
         var mapping = Request() with

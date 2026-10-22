@@ -5,11 +5,15 @@ namespace AgentStudio.Pipeline;
 /// <summary>Completes the audit half of an immutable operator receipt after a crash.</summary>
 public sealed class OperatorCandidateAuditRepair(
     TaskScannerService scanner, TimelineLog timeline, LaneMutexRegistry lanes,
-    ILogger<OperatorCandidateAuditRepair> logger) : IHostedService
+    ILogger<OperatorCandidateAuditRepair> logger, IHostApplicationLifetime lifetime) : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        RepairAll(cancellationToken);
+        lifetime.ApplicationStarted.Register(() => _ = Task.Run(() =>
+        {
+            try { RepairAll(lifetime.ApplicationStopping); }
+            catch (Exception ex) { logger.LogWarning(ex, "Operator candidate audit repair failed"); }
+        }, lifetime.ApplicationStopping));
         return Task.CompletedTask;
     }
 
@@ -17,25 +21,17 @@ public sealed class OperatorCandidateAuditRepair(
 
     public void RepairAll(CancellationToken cancellationToken = default)
     {
+        scanner.InvalidateCache();
         foreach (var snapshot in scanner.ScanAllJobsWithArchive())
         {
             if (cancellationToken.IsCancellationRequested) break;
             if (!snapshot.IntegrationRecords.Any(IsOperatorCandidate)) continue;
             using var lane = lanes.Acquire(snapshot.WatchPath, Timeout.InfiniteTimeSpan);
-            scanner.InvalidateCache();
-            var matches = scanner.ScanAllJobsWithArchive()
-                .Where(task => task.WatchPath == snapshot.WatchPath
-                    && task.Id == snapshot.Id
-                    && task.IntegrationRecords.Any(record => snapshot.IntegrationRecords.Any(prior =>
-                        IsOperatorCandidate(prior) && SameRecord(record, prior))))
-                .ToList();
-            var current = matches.FirstOrDefault(task => task.FolderPath == snapshot.FolderPath)
-                ?? (matches.Count == 1 ? matches[0] : null);
-            if (current is null) continue;
-            lock (TaskJsonFile.SyncRoot(current.FolderPath))
+            if (!File.Exists(Path.Combine(snapshot.FolderPath, "task.json"))) continue;
+            lock (TaskJsonFile.SyncRoot(snapshot.FolderPath))
             {
-                foreach (var record in current.IntegrationRecords.Where(IsOperatorCandidate))
-                    EnsureAudit(current.FolderPath, record);
+                foreach (var record in snapshot.IntegrationRecords.Where(IsOperatorCandidate))
+                    EnsureAudit(snapshot.FolderPath, record);
             }
         }
     }
@@ -79,12 +75,4 @@ public sealed class OperatorCandidateAuditRepair(
         => record.Classification == IntegrationRecordClasses.IntegratedVerified
            && record.Id.StartsWith("operator-candidate-", StringComparison.Ordinal);
 
-    private static bool SameRecord(TaskIntegrationRecord current, TaskIntegrationRecord prior)
-        => IsOperatorCandidate(current)
-           && current.Id == prior.Id
-           && current.IntegrationSha == prior.IntegrationSha
-           && current.SourceSha == prior.SourceSha
-           && current.DeliveryEpoch == prior.DeliveryEpoch
-           && current.RecordedAtUtc == prior.RecordedAtUtc
-           && current.Actor == prior.Actor;
 }

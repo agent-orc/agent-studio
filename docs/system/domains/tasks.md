@@ -678,11 +678,15 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   in Preparation, Ready, Progress, Auto Review, or Post Processing. A
   `curated-mapping` may be appended in Auto Review and requires a full 40-character
   `sourceSha`, full 40-character `integrationSha`, `deliveryEpoch`, and written
-  `evidence`. The target `integrationBranch` defaults to the project setting.
+  `evidence`. The `operator-candidate-` record id prefix is reserved for the
+  operator candidate verification route. The target `integrationBranch` defaults to the project setting.
   The mapping proves integration only while
   that integration SHA is reachable on the published target branch and its
   source SHA and epoch match the current delivery. Repeating a record id is an idempotent no-op. This mutation
   never changes a lane, commit chain, task branch, or Git history.
+  Operator candidate verification records the contained commit SHAs when the
+  receipt is written. Attribution added after that receipt needs an explicit
+  mapping; status reads do not run Git to discover patch equivalence.
   Historical verification records also remove the card from the live
   accepted-integration alert: they describe a reconciled historical fact, not
   an active acceptance transaction.

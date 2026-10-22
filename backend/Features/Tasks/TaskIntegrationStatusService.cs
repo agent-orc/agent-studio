@@ -789,22 +789,13 @@ public sealed class TaskIntegrationStatusService
                     && subject is not null
                     && string.Equals(record.SourceSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase)
                     && (string.Equals(sourceSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase)
-                        || root is not null && ReviewSubjectStore.IsValidResultSha(sourceSha)
-                            && ReviewSubjectStore.IsValidResultSha(record.IntegrationSha)
-                            && OperatorCandidateCovers(root, sourceSha, record.IntegrationSha!)))
+                        || record.CommitShas?.Contains(sourceSha, StringComparer.OrdinalIgnoreCase) == true))
                 && string.Equals(record.DeliveryEpoch, deliveryEpoch, StringComparison.Ordinal)
                 && IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, branch)
                 && record.IntegrationSha?.Length == 40
                 && AncestorSetContains(publishedAncestors, record.IntegrationSha))
             .Select(record => record.IntegrationSha!);
     }
-
-    private bool OperatorCandidateCovers(string root, string sourceSha, string candidateSha)
-        => _contentCache.GetOrCreateVersioned(
-            $"operator-candidate\0{root}\0{sourceSha}", candidateSha,
-            value => value == true ? CacheTtl : FailureCacheTtl,
-            () => ReadOnlyGitConcurrencyLimiter.Run(() =>
-                _git.IsDeliveryInPublished(root, sourceSha, candidateSha))) == true;
 
     /// <summary>
     /// The repository/branch the card is answered from when it carries no

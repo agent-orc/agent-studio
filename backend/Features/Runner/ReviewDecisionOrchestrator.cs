@@ -5413,9 +5413,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                             ThinkingLevel = report.ThinkingLevel,
                             ReviewedResultSha = ResolveBuildTestGateSubject(live, entry.Path).Sha,
                             Verdict = gradeToken,
-                            ReviewFindings = status == PipelineStepStatus.Failed
-                                ? new AgentStudio.Review.ReviewFindingCounts(Blocker: report.Findings?.Count ?? 0)
-                                : new AgentStudio.Review.ReviewFindingCounts(Major: report.Findings?.Count ?? 0),
+                            ReviewFindings = report.Findings is { Count: > 0 }
+                                ? status == PipelineStepStatus.Failed
+                                    ? new AgentStudio.Review.ReviewFindingCounts(Blocker: report.Findings.Count)
+                                    : new AgentStudio.Review.ReviewFindingCounts(Major: report.Findings.Count)
+                                : null,
                             ReviewCli = request.CliType,
                             VerdictSummary = string.IsNullOrWhiteSpace(report.Summary) ? null : report.Summary,
                             EvidenceRef = report.FileName,

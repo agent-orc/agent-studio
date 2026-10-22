@@ -23,7 +23,6 @@ public sealed class ReviewObservationStore(
         var reviews = new List<ReviewObservation>();
         var later = new List<ReviewLaterEvidence>();
         var dispositions = new List<ReviewFindingDisposition>();
-        var gateDefects = new List<(string JobId, string Sha, DateTime FoundAt, string EvidenceRef, string? RoundId)>();
         foreach (var task in scanner.ScanAllAutomationJobsWithArchive())
         {
             if (!string.Equals(task.WatchPath, watchPath, StringComparison.OrdinalIgnoreCase)) continue;
@@ -33,14 +32,6 @@ public sealed class ReviewObservationStore(
                 foreach (var run in record.PreviousAttempts.Append(record))
                 {
                     AddPipelineReviews(reviews, task.Id, run, pricing);
-                    foreach (var gate in run.Steps.Where(step =>
-                                 step.StepId == PipelineCatalogue.BuildTestGateStepId
-                                 && step.ReviewFindings?.Blocker > 0
-                                 && ValidSha(step.ReviewedResultSha) is not null
-                                 && step.CompletedAt.HasValue))
-                        gateDefects.Add((task.Id, gate.ReviewedResultSha!.ToLowerInvariant(),
-                            gate.CompletedAt!.Value.ToUniversalTime(),
-                            gate.EvidenceRef ?? PipelineExecutionLog.FileName, gate.ExecutionAttemptId));
                 }
             }
             var journal = Read(task.FolderPath);
@@ -56,15 +47,6 @@ public sealed class ReviewObservationStore(
             ? row with { ConfirmedFindings = outcome.Confirmed, DismissedFindings = outcome.Dismissed }
             : row).ToList();
         later.AddRange(InferLaterReviewMisses(reviews));
-        foreach (var gate in gateDefects)
-        foreach (var review in reviews.Where(row => row.JobId == gate.JobId
-                     && row.ResultSha == gate.Sha && row.ReviewedAt < gate.FoundAt
-                     && (row.ReviewRoundId is null || row.ReviewRoundId != gate.RoundId)
-                     && ReviewObservationPolicy.Approved(row)))
-            later.Add(new ReviewLaterEvidence(
-                $"gate:{gate.JobId}:{gate.FoundAt.Ticks}:{review.Id}", review.Id,
-                gate.Sha, gate.FoundAt, "gate", gate.EvidenceRef, "blocker",
-                "Later verification gate found a product blocker on the same delivered SHA."));
         later = later.GroupBy(row => row.Id, StringComparer.Ordinal)
             .Select(group => group.Last()).OrderBy(row => row.FoundAt).ToList();
         var report = new ReviewObservationReport(project, now.UtcDateTime, Method,
@@ -102,12 +84,15 @@ public sealed class ReviewObservationStore(
         var reviews = new List<ReviewObservation>();
         var evidence = new List<ReviewLaterEvidence>();
         var dispositions = new List<ReviewFindingDisposition>();
-        foreach (var line in File.ReadLines(path))
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+        while (reader.ReadLine() is { } line)
         {
             try
             {
                 var row = JsonSerializer.Deserialize<JournalRow>(line, Json);
-                if (row?.Review is not null) reviews.Add(row.Review);
+                if (row?.Review is not null)
+                    reviews.Add(row.Review with { Findings = row.Review.Findings ?? new() });
                 if (row?.Evidence is not null) evidence.Add(row.Evidence);
                 if (row?.Disposition is not null) dispositions.Add(row.Disposition);
             }
@@ -157,14 +142,18 @@ public sealed class ReviewObservationStore(
         PipelineExecutionRecord record, ITokenPricing pricing)
     {
         foreach (var step in record.Steps.Where(row => row.StepId.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(row.StepId, "post-deep-review", StringComparison.OrdinalIgnoreCase)
                      || string.Equals(row.StepId, PipelineCatalogue.CodeReviewGradeStepId, StringComparison.OrdinalIgnoreCase)))
         {
             var executions = StepCostMeasurement.Executions(pricing, step);
             for (var index = 0; index < executions.Count; index++)
             {
                 var execution = executions[index];
-                if (execution.CompletedAt is not { } completed || string.IsNullOrWhiteSpace(execution.Verdict)) continue;
-                var level = step.StepId.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase) ? "aspect" : "grade";
+                if (execution.Status == PipelineStepStatus.Failed
+                    || execution.CompletedAt is not { } completed
+                    || string.IsNullOrWhiteSpace(execution.Verdict)) continue;
+                var level = step.StepId.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+                    || step.StepId == "post-deep-review" ? "aspect" : "grade";
                 var findings = execution.ReviewFindings ?? CountsFromVerdict(execution.Verdict);
                 target.Add(new ReviewObservation(
                     $"{jobId}:{record.Attempt}:{step.StepId}:{index}", jobId, level,
@@ -195,9 +184,13 @@ public sealed class ReviewObservationStore(
     internal static IEnumerable<ReviewLaterEvidence> InferLaterReviewMisses(
         IReadOnlyList<ReviewObservation> reviews)
     {
+        var byDelivery = reviews.Where(row => row.ResultSha is not null)
+            .GroupBy(row => (row.JobId, row.ResultSha))
+            .ToDictionary(group => group.Key, group => group.ToArray());
         foreach (var found in reviews.Where(row => row.Findings.Blocker > 0 && row.ResultSha is not null))
-        foreach (var earlier in reviews.Where(row => row.JobId == found.JobId
-                     && row.ResultSha == found.ResultSha && row.ReviewedAt < found.ReviewedAt
+        foreach (var earlier in byDelivery[(found.JobId, found.ResultSha)].Where(row =>
+                     row.ReviewedAt < found.ReviewedAt
+                     && string.Equals(row.Aspect, found.Aspect, StringComparison.OrdinalIgnoreCase)
                      && (row.ReviewRoundId is null || found.ReviewRoundId is null
                          || row.ReviewRoundId != found.ReviewRoundId)
                      && ReviewObservationPolicy.Approved(row)))

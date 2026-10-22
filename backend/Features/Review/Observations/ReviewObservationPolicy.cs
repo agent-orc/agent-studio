@@ -46,5 +46,5 @@ public static class ReviewObservationPolicy
 
     /// <summary>Keep full review after repeated measured misses; otherwise leave existing scope policy intact.</summary>
     public static bool RequireFullReview(IReadOnlyList<ReviewObservationAggregate> aggregates)
-        => aggregates.Any(row => row.MissEligibleApprovals >= 5 && row.Misses >= 2 && row.MissRate >= 0.2);
+        => aggregates.Any(row => row.MissEligibleApprovals >= 20 && row.Misses >= 3 && row.MissRate >= 0.2);
 }
