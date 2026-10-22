@@ -18,6 +18,12 @@ import { EnvironmentHealthService } from '../../environment-health/services/envi
 import type { EnvironmentHealthResponse } from '../../environment-health/models/environment-health.model';
 
 export interface DeployPage<T> { items: T[]; offset: number; limit: number; total: number }
+export interface ReleaseNotes {
+  releaseId: string;
+  version: string;
+  preview: boolean;
+  notes: { cardKey: string; text: string }[];
+}
 
 /**
  * A 404 without an `error` body: the route is not on this server. AGT-3201 and
@@ -63,6 +69,11 @@ export class ProjectDeployDataService {
 
   releases(projectName: string): Observable<DeployPanel<Release[]>> {
     return panel(this.http.get<Release[]>(`${deployRoot(projectName)}/releases`), 'Releases could not be loaded.', true);
+  }
+
+  releaseNotes(projectName: string, releaseId: string): Observable<DeployPanel<ReleaseNotes>> {
+    return panel(this.http.get<ReleaseNotes>(`${deployRoot(projectName)}/releases/${encodeURIComponent(releaseId)}/notes`),
+      'Release notes could not be loaded.', true);
   }
 
   releasePage(projectName: string, offset: number): Observable<DeployPanel<DeployPage<Release>>> {

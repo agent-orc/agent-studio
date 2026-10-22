@@ -4,13 +4,21 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrchestratorContextDigest } from '../../models/orchestrator.model';
 import { OrchestratorSideSheetComponent } from './orchestrator-side-sheet.component';
 import { OrchestratorChatWaitingComponent } from '../orchestrator-chat-waiting/orchestrator-chat-waiting.component';
 
 describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
-  beforeEach(() => sessionStorage.removeItem('atp.studio.orchestratorOpen.v1'));
+  beforeEach(() => {
+    sessionStorage.removeItem('atp.studio.orchestratorOpen.v1');
+    // Keep the waiting child's interval from issuing a read during verify().
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  });
+  afterEach(() => {
+    TestBed.resetTestingModule();
+    vi.useRealTimers();
+  });
 
   async function makeFixture() {
     await TestBed.configureTestingModule({

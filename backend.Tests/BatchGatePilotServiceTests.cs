@@ -3182,7 +3182,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     private WebApplicationFactory<Program> BuildFactory(
-        IReadOnlyDictionary<string, string?>? configuration = null)
+        IReadOnlyDictionary<string, string?>? configuration = null, Action<IServiceCollection>? testServices = null)
     {
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -3227,6 +3227,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
                 services.AddHostedService<RemoteReviewEvidenceProjectionWorker>();
                 services.AddSingleton<MonolithOrchestrationRecoveryService>();
             });
+            if (testServices is not null) builder.ConfigureTestServices(testServices);
         });
         factory.Services.GetRequiredService<BatchGatePilotService>().WaitForFlightsInTick = true;
         return factory;

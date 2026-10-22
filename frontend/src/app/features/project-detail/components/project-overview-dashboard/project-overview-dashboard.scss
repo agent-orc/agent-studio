@@ -223,6 +223,7 @@
 }
 
 .operator-dashboard__split > * { min-width: 0; }
+.operator-dashboard__split > .operator-dashboard__review { grid-column: 1 / -1; }
 .operator-dashboard__split > .operator-dashboard__wiki { grid-column: 1 / -1; }
 
 .operator-dashboard__wiki-columns {

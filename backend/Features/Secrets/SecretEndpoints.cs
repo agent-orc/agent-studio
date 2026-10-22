@@ -260,10 +260,7 @@ public static class SecretEndpoints
             var environments = context.RequestServices.GetService<ProjectEnvironmentService>();
             if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account)
                 return new Caller(SecretActor.ServiceAccount(account.AccountId), null, registry, access, environments);
-            var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal
-                        ?? security.AuthenticateSession(
-                            context.Request.Cookies[AccessSecurityStore.SessionCookieName]
-                            ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName], touch: false);
+            var human = AccessSecurityEndpoints.FindHuman(context, security, touch: false);
             if (human is not null) return new Caller(SecretActor.Human(human.User.Username), human.User, registry, access, environments);
             if (SecurityProfiles.IsLocal(configuration)) return new Caller(SecretActor.Human(LocalOperator), null, registry, null, environments);
             throw new CallerUnauthenticatedException();

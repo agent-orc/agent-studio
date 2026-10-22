@@ -307,6 +307,8 @@
         "src/app/features/task-detail/components/decision-card-panel/decision-card-panel.component.scss",
         "src/app/features/task-detail/components/decision-blocked-notice/decision-blocked-notice.component.scss",
         "src/app/features/board/components/task-card-decision-chips/task-card-decision-chips.component.scss",
+        "src/app/features/quota/components/task-card-quota-notice/task-card-quota-notice.scss",
+        "src/app/features/quota/components/workspace-quota-banner/workspace-quota-banner.scss",
         "src/app/features/task-detail/components/escalation-summary/_escalation-summary-actions.scss",
         "src/app/features/remote-hosts/components/deployment-checkpoints/deployment-checkpoints.scss",
         "src/app/features/task-detail/components/prompt-pane/pipeline-run-history/pipeline-run-history.component.scss",
@@ -318,6 +320,7 @@
         "src/app/features/task-detail/components/protocol-pane/run-timeline/review-attempt-history/review-attempt-history.component.scss",
         "src/app/features/task-detail/components/protocol-pane/previous-results-control/previous-results-control.component.scss",
         "src/app/features/test-evidence/components/test-evidence-status/test-evidence-status.component.scss",
+        "src/app/features/deployments/components/card-environment-badges/card-environment-badges.scss",
         "src/app/components/task-preview/task-preview.component.scss"
       ],
       "rules": {

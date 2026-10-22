@@ -144,8 +144,18 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                aiOperator.RecoverPending();
-                RecoverOnce();
+                // Each recovery step fails alone so a pending activation cannot
+                // prevent the canary's applying recovery pass from running.
+                try { aiOperator.RecoverPending(); }
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "orchestration-operator-recovery-pending");
+                }
+                try { RecoverOnce(); }
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "orchestration-activation-recovery-pending");
+                }
                 try { await store.RecoverApplyingAsync(stoppingToken, (item, exception) =>
                     logger.LogWarning(exception,
                         "orchestration-application-retry-pending run={RunId} task={TaskId}",
