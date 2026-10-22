@@ -24,6 +24,8 @@ services:
   frontend:
     image: ghcr.io/agent-orc/agent-studio-web:v${STUDIO_VERSION}
     restart: unless-stopped
+    environment:
+      STUDIO_DOMAIN: ${STUDIO_DOMAIN}
     volumes:
       - ./Caddyfile.frontend:/etc/caddy/Caddyfile:ro
     depends_on:
@@ -38,10 +40,11 @@ services:
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
     ports:
-      - '80:80'
-      - '443:443'
+      - '0.0.0.0:80:80'
+      - '0.0.0.0:443:443'
     volumes:
       - ${STUDIO_CADDYFILE:-./Caddyfile.public}:/etc/caddy/Caddyfile:ro
+      - ${STUDIO_DATA_DIR}/origin-pull:/etc/caddy/origin-pull:ro
       - ${STUDIO_DATA_DIR}/caddy-data:/data
       - ${STUDIO_DATA_DIR}/caddy-config:/config
     depends_on:

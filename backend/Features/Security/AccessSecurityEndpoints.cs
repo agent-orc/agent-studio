@@ -31,9 +31,17 @@ public static class AccessSecurityEndpoints
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken));
             }));
 
-        auth.MapPost("/login", (LoginRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
+        auth.MapPost("/login", (LoginRequest request, HttpContext context, AccessSecurityStore store,
+            IConfiguration configuration, NetworkedLoginAddressHealth addressHealth, ILogger<NetworkedLoginAddressHealth> logger) =>
             Execute(() =>
             {
+                if (SecurityProfiles.IsNetworked(configuration)
+                    && NetworkedLoginAddressHealth.IsInvalid(context.Connection.RemoteIpAddress, configuration))
+                {
+                    logger.LogError("login-client-address-invalid resolved={Address}", context.Connection.RemoteIpAddress);
+                    addressHealth.ReportInvalid();
+                    throw new SecurityOperationException(503, "login-client-address-invalid", "Login is temporarily unavailable.");
+                }
                 var key = ClientThrottleKey(context.Connection.RemoteIpAddress);
                 var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);

@@ -70,6 +70,7 @@ builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();
 builder.Services.AddSingleton<OrchestrationEngineReadiness>();
 builder.Services.AddHostedService<OrchestrationEngineReadinessService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
+builder.Services.AddSingleton<NetworkedLoginAddressHealth>();
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
