@@ -13,6 +13,7 @@ import {
   OnDestroy,
 } from '@angular/core';
 import { forkJoin } from 'rxjs';
+import { DeliveryLanesComponent } from './features/deployments';
 import { FormsModule } from '@angular/forms';
 import {
   BoardFiltersService, ActiveBoardFiltersComponent,
@@ -61,12 +62,11 @@ import {
 } from './features/orchestrator';
 import {
   DEFAULT_PROJECT_RAIL_KEY,
-  ProjectOverlaysComponent,
   ProjectOverlaysService,
-  ProjectRailKey,
+  type ProjectRailKey,
   ProjectUrlPreviewTabComponent,
   WorkbenchTabHostComponent,
-} from './features/project-detail';
+} from './features/project-detail/runtime';
 import {
   AutoReviewIndicatorComponent,
   StatusBarComponent,
@@ -94,9 +94,6 @@ import { VerboseDebugOverlayComponent } from './features/verbose-debug';
 import {
   StudioShellComponent,
   StudioTabActionsComponent,
-  ProjectHubViewComponent,
-  StudioDiffViewComponent,
-  StudioActivityViewComponent,
   ProjectHubUrlService,
   StudioTabStateService,
   StudioPanelStateService,
@@ -115,6 +112,8 @@ import {
   type TaskDetailRouteTab,
   type TaskInspectorRouteTab,
 } from './features/studio-shell';
+import { ProjectOverlaysComponent } from './features/project-detail/lazy';
+import { ProjectHubViewComponent, StudioDiffViewComponent, StudioActivityViewComponent } from './features/studio-shell/lazy';
 import { TaskService } from './services/task.service';
 import { ClientService } from './services/client.service';
 import { NotificationService } from './services/notification.service';
@@ -169,6 +168,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
 @Component({
   selector: 'app-root',
   imports: [
+    DeliveryLanesComponent,
     TaskColumnComponent,
     ScrollMemoryDirective,
     TaskDetailComponent,
@@ -352,7 +352,7 @@ export class App implements OnInit, OnDestroy {
    * keyboard guards work unchanged; the `<app-project-overlays />`
    * container owns the rendering.
    */
-  private readonly projectOverlays = inject(ProjectOverlaysService);
+  readonly projectOverlays = inject(ProjectOverlaysService);
   readonly orchFeedProject = this.projectOverlays.orchFeedProject;
   readonly projectShellName = this.projectOverlays.projectShellName;
   readonly projectShellRail = this.projectOverlays.projectShellRail;
@@ -561,6 +561,7 @@ export class App implements OnInit, OnDestroy {
   readonly laneGroups = computed<BoardLaneGroup[]>(
     () => buildLaneGroups(this.displayGrouped(), this.boardDrag.active()),
   );
+  readonly deliveryMode = signal(false);
   // Copilot removed: no CLI exposes the inline path/token config card, so the
   // error-dialog "Open CLI config" affordance is permanently disabled.
   readonly selectedJobUsesCopilot = computed(() => false);
@@ -1151,6 +1152,11 @@ export class App implements OnInit, OnDestroy {
       this.studioTabState.open({ kind: 'task', taskKey: job.taskKey });
     }
     this.jobSelection.openDetailAfterPaint(job);
+  }
+  openDeliveryCard(key: string): void {
+    const card = this.jobService.jobs().find(job =>
+      (job.displayKey ?? job.taskKey).toLowerCase() === key.toLowerCase());
+    if (card) this.openDetail(card);
   }
   closeDetail() {
     this.jobSelection.closeDetail();

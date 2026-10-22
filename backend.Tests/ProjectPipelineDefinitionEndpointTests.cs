@@ -170,6 +170,33 @@ public sealed class ProjectPipelineDefinitionEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Validate_accepts_schema_two_target_without_legacy_declarations()
+    {
+        Directory.Delete(Path.Combine(Repository, "docs", "deployments", "environments"), true);
+        var yaml = SchemaOne.Replace("schemaVersion: 1", "schemaVersion: 2", StringComparison.Ordinal) + "\n" + """
+            project:
+              id: website
+            artifacts:
+              - name: site
+                type: static
+                path: dist
+            deploy:
+              - step: static-site
+                artifact: site
+                target: other-vm
+                directory: /srv/www/site
+                healthUrl: https://example.test/
+                healthTimeoutSeconds: 60
+            """;
+
+        using var response = await _client!.PostAsJsonAsync("/api/projects/Website/pipeline-definition/validate", new { yaml });
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(body.RootElement.GetProperty("valid").GetBoolean(), body.RootElement.GetProperty("issues").ToString());
+    }
+
+    [Fact]
     public void Only_the_confirm_route_is_classified_for_the_public_demo_lock()
     {
         var classified = ((IEndpointRouteBuilder)_app!).DataSources.SelectMany(source => source.Endpoints)

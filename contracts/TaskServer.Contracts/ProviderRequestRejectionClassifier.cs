@@ -30,6 +30,13 @@ public static partial class ProviderRequestRejectionClassifier
         return false;
     }
 
+    /// <summary>A credential can reject one model while the provider login stays healthy.</summary>
+    public static bool IsModelUnavailable(ProviderRequestRejection rejection, string? model)
+        => !string.IsNullOrWhiteSpace(model)
+           && (string.Equals(rejection.Parameter, "model", StringComparison.OrdinalIgnoreCase)
+               || rejection.Message.Contains(model, StringComparison.OrdinalIgnoreCase))
+           && ModelOrFeatureUnavailableRegex().IsMatch(rejection.Message);
+
     private static bool TryClassifyCandidate(string providerTerminalEvent, out ProviderRequestRejection rejection)
     {
         rejection = null!;
