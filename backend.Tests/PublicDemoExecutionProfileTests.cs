@@ -204,7 +204,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // every profile.
         // AGT-3239 added the operator candidate verification record on PostStep:
         // it appends immutable integrated-verified evidence after a passed suite.
-        Assert.Equal(126, routes.Count);
+        Assert.Equal(127, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
