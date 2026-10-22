@@ -693,11 +693,12 @@ public sealed class ProjectEnvironmentService
                 var project = Uri.UnescapeDataString(Path.GetFileNameWithoutExtension(file));
                 var state = Load(project);
                 var declarations = Declarations(project);
+                // Preview slots use the job lifecycle; removal reports release them explicitly.
                 if (declarations is not null)
                     foreach (var environmentId in _quota.ProjectEnvironmentIds(project))
                         if (environmentId.StartsWith("env:", StringComparison.Ordinal)
-                            && declarations.All(item => SlotKey(item.Id) != environmentId)
-                            && !PreviewIsRunning(state, environmentId[4..]))
+                            && !environmentId.StartsWith("env:preview-", StringComparison.Ordinal)
+                            && declarations.All(item => SlotKey(item.Id) != environmentId))
                             _quota.SetProjectEnvironment(project, environmentId, false);
                 // A report settles its reservation (it clears ReservedSlot), so only a claim that
                 // expired, was lost or was aborted without a report still holds one here.
@@ -713,11 +714,6 @@ public sealed class ProjectEnvironmentService
             }
         }
     }
-
-    private static bool PreviewIsRunning(State state, string environmentId) =>
-        state.Jobs.LastOrDefault(job => job.EnvironmentId == environmentId
-            && (job.Kind is "preview" or "preview-remove") && job.Status == "healthy")?.Kind == "preview"
-        || state.Jobs.Any(job => job.EnvironmentId == environmentId && job.ReservedSlot);
 
     private void EnsurePreviewHostIsNotProduction(string hostId)
     {
