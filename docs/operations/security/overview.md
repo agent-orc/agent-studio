@@ -59,13 +59,14 @@ that is already allowed to edit that project's checkout.
 - The first successful HTTPS bootstrap creates the sole initial owner and then
   closes permanently.
 - Human passwords are stored as versioned salted PBKDF2-SHA512 hashes with
-  600,000 iterations. Login failures are limited per client key (5 failures,
-  then a 15-minute lockout) and per existing username across client keys
-  (20 failures per 15 minutes). The client-key table holds at most 4,096 keys;
-  when full, a failed login from a new key returns 429 and still counts against
-  the existing username's budget. The settings are under
-  `Security:LoginThrottle`. Password resets create a temporary password,
-  revoke existing sessions, and force a change at the next login.
+  600,000 iterations. Login failures are limited per client (10 failures,
+  then a 15-minute lockout) and per username across clients (20 failures per
+  15 minutes, then a short per-client delay). Full tracking tables keep their
+  active budgets and fall back to fixed-size overflow counters. The settings
+  are under `Security:LoginThrottle`; the
+  [Studio website guide](../setup/studio-website.md#login-protection-behind-cloudflare)
+  describes them. Password resets create a temporary password, revoke existing
+  sessions, and force a change at the next login.
 - Human sessions use a random opaque token stored only as a SHA-256 hash on the
   server. The cookie is `Secure`, `HttpOnly`, `SameSite=Strict`, host-only, and
   has idle plus absolute expiry. Browser mutations require the matching CSRF
