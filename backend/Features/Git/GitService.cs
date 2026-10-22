@@ -5976,7 +5976,6 @@ public partial class GitService
             "rerere.enabled=false",
             "merge",
             "--no-ff",
-            "--no-commit",
             "--no-edit",
             sourceRef);
         IReadOnlyList<string> directConflicts = directMergeCode == 0 ? [] : ListUnmergedFiles(repoRoot);
@@ -5996,13 +5995,13 @@ public partial class GitService
                     return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
                         error: $"Could not retain integration report paths: {restoreError.Trim()}");
                 }
-            }
-            var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit");
-            if (commitCode != 0)
-            {
-                RunGitArgs(repoRoot, "merge", "--abort");
-                return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
-                    error: $"Could not commit the delivery merge: {commitError.Trim()}");
+                var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit");
+                if (commitCode != 0)
+                {
+                    RunGitArgs(repoRoot, "merge", "--abort");
+                    return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
+                        error: $"Could not commit the delivery merge: {commitError.Trim()}");
+                }
             }
             var directMergedSha = ReadHeadShaAt(repoRoot);
             _logger.LogInformation(
