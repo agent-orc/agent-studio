@@ -544,8 +544,8 @@ public sealed partial class BatchGatePilotServiceTests
 
     /// <summary>
     /// The card leaves Auto Review by a move this decision did not write (a
-    /// person, or any other writer) while the engine decides; the applier
-    /// refuses the decision with a source-state mismatch on purpose. That is no
+    /// person, or any other writer) outside the card gate while the engine
+    /// decides; the applier supersedes the source-state mismatch. That is no
     /// applier defect: the decision is not counted, and the next engine
     /// decision takes its place.
     /// </summary>
@@ -564,16 +564,19 @@ public sealed partial class BatchGatePilotServiceTests
         var canary = ActivatorUtilities.CreateInstance<EngineApplierCanaryService>(factory.Services);
         var moved = SettleDeferredReview(factory, "DOC-MOVED", "docs/moved.md");
         var (run, claim) = PrepareReviewDecision(orchestration, moved);
-        var manual = await factory.Services.GetRequiredService<TaskTransitionService>().MoveAsync(
-            moved.Member.Key, lane, _watchPath, CancellationToken.None, cause: actor,
-            suppressProductExecution: true, expectedSourceState: TaskStates.AutoReview, transitionCause: cause);
+        // The transition service now serializes normal moves with the
+        // occurrence and cancels it first. Drive the state machine directly to
+        // cover an external writer that did not take that card gate.
+        var manual = factory.Services.GetRequiredService<TaskStateMachine>().MoveJob(
+            moved.Member.Key, lane, _watchPath, cause: actor,
+            expectedSourceState: TaskStates.AutoReview, transitionCause: cause);
         Assert.Equal(MoveJobStatus.Success, manual.Status);
 
-        var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => orchestration.CompleteAsync(
-            run.RunId, ReviewCompletion(claim, moved, TransitionAction.HumanReview), CancellationToken.None));
-        Assert.Equal("orchestration-source-state-mismatch", refused.Message);
-        // The recovery retry refuses it again.
-        await Assert.ThrowsAsync<AggregateException>(() => orchestration.RecoverApplyingAsync(CancellationToken.None));
+        var refused = await orchestration.CompleteAsync(run.RunId,
+            ReviewCompletion(claim, moved, TransitionAction.HumanReview), CancellationToken.None);
+        Assert.Equal("cancelled", refused.Status);
+        Assert.StartsWith("superseded: source-state-mismatch", orchestration.GetOccurrence(run.RunId)!.CancellationReason);
+        await orchestration.RecoverApplyingAsync(CancellationToken.None);
         _clock = _clock.Add(rollout.ApplyDeadline);
         Assert.Equal(0, canary.CheckOnce());
 
@@ -635,8 +638,8 @@ public sealed partial class BatchGatePilotServiceTests
     /// <summary>
     /// The review of 20.10.2026: an accepted review awaits the serial
     /// per-project integration, and every delivery ahead runs its gate. While
-    /// the integration lane shows the delivery enqueued or dequeued without a
-    /// terminal event, the decision waits; still in flight at the apply
+    /// the integration lane shows the delivery dequeued and ready to publish
+    /// without a published row, the decision waits; still in flight at the apply
     /// deadline, it does not count instead of rolling the profile back.
     /// </summary>
     [Fact]
@@ -657,11 +660,15 @@ public sealed partial class BatchGatePilotServiceTests
         using var stop = new CancellationTokenSource();
         var deciding = journal.CompleteAsync(run.RunId,
             ReviewCompletion(claim, accepted, TransitionAction.AcceptAndIntegrate), stop.Token);
-        // The coordinator's lane rows of the delivery: queued, then running its gate.
+        // The merge and gate finished, but the asynchronous push has not.
         var folder = CardFolder(accepted.Member.Key);
         IntegrationLaneEvents.Append(folder, ProjectName, accepted.Member.Key, "enqueued", sequence: 7,
             atUtc: _clock);
         IntegrationLaneEvents.Append(folder, ProjectName, accepted.Member.Key, "dequeued", sequence: 7,
+            atUtc: _clock);
+        IntegrationLaneEvents.Append(folder, ProjectName, accepted.Member.Key, "ready-to-publish", sequence: 7,
+            atUtc: _clock);
+        IntegrationLaneEvents.Append(folder, ProjectName, accepted.Member.Key, "publication-queued", sequence: 7,
             atUtc: _clock);
 
         Assert.Equal(0, canary.CheckOnce());

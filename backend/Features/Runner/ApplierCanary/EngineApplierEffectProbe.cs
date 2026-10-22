@@ -225,9 +225,13 @@ public sealed class EngineApplierEffectProbe(
             .Where(entry => entry is not null)
             .MaxBy(entry => entry!.Sequence);
 
-    /// <summary>The coordinator's terminal lane events, the batch gate's publication and per-task handoff among them.</summary>
+    /// <summary>
+    /// The integration is terminal only after publication or a handoff. A
+    /// ready-to-publish merge still owes the asynchronous push before a
+    /// guarded move to Human Review can land.
+    /// </summary>
     private static bool IntegrationEnded(string kind)
-        => kind is "ready-to-publish" or "ejected" or "published" or "handed-off";
+        => kind is "ejected" or "published" or "handed-off";
 
     /// <summary>The applier's own predicate: the round row of this review's integration.</summary>
     private TimelineEvent? AgentRound(MonolithOrchestrationOccurrence occurrence, TaskInfo task)

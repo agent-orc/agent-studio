@@ -567,9 +567,10 @@ The canary rule:
 - Some checks wait on something that is no applier defect (`waitingOn`): an
   integration in flight (the card's integration lane shows the delivery
   `enqueued`, `agent-round-re-entry` or `dequeued` since the observation, and
-  no `ready-to-publish`, `ejected`, `published` or `handed-off` row; the
-  per-project queue is serial and
-  every delivery runs its gate) and a card missing from the scanner snapshot.
+  no `ejected`, `published` or `handed-off` row; `ready-to-publish` and
+  `publication-queued` still await the push required by the guarded lane move;
+  the per-project queue is serial and every delivery runs its gate) and a card
+  missing from the scanner snapshot.
   They wait, and at the apply deadline they are `not-counted`, never missing.
 - Restart safety: after a start the canary judges nothing until the recovery
   service finished one pass over the applying occurrences
