@@ -404,6 +404,7 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
                 }));
             builder.ConfigureTestServices(services =>
             {
+                services.RemoveAll<IHostedService>();
                 services.RemoveAll<TimeProvider>();
                 services.AddSingleton<TimeProvider>(clock);
             });
@@ -418,8 +419,8 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
             store.CancelUnactivated(prepared.RunId, "review-settlement-rejected");
         clock.Advance(TimeSpan.FromSeconds(31));
 
-        factory.Services.GetServices<IHostedService>()
-            .OfType<MonolithOrchestrationRecoveryService>().Single().RecoverOnce();
+        ActivatorUtilities.CreateInstance<MonolithOrchestrationRecoveryService>(factory.Services)
+            .RecoverOnce();
 
         Assert.Equal("cancelled", store.Get(prepared.RunId)!.Status);
         Assert.Null(EngineDecisionWaitMarker.Read(cardFolder));

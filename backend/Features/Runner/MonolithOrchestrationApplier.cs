@@ -32,8 +32,11 @@ public sealed class MonolithOrchestrationApplier(
 
     public void RecordSuperseded(MonolithOrchestrationOccurrence occurrence, string? observedState)
     {
-        var task = scanner.FindPublishedJob(occurrence.Run.TaskId);
-        if (task?.ProjectName != occurrence.Run.ProjectId) return;
+        var watchPath = scanner.GetWatchPaths().FirstOrDefault(item =>
+            item.Name == occurrence.Run.ProjectId)?.Path;
+        var task = watchPath is null ? null
+            : scanner.FindPublishedJob(occurrence.Run.TaskId, watchPath);
+        if (task is null) return;
         EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
         timeline.Append(task.FolderPath, new TimelineEvent
         {

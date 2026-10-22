@@ -75,24 +75,33 @@ public sealed class MonolithOrchestrationStore
         => item.Run.CurrentStage is not (OrchestrationStage.BatchPlan
             or OrchestrationStage.OperatorDecision or OrchestrationStage.OperatorSweep);
 
+    /// <summary>Run a recovery check only when the card gate is free; a busy card is revisited next pass.</summary>
+    internal bool TryWithCardGate(string projectId, string taskId, Action check)
+    {
+        var gate = CardGate(projectId, taskId);
+        if (!gate.Wait(0)) return false;
+        try
+        {
+            check();
+            return true;
+        }
+        finally { gate.Release(); }
+    }
+
     /// <summary>Recheck a lane decision under the same gate used by card moves and completion.</summary>
-    public async Task SupersedeStaleLaneDecisionAsync(string runId,
-        Func<string?> observeState, CancellationToken ct = default)
+    internal void TrySupersedeStaleLaneDecision(string runId, Func<string?> observeState)
     {
         var occurrence = GetOccurrence(runId);
         if (occurrence is null || !IsLaneDecision(occurrence)) return;
-        var gate = CardGate(occurrence.Run.ProjectId, occurrence.Run.TaskId);
-        await gate.WaitAsync(ct);
-        try
+        TryWithCardGate(occurrence.Run.ProjectId, occurrence.Run.TaskId, () =>
         {
-            occurrence = GetOccurrence(runId);
-            if (occurrence is null || !IsLaneDecision(occurrence)
-                || occurrence.Run.Status is not ("pending" or "leased")) return;
+            var current = GetOccurrence(runId);
+            if (current is null || !IsLaneDecision(current)
+                || current.Run.Status is not ("pending" or "leased")) return;
             var observedState = observeState();
-            if (observedState != occurrence.ExpectedSourceState)
+            if (observedState != current.ExpectedSourceState)
                 Supersede(runId, observedState, includeApplying: false);
-        }
-        finally { gate.Release(); }
+        });
     }
 
     private static bool IsSuperseded(MonolithOrchestrationOccurrence item)
