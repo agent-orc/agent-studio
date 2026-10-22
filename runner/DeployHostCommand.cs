@@ -146,7 +146,15 @@ public static class DeployHostCommand
                 else if (job.RetryStep != "health") throw new InvalidOperationException("Unknown retry step.");
                 evidence = "health-http-failed";
                 var healthUrl = job.SshSteps.Length > 0 ? null : job.HealthUrl;
-                healthy = healthUrl is null || await (checkHealth ?? CheckHealth)(healthUrl, lease.Token);
+                if (healthUrl is null) healthy = true;
+                else
+                {
+                    using var healthLimit = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
+                    using var timer = (clock ?? TimeProvider.System).CreateTimer(_ => healthLimit.Cancel(), null,
+                        TimeSpan.FromSeconds(60), Timeout.InfiniteTimeSpan);
+                    try { healthy = await (checkHealth ?? CheckHealth)(healthUrl, healthLimit.Token); }
+                    catch (OperationCanceledException) when (!lease.IsCancellationRequested) { healthy = false; }
+                }
                 if (healthy) evidence = "health-ok";
             }
         }
@@ -343,7 +351,7 @@ public static class DeployHostCommand
 
     private static async Task<bool> CheckHealth(string url, CancellationToken ct)
     {
-        using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         while (!ct.IsCancellationRequested)
         {
             try
@@ -355,6 +363,10 @@ public static class DeployHostCommand
             {
                 await Task.Delay(TimeSpan.FromSeconds(2), ct);
                 continue;
+            }
+            catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // One request timed out; the enclosing health deadline still controls the retry window.
             }
             await Task.Delay(TimeSpan.FromSeconds(2), ct);
         }

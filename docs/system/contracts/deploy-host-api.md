@@ -57,6 +57,9 @@ its token. A schema 1 host can report after five minutes without renewal only
 while its original token has not been reclaimed and the job has not reached
 `host-lost`. The host polls again
 after `200 null`; it must not treat that response as a failure.
+Legacy template health checks stop after 60 seconds and report a failed health
+result if the URL never becomes healthy. Each HTTP probe has a 10-second
+timeout, so a hung response cannot hold the claim indefinitely.
 
 For each SSH step, the host logs against its exact ordered name
 `deploy[index]:kind`, where `index` is zero-based. A log message must be
