@@ -9,7 +9,16 @@ public sealed record OperationalStallSnapshot(
     IReadOnlyList<GateStallFact> Gates,
     IReadOnlyList<LaneStallFact> Lanes,
     IReadOnlyList<DeployStallFact> Deployments,
-    IReadOnlyList<HostHeartbeatFact>? Heartbeats = null);
+    IReadOnlyList<HostHeartbeatFact>? Heartbeats = null,
+    IReadOnlyList<LegacyModelHostFact>? LegacyModelHosts = null,
+    FleetClaimStallFact? FleetClaims = null);
+
+public sealed record LegacyModelHostFact(string Host, string Role, string RunnerId,
+    DateTime SinceUtc);
+public sealed record FleetClaimRefusalFact(string Reason, DateTime SinceUtc, string Card);
+public sealed record FleetClaimStallFact(IReadOnlyList<string> PendingCards,
+    DateTime OldestPendingUtc, DateTime? LastClaimUtc,
+    IReadOnlyList<FleetClaimRefusalFact> Refusals, bool HostsPolling);
 
 public sealed record HostHeartbeatFact(string Host, string Role, DateTime LastSeenUtc,
     IReadOnlyList<string> WaitingCards, bool Stopped = false);
@@ -35,7 +44,8 @@ public sealed record OperationalStallThresholds(
     double HostTargetPercent = 85, int HostOverloadMinutes = 10,
     double MemoryUsedPercent = 90, double SwapBytesPerSecond = 65536,
     int IdleWaitMinutes = 15, int GatePendingHours = 2,
-    int LaneBudgetHours = 24, int HostHeartbeatMinutes = 10);
+    int LaneBudgetHours = 24, int HostHeartbeatMinutes = 10,
+    int FleetClaimStallMinutes = 10);
 
 /// <summary>Pure policy. The collector supplies facts and the sweep supplies the clock.</summary>
 public static class OperationalStallDetector
@@ -53,6 +63,40 @@ public static class OperationalStallDetector
                     + (heartbeat.Stopped ? "is stopped." : "stopped reporting."),
                 heartbeat.WaitingCards.Count, "Check the host or container and restore its heartbeat.",
                 $"lastSeenUtc={heartbeat.LastSeenUtc:O}", cards: heartbeat.WaitingCards);
+        }
+        foreach (var legacy in facts.LegacyModelHosts ?? [])
+            AddScoped("host-model-upgrade-required", $"host:{legacy.Host}:{legacy.Role}", "warning",
+                legacy.SinceUtc,
+                $"{legacy.Host} ({legacy.Role}): upgrade required for model acceptance.",
+                0, "Upgrade agent-host on this host and verify model acceptance is advertised.",
+                $"runner={legacy.RunnerId}");
+        if (facts.FleetClaims is { } fleet && fleet.HostsPolling
+            && fleet.PendingCards.Count > 0)
+        {
+            var since = fleet.LastClaimUtc is { } last && last > fleet.OldestPendingUtc
+                ? last : fleet.OldestPendingUtc;
+            // When a refusal exists, do not date the alarm before that first
+            // claim attempt, even for an older pending card.
+            if (fleet.Refusals.Count > 0)
+            {
+                var firstRefusal = fleet.Refusals.Min(x => x.SinceUtc);
+                if (firstRefusal > since) since = firstRefusal;
+            }
+            if (nowUtc - since >= TimeSpan.FromMinutes(thresholds.FleetClaimStallMinutes))
+            {
+                var dominant = fleet.Refusals.GroupBy(x => x.Reason, StringComparer.Ordinal)
+                    .OrderByDescending(x => x.Count()).ThenBy(x => x.Key, StringComparer.Ordinal)
+                    .FirstOrDefault();
+                var reason = dominant?.Key ?? "no refusal recorded";
+                AddScoped("fleet-claim-stall", "fleet:coding-review", "critical", since,
+                    $"No coding or review claim succeeded while work waits and hosts poll. Dominant refusal: {reason}.",
+                    fleet.PendingCards.Count,
+                    dominant is null
+                        ? "Inspect claim eligibility and verify a successful claim."
+                        : "Repair the dominant claim refusal and verify a successful claim.", null,
+                    [("dominantReason", reason), ("refusalCount", dominant?.Count() ?? 0)],
+                    cards: fleet.PendingCards);
+            }
         }
         foreach (var host in facts.Hosts)
         {
@@ -132,7 +176,8 @@ public static class OperationalStallDetector
             if (excerpt is not null) details["logExcerpt"] = excerpt.Length <= 500 ? excerpt : excerpt[..500];
             result.Add(new WatcherSignalObservation
             {
-                DetectorClass = kind is "host-offline" or "host-overload" or "memory-pressure" or "idle-capacity" or "lane-stall"
+                DetectorClass = kind is "host-offline" or "host-overload" or "memory-pressure"
+                    or "idle-capacity" or "lane-stall" or "fleet-claim-stall"
                     ? WatcherDetectorClasses.Silence : WatcherDetectorClasses.Hygiene,
                 Project = project,
                 FingerprintKey = $"operational:{kind}:{subject}",

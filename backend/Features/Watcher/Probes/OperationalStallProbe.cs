@@ -137,6 +137,48 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
                 group.Min(x => x.Attempt.CreatedAt), group.Select(x => x.Attempt.TaskKey).Distinct().ToArray(),
                 $"unclaimable-plan-requirements: {group.Key.Reason}"));
         var claims = cardClaims.Concat(reviewClaims).ToArray();
+        var legacyModelHosts = allReviewHosts
+            .Where(host => host.Status == "active"
+                && nowUtc - host.LastSeenAt <= TimeSpan.FromMinutes(thresholds.HostHeartbeatMinutes)
+                && host.Capabilities.Any(capability => capability.Key is
+                    Contract.CapabilityProtocol.CodingExecutor or Contract.CapabilityProtocol.ReviewExecutor)
+                && !host.Capabilities.Any(capability => capability.Key.StartsWith(
+                    "model-acceptance:", StringComparison.Ordinal)))
+            .Select(host => new LegacyModelHostFact(host.HostId,
+                host.Capabilities.Any(capability => capability.Key == Contract.CapabilityProtocol.CodingExecutor)
+                    ? "coding" : "review", host.RunnerId, host.RegisteredAt))
+            .ToArray();
+        var ready = jobs.Where(job => job.State == TaskStates.Ready).ToArray();
+        var pendingCards = ready.Select(job => job.Id)
+            .Concat(pendingReviews.Select(review => review.TaskKey))
+            .Distinct(StringComparer.Ordinal).ToArray();
+        var claimRefusals = ready.Where(job => job.RemoteDispatchRejection is not null)
+            .Select(job => new FleetClaimRefusalFact(
+                job.RemoteDispatchRejection!.Code,
+                job.RemoteDispatchRejection.RejectedAtUtc, job.Id))
+            .Concat(pendingReviews.Select(attempt => (Attempt: attempt,
+                Refusal: _unclaimable.Latest(attempt.AttemptId)))
+                .Where(item => item.Refusal is not null)
+                .Select(item => new FleetClaimRefusalFact(
+                    item.Refusal!.MissingCapabilities.FirstOrDefault() ?? "review-claim-refused",
+                    item.Refusal.ObservedAt, item.Attempt.TaskKey)))
+            .ToArray();
+        var lastCodingClaim = clients.Where(client => client.Kind != ClientIdentityKind.Retired)
+            .Select(client => client.RunnerLastClaimAt?.ToUniversalTime()).Max();
+        var lastReviewClaim = _attempts.ReadReviewClaimActivity().LastClaimAt;
+        var lastClaim = new[] { lastCodingClaim, lastReviewClaim }.OfType<DateTime>()
+            .DefaultIfEmpty().Max();
+        var fleetClaims = pendingCards.Length == 0 ? null : new FleetClaimStallFact(
+            pendingCards,
+            ready.Select(job => job.EnteredLaneAt)
+                .Concat(pendingReviews.Select(review => review.CreatedAt))
+                .DefaultIfEmpty(nowUtc).Min(),
+            lastClaim == default ? null : lastClaim,
+            claimRefusals,
+            clients.Any(client => client.LastSeenAt is { } seen
+                && nowUtc - seen <= TimeSpan.FromMinutes(thresholds.HostHeartbeatMinutes))
+                || allReviewHosts.Any(host => nowUtc - host.LastSeenAt
+                    <= TimeSpan.FromMinutes(thresholds.HostHeartbeatMinutes)));
         var cardProviders = jobs.Where(x => (x.State is TaskStates.Ready or TaskStates.Progress or TaskStates.AutoReview)
                 && x.RemoteClaimFailure is { } failure
                 && (failure.Reason.Contains("CredentialInvalid", StringComparison.OrdinalIgnoreCase)
@@ -189,7 +231,8 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
                 x.Release?.Version, x.LastSeenAt, x.Reason)).ToArray();
 
         return OperationalStallDetector.Detect(new OperationalStallSnapshot(hostFacts, capacity,
-            claims, providers, gateFacts, lanes, deployments, heartbeats), thresholds, nowUtc);
+            claims, providers, gateFacts, lanes, deployments, heartbeats,
+            legacyModelHosts, fleetClaims), thresholds, nowUtc);
     }
 
     private static double? MemoryPercent(HostTelemetrySample sample) => sample.MemoryTotalBytes is > 0

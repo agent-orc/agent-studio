@@ -564,6 +564,7 @@ public static class V1ReviewPlaneEndpoints
             // library plan is immutable after sealing; model changes require
             // a pending replan or a new eligible attempt.
             string? quotaDeferredReason;
+            string? hostCapabilityDeferredCode;
             if (subjectTask is not null
                 && !subject.Plan.Commands.Any(command => command.LibraryStep is not null))
                 subject = ApplyQuotaFallbackToAspects(
@@ -571,13 +572,22 @@ public static class V1ReviewPlaneEndpoints
                     subjectTask,
                     quotaAdmission,
                     quotaAdmissionRecorder,
-                    (provider, model) => registry.AcceptsModel(
+                    (provider, model) => registry.ModelAdmission(
                         runnerId, request.InstanceId, provider, model),
-                    out quotaDeferredReason);
+                    runnerId,
+                    out quotaDeferredReason,
+                    out hostCapabilityDeferredCode);
             else
+            {
                 quotaDeferredReason = null;
+                hostCapabilityDeferredCode = null;
+            }
             if (!string.IsNullOrWhiteSpace(quotaDeferredReason))
             {
+                unclaimableLog.Record(runnerId,
+                [new Contract.ReviewUnclaimableAttemptDto(
+                    review.AttemptId, review.TaskKey, review.CreatedAt,
+                    [quotaDeferredReason])]);
                 if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId))
                 {
                     return Results.Conflict(new Contract.ApiError(
@@ -585,7 +595,7 @@ public static class V1ReviewPlaneEndpoints
                         "Review quota admission deferred the claim, but its lease could not be relinquished."));
                 }
                 return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
-                    Contract.ReviewClaimEmptyReasons.QuotaDeferred,
+                    hostCapabilityDeferredCode ?? Contract.ReviewClaimEmptyReasons.QuotaDeferred,
                     quotaDeferredReason));
             }
             var lease = ToLease(authority, review);
@@ -2479,11 +2489,14 @@ public static class V1ReviewPlaneEndpoints
         TaskInfo task,
         QuotaAdmissionService quotaAdmission,
         QuotaAdmissionRecorder recorder,
-        Func<string, string?, bool> modelAccepted,
-        out string? deferredReason)
+        Func<string, string?, Contract.ModelAcceptanceAdmission> modelAdmission,
+        string claimingHost,
+        out string? deferredReason,
+        out string? hostCapabilityDeferredCode)
     {
         var switched = false;
         string? deferred = null;
+        string? capabilityDeferred = null;
         QuotaAdmissionPlan? lastSwitch = null;
         string? lastPrimaryCli = null;
         string? lastPrimaryModel = null;
@@ -2497,11 +2510,27 @@ public static class V1ReviewPlaneEndpoints
                 task.ProjectName,
                 OccupiedSlots: 0,
                 ExecutionPath: "remote-review-claim",
-                ModelAccepted: modelAccepted));
-            recorder.EmitAdmissionDecision(task, plan, source: "review-claim");
+                ModelAccepted: (provider, model) => modelAdmission(provider, model)
+                    is Contract.ModelAcceptanceAdmission.Accepted or Contract.ModelAcceptanceAdmission.Legacy,
+                ClaimingHost: claimingHost,
+                FallbackModelAccepted: (provider, model) => modelAdmission(provider, model)
+                    == Contract.ModelAcceptanceAdmission.Accepted));
+            if (plan.Outcome != QuotaAdmissionOutcome.HostCapabilityMissing)
+                recorder.EmitAdmissionDecision(task, plan, source: "review-claim");
             if (!plan.ShouldLaunch)
             {
-                deferred ??= plan.Reason;
+                if (plan.Outcome == QuotaAdmissionOutcome.HostCapabilityMissing)
+                {
+                    var modelDecision = modelAdmission(plan.CliType, plan.Model);
+                    capabilityDeferred = modelDecision == Contract.ModelAcceptanceAdmission.Unavailable
+                        ? Contract.ReviewClaimEmptyReasons.HostModelUnavailable
+                        : Contract.ReviewClaimEmptyReasons.HostCapabilityMissing;
+                    deferred ??= Contract.ModelAcceptanceAdmissionPolicy.Refusal(
+                        claimingHost,
+                        Contract.CapabilityProtocol.ModelAcceptance(plan.CliType, plan.Model!),
+                        modelDecision);
+                }
+                else deferred ??= plan.Reason;
                 return command;
             }
             if (!plan.IsFallback) return command;
@@ -2530,6 +2559,7 @@ public static class V1ReviewPlaneEndpoints
             };
         }).ToList();
         deferredReason = deferred;
+        hostCapabilityDeferredCode = capabilityDeferred;
 
         if (!string.IsNullOrWhiteSpace(deferredReason))
         {
@@ -3443,7 +3473,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     now,
                     now,
                     request.Release,
-                    codingExecutor && request.RunTimeoutSeconds > 0 ? request.RunTimeoutSeconds : null),
+                    codingExecutor && request.RunTimeoutSeconds > 0 ? request.RunTimeoutSeconds : null,
+                    now),
                 (_, existing) =>
                 {
                     var existingReview =
@@ -3476,6 +3507,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                         Capabilities = capabilities.ToHashSet(StringComparer.Ordinal),
                         RoleMaxParallelism = request.BootstrapMaxParallelism,
                         LastSeenAt = now,
+                        InstanceStartedAt = string.Equals(existing.InstanceId, request.InstanceId, StringComparison.Ordinal)
+                            ? existing.InstanceStartedAt : now,
                         RunTimeoutSeconds = codingExecutor && request.RunTimeoutSeconds > 0
                             ? request.RunTimeoutSeconds : null,
                         // A heartbeat-style re-registration from the same daemon
@@ -3719,7 +3752,10 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 request.InstanceId,
                 request.Generation,
                 capabilities,
-                request.Telemetry);
+                request.Telemetry,
+                (existing is not null && existing.InstanceId == request.InstanceId
+                    && existing.ModelAcceptanceAdvertised)
+                || capabilities.Any(item => item.Key.StartsWith("model-acceptance:", StringComparison.Ordinal)));
             // A generic advertisement is not a recovery verdict. Provider auth
             // is the deliberate exception: an explicit successful status probe
             // is stronger evidence than the earlier run failure and clears only
@@ -3788,7 +3824,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     0,
                     activeSlots,
                     TaskServerConnectionStatus: "connected",
-                    TaskServerConnectionObservedAt: now));
+                    TaskServerConnectionObservedAt: now),
+                existing?.ModelAcceptanceAdvertised ?? false);
         }
     }
 
@@ -4330,28 +4367,33 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         }
     }
 
-    /// <summary>Only a fresh, credentialed host probe admits a quota fallback model.</summary>
-    public bool AcceptsModel(string runnerId, string? instanceId, string cliType, string? model)
+    public Contract.ModelAcceptanceAdmission ModelAdmission(
+        string runnerId, string? instanceId, string cliType, string? model)
     {
-        // The provider-auth real request already proves the CLI's implicit
-        // default route. Model acceptance applies to named model pins.
-        if (string.IsNullOrWhiteSpace(model)) return true;
+        if (string.IsNullOrWhiteSpace(model)) return Contract.ModelAcceptanceAdmission.Accepted;
         var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
         lock (_gate)
         {
-            if (_rejectedModels.ContainsKey($"{runnerId}|{key}")) return false;
             if (string.IsNullOrWhiteSpace(instanceId)
                 || !_registrations.TryGetValue(runnerId, out var registration)
-                || !string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal)
-                || !_capabilityStates.TryGetValue(runnerId, out var state)
-                || !string.Equals(state.InstanceId, instanceId, StringComparison.Ordinal))
-                return false;
-            return state.Capabilities.Any(item =>
-                string.Equals(item.Key, key, StringComparison.Ordinal)
-                && item.FreshUntil > _time.GetUtcNow().UtcDateTime
-                && string.Equals(item.AdvertisedStatus, "ready", StringComparison.Ordinal));
+                || !string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal))
+                return Contract.ModelAcceptanceAdmission.Refused;
+            _capabilityStates.TryGetValue(runnerId, out var state);
+            var capabilities = state?.InstanceId == instanceId ? state.Capabilities : [];
+            var entry = capabilities.FirstOrDefault(item => item.Key == key);
+            return Contract.ModelAcceptanceAdmissionPolicy.Evaluate(model,
+                state is not null && state.InstanceId == instanceId && state.ModelAcceptanceAdvertised,
+                entry?.AdvertisedStatus, entry?.FreshUntil,
+                _rejectedModels.ContainsKey($"{runnerId}|{key}"),
+                registration.InstanceStartedAt ?? registration.RegisteredAt,
+                _time.GetUtcNow().UtcDateTime);
         }
     }
+
+    /// <summary>Primary-route compatibility check; fallback callers require <see cref="ModelAdmission"/> to be Accepted.</summary>
+    public bool AcceptsModel(string runnerId, string? instanceId, string cliType, string? model)
+        => ModelAdmission(runnerId, instanceId, cliType, model)
+            is Contract.ModelAcceptanceAdmission.Accepted or Contract.ModelAcceptanceAdmission.Legacy;
 
     public string? CurrentInstanceId(string runnerId)
     {
@@ -4504,13 +4546,15 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         DateTime RegisteredAt,
         DateTime LastSeenAt,
         Contract.RunnerReleaseIdentityDto? Release = null,
-        int? RunTimeoutSeconds = null);
+        int? RunTimeoutSeconds = null,
+        DateTime? InstanceStartedAt = null);
 
     private sealed record CapabilityState(
         string InstanceId,
         long Generation,
         IReadOnlyList<Contract.CapabilityHealthDto> Capabilities,
-        Contract.HostTelemetrySnapshotDto? Telemetry);
+        Contract.HostTelemetrySnapshotDto? Telemetry,
+        bool ModelAcceptanceAdvertised);
 
     private sealed record ReviewRestartStatus(
         DateTime RestartedAt,

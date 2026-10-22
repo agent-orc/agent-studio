@@ -40,7 +40,8 @@ public sealed record WatcherOptions
                 Math.Max(1, section.GetValue("IdleWaitMinutes", 15)),
                 Math.Max(1, section.GetValue("GatePendingHours", 2)),
                 Math.Max(1, section.GetValue("LaneBudgetHours", 24)),
-                Math.Max(1, section.GetValue("HostHeartbeatMinutes", 10))),
+                Math.Max(1, section.GetValue("HostHeartbeatMinutes", 10)),
+                Math.Max(1, section.GetValue("FleetClaimStallMinutes", 10))),
         };
     }
 }

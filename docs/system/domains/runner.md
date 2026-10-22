@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-10-17
+Version: 2026-10-22
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -30,11 +30,27 @@ the local credential generation and advertised as `model-acceptance:<provider>:<
 The quota view lists accepted models by host. A launch-time model refusal with
 no salvage marks that host model unavailable and puts the card back in Ready.
 Task Server claims and work-permit offers and acceptances require fresh
-acceptance of the effective named model; a blank model uses the CLI default.
+acceptance of the effective named model when the host advertises the
+`model-acceptance` protocol. A host with no entries is a legacy daemon: its
+primary route remains claimable while Execution Hosts raises an upgrade warning.
+An advertised `unavailable` verdict refuses the claim. An advertised `unknown`
+verdict, missing model entry, or stale verdict waits for the two-minute startup
+grace, then refuses the claim as `host-capability-missing`, without a quota reset
+date. A blank model uses the CLI default.
 A refused model stays held until the same runner instance advertises it as not
 ready and then advertises a ready verdict with a larger runner-local probe
 sequence. Runner and server clock order never clears the hold. A refused
 fallback does not hold the card once quota admission can use its primary route.
+
+The deploy contract for backend features that require an agent-host release is
+[`runner-release-requirements.json`](../../../contracts/TaskServer.Contracts/runner-release-requirements.json).
+Model acceptance requires agent-host 0.9.5 with commit d32e13f49 or a descendant;
+the version alone is insufficient because 0.9.5 predates the probe. Before
+`update-stable.sh` stops Stable, `host-release-preflight.mjs` checks registered
+host release identities against the candidate contract. It refuses an older or
+unverifiable host unless `ATP_FORCE_HOST_COMPATIBILITY=1` is set, and writes a
+record under `release-records/<target-sha>.json` with the minimum release and
+the affected hosts. A forced rollout retains the legacy claim path and warning.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable

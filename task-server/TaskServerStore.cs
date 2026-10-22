@@ -777,12 +777,12 @@ public sealed partial class TaskServerStore
                     host_orchestrator_minimum, host_orchestrator_maximum,
                     role_max_parallelism,
                     effective_max_parallelism, runtime_capacity_applied_at,
-                    runtime_capacity_applied_version, release_identity_json)
+                    runtime_capacity_applied_version, release_identity_json, instance_started_at)
                 VALUES (
                     $id, $name, $host, $instance, $version, $protocol,
                     $capabilities, 'active', $now, $now, $hostOrchestratorMinimum,
                     $hostOrchestratorMaximum, $roleMaxParallelism, NULL, NULL, NULL,
-                    $release)
+                    $release, $now)
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
                     host_id = excluded.host_id,
@@ -822,6 +822,8 @@ public sealed partial class TaskServerStore
                         THEN NULL
                         ELSE runners.runtime_capacity_applied_version
                     END,
+                    instance_started_at = CASE WHEN runners.instance_id = excluded.instance_id
+                        THEN runners.instance_started_at ELSE excluded.instance_started_at END,
                     status = CASE WHEN runners.status = 'retired' THEN 'retired' ELSE 'active' END,
                     last_seen_at = excluded.last_seen_at;
                 """, ct, transaction,
@@ -1511,10 +1513,12 @@ public sealed partial class TaskServerStore
             // at the first admissible task, so refused projects cost one
             // evaluation and one admission receipt rather than one per task.
             var verdicts = new List<ClaimPlacementVerdict>();
+            string? modelRefusal = null;
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
                 WhereModelAcceptedAsync(
                     ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
-                    connection, transaction, request.RunnerId, ct),
+                    connection, transaction, request.RunnerId,
+                    reason => modelRefusal ??= reason, ct),
                 async projectId =>
                 {
                     var verdict = await EvaluateProjectAsync(projectId);
@@ -1528,13 +1532,16 @@ public sealed partial class TaskServerStore
             var selectedPlacement = selected?.Placement;
             var placementReason = selected?.Reason
                                   ?? verdicts.LastOrDefault()?.Reason
-                                  ?? ProjectPlacementReasons.NoAdmissibleTask;
+                                  ?? (modelRefusal is null
+                                      ? ProjectPlacementReasons.NoAdmissibleTask
+                                      : modelRefusal.StartsWith("Host model unavailable", StringComparison.Ordinal)
+                                          ? "host-model-unavailable" : "host-capability-missing");
 
             if (task is null)
             {
                 response = new ClaimResponse(
                     "empty",
-                    Message: "No admissible task is ready.",
+                    Message: modelRefusal ?? "No admissible task is ready.",
                     ReconciliationActions: reconciliationActions,
                     RuntimeCapacity: runtimeCapacity,
                     PlacementReason: placementReason);
@@ -3668,7 +3675,8 @@ public sealed partial class TaskServerStore
                 effective_max_parallelism INTEGER,
                 runtime_capacity_applied_at TEXT,
                 runtime_capacity_applied_version INTEGER,
-                release_identity_json TEXT
+                release_identity_json TEXT,
+                instance_started_at TEXT
             );
             CREATE TABLE IF NOT EXISTS runtime_capacity_settings(
                 host_id TEXT PRIMARY KEY,
@@ -4340,6 +4348,7 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runners", "runtime_capacity_applied_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runners", "runtime_capacity_applied_version", "INTEGER", ct);
         await EnsureColumnAsync(connection, "runners", "release_identity_json", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runners", "instance_started_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "signal", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_expires_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "limited_until", "TEXT", ct);
