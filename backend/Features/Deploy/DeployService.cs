@@ -52,7 +52,8 @@ public sealed class DeployService
         IEnumerable<EnvironmentDeclaration> declarations)
         => declarations.Where(item => item.Kind is "stage" or "production")
             .Select((item, index) => new DeployEnvironment(item.Id, project, item.Name, index,
-                item.Kind == "stage" ? EnvironmentKinds.Staging : EnvironmentKinds.Production))
+                item.Kind == "stage" ? EnvironmentKinds.Staging : EnvironmentKinds.Production)
+            { Protected = item.Protected, Automatic = item.Automatic, Requires = item.Requires })
             .ToArray();
 
     public IReadOnlyList<DeployEnvironment>? Environments(string project)
@@ -81,7 +82,15 @@ public sealed class DeployService
     public DeployOutcome<Release> CreateRelease(string project, string artifact, string commit, string actor)
     {
         const string invalid = "Artifact, commit, or stage and production declarations are invalid.";
-        if (_environments.Declarations(project) is null) return DeployOutcome<Release>.NotFound($"Unknown project '{project}'.");
+        try
+        {
+            if (_environments.Declarations(project) is null)
+                return DeployOutcome<Release>.NotFound($"Unknown project '{project}'.");
+        }
+        catch (JsonException ex)
+        {
+            return DeployOutcome<Release>.Invalid($"The current environment declaration diverges from project.yml: {ex.Message}");
+        }
         if (!_environments.CanQueueRelease(project, artifact, commit)) return DeployOutcome<Release>.Invalid(invalid);
         IReadOnlyList<EnvironmentDeclaration>? declarations;
         try
@@ -274,6 +283,22 @@ public sealed class DeployService
             if (snapshot is null || snapshot.Runs.All(item => item.Id != deploymentId)) return null;
             return new(deploymentId, _store.ReadLog(project, deploymentId)
                 .Where(item => step is null || item.Step == step).ToArray());
+        }
+    }
+
+    public bool AppendHostStepLog(string project, string jobId, DeployStepLogRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.LeaseToken) || string.IsNullOrWhiteSpace(request.Message)
+            || request.Message.Length > 512 || request.Message.Any(char.IsControl)
+            || string.IsNullOrWhiteSpace(request.Step) || request.Step.Length > 80) return false;
+        lock (_gate)
+        {
+            var job = _environments.FindClaimedJob(project, jobId, request.LeaseToken);
+            if (job is null || !job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}")
+                    .Contains(request.Step, StringComparer.Ordinal)) return false;
+            var runId = _store.ReadDeployments(project).FirstOrDefault(item => item.JobId == jobId)?.Id ?? jobId;
+            _store.AppendLog(project, [new(runId, request.Step, _clock.GetUtcNow().UtcDateTime, request.Message)]);
+            return true;
         }
     }
 
@@ -500,7 +525,8 @@ public sealed class DeployService
                 if (target is null) return DeployOutcome<Deployment>.Conflict("The release has no environment snapshot.");
                 var job = _environments.QueueRetry(project, target with { GuidedFailure = run.GuidedFailure },
                     release.Release.ArtifactDigests[0], actor.Id, run.JobId!,
-                    retryStep: run.FailedStep == DeployStepNames.Health ? DeployStepNames.Health : null);
+                    retryStep: run.FailedStep == DeployStepNames.Health && run.SshStepNames.Count == 0
+                        ? DeployStepNames.Health : null);
                 if (job is null) return DeployOutcome<Deployment>.Conflict(
                     "The failed step cannot be retried after another job entered this environment.");
                 updated = updated with { State = DeploymentStates.Queued, JobId = job.Id,
@@ -685,9 +711,14 @@ public sealed class DeployService
     private static LifecycleRequest Facts(string project, Snapshot snapshot, Release release, DeployEnvironment environment,
         DeployIntent intent, bool approve, DeployActor actor, string? excludeRunId)
     {
+        if (snapshot.Records.TryGetValue(release.Id, out var record))
+            environment = MapEnvironments(project, record.Environments)
+                .FirstOrDefault(item => item.Id == environment.Id) ?? environment;
         var deployments = snapshot.Deployments(project).Where(item => item.Id != excludeRunId).ToArray();
         var here = deployments.Where(item => item.EnvironmentId == environment.Id).ToArray();
-        var previous = snapshot.Environments.Where(item => item.Order < environment.Order)
+        var releaseEnvironments = snapshot.Records.TryGetValue(release.Id, out var previousRecord)
+            ? MapEnvironments(project, previousRecord.Environments) : snapshot.Environments;
+        var previous = releaseEnvironments.Where(item => item.Order < environment.Order)
             .OrderBy(item => item.Order).LastOrDefault();
         return new(intent, environment, actor, approve,
             previous is null || EnvironmentStatusProjection.SucceededIn(deployments, release.Id, previous.Id),
@@ -874,11 +905,12 @@ public sealed class DeployService
     {
         var declaration = declarations.FirstOrDefault(item => item.Id == environment.Id);
         var template = declaration?.Template ?? "container";
+        var protectedEnvironment = declaration?.Protected ?? StandardLifecyclePolicy.RequiresApproval(environment);
         var run = new DeploymentRecord
         {
             Id = job?.Id ?? Guid.NewGuid().ToString("N"), ReleaseId = release.Id, EnvironmentId = environment.Id,
             State = state, Trigger = trigger, DeployStep = DeployStepNames.ForTemplate(template),
-            NeedsApproval = StandardLifecyclePolicy.RequiresApproval(environment),
+            NeedsApproval = protectedEnvironment,
             RequestedBy = requestedBy, ApprovedBy = approvedBy, ApprovedAtUtc = approvedBy is null ? null : now,
             JobId = job?.Id, CreatedAtUtc = now,
             GuidedFailure = guidedFailure ?? declaration?.GuidedFailure ?? false,
