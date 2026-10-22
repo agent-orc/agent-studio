@@ -1,5 +1,12 @@
 # AGT-3218 engine applier contract and canary status
 
+## Follow-up 5 (22.10.2026: merge-into-develop recovery)
+
+- Failed stage: `merge-into-develop` could not integrate delivery `a300c5a3cb7f4a089a08b299245a00fa2ceef1c5` at develop tip `f822e5d8f5845b9b730e87ae9d1dde117acfbd43`. The direct and mechanical merges conflicted in `backend.Tests/ReviewDecisionOrchestratorCompletionGateTests.cs` and `docs/system/contracts/orchestration-decisions.md`; the rebase fallback could not retain one-to-one delivery commit mapping.
+- Resolution: merge commit `94d42a03b640832725c288c1bfc8fa71c20338dc` has delivery `a300c5a3c` and develop `dc0e0c69d` as its two parents. It keeps the AGT-3218 `orchestration` fixture argument alongside develop's gate cancellation fixture changes, and keeps the applier contract and canary documentation alongside develop's contract text. Commits `5a888dc89` and `734cce18e` follow the merge without rebasing or squashing the delivery. Result implementation SHA: `734cce18eb645ecede9e87fb73159cca2da9ea9b`.
+- [Merge resolution and verification evidence](/home/agent/runner-work/tasks/AGT-3218/results/integration-recovery.md). The merge ancestry checks confirm that both the delivery and current `origin/develop` are ancestors of the result.
+- Remote verification on agent-runner-01: the solution and production frontend builds passed. The focused backend class filter passed 344 tests. The `FullyQualifiedName~.Architecture.|Category=Guard` filter passed 138 backend and 2 runner tests, with no matches in the other six .NET test projects. `npm --prefix frontend run lint` passed, including the component-size check. `git diff --check` passed; no test log contains a failure line.
+
 ## Follow-up 4 (operator round of 21.10.2026: frontend budget and remote verification)
 
 - Result implementation SHA: `cee8b5ebcbdcb9dd1407c8c605d05d5ca5ab2126`, the merge of the previous delivery `fb6e42f9a33165dd25b0feacec04cce18ed4b3d0` with `origin/develop` at `9fd83508c047709ec225914d891d55ed0d96ea40`. Only `status.md` conflicted; the merge keeps both the AGT-3218 history and develop's entries. No rebase or squash was used. A final `git fetch origin develop` and `git merge origin/develop` reported already up to date. Both ancestry checks, `git merge-base --is-ancestor origin/develop HEAD` and `git merge-base --is-ancestor fb6e42f9a HEAD`, pass. This status entry is a separate commit on top.
