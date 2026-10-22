@@ -72,7 +72,8 @@ public static class DeploymentReconciler
     {
         var linked = runs.Where(item => item.JobId is not null).Select(item => item.JobId!)
             .Concat(runs.SelectMany(item => item.PriorJobIds)).ToHashSet(StringComparer.Ordinal);
-        foreach (var job in input.Jobs.Where(item => !linked.Contains(item.Id)).OrderBy(item => item.CreatedAt))
+        // A stop job ends an environment; it is not a deployment of a release.
+        foreach (var job in input.Jobs.Where(item => !item.IsStop && !linked.Contains(item.Id)).OrderBy(item => item.CreatedAt))
         {
             if (!environments.TryGetValue(job.EnvironmentId, out var environment)) continue;
             if (job.RetryOfJobId is { } priorId)

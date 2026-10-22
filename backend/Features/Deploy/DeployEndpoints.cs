@@ -1,3 +1,5 @@
+using AgentStudio.Projects;
+
 namespace AgentStudio.Deploy;
 
 /// <summary>BD-1 routes for the P1 data contract (releases, deployments, status, matrix).</summary>
@@ -57,12 +59,14 @@ public static class DeployEndpoints
 
         project.MapPost("/releases/{releaseId}/deployments", (HttpContext context, string projectName,
             string releaseId, DeploymentRequest request, DeployService deploy) =>
-            Respond(deploy.RequestDeployment(projectName, releaseId, request, Actor(context, projectName)), accepted: true))
+            QuotaRefusable(() => Respond(deploy.RequestDeployment(projectName, releaseId, request,
+                Actor(context, projectName)), accepted: true)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapPost("/deployments/{deploymentId}/approve", (HttpContext context, string projectName,
             string deploymentId, DeploymentApprovalRequest? request, DeployService deploy) =>
-            Respond(deploy.Approve(projectName, deploymentId, Actor(context, projectName), request?.GuidedFailure)))
+            QuotaRefusable(() => Respond(deploy.Approve(projectName, deploymentId,
+                Actor(context, projectName), request?.GuidedFailure))))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         project.MapPost("/deployments/{deploymentId}/reject", (HttpContext context, string projectName,
@@ -82,14 +86,14 @@ public static class DeployEndpoints
 
         project.MapPost("/environments/{environmentId}/redeploy", (HttpContext context, string projectName,
             string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
-            Respond(deploy.Redeploy(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName), request?.GuidedFailure), accepted: true))
+            QuotaRefusable(() => Respond(deploy.Redeploy(projectName, environmentId, request?.Approve == true,
+                Actor(context, projectName), request?.GuidedFailure), accepted: true)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapPost("/environments/{environmentId}/rollback", (HttpContext context, string projectName,
             string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
-            Respond(deploy.Rollback(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName), request?.GuidedFailure), accepted: true))
+            QuotaRefusable(() => Respond(deploy.Rollback(projectName, environmentId, request?.Approve == true,
+                Actor(context, projectName), request?.GuidedFailure), accepted: true)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapGet("/api/deploy/matrix", (HttpContext context, DeployService deploy, ProjectRegistry projects) =>
@@ -129,4 +133,14 @@ public static class DeployEndpoints
         DeployOutcomeKind.Forbidden => Results.Json(new { error = outcome.Error }, statusCode: StatusCodes.Status403Forbidden),
         _ => Results.Conflict(new { error = outcome.Error }),
     };
+
+    /// <summary>Maps a quota refusal from a deploy action to 409 with reason <c>quota</c>.</summary>
+    internal static IResult QuotaRefusable(Func<IResult> action)
+    {
+        try { return action(); }
+        catch (DeployQuotaRefusedException ex)
+        {
+            return Results.Conflict(new { error = ex.Message, reason = "quota" });
+        }
+    }
 }

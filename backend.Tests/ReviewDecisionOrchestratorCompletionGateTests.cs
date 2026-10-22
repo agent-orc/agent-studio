@@ -565,6 +565,7 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
         bool enableFailureIntervention = false,
         Func<Task>? gateFailureDecisionCheckpoint = null,
         Action<IConfigurationRoot>? configure = null,
+        MonolithOrchestrationStore? orchestration = null,
         TaskGateCancellationRegistry? gateCancellation = null)
     {
         var dict = new Dictionary<string, string?>
@@ -637,6 +638,7 @@ public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
             timeline: timeline,
             projectSettings: settings,
             failureInterventions: failureInterventions,
+            orchestration: orchestration,
             timeProvider: timeProvider);
         orchestrator.GateFailureDecisionCheckpointAsync = gateFailureDecisionCheckpoint;
         return orchestrator;
