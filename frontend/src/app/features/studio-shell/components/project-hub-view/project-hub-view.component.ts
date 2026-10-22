@@ -3,7 +3,6 @@ import {
   ProjectShellComponent,
   ProjectDetailComponent,
   ProjectOverviewDashboardComponent,
-  ProjectDeployAreaComponent,
   ProjectEnvironmentOverviewComponent,
   ProjectSettingsPanelComponent,
   SecurityPanelComponent,
@@ -30,7 +29,8 @@ import {
   ProjectRailKey,
   resolveProjectSection,
 } from '../../../project-detail/components/project-shell/project-shell.config';
-import type { DeployView } from '../../../project-detail/components/project-deploy-area/project-deploy-area';
+// Imported directly, not through the barrel, so the @defer block keeps the Deploy area out of the initial bundle.
+import { ProjectDeployAreaComponent, type DeployView } from '../../../project-detail/components/project-deploy-area/project-deploy-area';
 import { ProjectOverlaysService } from '../../../project-detail/state/project-overlays.service';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
 import type { WikiTabNavigationRequest, WikiTabTarget } from '../../studio-shell.types';

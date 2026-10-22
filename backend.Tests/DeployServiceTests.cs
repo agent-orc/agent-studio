@@ -357,6 +357,23 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void ReleasePage_FindsTheReleaseOfAnArtifactByDigestAndDeployTime()
+    {
+        var (deploy, _, _) = Build();
+        var first = CreateRelease(deploy, Artifact('a'), Head());
+        var firstCreated = _clock.GetUtcNow().UtcDateTime;
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        var second = CreateRelease(deploy, Artifact('b'), Commit("second"));
+
+        var byDigest = deploy.ReleasePage("demo", 0, 1, "other.registry/app@sha256:" + new string('a', 64))!;
+        Assert.Equal((1, first.Id), (byDigest.Total, Assert.Single(byDigest.Items).Id));
+        Assert.Equal(second.Id, Assert.Single(deploy.ReleasePage("demo", 0, 1, Artifact('b'))!.Items).Id);
+        Assert.Empty(deploy.ReleasePage("demo", 0, 1, Artifact('b'), firstCreated)!.Items);
+        Assert.Empty(deploy.ReleasePage("demo", 0, 1, Artifact('c'))!.Items);
+        Assert.Equal(2, deploy.ReleasePage("demo", 0, 25)!.Total);
+    }
+
+    [Fact]
     public void Release_IncludesOnlyCardsIntegratedSincePreviousRelease()
     {
         var (deploy, _, _) = Build();
