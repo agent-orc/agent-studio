@@ -29,14 +29,6 @@
     "body": "Run tests/known-passing.sh and tests/known-failing.sh, commit the results log, and stop.",
     "initialState": "2-ready"
   },
-  "epic": {
-    "note": "The card's target fixture also specifies an epic with two tasks. Only the single task above is wired into typed scenario steps today; a second task is a placeholder for future growth (see docs/operations/testing/deployment-scenario.md).",
-    "secondaryTask": {
-      "title": "Reserved for a future scenario step",
-      "body": "Not yet exercised by any typed step.",
-      "initialState": "0-backlog"
-    }
-  },
   "dossier": {
     "note": "The distributed Task Server / Studio BFF / Runner topology this scenario boots does not yet expose a dossier/decision-gate concept (that lives only in the separate backend monolith). This section is reserved fixture data for when the concept lands here; no typed step reads it yet.",
     "decisionGate": {

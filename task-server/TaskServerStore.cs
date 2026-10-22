@@ -54,7 +54,9 @@ public sealed partial class TaskServerStore
     // 35 adds project review plans, integration commands, publication leases
     // and the continuation base reason of the standalone review loop (I11).
     // 36 adds one-time Studio invitations and per-project production approval.
-    public const int CurrentSchemaVersion = 36;
+    // 37 removes retired parent tables and their task metadata field.
+    // Older binaries must reject this store before reading task metadata.
+    public const int CurrentSchemaVersion = 37;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -1510,7 +1512,9 @@ public sealed partial class TaskServerStore
             // evaluation and one admission receipt rather than one per task.
             var verdicts = new List<ClaimPlacementVerdict>();
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
-                ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
+                WhereModelAcceptedAsync(
+                    ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
+                    connection, transaction, request.RunnerId, ct),
                 async projectId =>
                 {
                     var verdict = await EvaluateProjectAsync(projectId);
@@ -1539,7 +1543,7 @@ public sealed partial class TaskServerStore
             capabilityAdmission = selected!.Admission!;
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
-                connection, transaction, task, ct);
+                connection, transaction, task.TaskId, ct);
             var continuationIntent = await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct);
             var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
             SessionContinuationLedgerEntry? previousSession = null;
@@ -2207,7 +2211,26 @@ public sealed partial class TaskServerStore
             }
             providerRecovery = await PlanProviderRejectionAsync(
                 connection, transaction, lease.TaskId, request, ct);
-            if (providerRecovery?.Fallback is { } fallback)
+            if (providerRecovery?.HostModelUnavailable == true)
+            {
+                nextState = StudioTaskLanes.Ready;
+                effectiveSummary = providerRecovery.EscalationReason;
+                var cli = request.OutcomeDecision?.RawFacts.EffectiveCliType?.Trim().ToLowerInvariant();
+                if (!string.IsNullOrWhiteSpace(cli))
+                {
+                    await RecordModelRejectionAsync(connection, transaction, request.RunnerId,
+                        CapabilityProtocol.ModelAcceptance(cli, providerRecovery.Model), now, ct);
+                    await AppendLifecycleEventAsync(connection, transaction, runId, lease.TaskId,
+                        lease.Fence, "execution.model-capability-held", new
+                        {
+                            runnerId = request.RunnerId,
+                            provider = cli,
+                            model = providerRecovery.Model,
+                            reason = effectiveSummary,
+                        }, ct);
+                }
+            }
+            else if (providerRecovery?.Fallback is { } fallback)
             {
                 nextState = "2-ready";
                 effectiveSummary =
@@ -3134,7 +3157,6 @@ public sealed partial class TaskServerStore
 
         foreach (var (kind, wanted) in new (string Kind, long Count)[]
                  {
-                     ("epic", expected.Epics),
                      ("dossier", expected.Dossiers),
                      ("orchestrator-session", expected.OrchestratorSessions),
                      ("context-chat", expected.ContextChats),
@@ -3514,9 +3536,7 @@ public sealed partial class TaskServerStore
         var storedVersion = Convert.ToInt32(
             await ScalarAsync(connection, "SELECT value FROM meta WHERE key = 'schema_version';", ct) ?? 0,
             CultureInfo.InvariantCulture);
-        if (storedVersion > CurrentSchemaVersion)
-            throw new InvalidOperationException(
-                $"Task Server store schema {storedVersion} is newer than this service supports ({CurrentSchemaVersion}).");
+        RejectUnsupportedSchemaVersion(storedVersion, CurrentSchemaVersion);
 
         await ExecuteAsync(connection, """
             CREATE TABLE IF NOT EXISTS schema_migrations(
@@ -4266,6 +4286,13 @@ public sealed partial class TaskServerStore
                 ON orchestrator_context_turns(context_key, sequence);
             CREATE INDEX IF NOT EXISTS ix_leases_task_status ON leases(task_id, status);
             CREATE INDEX IF NOT EXISTS ix_events_run_cursor ON events(run_id, cursor);
+            CREATE TABLE IF NOT EXISTS runner_model_rejections(
+                runner_id TEXT NOT NULL,
+                capability_key TEXT NOT NULL,
+                rejected_at TEXT NOT NULL,
+                acknowledged_instance_id TEXT,
+                acknowledged_sequence INTEGER,
+                PRIMARY KEY(runner_id, capability_key));
             CREATE INDEX IF NOT EXISTS ix_artifacts_run ON artifacts(run_id);
             CREATE INDEX IF NOT EXISTS ix_legacy_entities_migration_kind
                 ON legacy_migration_entities(migration_id, entity_kind);
@@ -4379,6 +4406,8 @@ public sealed partial class TaskServerStore
         // (docs/studio-route-ownership/index.html): each group below owns a
         // disjoint set of new tables and touches no other group's schema.
         await ApplyStudioHostsMigrationAsync(connection, ct);
+        if (storedVersion < CurrentSchemaVersion)
+            await GuardRetiredSchemaRemovalAsync(connection, ct);
         await ApplyStudioProjectMetaMigrationAsync(connection, ct);
         await ApplyStudioRunnerOrchestratorMigrationAsync(connection, ct);
         await ApplyStudioTaskMetadataMigrationAsync(connection, ct);
@@ -4453,6 +4482,19 @@ public sealed partial class TaskServerStore
         await ApplyStandaloneReviewLoopMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
+
+    internal static void RejectUnsupportedSchemaVersion(int storedVersion, int supportedVersion)
+    {
+        if (storedVersion > supportedVersion)
+            throw new InvalidOperationException(
+                $"Task Server store schema {storedVersion} is newer than this service supports ({supportedVersion}).");
+    }
+
+    // The old reader checks meta.schema_version. Commit this guard before the
+    // retired schema is dropped so a crash cannot expose a version-36 store
+    // with the fields that reader expects already missing.
+    internal static Task GuardRetiredSchemaRemovalAsync(SqliteConnection connection, CancellationToken ct)
+        => SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
 
     /// <summary>
     /// Upgrades a pre-retention store where <c>artifacts.content</c> is <c>NOT NULL</c>. Archiving clears
@@ -5380,7 +5422,6 @@ internal sealed record LegacyTaskImport(
     IReadOnlyList<LegacyArtifactImport> Artifacts,
     string MetadataJson,
     string SourcePath,
-    bool IsEpic,
     int GitCommits,
     int IntegrationRecords,
     int PendingIntegrationRecords,

@@ -185,7 +185,8 @@ public static class V1ReviewPlaneEndpoints
             Contract.CapabilityAdvertisementRequest request,
             V1ReviewExecutorRegistry registry,
             AdaptiveReviewParallelismAdvisor reviewParallelism,
-            AgentStudio.Clients.ClientIdentityStore clients) =>
+            AgentStudio.Clients.ClientIdentityStore clients,
+            CliQuotaFallbackService quotaRoutes) =>
         {
             if (!RunnerMatches(context, runnerId))
                 return Results.Unauthorized();
@@ -195,7 +196,10 @@ public static class V1ReviewPlaneEndpoints
                     "Route and capability runner ids differ."));
             try
             {
-                var snapshot = registry.AdvertiseCapabilities(runnerId, request);
+                var snapshot = registry.AdvertiseCapabilities(runnerId, request) with
+                {
+                    ConfiguredModelRoutes = ConfiguredModelRoutes(quotaRoutes.GetAll().Values),
+                };
                 clients.RecordSeen(runnerId);
                 // AGT-2820: the review plane's parallelism recommendation used to
                 // be an unread number on a diagnostics endpoint - it answered
@@ -567,6 +571,8 @@ public static class V1ReviewPlaneEndpoints
                     subjectTask,
                     quotaAdmission,
                     quotaAdmissionRecorder,
+                    (provider, model) => registry.AcceptsModel(
+                        runnerId, request.InstanceId, provider, model),
                     out quotaDeferredReason);
             else
                 quotaDeferredReason = null;
@@ -972,6 +978,7 @@ public static class V1ReviewPlaneEndpoints
                         orchestration.CancelUnactivated(occurrence.RunId, "review-settlement-failed");
                         EngineDecisionWaitMarker.Clear(reviewTask.FolderPath, occurrence.RunId);
                         scanner.InvalidateCache();
+                        scanner.PublishCoreFromKnownFolder(reviewTask.FolderPath);
                     }
                     logger.LogError(exception, "engine-review-settlement-failed attempt={AttemptId}", attemptId);
                     return Results.Json(new Contract.ApiError("review-settlement-repair-required",
@@ -983,6 +990,7 @@ public static class V1ReviewPlaneEndpoints
                     orchestration.CancelUnactivated(occurrence.RunId, "review-settlement-rejected");
                     EngineDecisionWaitMarker.Clear(reviewTask.FolderPath, occurrence.RunId);
                     scanner.InvalidateCache();
+                    scanner.PublishCoreFromKnownFolder(reviewTask.FolderPath);
                     return Results.Conflict(new Contract.ApiError("idempotency-conflict",
                         "The review report key is bound to a different payload."));
                 }
@@ -991,6 +999,7 @@ public static class V1ReviewPlaneEndpoints
                     orchestration.CancelUnactivated(occurrence.RunId, "review-settlement-rejected");
                     EngineDecisionWaitMarker.Clear(reviewTask.FolderPath, occurrence.RunId);
                     scanner.InvalidateCache();
+                    scanner.PublishCoreFromKnownFolder(reviewTask.FolderPath);
                     return AttemptError(engineSettled);
                 }
                 try
@@ -1008,6 +1017,7 @@ public static class V1ReviewPlaneEndpoints
                 if (occurrence.Status is "pending" or "leased" or "applying")
                     EngineDecisionWaitMarker.Write(reviewTask.FolderPath, occurrence.RunId);
                 scanner.InvalidateCache();
+                scanner.PublishCoreFromKnownFolder(reviewTask.FolderPath);
                 var engineReceivedAt = engineSettled.ReviewAttempt.Reports.LastOrDefault(report =>
                     report.IdempotencyKey == request.IdempotencyKey)?.ReceivedAt ?? DateTime.UtcNow;
                 evidenceQueue.Enqueue(new RemoteReviewEvidenceProjectionRequest(
@@ -1377,7 +1387,10 @@ public static class V1ReviewPlaneEndpoints
                         logger.LogError(fallbackError,
                             "batch-gate-emergency-fallback-failed attempt={AttemptId}", attemptId);
                     }
-                    if (emergencyBatchState is not (TaskStates.HumanReview or TaskStates.Escalated))
+                    // AGT-3219: a queue overrun of the emergency gate admits the
+                    // review to the batch queue; the card stays in Auto Review.
+                    if (emergencyBatchState is not (TaskStates.HumanReview or TaskStates.Escalated)
+                        && !batchPilot.IsQueuedForBatch(settled.ReviewAttempt.AttemptId))
                         return Results.Json(new Contract.ApiError(
                             "batch-gate-evidence-missing",
                             "The settled review could not enter the durable batch queue or finish its per-task gate."),
@@ -2465,6 +2478,7 @@ public static class V1ReviewPlaneEndpoints
         TaskInfo task,
         QuotaAdmissionService quotaAdmission,
         QuotaAdmissionRecorder recorder,
+        Func<string, string?, bool> modelAccepted,
         out string? deferredReason)
     {
         var switched = false;
@@ -2481,7 +2495,8 @@ public static class V1ReviewPlaneEndpoints
                 command.ThinkingLevel,
                 task.ProjectName,
                 OccupiedSlots: 0,
-                ExecutionPath: "remote-review-claim"));
+                ExecutionPath: "remote-review-claim",
+                ModelAccepted: modelAccepted));
             recorder.EmitAdmissionDecision(task, plan, source: "review-claim");
             if (!plan.ShouldLaunch)
             {
@@ -3254,6 +3269,21 @@ public static class V1ReviewPlaneEndpoints
         }
     }
 
+    /// <summary>Named primary and fallback models a host must probe before admission.</summary>
+    internal static IReadOnlyList<Contract.ConfiguredModelRouteDto> ConfiguredModelRoutes(
+        IEnumerable<CliModelRouteProfile> profiles)
+        => profiles
+            .SelectMany(profile => new[]
+            {
+                (Cli: profile.CliType, Model: profile.PrimaryModel),
+                (Cli: profile.FallbackCliType ?? profile.CliType, Model: profile.FallbackModel),
+            })
+            .Where(route => !string.IsNullOrWhiteSpace(route.Cli) && !string.IsNullOrWhiteSpace(route.Model))
+            .Select(route => new Contract.ConfiguredModelRouteDto(
+                route.Cli.Trim().ToLowerInvariant(), route.Model!.Trim()))
+            .Distinct()
+            .ToArray();
+
     private static bool RunnerMatches(HttpContext context, string runnerId)
         => context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
            || string.Equals(principal.RunnerId, runnerId, StringComparison.Ordinal);
@@ -3575,6 +3605,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     capability.EvidenceId,
                     capability.EvidenceExcerpt,
                     capability.SupportedModels,
+                    CredentialGeneration: capability.CredentialGeneration,
+                    CredentialObservedAt: capability.CredentialObservedAt,
                     HealthOutcome: request.CredentialHealthVersion == 2 ? capability.HealthOutcome : null,
                     ServiceAvailability: request.CredentialHealthVersion == 2 ? capability.ServiceAvailability : null,
                     CredentialHealth: request.CredentialHealthVersion == 2 ? capability.CredentialHealth : null);
@@ -3651,6 +3683,29 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 Release = request.Release ?? registration.Release,
             };
             _registrations[runnerId] = registration;
+            capabilities = capabilities.Select(capability =>
+            {
+                if (!capability.Key.StartsWith("model-acceptance:", StringComparison.Ordinal))
+                    return capability;
+                var rejectedKey = $"{runnerId}|{capability.Key}";
+                if (!_rejectedModels.TryGetValue(rejectedKey, out var rejection))
+                    return capability;
+                var sequence = request.Capabilities.LastOrDefault(item => string.Equals(
+                    item.Key.Trim().ToLowerInvariant(), capability.Key, StringComparison.Ordinal))?.ProbeSequence;
+                var (cleared, acknowledged) = Contract.ModelAcceptanceRecovery.Evaluate(
+                    rejection, request.InstanceId, capability.AdvertisedStatus, sequence);
+                if (cleared)
+                {
+                    _rejectedModels.Remove(rejectedKey);
+                    return capability;
+                }
+                _rejectedModels[rejectedKey] = acknowledged;
+                return capability with
+                {
+                    AdvertisedStatus = "unavailable",
+                    Detail = "The provider refused this model for the host login.",
+                };
+            }).ToArray();
             _capabilityStates[runnerId] = new CapabilityState(
                 request.InstanceId,
                 request.Generation,
@@ -4263,6 +4318,58 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
             return capability is null
                 ? null
                 : new CliModelCapability(capability.Version, capability.SupportedModels);
+        }
+    }
+
+    /// <summary>Only a fresh, credentialed host probe admits a quota fallback model.</summary>
+    public bool AcceptsModel(string runnerId, string? instanceId, string cliType, string? model)
+    {
+        // The provider-auth real request already proves the CLI's implicit
+        // default route. Model acceptance applies to named model pins.
+        if (string.IsNullOrWhiteSpace(model)) return true;
+        var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
+        lock (_gate)
+        {
+            if (_rejectedModels.ContainsKey($"{runnerId}|{key}")) return false;
+            if (string.IsNullOrWhiteSpace(instanceId)
+                || !_registrations.TryGetValue(runnerId, out var registration)
+                || !string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal)
+                || !_capabilityStates.TryGetValue(runnerId, out var state)
+                || !string.Equals(state.InstanceId, instanceId, StringComparison.Ordinal))
+                return false;
+            return state.Capabilities.Any(item =>
+                string.Equals(item.Key, key, StringComparison.Ordinal)
+                && item.FreshUntil > _time.GetUtcNow().UtcDateTime
+                && string.Equals(item.AdvertisedStatus, "ready", StringComparison.Ordinal));
+        }
+    }
+
+    public string? CurrentInstanceId(string runnerId)
+    {
+        lock (_gate)
+            return _registrations.TryGetValue(runnerId, out var registration)
+                ? registration.InstanceId : null;
+    }
+
+    private readonly Dictionary<string, Contract.ModelRejectionAcknowledgement> _rejectedModels = new(StringComparer.Ordinal);
+
+    public void MarkModelRejected(string runnerId, string cliType, string model)
+    {
+        var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
+        lock (_gate)
+        {
+            _rejectedModels[$"{runnerId}|{key}"] = Contract.ModelRejectionAcknowledgement.None;
+            if (!_capabilityStates.TryGetValue(runnerId, out var state)) return;
+            _capabilityStates[runnerId] = state with
+            {
+                Capabilities = state.Capabilities.Select(item => item.Key == key
+                    ? item with
+                    {
+                        AdvertisedStatus = "unavailable",
+                        Detail = "The provider refused this model for the host login.",
+                    }
+                    : item).ToArray(),
+            };
         }
     }
 

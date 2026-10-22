@@ -34,6 +34,18 @@
       Awaiting approval: {{ approval.subject }}@if (approval.requestedBy) { <span class="env-card__muted">, requested by {{ approval.requestedBy }}</span> }
     </p>
   }
+  @if (environment().intervention; as intervention) {
+    <button type="button" class="env-card__note" data-testid="deploy-environment-intervention"
+            (click)="openRun.emit(intervention.deploymentId)">
+      @if (intervention.decision) {
+        {{ intervention.failedStep }}: {{ intervention.decision }} by {{ intervention.decidedBy ?? 'system' }}.
+      } @else {
+        {{ intervention.failedStep }} failed. Waiting for intervention
+        @if (intervention.expiresAtUtc) { until <time [attr.datetime]="intervention.expiresAtUtc">{{ intervention.expiresAtUtc | date:'medium' }}</time> }.
+      }
+      Open run
+    </button>
+  }
   <div class="env-card__actions">
     @if (environment().lastRun?.deploymentId; as runId) {
       <button type="button" data-testid="deploy-environment-open-run"

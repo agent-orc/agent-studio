@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace AgentStudio.TaskServer.Contracts;
 
 public sealed record WorkspaceDto(
@@ -86,7 +89,11 @@ public sealed record ExecutionAttemptTimelineDto(
 
 public sealed record CreateWorkspaceRequest(string Name, string? WorkspaceId = null);
 public sealed record CreateProjectRequest(string WorkspaceId, string Name, string TaskKeyPrefix, string? ProjectId = null);
-public sealed record CreateTaskRequest(string Title, string? Body = null, string State = "0-backlog", string? TaskId = null, string? TaskKey = null);
+public sealed record CreateTaskRequest(string Title, string? Body = null, string State = "0-backlog", string? TaskId = null, string? TaskKey = null)
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? CompatibilityFields { get; init; }
+}
 public sealed record UpdateTaskRequest(
     string? Title, string? Body, string? State, long ExpectedVersion,
     MechanicalRoundDelta? MechanicalDelta = null);

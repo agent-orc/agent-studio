@@ -488,7 +488,6 @@ public sealed class AccessSecurityMiddleware
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/claim", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/renew", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Lease;
         if (HttpMethods.IsPost(method) && path.Equals("/api/runner/project-chat/complete", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Completion;
-        if (HttpMethods.IsPost(method) && path.Equals("/api/runner/epic-planning-prompt", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Claim;
         if (HttpMethods.IsPost(method) && path.StartsWith("/api/clients/", StringComparison.OrdinalIgnoreCase)
             && path.EndsWith("/runner-git-capability", StringComparison.OrdinalIgnoreCase)) return RunnerScopes.Events;
         return GateRunnerScope(method, path);
