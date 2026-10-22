@@ -3,6 +3,40 @@
 Version: 2026-10-12
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
+## Deep review selection (AGT-3268)
+
+`RemoteReviewPlanBuilder` freezes a `deepReviewDecision` receipt on each coding
+delivery's ReviewSubject. `DeepReview:Mode` defaults to `shadow`: the receipt
+records the selection and route, but no command runs. `active` adds one
+`post-deep-review` semantic command to the remote review plan. The review host
+executes it in the same read-only, exact-SHA workspace as the aspects. Its
+command evidence includes model, reasoning level, token usage, and host identity,
+and its verdict is reported as `deep-review` beside the aspect verdicts.
+The run-completion timeline names the receipt, and report projection records a
+`post-deep-review-decision` pipeline row before the deep-review verdict row.
+
+The engine policy in `orchestration-decisions/DeepReviewPolicy.cs` selects from
+the card's Token Economy correctness floor, changed paths and line count, prior
+blocks, gate failures, delivered rounds, and quota admission. It defaults to
+`gpt-6-sol` at `medium`; P0, critical correctness floors, and touched security
+or auth feature code, attempt authority, transition decisions, or deep-review
+policy require `xhigh`. Unknown diff size is recorded in the receipt without
+selecting review. Available quota never raises the effort. A capped route can suppress
+discretionary review, but a critical review retains its floor and waits for
+quota. The plan refuses a quota fallback that would replace its frozen route.
+Quota-deferred attempts have a short claim cooldown so other queued reviews can run.
+The AGT-3068 rules editor accepts the `deep-review` trigger with numeric
+`review.changed-lines`, `review.previous-blocks`, `review.gate-failures`, and
+`review.delivered-rounds` facts. A matching `prepare` rule selects review;
+`observe` declines it. The critical floor cannot be waived. Model and reasoning
+level can be configured within the validated catalogue and the critical floor.
+
+The plan stops deep review after three delivered rounds or the lower project
+review limit. Aspect and deep findings with the same cited evidence and missing
+contract form one fix item. A third consecutive block of the same cited deep
+finding escalates to a person rather than opening another automatic fix round. The existing card
+round and reissue budgets still govern every review result.
+
 ## Review host placement (D19 A, AGT-3069)
 
 Remote Review subjects retain the source coding host, and each claimed attempt

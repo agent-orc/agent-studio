@@ -26,7 +26,8 @@ public static class StageDecisionPolicy
     public static TransitionFacts Facts(string taskId, int reissues, StagePayload payload)
     {
         var reissuesUsed = payload.ReissuesUsed ?? reissues;
-        var findings = (payload.Verdicts ?? []).Where(verdict =>
+        var verdicts = ReviewFindingMergePolicy.MergeVerdicts(payload.Verdicts ?? []);
+        var findings = verdicts.Where(verdict =>
             !ReviewRoundBudgetPolicy.IsUncitedBlock(verdict.Classification)).Select(verdict => new ReviewFollowUpFinding(
             verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
             verdict.Missing, verdict.Classification)).Concat((payload.ReviewFindings ?? []).Select(item =>
@@ -38,7 +39,7 @@ public static class StageDecisionPolicy
                 !string.IsNullOrWhiteSpace(payload.ResultSha),
                 payload.ResultRef is { Length: > 0 } resultRef && payload.ResultSha is { Length: > 0 } sha
                     ? new(resultRef, sha, payload.ReviewAttemptId ?? string.Empty) : null),
-            new(payload.ReviewOutcome ?? ReviewOutcomeKinds.Pass, findings, payload.ReviewPlan, payload.Verdicts,
+            new(payload.ReviewOutcome ?? ReviewOutcomeKinds.Pass, findings, payload.ReviewPlan, verdicts,
                 payload.FailureClassification),
             new(payload.MaximumCardRounds, payload.MaximumConcernRounds,
                 payload.MaximumDeliveredRounds, MaximumReissues: payload.MaximumReissues),
@@ -51,7 +52,14 @@ public static class StageDecisionPolicy
                 && ReviewRoundBudgetPolicy.IsDeliveredOutcome(payload.ReviewOutcome))
             .GroupBy(payload => payload.ReviewAttemptId, StringComparer.Ordinal).Select(group => group.Last())
             .Select(payload => new DeliveredReviewRound(payload.ReviewAttemptId!,
-                ReviewRoundBudgetPolicy.CountedBlockingAspects(payload.Verdicts ?? []), [])).ToArray());
+                ReviewRoundBudgetPolicy.CountedBlockingAspects(payload.Verdicts ?? []), [],
+                BlockingFindingKeys: ReviewFindingMergePolicy.Merge((payload.Verdicts ?? [])
+                    .Select(item => new ReviewFollowUpFinding(item.Aspect, item.Status, item.Summary,
+                        item.EvidenceChecked, item.Missing, item.Classification)))
+                    .Where(item => ReviewGradingPolicy.IsBlockingToken(item.Status)
+                        && !ReviewRoundBudgetPolicy.IsUncitedBlock(item.Classification))
+                    .Select(ReviewFindingMergePolicy.Fingerprint).Distinct(StringComparer.Ordinal).ToArray()))
+            .ToArray());
 
     public static int ConcernRoundsUsed(IEnumerable<StagePayload> priorReports)
         => priorReports.Count(payload => TransitionDecisionPolicy.Decide(Facts(

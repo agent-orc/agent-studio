@@ -560,12 +560,10 @@ public static class V1ReviewPlaneEndpoints
                 mutations,
                 timeline,
                 loggerFactory.CreateLogger(LoggerName));
-            // Legacy plans retain claim-time quota fallback. A versioned
-            // library plan is immutable after sealing; model changes require
-            // a pending replan or a new eligible attempt.
+            // Library plans remain immutable. Check their frozen deep-review
+            // route against live quota before handing out the lease.
             string? quotaDeferredReason;
-            if (subjectTask is not null
-                && !subject.Plan.Commands.Any(command => command.LibraryStep is not null))
+            if (subjectTask is not null)
                 subject = ApplyQuotaFallbackToAspects(
                     subject,
                     subjectTask,
@@ -573,12 +571,14 @@ public static class V1ReviewPlaneEndpoints
                     quotaAdmissionRecorder,
                     (provider, model) => registry.AcceptsModel(
                         runnerId, request.InstanceId, provider, model),
-                    out quotaDeferredReason);
+                    out quotaDeferredReason,
+                    immutablePlan: subject.Plan.Commands.Any(command => command.LibraryStep is not null));
             else
                 quotaDeferredReason = null;
             if (!string.IsNullOrWhiteSpace(quotaDeferredReason))
             {
-                if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId))
+                if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId,
+                    quotaDeferred: true))
                 {
                     return Results.Conflict(new Contract.ApiError(
                         "review-quota-defer-failed",
@@ -1081,6 +1081,7 @@ public static class V1ReviewPlaneEndpoints
             if (preparedTask is null)
                 return Results.Json(new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
+            request = request with { Verdicts = MonolithTransitionAdapter.MergeReviewVerdicts(request.Verdicts) };
             var originalVerdicts = request.Verdicts;
             var previousRounds = projections.Read(preparedTask).Attempts
                 .Where(round => round.AttemptId != attemptId).ToArray();
@@ -1117,7 +1118,8 @@ public static class V1ReviewPlaneEndpoints
                 or ReviewTerminalOutcome.IntegrationBranchDefect
                 ? new DeliveredReviewRound(
                     attemptId, blockingAspects, shouldDegrade ? roundBudget.DegradedAspects : [],
-                    SpentBy: roundBudget.SpentBy)
+                    SpentBy: roundBudget.SpentBy,
+                    BlockingFindingKeys: MonolithTransitionAdapter.BlockingReviewFindingKeys(originalVerdicts))
                 : null;
             RemoteReviewContinuation? continuation = null;
             if (!acceptedReplay && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
@@ -2479,7 +2481,8 @@ public static class V1ReviewPlaneEndpoints
         QuotaAdmissionService quotaAdmission,
         QuotaAdmissionRecorder recorder,
         Func<string, string?, bool> modelAccepted,
-        out string? deferredReason)
+        out string? deferredReason,
+        bool immutablePlan = false)
     {
         var switched = false;
         string? deferred = null;
@@ -2489,6 +2492,8 @@ public static class V1ReviewPlaneEndpoints
         var resolvedCommands = subject.Plan.Commands.Select(command =>
         {
             if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)) return command;
+            if (immutablePlan && !string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
+                return command;
             var plan = quotaAdmission.Plan(new QuotaAdmissionRequest(
                 command.CliType,
                 command.Model,
@@ -2504,6 +2509,14 @@ public static class V1ReviewPlaneEndpoints
                 return command;
             }
             if (!plan.IsFallback) return command;
+            if (string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
+            {
+                // This plan froze the deep-review correctness floor. A quota
+                // sibling may be useful for ordinary aspects, but accepting a
+                // lower route here would silently invalidate its receipt.
+                deferred ??= "Deep review requires its planned model and reasoning level; quota fallback is deferred.";
+                return command;
+            }
             switched = true;
             lastSwitch = plan;
             lastPrimaryCli = command.CliType;
