@@ -75,7 +75,7 @@ builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    options.ForwardLimit = 1;
+    options.ForwardLimit = 2;
     foreach (var raw in (builder.Configuration["Security:TrustedProxyAddresses"] ?? "")
                  .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
     {
@@ -398,6 +398,10 @@ builder.Services.AddSingleton<AgentStudio.Registry.OrchestratorDefaultsProvider>
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlDetectionService>();
 builder.Services.AddSingleton<AgentStudio.Registry.IProjectUrlPortInspector, AgentStudio.Registry.ProjectUrlPortInspector>();
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlProcessService>();
+builder.Services.AddSingleton<AgentStudio.Registry.IProjectUrlProcessStarter>(provider =>
+    provider.GetRequiredService<AgentStudio.Registry.ProjectUrlProcessService>());
+builder.Services.AddSingleton<AgentStudio.Registry.IProjectUrlProcessStopper>(provider =>
+    provider.GetRequiredService<AgentStudio.Registry.ProjectUrlProcessService>());
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlReadinessService>();
 // AGT-2180: bounded HTTP client shared by the readiness probe and the URL
 // diagnostics (an unconfigured named client would wait 100 s per probe).

@@ -34,7 +34,7 @@ public static class AccessSecurityEndpoints
         auth.MapPost("/login", (LoginRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
             Execute(() =>
             {
-                var key = $"{(request.Username ?? string.Empty).Trim().ToLowerInvariant()}|{context.Connection.RemoteIpAddress}";
+                var key = ClientThrottleKey(context.Connection.RemoteIpAddress);
                 var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken));
@@ -263,6 +263,17 @@ public static class AccessSecurityEndpoints
         var token = context.Request.Cookies[AccessSecurityStore.SessionCookieName]
                     ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName];
         return store.AuthenticateSession(token, touch);
+    }
+
+    internal static string ClientThrottleKey(IPAddress? address)
+    {
+        if (address is null) return "unknown";
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+            return address.ToString();
+        var bytes = address.GetAddressBytes();
+        Array.Clear(bytes, 8, 8);
+        return new IPAddress(bytes).ToString() + "/64";
     }
 
     private static bool RequiresBootstrapCode(HttpContext context, IConfiguration configuration)
