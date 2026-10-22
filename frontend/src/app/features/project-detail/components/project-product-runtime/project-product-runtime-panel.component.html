@@ -20,10 +20,10 @@
                   (click)="refresh()">⟳ Refresh</button>
         </div>
         <p class="prt__sub">
-          Structured events from the built software during local runs and tests.
-          Read-only stream; distinct from the Agent Message Bus.
+          Structured events from local runs and tests. Distinct from the Agent Message Bus.
         </p>
       </header>
+      <app-task-detail-latency />
 
       @if (loadError(); as err) {
         <div class="prt__error" data-testid="product-runtime-load-error">

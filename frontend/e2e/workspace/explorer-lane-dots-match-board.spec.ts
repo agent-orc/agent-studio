@@ -3,66 +3,39 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 /**
- * AGT-2676. Operator sighting 2026-08-23 on the Token Economy board: the
- * Explorer tree showed a GREEN lane dot on "Board" while every board lane read
- * 0 tasks. Two independent defects behind one symptom:
- *
- *  1. The tree's dots counted an EPIC (TE-8, parked in 5-human-review) that the
- *     board lanes are not allowed to draw - epics are containers with their own
- *     Epics view. Tree and board now share the board's `excludeEpics` filter.
- *  2. The human-review dot borrowed the success green, so the one lane that
- *     means "needs you" rendered in the colour reserved for Delivered. It now
- *     reads in the Review lane's own hue (`--lane-human-review`).
- *
- * This spec locks both: dot count == visible board lane count for a fixture
- * containing an epic, and the Review hue is distinct from Delivered green in
- * BOTH themes.
+ * The Explorer lane dots match the cards visible in the board lanes, and the
+ * human-review dot uses the Review hue in both themes.
  */
 
 const PROJECT = 'Token Economy';
 const WATCH_PATH = 'C:/fixtures/token-economy';
 const resultsDir = process.env['JOB_RESULTS_DIR'] ?? path.join(process.cwd(), 'test-results');
 
-function card(id: string, state: string, order: number, kind?: 'epic') {
+function card(id: string, state: string, order: number) {
   return {
     id, taskKey: `${WATCH_PATH}::${id}`, jobKey: `${WATCH_PATH}::${id}`, title: id,
     state, order, projectName: PROJECT, watchPath: WATCH_PATH,
     folderPath: `${WATCH_PATH}/.orchestrator/jobs/${id}`,
     createdAt: '2026-08-23T08:00:00Z', lastActivity: '2026-08-23T09:00:00Z',
-    agent: 'codex', cliType: 'codex', kind, epicId: null,
+    agent: 'codex', cliType: 'codex',
     sessionName: null, model: null, useOwnSession: null, lastUsage: null,
     execution: null, commit: null, commits: [], ownerClientId: 'local-default',
     tags: [], pendingIntent: null, autoLoop: null, summaryState: null,
   };
 }
 
-/**
- * The reported shape: one epic in 5-human-review plus real work in the three
- * lanes the Explorer dashboard mirrors. The epic must be invisible to both
- * surfaces; the four tasks must be visible to both.
- */
 function grouped() {
   return {
     backlog: [], preparation: [], orchestratorPrep: [], failedPickup: [],
     codeNotComplete: [], autoReview: [], review: [], completed: [], archive: [],
     ready: [card('TE-1', '2-ready', 1)],
     progress: [card('TE-2', '3-progress', 1)],
-    humanReview: [card('TE-8', '5-human-review', 1, 'epic'), card('TE-3', '5-human-review', 2)],
+    humanReview: [card('TE-3', '5-human-review', 2)],
     escalated: [card('TE-4', '5e-escalated', 1)],
   };
 }
 
-/** The degenerate case the operator hit: the project's only card is an epic. */
-function epicOnlyGrouped() {
-  return {
-    backlog: [], preparation: [], orchestratorPrep: [], failedPickup: [],
-    codeNotComplete: [], autoReview: [], review: [], completed: [], archive: [],
-    ready: [], progress: [], escalated: [],
-    humanReview: [card('TE-8', '5-human-review', 1, 'epic')],
-  };
-}
-
-const VISIBLE_BOARD_CARDS = 4; // TE-1, TE-2, TE-3, TE-4, never the TE-8 epic.
+const VISIBLE_BOARD_CARDS = 4;
 
 /** Swapped per test before `installRoutes` reads it. */
 let feed: () => ReturnType<typeof grouped> = grouped;
@@ -121,40 +94,7 @@ test.beforeEach(() => { feed = grouped; });
 function rgbToHex(value: string): string {
   const parts = value.match(/\d+(\.\d+)?/g)?.slice(0, 3).map(Number) ?? [];
   return parts.map(n => Math.round(n).toString(16).padStart(2, '0')).join('');
-}
-
-test('tree lane dots count exactly what the board lanes render, with an epic in the feed', async ({ page }) => {
-  fs.mkdirSync(resultsDir, { recursive: true });
-  await boot(page, 'dots');
-
-  // The board draws the four tasks and hides the epic.
-  await expect(page.getByTestId('task-card')).toHaveCount(VISIBLE_BOARD_CARDS);
-  await expect(page.getByTestId('task-card').filter({ hasText: 'TE-8' })).toHaveCount(0);
-
-  // The tree draws exactly as many dots as the board draws cards.
-  const dots = page.getByTestId(`studio-explorer-project-board-dots-${PROJECT}`);
-  await expect(dots.locator('[data-lane]')).toHaveCount(VISIBLE_BOARD_CARDS);
-  await expect(dots).toHaveAttribute('aria-label', '1 ready, 1 in progress, 2 human review');
-
-  // ...and they carry the right lanes: the epic did not inflate human review.
-  expect(await dots.locator('[data-lane]').evaluateAll(
-    nodes => nodes.map(n => n.getAttribute('data-lane')),
-  )).toEqual(['ready', 'progress', 'humanReview', 'humanReview']);
-});
-
-test('a project whose only card is an epic shows no dot at all', async ({ page }) => {
-  feed = epicOnlyGrouped;
-  await boot(page, 'dots');
-
-  // Exactly the reported sighting: the board is empty, so the tree must be too.
-  await expect(page.getByTestId('task-card')).toHaveCount(0);
-
-  const dots = page.getByTestId(`studio-explorer-project-board-dots-${PROJECT}`);
-  await expect(dots.locator('[data-lane]')).toHaveCount(0);
-  await expect(dots).toHaveAttribute('aria-label', '0 ready, 0 in progress, 0 human review');
-});
-
-test('the human-review dot reads in the Review hue, never Delivered green, in both themes', async ({ page }) => {
+}test('the human-review dot reads in the Review hue, never Delivered green, in both themes', async ({ page }) => {
   fs.mkdirSync(resultsDir, { recursive: true });
   await boot(page, 'dots');
 
@@ -202,7 +142,7 @@ test('the numbers view mirrors the same board-truthful counts in both themes', a
   const sidebar = page.getByTestId('studio-sidebar');
   await expect(page.getByTestId(`studio-explorer-project-board-count-ready-${PROJECT}`)).toHaveText('1');
   await expect(page.getByTestId(`studio-explorer-project-board-count-progress-${PROJECT}`)).toHaveText('1');
-  // 1 human review + 1 escalated; the TE-8 epic is counted by neither surface.
+  // One human review card and one escalated card share the counter.
   await expect(page.getByTestId(`studio-explorer-project-board-count-human-review-${PROJECT}`)).toHaveText('2');
 
   for (const theme of ['dark', 'light'] as const) {

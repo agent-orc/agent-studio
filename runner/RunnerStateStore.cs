@@ -62,7 +62,7 @@ public sealed class RunnerStateStore
 
     public RunnerStateStore(string root)
     {
-        Root = Path.GetFullPath(root);
+        Root = RunnerStateRootGuard.Validate(root);
         Directory.CreateDirectory(Root);
     }
 

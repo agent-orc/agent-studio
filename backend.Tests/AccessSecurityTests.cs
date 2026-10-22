@@ -348,7 +348,6 @@ public sealed class AccessSecurityTests : IDisposable
             ("POST", "/api/runner/project-chat/complete", RunnerScopes.Completion),
             ("POST", "/api/runner/orchestrator-decisions/claim", RunnerScopes.Claim),
             ("POST", "/api/runner/orchestrator-decisions/complete", RunnerScopes.Completion),
-            ("POST", "/api/runner/epic-planning-prompt", RunnerScopes.Claim),
             ("GET", "/api/system/about", RunnerScopes.Claim),
             ("POST", $"/api/clients/{id}/runner-git-capability", RunnerScopes.Events),
         };

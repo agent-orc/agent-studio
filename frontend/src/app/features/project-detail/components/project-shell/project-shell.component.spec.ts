@@ -320,7 +320,6 @@ describe('resolveProjectSection', () => {
     ['observability', 'operations', 'overview'],
     ['agent-activity', 'agent-activity', 'overview'],
     ['wiki', 'wiki', 'overview'],
-    ['epics', 'overview', 'overview'],
     [null, 'overview', 'overview'],
   ] as const)('opens %s on rail %s with Deploy view %s', (section, rail, deployView) => {
     expect(resolveProjectSection(section)).toEqual({ rail, deployView });

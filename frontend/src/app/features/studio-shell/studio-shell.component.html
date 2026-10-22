@@ -157,7 +157,7 @@
        titlebar (above) and statusbar (below) spanning the full shell
        width while activity bar + orchestrator anchor the left/right
        edges — VS-Code-style panel layout. -->
-  <div class="studio-body"
+  <div class="studio-body" data-testid="studio-body"
        [style.grid-template-columns]="sidebarVisible()
            ? 'var(--studio-activitybar-w) minmax(0, ' + sidebarWidth() + 'px) minmax(0, 1fr) auto'
            : 'var(--studio-activitybar-w) minmax(0, 1fr) auto'">
@@ -457,9 +457,6 @@
               }
               @if (tabPrefix(t); as prefix) {
                 <span class="studio-tab__prefix">{{ prefix }}</span>
-              }
-              @if (t.kind === 'epic') {
-                <app-studio-icon name="epic" [size]="13"></app-studio-icon>
               }
               @if (tabIcon(t); as icon) {
                 <app-studio-icon [name]="icon" [size]="13"></app-studio-icon>
