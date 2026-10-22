@@ -79,6 +79,12 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("PUT", "/api/projects/{projectName}/wiki/files/{**relPath}", IamPermissions.ProjectDocsWrite)]
     [InlineData("POST", "/api/runner/{projectName}/orchestrator-chat", IamPermissions.ProjectChatWrite)]
     [InlineData("POST", "/api/runner/claim", IamPermissions.RunnerService)]
+    [InlineData("POST", "/api/projects/{project}/operator-candidate-verifications", IamPermissions.WorkspaceOperate)]
+    [InlineData("POST", "/api/projects/{projectName}/batch-gate/queue-stalls/release", IamPermissions.ProjectRunsOperate)]
+    [InlineData("POST", "/api/projects/{projectName}/deploy/deployments/{deploymentId}/intervention", IamPermissions.EnvironmentProductionDeploy)]
+    [InlineData("POST", "/api/tasks/{jobId}/review-observations", IamPermissions.ProjectRunsOperate)]
+    [InlineData("POST", "/api/tasks/{jobId}/review-observations/{reviewId}/later-evidence", IamPermissions.ProjectRunsOperate)]
+    [InlineData("POST", "/api/tasks/{jobId}/review-observations/{reviewId}/finding-outcomes", IamPermissions.ProjectRunsOperate)]
     [InlineData("GET", "/api/v1/management/status", IamPermissions.WorkspaceOperate)]
     [InlineData("PUT", "/api/workspaces/{id}/usage-calendar", IamPermissions.WorkspaceAdminister)]
     [InlineData("PUT", "/api/workspaces/{id}/autonomy", IamPermissions.WorkspaceSettingsWrite)]
@@ -193,6 +199,7 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     public void An_unlisted_write_route_resolves_to_nothing()
     {
         Assert.Null(RoutePermissionCatalog.Resolve("POST", "/api/tasks/{}/brand-new-mutation"));
+        Assert.Null(RoutePermissionCatalog.Resolve("POST", "/api/runner/epic-planning-prompt"));
         Assert.Null(RoutePermissionCatalog.Resolve("POST", "/api/brand-new-area/{}"));
         Assert.Null(RoutePermissionCatalog.Resolve("GET", "/api/brand-new-area"));
     }

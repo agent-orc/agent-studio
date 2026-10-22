@@ -56,33 +56,72 @@ public sealed class OperatorCandidateVerificationTests
     }
 
     [Fact]
-    public void WorkspaceTokenNeedsTheAllProjectsGrant()
+    public void WorkspaceOperationRequiresAWorkspaceBinding()
     {
         var context = new DefaultHttpContext();
         Assert.True(OperatorCandidateVerificationPolicy.HasWorkspaceScope(context));
-        context.Items[AccessSecurityMiddleware.ApiTokenPrincipalItem] = Token(["project-id"]);
+        context.Items[AccessSecurityMiddleware.RequestAccessItem] = Access(IamPrincipalKind.User, IamScope.ForProject("alpha"));
         Assert.False(OperatorCandidateVerificationPolicy.HasWorkspaceScope(context));
-        context.Items[AccessSecurityMiddleware.ApiTokenPrincipalItem] = Token(["*"]);
+        context.Items[AccessSecurityMiddleware.RequestAccessItem] = Access(IamPrincipalKind.User, IamScope.Workspace);
         Assert.True(OperatorCandidateVerificationPolicy.HasWorkspaceScope(context));
+    }
+
+    [Fact]
+    public void SyntheticServiceAccountCannotRecordEvenWithOperatorProjection()
+    {
+        var context = new DefaultHttpContext();
+        var user = new StudioUser
+        {
+            Id = "service-account:bot", Username = "service-account:bot", DisplayName = "Bot",
+            Role = StudioRoles.Operator, PasswordHash = "unused", CreatedAt = Now.UtcDateTime,
+            PasswordChangedAt = Now.UtcDateTime,
+        };
+        context.Items[AccessSecurityMiddleware.HumanPrincipalItem] = new HumanPrincipal(user, new StudioSession
+        {
+            Id = "bot", UserId = user.Id, TokenHash = "unused", CsrfHash = "unused",
+            CreatedAt = Now.UtcDateTime, LastSeenAt = Now.UtcDateTime,
+            ExpiresAt = Now.AddHours(1).UtcDateTime, AbsoluteExpiresAt = Now.AddHours(1).UtcDateTime,
+        });
+        context.Items[AccessSecurityMiddleware.RequestAccessItem] = Access(IamPrincipalKind.ServiceAccount, IamScope.Workspace);
+        Assert.False(OperatorCandidateVerificationPolicy.HasOperatorAuthority(context));
+    }
+
+    [Fact]
+    public void DeveloperProjectionDoesNotGainOperatorAuthorityFromItsLegacyOperatorSummary()
+    {
+        var context = new DefaultHttpContext();
+        var user = new StudioUser
+        {
+            Id = "person", Username = "person", DisplayName = "Person",
+            Role = StudioRoles.Operator, PasswordHash = "unused", CreatedAt = Now.UtcDateTime,
+            PasswordChangedAt = Now.UtcDateTime,
+        };
+        context.Items[AccessSecurityMiddleware.HumanPrincipalItem] = new HumanPrincipal(user, new StudioSession
+        {
+            Id = "session", UserId = user.Id, TokenHash = "unused", CsrfHash = "unused",
+            CreatedAt = Now.UtcDateTime, LastSeenAt = Now.UtcDateTime,
+            ExpiresAt = Now.AddHours(1).UtcDateTime, AbsoluteExpiresAt = Now.AddHours(1).UtcDateTime,
+        });
+        context.Items[AccessSecurityMiddleware.RequestAccessItem] = new RequestAccess(
+            new IamSubject(IamPrincipalKind.User, user.Id, new HashSet<string>()), [],
+            IamPermissions.WorkspaceOperate, (bound, requested) => bound == requested, IamRoles.Developer);
+        Assert.False(OperatorCandidateVerificationPolicy.HasOperatorAuthority(context));
     }
 
     private static RecordOperatorCandidateRequest Request() => new(
         Sha, ["AGT-3166"], "gate-host", [new("dotnet test", 10, 0, 0)],
         Now.AddMinutes(-40), Now, new string('b', 64));
 
-    private static ApiTokenPrincipal Token(List<string> projects)
+    private static RequestAccess Access(IamPrincipalKind kind, IamScope scope)
     {
-        var user = new StudioUser
+        var id = kind == IamPrincipalKind.User ? "person" : "bot";
+        var subject = new IamSubject(kind, id, new HashSet<string>());
+        var binding = new RoleBinding
         {
-            Id = "operator", Username = "operator", DisplayName = "Operator",
-            Role = StudioRoles.Operator, PasswordHash = "unused",
-            CreatedAt = Now.UtcDateTime, PasswordChangedAt = Now.UtcDateTime,
+            Id = "binding", PrincipalKind = kind, PrincipalId = id, Role = IamRoles.Admin,
+            Scope = scope, Source = IamBindingSources.Manual,
         };
-        return new(new StudioApiToken
-        {
-            Id = "token", Name = "operator", Role = StudioRoles.Operator, Projects = projects,
-            SecretHash = "unused", CreatedBy = user.Id,
-            CreatedAt = Now.UtcDateTime, ExpiresAt = Now.AddHours(1).UtcDateTime,
-        }, user);
+        return new RequestAccess(subject, [binding], IamPermissions.WorkspaceOperate,
+            (bound, requested) => string.Equals(bound, requested, StringComparison.OrdinalIgnoreCase), IamRoles.Admin);
     }
 }

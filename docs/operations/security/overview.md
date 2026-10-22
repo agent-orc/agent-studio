@@ -187,6 +187,16 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   operator intent also requires `project.runs.operate` on the receipt's own
   project. An environment binding grants its environment-level
   permissions in that environment and read access to the project.
+- Moving a card to another project checks `project.cards.write` on both the
+  source and destination. A Product binding in the destination cannot perform
+  the move. A workspace binding still admits an unresolved card address so
+  the handler can return 404; a project-only binding does not gain access to
+  an unresolved address.
+- Hub project groups and conversation subscriptions use the current role
+  bindings for `project.read`. The unscoped live-event group requires a
+  workspace binding. Reading one `/api/v1/reviews/attempts/{id}` result also
+  checks `project.read` against the attempt's card project and returns 404
+  outside that scope.
 - Environment scopes name the environment kind of the project's declarations
   (`docs/deployments/environments/*.json`): `stage`, `production`, or
   `other`, never an environment id. Releases address `stage`, promotions and
@@ -204,6 +214,11 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   a human Approver bound at the workspace, project, or production environment
   may decide in scope. Service accounts cannot approve. The deployment
   lifecycle still checks the approval when it processes the decision.
+  Deployment intervention requires `environment.production.deploy` for the
+  production environment. Batch gate queue-stall release and review
+  observation writes require `project.runs.operate`; recording operator
+  candidate verification additionally requires a human Admin or Owner and
+  `workspace.operate` on the workspace.
 - Application telemetry queries and ingest-token lists require `project.read`.
   Issuing or revoking an ingest token requires `project.settings.write` for
   that project. OTLP intake authenticates the ingest token itself and grants

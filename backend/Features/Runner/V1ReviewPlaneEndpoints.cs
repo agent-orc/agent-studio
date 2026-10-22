@@ -7,6 +7,7 @@ using System.Text.Json;
 using AgentStudio.Cli;
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
+using AgentStudio.Registry;
 using AgentStudio.Security;
 using AgentStudio.Tasks;
 using Microsoft.Extensions.Hosting;
@@ -597,11 +598,24 @@ public static class V1ReviewPlaneEndpoints
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         api.MapGet("/reviews/attempts/{attemptId}", (
+            HttpContext context,
             string attemptId,
-            AttemptAuthorityService authority) =>
-            authority.GetReview(attemptId) is { } review
-                ? Results.Ok(ToAttempt(review))
-                : Results.NotFound(new Contract.ApiError("not-found", "ReviewAttempt was not found.")));
+            AttemptAuthorityService authority,
+            TaskScannerService scanner,
+            ProjectRegistry projects) =>
+        {
+            var review = authority.GetReview(attemptId);
+            if (review is null)
+                return Results.NotFound(new Contract.ApiError("not-found", "ReviewAttempt was not found."));
+            if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess)
+            {
+                var task = FindTask(scanner, review.TaskKey);
+                if (task is null || !ProjectAccessAuthorization.AllowsTasks(
+                        context, [task.ProjectName], IamPermissions.ProjectRead, projects))
+                    return Results.NotFound(new Contract.ApiError("not-found", "ReviewAttempt was not found."));
+            }
+            return Results.Ok(ToAttempt(review));
+        });
 
         api.MapPost("/reviews/attempts/{attemptId}/lease/renew", (
             HttpContext context,

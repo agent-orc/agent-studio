@@ -1001,8 +1001,8 @@ public sealed class AccessSecurityMiddleware
                     : ProjectRouteAddress.Unaddressed;
             // Every other /api/tasks/{id}/... route is single-task addressed. A
             // scoped account may act only on a task whose project it belongs to. If
-            // that project cannot be resolved (unknown id or the scanner is
-            // unavailable), fail closed rather than allow the request through.
+            // that project cannot be resolved (unknown id or unavailable
+            // scanner), only a workspace binding can reach the handler's 404.
             return ProjectRouteAddress.Addressed(ResolveTaskProjects(Uri.UnescapeDataString(taskId), request));
         }
         return ProjectRouteAddress.Unaddressed;

@@ -2,8 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Deploy;
+using AgentStudio.Runner;
 using AgentStudio.Security;
 using AgentStudio.Secrets;
+using AgentStudio.Shared;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -55,6 +57,98 @@ public sealed class IamHandlerAccessTests : IDisposable
         Assert.Equal(HttpStatusCode.Accepted, batchAlpha.StatusCode);
         using var createAlpha = await client.PostAsJsonAsync("/api/tasks", new { title = "Alpha write", watchPath = ProjectPath("alpha") });
         Assert.Equal(HttpStatusCode.OK, createAlpha.StatusCode);
+    }
+
+    [Fact]
+    public async Task Change_project_requires_write_permission_and_a_non_product_role_in_the_destination()
+    {
+        using var factory = BuildFactory();
+        var callers = new[]
+        {
+            Client(factory, Invite(factory, "move.viewer", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha")),
+                new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("beta")))),
+            Client(factory, Invite(factory, "move.unbound", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha")))),
+            Client(factory, Invite(factory, "move.product", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha")),
+                new IamGrantRequest(IamRoles.Contributor, IamScope.ForProject("beta")))),
+        };
+        foreach (var client in callers)
+        {
+            using (client)
+            using (var response = await client.PostAsJsonAsync("/api/tasks/alpha-card/change-project",
+                       new ChangeProjectRequest { TargetProject = "beta" }))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.True(Directory.Exists(Path.Combine(ProjectPath("alpha"), TaskStates.Backlog, "alpha-card")));
+        }
+    }
+
+    [Fact]
+    public async Task New_operator_and_review_routes_have_permissions_in_the_networked_host()
+    {
+        using var factory = BuildFactory();
+        using var owner = Client(factory, Login(factory, "first.owner"));
+        using var developer = Client(factory, Invite(factory, "route.dev",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+
+        var routes = new[]
+        {
+            "/api/projects/alpha/operator-candidate-verifications",
+            "/api/projects/alpha/deploy/deployments/unknown/intervention",
+            "/api/projects/alpha/batch-gate/queue-stalls/release",
+            "/api/tasks/alpha-card/review-observations",
+            "/api/tasks/alpha-card/review-observations/unknown/later-evidence",
+            "/api/tasks/alpha-card/review-observations/unknown/finding-outcomes",
+        };
+        foreach (var route in routes)
+        {
+            using var response = await owner.PostAsJsonAsync(route, new { });
+            Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+        foreach (var route in routes.Take(2))
+        {
+            using var response = await developer.PostAsJsonAsync(route, new { });
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+        using var inProject = await developer.PostAsJsonAsync(routes[2], new { });
+        Assert.NotEqual(HttpStatusCode.Forbidden, inProject.StatusCode);
+    }
+
+    [Fact]
+    public async Task Owner_reaches_not_found_for_an_unknown_task_id()
+    {
+        using var factory = BuildFactory();
+        using var owner = Client(factory, Login(factory, "first.owner"));
+        using var response = await owner.GetAsync("/api/tasks/no-such-task-id");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Review_attempt_read_is_limited_to_the_attempts_project()
+    {
+        using var factory = BuildFactory();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var sha = new string('a', 40);
+        var run = Assert.IsType<RunAttemptDto>(authority.AcquireRun(
+            "beta-card", "beta", null, "runner", "host", 60, "iam-review-run").RunAttempt);
+        authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, "iam-review-settle"),
+            Outcome = "done", ResultSha = sha,
+        });
+        var review = Assert.IsType<ReviewAttemptDto>(authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            "beta-card", "beta", sha, run.AttemptId, "req", "policy", [], "iam-review-create")).ReviewAttempt);
+        using var owner = Client(factory, Login(factory, "first.owner"));
+        using var alpha = Client(factory, Invite(factory, "review.alpha",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+        using var beta = Client(factory, Invite(factory, "review.beta",
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("beta"))));
+
+        var route = "/api/v1/reviews/attempts/" + review.AttemptId;
+        using var ownerRead = await owner.GetAsync(route);
+        using var alphaRead = await alpha.GetAsync(route);
+        using var betaRead = await beta.GetAsync(route);
+        Assert.Equal(HttpStatusCode.OK, ownerRead.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, alphaRead.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, betaRead.StatusCode);
     }
 
     [Fact]

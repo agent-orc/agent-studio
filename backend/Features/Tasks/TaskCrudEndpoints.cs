@@ -1233,7 +1233,7 @@ public static class TaskCrudEndpoints
             return Results.Ok(new { priority = req.Priority, position });
         });
 
-        group.MapPost("/{jobId}/change-project", (string jobId, string? project, string? watchPath, ChangeProjectRequest req, TaskStateMachine states, AgentStudio.Registry.ProjectRegistry projects) =>
+        group.MapPost("/{jobId}/change-project", (string jobId, string? project, string? watchPath, ChangeProjectRequest req, HttpContext ctx, TaskStateMachine states, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             // The target project is likewise addressable by a path-free handle;
@@ -1241,6 +1241,12 @@ public static class TaskCrudEndpoints
             var targetWatchPath = ResolveWatchPath(projects, req.TargetProject, req.TargetWatchPath);
             if (string.IsNullOrWhiteSpace(targetWatchPath))
                 return Results.BadRequest("A valid target project is required");
+            var target = projects.FindByStorageLocation(targetWatchPath);
+            if (target is null)
+                return Results.BadRequest("A registered target project is required");
+            if (!ProjectAccessAuthorization.AllowsTasks(ctx, [target.Id], IamPermissions.ProjectCardsWrite, projects)
+                || ProjectAccessAuthorization.IsProductRoleIn(ctx, target.Id))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             var success = states.ChangeProject(jobId, targetWatchPath, watchPath);
             return success ? Results.Ok() : Results.BadRequest("Failed to change project");
         });

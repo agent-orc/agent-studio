@@ -119,6 +119,18 @@ public sealed class PermissionEvaluatorTests
     }
 
     [Fact]
+    public void Workspace_binding_covers_an_unresolved_task_while_a_project_binding_does_not()
+    {
+        var unresolved = PermissionTarget.ForProject(null);
+        Assert.True(Evaluate(IamPermissions.ProjectRead, User(),
+            [Binding(IamPrincipalKind.User, UserId, IamRoles.Owner, Workspace)], unresolved).Allowed);
+        Assert.Equal(IamRoles.Admin, PermissionEvaluator.StrongestRole(IamPermissions.ProjectCardsWrite, User(),
+            [Binding(IamPrincipalKind.User, UserId, IamRoles.Admin, Workspace)], unresolved));
+        Assert.False(Evaluate(IamPermissions.ProjectRead, User(),
+            [Binding(IamPrincipalKind.User, UserId, IamRoles.Developer, Project("alpha"))], unresolved).Allowed);
+    }
+
+    [Fact]
     public void Service_accounts_use_their_own_bindings_and_need_the_workspace_for_collections()
     {
         var account = IamSubject.ForServiceAccount(AccountId);

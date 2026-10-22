@@ -77,8 +77,11 @@ public static class PermissionEvaluator
                 covering = [];
                 foreach (var project in target.Projects)
                 {
-                    if (string.IsNullOrWhiteSpace(project)) return PermissionDecision.DenyScope("The route addresses no resolvable project.");
-                    var forProject = granting.Where(binding => Covers(binding, project, matches)).ToList();
+                    // A workspace grant covers a task whose project cannot be
+                    // resolved. The handler can then return its normal 404.
+                    var forProject = string.IsNullOrWhiteSpace(project)
+                        ? granting.Where(binding => binding.Scope.Kind == IamScopeKind.Workspace).ToList()
+                        : granting.Where(binding => Covers(binding, project, matches)).ToList();
                     if (forProject.Count == 0) return PermissionDecision.DenyScope($"No role binding grants '{permission}' in project '{project}'.");
                     covering.AddRange(forProject);
                 }
@@ -191,14 +194,17 @@ public static class PermissionEvaluator
         IReadOnlyList<RoleBinding> bindings, PermissionTarget target, Func<string, string, bool> matches)
     {
         var projects = target.Scope == ProjectRouteScope.Addressed
-            ? target.Projects.Where(project => !string.IsNullOrWhiteSpace(project)).Select(project => project!).ToList()
+            ? target.Projects.ToList()
             : [];
         if (projects.Count == 0)
             return target.Scope == ProjectRouteScope.Addressed ? null : Strongest(bindings, target.Environment);
         RoleDefinition? weakest = null;
         foreach (var project in projects)
         {
-            var best = Strongest(bindings.Where(binding => Covers(binding, project, matches)), target.Environment);
+            var candidates = string.IsNullOrWhiteSpace(project)
+                ? bindings.Where(IsWorkspace)
+                : bindings.Where(binding => Covers(binding, project, matches));
+            var best = Strongest(candidates, target.Environment);
             if (best is null) return null;
             var role = IamRoles.Find(best)!;
             if (weakest is null || role.Rank < weakest.Rank) weakest = role;

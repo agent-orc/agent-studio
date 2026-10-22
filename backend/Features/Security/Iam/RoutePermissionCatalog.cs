@@ -198,7 +198,7 @@ public static class RoutePermissionCatalog
         Add("POST", IamPermissions.RunnerService,
             "/api/runner/claim", "/api/runner/completion", "/api/runner/events", "/api/runner/logs",
             "/api/runner/orchestrator-decisions/**", "/api/runner/project-chat/claim", "/api/runner/project-chat/renew",
-            "/api/runner/project-chat/complete", "/api/runner/epic-planning-prompt", "/api/runner/replay/events",
+            "/api/runner/project-chat/complete", "/api/runner/replay/events",
             "/api/clients/{}/runner-git-capability", "/api/deploy/jobs/**", "/api/deploy/gate-releases");
         // The proxy to a standalone Task Server declares its own split
         // (TaskServerPlaneProxy.MapTaskServerPlaneProxy).
@@ -230,6 +230,8 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/deploy/deployments/{}/approve", IamEnvironments.Production);
         Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
             "/api/projects/{}/deploy/deployments/{}/reject", IamEnvironments.Production);
+        Environment("POST", IamPermissions.EnvironmentProductionDeploy,
+            "/api/projects/{}/deploy/deployments/{}/intervention", IamEnvironments.Production);
         Add("POST", IamPermissions.EnvironmentProductionDeploy,
             "/api/projects/{}/deploy/deployments/{}/cancel");
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
@@ -311,6 +313,8 @@ public static class RoutePermissionCatalog
             "cli-type", "thinking-level", "requires-integration", "move", "move-to-top", "attachments",
             "preview-comments", "change-project", "intake", "review-priority", "decision", "decision/migrate",
             "decision/reopen", "promote-concept", "concept-dossier", "planning-closure");
+        Under("POST", IamPermissions.ProjectRunsOperate, "/api/tasks/{}",
+            "review-observations", "review-observations/{}/later-evidence", "review-observations/{}/finding-outcomes");
         Under("W", IamPermissions.ProjectCardsWrite, "/api/projects/{}", "auto-tag/backfill", "auto-tag/backfill-jobs", "tag-maintenance/**");
 
         // --- Runs, pipeline, integration, and project actions --------------
@@ -330,6 +334,8 @@ public static class RoutePermissionCatalog
             "publish/package", "publish/website", "model-migrations/**", "security/audit", "skill-readiness/**",
             "proposals/**", "proposals", "design/**", "graph/**", "wiki/grading/**", "visual-evidence/**",
             "execution/proposal", "checkout/**", "gate-result-cache", "urls/{}/start", "urls/test", "urls/{}/process");
+        Add("POST", IamPermissions.WorkspaceOperate, "/api/projects/{}/operator-candidate-verifications");
+        Add("POST", IamPermissions.ProjectRunsOperate, "/api/projects/{}/batch-gate/queue-stalls/release");
 
         // --- Documents -----------------------------------------------------
         Under("W", IamPermissions.ProjectDocsWrite, "/api/projects/{}",

@@ -176,11 +176,14 @@ public static class OperatorCandidateVerificationPolicy
     }
 
     public static bool HasOperatorAuthority(HttpContext context)
-        => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal principal
-           && principal.User.Role is StudioRoles.Owner or StudioRoles.Operator
+        => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal
+           && context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is null
+           && context.Items[AccessSecurityMiddleware.RequestAccessItem] is not RequestAccess
+               { Subject.Kind: IamPrincipalKind.ServiceAccount }
+           && ProjectAccessAuthorization.HasOperatorAuthority(context)
            && context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is null;
 
     public static bool HasWorkspaceScope(HttpContext context)
-        => context.Items[AccessSecurityMiddleware.ApiTokenPrincipalItem] is not ApiTokenPrincipal token
-           || token.Token.Projects.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal);
+        => context.Items[AccessSecurityMiddleware.RequestAccessItem] is not RequestAccess access
+           || access.Allows(IamPermissions.WorkspaceOperate, PermissionTarget.WorkspaceWide);
 }
