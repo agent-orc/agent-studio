@@ -1,3 +1,9 @@
+## AGT-3290 develop merge follow-up, 22 October 2026
+
+- Result implementation SHA: `8af22294785fcbdaeb165e2741723cd92e86b8c9`. It merges the reviewed delivery `ca2f414d923d4035580d52a4026e5f3cd72d49a5` with `origin/develop` at `47f2341be`. The final fetch and merge found develop already up to date; `git merge-base --is-ancestor origin/develop HEAD` passed. No rebase or squash was used.
+- Implemented option: retain develop's AGT-3282 and AGT-3283 behavior while keeping the five approved follow-up fixes. Clean Git integration uses the automatic merge commit, report-only conflicts use restore and explicit commit, legacy reports remain a single bounded artifact, and review diagnosis retains the timeout and credential redaction coverage. This round adds no behavior beyond resolving the merge conflicts.
+- Remote verification on `agent-studio-runner`: `dotnet build agent-taskboard.sln --no-restore -m:2 -nodeReuse:false -p:UseSharedCompilation=false -v:q` passed with zero errors. Backend class filter `MergeIntoDevelopRunnerTests|GitServiceWorktreeRunCommitTests|BatchGateGitReplayTests|AcceptanceIntegrationRoundTripTests` passed 188 tests. Runner class filter `ReviewCommandExitDiagnosisTests|GitWorkspaceTests|DetachedReviewWorkerOptionsTests|ReviewWorkerReleaseProvenanceTests|RemoteReviewWorkspaceTests` passed 171 tests. `FullyQualifiedName~.Architecture.|Category=Guard` passed 99 backend and 2 runner tests and matched no tests in the other six .NET test projects. `npm --prefix frontend run lint` and `git diff --check` passed. Logs are in `/home/agent/runner-work/tasks/AGT-3290/results`.
+
 ## AGT-3290 operator deep-review follow-up, 21 October 2026
 
 - Result SHA: `fa1b7999399a93d093aa059af11a68d77fa96045908792b1f3bb4884d5f3c1c6` (SHA-256 over paths and contents of the 48 changed files other than this status entry). The platform owns the delivery commit; base Git SHA: `f969c27d40e276ff5100345716f23b3291dea75b`.
