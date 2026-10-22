@@ -82,6 +82,10 @@ public sealed class EngineBatchAdmission(
         }
         if (state is TaskStates.HumanReview or TaskStates.Escalated)
             return EngineBatchAdmissionOutcome.PerTaskGate;
+        // AGT-3219: the per-task gate overran the machine gate queue and the
+        // review returned to the batch queue; the card stays in Auto Review.
+        if (batches.IsQueuedForBatch(review.AttemptId))
+            return EngineBatchAdmissionOutcome.Enqueued;
         if (!IsCurrentGeneration(review))
             return Skip(task, occurrence,
                 $"Review {review.AttemptId} was superseded while it entered the batch queue.");

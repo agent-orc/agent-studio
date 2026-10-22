@@ -28,6 +28,8 @@ public sealed class GateCancellationPolicyTests
     [InlineData("same", "same", "review", "review", false, false, "shutdown", "shutdown")]
     [InlineData("same", "same", "review", "review", false, false, null, "operator")]
     [InlineData("same", "same", "review", "review", false, true, "operator", "operator")]
+    [InlineData("same", "same", "review", "review", false, false, "superseded", "superseded")]
+    [InlineData("same", "same", "review", "review", false, true, "superseded", "superseded")]
     public void Ownership_precedes_cancellation_origin(string expected, string current,
         string lane, string currentLane, bool pending, bool shutdown, string? origin, string reason)
         => Assert.Equal(reason, GateCancellationPolicy.Decide(expected, current, lane, currentLane, pending, shutdown, origin));

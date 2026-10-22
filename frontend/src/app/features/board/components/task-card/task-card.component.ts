@@ -59,6 +59,7 @@ import { RunDispositionBadgesComponent } from '../run-disposition-badges/run-dis
 import { IntegrationStatusBadgeComponent } from '../../../../components/integration-status-badge/integration-status-badge.component';
 import { ReviewDecisionBadgesComponent } from '../review-decision-badges/review-decision-badges.component';
 import { TaskLiveStatusComponent } from '../../../../components/task-live-status/task-live-status.component';
+import { TaskPreviewComponent } from '../../../../components/task-preview/task-preview.component';
 import { TokenPopoverDirective } from './token-popover.directive';
 import { TaskTokenUsagePopoverComponent } from './token-usage-popover/token-usage-popover.component';
 import { TaskCardQuotaWaitComponent } from '../task-card-quota-wait/task-card-quota-wait.component';
@@ -89,7 +90,7 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, TaskCardCauseWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent],
+  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskPreviewComponent, TaskCardQuotaWaitComponent, TaskCardCauseWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent, TaskCardQuotaNoticeComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',
