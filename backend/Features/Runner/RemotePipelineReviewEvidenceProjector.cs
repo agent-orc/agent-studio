@@ -71,7 +71,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
         {
             ProjectCarriedAspect(task, review, verdict, receivedAt, execution.Attempt);
         }
-        ProjectToolGate(task, review, report, execution.Attempt);
+        ProjectToolGate(task, review, report, evidenceFile, receivedAt, execution.Attempt);
         ProjectTimeline(task, review, report, evidenceFile, receivedAt);
         RecordReviewUsage(task, review, report);
     }
@@ -247,6 +247,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
             Attempt = pipelineAttempt,
             Model = command.Model,
             ThinkingLevel = command.ThinkingLevel,
+            ReviewedResultSha = command.ExpectedResultSha,
             StartedAt = command.StartedAt,
             CompletedAt = command.FinishedAt,
             DurationMs = duration,
@@ -256,6 +257,14 @@ public sealed class RemotePipelineReviewEvidenceProjector
             CacheCreationTokens = command.CacheCreationTokens,
             InputIncludesCached = command.InputIncludesCached,
             Verdict = AspectVerdictParsing.StatusToken(status),
+            ReviewFindings = status switch
+            {
+                AspectStatus.Block => new AgentStudio.Review.ReviewFindingCounts(Blocker: 1),
+                AspectStatus.Concerns => new AgentStudio.Review.ReviewFindingCounts(Major: 1),
+                _ => new AgentStudio.Review.ReviewFindingCounts(),
+            },
+            ReviewCli = CliFromExecutable(command.FileName),
+            ReviewedFileCount = report.Workspace.ChangedPaths?.Count,
             VerdictSummary = summary,
             EvidenceRef = markdownName,
             // Semantic concerns and blocks are successful aspect executions.
@@ -283,6 +292,8 @@ public sealed class RemotePipelineReviewEvidenceProjector
         TaskInfo task,
         ReviewAttemptDto review,
         Contract.ReviewReportRequest report,
+        string evidenceFile,
+        DateTime receivedAt,
         int pipelineAttempt)
     {
         var tools = report.Commands
@@ -291,6 +302,9 @@ public sealed class RemotePipelineReviewEvidenceProjector
             .ToArray();
         if (tools.Length == 0) return;
         var passed = tools.All(command => command.ExitCode == 0 && command.Signal is null);
+        var citedProductFailure = tools.Any(command => command.Diagnosis?.ChargesCard == true
+            || command.NewFailures is { Count: > 0 }
+            || command.BaselineExitCode == 0 && command.ExitCode is > 0);
         var first = tools.MinBy(command => command.StartedAt)!;
         var last = tools.MaxBy(command => command.FinishedAt)!;
         _pipeline.RecordStep(task.FolderPath, new PipelineStepExecution
@@ -298,13 +312,20 @@ public sealed class RemotePipelineReviewEvidenceProjector
             StepId = PipelineCatalogue.BuildTestGateStepId,
             Kind = StepKind.Tool,
             Attempt = pipelineAttempt,
+            ReviewedResultSha = first.ExpectedResultSha,
             Status = passed ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
             StartedAt = first.StartedAt,
-            CompletedAt = last.FinishedAt,
+            CompletedAt = receivedAt,
             DurationMs = Math.Max(0, (long)(last.FinishedAt - first.StartedAt).TotalMilliseconds),
             Reason = passed
                 ? $"{tools.Length} remote tool gate command(s) passed at the immutable Result-SHA."
                 : "A remote tool gate command failed at the immutable Result-SHA.",
+            Verdict = passed ? "pass" : "block",
+            ReviewFindings = !passed && citedProductFailure
+                && string.Equals(report.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase)
+                ? new AgentStudio.Review.ReviewFindingCounts(Blocker: 1)
+                : new AgentStudio.Review.ReviewFindingCounts(),
+            EvidenceRef = evidenceFile,
             ExecutionLocation = "remote",
             ExecutionHostId = review.Lease?.HostId ?? report.Environment.HostId,
             ExecutionExecutorId = review.Lease?.ExecutorId ?? report.ExecutorId,
