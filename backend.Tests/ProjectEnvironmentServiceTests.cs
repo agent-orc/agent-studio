@@ -12,6 +12,7 @@ using AgentStudio.Projects;
 using AgentStudio.Runner;
 using AgentStudio.Security;
 using AgentStudio.Secrets;
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -228,7 +229,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.False(service.Report("demo", claimed.Id, new DeployReportRequest(claimed.LeaseToken!, true, "health-ok")));
         var png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC";
         Assert.True(service.Report("demo", claimed.Id,
-            new DeployReportRequest(claimed.LeaseToken!, true, "health-ok", png)));
+            new DeployReportRequest(claimed.LeaseToken!, true, "health-ok", ScreenshotBase64: png)));
         var ready = service.PreviewJob("demo", claimed.Id)!;
         Assert.Equal("healthy", ready.Status);
         Assert.NotNull(ready.ScreenshotUrl);
@@ -278,6 +279,51 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal("stage", Assert.Single(service.Read("Operator Demo")!.Environments
             .Where(item => item.PendingArtifact is not null)).Declaration.Id);
         Assert.Equal("stage", service.Claim("stage-host")!.EnvironmentId);
+    }
+
+    [Fact]
+    public void HostMove_RoutesClaimToCurrentHostWithoutChangingReleaseSshTarget()
+    {
+        var (service, repo, _) = Build();
+        var snapshot = service.Declarations("demo")!.Single(item => item.Id == "stage") with
+        {
+            SshSteps = [new ProjectDeployStep("container", "app", "stage-host", null, null, null,
+                [], ["staging"]) { ComposeFile = "/srv/apps/web/compose.yml", Service = "web" }],
+        };
+        var declarationPath = Path.Combine(repo, "docs", "deployments", "environments", "stage.json");
+        File.WriteAllText(declarationPath, File.ReadAllText(declarationPath)
+            .Replace("stage-host", "new-host", StringComparison.Ordinal));
+
+        var queued = service.QueueDeployment("demo", snapshot, _artifact, "operator", rollback: false);
+        Assert.NotNull(queued);
+        Assert.Equal("new-host", queued.HostId);
+        Assert.Equal("stage-host", Assert.Single(queued.SshSteps).Target);
+        Assert.Null(service.Claim("stage-host"));
+        var claimed = service.Claim("new-host");
+        Assert.Equal("stage-host", Assert.Single(claimed!.SshSteps).Target);
+    }
+
+    [Fact]
+    public void Lease_renewal_keeps_claim_live_and_old_token_is_fenced_after_reclaim()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var first = service.Claim("stage-host")!;
+
+        _clock.Advance(TimeSpan.FromMinutes(4));
+        Assert.True(service.RenewClaim("demo", first.Id, first.LeaseToken!));
+        _clock.Advance(TimeSpan.FromMinutes(4));
+        Assert.NotNull(service.FindClaimedJob("demo", first.Id, first.LeaseToken!));
+        Assert.Null(service.Claim("stage-host"));
+
+        _clock.Advance(TimeSpan.FromMinutes(2));
+        Assert.False(service.RenewClaim("demo", first.Id, first.LeaseToken!));
+        Assert.False(service.Report("demo", first.Id, new(first.LeaseToken!, true, "health-ok")));
+        var restarted = service.Claim("stage-host")!;
+        Assert.NotEqual(first.LeaseToken, restarted.LeaseToken);
+        Assert.False(service.RenewClaim("demo", first.Id, first.LeaseToken!));
+        Assert.True(service.RenewClaim("demo", restarted.Id, restarted.LeaseToken!));
     }
 
     [Fact]

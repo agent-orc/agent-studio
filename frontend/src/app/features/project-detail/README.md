@@ -9,6 +9,9 @@ one project surface in the user's mental model.
 ## Public API
 
 Import via `from './features/project-detail'`. See [`index.ts`](./index.ts).
+Startup shell imports use [`runtime.ts`](./runtime.ts). Components mounted only
+after navigation use [`lazy.ts`](./lazy.ts), so the startup graph cannot pull in
+the project overlay or legacy detail component through the public barrel.
 
 **State services**:
 
@@ -17,11 +20,11 @@ Import via `from './features/project-detail'`. See [`index.ts`](./index.ts).
 
 **Container components**:
 
-- `ProjectOverlaysComponent`: renders the four overlays in one place; the shell
-  mounts it once.
+- `ProjectOverlaysComponent`: deferred overlay container exported from `lazy.ts`.
 - `ProjectShellComponent`: the project page's left rail and body shell.
 - `ProjectOverviewDashboardComponent`: operator-first default Overview.
-- `ProjectDetailComponent`: legacy per-project settings overlay.
+- `ProjectDetailComponent`: legacy per-project settings overlay, exported from
+  `lazy.ts` rather than the public barrel.
 - `AnalysisReportDrilldownComponent`: drill-down for one analysis report.
 - `AutonomySliderComponent`: the autonomy slider used in project settings.
 - `WorkbenchViewerComponent` and `WorkbenchDecisionPanelComponent`: the isolated

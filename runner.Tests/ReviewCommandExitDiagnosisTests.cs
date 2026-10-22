@@ -46,11 +46,28 @@ public sealed class ReviewCommandExitDiagnosisTests
     [InlineData("{\"password\": \"jkl\"}", "jkl")]
     [InlineData("Authorization: Basic bW5v", "bW5v")]
     [InlineData("https://user:pass@example.invalid/path", "pass")]
+    [InlineData("{\"Authorization\": \"Bearer abcdefghi\"}", "abcdefghi")]
+    [InlineData("https://abcdefghi@example.invalid/path", "abcdefghi")]
+    [InlineData("ghp_abcdefghij", "ghp_abcdefghij")]
+    [InlineData("github_pat_abcdefghij", "github_pat_abcdefghij")]
+    [InlineData("glpat-abcdefghij", "glpat-abcdefghij")]
+    [InlineData("xoxb-123456-abcdef", "xoxb-123456-abcdef")]
     public void Evidence_scrubs_common_credential_forms(string output, string secret)
     {
         var evidence = ReviewCommandExitDiagnosis.Evidence("build", "base", "candidate", 0, 1, 1, output, "");
         Assert.Contains("[redacted]", evidence);
         Assert.DoesNotContain(secret, evidence);
+    }
+
+    [Fact]
+    public void Underscore_heavy_output_finishes_and_keeps_the_failure_tail()
+    {
+        var output = new string('_', 200) + "\n" +
+            string.Join('_', Enumerable.Repeat("identifier", 31)) + "\nerror: failure";
+        var evidence = ReviewCommandExitDiagnosis.Evidence("build", "base", "candidate", 0, 1, 1,
+            output, "");
+        Assert.Contains("error: failure", evidence);
+        Assert.True(evidence.Length < 2400);
     }
 
     [Fact]

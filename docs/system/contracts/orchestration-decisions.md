@@ -32,6 +32,19 @@ claimable occurrences. An unaccepted preparation has no wait marker and, after
 a bounded grace period, receives a durable cancellation receipt. A later valid
 report can prepare the same idempotency key again.
 
+An operator lane move or accepted `/continue` supersedes open Engine-mode
+lane-decision occurrences for that card. Shadow occurrences remain available
+for comparing the monolith outcome. The card move and engine application serialize on
+the card, so a decision cannot apply between the move and cancellation. A
+restarted host also cancels a pending or leased occurrence whose source lane
+is gone; applying recovery cancels a source-state mismatch, settles malformed
+decision data as failed, and retries transient application failures. A
+superseded occurrence records the observed lane and reason, and the card
+timeline records `orchestration_decision_superseded`.
+Board wait state checks the occurrence and current lane, so an old marker file
+cannot block Ready pickup. A card still waiting after 15 minutes while engine
+readiness is `ready` raises one operator-feed alert per occurrence.
+
 AGT-3059 adds a per-profile rollout journal at
 `<TaskRepository>/.orchestration-rollout.json`. Coding completion, review report,
 and gate or batch result can be switched independently from Monolith to Shadow and then

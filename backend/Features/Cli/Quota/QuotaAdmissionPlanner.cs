@@ -78,7 +78,8 @@ public static class QuotaAdmissionPlanner
         DateTime nowUtc,
         int occupiedSlots,
         ResolvedCliQuotaWaitPolicy? waitPolicy = null,
-        CliFallbackPreference? preference = null)
+        CliFallbackPreference? preference = null,
+        Func<string, string?, bool>? modelAccepted = null)
     {
         var cli = string.IsNullOrWhiteSpace(requestedCli)
             ? CliTypes.Claude
@@ -137,7 +138,7 @@ public static class QuotaAdmissionPlanner
         }
 
         var preferFallback = preference?.Active == true;
-        var route = fallback?.Resolve(cli, requestedModel, requestedThinking, Admission, preferFallback);
+        var route = fallback?.Resolve(cli, requestedModel, requestedThinking, Admission, preferFallback, modelAccepted);
 
         // 2) The router switched us to the fallback (primary capped or projected;
         //    a usable fallback exists). Documented model switch before start.
@@ -186,6 +187,16 @@ public static class QuotaAdmissionPlanner
         var strictPrimary = Strict(cli);
         var admissionPrimary = route?.PrimaryCap ?? Admission(cli);
 
+        if (modelAccepted is not null && !modelAccepted(cli, model))
+        {
+            var reset = EarliestReset(primarySnapshot, nowUtc, caps, blockedOnly: false);
+            return new QuotaAdmissionPlan(
+                QuotaAdmissionOutcome.Wait, cli, model, thinking, false,
+                AppendReset($"waiting: {cli}/{model ?? "provider default"} is not accepted by the claiming host", reset),
+                reset?.ResetAt, QuotaWindowProjection.WorstProjection(primarySnapshot, caps, nowUtc),
+                projectionWarning);
+        }
+
         // 3) Primary is ACTUALLY over cap and no fallback saved us: everything is
         //    exhausted. Wait quietly with a reason and the next reset time.
         if (strictPrimary.Blocked)
@@ -210,6 +221,11 @@ public static class QuotaAdmissionPlanner
         {
             var proj = QuotaWindowProjection.WorstProjection(snapshotFor(cli), caps, nowUtc);
             var reset = EarliestReset(snapshotFor(cli), nowUtc, caps, blockedOnly: false);
+            if (modelAccepted is not null)
+                return new QuotaAdmissionPlan(
+                    QuotaAdmissionOutcome.Wait, cli, model, thinking, false,
+                    AppendReset($"waiting: no accepted fallback on the claiming host ({route?.Reason ?? admissionPrimary.DescribeReason()})", reset),
+                    reset?.ResetAt, proj, projectionWarning);
             var throttle = occupiedSlots > 0;
             var verb = throttle ? "throttling" : "launching (projection-flagged)";
             return new QuotaAdmissionPlan(
