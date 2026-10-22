@@ -188,6 +188,7 @@ public static class RoutePermissionCatalog
         Add("*", IamPermissions.WorkspaceAdminister, "/api/first-run/**");
 
         // --- Runner and engine service routes (credential scopes decide) ----
+        Add("R", IamPermissions.RunnerService, "/api/quota/admission/{}");
         Add("*", IamPermissions.RunnerService,
             "/api/v1/orchestration/**", "/api/v1/runners/**", "/api/v1/gates/**", "/api/v1/runs/**",
             "/api/runner/artifacts/**", "/api/runner/lease/**", "/api/pull-gates/**", "/api/gate-artifacts/**");

@@ -121,6 +121,7 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("DELETE", "/api/projects/{projectName}/environments/{environmentId}/telemetry/tokens/{tokenId}", IamPermissions.ProjectSettingsWrite)]
     [InlineData("GET", "/api/orchestration/decision-receipts/{receiptId}", IamPermissions.ProjectRead)]
     [InlineData("POST", "/api/orchestration/decision-receipts/{receiptId}/operator-intent", IamPermissions.ProjectRunsOperate)]
+    [InlineData("GET", "/api/quota/admission/{project}", IamPermissions.RunnerService)]
     public void Representative_routes_resolve_to_their_permission(string method, string pattern, string permission)
     {
         var resolved = RoutePermissionCatalog.Resolve(method,

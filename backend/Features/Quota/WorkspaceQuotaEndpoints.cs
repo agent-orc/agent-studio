@@ -27,21 +27,26 @@ public static class WorkspaceQuotaEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
         app.MapGet("/api/workspaces/{workspaceId}/quota/audit", (HttpContext context, string workspaceId,
             WorkspaceQuotaService quotas) => Owner(context) ? Results.Ok(quotas.Audit(workspaceId, null)) : Results.Forbid())
+            .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
         app.MapPut("/api/workspaces/{workspaceId}/quota", (HttpContext context, string workspaceId,
             QuotaLimits limits, WorkspaceQuotaService quotas) => Set(context, () => quotas.SetLimits(workspaceId, null, limits)))
+            .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
         app.MapPut("/api/workspaces/{workspaceId}/projects/{projectId}/quota", (HttpContext context,
             string workspaceId, string projectId, QuotaLimits limits, WorkspaceQuotaService quotas) =>
             Set(context, () => quotas.SetLimits(workspaceId, projectId, limits)))
+            .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
         app.MapPost("/api/workspaces/{workspaceId}/quota/override", (HttpContext context,
             string workspaceId, QuotaOverrideRequest request, WorkspaceQuotaService quotas) =>
             Set(context, () => quotas.Override(workspaceId, null, Actor(context), request.Reason)))
+            .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
         app.MapPost("/api/workspaces/{workspaceId}/projects/{projectId}/quota/override", (HttpContext context,
             string workspaceId, string projectId, QuotaOverrideRequest request, WorkspaceQuotaService quotas) =>
             Set(context, () => quotas.Override(workspaceId, projectId, Actor(context), request.Reason)))
+            .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
     }
 
