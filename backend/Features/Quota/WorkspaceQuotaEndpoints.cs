@@ -60,14 +60,15 @@ public static class WorkspaceQuotaEndpoints
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
     }
 
-    /// <summary>An API token acts as its owner but is audited under its own token id.</summary>
+    /// <summary>Attribute non-human calls to the service account that owns the token.</summary>
     internal static string Actor(HttpContext context)
-        => context.Items[AccessSecurityMiddleware.ApiTokenPrincipalItem] is ApiTokenPrincipal token
-            ? "api:" + token.Token.Id
+        => context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account
+            ? account.ActorId
             : (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Id
               ?? "local-owner";
 
-    private static bool Owner(HttpContext context)
-        => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal principal
-           || principal.User.Role == StudioRoles.Owner;
+    internal static bool Owner(HttpContext context)
+        => context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is null
+           && (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal principal
+               || principal.User.Role == StudioRoles.Owner);
 }

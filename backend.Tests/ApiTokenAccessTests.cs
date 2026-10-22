@@ -44,7 +44,7 @@ public sealed class ApiTokenAccessTests : IDisposable
     }
 
     [Fact]
-    public async Task Api_token_cannot_use_the_quota_admission_route_and_overrides_name_the_token()
+    public async Task Api_token_cannot_use_the_quota_admission_route_and_overrides_name_the_service_account()
     {
         var (store, configuration) = NewStore();
         var owner = store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", "Owner")).User;
@@ -59,8 +59,9 @@ public sealed class ApiTokenAccessTests : IDisposable
         Assert.Equal(403, admission.Response.StatusCode);
         Assert.Equal(0, called);
         var context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
-        context.Items[AccessSecurityMiddleware.ApiTokenPrincipalItem] = store.AuthenticateApiToken(token.Secret);
-        Assert.Equal("api:" + token.Token.Id, AgentStudio.Quota.WorkspaceQuotaEndpoints.Actor(context));
+        context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] = store.AuthenticateServiceAccount(token.Secret);
+        Assert.Equal("service-account:sa_" + token.Token.Id, AgentStudio.Quota.WorkspaceQuotaEndpoints.Actor(context));
+        Assert.False(AgentStudio.Quota.WorkspaceQuotaEndpoints.Owner(context));
     }
 
     [Fact]
