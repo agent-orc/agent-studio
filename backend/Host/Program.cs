@@ -69,6 +69,10 @@ builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();
 // waits for is live; see /healthz/orchestration-engine.
 builder.Services.AddSingleton<OrchestrationEngineReadiness>();
 builder.Services.AddHostedService<OrchestrationEngineReadinessService>();
+// AGT-3218: checks the first engine decisions after a profile switch and rolls
+// the profile back when an applied decision lacks its effect.
+builder.Services.AddSingleton<EngineApplierEffectProbe>();
+builder.Services.AddHostedService<EngineApplierCanaryService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 

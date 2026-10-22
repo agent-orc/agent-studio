@@ -18,6 +18,9 @@
 .rollout__profile { background: var(--studio-bg-elevated); padding: var(--studio-spacing-3); }
 .rollout__state { background: var(--studio-bg-surface); padding: var(--studio-spacing-1) var(--studio-spacing-2); }
 .rollout__number { font-variant-numeric: tabular-nums; }
+.rollout__checks { display: grid; grid-template-columns: max-content 1fr; gap: var(--studio-spacing-1) var(--studio-spacing-3); margin: 0 0 var(--studio-spacing-3); }
+.rollout__checks dt { color: var(--studio-fg-muted); }
+.rollout__checks dd { margin: 0; }
 .rollout__actions { justify-content: flex-start; }
 .rollout button { border: 1px solid var(--studio-border); border-radius: 6px; background: var(--studio-bg-surface); color: var(--studio-fg); padding: var(--studio-spacing-2) var(--studio-spacing-3); cursor: pointer; font: inherit; }
 .rollout button:hover:not(:disabled) { background: var(--studio-bg-hover); }
