@@ -5,6 +5,7 @@ import { setTheme } from '../helpers/theme';
 
 const PROJECT = 'Route Project';
 const PROJECT_SLUG = 'route-project';
+const PROJECT_ID = 'PROJ-ROUTE';
 const TASK_REFERENCE = 'AGT-2291';
 const TASK_ID = 'route-restoration-task';
 const WATCH_PATH = '/tmp/route-project';
@@ -66,6 +67,30 @@ const TASK_DETAIL = {
   log: [],
   summaryState: null,
   reviewEvidence: [],
+};
+
+const TASK_CORE = {
+  state: 'ready', projectId: PROJECT_ID, projectName: PROJECT,
+  id: TASK_ID, taskKey: TASK_KEY, key: TASK_REFERENCE,
+  watchPath: WATCH_PATH, folderPath: TASK_DETAIL.info.folderPath,
+  title: TASK_DETAIL.info.title, kind: 'task', taskType: 'chore',
+  lane: TASK_DETAIL.info.state, archiveState: null,
+  enteredLaneAt: TASK_DETAIL.info.lastActivity, order: 1, mode: 'coding',
+  released: false, pendingIntent: false, coreVersion: '1', runtimeVersion: '1',
+  pins: { model: null, modelExplicit: false, thinkingLevel: null,
+    thinkingLevelExplicit: false, cliType: null, contextMode: null,
+    useOwnSession: null, allowWebAccess: false, noBranchExpected: false },
+  actions: { canEdit: true, canMove: true, canDelete: true, canContinue: true },
+  blocking: { blockerType: null, blockerCondition: null, blockerStatus: null,
+    blockerDescription: null, needsInput: null, dependencyBlocked: false,
+    dependencyState: 'ready', dependencies: [] },
+  runtime: { attemptId: null, runnerId: null, runnerName: null, hostname: null,
+    executionStatus: null, location: 'none', heartbeatAt: null,
+    leaseState: 'none', leaseId: null },
+  statusSummary: { state: 'ready', text: '', originalBytes: 0, hash: null, cursor: null },
+  prompt: { state: 'ready', text: TASK_DETAIL.promptMarkdown,
+    originalBytes: TASK_DETAIL.promptMarkdown.length, hash: null, cursor: null },
+  timeline: { state: 'ready', events: [], cursor: null },
 };
 
 function evidencePath(testInfo: TestInfo, name: string): string {
@@ -160,6 +185,9 @@ async function stubRouteData(page: Page): Promise<void> {
     }
     if (url.pathname === '/api/v1/management/remote-hosts') return json([]);
     if (url.pathname === '/api/v1/management/links') return json([]);
+    if (url.pathname === '/api/v1/management/credential-inventory') {
+      return json({ generatedAt: '2026-07-24T10:00:00Z', items: [] });
+    }
     if (/\/api\/bus\/[^/]+\/messages$/.test(url.pathname)) return json([]);
     if (url.pathname === '/api/watch-paths') {
       return json([{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
@@ -171,6 +199,25 @@ async function stubRouteData(page: Page): Promise<void> {
       return json({ active: false, items: [], generatedAtUtc: '2026-07-24T10:00:00Z' });
     }
     if (url.pathname === '/api/runner/queue-starvation') return json({ active: false, items: [] });
+    const coreTaskId = /^\/api\/tasks\/([^/]+)\/core$/.exec(url.pathname)?.[1];
+    if (coreTaskId === TASK_REFERENCE || coreTaskId === TASK_ID) return json(TASK_CORE);
+    const detailResource = /^\/api\/tasks\/([^/]+)\/details\/([^/]+)$/.exec(url.pathname);
+    if (detailResource && [TASK_REFERENCE, TASK_ID].includes(detailResource[1])) {
+      const resource = detailResource[2];
+      const name = url.searchParams.get('name');
+      const data = resource === 'documents'
+        ? { name, markdown: name === 'prompt' ? TASK_DETAIL.promptMarkdown : '', summaryState: null }
+        : resource === 'overview'
+          ? { references: TASK_DETAIL.info.references, relatedWikiPages: [], waitsOn: null }
+          : resource === 'history'
+            ? { promptHistory: [], titleHistory: [], log: [] }
+            : resource === 'usage'
+              ? { tokenSummary: null, lastUsage: null, contextUsage: null }
+              : {};
+      return json({ id: TASK_ID, taskKey: TASK_KEY, projectId: PROJECT_ID,
+        attemptId: null, coreVersion: '1', resource, version: '1',
+        computedAt: null, state: 'ready', data, reason: null });
+    }
     const detailTaskId = /^\/api\/v1\/projects\/[^/]+\/tasks\/([^/]+)$/.exec(url.pathname)?.[1];
     if (detailTaskId === TASK_REFERENCE || detailTaskId === TASK_ID) {
       return json(TASK_DETAIL);
@@ -404,13 +451,13 @@ test.describe('Studio route restoration', () => {
     await expect(page.getByTestId('project-wiki-viewer-path')).toContainText('concepts/routing.md');
     await expect(page.getByTestId('project-wiki-viewer')).toContainText('Restored Wiki page');
     await expect.poll(() => new URL(page.url()).hash)
-      .toContain('#/projects/route-project/wiki?page=concepts%2Frouting.md');
+      .toContain(`#/projects/${PROJECT_ID}/wiki?page=concepts%2Frouting.md`);
     await expect(page.getByTestId('error-dialog')).toHaveCount(0);
 
     await page.goto(`/#/projects/${PROJECT_SLUG}/wiki`, { waitUntil: 'commit' });
     await page.getByTestId('project-wiki-file-concepts/routing.md').click();
     await expect.poll(() => new URL(page.url()).hash)
-      .toContain('#/projects/route-project/wiki?page=concepts%2Frouting.md');
+      .toContain(`#/projects/${PROJECT_ID}/wiki?page=concepts%2Frouting.md`);
     await page.screenshot({ path: evidencePath(testInfo, 'route-restoration-wiki-page.png') });
     await page.reload({ waitUntil: 'commit' });
     await expect(page.getByTestId('project-wiki-viewer-path')).toContainText('concepts/routing.md');
@@ -525,7 +572,7 @@ test.describe('Studio route restoration', () => {
     const notice = page.getByTestId('workbench-documentation-ready');
     await expect(notice).toContainText('All referenced cards are terminal');
     await expect(page.getByTestId(`studio-explorer-workbench-${PROJECT}-route-lab`))
-      .toContainText('Ready to document');
+      .toContainText('Delivery record');
 
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
@@ -549,7 +596,7 @@ test.describe('Studio route restoration', () => {
     await expect(page.getByTestId('project-shell-panel-overview')).toBeVisible();
     await expect(page.getByTestId('project-overview-dashboard')).toBeVisible();
     await expect.poll(() => new URL(page.url()).hash)
-      .toContain('#/projects/route-project');
+      .toContain(`#/projects/${PROJECT_ID}`);
     await page.reload({ waitUntil: 'commit' });
     await expect(page.getByTestId('project-shell-panel-overview')).toBeVisible();
   });
@@ -604,7 +651,7 @@ test.describe('Studio route restoration', () => {
 
     await expect(page.getByTestId('project-shell-panel-settings')).toBeVisible();
     await expect.poll(() => new URL(page.url()).hash)
-      .toContain('#/projects/route-project/settings');
+      .toContain(`#/projects/${PROJECT_ID}/settings`);
 
     await page.reload({ waitUntil: 'commit' });
     await expect(page.getByTestId('project-shell-panel-settings')).toBeVisible();
