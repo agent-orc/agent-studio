@@ -1,0 +1,199 @@
+{
+  "schemaVersion": 1,
+  "id": "pipeline-delivery-target",
+  "title": "Pipeline target picture: tests before delivery, delivery lanes, central source API",
+  "summary": "Updates the target picture after Robert's request of 20 October 2026. Tests: per card only build, affected tests and fast checks; after merge, window checks and a nightly full suite on develop; the full suite once on the release candidate before delivery, optional per project; red develop is attributed and repaired by revert or fix forward, and holds releases, not merges. Delivery lanes: a Delivery section after Done & Decide with one column per declared environment, landed and waiting cards projected from releases, deploy runs and CardsSinceLastDeploy (AGT-3201), cards keep their lane state; no Dev environment exists today. Central API: the Task Server serves card state, board and artefacts, derived diffs, history and blame replace request-time git, host object caches replace gate bundles, the workspace repository becomes an export. Ten decisions D1 to D10 with recommendations and thirteen implementation cards.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "pattern": "concept",
+  "updatedAt": "2026-10-21T07:20:00Z",
+  "sourceTaskKeys": [
+    "AGT-3276"
+  ],
+  "relatedTaskKeys": [
+    "AGT-3201",
+    "AGT-3202",
+    "AGT-3232",
+    "AGT-3070",
+    "AGT-3052",
+    "AGT-3044",
+    "AGT-3017",
+    "AGT-3099"
+  ],
+  "implementationTasks": [
+    {
+      "id": "target-picture-update",
+      "title": "Target picture update: publish the pipeline Dossier and link it from the North star",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Docs only: move the Dossier to docs/operations/, add the North star map card and register row, add the docs/start/README.md row; no product code.",
+        "criteria": [
+          "All links resolve; the Dossier renders in the Studio viewer in both themes.",
+          "No product code changes."
+        ]
+      },
+      "promptMarkdown": "# Target picture update: publish the pipeline Dossier and link it from the North star\n\nSource of truth: `docs/pipeline-delivery-target/index.html` (AGT-3276). Use the Dossier's recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Sections 00 and 10, all decisions.\n\n## Deliver\n\n1. Move `docs/pipeline-delivery-target/` to `docs/operations/pipeline-delivery-target/` with its `assets/` directory. Fix relative links.\n2. North star (`docs/operations/nordstern/index.html`): add a map card in §9 and a row in the §6 decision register once Robert's decisions D1 to D10 are recorded; until then list it in §7 \"What is still open\". Update the §3 step table and the §5 guardrail \"full suite once per batch\" to the decided test placement (D1).\n3. Add one row to `docs/start/README.md` and one row to `docs/operations/README.md`.\n4. Record the operator decisions in the Dossier (status `decided`), leaving the implementation section markers intact.\n\n## Acceptance criteria\n\n- All links resolve; the Dossier renders in the Studio viewer in both themes.\n- No product code changes.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Builds and tests run remotely. Report the result SHA in status.md."
+    },
+    {
+      "id": "pipeline-metrics-baseline",
+      "title": "Pipeline metrics baseline: lead time, gate minutes per card, red develop time, board read, gate source",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Read-only metrics: extend /api/gate-economics and the Ops panel with per-card and post-merge metrics; no gate behaviour change.",
+        "criteria": [
+          "Unit tests compute each metric from fixture receipts and events, including legacy receipts without new fields.",
+          "The panel aggregate row equals the sum of the visible project rows."
+        ]
+      },
+      "promptMarkdown": "# Pipeline metrics baseline: lead time, gate minutes per card, red develop time, board read, gate source\n\nSource of truth: `docs/pipeline-delivery-target/index.html` (AGT-3276). Use the Dossier's recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Section 07 (Measurable targets), decision D1.\n\nThis card lands before any behaviour change so later cards are judged against a measured baseline.\n\n## Deliver\n\n1. Extend `GET /api/gate-economics?window=7d|30d` (AGT-3070) per project with: lead time card to develop (review pass of the last round to integrated push; median, p90), gate minutes per card (T1 plus T2, excluding queue wait), full-suite runs per day, red develop time (empty until the post-merge card lands), board read p50/p95 and git spawns per board request (from the git telemetry endpoint), gate source bytes and seconds per run (from `remote_gate_bundle_transferred`).\n2. Missing inputs count as unknown, never as zero.\n3. Show the new rows in the existing gate economics panel using central design tokens and existing components; light and dark Playwright screenshots in the task `results/` folder.\n4. Record the first 7-day baseline for Agent Studio in the delivery report.\n\n## Acceptance criteria\n\n- Unit tests compute each metric from fixture receipts and events, including legacy receipts without new fields.\n- The panel aggregate row equals the sum of the visible project rows.\n\nOut of scope: any change to gates, reviews or the board read path.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Builds and tests run remotely. Report the result SHA in status.md."
+    },
+    {
+      "id": "per-card-verify-plan",
+      "title": "Per-card verify plan: build, generated project map, affected tests, fast checks",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Review attempts run build, map-selected tests and fast checks behind a project setting; DeterministicTestScope unions mapped commands; full fallback kept for global inputs and unmapped paths.",
+        "criteria": [
+          "A `setup/`-only diff selects `setup.Tests`, not backend.Tests; a `runner/` diff selects backend, runner and task-server tests; a `global.json` diff runs the full set.",
+          "With `full`, plans are byte-identical to today.",
+          "Report median T1 minutes on a replay of the last 20 Agent Studio review plans."
+        ]
+      },
+      "promptMarkdown": "# Per-card verify plan: build, generated project map, affected tests, fast checks\n\nSource of truth: `docs/pipeline-delivery-target/index.html` (AGT-3276). Use the Dossier's recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Section 03 tier T1, decision D1. Builds on the AGT-W69 impact-union proposal (card 5) and AGT-3085 class selection.\n\n## Deliver\n\n1. Generate `folderToTestProjects` at plan time from the `.csproj` `ProjectReference` graph plus `frontend/` to `frontend-unit`; record the map digest in the test-selection audit.\n2. Replace the multi-module fallback in `DeterministicTestScope` with the union of mapped commands; keep the full fallback for global inputs (`Directory.Build.*`, `global.json`, `.agent-studio/**`, `testsupport/**`), unmapped paths, a stale map and missing changed-file input.\n3. Within a selected .NET test project, use `DotNetReferenceSelection` class selection where it applies.\n4. Add fast checks for touched areas: lint, type check and format.\n5. New project setting `testing.perCard: affected | full` (default `full`, so behaviour is unchanged until switched); surface it read-only in project settings.\n\n## Acceptance criteria\n\n- A `setup/`-only diff selects `setup.Tests`, not backend.Tests; a `runner/` diff selects backend, runner and task-server tests; a `global.json` diff runs the full set.\n- With `full`, plans are byte-identical to today.\n- Report median T1 minutes on a replay of the last 20 Agent Studio review plans.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Builds and tests run remotely. Report the result SHA in status.md."
+    },
+    {
+      "id": "post-merge-develop-checks",
+      "title": "Post-merge checks on develop: merge windows, nightly full suite, last green SHA",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "A post-merge runner on the exact develop tip: window union of affected tests and a nightly sharded full suite; persists last green SHA and red state per project; opens no cards yet.",
+        "criteria": [
+          "Tests: window closing by count and by time; a run tests the SHA fetched at start; the last green SHA advances only on green; a skipped run is recorded.",
+          "Dry-run mode prints the plan without executing.",
+          "Document the runner in `docs/system/domains/pipeline.md`."
+        ]
+      },
+      "promptMarkdown": "# Post-merge checks on develop: merge windows, nightly full suite, last green SHA\n\nSource of truth: `docs/pipeline-delivery-target/index.html` (AGT-3276). Use the Dossier's recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Section 03 tier T3, decisions D1 and D3. Absorbs AGT-W69 card 3 (nightly guard).\n\n## Deliver\n\n1. A claimable post-merge unit (no new workflow engine) that runs on a runner host for the exact fetched develop tip: (a) per merge window, configurable (default 30 minutes or 6 merges, whichever first), the union of affected tests of the merges in the window; (b) nightly, the full suite with AGT-3232 sharding across free slots; reuse the `agent-coverage-run.timer` slot window (01:15 to 05:15) where it fits.\n2. Persist per project: run record (tip SHA, window range, commands, verdicts, start and end), the last green SHA, and `developState: green | running | red`.\n3. Surface the state in the board header and through the metrics endpoint of the baseline card.\n4. Skip runs when develop has not moved since the last green run; record the skip.\n\n## Acceptance criteria\n\n- Tests: window closing by count and by time; a run tests the SHA fetched at start; the last green SHA advances only on green; a skipped run is recorded.\n- Dry-run mode prints the plan without executing.\n- Document the runner in `docs/system/domains/pipeline.md`.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Builds and tests run remotely. Report the result SHA in status.md."
+    },
+    {
+      "id": "attribution-and-repair",
+      "title": "Attribution and repair cards for a red develop: revert or fix forward",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "On a red post-merge run: attribute to merges in last-green..tip, open one repair card per failure fingerprint, revert when unique and clean, otherwise fix forward; hold release candidates; escalate after 2 hours.",
+        "criteria": [
+          "Decision-table tests for every branch; `TransitionDecisionBoundaryTests` and `MonolithDecisionBoundaryTests` stay green.",
+          "A repeated identical red run creates no second card; a green run closes the incident and records red time."
+        ]
+      },
+      "promptMarkdown": "# Attribution and repair cards for a red develop: revert or fix forward\n\nSource of truth: `docs/pipeline-delivery-target/index.html` (AGT-3276). Use the Dossier's recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Section 03 \"Failures after merge\", decision D2. Transition rules belong in `orchestration-decisions/`; hosts only collect facts and apply decisions.\n\n## Deliver\n\n1. Attribution facts: suspects are the first-parent merges between the last green SHA and the red tip; narrow by intersecting changed paths with the failing tests' project map, then re-run only the failing tests at merge points, then bisect if more than one suspect remains. Run flaky quarantine (AGT-W57 D3) first.\n2. A pure decision in `orchestration-decisions/` choosing `revert`, `fix-forward` or `escalate` from typed facts (unique suspect, revert applies cleanly, later merges depend on it, red age).\n3. Repair card through the `FailureInterventionService` fingerprint pattern: one card per fingerprint, with attributed merge, failing tests and log excerpt. A revert runs under the publication lease and reopens the original card in Preparation with the failure attached.\n4. Containment: a red develop holds release-candidate creation; cards whose changed paths overlap the failing area wait; others keep merging. After 2 hours red, escalate to the Human Operator and offer switching the project back to the pre-merge batch gate.\n\n## Acceptance criteria\n\n- Decision-table tests for every branch; `TransitionDecisionBoundaryTests` and `MonolithDecisionBoundaryTests` stay green.\n- A repeated identical red run creates no second card; a green run closes the incident and records red time.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Builds and tests run remotely. Report the result SHA in status.md."
+    },
+    {
+      "id": "pre-delivery-full-suite",
+      "title": "Pre-delivery full suite on the release candidate, verdict reused by promotion",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Before CreateRelease queues the first environment, run the full suite once on the candidate SHA when the project requires it; store the verdict by commit SHA and command-set digest; promotion to main reuses it.",
+        "criteria": [
+          "Tests: `required` blocks a release on red or missing verdict; `off` passes through; promotion reuses an exact match and runs on any digest mismatch.",
+          "The release header in the Deploy area shows the verdict and its SHA."
+        ]
+      },
+      "promptMarkdown": "# Pre-delivery full suite on the release candidate, verdict reused by promotion\n\nSource of truth: `docs/pipeline-delivery-target/index.html` (AGT-3276). Use the Dossier's recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Section 03 tier T4 and \"What changes for ... promotion\", decisions D3 and D4.\n\n## Deliver\n\n1. Project setting `delivery.fullSuite: required | optional | off`; default `required` when a production environment is declared, else `optional`.\n2. A release-candidate gate in front of `/api/deploy/gate-releases`: the green post-merge state is a precondition; then the full suite (sharded) on the exact candidate SHA; only a green verdict calls `DeployService.CreateRelease`.\n3. Persist the verdict keyed by commit SHA and command-set digest in the Task Server (not host-local), so every host can read it.\n4. `scripts/release/promotion-full-gate.sh` and the promotion train skip the suite when a green verdict for the exact SHA and digest exists, and record the reuse in the train log.\n\n## Acceptance criteria\n\n- Tests: `required` blocks a release on red or missing verdict; `off` passes through; promotion reuses an exact match and runs on any digest mismatch.\n- The release header in the Deploy area shows the verdict and its SHA.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Builds and tests run remotely. Report the result SHA in status.md."
+    },
+    {
+      "id": "post-merge-mode-switch",
+      "title": "Post-merge mode per project: integration gate reduced to T2, per-branch merge lock",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Project setting switches a project from pre-merge full suite to post-merge mode; the develop gate runs compile of the merged tree only; the singleton merge lock becomes per (project, branch).",
+        "criteria": [
+          "Two projects merge concurrently while merges of one project stay serialised; rollback of one does not touch the other.",
+          "`pre-merge` projects behave byte-identically to today.",
+          "Report lead time card to develop and gate minutes per card for 7 days after the switch against the baseline."
+        ]
+      },
+      "promptMarkdown": "# Post-merge mode per project: integration gate reduced to T2, per-branch merge lock\n\nSource of truth: `docs/pipeline-delivery-target/index.html` (AGT-3276). Use the Dossier's recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Section 03 tier T2 and \"What changes for the batch gate\", decision D1. Requires the per-card plan, post-merge checks, attribution and pre-delivery cards.\n\n## Deliver\n\n1. Project setting `testing.mode: pre-merge | post-merge` (default `pre-merge`). In `post-merge`, `PreDevelopBuildGate` runs compile of the merged tree plus the T1 selection only when develop moved over shared paths since the review; the batch gate is disabled for the project, and its look-ahead planner sizes the post-merge window instead.\n2. Replace `_mergeGate` (`SemaphoreSlim(1,1)` in `MergeIntoDevelopRunner`) with a keyed lock per (project, integration branch); keep push serialisation per branch and one aggregate busy flag for the stable deploy drain.\n3. Automatic fallback: while the attribution card's escalation is active, the project runs in `pre-merge` mode.\n4. Switch Agent Studio only after the baseline card shows T1 median at or below 10 minutes on replay.\n\n## Acceptance criteria\n\n- Two projects merge concurrently while merges of one project stay serialised; rollback of one does not touch the other.\n- `pre-merge` projects behave byte-identically to today.\n- Report lead time card to develop and gate minutes per card for 7 days after the switch against the baseline.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Builds and tests run remotely. Report the result SHA in status.md."
+    },
+    {
+      "id": "delivery-lanes-read-model",
+      "title": "Delivery lanes read model and lifecycle order of environments",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Backend projection per project: one column per declared environment in explicit lifecycle order plus Integrated-on-develop, with landed and waiting cards from releases, deploy runs and CardsSinceLastDeploy; requires AGT-3202 integrated.",
+        "criteria": [
+          "Projection tests with fixture releases and runs: promotion moves cards from waiting to landed; rollback moves them back; an archived card still appears; a hotfix lifecycle skipping Stage shows its cards landed in production only.",
+          "Lane state of every card is unchanged."
+        ]
+      },
+      "promptMarkdown": "# Delivery lanes read model and lifecycle order of environments\n\nSource of truth: `docs/pipeline-delivery-target/index.html` (AGT-3276). Use the Dossier's recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Section 04, decisions D5 and D6. Requires AGT-3202 (cards know their environments) on develop.\n\n## Deliver\n\n1. Environment declarations gain an `order` field; `ProjectEnvironmentService` sorts by it (today it sorts stage, production, other). Allow a Dev environment of kind `other` before stage; extend `EnvironmentKinds` and `StandardLifecyclePolicy` so a declared lifecycle phase without approval is automatic.\n2. `GET /api/projects/{p}/deploy/lanes`: columns in lifecycle order; per column the current release (version, last run state and time, health, pending approval), `landed` card keys (current release and the previous N releases, newest first, N default 5) and `waiting` card keys (`CardsSinceLastDeploy`); a first column with integrated cards no release names yet. Reuse `EnvironmentStatusProjection` and the AGT-3202 card deployment projection; no own git query.\n3. Rollbacks mark the cards of the withdrawn release as rolled back.\n\n## Acceptance criteria\n\n- Projection tests with fixture releases and runs: promotion moves cards from waiting to landed; rollback moves them back; an archived card still appears; a hotfix lifecycle skipping Stage shows its cards landed in production only.\n- Lane state of every card is unchanged.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Builds and tests run remotely. Report the result SHA in status.md."
+    },
+    {
+      "id": "delivery-section-board",
+      "title": "Delivery section on the board",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Frontend: a Delivery section after Done & Decide rendering the lanes read model, with landed and waiting parts per environment; rename of the 6-completed display name per D10.",
+        "criteria": [
+          "Playwright spec with fixture releases covering landed, waiting, approval pending and rolled back; light and dark screenshots in `results/`.",
+          "No coloured left accent bars; both themes; reduced motion respected."
+        ]
+      },
+      "promptMarkdown": "# Delivery section on the board\n\nSource of truth: `docs/pipeline-delivery-target/index.html` (AGT-3276). Use the Dossier's recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Section 04 \"Proposed view\", decisions D5 and D10. Requires the lanes read-model card.\n\n## Deliver\n\n1. A Delivery group after \"Done & Decide\" in `board-lane-layout.util.ts`, one column per environment from the read model; column header with release version, run state, time, health and an approval pill; landed cards first, then a \"Waiting\" divider and waiting cards. Collapsible like other groups; a display option \"furthest environment only\".\n2. Card tiles reuse the standard task card; no new card primitive. Names and tones come from `lane-presentation.ts` or a sibling presentation source; no hard-coded strings (`npm run lint:structure`).\n3. D10 A: change the display name of `6-completed` to \"Accepted\" with sentence \"Integrated and accepted.\" in `lane-presentation.ts`; update the asserting specs.\n4. Live updates through the existing deploy polling or hub events; aggregate counts equal the sum of visible children.\n\n## Acceptance criteria\n\n- Playwright spec with fixture releases covering landed, waiting, approval pending and rolled back; light and dark screenshots in `results/`.\n- No coloured left accent bars; both themes; reduced motion respected.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Builds and tests run remotely. Report the result SHA in status.md."
+    },
+    {
+      "id": "board-from-task-server",
+      "title": "Board read model served by the Task Server: shadow, then cutover",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Task Server serves the board and card core per project; Studio reads it in shadow with recorded differences, then switches by setting; writes unchanged until the write cutover.",
+        "criteria": [
+          "Board read p95 under 200 ms server side and zero git spawns per request on the Agent Studio board, measured by the baseline card.",
+          "Integration test: a lane move through the API appears in both sources within one generation."
+        ]
+      },
+      "promptMarkdown": "# Board read model served by the Task Server: shadow, then cutover\n\nSource of truth: `docs/pipeline-delivery-target/index.html` (AGT-3276). Use the Dossier's recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Section 05, migration steps M1 and M2, decision D7.\n\n## Deliver\n\n1. Task Server endpoint for the board read model per project (lanes, card core fields, counts, ETag by generation) from the `tasks` table, plus a change feed.\n2. Shadow mode: the backend answers from `TaskIndexCache` and compares with the Task Server answer per request; differences recorded with card id and field, exposed in the metrics card.\n3. Setting `Board:Source = workspace | task-server-shadow | task-server`; rollback is the setting.\n4. Switch Agent Studio to `task-server` after 7 days with zero unexplained differences.\n\n## Acceptance criteria\n\n- Board read p95 under 200 ms server side and zero git spawns per request on the Agent Studio board, measured by the baseline card.\n- Integration test: a lane move through the API appears in both sources within one generation.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Builds and tests run remotely. Report the result SHA in status.md."
+    },
+    {
+      "id": "diff-objects-and-history",
+      "title": "Diff objects and derived history and blame for review",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Immutable diff objects keyed by repository, base, head, options and renderer version, computed by a runner-host producer and served by the Task Server; path history and blame as derived data; review and card open stop spawning git.",
+        "criteria": [
+          "The same base and head yield byte-identical material from producer and fallback.",
+          "Zero git spawns on card open in the Agent Studio board measurement; review material time p95 reported."
+        ]
+      },
+      "promptMarkdown": "# Diff objects and derived history and blame for review\n\nSource of truth: `docs/pipeline-delivery-target/index.html` (AGT-3276). Use the Dossier's recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Section 05 rows \"Diff against merge base\" and \"History and blame\", decision D7. Implements AGT-3017 D1 and the git-facts option C target.\n\n## Deliver\n\n1. Producer on the runner host computes, at result handoff and on demand: diff against merge base (name list and unified diff within the review budget of 200 files and 12,000 lines), path history and blame for touched files; publishes to the Task Server with producer epoch fencing.\n2. Task Server stores diff objects and derived rows by immutable key; no TTL, size-bounded eviction.\n3. Remote Review reads review material from the Task Server and falls back to a local `git diff` only when the object is missing, recording the miss.\n4. Card-open provenance and file history read derived data; no request-time git.\n\n## Acceptance criteria\n\n- The same base and head yield byte-identical material from producer and fallback.\n- Zero git spawns on card open in the Agent Studio board measurement; review material time p95 reported.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Builds and tests run remotely. Report the result SHA in status.md."
+    },
+    {
+      "id": "gate-source-object-cache",
+      "title": "Gate and review sources through a host object cache",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Runner hosts keep a content-addressed object cache; gates and reviews fetch only missing objects for a tree SHA and check out sparsely by test plan; bundles remain only for cold start.",
+        "criteria": [
+          "Median gate source bytes under 10 MB and ready in 30 s on a warm host, reported against the baseline.",
+          "A corrupted cache entry is detected by hash and refetched; no gate runs on an unverified tree."
+        ]
+      },
+      "promptMarkdown": "# Gate and review sources through a host object cache\n\nSource of truth: `docs/pipeline-delivery-target/index.html` (AGT-3276). Use the Dossier's recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Section 05 rows \"Gate source delivery\", tier 1, migration M5, decision D8.\n\n## Deliver\n\n1. A host object cache per runner host (bounded, evictable, shared by all slots) seeded from the canonical repository.\n2. Gate and review attempts request a commit SHA; the host fetches missing objects through the Task Server or the canonical remote, and materialises a sparse checkout of the projects the test plan needs.\n3. The pull transport stops bundling `--all`; the SSH transport keeps thin bundles only on a cache miss.\n4. Log bytes transferred and seconds to ready per run for the metrics card.\n\n## Acceptance criteria\n\n- Median gate source bytes under 10 MB and ready in 30 s on a warm host, reported against the baseline.\n- A corrupted cache entry is detected by hash and refetched; no gate runs on an unverified tree.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Builds and tests run remotely. Report the result SHA in status.md."
+    },
+    {
+      "id": "task-artefacts-in-task-server",
+      "title": "Task-folder artefacts in the Task Server; workspace repository as export",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "After the write cutover, task files and artefacts live in Task Server tables and an object store; the evidence batcher and push worker become a periodic export into the workspace repository; nothing reads the export in a request path.",
+        "criteria": [
+          "A full export reproduces the task-folder layout readable by today's tools.",
+          "A push backlog of the export does not change board latency (measured).",
+          "Rollback procedure from the runbook rehearsed once on a copy."
+        ]
+      },
+      "promptMarkdown": "# Task-folder artefacts in the Task Server; workspace repository as export\n\nSource of truth: `docs/pipeline-delivery-target/index.html` (AGT-3276). Use the Dossier's recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Section 05 rows \"Task-folder artefacts\" and \"Release card attribution\", migration M3 and M6, decision D9. Requires the remaining 50 v1 handlers of the remote Task Server runbook.\n\n## Deliver\n\n1. Task files and results write to `task_file_revisions` and `artifacts` with content hashes; blobs above the inline limit go to the object store.\n2. Release card attribution (`DeployService.IntegratedCards`) queries the Task Server instead of scanning task folders.\n3. Replace `WorkspaceEvidenceBatcher` and `WorkspaceArtifactPushWorker` on the hot path with a periodic export job writing task folders into the workspace repository for audit and offline reading.\n4. Update `docs/operations/workspace-repository-lifecycle.md`.\n\n## Acceptance criteria\n\n- A full export reproduces the task-folder layout readable by today's tools.\n- A push backlog of the export does not change board latency (measured).\n- Rollback procedure from the runbook rehearsed once on a copy.\n\nRules: tests inject the clock (TestClockGuardTests), every ProcessStartInfo sets CreateNoWindow = true, no empty catch blocks, no whole-file line-ending rewrites, component-size baselines must not rise. Builds and tests run remotely. Report the result SHA in status.md."
+    }
+  ]
+}

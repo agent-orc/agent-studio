@@ -14,8 +14,18 @@ public static class ReviewBudgetPolicy
 {
     public static ReviewBudgetDecision Decide(ReviewBudgetFacts facts)
     {
-        var followUp = ReviewFollowUpPolicy.Decide(facts.Findings, facts.ConcernRoundsUsed, facts.MaximumConcernRounds);
-        var blocked = ReviewRoundBudgetPolicy.CountedBlockingAspects(facts.Findings);
+        var findings = ReviewFindingMergePolicy.Merge(facts.Findings);
+        var followUp = ReviewFollowUpPolicy.Decide(findings, facts.ConcernRoundsUsed, facts.MaximumConcernRounds);
+        var blocked = ReviewRoundBudgetPolicy.CountedBlockingAspects(findings);
+        var previous = facts.DeliveredRounds.Rounds.Where(round => round.AttemptId != facts.AttemptId)
+            .TakeLast(2).ToArray();
+        var repeatedDeepBlock = previous.Length == 2 && findings.Where(item =>
+                item.Aspect.Equals("deep-review", StringComparison.OrdinalIgnoreCase)
+                && ReviewGradingPolicy.IsBlockingToken(item.Status)
+                && !ReviewRoundBudgetPolicy.IsUncitedBlock(item.Classification))
+            .Select(ReviewFindingMergePolicy.Fingerprint)
+            .Any(key => previous.All(round => round.BlockingFindingKeys?.Contains(
+                key, StringComparer.Ordinal) == true));
         var round = ReviewRoundBudgetPolicy.Decide(facts.DeliveredRounds, facts.AttemptId, blocked,
             facts.MaximumDeliveredRounds, facts.ConsecutiveBlockRounds, facts.PriorReissues, facts.MaximumReissues);
         var concern = facts.Outcome == ReviewOutcomeKinds.Pass && followUp.Action == ReviewFollowUpAction.ReviewConcernRound;
@@ -23,14 +33,15 @@ public static class ReviewBudgetPolicy
         if (!facts.AcceptedReplay && card == CardRoundBudgetAction.DegradeToFollowUp
             && (facts.Outcome == ReviewOutcomeKinds.ProductFailure || concern))
             round = new(round.RoundNumber, round.MaximumRounds,
-                concern ? facts.Findings.Where(item => !string.Equals(item.Status, "pass", StringComparison.OrdinalIgnoreCase))
+                concern ? findings.Where(item => !string.Equals(item.Status, "pass", StringComparison.OrdinalIgnoreCase))
                     .Select(item => item.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() : blocked,
                 "card-round-budget");
-        var degrade = !facts.AcceptedReplay && ((facts.Outcome == ReviewOutcomeKinds.ProductFailure && round.Degrade)
+        var degrade = !repeatedDeepBlock && !facts.AcceptedReplay
+            && ((facts.Outcome == ReviewOutcomeKinds.ProductFailure && round.Degrade)
             || (concern && card == CardRoundBudgetAction.DegradeToFollowUp));
         if (degrade)
         {
-            var adjusted = facts.Findings.Select(item => round.DegradedAspects.Contains(item.Aspect,
+            var adjusted = findings.Select(item => round.DegradedAspects.Contains(item.Aspect,
                 StringComparer.OrdinalIgnoreCase) && ReviewGradingPolicy.IsBlockingToken(item.Status)
                 ? item with { Status = "concerns" } : item).ToArray();
             followUp = ReviewFollowUpPolicy.Decide(adjusted, facts.ConcernRoundsUsed, facts.MaximumConcernRounds);
@@ -38,6 +49,7 @@ public static class ReviewBudgetPolicy
                 followUp = ReviewRoundBudgetPolicy.ApplyFollowUp(followUp, round);
         }
         return new(followUp, round, card, blocked, degrade,
-            !facts.AcceptedReplay && facts.Outcome == ReviewOutcomeKinds.ProductFailure && card == CardRoundBudgetAction.Escalate);
+            !facts.AcceptedReplay && facts.Outcome == ReviewOutcomeKinds.ProductFailure
+            && (card == CardRoundBudgetAction.Escalate || repeatedDeepBlock));
     }
 }

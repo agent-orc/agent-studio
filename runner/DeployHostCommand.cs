@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Secrets;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
@@ -20,6 +21,9 @@ public static class DeployHostCommand
         string? RetryStep = null, Dictionary<string, string>? SecretBindings = null,
         JsonElement[]? MissingSecretRefs = null)
     {
+        public ProjectDeployStep[] SshSteps { get; init; } = [];
+        public ProjectVariableDefinition[] Variables { get; init; } = [];
+        public ProjectArtifactDefinition[] Artifacts { get; init; } = [];
         public string Kind { get; init; } = "standard";
         public string? CardKey { get; init; }
         public string? SourceCommit { get; init; }
@@ -33,7 +37,9 @@ public static class DeployHostCommand
     private sealed record IssuedSecret(string Value);
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
-        HttpClient? transport = null, IPreviewRunZone? previewZone = null)
+        HttpClient? transport = null, SshDeployExecutor? sshExecutor = null,
+        Func<string, CancellationToken, Task<bool>>? checkHealth = null, TimeProvider? clock = null,
+        IPreviewRunZone? previewZone = null)
     {
         if (args.Length < 4 || args.Length > 5)
         {
@@ -48,8 +54,16 @@ public static class DeployHostCommand
         claimed.EnsureSuccessStatusCode();
         var job = await claimed.Content.ReadFromJsonAsync<Job>(cancellationToken);
         if (job is null) return 0;
+        using var lease = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var leaseLost = false;
+        var renewal = RenewWhileRunning(client, job, clock ?? TimeProvider.System, () =>
+        {
+            leaseLost = true;
+            lease.Cancel();
+        }, lease.Token);
         var evidence = "deploy-step-failed";
         var healthy = false;
+        var stepResults = new List<object>();
         string? screenshotBase64 = null;
         try
         {
@@ -67,8 +81,7 @@ public static class DeployHostCommand
             {
                 if (previewZone is null)
                 {
-                    Console.Error.WriteLine("Preview run zone is not configured for this deploy host.");
-                    return 2;
+                    throw new InvalidOperationException("Preview run zone is not configured for this deploy host.");
                 }
                 if (job.CardKey is null || job.SourceCommit is null || job.Address is null
                     || job.SourceRepository is null || job.SourceRef is null)
@@ -78,12 +91,12 @@ public static class DeployHostCommand
                     job.ArtifactPath, job.Dockerfile, job.BuildCommands, job.SecretRefs, job.ContainerPort);
                 if (job.Kind == "preview-remove")
                 {
-                    await previewZone.RemoveAsync(preview, cancellationToken);
+                    await previewZone.RemoveAsync(preview, lease.Token);
                     healthy = true;
                 }
                 else
                 {
-                    var result = await previewZone.DeployAsync(preview, cancellationToken);
+                    var result = await previewZone.DeployAsync(preview, lease.Token);
                     healthy = result.Healthy && result.ScreenshotPng is { Length: > 0 };
                     screenshotBase64 = healthy ? Convert.ToBase64String(result.ScreenshotPng!) : null;
                 }
@@ -91,33 +104,135 @@ public static class DeployHostCommand
             }
             else
             {
-                if (job.RetryStep is null)
+                if (job.RetryStep is null && job.SshSteps.Length > 0)
                 {
-                    if (job.Template == "container")
-                        await DeployContainer(job, client, cancellationToken);
-                    else if (job.Template == "static")
+                    var executor = sshExecutor ?? new SshDeployExecutor();
+                    for (var index = 0; index < job.SshSteps.Length; index++)
                     {
-                        if (job.SecretRefs.Length > 0) throw new InvalidOperationException("Static deployment cannot receive secrets.");
-                        await DeployStatic(job, args[3], cancellationToken);
+                        var step = job.SshSteps[index];
+                        var name = $"deploy[{index}]:{step.Step}";
+                        try
+                        {
+                            var variables = await ResolveVariables(job, client, lease.Token);
+                            var bundlePath = step.Step == "static-site"
+                                ? job.Artifacts.FirstOrDefault(item => item.Name == step.Artifact && item.Type == "static")?.Path
+                                    ?? throw new InvalidDataException("Static artifact is missing from the release snapshot.")
+                                : null;
+                            await executor.ExecuteAsync(job.HostId, step, job.Artifact, args[3], variables,
+                                message => AppendLog(client, job, name, message, lease.Token), lease.Token,
+                                bundlePath);
+                            if (step.HealthUrl is { } stepHealth)
+                            {
+                                using var limit = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
+                                using var timeout = (clock ?? TimeProvider.System).CreateTimer(_ => limit.Cancel(), null,
+                                    TimeSpan.FromSeconds(step.HealthTimeoutSeconds ?? 60), Timeout.InfiniteTimeSpan);
+                                var passed = false;
+                                try { passed = await (checkHealth ?? CheckHealth)(stepHealth, limit.Token); }
+                                catch (OperationCanceledException) when (!lease.IsCancellationRequested) { passed = false; }
+                                if (!passed)
+                                {
+                                    evidence = "health-http-failed";
+                                    throw new InvalidOperationException("Step health check failed.");
+                                }
+                            }
+                            stepResults.Add(new { name, succeeded = true });
+                        }
+                        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException
+                            or InvalidOperationException or HttpRequestException or System.ComponentModel.Win32Exception)
+                        {
+                            stepResults.Add(new { name, succeeded = false });
+                            await AppendLog(client, job, name, $"Step failed: {ex.GetType().Name}.", lease.Token);
+                            throw;
+                        }
                     }
-                    else throw new InvalidOperationException("Unknown template.");
                 }
-                else if (job.RetryStep != "health") throw new InvalidOperationException("Unknown retry step.");
+                else if (job.RetryStep is null && job.Template == "container")
+                    await DeployContainer(job, client, lease.Token);
+                else if (job.RetryStep is null && job.Template == "static")
+                {
+                    if (job.SecretRefs.Length > 0) throw new InvalidOperationException("Static deployment cannot receive secrets.");
+                    await DeployStatic(job, args[3], lease.Token);
+                }
+                else if (job.RetryStep is not "health") throw new InvalidOperationException("Unknown template or retry step.");
                 evidence = "health-http-failed";
-                healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
+                var healthUrl = job.SshSteps.Length > 0 && job.RetryStep is null ? null : job.HealthUrl;
+                using var healthLimit = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
+                using var legacyTimeout = (clock ?? TimeProvider.System).CreateTimer(_ => healthLimit.Cancel(), null,
+                    TimeSpan.FromSeconds(60), Timeout.InfiniteTimeSpan);
+                try { healthy = healthUrl is null || await (checkHealth ?? CheckHealth)(healthUrl, healthLimit.Token); }
+                catch (OperationCanceledException) when (!lease.IsCancellationRequested) { healthy = false; }
                 if (healthy) evidence = "health-ok";
             }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
-            or HttpRequestException or System.ComponentModel.Win32Exception)
+            or HttpRequestException or System.ComponentModel.Win32Exception or OperationCanceledException)
         {
             Console.Error.WriteLine($"Deploy job {job.Id} failed: {ex.GetType().Name}");
         }
+        lease.Cancel();
+        await renewal;
+        if (leaseLost) return 1;
         using var report = await client.PostAsJsonAsync(
             $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/report",
-            new { job.LeaseToken, Healthy = healthy, Evidence = evidence, ScreenshotBase64 = screenshotBase64 }, cancellationToken);
+            new { job.LeaseToken, Healthy = healthy, Evidence = evidence, Steps = stepResults,
+                ScreenshotBase64 = screenshotBase64 }, cancellationToken);
         report.EnsureSuccessStatusCode();
         return healthy ? 0 : 1;
+    }
+
+    private static async Task RenewWhileRunning(HttpClient client, Job job, TimeProvider clock,
+        Action onLost, CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), clock);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(15));
+                try
+                {
+                    using var response = await client.PostAsJsonAsync(
+                        $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/renew",
+                        new { job.LeaseToken }, timeout.Token);
+                    if (!response.IsSuccessStatusCode && !ct.IsCancellationRequested) { onLost(); return; }
+                }
+                catch (HttpRequestException) when (!ct.IsCancellationRequested) { onLost(); return; }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { onLost(); return; }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+    }
+
+    private static async Task<Dictionary<string, string>> ResolveVariables(Job job, HttpClient client, CancellationToken ct)
+    {
+        var resolved = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var variable in job.Variables)
+        {
+            if (variable.Value is { } value) { resolved.Add(variable.Name, value); continue; }
+            if (variable.Secret is null) throw new InvalidDataException("Deploy variable has no source.");
+            var reference = $"secret://{job.Project}/{job.EnvironmentId}/{variable.Secret}";
+            using var response = await client.PostAsJsonAsync("api/runner/secrets/resolve", new
+            {
+                reference, purpose = "deploy", workload = new
+                {
+                    kind = "deploy-job", project = job.Project, jobId = job.Id, leaseToken = job.LeaseToken,
+                },
+            }, ct);
+            response.EnsureSuccessStatusCode();
+            using var body = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken: ct);
+            resolved.Add(variable.Name, body?.RootElement.GetProperty("value").GetString()
+                ?? throw new InvalidDataException("Secret provider returned no value."));
+        }
+        return resolved;
+    }
+
+    private static async Task AppendLog(HttpClient client, Job job, string step, string message, CancellationToken ct)
+    {
+        using var response = await client.PostAsJsonAsync(
+            $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/log",
+            new { job.LeaseToken, Step = step, Message = message }, ct);
+        response.EnsureSuccessStatusCode();
     }
 
     private static async Task DeployStatic(Job job, string artifactStore, CancellationToken ct)
@@ -261,8 +376,8 @@ public static class DeployHostCommand
 
     private static async Task<bool> CheckHealth(string url, CancellationToken ct)
     {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        for (var attempt = 0; attempt < 5; attempt++)
+        using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        while (!ct.IsCancellationRequested)
         {
             try
             {

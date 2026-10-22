@@ -16,6 +16,15 @@ const UP_LINK = {
 };
 
 describe('provider auth projection', () => {
+  it('shows only fresh accepted models from each host credential probe', () => {
+    const host = snapshot('ready', 'healthy', true, undefined, null, 'ok', null, 'codex');
+    const baseline = host.capabilities[0];
+    host.capabilities.push(
+      { ...baseline, key: 'model-acceptance:codex:gpt-6-luna', category: 'model-acceptance', advertisedStatus: 'ready' },
+      { ...baseline, key: 'model-acceptance:codex:gpt-6-sol', category: 'model-acceptance', advertisedStatus: 'unavailable' },
+    );
+    expect(providerAuthBadgesForSnapshot(host, NOW)[0].acceptedModels).toEqual(['gpt-6-luna']);
+  });
   it('shows the model CLI minimum as the Ready-card wait reason', () => {
     const task = {
       state: '2-ready', cliType: 'codex', model: 'gpt-6-astra',

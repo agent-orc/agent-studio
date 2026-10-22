@@ -132,4 +132,23 @@ describe('DecisionRulesPanelComponent', () => {
     await draft;
     expect(component.draftId()).toBe('drv_new');
   });
+
+  it('shows deep review as an editable decision with a reasoning level', async () => {
+    const fixture = await render({ activeVersionId: null, versions: [], hardFloors: [] });
+    const component = fixture.componentInstance;
+    component.addRule();
+    component.updateRule(0, 'trigger', 'deep-review');
+    component.updateRule(0, 'factId', 'review.changed-lines');
+    component.updateRule(0, 'candidateActions', 'prepare');
+    component.updateRule(0, 'thinkingLevel', 'xhigh');
+    fixture.detectChanges();
+    const triggers = [...fixture.nativeElement.querySelectorAll('.rules__row select')[0].options]
+      .map((option: HTMLOptionElement) => option.value);
+    expect(triggers).toContain('deep-review');
+    expect(fixture.nativeElement.textContent).toContain('Review reasoning');
+    expect(component.rules()[0]).toEqual(expect.objectContaining({
+      trigger: 'deep-review', factId: 'review.changed-lines',
+      candidateActions: ['prepare'], thinkingLevel: 'xhigh',
+    }));
+  });
 });

@@ -30,7 +30,7 @@ import { ClientService } from '../../services/client.service';
 import { FeatureFlagsService } from '../../services/feature-flags.service';
 import { projectIdentity } from '../../services/project-identity.util';
 import { TaskSelectionService } from '../task-detail/runtime';
-import { ProjectDetailComponent } from '../project-detail';
+import { ProjectDetailComponent } from '../project-detail/lazy';
 import {
   PROJECT_RAIL_ITEMS,
   DEFAULT_PROJECT_RAIL_KEY,

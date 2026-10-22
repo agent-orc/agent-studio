@@ -61,12 +61,11 @@ import {
 } from './features/orchestrator';
 import {
   DEFAULT_PROJECT_RAIL_KEY,
-  ProjectOverlaysComponent,
   ProjectOverlaysService,
-  ProjectRailKey,
+  type ProjectRailKey,
   ProjectUrlPreviewTabComponent,
   WorkbenchTabHostComponent,
-} from './features/project-detail';
+} from './features/project-detail/runtime';
 import {
   AutoReviewIndicatorComponent,
   StatusBarComponent,
@@ -94,9 +93,6 @@ import { VerboseDebugOverlayComponent } from './features/verbose-debug';
 import {
   StudioShellComponent,
   StudioTabActionsComponent,
-  ProjectHubViewComponent,
-  StudioDiffViewComponent,
-  StudioActivityViewComponent,
   ProjectHubUrlService,
   StudioTabStateService,
   StudioPanelStateService,
@@ -115,6 +111,8 @@ import {
   type TaskDetailRouteTab,
   type TaskInspectorRouteTab,
 } from './features/studio-shell';
+import { ProjectOverlaysComponent } from './features/project-detail/lazy';
+import { ProjectHubViewComponent, StudioDiffViewComponent, StudioActivityViewComponent } from './features/studio-shell/lazy';
 import { TaskService } from './services/task.service';
 import { ClientService } from './services/client.service';
 import { NotificationService } from './services/notification.service';
@@ -352,7 +350,7 @@ export class App implements OnInit, OnDestroy {
    * keyboard guards work unchanged; the `<app-project-overlays />`
    * container owns the rendering.
    */
-  private readonly projectOverlays = inject(ProjectOverlaysService);
+  readonly projectOverlays = inject(ProjectOverlaysService);
   readonly orchFeedProject = this.projectOverlays.orchFeedProject;
   readonly projectShellName = this.projectOverlays.projectShellName;
   readonly projectShellRail = this.projectOverlays.projectShellRail;
