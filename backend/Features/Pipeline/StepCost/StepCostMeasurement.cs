@@ -228,6 +228,8 @@ public static class StepCostMeasurement
             DurationMs = row.DurationMs,
             GrantedCores = row.GrantedCores,
             Model = row.Model,
+            ReviewedResultSha = row.ReviewedResultSha,
+            ExecutionAttemptId = row.ExecutionAttemptId,
             ThinkingLevel = row.ThinkingLevel,
             ModelSource = row.ModelSource,
             InputTokens = dropTokens ? 0 : row.InputTokens,
@@ -238,6 +240,9 @@ public static class StepCostMeasurement
             EstimatedCostUsd = dropTokens ? null : stamped.EstimatedCostUsd,
             ModelPriced = stamped.ModelPriced,
             Verdict = row.Verdict,
+            ReviewFindings = row.ReviewFindings,
+            ReviewCli = row.ReviewCli,
+            ReviewedFileCount = row.ReviewedFileCount,
             Reason = row.Reason,
             EvidenceRef = row.EvidenceRef,
         };

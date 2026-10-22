@@ -1136,7 +1136,8 @@ public static class V1ReviewPlaneEndpoints
                 or ReviewTerminalOutcome.IntegrationBranchDefect
                 ? new DeliveredReviewRound(
                     attemptId, blockingAspects, shouldDegrade ? roundBudget.DegradedAspects : [],
-                    SpentBy: roundBudget.SpentBy)
+                    SpentBy: roundBudget.SpentBy,
+                    BlockingFindingKeys: MonolithTransitionAdapter.BlockingReviewFindingKeys(originalVerdicts))
                 : null;
             RemoteReviewContinuation? continuation = null;
             if (!acceptedReplay && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
@@ -2523,6 +2524,14 @@ public static class V1ReviewPlaneEndpoints
                 return command;
             }
             if (!plan.IsFallback) return command;
+            if (string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
+            {
+                // This plan froze the deep-review correctness floor. A quota
+                // sibling may be useful for ordinary aspects, but accepting a
+                // lower route here would silently invalidate its receipt.
+                deferred ??= "Deep review requires its planned model and reasoning level; quota fallback is deferred.";
+                return command;
+            }
             switched = true;
             lastSwitch = plan;
             lastPrimaryCli = command.CliType;

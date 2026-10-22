@@ -88,6 +88,7 @@
   }
 
   <app-project-pipeline-cost-trend [timeline]="pipelineCost()" />
+  <app-review-observation-table [projectName]="projectName()" />
 
   @if (summary()?.hasData !== false) {
     <section class="tup__heatmap-section" aria-label="Per-task heatmap">

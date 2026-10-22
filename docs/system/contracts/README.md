@@ -10,6 +10,7 @@ Durable contracts that code, CLIs, and agents must respect.
 | [protocol-style.md](protocol-style.md) | `status.md`, activity markers, attachments, results, and image retention. |
 | [run-outcome.md](run-outcome.md) | Post-run classification shared by lane routing and UI surfacing. |
 | [review-plane.md](review-plane.md) | Review Plane claim/report/replay endpoints: two-phase report hand-off, idempotent replay, and stale-lease claim requeue. |
+| [deploy-host-api.md](deploy-host-api.md) | Deploy host claim, lease-bound step log and report routes, snapshot payload, and secret resolution. |
 | [remote-run-result.md](remote-run-result.md) | Immutable infrastructure scenario result assembled from authoritative Task Server and Runner evidence. |
 | [ui-task-pipeline.md](ui-task-pipeline.md) | Iterative UI routing, per-iteration visual evidence, cap, and Part 2 Human Gate marker. |
 | [loop-inventory.md](loop-inventory.md) | Re-entry, retry, and loop breaker registry. |

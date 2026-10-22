@@ -127,7 +127,9 @@ public static class DeploymentReconciler
 
             var trigger = !job.IsRollback ? DeploymentTriggers.Deploy
                 : actor == "automatic-rollback" ? DeploymentTriggers.AutomaticRollback : DeploymentTriggers.Rollback;
-            var needsApproval = StandardLifecyclePolicy.RequiresApproval(environment)
+            var declaration = input.Releases.FirstOrDefault(item => item.Release.Id == release.Id)?.Environments
+                .FirstOrDefault(item => item.Id == environment.Id);
+            var needsApproval = (declaration?.Protected ?? StandardLifecyclePolicy.RequiresApproval(environment))
                 && trigger != DeploymentTriggers.AutomaticRollback;
             var timeout = input.Releases.FirstOrDefault(item => item.Release.Id == release.Id)?.Environments
                 .FirstOrDefault(item => item.Id == environment.Id)?.InterventionTimeoutMinutes ?? 60;
@@ -136,6 +138,7 @@ public static class DeploymentReconciler
                 Id = job.Id, ReleaseId = release.Id, EnvironmentId = environment.Id,
                 State = DeploymentStates.Queued, Trigger = trigger,
                 DeployStep = DeployStepNames.ForTemplate(job.Template), NeedsApproval = needsApproval,
+                SshStepNames = job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}").ToArray(),
                 RequestedBy = actor, ApprovedBy = needsApproval ? actor : null,
                 ApprovedAtUtc = needsApproval ? job.CreatedAt : null, JobId = job.Id, CreatedAtUtc = job.CreatedAt,
                 GuidedFailure = job.GuidedFailure,
@@ -164,7 +167,7 @@ public static class DeploymentReconciler
                     && item.Release.CreatedAtUtc <= promotion.StageHealthyAt)
                 .OrderBy(item => item.Release.CreatedAtUtc).ThenBy(item => item.Release.Id, StringComparer.Ordinal)
                 .LastOrDefault();
-            if (record is null) continue;
+            if (record is null || record.Environments.FirstOrDefault(item => item.Id == environment.Id)?.Protected == false) continue;
             var release = record.Release;
             // Any run for this release here since staging turned healthy answers
             // the promotion already, including a cancelled one.
@@ -229,7 +232,9 @@ public static class DeploymentReconciler
             var version = releases.TryGetValue(run.ReleaseId, out var release) ? release.Version : run.ReleaseId;
             var environmentName = environments.TryGetValue(run.EnvironmentId, out var environment)
                 ? environment.Name : run.EnvironmentId;
-            var updated = run;
+            var names = job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}").ToArray();
+            var updated = run.SshStepNames.SequenceEqual(names) && run.StepResults.SequenceEqual(job.StepResults)
+                ? run : run with { SshStepNames = names, StepResults = job.StepResults };
             if (job.RetryStep != run.RetryStep) updated = updated with { RetryStep = job.RetryStep };
             if (state != DeploymentStates.Cancelled && run.StartedAtUtc is null && job.ClaimedAt is { } claimedAt)
             {
