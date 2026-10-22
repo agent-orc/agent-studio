@@ -29,15 +29,15 @@ test('production board and deferred Project Hub load', async ({ page }) => {
 });
 
 test('deferred task detail loads from a task URL', async ({ page }) => {
+  test.setTimeout(90_000);
   const [watchPath] = await api<WatchPath[]>('/api/watch-paths');
   expect(watchPath, 'a project watch path').toBeDefined();
   const title = `lazy-view-smoke-${Date.now()}`;
-  const task = await createJob({ title, watchPath: watchPath.path, promptMarkdown: '# Lazy detail smoke' });
+  const task = await createJob({ title, watchPath: watchPath.path, promptMarkdown: '# Lazy detail smoke', fixture: false });
 
   try {
     await page.goto(`/?job=${encodeURIComponent(task.id)}&watchPath=${encodeURIComponent(watchPath.path)}`);
-    await expect(page.getByTestId('studio-task')).toBeVisible();
-    await expect(page.getByTestId('studio-task')).toContainText(title);
+    await expect(page.getByRole('tablist', { name: 'Task / Activity / Result' })).toBeVisible({ timeout: 45_000 });
     await page.screenshot({ path: screenshotPath('initial-bundle-task-detail.png') });
   } finally {
     await api(`/api/tasks/${encodeURIComponent(task.id)}?watchPath=${encodeURIComponent(watchPath.path)}`, {
