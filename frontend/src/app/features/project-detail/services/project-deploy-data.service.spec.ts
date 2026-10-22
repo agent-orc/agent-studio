@@ -71,6 +71,26 @@ describe('ProjectDeployDataService', () => {
     expect(runs.at(-1)).toMatchObject({ status: 'ready', value: { total: 51 } });
   });
 
+  it('resolves a host artifact to its release with one bounded read, and reads one run by id', () => {
+    const [release] = deployReleasesFixture();
+    const found = collect(service.releaseForArtifact('Web Site', 'registry.example/website@sha256:b', '2026-10-19T11:57:00Z'));
+    const none = collect(service.releaseForArtifact('Web Site', 'legacy@sha256:x', null));
+    const run = collect(service.deployment('Web Site', 'run-b-stage'));
+
+    const lookup = http.expectOne(req => req.url === `${DEPLOY}/releases/page` && req.params.get('artifact') === 'registry.example/website@sha256:b');
+    expect(lookup.request.params.get('limit')).toBe('1');
+    expect(lookup.request.params.get('notAfterUtc')).toBe('2026-10-19T11:57:00Z');
+    lookup.flush({ items: [release], offset: 0, limit: 1, total: 2 });
+    const legacy = http.expectOne(req => req.url === `${DEPLOY}/releases/page` && req.params.get('artifact') === 'legacy@sha256:x');
+    expect(legacy.request.params.has('notAfterUtc')).toBe(false);
+    legacy.flush({ items: [], offset: 0, limit: 1, total: 0 });
+    http.expectOne(`${DEPLOY}/deployments/run-b-stage`).flush(deployDeploymentsFixture()[0]);
+
+    expect(found.at(-1)).toEqual({ status: 'ready', value: release });
+    expect(none.at(-1)).toEqual({ status: 'ready', value: null });
+    expect(run.at(-1)).toEqual({ status: 'ready', value: deployDeploymentsFixture()[0] });
+  });
+
   it('reads AGT-3223 environment health and distinguishes unavailable from server error', () => {
     const health = collect(service.health('Web Site'));
     const response = { capturedAt: '2026-10-19T12:00:00Z', probeOrigin: 'mock', environments: [] };

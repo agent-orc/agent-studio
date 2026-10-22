@@ -224,7 +224,7 @@ public sealed class TaskIntegrationStatusService
                         job,
                         CurrentIntegrationSha(classified, card, reaches),
                         classified.IntegrationBranch,
-                        classified.Sha ?? CurrentReviewSubject(job)?.ResultSha,
+                        CurrentReviewSubject(job)?.ResultSha ?? classified.Sha,
                         BranchHistory(classified, card, reaches))
                     : null,
             };
@@ -541,14 +541,22 @@ public sealed class TaskIntegrationStatusService
                 var mapped = CuratedMappingIntegrationShas(job, subject.ResultSha, subject.RunAttemptId,
                     subjectReach.IntegrationBranch, subjectReach.PublishedAncestors).ToList();
                 if (mapped.Count > 0)
-                    return Integrated(Short(subject.ResultSha), subjectReach.IntegrationBranch,
-                        DeliveryRefFor(job), "current-result-curated-mapping")
-                        with
-                        {
-                            Repositories = CurrentResultRepositories(job, card, reaches, subject),
-                            CurrentResultReleased = mapped.Any(sha =>
-                                AncestorSetContains(subjectReach.ReleaseAncestors, sha)),
-                        };
+                {
+                    var entries = CurrentResultRepositories(job, card, reaches, subject);
+                    var curatedMapping = CuratedMappingIntegrationShas(job, subject.ResultSha,
+                        subject.RunAttemptId, subjectReach.IntegrationBranch,
+                        subjectReach.PublishedAncestors, includeOperatorCandidates: false).Any();
+                    if (curatedMapping || entries.Count == groups.Count
+                        && entries.All(entry => entry.OnIntegrationBranch))
+                        return Integrated(Short(subject.ResultSha), subjectReach.IntegrationBranch,
+                            DeliveryRefFor(job), "current-result-curated-mapping")
+                            with
+                            {
+                                Repositories = entries,
+                                CurrentResultReleased = mapped.Any(sha =>
+                                    AncestorSetContains(subjectReach.ReleaseAncestors, sha)),
+                            };
+                }
                 if (AncestorSetContains(subjectReach.DevelopAncestors, subject.ResultSha))
                     return MergedLocally(subjectReach.IntegrationBranch, DeliveryRefFor(job),
                         "current result is present locally", [Short(subject.ResultSha)]);
@@ -652,7 +660,7 @@ public sealed class TaskIntegrationStatusService
     /// Built from the batch's cached ancestor sets only; no git process is
     /// spawned here, which is why legacy path evidence is not consulted.
     /// </summary>
-    private static List<TaskRepositoryIntegrationStatus> CurrentResultRepositories(
+    private List<TaskRepositoryIntegrationStatus> CurrentResultRepositories(
         TaskInfo job,
         CardIntegrationWork card,
         IReadOnlyDictionary<RepoBranchKey, RepoIntegration> reaches,
@@ -671,7 +679,7 @@ public sealed class TaskIntegrationStatusService
         return entries;
     }
 
-    private static List<TaskRepositoryCommitMembership> EvaluateMemberships(
+    private List<TaskRepositoryCommitMembership> EvaluateMemberships(
         TaskInfo job,
         RepositoryCommitGroup group,
         IReadOnlyList<TaskCommitInfo> commits,
@@ -685,7 +693,7 @@ public sealed class TaskIntegrationStatusService
                     subject?.RunAttemptId ?? commit.RunAttemptId
                         ?? commit.DeliveryGeneration?.ToString(),
                     reach?.IntegrationBranch ?? group.IntegrationBranch,
-                    reach?.PublishedAncestors));
+                    reach?.PublishedAncestors, group.Key?.Root));
 
         return DeliveryGenerationPolicy.Evaluate(
             commits,
@@ -766,18 +774,37 @@ public sealed class TaskIntegrationStatusService
     /// The published integration SHAs an explicit, epoch-bound curated mapping
     /// names for <paramref name="sourceSha"/>. Empty when no mapping proves it.
     /// </summary>
-    private static IEnumerable<string> CuratedMappingIntegrationShas(TaskInfo job, string sourceSha,
-        string? deliveryEpoch, string branch, HashSet<string>? publishedAncestors)
-        => publishedAncestors is null || string.IsNullOrWhiteSpace(deliveryEpoch)
-            ? []
-            : job.IntegrationRecords.Where(record =>
-                    record.Classification == IntegrationRecordClasses.CuratedMapping
+    private IEnumerable<string> CuratedMappingIntegrationShas(TaskInfo job, string sourceSha,
+        string? deliveryEpoch, string branch, HashSet<string>? publishedAncestors, string? root = null,
+        bool includeOperatorCandidates = true)
+    {
+        if (publishedAncestors is null || string.IsNullOrWhiteSpace(deliveryEpoch)) return [];
+        var subject = CurrentReviewSubject(job);
+        return job.IntegrationRecords.Where(record =>
+                (record.Classification == IntegrationRecordClasses.CuratedMapping
                     && string.Equals(record.SourceSha, sourceSha, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(record.DeliveryEpoch, deliveryEpoch, StringComparison.Ordinal)
-                    && string.Equals(record.IntegrationBranch, branch, StringComparison.OrdinalIgnoreCase)
-                    && record.IntegrationSha?.Length == 40
-                    && AncestorSetContains(publishedAncestors, record.IntegrationSha))
-                .Select(record => record.IntegrationSha!);
+                    || includeOperatorCandidates
+                    && record.Classification == IntegrationRecordClasses.IntegratedVerified
+                    && record.Id.StartsWith("operator-candidate-", StringComparison.Ordinal)
+                    && subject is not null
+                    && string.Equals(record.SourceSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase)
+                    && (string.Equals(sourceSha, subject.ResultSha, StringComparison.OrdinalIgnoreCase)
+                        || root is not null && ReviewSubjectStore.IsValidResultSha(sourceSha)
+                            && ReviewSubjectStore.IsValidResultSha(record.IntegrationSha)
+                            && OperatorCandidateCovers(root, sourceSha, record.IntegrationSha!)))
+                && string.Equals(record.DeliveryEpoch, deliveryEpoch, StringComparison.Ordinal)
+                && IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, branch)
+                && record.IntegrationSha?.Length == 40
+                && AncestorSetContains(publishedAncestors, record.IntegrationSha))
+            .Select(record => record.IntegrationSha!);
+    }
+
+    private bool OperatorCandidateCovers(string root, string sourceSha, string candidateSha)
+        => _contentCache.GetOrCreateVersioned(
+            $"operator-candidate\0{root}\0{sourceSha}", candidateSha,
+            value => value == true ? CacheTtl : FailureCacheTtl,
+            () => ReadOnlyGitConcurrencyLimiter.Run(() =>
+                _git.IsDeliveryInPublished(root, sourceSha, candidateSha))) == true;
 
     /// <summary>
     /// The repository/branch the card is answered from when it carries no

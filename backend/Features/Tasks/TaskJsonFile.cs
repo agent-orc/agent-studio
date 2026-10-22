@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using AgentStudio.Persistence;
 
@@ -19,6 +20,34 @@ internal static class TaskJsonFile
     internal static readonly JsonSerializerOptions ReadOpts = new() { PropertyNameCaseInsensitive = true };
     private static readonly JsonSerializerOptions WriteOpts = new() { WriteIndented = true };
     private static readonly IAtomicJsonFileWriter FileWriter = new AtomicJsonFileWriter();
+    private static readonly ConcurrentDictionary<string, object> WriteLocks = new(FileSystemPathComparer.Instance);
+
+    internal static object SyncRoot(string jobDir) => WriteLocks.GetOrAdd(jobDir, static _ => new object());
+
+    /// <summary>Restore selected fields while retaining concurrently appended card evidence.</summary>
+    internal static void RestoreFieldsFromSnapshot(string jobDir, string snapshot,
+        params string[] fieldNames)
+    {
+        lock (SyncRoot(jobDir))
+        {
+            var path = Path.Combine(jobDir, "task.json");
+            var before = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(snapshot, ReadOpts)
+                ?? throw new JsonException("Decision migration snapshot is invalid.");
+            var current = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(path), ReadOpts)
+                ?? throw new JsonException("Decision migration card is invalid.");
+            var fields = fieldNames.ToHashSet(StringComparer.Ordinal);
+            var restored = new Dictionary<string, object>();
+            foreach (var entry in current)
+            {
+                if (!fields.Contains(entry.Key)) restored[entry.Key] = entry.Value;
+                else if (before.TryGetValue(entry.Key, out var original)) restored[entry.Key] = original;
+            }
+            foreach (var field in fields)
+                if (!restored.ContainsKey(field) && before.TryGetValue(field, out var original))
+                    restored[field] = original;
+            Write(path, restored);
+        }
+    }
 
     /// <summary>
     /// Reads <c>task.json</c>, replaces or adds a single top-level field, writes
@@ -83,6 +112,8 @@ internal static class TaskJsonFile
         object value,
         IAtomicJsonFileWriter? fileWriter = null)
     {
+        lock (SyncRoot(jobDir))
+        {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         if (!File.Exists(jobJsonPath))
             throw new FileNotFoundException("task.json was not found", jobJsonPath);
@@ -108,6 +139,7 @@ internal static class TaskJsonFile
         if (!inserted) updated[fieldName] = value;
 
         Write(jobJsonPath, updated, fileWriter);
+        }
     }
 
     /// <summary>
@@ -152,6 +184,8 @@ internal static class TaskJsonFile
         ILogger logger,
         IAtomicJsonFileWriter? fileWriter = null)
     {
+        lock (SyncRoot(jobDir))
+        {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         if (!File.Exists(jobJsonPath)) return false;
 
@@ -180,6 +214,7 @@ internal static class TaskJsonFile
             logger.LogError(ex, "Failed to update fields in task.json at {Dir}", jobDir);
             return false;
         }
+        }
     }
 
     /// <summary>
@@ -189,6 +224,8 @@ internal static class TaskJsonFile
     /// </summary>
     internal static bool RemoveField(string jobDir, string fieldName, ILogger logger)
     {
+        lock (SyncRoot(jobDir))
+        {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         if (!File.Exists(jobJsonPath)) return false;
 
@@ -214,6 +251,7 @@ internal static class TaskJsonFile
             logger.LogError(ex, "Failed to remove field {Field} from task.json at {Dir}", fieldName, jobDir);
             return false;
         }
+        }
     }
 
     /// <summary>
@@ -223,6 +261,8 @@ internal static class TaskJsonFile
     /// </summary>
     internal static void UpdateOrder(string jobDir, int order, ILogger logger)
     {
+        lock (SyncRoot(jobDir))
+        {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         if (!File.Exists(jobJsonPath)) return;
 
@@ -246,6 +286,7 @@ internal static class TaskJsonFile
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to update order in task.json at {Dir}", jobDir);
+        }
         }
     }
 
