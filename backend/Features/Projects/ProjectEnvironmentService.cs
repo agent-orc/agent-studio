@@ -10,7 +10,7 @@ public sealed record EnvironmentDeclaration(
     string Template, string Destination, string? HealthUrl, string Approval,
     IReadOnlyList<string> SecretRefs, int ContainerPort,
     IReadOnlyList<HealthCheckDefinition>? HealthChecks = null, bool HealthChecksAllowPrivateNetwork = false,
-    bool GuidedFailure = false, int InterventionTimeoutMinutes = 60)
+    bool GuidedFailure = false, int InterventionTimeoutMinutes = 60, RunTargetHosting? Hosting = null)
 {
     public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
@@ -27,15 +27,17 @@ public sealed record DeploymentHistoryItem(DateTime At, string Status, string Ar
     string? Evidence);
 
 public sealed record ProjectEnvironmentView(EnvironmentDeclaration Declaration, string? DeployedArtifact,
-    string Health, string? PendingArtifact, IReadOnlyList<DeploymentHistoryItem> History);
+    string Health, string? PendingArtifact, IReadOnlyList<DeploymentHistoryItem> History,
+    RunTargetObservation? Observed = null);
 
 public sealed record DeployJob(string Id, string Project, string EnvironmentId, string HostId,
     string Artifact, string Template, string Destination, string? HealthUrl,
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
     string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0,
-    bool GuidedFailure = false, bool GuidedResolved = false, string? RetryStep = null,
-    string? RetryOfJobId = null, bool ReservedSlot = false)
+    bool ReservedSlot = false, bool IsStop = false, bool GuidedFailure = false,
+    bool GuidedResolved = false, string? RetryStep = null, string? RetryOfJobId = null,
+    DateTime? FirstClaimedAt = null, RunTargetHosting? Hosting = null)
 {
     public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
@@ -74,7 +76,7 @@ public sealed record DeploymentFailureCard(string EnvironmentId, string Artifact
 
 public sealed record ProjectEnvironmentsResponse(string Project, IReadOnlyList<ProjectEnvironmentView> Environments,
     IReadOnlyList<EnvironmentPromotion> Promotions, IReadOnlyList<DeployJob> Jobs,
-    IReadOnlyList<DeploymentFailureCard> FailureCards);
+    IReadOnlyList<DeploymentFailureCard> FailureCards, IReadOnlyList<RunTargetRemovalRecord>? RunTargetRemovals = null);
 
 public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string? Evidence,
     IReadOnlyList<DeployStepResult>? Steps = null, string? ScreenshotBase64 = null);
@@ -89,7 +91,7 @@ public sealed record GateArtifactRequest(string Project, string Artifact, string
 public sealed class DeployQuotaRefusedException(string message) : InvalidOperationException(message);
 
 /// <summary>Repository declarations and a separate, durable host-deploy queue.</summary>
-public sealed class ProjectEnvironmentService
+public sealed partial class ProjectEnvironmentService
 {
     public const string DeclarationDirectory = "docs/deployments/environments";
     /// <summary>After this, the claiming host may claim its job again (it restarted).</summary>
@@ -172,7 +174,7 @@ public sealed class ProjectEnvironmentService
     {
         if (!IsWatched(project)) return null;
         var root = _git.ResolveRepoRootForProject(project);
-        if (root is null) return [];
+        if (root is null) return null;
         var directory = Path.Combine(root, "docs", "deployments", "environments");
         var parsed = ParseDeclarationFiles((Directory.Exists(directory)
                 ? Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly) : Enumerable.Empty<string>())
@@ -288,6 +290,39 @@ public sealed class ProjectEnvironmentService
     private bool IsWatched(string project)
         => _scanner.GetWatchPaths().Any(item => string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase));
 
+    private enum DeclarationSource { UnknownProject, CheckoutMissing, FolderMissing, Read }
+
+    /// <summary>A complete deployment read distinguishes missing source from an empty declaration set.</summary>
+    private (DeclarationSource Source, IReadOnlyList<EnvironmentDeclaration> Declarations, IReadOnlySet<string> Tombstones)
+        ReadDeclarations(string project)
+    {
+        var tombstones = new HashSet<string>(StringComparer.Ordinal);
+        if (!IsWatched(project)) return (DeclarationSource.UnknownProject, [], tombstones);
+        var root = _git.ResolveRepoRootForProject(project);
+        if (root is null) return (DeclarationSource.CheckoutMissing, [], tombstones);
+        var directory = Path.Combine(root, DeclarationDirectory);
+        if (!Directory.Exists(directory)) return (DeclarationSource.FolderMissing, [], tombstones);
+        var files = Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
+            .Select(file => (Name: Path.GetFileName(file), Json: File.ReadAllText(file))).ToArray();
+        foreach (var (name, json) in files)
+        {
+            using var document = JsonDocument.Parse(json);
+            var value = document.RootElement;
+            if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty("removed", out var removed)) continue;
+            if (removed.ValueKind != JsonValueKind.True || value.EnumerateObject().Count() != 2
+                || !value.TryGetProperty("id", out var id) || id.ValueKind != JsonValueKind.String
+                || !Identifier.IsMatch(id.GetString() ?? ""))
+                throw new JsonException($"Environment {name} has an invalid removal tombstone.");
+            if (!tombstones.Add(id.GetString()!)) throw new JsonException("Duplicate environment removal tombstone.");
+        }
+        var parsed = ParseDeclarationFiles(files);
+        if (parsed.FirstOrDefault(item => item.Error is not null) is { Error: { } error }) throw new JsonException(error);
+        var declarations = parsed.Select(item => item.Declaration!).ToArray();
+        if (declarations.Any(item => tombstones.Contains(item.Id)))
+            throw new JsonException("An environment id cannot be declared and removed at the same time.");
+        return (DeclarationSource.Read, declarations, tombstones);
+    }
+
     private static IReadOnlyList<EnvironmentDeclarationFile> ParseDeclarationFiles(IEnumerable<(string Name, string Json)> files)
     {
         var result = new List<EnvironmentDeclarationFile>();
@@ -295,6 +330,16 @@ public sealed class ProjectEnvironmentService
         {
             try
             {
+                using var document = JsonDocument.Parse(json);
+                if (document.RootElement.ValueKind == JsonValueKind.Object
+                    && document.RootElement.TryGetProperty("removed", out var removed))
+                {
+                    if (removed.ValueKind != JsonValueKind.True || document.RootElement.EnumerateObject().Count() != 2
+                        || !document.RootElement.TryGetProperty("id", out var id) || id.ValueKind != JsonValueKind.String
+                        || !Identifier.IsMatch(id.GetString() ?? ""))
+                        throw new JsonException($"Environment {file} has an invalid removal tombstone.");
+                    continue;
+                }
                 var declaration = ParseDeclaration(file, json);
                 result.Add(new(declaration.Id, declaration, null));
             }
@@ -353,8 +398,9 @@ public sealed class ProjectEnvironmentService
         var destination = Required("destination");
         if (template == "static" && (!Path.IsPathFullyQualified(destination) || destination.Contains("..", StringComparison.Ordinal)))
             throw new JsonException("Static destination must be an absolute path without traversal.");
-        if (template == "container" && (!int.TryParse(destination, out var port) || port is < 1 or > 65535))
-            throw new JsonException("Container destination must be a local proxy port.");
+        var edgeHosted = template == "container" && destination == RunTargetVocabulary.EdgeDestination;
+        if (template == "container" && !edgeHosted && (!int.TryParse(destination, out var port) || port is < 1 or > 65535))
+            throw new JsonException("Container destination must be a local proxy port or 'edge'.");
         var healthUrl = Optional("healthUrl");
         if (kind is "stage" or "production" && healthUrl is null)
             throw new JsonException("Stage and production require a health URL.");
@@ -377,7 +423,9 @@ public sealed class ProjectEnvironmentService
         return new(id, Required("name"), kind, host, Required("address"), template,
             destination, healthUrl, approval, secrets, containerPort,
             HealthCheckDeclarations.Parse(value, Path.GetFileName(file)),
-            HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)), guidedFailure, timeout);
+            HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)),
+            guidedFailure, timeout,
+            edgeHosted ? RunTargetHostingDeclaration.Parse(value, Path.GetFileName(file), healthUrl, secrets) : null);
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -394,16 +442,18 @@ public sealed class ProjectEnvironmentService
                 var history = state.History.Where(row => row.EnvironmentId == item.Id)
                     .Reverse().Take(30).Select(row => row.Item).ToArray();
                 var latest = history.FirstOrDefault();
-                var pending = state.Jobs.LastOrDefault(job => job.EnvironmentId == item.Id
+                var pending = state.Jobs.LastOrDefault(job => job.EnvironmentId == item.Id && !job.IsStop
                     && (job.Status is "queued" or "claimed"));
                 return new ProjectEnvironmentView(item, latest?.Artifact,
                     latest is null ? "unknown" : latest.Status is "failed" or "stopped" ? latest.Status : "healthy",
-                    pending?.Artifact, history);
+                    pending?.Artifact, history,
+                    state.Observed.LastOrDefault(row => row.EnvironmentId == item.Id)?.Observation);
             }).ToArray(), state.Promotions.ToArray(), state.Jobs.Select(Sanitize).ToArray(),
                 state.History.Where(row => row.Item.Status == "failed").AsEnumerable().Reverse()
                     .Take(20).Select(row => new DeploymentFailureCard(row.EnvironmentId,
                         row.Item.Artifact, row.At, row.Item.Evidence ?? "deploy-step-failed",
-                        row.Item.PreviousArtifact)).ToArray());
+                        row.Item.PreviousArtifact)).ToArray(),
+                RunTargetDesiredStatePolicy.Removals(state.Placements, state.RunTargetRemovals));
         }
     }
 
@@ -498,6 +548,7 @@ public sealed class ProjectEnvironmentService
             var index = state.Jobs.FindIndex(item => item.Id == failedJobId && item.Status == "failed"
                 && item.EnvironmentId == target.Id);
             if (index < 0 || state.Jobs.Skip(index + 1).Any(item => item.EnvironmentId == target.Id)) return null;
+            RequireQuota(project, target.Id);
             var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state,
                 rollback: state.Jobs[index].IsRollback, actor: actor, retryStep: retryStep,
                 retryOfJobId: failedJobId);
@@ -581,7 +632,7 @@ public sealed class ProjectEnvironmentService
                 Status = "cancelled", LeaseToken = null, FinishedAt = now,
                 Evidence = aborted ? AbortedEvidence : null,
             };
-            if (aborted)
+            if (aborted && !job.IsStop)
                 state.History.Add(new(job.EnvironmentId, now,
                     new(now, "failed", job.Artifact, job.PreviousArtifact, AbortedEvidence)));
             var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact
@@ -727,6 +778,17 @@ public sealed class ProjectEnvironmentService
         }
     }
 
+    private bool QueueRollback(string project, EnvironmentDeclaration declaration, State state, string actor)
+    {
+        var current = state.History.LastOrDefault(row => row.EnvironmentId == declaration.Id)?.Item.Artifact;
+        var previous = state.History.LastOrDefault(row => row.EnvironmentId == declaration.Id
+            && (row.Item.Status is "healthy" or "rolled-back") && row.Item.Artifact != current);
+        if (previous is null) return false;
+        Queue(project, DeployedSpec(state, declaration, previous.Item.Artifact), previous.Item.Artifact, state,
+            rollback: true, actor: actor);
+        return true;
+    }
+
     /// <summary>
     /// Hands the host its next job. A host whose lease expired (it restarted)
     /// claims its own job again; every claim counts in <see cref="DeployJob.Claims"/>
@@ -750,38 +812,25 @@ public sealed class ProjectEnvironmentService
                 states.Add((project, state));
             }
             if (states.Any(item => item.State.Jobs.Any(job =>
-                    job.HostId == hostId && job.Status == "claimed" && job.ClaimedAt > now - LeaseDuration)))
+                    job.HostId == hostId && job.Destination != RunTargetVocabulary.EdgeDestination
+                    && job.Status == "claimed" && job.ClaimedAt > now - LeaseDuration)))
                 return null;
             foreach (var (project, state) in states)
             {
                 var job = state.Jobs.FirstOrDefault(item => item.HostId == hostId
+                    && item.Destination != RunTargetVocabulary.EdgeDestination
                     && (!productionHost || item.Kind is not ("preview" or "preview-remove")) &&
                     (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration));
                 if (job is null) continue;
-                if (!TryAdmitClaim(project, job, out var reserved)) continue;
-                var jobIndex = state.Jobs.IndexOf(job);
-                // A later claim can reuse a slot reserved by an earlier job for
-                // the same environment. Move the reservation with the claim so
-                // settling the earlier job cannot release the later deployment.
-                if (!reserved && !job.ReservedSlot && jobIndex > 0)
-                {
-                    var priorIndex = state.Jobs.FindLastIndex(jobIndex - 1,
-                        item => item.EnvironmentId == job.EnvironmentId && item.ReservedSlot
-                            && item.Status != "healthy");
-                    if (priorIndex >= 0 && !state.Jobs.Skip(priorIndex + 1)
-                            .Take(jobIndex - priorIndex - 1)
-                            .Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "healthy"))
-                    {
-                        state.Jobs[priorIndex] = state.Jobs[priorIndex] with { ReservedSlot = false };
-                        reserved = true;
-                    }
-                }
+                var reserved = false;
+                if (!job.IsStop && job.Kind != "preview-remove"
+                    && !TryAdmitClaim(project, job, out reserved)) continue;
                 var claimed = job with
                 {
                     Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N"),
                     Claims = job.Claims + 1, ReservedSlot = job.ReservedSlot || reserved,
                 };
-                state.Jobs[jobIndex] = claimed;
+                state.Jobs[state.Jobs.IndexOf(job)] = claimed;
                 Save(project, state);
                 _quota?.RecordDeployStart(project, claimed.Id, claimed.EnvironmentId);
                 return claimed;
@@ -790,7 +839,7 @@ public sealed class ProjectEnvironmentService
         }
     }
 
-    /// <summary>Releases orphaned reservations and settles completed deploy claims.</summary>
+    /// <summary>Releases reservations for removed environments and expired deploy leases.</summary>
     public void ReconcileHostingSlots()
     {
         if (_quota is null || !_quota.HasLimits()) return;
@@ -802,26 +851,26 @@ public sealed class ProjectEnvironmentService
             foreach (var file in Directory.EnumerateFiles(root, "*.json").ToArray())
             {
                 var project = Uri.UnescapeDataString(Path.GetFileNameWithoutExtension(file));
+                var state = Load(project);
                 var declarations = Declarations(project);
+                // Preview slots use the job lifecycle; removal reports release them explicitly.
                 if (declarations is not null)
                     foreach (var environmentId in _quota.ProjectEnvironmentIds(project))
                         if (environmentId.StartsWith("env:", StringComparison.Ordinal)
+                            && !environmentId.StartsWith("env:preview-", StringComparison.Ordinal)
                             && declarations.All(item => SlotKey(item.Id) != environmentId))
                             _quota.SetProjectEnvironment(project, environmentId, false);
-                var state = Load(project);
-                var settled = state.Jobs.Where(job => job.ReservedSlot
+                // A report settles its reservation (it clears ReservedSlot), so only a claim that
+                // expired, was lost or was aborted without a report still holds one here.
+                var expired = state.Jobs.Where(job => job.ReservedSlot && job.Status != "healthy"
                     && (job.Status != "claimed" || job.ClaimedAt <= now - LeaseDuration)).ToList();
-                foreach (var job in settled)
+                foreach (var job in expired)
                 {
-                    // A healthy deploy now owns the slot as a running environment.
-                    // A newer healthy deploy also owns it, including when an
-                    // older queue record still carries its reservation flag.
-                    if (job.Status != "healthy" && !HasNewerHealthyDeployment(state, job))
-                        _quota.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
+                    _quota.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
                     _quota.RecordDeployEnd(project, job.Id);
                     state.Jobs[state.Jobs.IndexOf(job)] = job with { ReservedSlot = false };
                 }
-                if (settled.Count > 0) Save(project, state);
+                if (expired.Count > 0) Save(project, state);
             }
         }
     }
@@ -860,32 +909,6 @@ public sealed class ProjectEnvironmentService
         }
     }
 
-    /// <summary>Records an operator-confirmed stop and releases its hosting slot.</summary>
-    public bool Stop(string project, string environmentId, string actor)
-    {
-        lock (_gate)
-        {
-            var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == environmentId);
-            if (declaration is null) return false;
-            var state = Load(project);
-            // Settle abandoned claims as host-lost before deciding whether a live claim blocks Stop.
-            var advanced = AdvanceQueue(state);
-            var current = state.History.LastOrDefault(row => row.EnvironmentId == environmentId)?.Item;
-            if (current is null || current.Status == "stopped"
-                || state.Jobs.Any(job => job.EnvironmentId == environmentId && job.Status == "claimed"))
-            {
-                if (advanced) Save(project, state);
-                return false;
-            }
-            var now = _clock.GetUtcNow().UtcDateTime;
-            state.History.Add(new(environmentId, now, new(now, "stopped", current.Artifact, current.Artifact,
-                "stopped-by:" + actor)));
-            Save(project, state);
-            _quota?.SetProjectEnvironment(project, SlotKey(environmentId), false);
-            return true;
-        }
-    }
-
     /// <summary>Extends a live claim without changing its fencing token.</summary>
     public bool RenewClaim(string project, string jobId, string leaseToken)
     {
@@ -911,6 +934,28 @@ public sealed class ProjectEnvironmentService
     }
 
     /// <summary>
+    /// Queues a stop for the environment's host. The environment stays running and keeps its
+    /// hosting slot until that host claims the stop job and reports it done (see <see cref="Report"/>).
+    /// </summary>
+    public bool Stop(string project, string environmentId, string actor)
+    {
+        lock (_gate)
+        {
+            var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == environmentId);
+            if (declaration is null) return false;
+            var state = Load(project);
+            var current = state.History.LastOrDefault(row => row.EnvironmentId == environmentId)?.Item;
+            if (current is null || current.Status == "stopped") return false;
+            if (state.Jobs.Any(job => job.IsStop && job.EnvironmentId == environmentId
+                    && job.Status is "queued" or "claimed")) return false;
+            var job = Queue(project, declaration, current.Artifact, state, actor: actor);
+            state.Jobs[state.Jobs.IndexOf(job)] = job with { IsStop = true };
+            Save(project, state);
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Accepts the host's result while its lease token is valid. The token
     /// changes on a reclaim and is cleared when the claim fails as
     /// <c>host-lost</c> or is aborted, so only the current claim reports.
@@ -930,6 +975,12 @@ public sealed class ProjectEnvironmentService
             }
             var now = _clock.GetUtcNow().UtcDateTime;
             if (job.ClaimedAt < now - LeaseDuration) return false;
+            if (job.IsStop)
+            {
+                ReportStop(project, state, job, report.Healthy, now);
+                Save(project, state);
+                return true;
+            }
             var expectedSteps = job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}").ToArray();
             var reportedSteps = report.Steps ?? [];
             if (reportedSteps.Count > expectedSteps.Length || reportedSteps.Where((step, index) =>
@@ -949,16 +1000,19 @@ public sealed class ProjectEnvironmentService
             // Host output is deliberately not accepted as an audit string. Keep a bounded status code only.
             var evidence = report.Evidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
                 ? report.Evidence : success ? "health-ok" : "deploy-step-failed";
+            // The report settles the reservation: a healthy deploy keeps its slot as a running
+            // environment, a failed one returns it below. The reconciler only releases unsettled claims.
             state.Jobs[state.Jobs.IndexOf(job)] = job with
-            { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence,
-                StepResults = reportedSteps, ScreenshotUrl = screenshotUrl };
+            {
+                Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence,
+                ReservedSlot = false, StepResults = reportedSteps, ScreenshotUrl = screenshotUrl,
+            };
             var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
             _quota?.RecordDeployEnd(project, job.Id);
-            if (success) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), true);
-            else if (job.ReservedSlot && !HasNewerHealthyDeployment(state, job))
-                _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
+            if (success) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), job.Kind != "preview-remove");
+            else if (job.ReservedSlot) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
             if (success || !job.GuidedFailure) ClosePromotionForResult(state, job, success, now);
             // A job already queued for the environment replaces the failed
             // one; a rollback queued behind it would replace a newer release.
@@ -972,6 +1026,49 @@ public sealed class ProjectEnvironmentService
             }
             Save(project, state);
             return true;
+        }
+    }
+
+    /// <summary>
+    /// The host acknowledged a stop job: only a confirmed stop marks the environment stopped and
+    /// releases its hosting slot. A failed stop leaves the environment running and counted.
+    /// </summary>
+    private void ReportStop(string project, State state, DeployJob job, bool stopped, DateTime now)
+    {
+        state.Jobs[state.Jobs.IndexOf(job)] = job with
+        {
+            Status = stopped ? "stopped" : "failed", LeaseToken = null, FinishedAt = now,
+            Evidence = stopped ? "stop-ok" : "stop-failed",
+        };
+        _quota?.RecordDeployEnd(project, job.Id);
+        if (!stopped) return;
+        state.History.Add(new(job.EnvironmentId, now, new(now, "stopped", job.Artifact, job.Artifact,
+            "stopped-by:" + job.RequestedBy)));
+        _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
+    }
+
+    private void Complete(string project, State state, DeployJob job, bool success, string? reportedEvidence,
+        Func<IReadOnlyList<EnvironmentDeclaration>?> declarations)
+    {
+        var now = _clock.GetUtcNow().UtcDateTime;
+        var evidence = reportedEvidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
+            ? reportedEvidence : success ? "health-ok" : "deploy-step-failed";
+        state.Jobs[state.Jobs.IndexOf(job)] = job with
+        { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence,
+            ReservedSlot = false };
+        var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
+        state.History.Add(new(job.EnvironmentId, now,
+            new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
+        _quota?.RecordDeployEnd(project, job.Id);
+        if (success) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), true);
+        else if (job.ReservedSlot) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
+        if (success || !job.GuidedFailure) ClosePromotionForResult(state, job, success, now);
+        if (!success && !job.GuidedFailure && !job.IsRollback && job.PreviousArtifact is not null
+            && !state.Jobs.Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "queued"))
+        {
+            var declaration = declarations()?.FirstOrDefault(item => item.Id == job.EnvironmentId);
+            if (declaration is not null) Queue(project, DeployedSpec(state, declaration, job.PreviousArtifact),
+                job.PreviousArtifact, state, rollback: true, actor: "automatic-rollback");
         }
     }
 
@@ -1007,10 +1104,12 @@ public sealed class ProjectEnvironmentService
         {
             var lost = job with { Status = "failed", LeaseToken = null, FinishedAt = now, Evidence = HostLostEvidence };
             state.Jobs[state.Jobs.IndexOf(job)] = lost;
+            changed = true;
+            // A lost stop leaves the environment as it was: running and counted.
+            if (job.IsStop) continue;
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, "failed", job.Artifact, job.PreviousArtifact, HostLostEvidence)));
             if (!job.GuidedFailure) ClosePromotionForResult(state, lost, success: false, now);
-            changed = true;
         }
         return changed;
     }
@@ -1028,6 +1127,7 @@ public sealed class ProjectEnvironmentService
             {
                 Template = deployed.Template, Destination = deployed.Destination,
                 HealthUrl = deployed.HealthUrl, SecretRefs = deployed.SecretRefs, ContainerPort = deployed.ContainerPort,
+                Hosting = deployed.Hosting ?? current.Hosting,
                 SshSteps = deployed.SshSteps, Variables = deployed.Variables, Artifacts = deployed.Artifacts,
             }
             : current;
@@ -1078,10 +1178,6 @@ public sealed class ProjectEnvironmentService
         => state.Promotions.Any(item => item.Artifact == artifact
             && item.Status is not ("rejected" or "failed" or "cancelled"));
 
-    private static bool HasNewerHealthyDeployment(State state, DeployJob job)
-        => state.Jobs.Skip(state.Jobs.FindIndex(item => item.Id == job.Id) + 1)
-            .Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "healthy");
-
     private static bool IsDeclared(IReadOnlyList<EnvironmentDeclaration>? declarations, string environmentId)
         => declarations?.Any(item => item.Id == environmentId) == true;
 
@@ -1096,7 +1192,7 @@ public sealed class ProjectEnvironmentService
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
             IsRollback: rollback, RequestedBy: actor, GuidedFailure: declaration.GuidedFailure,
-            RetryStep: retryStep, RetryOfJobId: retryOfJobId)
+            RetryStep: retryStep, RetryOfJobId: retryOfJobId, Hosting: declaration.Hosting)
         { SshSteps = declaration.SshSteps, Variables = declaration.Variables, Artifacts = declaration.Artifacts };
         state.Jobs.Add(job);
         return job;
@@ -1177,6 +1273,10 @@ public sealed class ProjectEnvironmentService
         public List<DeployJob> Jobs { get; set; } = [];
         public List<EnvironmentPromotion> Promotions { get; set; } = [];
         public List<EnvironmentHistoryRow> History { get; set; } = [];
+        public List<RunTargetObservedRow> Observed { get; set; } = [];
+        public List<RunTargetPlacement> Placements { get; set; } = [];
+        public List<RunTargetRemovalRecord> RunTargetRemovals { get; set; } = [];
     }
     public sealed record EnvironmentHistoryRow(string EnvironmentId, DateTime At, DeploymentHistoryItem Item);
+    public sealed record RunTargetObservedRow(string EnvironmentId, RunTargetObservation Observation);
 }

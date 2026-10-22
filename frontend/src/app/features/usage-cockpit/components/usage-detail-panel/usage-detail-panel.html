@@ -135,5 +135,11 @@
     </section>
   }
 
-  <app-usage-cost-detail [cost]="v.cost" [sectionId]="sectionId(costFocus)" />
+  @defer (on viewport) {
+    <app-usage-cost-detail [cost]="v.cost" [sectionId]="sectionId(costFocus)" />
+  } @placeholder {
+    <section class="usage-detail__section" [id]="sectionId(costFocus)">
+      <h3 class="usage-detail__title" tabindex="-1" [id]="sectionId(costFocus) + '-title'">Cost</h3>
+    </section>
+  }
 </div>

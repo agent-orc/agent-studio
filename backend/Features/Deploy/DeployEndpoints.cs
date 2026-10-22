@@ -30,6 +30,13 @@ public static class DeployEndpoints
             deploy.ReleaseDetail(projectName, releaseId) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
 
+        project.MapGet("/releases/{releaseId}/notes", (string projectName, string releaseId, DeployService deploy) =>
+            deploy.Notes(projectName, releaseId) is { } value
+                ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
+
+        project.MapGet("/cards", (string projectName, DeployService deploy) =>
+            deploy.Cards(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
         project.MapGet("/deployments", (string projectName, string? environmentId, DeployService deploy) =>
             deploy.Deployments(projectName, environmentId) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
@@ -58,7 +65,8 @@ public static class DeployEndpoints
 
         project.MapPost("/deployments/{deploymentId}/approve", (HttpContext context, string projectName,
             string deploymentId, DeploymentApprovalRequest? request, DeployService deploy) =>
-            QuotaRefusable(() => Respond(deploy.Approve(projectName, deploymentId, Actor(context, projectName), request?.GuidedFailure))))
+            QuotaRefusable(() => Respond(deploy.Approve(projectName, deploymentId,
+                Actor(context, projectName), request?.GuidedFailure))))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         project.MapPost("/deployments/{deploymentId}/reject", (HttpContext context, string projectName,
@@ -98,6 +106,14 @@ public static class DeployEndpoints
                         .Where(row => ProjectAccessAuthorization.Allows(human.User, row.ProjectId, projects)).ToArray(),
                 }
                 : matrix);
+        });
+
+        app.MapGet("/api/deploy/cards", (HttpContext context, DeployService deploy, ProjectRegistry projects) =>
+        {
+            var cards = deploy.CardMatrix();
+            return Results.Ok(context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                ? cards.Where(card => ProjectAccessAuthorization.Allows(human.User, card.ProjectId, projects)).ToArray()
+                : cards);
         });
     }
 

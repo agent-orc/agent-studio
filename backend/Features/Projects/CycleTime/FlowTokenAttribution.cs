@@ -33,6 +33,8 @@ public static class FlowTokenAttribution
             else if (participant.StartsWith("support:remote-review:", StringComparison.Ordinal))
             {
                 var id = participant["support:remote-review:".Length..];
+                var stepMarker = id.IndexOf(":step:", StringComparison.OrdinalIgnoreCase);
+                if (stepMarker >= 0) id = id[..stepMarker];
                 index = segments.FindIndex(s => s.AttemptId == id
                     && s.Step is ("reviewAspects" or "reviewFailedAttempt"));
                 if (index < 0) index = segments.FindIndex(s => s.Step == "reviewAspects"

@@ -166,6 +166,38 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Blank_limits_are_no_limit_and_admission_stays_a_strict_no_op_with_an_unreadable_ledger()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "blank"), "Blank", workspace.Id, _clock);
+        var job = Path.Combine(project.StorageLocation, TaskStates.Ready, "blank-card");
+        Directory.CreateDirectory(job);
+        File.WriteAllText(Path.Combine(job, "task.json"), "{invalid-json");
+        await Bus(services, project.DisplayName, "01HX0000000000000000000044",
+            new AgentMessageTokens(Input: 10, Output: 5, Model: "gpt-5.6-sol"));
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+
+        // Settings saves blank fields as all-null limits for the workspace and the project.
+        quota.SetLimits(workspace.Id, null, new QuotaLimits(null, null, null));
+        quota.SetLimits(workspace.Id, project.Id, new QuotaLimits(null, null, null));
+
+        Assert.False(quota.HasLimits());
+        foreach (var admission in new[] { quota.Admit(project.Id), quota.Admit(project.Id, hosting: true) })
+        {
+            Assert.True(admission.Allowed);
+            Assert.Null(admission.Message);
+            Assert.False(admission.MeterUnavailable);
+        }
+        using var stored = JsonDocument.Parse(File.ReadAllText(Path.Combine(_root, ".metadata", "workspace-quotas.json")));
+        Assert.Empty(stored.RootElement.GetProperty("Workspaces").EnumerateObject());
+        Assert.Empty(stored.RootElement.GetProperty("Projects").EnumerateObject());
+    }
+
+    [Fact]
     public void Unreadable_state_keeps_the_last_good_limits_and_reports_the_meter()
     {
         Directory.CreateDirectory(_root);

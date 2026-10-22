@@ -70,6 +70,8 @@ reason, or `abort` to
 Retry queues the failed deploy step again under the same run. A failed health
 step retries only the health check, without redeploying the artifact. Abort and timeout
 use the existing automatic rollback rule, including its host-lost exception.
+An aborted run with a failed step leaves the same linked Production failure
+card as a run that fails without intervention.
 Manual rollback runs can pause and retry as rollbacks; automatic rollbacks never
 pause. Retry jobs retain their parent job id so reconciliation restores the
 same run if the control plane restarts after queuing but before saving the run.
@@ -97,10 +99,17 @@ stays the only executor; releases and runs describe and steer it.
   cards it adds, and channel `default`. Each release is one write-once file under
   `<TaskRepository>/deployments/projects/<project>/releases/`, written as a
   flushed temporary file and moved into place without overwrite. The same
-  project, commit and artifacts always resolve to the same release. Cards are
-  those whose integration verification names a commit reachable from the release
-  commit and not from the previous release (at most 200 commits for the first
-  release).
+  project, commit and artifacts always resolve to the same release. Card
+  attribution reads verified integration records. A matching commit or card
+  key in the release delta is used when present. When a rebase or squash
+  rewrites both the SHA and commit message, the verified integration-branch
+  commit still maps the card: the release adds the cards behind the newest
+  integration-branch commit whose tree a release delta commit carries
+  unchanged, down to the commit the previous release carried. A release
+  without that tree, such as a hotfix branch, claims no card by time alone.
+  Cards already included by an ancestor release are excluded from the new
+  release's added cards. A failed Production run is checked for its failure
+  card once per process.
 - **Release order.** Releases never move back in history. A commit that is a
   strict ancestor of the newest release's commit is refused with 409 and
   `"reason":"superseded"`, so a gate
@@ -193,12 +202,27 @@ stays the only executor; releases and runs describe and steer it.
 
 Routes, under `/api/projects/{project}/deploy`: `GET environments`, `status`
 (one EnvironmentStatus per environment), `releases`, `releases/{id}`,
-`deployments[?environmentId=]`, `deployments/{id}`, `deployments/{id}/log[?step=]`
-and `audit`; `POST releases/{id}/deployments` (`{environmentId, approve}`),
+`releases/{id}/notes`, `cards`, `deployments[?environmentId=]`,
+`deployments/{id}`, `deployments/{id}/log[?step=]` and `audit`;
+`POST releases/{id}/deployments` (`{environmentId, approve}`),
 `deployments/{id}/approve`, `deployments/{id}/reject`, `deployments/{id}/cancel`,
 `environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve}`).
 `GET /api/deploy/matrix` returns the workspace dashboard rows, filtered to the
-caller's projects.
+caller's projects. `GET /api/deploy/cards` returns card environment badges across
+the caller's projects. The project-scoped `cards` route returns the same badges
+for one project. Each card has `projectId`, `cardKey` and `environments`; each
+badge has `environmentId`, `environmentName`, `kind`, `state`, `releaseId`,
+`releaseVersion` and `atUtc`. Badge `state` is `not-deployed`, `queued`,
+`running`, `succeeded`, `failed`, `cancelled`, `awaiting-approval` or
+`rolled-back`. Card presence follows the ancestry of the deployed release,
+including divergent release histories. `rolled-back` marks a card withdrawn by
+a successful rollback and stays visible through later queued or failed attempts;
+`not-deployed` means the card has no deployment in that environment. The
+release notes response has `releaseId`, `version`, `preview` and `notes` entries
+with `cardKey` and product-facing `text` captured from the included cards.
+Deployment `state` uses `queued`, `running`, `succeeded`, `failed`, `cancelled`
+and `awaiting-approval`. Step `state` also permits `pending` and `skipped`.
+EnvironmentStatus `health` is `healthy`, `unhealthy` or `unknown`.
 
 The deploy host uses a credential with only `runner.deploy`; its service
 identity must match `targetHostId`. In the managed host record, the deploy
@@ -210,6 +234,21 @@ carries names only; the secret resolution response returns a value to the
 authorized host for execution.
 The managed `remote-runner-onboard.sh --role deploy` path installs the separate
 `agent-runner-deploy.service` and generated `deploy.env` for the host.
+
+A container environment with `"destination": "edge"` is hosted by the
+run-target role instead (IP-1, `RUNNER_ROLE=run-target`). It declares
+`domains`, `edge` (`acme` or `cloudflare`), `healthPath`, plain `variables`, and
+`resources`. The run host polls its desired state, starts each new revision
+next to the running one behind an edge Caddy, and switches traffic only after
+the health check passes. It keeps the previous revision for rollback,
+restarts crashed apps with backoff, and rolls a crash-looping revision back.
+It removes an app only on Studio's explicit removal signal. For production
+and stage, Studio sends that signal only after an operator confirms the
+pending removal or the repository holds a tombstone (`"removed": true`).
+Domains must fall under the project's operator-owned suffixes. Secrets reach the
+app as files on tmpfs, named by `<NAME>_FILE`. The same deploy jobs,
+promotions, and automatic rollback apply. See the
+[runner domain map](../system/domains/runner.md#run-target-host-app-hosting-ip-1).
 
 Status: concept and initial workflow implemented, 2026-07-11. The shared
 Deployment contract now includes DEP-1 history and DEP-2 repository-derived

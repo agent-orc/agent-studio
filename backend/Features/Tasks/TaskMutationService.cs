@@ -488,10 +488,13 @@ public class TaskMutationService
 
             var isRemoteAttempt = participantId.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
                 StringComparison.Ordinal);
+            var isReviewAttempt = participantId.StartsWith("support:remote-review:", StringComparison.Ordinal);
             var retained = (persisted?.Entries ?? [])
                 .Where(entry => !string.Equals(entry.ParticipantId, participantId, StringComparison.Ordinal)
                     && !(isRemoteAttempt &&
-                        (entry.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false)))
+                        (entry.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false))
+                    && !(isReviewAttempt &&
+                        (entry.ParticipantId?.StartsWith(participantId + ":step:", StringComparison.Ordinal) ?? false)))
                 .ToList();
             var recorded = retained
                 .Where(entry => TokenLedgerDuplicates.UsageIdentity(entry) is not null)
@@ -508,8 +511,10 @@ public class TaskMutationService
             {
                 var entry = source with
                 {
-                    ParticipantId = isRemoteAttempt &&
-                        (source.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false)
+                    ParticipantId = ((isRemoteAttempt &&
+                        (source.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false))
+                        || (isReviewAttempt &&
+                        (source.ParticipantId?.StartsWith(participantId + ":step:", StringComparison.Ordinal) ?? false)))
                         ? source.ParticipantId : participantId,
                 };
                 var identity = isRemoteAttempt ? TokenLedgerDuplicates.UsageIdentity(entry) : null;
