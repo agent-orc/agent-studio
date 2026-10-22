@@ -142,7 +142,7 @@ public static class TaskCrudEndpoints
                 var tokenLookup = BuildTokenLookup(raw, tokens);
                 var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
                 var dependencyLookups = BuildDependencyGraphLookups(raw, scanner,
-                    attemptAuthority: attemptAuthority, references: publication?.References);
+                    attemptAuthority: attemptAuthority);
                 var gitLookup = gitProjection.ReadCacheOnly(raw);
                 var liveLookup = liveStatus.BuildLookup(raw);
                 var reviewQueue = attemptAuthority.ReadReviewQueue();
@@ -196,8 +196,8 @@ public static class TaskCrudEndpoints
                 includeNested: true);
 
             // AGT-3088: the read takes one already published index generation
-            // and pins it, so every nested index read below - the reference
-            // graph, the runner status the validator and the live-status strip
+            // and pins it for board cards and runner status. Dependency targets
+            // use the separately published core graph; the live-status strip
             // read, the generation folded into the tag - answers from that one
             // generation and none of them refreshes on this thread. A dirty
             // index starts a background refresh; only a cold start or this
@@ -242,7 +242,7 @@ public static class TaskCrudEndpoints
                 var tokenLookup = BuildTokenLookup(raw, tokens);
                 var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
                 var dependencyLookups = BuildDependencyGraphLookups(raw, scanner,
-                    attemptAuthority: attemptAuthority, references: publication?.References);
+                    attemptAuthority: attemptAuthority);
                 var gitLookup = gitProjection.ReadCacheOnly(raw);
                 var liveLookup = liveStatus.BuildLookup(raw);
                 var reviewQueue = attemptAuthority.ReadReviewQueue();
@@ -484,7 +484,7 @@ public static class TaskCrudEndpoints
                     .Where(job => !job.Fixture)
                 : Enumerable.Empty<TaskInfo>();
             var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(
-                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority, facts.References));
+                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority));
             var withRuntime = WithRuntime(pricing, detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
             withRuntime = TaskSwitchTrace.Run("runtime", () => withRuntime with
             {
@@ -1002,13 +1002,19 @@ public static class TaskCrudEndpoints
             IConfiguration configuration,
             CancellationToken ct) =>
         {
+            if (req.CompatibilityFields?.Keys.Any(key =>
+                string.Equals(key, "epicId", StringComparison.OrdinalIgnoreCase)) == true)
+            {
+                ctx.Response.Headers["Deprecation"] = "true";
+                ctx.Response.Headers.Warning = "299 - \"epicId is deprecated and ignored\"";
+            }
             if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
                 && req.TargetState is not (null or TaskStates.Backlog or TaskStates.Ready))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             if (string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest("Title is required");
             if (req.Kind is not null && !TaskKinds.All.Contains(req.Kind.Trim(), StringComparer.OrdinalIgnoreCase))
-                return Results.BadRequest(new { error = "kind must be task, epic, or decision." });
+                return Results.BadRequest(new { error = "kind must be task or decision." });
             if (TaskKinds.IsDecision(req.Kind))
             {
                 var errors = DecisionCardPolicy.ValidateContent(req.Decision);
@@ -1247,17 +1253,6 @@ public static class TaskCrudEndpoints
             if (req.UseOwnSession.HasValue)
                 mutations.SetJobUseOwnSession(jobId, req.UseOwnSession.Value, watchPath);
             return Results.Ok();
-        });
-
-        // Epics assignment way 2 (post-hoc): attach/detach a task to a parent epic.
-        // Body { epicId }: null or empty detaches. (Way 1 is CreateTaskRequest.EpicId
-        // at create time; way 3 is an epic's decomposition run creating sub-tasks
-        // with epicId via the create path.)
-        group.MapPut("/{jobId}/epic", (string jobId, string? project, string? watchPath, SetJobEpicRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
-        {
-            watchPath = ResolveWatchPath(projects, project, watchPath);
-            var ok = mutations.SetJobEpic(jobId, req?.EpicId, watchPath);
-            return ok ? Results.Ok() : Results.NotFound();
         });
 
         group.MapPut("/{jobId}/dossier", (string jobId, string? project, string? watchPath,

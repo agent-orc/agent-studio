@@ -102,7 +102,7 @@
             [canNavigateForward]="studioTabState.canNavigateDocumentForward()"
             [documentHistoryLength]="studioTabState.activeDocumentHistoryLength()"
             [boardActionsVisible]="studioTabState.activeTab()?.kind === 'board'"
-            [groupByEpic]="groupByEpic()"
+            [groupByDossier]="groupByDossier()"
             [mutationsBlocked]="updateClient.mutationsBlocked()"
             [task]="studioTabActionsTask()"
             [runActivity]="studioRunActivityBadge()"
@@ -111,7 +111,7 @@
             [laneOptions]="studioLaneOptions"
             [triage]="studioTabActionsTriage()"
             (navigateDocumentHistory)="projectHubUrls.navigateDocumentHistory($event)"
-            (toggleGroupByEpic)="toggleGroupByEpic()"
+            (toggleGroupByDossier)="toggleGroupByDossier()"
             (addTask)="openCreate()"
             (togglePane)="onShellTogglePane($event)"
             (previousTask)="onStudioPagerPrev()"
@@ -134,8 +134,8 @@
                 <app-loading-surface kind="board" label="Loading board…" />
               } @else {
               <app-active-board-filters [resultCount]="filteredTaskCount()" /><app-tag-filters [projectName]="boardProjectScope()" />
-              @if (groupByEpic()) {
-                <main class="dashboard dashboard--studio dashboard--epic-board"
+              @if (groupByDossier()) {
+                <main class="dashboard dashboard--studio dashboard--dossier-board"
                       data-testid="studio-board">
                   <app-dossier-group-board
                     [tasks]="dossierBoardTasks()"
@@ -161,7 +161,7 @@
                           [icon]="lane.icon"
                           [state]="lane.state"
                           [jobs]="lane.jobs"
-                          [allBoardJobs]="epicBoardTasks()"
+                          [allBoardJobs]="dossierBoardTasks()"
                           [collapsed]="isLaneCollapsed(lane.state)"
                           [compact]="effectiveCompactCards()"
                           [archiving]="archivingInProgress()"
@@ -211,8 +211,6 @@
                                   (projectChanged)="onProjectChanged($event)"
                                   (deleteRequested)="onDeleteFromDetail(detail.info)"
                                   (navigateLaneRequested)="onNavigateLane($event)"
-                                  (openEpicRequested)="onOpenEpicFromTaskAnchor(detail.info, $event)"
-                                  (openSubTaskRequested)="onOpenJobDetailFromSheet($event)"
                                   (triageMoveRequested)="onTriageMove(detail.info, $event)"
                                   (triageMoveToTopRequested)="onTriageMoveToTop(detail.info, $event)"
                                   (triageDeleteRequested)="onTriageDelete(detail.info, $event)"
@@ -234,61 +232,6 @@
               }
               } @placeholder {
                 <app-loading-surface kind="task-detail" label="Loading task details…" />
-              }
-            }
-            @case ('epic') {
-              @defer (when studioTabState.activeTab()?.kind === 'epic') {
-              @if (studioTabState.activeTab(); as tab) {
-                @if (tab.kind === 'epic' && selectedJob(); as detail) {
-                  <main class="workspace__main workspace__main--studio" data-testid="studio-epic">
-                    @if (epicTabTaskDetail(); as subDetail) {
-                  <!-- In-place sub-task view reuses this panel; the membership
-                       banner returns to the epic and paging stays within it. -->
-                      <app-job-detail #jobDetail
-                        [detail]="subDetail"
-                        data-testid="studio-epic-subtask-detail"
-                        [watchPaths]="watchPaths()"
-                        [lanePeers]="epicTabSubTaskPeers()"
-                        [mutationsBlocked]="updateClient.mutationsBlocked()"
-                        (back)="closeEpicTabTaskDetail()"
-                        (fileSaved)="onFileSaved()"
-                        (projectChanged)="onProjectChanged($event)"
-                        (deleteRequested)="onDeleteFromDetail(subDetail.info)"
-                        (navigateLaneRequested)="onEpicTabNavigateLane($event)"
-                        (openEpicRequested)="onOpenEpicFromTaskAnchor(subDetail.info, $event)"
-                        (openSubTaskRequested)="onOpenJobDetailFromSheet($event)"
-                        (triageMoveRequested)="onTriageMove(subDetail.info, $event)"
-                        (triageMoveToTopRequested)="onTriageMoveToTop(subDetail.info, $event)"
-                        (triageDeleteRequested)="onTriageDelete(subDetail.info, $event)"
-                        (triageStartRequested)="onTriageStart(subDetail.info, $event)"
-                        (nextInLaneRequested)="onEpicTabNextSubTask(subDetail.info)"
-                        (prevInLaneRequested)="onEpicTabPrevSubTask(subDetail.info)" />
-                    } @else {
-                      <app-job-detail #jobDetail
-                                      [detail]="detail"
-                                      data-testid="studio-epic-detail"
-                                      [watchPaths]="watchPaths()"
-                                      [lanePeers]="triageLanePeers()"
-                                      [mutationsBlocked]="updateClient.mutationsBlocked()"
-                                      (back)="closeDetail()"
-                                      (fileSaved)="onFileSaved()"
-                                      (projectChanged)="onProjectChanged($event)"
-                                      (deleteRequested)="onDeleteFromDetail(detail.info)"
-                                      (navigateLaneRequested)="onNavigateLane($event)"
-                                      (openEpicRequested)="onOpenEpicFromTaskAnchor(detail.info, $event)"
-                                      (openSubTaskRequested)="onEpicTabOpenSubTask($event)"
-                                      (triageMoveRequested)="onTriageMove(detail.info, $event)"
-                                      (triageMoveToTopRequested)="onTriageMoveToTop(detail.info, $event)"
-                                      (triageDeleteRequested)="onTriageDelete(detail.info, $event)"
-                                      (triageStartRequested)="onTriageStart(detail.info, $event)"
-                                      (nextInLaneRequested)="onTriageNext(detail.info)"
-                                      (prevInLaneRequested)="onTriagePrev(detail.info)" />
-                    }
-                  </main>
-                }
-              }
-              } @placeholder {
-                <app-loading-surface kind="task-detail" label="Loading epic details…" />
               }
             }
             @case ('hub') {
@@ -400,8 +343,6 @@
           [(newTaskType)]="createJobForm.newTaskType" (newTaskTypeChange)="createJobForm.onTaskTypeChange($event)"
           [(newTags)]="createJobForm.newTags"
           [(newTargetState)]="createJobForm.newTargetState"
-          [(newKind)]="createJobForm.newKind"
-          [(newEpicId)]="createJobForm.newEpicId"
           [(newMode)]="createJobForm.newMode"
           [(newAllowWebAccess)]="createJobForm.newAllowWebAccess"
           (cliTypeChange)="onCreateCliTypeChange($event)"
@@ -622,8 +563,6 @@
                               (projectChanged)="onProjectChanged($event)"
                               (deleteRequested)="onDeleteFromDetail(detail.info)"
                               (navigateLaneRequested)="onNavigateLane($event)"
-                              (openEpicRequested)="onOpenEpicFromTaskAnchor(detail.info, $event)"
-                              (openSubTaskRequested)="onOpenJobDetailFromSheet($event)"
                               (triageMoveRequested)="onTriageMove(detail.info, $event)"
                               (triageMoveToTopRequested)="onTriageMoveToTop(detail.info, $event)"
                               (triageDeleteRequested)="onTriageDelete(detail.info, $event)"
@@ -666,7 +605,7 @@
                       [title]="lane.title"
                       [icon]="lane.icon"
                       [state]="lane.state"
-                      [jobs]="lane.jobs" [allBoardJobs]="epicBoardTasks()"
+                      [jobs]="lane.jobs" [allBoardJobs]="dossierBoardTasks()"
                       [collapsed]="isLaneCollapsed(lane.state)"
                       [compact]="effectiveCompactCards()"
                       [archiving]="archivingInProgress()"
@@ -753,8 +692,6 @@
           [(newTaskType)]="createJobForm.newTaskType" (newTaskTypeChange)="createJobForm.onTaskTypeChange($event)"
           [(newTags)]="createJobForm.newTags"
           [(newTargetState)]="createJobForm.newTargetState"
-          [(newKind)]="createJobForm.newKind"
-          [(newEpicId)]="createJobForm.newEpicId"
           [(newMode)]="createJobForm.newMode"
           [(newAllowWebAccess)]="createJobForm.newAllowWebAccess"
           (cliTypeChange)="onCreateCliTypeChange($event)"

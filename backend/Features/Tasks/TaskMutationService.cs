@@ -165,20 +165,6 @@ public class TaskMutationService
         return Updated(info);
     }
 
-    /// <summary>
-    /// Epics assignment way 2 (post-hoc): attach this task to a parent epic, or
-    /// detach it (<paramref name="epicId"/> null/empty clears the link). Writes
-    /// the <c>epicId</c> field on task.json via the mutation layer (API-only
-    /// job-folder rule, ADR-0024). Returns false when the task is not found.
-    /// </summary>
-    public bool SetJobEpic(string jobId, string? epicId, string? watchPath = null)
-    {
-        var info = _scanner.FindJob(jobId, watchPath);
-        if (info == null) return false;
-        TaskJsonFile.UpdateField(info.FolderPath, "epicId", epicId ?? "", _logger);
-        return Updated(info);
-    }
-
     public bool SetJobCliType(string jobId, string cliType, string? watchPath = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
@@ -1435,7 +1421,8 @@ public class TaskMutationService
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
-        TaskJsonFile.UpdateField(info.FolderPath, "released", released, _logger);
+        if (!TaskJsonFile.UpdateField(info.FolderPath, "released", released, _logger))
+            return false;
         var dependents = ReleaseGatedDependentKeys(info);
         _timeline?.Append(
             info.FolderPath,
@@ -1467,7 +1454,7 @@ public class TaskMutationService
         if (string.IsNullOrWhiteSpace(info.Key)) return [];
         try
         {
-            return _scanner.GetReferenceIndex()
+            return _scanner.GetCoreReferenceIndex()
                 .Dependents(info.Key, TaskReferenceKinds.DependsOn)
                 .Where(link => link.ReleaseGate && !string.IsNullOrWhiteSpace(link.SourceKey))
                 .Select(link => link.SourceKey!)
@@ -1984,11 +1971,8 @@ public class TaskMutationService
         jobJson["thinkingLevelExplicit"] = req.ThinkingLevelExplicit ?? !string.IsNullOrWhiteSpace(req.ThinkingLevel);
         if (!string.IsNullOrWhiteSpace(effectiveCliType))
             jobJson["cliType"] = effectiveCliType;
-        // Epics: card kind (task|epic) + optional parent epic (assignment way 1,
-        // at create time). kind is always written so a fresh task.json is explicit.
+        // Keep the normalized card kind explicit in new task metadata.
         jobJson["kind"] = TaskKinds.Normalize(req.Kind);
-        if (!string.IsNullOrWhiteSpace(req.EpicId))
-            jobJson["epicId"] = req.EpicId;
         if (req.Dossier is { Path.Length: > 0 })
             jobJson["dossier"] = req.Dossier;
         // Execution mode (coding|planning|research) + web-access. mode is always

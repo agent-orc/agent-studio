@@ -1124,11 +1124,6 @@ export class StudioShellComponent {
         return 'Activity across projects';
       case 'workbenches':
         return 'Dossiers';
-      case 'epic': {
-        const labelKey = tab.viewTaskKey ?? tab.epicKey;
-        const job = this.findJob(labelKey);
-        return job?.title || job?.key || job?.id || this.taskIdFromKey(labelKey);
-      }
       case 'task': {
         const job = this.findJob(tab.taskKey);
         return job?.title || job?.key || job?.id || this.taskIdFromKey(tab.taskKey);
@@ -1212,8 +1207,7 @@ export class StudioShellComponent {
   }
 
   /** Leading icon for the tab strip. Deck tabs show their active section's
-   *  rail icon (e.g. `book` for Wiki); other kinds render none here (the
-   *  epic tab keeps its own dedicated glyph in the template). */
+   *  rail icon (e.g. `book` for Wiki); other kinds render none here. */
   tabIcon(tab: StudioTab): StudioIconName | null {
     if (tab.kind === 'hub') {
       const area = this.projectAreaLabel(tab.section);
@@ -1245,8 +1239,6 @@ export class StudioShellComponent {
       case 'task':
       case 'activity':
         return this.findJob(tab.taskKey)?.projectName ?? null;
-      case 'epic':
-        return this.findJob(tab.viewTaskKey ?? tab.epicKey)?.projectName ?? null;
       default:
         return null;
     }
@@ -1313,7 +1305,6 @@ export class StudioShellComponent {
    */
   tabJob(tab: StudioTab): TaskInfo | null {
     if (tab.kind === 'task' || tab.kind === 'activity') return this.findJob(tab.taskKey);
-    if (tab.kind === 'epic') return this.findJob(tab.viewTaskKey ?? tab.epicKey);
     return null;
   }
 }

@@ -146,23 +146,23 @@ describe('TaskService', () => {
 
   it('loads task detail by project handle and falls back to watchPath', () => {
     let detailId = '';
-    service.getDetailByProject('epic-a', 'PROJ-002', 'C:/projects/demo').subscribe((detail) => {
+    service.getDetailByProject('task-a', 'PROJ-002', 'C:/projects/demo').subscribe((detail) => {
       detailId = detail.info.id;
     });
 
     const projectRequest = http.expectOne((request) =>
-      request.url === '/api/v1/projects/PROJ-002/tasks/epic-a' &&
+      request.url === '/api/v1/projects/PROJ-002/tasks/task-a' &&
       request.params.get('project') === 'PROJ-002' &&
       !request.params.has('watchPath'));
     projectRequest.flush(null, { status: 404, statusText: 'Not Found' });
 
     const fallbackRequest = http.expectOne((request) =>
-      request.url === '/api/v1/projects/-/tasks/epic-a' &&
+      request.url === '/api/v1/projects/-/tasks/task-a' &&
       request.params.get('watchPath') === 'C:/projects/demo' &&
       !request.params.has('project'));
-    fallbackRequest.flush({ info: { id: 'epic-a' } });
+    fallbackRequest.flush({ info: { id: 'task-a' } });
 
-    expect(detailId).toBe('epic-a');
+    expect(detailId).toBe('task-a');
   });
 
   it('decodes raw diff endpoints from UTF-8 bytes', () => {

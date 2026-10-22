@@ -126,7 +126,15 @@ the domains it broke without hiding the domains that succeeded.
 
 The Project URL tab keeps its live iframe and places the project chat beside it through the existing Orchestrator side sheet. Its product controls collect a change request in plain language: desired result, page location, optional example, quota estimate, then an explicit Create this change action. The resulting card asks for before and after screenshots of each changed page. Delivery screenshots come from the task screenshot API. A person marks a rectangle or point on a screenshot, writes feedback, and sends its crop, optional element selector, and current preview address to the same card's next round. Acceptance uses the existing Human Review move; production release remains a separate approval.
 
-Cross-origin iframes do not expose their pixels or DOM to Studio. Screenshot markup therefore uses the task's captured image, and a selector is optional unless the person knows it. The Project URL registry currently supplies the preview address. A task-specific preview address requires the companion card-preview contract when it becomes available.
+Cross-origin iframes do not expose their pixels or DOM to Studio. Screenshot markup therefore uses the task's captured image, and a selector is optional unless the person knows it. The Project URL registry supplies its local-checkout address; a card preview has a separate delivery-specific address.
+
+Card previews now appear on the board card, in task detail, and next to the
+card chat composer. The card shows status, delivery SHA, address, and the PNG
+reported after deployment. This address belongs to the card's delivery rather
+than the Project URL's local checkout. The preview disappears after its removal
+job succeeds; a pending removal remains visible as `removing` until then. The
+card retains an `expired` or `removed` status so the same delivery cannot
+recreate the environment on the next sweep.
 
 Product calls to `toLocaleString`, `toLocaleDateString`, `toLocaleTimeString`,
 and `Intl` formatters pass an explicit locale. The current product formatting
@@ -380,12 +388,12 @@ occur. It is not a claim about tunnel transfer time.
   excludes Deploy, Deployment, Pipeline, and Observability. Agent-work panels
   stay in the Deck as the Insight rail Agent activity: the message bus panel,
   token summary, supervisor and meta-cycle sections, and analysis reports.
-  Legacy `observability` sections open Operations. The Epic overview and Epic
-  grouping controls are retired from navigation (the board groups by Dossier
-  instead). Legacy `#/epics` and `#/projects/<project>/epics` routes and
-  restored Epics tabs open the Dossiers overview tab and rewrite to its URL;
-  legacy Epic data and API behavior remain until the separate data-removal
-  card.
+  Legacy `observability` sections open Operations. The board groups cards by
+  Dossier. Task detail and board surfaces no longer expose parent-card rollups
+  or assignment controls. Legacy `#/epics` and `#/projects/<project>/epics`
+  routes and restored Epics tabs open the Dossiers overview tab and rewrite to
+  its URL; parent-card data and assignment routes are retired. Incoming
+  `epicId` is ignored with a deprecation warning for one API version.
 - The Deploy overview reads declared environments from AGT-3176 and status,
   releases, deploy runs, and step logs from `/api/projects/<project>/deploy`.
   Release and run lists request `/releases/page` and `/deployments/page` with
