@@ -134,7 +134,17 @@
                 <app-loading-surface kind="board" label="Loading board…" />
               } @else {
               <app-active-board-filters [resultCount]="filteredTaskCount()" /><app-tag-filters [projectName]="boardProjectScope()" />
-              @if (groupByDossier()) {
+              <button type="button" class="btn btn--ghost" data-testid="delivery-mode-toggle"
+                      (click)="deliveryMode.set(!deliveryMode())">
+                {{ deliveryMode() ? 'Task board' : 'Delivery lanes' }}</button>
+              @if (deliveryMode()) {
+                <main class="dashboard dashboard--delivery" data-testid="studio-delivery-board">
+                  @defer (on idle) {
+                  <app-delivery-lanes [project]="boardProjectScope()" [projects]="projectNames()" [boardFilters]="true"
+                    (openDeployment)="studioTabState.open({ kind: 'hub', projectName: $event, section: 'deployment' })" (openCard)="openDeliveryCard($event)" />
+                  }
+                </main>
+              } @else if (groupByDossier()) {
                 <main class="dashboard dashboard--studio dashboard--dossier-board"
                       data-testid="studio-board">
                   <app-dossier-group-board
@@ -191,7 +201,7 @@
               }
             }
             @case ('task') {
-              @defer (when studioTabState.activeTab()?.kind === 'task') {
+              @defer (on immediate) {
               @if (detailPreview(); as preview) {
                 <main class="workspace__main workspace__main--studio" data-testid="studio-task">
                   <app-task-detail-load-sections [info]="preview" [core]="selectedCore()" [resources]="detailResourceStates()" [errorMessage]="detailLoadError()?.message ?? null"
@@ -237,11 +247,13 @@
             @case ('hub') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'hub') {
-                  <app-project-hub-view
-                    [projectName]="tab.projectName" [projectId]="projectHubUrls.projectIdForName(tab.projectName)"
-                    [initialSection]="tab.section ?? 'overview'" [wikiTarget]="tab.wikiTarget"
-                    [pipelineStepId]="tab.pipelineStepId"
-                    (openTask)="onOpenTaskFromReel($event)" />
+                  @defer (on immediate) {
+                    <app-project-hub-view
+                      [projectName]="tab.projectName" [projectId]="projectHubUrls.projectIdForName(tab.projectName)"
+                      [initialSection]="tab.section ?? 'overview'" [wikiTarget]="tab.wikiTarget"
+                      [pipelineStepId]="tab.pipelineStepId"
+                      (openTask)="onOpenTaskFromReel($event)" />
+                  }
                 }
               }
             }
@@ -259,14 +271,18 @@
             @case ('diff') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'diff') {
-                  <app-studio-diff-view [commitSha]="tab.commitSha" />
+                  @defer (on immediate) {
+                    <app-studio-diff-view [commitSha]="tab.commitSha" />
+                  }
                 }
               }
             }
             @case ('activity') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'activity') {
-                  <app-studio-activity-view [taskKey]="tab.taskKey" />
+                  @defer (on immediate) {
+                    <app-studio-activity-view [taskKey]="tab.taskKey" />
+                  }
                 }
               }
             }
@@ -354,6 +370,7 @@
         <app-tag-manager-dialog
           (closed)="onTagManagerClosed()" />
       }
+      @defer (when projectOverlays.anyOpen()) {
       <app-project-overlays
         (securityFollowUp)="onSecurityFollowUp($event)"
         (securityOpenEvidence)="onSecurityOpenEvidence($event)"
@@ -361,6 +378,7 @@
         (uxuiFollowUp)="onUxuiFollowUp($event)"
         (uxuiActionQueued)="onUxuiActionQueued($event)"
         (openTask)="onOpenTaskFromReel($event)" />
+      }
       @defer (when verboseDebugContext() !== null) {
         @if (verboseDebugContext(); as ctx) {
           <app-verbose-debug-overlay
@@ -652,6 +670,7 @@
         (defaultCliChange)="onDefaultCliChange($event)"
         (defaultModelChange)="onDefaultModelChange($event)" />
 
+      @defer (when projectOverlays.anyOpen()) {
       <app-project-overlays
         (securityFollowUp)="onSecurityFollowUp($event)"
         (securityOpenEvidence)="onSecurityOpenEvidence($event)"
@@ -659,6 +678,7 @@
         (uxuiFollowUp)="onUxuiFollowUp($event)"
         (uxuiActionQueued)="onUxuiActionQueued($event)"
         (openTask)="onOpenTaskFromReel($event)" />
+      }
 
 
       <app-workspace-overlays [watchPaths]="watchPaths()"

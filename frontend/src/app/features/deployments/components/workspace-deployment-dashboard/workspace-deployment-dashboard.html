@@ -58,4 +58,8 @@
       </tbody>
     </table>
   </div>
+  @for (row of rows(); track row.id) {
+    <app-delivery-lanes [project]="row.name" [heading]="row.name + ' delivery'"
+      (openDeployment)="openDeployment.emit($event)" (openCard)="openCard.emit($event)" />
+  }
 </section>
