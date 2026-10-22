@@ -1034,7 +1034,9 @@ public sealed class DeployService
     {
         var production = environments.Where(item => item.Kind == EnvironmentKinds.Production)
             .Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
-        var pending = runs.Where(item => item.State == DeploymentStates.Failed
+        var pending = runs.Where(item => (item.State == DeploymentStates.Failed
+                    || (item.State == DeploymentStates.Cancelled && item.InterventionDecision == "abort"
+                        && item.FailedStep is not null))
                 && production.Contains(item.EnvironmentId)
                 && !_failureCardsHandled.Contains(project + "/" + item.Id))
             .ToArray();

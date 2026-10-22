@@ -1356,7 +1356,7 @@ public sealed class DeployServiceTests : IDisposable
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         var environments = new ProjectEnvironmentService(config, scanner, git, settings, _clock);
         return new DeployService(environments, new DeployStore(config), git, scanner, _clock,
-            NullLogger<DeployService>.Instance);
+            NullLogger<DeployService>.Instance, null);
     }
 
     private void WriteProduction(string host, string destination, bool guidedFailure = false)
