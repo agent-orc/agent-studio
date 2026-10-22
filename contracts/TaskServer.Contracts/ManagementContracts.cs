@@ -19,7 +19,9 @@ public sealed record TaskServerStatusDto(
     DateTime StartedAt,
     int OutboxBacklog = 0,
     long? OldestUnacknowledgedSequence = null,
-    IReadOnlyDictionary<string, int>? FinalHandoffStates = null);
+    IReadOnlyDictionary<string, int>? FinalHandoffStates = null,
+    // Workspace quota admission: "off" (no meter configured), "on" or "unreachable".
+    string? QuotaAdmission = null);
 
 public sealed record ChangeModeRequest(TaskServerMode Mode, string Reason);
 public sealed record PrepareShutdownRequest(string Reason);

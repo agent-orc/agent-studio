@@ -397,6 +397,7 @@ builder.Services.AddSingleton<AgentStudio.Registry.ComponentRoutingService>();
 // AGT-1812: per-workspace default settings store + the two-tier orchestrator
 // resolver (project override -> workspace default -> platform constant default).
 builder.Services.AddSingleton<AgentStudio.Registry.WorkspaceSettingsService>();
+builder.Services.AddSingleton<AgentStudio.Quota.WorkspaceQuotaService>();
 builder.Services.AddSingleton<AgentStudio.Registry.OrchestratorDefaultsProvider>();
 // Project URLs: read-only repo scan for suggestions + minimal dev-server spawn.
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlDetectionService>();
@@ -534,6 +535,9 @@ builder.Services.AddSingleton<OperatorReviewRequeueService>();
 builder.Services.AddSingleton<PublishTargetService>();
 builder.Services.AddSingleton<TaskPublishableService>();
 builder.Services.AddSingleton<PublishActionService>();
+builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconciler>(sp =>
+    sp.GetRequiredService<PublishActionService>());
+builder.Services.AddHostedService<AgentStudio.Publishing.PublishEnvironmentReconciliationService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
@@ -888,7 +892,9 @@ builder.Services.AddSingleton<AgentStudio.Runner.IGateExecutorDirectory>(sp =>
     sp.GetRequiredService<V1ReviewExecutorRegistry>());
 builder.Services.AddSingleton(sp => new AgentStudio.Runner.MonolithGateStore(
     sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TimeProvider>(),
-    sp.GetRequiredService<AgentStudio.Runner.IGateExecutorDirectory>()));
+    sp.GetRequiredService<AgentStudio.Runner.IGateExecutorDirectory>(),
+    sp.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>(),
+    sp.GetRequiredService<TaskScannerService>()));
 // AGT-3055: BatchGate:Execution=claimed opts the batch suite into claimable
 // gate work; unset keeps the SSH bridge. The claimed subject lives where runner
 // gate claims land: the standalone Task Server when the versioned plane is
