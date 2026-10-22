@@ -95,6 +95,13 @@ public sealed class StudioResponseHeadersMiddleware(RequestDelegate next)
         context.Response.OnStarting(() =>
         {
             StudioResponseHeaderPolicy.Apply(context.Response.Headers);
+            // API and hub responses may contain private data even when an endpoint
+            // selected a browser cache lifetime. Cloudflare must not store them.
+            if (context.Request.Path.StartsWithSegments("/api")
+                || context.Request.Path.StartsWithSegments("/hubs")
+                || context.Request.Cookies.ContainsKey(AccessSecurityStore.SessionCookieName)
+                || context.Items.ContainsKey(AccessSecurityMiddleware.HumanPrincipalItem))
+                context.Response.Headers.CacheControl = "no-store";
             // UseHsts sets this before the endpoint runs; the exception handler
             // clears it with the other headers of the failed response.
             if (context.Request.IsHttps && string.IsNullOrEmpty(context.Response.Headers.StrictTransportSecurity))

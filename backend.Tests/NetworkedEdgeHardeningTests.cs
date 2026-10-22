@@ -184,11 +184,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
                    $"/api/tasks/{TaskKey}/thumbnail?path=image.png", owner.SessionToken))
         {
             Assert.Equal(HttpStatusCode.OK, thumbnail.StatusCode);
-            var cacheDirectives = Header(thumbnail, "Cache-Control")
-                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-            Assert.Contains("private", cacheDirectives);
-            Assert.Contains("max-age=3600", cacheDirectives);
-            Assert.DoesNotContain("no-store", cacheDirectives);
+            Assert.Equal("no-store", Header(thumbnail, "Cache-Control"));
         }
 
         // The networked boundary keeps task files Runner-only (prompt.md under
@@ -271,6 +267,10 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         using var response = await client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        using var secret = new HttpRequestMessage(HttpMethod.Get, "/api/secrets");
+        secret.Headers.Add("Cookie", $"{AccessSecurityStore.InsecureSessionCookieName}={owner.SessionToken}");
+        using var secretResponse = await client.SendAsync(secret);
+        Assert.Equal(HttpStatusCode.Unauthorized, secretResponse.StatusCode);
     }
 
     [Fact]
@@ -366,7 +366,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
             Assert.True((await StatusAsync(client, "198.51.100.7")).BootstrapCodeRequired);
             trusted.Services.GetRequiredService<AccessSecurityStore>().Bootstrap(new BootstrapRequest("first.owner", Password, null));
 
-            for (var attempt = 0; attempt < 5; attempt++)
+            for (var attempt = 0; attempt < 10; attempt++)
                 Assert.Equal(HttpStatusCode.Unauthorized, await LoginAsync(client, "198.51.100.7", "wrong password phrase"));
             Assert.Equal((HttpStatusCode)429, await LoginAsync(client, "198.51.100.7", Password));
             Assert.Equal(HttpStatusCode.OK, await LoginAsync(client, "198.51.100.8", Password));
@@ -395,7 +395,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
             ipv6.Services.GetRequiredService<AccessSecurityStore>().Bootstrap(new BootstrapRequest("first.owner", Password, null));
 
             // One IPv6 host owns its whole /64; rotating within it shares one key.
-            for (var attempt = 0; attempt < 5; attempt++)
+            for (var attempt = 0; attempt < 10; attempt++)
                 Assert.Equal(HttpStatusCode.Unauthorized,
                     await LoginAsync(client, $"2001:db8:1:2::{attempt + 1:x}", "wrong password phrase"));
             Assert.Equal((HttpStatusCode)429, await LoginAsync(client, "2001:db8:1:2:ffff::9", Password));
@@ -406,7 +406,7 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
         using var spoofing = NewClient(untrusted);
         Assert.True((await StatusAsync(spoofing, "127.0.0.1")).BootstrapCodeRequired);
         untrusted.Services.GetRequiredService<AccessSecurityStore>().Bootstrap(new BootstrapRequest("first.owner", Password, null));
-        for (var attempt = 0; attempt < 5; attempt++)
+        for (var attempt = 0; attempt < 10; attempt++)
             Assert.Equal(HttpStatusCode.Unauthorized, await LoginAsync(spoofing, $"198.51.100.{attempt + 20}", "wrong password phrase"));
         Assert.Equal((HttpStatusCode)429, await LoginAsync(spoofing, "198.51.100.99", Password));
     }

@@ -275,6 +275,16 @@ public sealed class CommitCandidateGate
                     "Root scratch/debug artifact was excluded by deterministic policy.",
                     "policy", ExcludesCandidate: true));
             }
+            if (DeliveryReportPathPolicy.IsEnabled(root)
+                && DeliveryReportPathPolicy.IsReportPath(normalized))
+            {
+                included = false;
+                exclusion = "card-report-artifact";
+                findings.Add(new CommitGateFinding(
+                    "card-report-artifact", CommitGateSeverities.Info, normalized,
+                    "Card reports belong in the task results folder and were excluded from the product commit.",
+                    "policy", ExcludesCandidate: true));
+            }
             if (IsCredentialHome(normalized))
             {
                 included = false;

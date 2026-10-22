@@ -80,14 +80,14 @@ for name, (caddyfile, allow_direct) in expected.items():
     edge_mounts = mounts(edge)
     assert edge_mounts['/etc/caddy/Caddyfile'].endswith('/' + caddyfile), (name, edge_mounts)
     assert edge_mounts['/etc/caddy/cloudflare-ips.caddy'].endswith('/cloudflare-ips.caddy'), (name, edge_mounts)
-    assert edge_mounts['/etc/caddy/cloudflare-origin-pull-ca.pem'].endswith('/cloudflare-origin-pull-ca.pem'), (name, edge_mounts)
+    assert '/etc/caddy/cloudflare-origin-pull-ca.pem' not in edge_mounts, (name, edge_mounts)
     assert edge['environment']['STUDIO_CLOUDFLARE_ALLOW_DIRECT'] == allow_direct, (name, edge['environment'])
     assert edge['networks']['website']['ipv4_address'] == '172.30.83.2', edge['networks']
     frontend = rendered['services']['frontend']
     assert mounts(frontend)['/etc/caddy/Caddyfile'].endswith('/Caddyfile.frontend'), frontend['volumes']
     assert frontend['networks']['website']['ipv4_address'] == '172.30.83.3', frontend['networks']
     api = rendered['services']['api']
-    assert api['environment']['Security__TrustedProxyAddresses'] == '172.30.83.3', api['environment']
+    assert api['environment']['Security__TrustedProxyAddresses'] == '172.30.83.3,172.30.83.2', api['environment']
     assert 'ports' not in api and 'ports' not in frontend, 'only the edge may publish ports'
 print('Compose render passed for the public, Cloudflare and Cloudflare direct-access modes.')
 PY
@@ -115,18 +115,6 @@ if docker run --rm -e STUDIO_DOMAIN=studio.example.test -e STUDIO_CLOUDFLARE_ALL
   echo 'Caddyfile.cloudflare accepted STUDIO_CLOUDFLARE_ALLOW_DIRECT=yes' >&2
   exit 1
 fi
-# Validating provisions the TLS policy, so Caddy loads the shipped
-# origin-pull CA as the client certificate trust pool.
-docker run --rm -e STUDIO_DOMAIN=studio.example.test -e STUDIO_CLOUDFLARE_ALLOW_DIRECT=false \
-  -v "$stack/Caddyfile.cloudflare:/etc/caddy/Caddyfile:ro" \
-  -v "$stack/cloudflare-ips.caddy:/etc/caddy/cloudflare-ips.caddy:ro" \
-  -v "$stack/cloudflare-origin-pull-ca.pem:/etc/caddy/cloudflare-origin-pull-ca.pem:ro" \
-  "$caddy_image" caddy validate --config /etc/caddy/Caddyfile > "$work/validate.log" 2>&1 || {
-  cat "$work/validate.log" >&2
-  exit 1
-}
-openssl x509 -in "$stack/cloudflare-origin-pull-ca.pem" -noout -subject | grep -q 'CN *= *origin-pull.cloudflare.net'
-
 python3 - "$work" "$stack/cloudflare-ips.caddy" "$stack/Caddyfile.frontend" <<'PY'
 import ipaddress, json, os, re, sys
 work, ranges_file, frontend_file = sys.argv[1:4]
@@ -149,41 +137,33 @@ assert site.get('trusted_proxies_strict') == 1, site
 config = json.dumps(site)
 assert '{http.vars.trusted_proxy}' in config and '{env.STUDIO_CLOUDFLARE_ALLOW_DIRECT}' in config, config
 
-# Direct access off: a TLS connection for the Studio name needs Cloudflare's
-# origin-pull client certificate. Caddy appends a catch-all policy for other
-# SNI values; with client auth configured it enforces strict_sni_host, so a
-# Host header cannot reach the site through it (the edge test checks this).
-policies = site.get('tls_connection_policies', [])
-studio = [policy for policy in policies if 'studio.example.test' in policy.get('match', {}).get('sni', [])]
-assert len(studio) == 1, policies
-client_auth = studio[0].get('client_authentication')
-assert client_auth == {
-    'ca': {'provider': 'file', 'pem_files': ['/etc/caddy/cloudflare-origin-pull-ca.pem']},
-    'mode': 'require_and_verify',
-}, policies
-assert all(policy == {} for policy in policies if policy is not studio[0]), policies
-assert site.get('strict_sni_host') in (None, True), site.get('strict_sni_host')
+# Origin authentication is owned by AGT-3298. Both edge modes preserve the
+# same trusted proxy range and have no client certificate policy yet.
+assert not any(policy.get('client_authentication') for policy in site.get('tls_connection_policies', [])), site
 direct = next(server for server in adapted('Caddyfile.cloudflare-direct').values() if ':443' in server['listen'])
 assert not any(policy.get('client_authentication') for policy in direct.get('tls_connection_policies', [])), direct
 assert direct['trusted_proxies'] == site['trusted_proxies'], direct
 
-for name in ('Caddyfile.public', 'Caddyfile.private'):
-    for server in adapted(name).values():
-        assert 'trusted_proxies' not in server, (name, server)
-        assert 'client_ip_headers' not in server, (name, server)
+public = next(server for server in adapted('Caddyfile.public').values() if ':443' in server['listen'])
+assert public['trusted_proxies'] == {'source': 'static', 'ranges': listed}, public
+public_matchers = re.findall(r'@cloudflare remote_ip (.+)', open(os.path.join(os.path.dirname(ranges_file), 'Caddyfile.public'), encoding='utf-8').read())
+assert len(public_matchers) == 1 and public_matchers[0].split() == listed, public_matchers
+for server in adapted('Caddyfile.private').values():
+    assert 'trusted_proxies' not in server, server
+    assert 'client_ip_headers' not in server, server
 
 frontend = adapted('Caddyfile.frontend')['srv0']
 assert frontend['trusted_proxies']['ranges'] == ['172.30.83.2/32'], frontend['trusted_proxies']
 text = json.dumps(frontend)
 assert "frame-ancestors 'self'" in text and 'SAMEORIGIN' in text, text
 assert re.search(r'header_up X-Forwarded-For \{client_ip\}', open(frontend_file, encoding='utf-8').read())
-print('Caddy adapt passed: Cloudflare ranges trusted only in Cloudflare mode; the frontend trusts only the edge.')
+print('Caddy adapt passed: edge modes trust Cloudflare ranges; the frontend trusts only the edge.')
 PY
 
 # The range update accepts only CIDR lists and leaves the file alone when
 # nothing changed.
 mkdir -p "$work/ranges-source" "$work/ranges-stack"
-cp "$stack/update-cloudflare-ips.sh" "$stack/cloudflare-ips.caddy" "$work/ranges-stack/"
+cp "$stack/update-cloudflare-ips.sh" "$stack/cloudflare-ips.caddy" "$stack/Caddyfile.public" "$work/ranges-stack/"
 sed -n 's/^[[:space:]]*\([0-9.]*\/[0-9]*\).*/\1/p' "$stack/cloudflare-ips.caddy" > "$work/ranges-source/ips-v4"
 sed -n 's/^[[:space:]]*\([0-9A-Fa-f]*:[0-9A-Fa-f:]*\/[0-9]*\).*/\1/p' "$stack/cloudflare-ips.caddy" > "$work/ranges-source/ips-v6"
 export CLOUDFLARE_IPS_BASE_URL="file://$work/ranges-source"
@@ -198,6 +178,7 @@ fi
 cmp -s "$stack/cloudflare-ips.caddy" "$work/ranges-stack/cloudflare-ips.caddy"
 bash "$work/ranges-stack/update-cloudflare-ips.sh" > /dev/null
 grep -q '^	203\.0\.113\.0/24 \\$' "$work/ranges-stack/cloudflare-ips.caddy"
+grep -q '@cloudflare remote_ip .*203\.0\.113\.0/24' "$work/ranges-stack/Caddyfile.public"
 docker run --rm -v "$work/ranges-stack/cloudflare-ips.caddy:/etc/caddy/cloudflare-ips.caddy:ro" \
   -v "$stack/Caddyfile.cloudflare:/etc/caddy/Caddyfile:ro" -e STUDIO_DOMAIN=studio.example.test \
   "$caddy_image" caddy adapt --config /etc/caddy/Caddyfile 2> /dev/null | grep -q '"203.0.113.0/24"'

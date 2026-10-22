@@ -6,6 +6,7 @@ namespace AgentStudio.Deploy;
 
 public static class EnvironmentKinds
 {
+    public const string Preview = "preview";
     public const string Staging = "staging";
     public const string Production = "production";
 }
@@ -53,7 +54,12 @@ public static class EnvironmentHealth
     public const string Unknown = "unknown";
 }
 
-public sealed record DeployEnvironment(string Id, string ProjectId, string Name, int Order, string Kind);
+public sealed record DeployEnvironment(string Id, string ProjectId, string Name, int Order, string Kind)
+{
+    public bool? Protected { get; init; }
+    public bool? Automatic { get; init; }
+    public string? Requires { get; init; }
+}
 
 /// <summary>
 /// Immutable snapshot of what was built. Written once by

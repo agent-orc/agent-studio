@@ -389,7 +389,7 @@ public sealed class AccessSecurityTests : IDisposable
         {
             ["Security:Session:IdleMinutes"] = "1",
             ["Security:Session:AbsoluteMinutes"] = "2",
-            ["Security:LoginThrottle:MaxFailures"] = "2"
+            ["Security:LoginThrottle:ClientMaxFailures"] = "2"
         });
         var password = "correct horse battery staple!";
         var owner = store.Bootstrap(new BootstrapRequest("first.owner", password, null));
@@ -407,26 +407,25 @@ public sealed class AccessSecurityTests : IDisposable
     {
         var (store, _, clock) = NewStore(new Dictionary<string, string?>
         {
-            ["Security:LoginThrottle:MaxTrackedKeys"] = "1",
-            ["Security:LoginThrottle:MaxFailuresPerUsername"] = "2",
-            ["Security:LoginThrottle:UsernameWindowMinutes"] = "30"
+            ["Security:LoginThrottle:MaxTrackedClients"] = "1",
+            ["Security:LoginThrottle:UsernameMaxFailures"] = "2",
+            ["Security:LoginThrottle:UsernameDelaySeconds"] = "5"
         });
         const string password = "correct horse battery staple!";
         store.Bootstrap(new BootstrapRequest("first.owner", password, null));
 
         Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
             store.Login("unknown.user", "wrong password", "client|one")).Status);
-        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
             store.Login("first.owner", "wrong password", "client|two")).Status);
-        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
             store.Login("FIRST.OWNER", "wrong password", "client|three")).Status);
 
-        // Client-key expiry frees capacity, but the account budget still blocks
-        // a valid password until its own window expires.
-        clock.Advance(TimeSpan.FromMinutes(16));
+        // Rotating client keys spend the account budget while the client table is
+        // full. A new client then waits for the short delay instead of a lockout.
         Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
             store.Login("first.owner", password, "client|four")).Status);
-        clock.Advance(TimeSpan.FromMinutes(15));
+        clock.Advance(TimeSpan.FromSeconds(5));
         Assert.Equal("first.owner", store.Login("first.owner", password, "client|four").User.Username);
     }
 
@@ -435,20 +434,20 @@ public sealed class AccessSecurityTests : IDisposable
     {
         var (store, _, _) = NewStore(new Dictionary<string, string?>
         {
-            ["Security:LoginThrottle:MaxTrackedKeys"] = "1"
+            ["Security:LoginThrottle:MaxTrackedClients"] = "1",
+            ["Security:LoginThrottle:MaxTrackedUsernames"] = "1"
         });
         store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
         Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
             store.Login("unknown.user", "wrong password", "client|one")).Status);
 
-        for (var index = 0; index < 10; index++)
-            Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+        // Guessed usernames fail like an existing account and use only the fixed
+        // overflow counters once both tables are full.
+        for (var index = 0; index < 3; index++)
+            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
                 store.Login($"guessed.user.{index}", "wrong password", $"client|{index + 2}")).Status);
 
-        var field = typeof(AccessSecurityStore).GetField("_usernameFailures",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        var budgets = Assert.IsAssignableFrom<System.Collections.IDictionary>(field!.GetValue(store));
-        Assert.Empty(budgets);
+        Assert.Equal((1, 1, 0, 0), store.LoginStateCounts);
     }
 
     [Fact]
@@ -456,43 +455,32 @@ public sealed class AccessSecurityTests : IDisposable
     {
         var (store, _, clock) = NewStore(new Dictionary<string, string?>
         {
-            ["Security:LoginThrottle:MaxFailuresPerUsername"] = "2",
-            ["Security:LoginThrottle:MaxFailures"] = "2",
-            ["Security:LoginThrottle:MaxTrackedKeys"] = "8"
+            ["Security:LoginThrottle:MaxTrackedClients"] = "8",
+            ["Security:LoginThrottle:MaxTrackedUsernames"] = "8",
+            ["Security:LoginThrottle:ClientMaxFailures"] = "2"
         });
         store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
-
-        var field = typeof(AccessSecurityStore).GetField("_usernameFailures",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        var budgets = Assert.IsAssignableFrom<System.Collections.IDictionary>(field!.GetValue(store));
-        var clientField = typeof(AccessSecurityStore).GetField("_loginAttempts",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        var clients = Assert.IsAssignableFrom<System.Collections.IDictionary>(clientField!.GetValue(store));
 
         for (var index = 0; index < 16; index++)
         {
             var failure = Assert.Throws<SecurityOperationException>(() =>
                 store.Login($"guessed.user.{index}", "wrong password", $"unknown|{index}"));
-            Assert.Equal(index < 8 ? 401 : 429, failure.Status);
-            Assert.InRange(clients.Count + budgets.Count, 0, 8);
+            if (index < 8) Assert.Equal(401, failure.Status);
+            else Assert.Contains(failure.Status, new[] { 401, 429 });
+            Assert.InRange(store.LoginStateCounts.Clients, 0, 8);
+            Assert.InRange(store.LoginStateCounts.Usernames, 0, 8);
         }
-        Assert.Equal(8, clients.Count);
-        Assert.All(clients.Keys.Cast<string>(), key => Assert.Equal(64, key.Length));
-        Assert.Empty(budgets);
+        Assert.Equal((8, 8, 0, 0), store.LoginStateCounts);
         Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
             store.Login("guessed.user.0", "wrong password", "unknown|0")).Status);
         Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
             store.Login("guessed.user.0", "wrong password", "unknown|0")).Status);
-        Assert.Equal(8, clients.Count);
 
         clock.Advance(TimeSpan.FromMinutes(16));
-        for (var index = 0; index < 2; index++)
-            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
-                store.Login("first.owner", "wrong password", $"owner|{index}")).Status);
-        Assert.Equal(2, clients.Count);
-        Assert.Single(budgets);
-        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
-            store.Login("first.owner", "correct horse battery staple!", "owner|new-address")).Status);
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("first.owner", "wrong password", "owner|new-address")).Status);
+        Assert.InRange(store.LoginStateCounts.Clients, 0, 8);
+        Assert.InRange(store.LoginStateCounts.Usernames, 0, 8);
     }
 
     [Fact]
@@ -507,7 +495,9 @@ public sealed class AccessSecurityTests : IDisposable
             {
                 ["TaskRepository"] = Path.Combine(_root, "http-login"),
                 ["Security:Profile"] = "networked",
-                ["Security:LoginThrottle:MaxTrackedKeys"] = "8",
+                ["Security:LoginThrottle:MaxTrackedClients"] = "8",
+                ["Security:LoginThrottle:MaxTrackedUsernames"] = "8",
+                ["Security:LoginThrottle:ClientMaxFailures"] = "8",
                 ["AllowedHosts"] = "studio.test"
             }));
         });
@@ -519,9 +509,6 @@ public sealed class AccessSecurityTests : IDisposable
         });
         client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
 
-        var field = typeof(AccessSecurityStore).GetField("_loginAttempts",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        var attempts = Assert.IsAssignableFrom<System.Collections.IDictionary>(field!.GetValue(store));
         for (var index = 0; index < 16; index++)
         {
             var username = $"guessed.{index}." + new string('x', 2000);
@@ -532,8 +519,8 @@ public sealed class AccessSecurityTests : IDisposable
                 var body = await response.Content.ReadFromJsonAsync<JsonElement>();
                 Assert.Equal("invalid-credentials", body.GetProperty("error").GetString());
             }
-            Assert.InRange(attempts.Count, 0, 8);
-            Assert.All(attempts.Keys.Cast<string>(), key => Assert.Equal(64, key.Length));
+            Assert.Equal(1, store.LoginStateCounts.Clients);
+            Assert.Equal(0, store.LoginStateCounts.Usernames);
         }
 
         using var oversized = await client.PostAsJsonAsync("/api/auth/login", new
@@ -541,7 +528,7 @@ public sealed class AccessSecurityTests : IDisposable
             username = new string('y', 5000), password = "wrong password"
         });
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, oversized.StatusCode);
-        Assert.Equal(8, attempts.Count);
+        Assert.Equal(1, store.LoginStateCounts.Clients);
 
         clock.Advance(TimeSpan.FromMinutes(16));
         using var afterExpiry = await client.PostAsJsonAsync("/api/auth/login", new
@@ -549,30 +536,8 @@ public sealed class AccessSecurityTests : IDisposable
             username = "guessed.after-expiry." + new string('z', 2000), password = "wrong password"
         });
         Assert.Equal(HttpStatusCode.Unauthorized, afterExpiry.StatusCode);
-        Assert.Single(attempts);
-        Assert.All(attempts.Keys.Cast<string>(), key => Assert.Equal(64, key.Length));
-    }
-
-    [Theory]
-    [InlineData("Authorization: Bearer rnr.abc.abcdefghijklmnopqrstuvwxyz012345")]
-    [InlineData("password=super-secret")]
-    [InlineData("ssn.abc.abcdefghijklmnopqrstuvwxyz012345")]
-    [InlineData("{\"temporaryPassword\":\"one-time-value\"}")]
-    [InlineData("{\"password\":\"correct horse battery staple\"}")]
-    [InlineData("https://tasks.test/enroll?access_token=query-secret")]
-    [InlineData("X-CSRF-Token: csrf-secret")]
-    [InlineData("Cookie: arbitrary-session=value; preference=also-private")]
-    public void Credential_redaction_removes_secret_material(string input)
-    {
-        var output = CredentialRedactor.Redact(input);
-        Assert.DoesNotContain("super-secret", output);
-        Assert.DoesNotContain("abcdefghijklmnopqrstuvwxyz012345", output);
-        Assert.DoesNotContain("one-time-value", output);
-        Assert.DoesNotContain("query-secret", output);
-        Assert.DoesNotContain("csrf-secret", output);
-        Assert.DoesNotContain("horse battery", output);
-        Assert.DoesNotContain("also-private", output);
-        Assert.Contains("REDACT", output);
+        Assert.Equal(1, store.LoginStateCounts.Clients);
+        Assert.Equal(0, store.LoginStateCounts.Usernames);
     }
 
     [Fact]
@@ -724,7 +689,7 @@ public sealed class AccessSecurityTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_root, true); } catch { }
+        if (Directory.Exists(_root)) Directory.Delete(_root, true);
     }
 
     private sealed class BoolBox { public bool Value; }

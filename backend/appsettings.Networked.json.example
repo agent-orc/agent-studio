@@ -8,10 +8,12 @@
       "AbsoluteMinutes": 10080
     },
     "LoginThrottle": {
-      "MaxFailures": 5,
+      "ClientMaxFailures": 10,
+      "UsernameMaxFailures": 20,
       "WindowMinutes": 15,
-      "LockoutMinutes": 15,
-      "MaxTrackedKeys": 4096
+      "ClientLockoutMinutes": 15,
+      "UsernameDelaySeconds": 2,
+      "RecentSuccessMinutes": 1440
     }
   },
   "ErrorHandling": {

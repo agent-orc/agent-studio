@@ -143,7 +143,7 @@ public sealed class StudioResponseHeaderPolicyTests
         var frontendAddress = ServiceAddress(compose, "frontend");
 
         Assert.Contains($"trusted_proxies static {edgeAddress}/32", frontend);
-        Assert.Contains($"Security__TrustedProxyAddresses: {frontendAddress}", compose);
+        Assert.Contains($"Security__TrustedProxyAddresses: {frontendAddress},{edgeAddress}", compose);
         Assert.Contains("./cloudflare-ips.caddy:/etc/caddy/cloudflare-ips.caddy:ro", compose);
         Assert.Contains("STUDIO_CLOUDFLARE_ALLOW_DIRECT: ${STUDIO_CLOUDFLARE_ALLOW_DIRECT:-false}", compose);
     }

@@ -14,6 +14,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 target=cloudflare-ips.caddy
+public_caddyfile=Caddyfile.public
 base="${CLOUDFLARE_IPS_BASE_URL:-https://www.cloudflare.com}"
 check=false
 https_only=()
@@ -65,14 +66,27 @@ current_ranges() {
   sed -n 's/^[[:space:]]*\([0-9A-Fa-f.:]*\/[0-9]*\).*/\1/p' "$target"
 }
 
-if [ "$(current_ranges)" = "$(cat "$work/ranges")" ]; then
-  echo "$target already matches Cloudflare's published ranges."
+current_public_ranges() {
+  [ -f "$public_caddyfile" ] || return 0
+  sed -n 's/^[[:space:]]*@cloudflare remote_ip //p' "$public_caddyfile" \
+    | tr ' ' '\n' | sed '/^$/d'
+}
+
+if [ "$(grep -c '^[[:space:]]*@cloudflare remote_ip ' "$public_caddyfile")" -ne 1 ]; then
+  echo "$public_caddyfile needs exactly one @cloudflare remote_ip matcher" >&2
+  exit 1
+fi
+
+if [ "$(current_ranges)" = "$(cat "$work/ranges")" ] \
+  && [ "$(current_public_ranges)" = "$(cat "$work/ranges")" ]; then
+  echo "$target and $public_caddyfile already match Cloudflare's published ranges."
   exit 0
 fi
 
 if [ "$check" = true ]; then
-  echo "$target differs from Cloudflare's published ranges:" >&2
+  echo "$target or $public_caddyfile differs from Cloudflare's published ranges:" >&2
   diff <(current_ranges) "$work/ranges" >&2 || true
+  diff <(current_public_ranges) "$work/ranges" >&2 || true
   exit 1
 fi
 
@@ -84,6 +98,12 @@ fi
   echo 'trusted_proxies static \'
   sed -e 's/^/	/' -e '$!s/$/ \\/' "$work/ranges"
 } > "$work/$target"
+matcher="    @cloudflare remote_ip $(paste -sd' ' "$work/ranges")"
+awk -v replacement="$matcher" '
+  /^[[:space:]]*@cloudflare remote_ip / { print replacement; next }
+  { print }
+' "$public_caddyfile" > "$work/$public_caddyfile"
 diff <(current_ranges) "$work/ranges" || true
 mv "$work/$target" "$target"
-echo "Updated $target. Run 'docker compose restart edge' to apply it."
+mv "$work/$public_caddyfile" "$public_caddyfile"
+echo "Updated $target and $public_caddyfile. Run 'docker compose restart edge' to apply them."

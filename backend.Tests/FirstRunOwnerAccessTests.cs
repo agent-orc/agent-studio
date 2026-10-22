@@ -10,9 +10,12 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using AgentStudio.Persistence;
+using AgentStudio.Registry;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -38,9 +41,9 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
     ];
 
     [Fact]
-    public void Every_first_run_route_declares_the_owner_requirement()
+    public void Local_first_run_routes_declare_the_owner_requirement()
     {
-        using var factory = BuildFactory(SecurityProfiles.Networked);
+        using var factory = BuildFactory(SecurityProfiles.Local);
         var endpoints = factory.Services.GetServices<EndpointDataSource>()
             .SelectMany(source => source.Endpoints).ToArray();
         var firstRun = endpoints.OfType<RouteEndpoint>()
@@ -73,6 +76,7 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
     [InlineData(StudioRoles.Owner, StudioRoles.Owner, true)]
     [InlineData(StudioRoles.Owner, StudioRoles.Operator, false)]
     [InlineData(StudioRoles.Owner, StudioRoles.Contributor, false)]
+    [InlineData(StudioRoles.Owner, StudioRoles.ContributorDisplayName, false)]
     [InlineData(StudioRoles.Owner, StudioRoles.Viewer, false)]
     [InlineData(StudioRoles.Operator, StudioRoles.Owner, true)]
     [InlineData(StudioRoles.Operator, StudioRoles.Operator, true)]
@@ -82,51 +86,402 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
         => Assert.Equal(admitted, new StudioRoleRequirement(minimum).IsSatisfiedBy(role));
 
     [Fact]
-    public async Task Networked_first_run_routes_admit_only_the_owner()
+    public async Task Networked_monolith_does_not_map_first_run_backend_routes()
+    {
+        using var factory = BuildFactory(SecurityProfiles.Networked);
+        var owner = factory.Services.GetRequiredService<AccessSecurityStore>()
+            .Bootstrap(new BootstrapRequest("first.owner", Password, "Owner"));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+
+        foreach (var (method, _, path, ownerStatus) in Routes)
+        {
+            using var request = NewRequest(method, path);
+            Session(request, owner.SessionToken, owner.CsrfToken);
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task Networked_project_repository_url_changes_require_owner()
     {
         using var factory = BuildFactory(SecurityProfiles.Networked);
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         var owner = store.Bootstrap(new BootstrapRequest("first.owner", Password, "Owner"));
-        var operatorSession = Invite(store, "site.operator", StudioRoles.Operator);
-        var viewerSession = Invite(store, "site.viewer", StudioRoles.Viewer);
-        var expires = _clock.GetUtcNow().UtcDateTime.AddDays(1);
-        var operatorToken = store.CreateApiToken(new CreateApiTokenRequest("automation", StudioRoles.Operator,
-            [ProjectAccessAuthorization.AllProjectsGrant], expires), owner.User.Id);
-        var viewerToken = store.CreateApiToken(new CreateApiTokenRequest("reader", StudioRoles.Viewer,
-            [ProjectAccessAuthorization.AllProjectsGrant], expires), owner.User.Id);
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
 
-        var callers = new (string Name, Action<HttpRequestMessage> Authenticate, HttpStatusCode? Status, string? Error)[]
+        using var create = new HttpRequestMessage(HttpMethod.Post, "/api/projects")
         {
-            ("owner", request => Session(request, owner.SessionToken, owner.CsrfToken), null, null),
-            ("operator", request => Session(request, operatorSession.SessionToken, operatorSession.CsrfToken),
-                HttpStatusCode.Forbidden, "owner-required"),
-            ("viewer", request => Session(request, viewerSession.SessionToken, viewerSession.CsrfToken),
-                HttpStatusCode.Forbidden, "owner-required"),
-            ("operator api token", request => Bearer(request, operatorToken.Secret), HttpStatusCode.Forbidden, "owner-required"),
-            ("viewer api token", request => Bearer(request, viewerToken.Secret), HttpStatusCode.Forbidden, null),
-            ("anonymous", _ => { }, HttpStatusCode.Unauthorized, "authentication-required"),
+            Content = JsonContent.Create(new { displayName = "Repository Guard", workspaceId = "ws-default" }),
         };
+        Session(create, owner.SessionToken, owner.CsrfToken);
+        using var created = await client.SendAsync(create);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var project = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var previousRepositoryUrl = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>()
+            .FindById(project)!.Urls.FirstOrDefault(url => url.Id == "repo")?.Url;
+        var invitation = store.InviteUser(new InviteUserRequest("site.operator", "Operator",
+            StudioRoles.Operator, [ProjectAccessAuthorization.AllProjectsGrant]));
+        var contributorInvitation = store.InviteUser(new InviteUserRequest("product.contributor", "Product",
+            StudioRoles.Contributor, [project]));
+        var operatorSession = store.AcceptInvitation(new AcceptInvitationRequest(invitation.Token, Password));
+        var contributor = store.AcceptInvitation(new AcceptInvitationRequest(contributorInvitation.Token, Password));
 
-        var failures = new List<string>();
-        foreach (var (method, _, path, ownerStatus) in Routes)
+        using var rejected = new HttpRequestMessage(HttpMethod.Put, $"/api/projects/{project}")
         {
-            foreach (var (name, authenticate, status, error) in callers)
-            {
-                using var request = NewRequest(method, path);
-                authenticate(request);
-                using var response = await client.SendAsync(request);
-                var expected = status ?? ownerStatus;
-                var actualError = response.Content.Headers.ContentType?.MediaType == "application/json"
-                                  && response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
-                    ? (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()
-                    : null;
-                if (response.StatusCode != expected || error is not null && actualError != error)
-                    failures.Add($"{name} {method} {path}: expected {(int)expected} {error}, got {(int)response.StatusCode} {actualError}");
-            }
+            Content = JsonContent.Create(new { repositoryUrl = "https://github.com/example/repo.git" }),
+        };
+        Session(rejected, operatorSession.SessionToken, operatorSession.CsrfToken);
+        using var rejectedResponse = await client.SendAsync(rejected);
+        Assert.Equal(HttpStatusCode.Forbidden, rejectedResponse.StatusCode);
+        Assert.Equal("owner-required", (await rejectedResponse.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString());
+        Assert.Equal(previousRepositoryUrl, factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>()
+            .FindById(project)!.Urls.FirstOrDefault(url => url.Id == "repo")?.Url);
+
+        using var accepted = new HttpRequestMessage(HttpMethod.Put, $"/api/projects/{project}")
+        {
+            Content = JsonContent.Create(new { repositoryUrl = "https://github.com/example/repo.git" }),
+        };
+        Session(accepted, owner.SessionToken, owner.CsrfToken);
+        using var acceptedResponse = await client.SendAsync(accepted);
+        Assert.Equal(HttpStatusCode.OK, acceptedResponse.StatusCode);
+        Assert.Equal("https://github.com/example/repo.git", factory.Services
+            .GetRequiredService<AgentStudio.Registry.ProjectRegistry>().FindById(project)!
+            .Urls.First(url => url.Id == "repo").Url);
+        var audit = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>()
+            .RepositoryAudit().Single();
+        Assert.Equal(project, audit.ProjectId);
+        Assert.Equal(owner.User.Id, audit.ActorId);
+        Assert.Equal(owner.User.Username, audit.Actor);
+        Assert.Equal(previousRepositoryUrl, audit.PreviousRepositoryUrl);
+        Assert.Equal("https://github.com/example/repo.git", audit.RepositoryUrl);
+        Assert.Equal(_clock.GetUtcNow().UtcDateTime, audit.Timestamp);
+
+        foreach (var method in new[] { HttpMethod.Put, HttpMethod.Delete })
+        {
+            using var bypass = new HttpRequestMessage(method, $"/api/projects/{project}/urls/repo");
+            if (method == HttpMethod.Put)
+                bypass.Content = JsonContent.Create(new { label = "Repository", url = "https://example.test/redirect.git" });
+            Session(bypass, operatorSession.SessionToken, operatorSession.CsrfToken);
+            using var response = await client.SendAsync(bypass);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         }
-        Assert.True(failures.Count == 0, string.Join("\n", failures));
+        var projectRegistry = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        Assert.Single(projectRegistry.RepositoryAudit());
+        using var ownerUpdate = new HttpRequestMessage(HttpMethod.Put, $"/api/projects/{project}/urls/repo")
+        { Content = JsonContent.Create(new { label = "Repository", url = "https://example.test/owner-update.git" }) };
+        Session(ownerUpdate, owner.SessionToken, owner.CsrfToken);
+        using var ownerUpdateResponse = await client.SendAsync(ownerUpdate);
+        Assert.Equal(HttpStatusCode.OK, ownerUpdateResponse.StatusCode);
+        using var ownerDelete = new HttpRequestMessage(HttpMethod.Delete, $"/api/projects/{project}/urls/repo");
+        Session(ownerDelete, owner.SessionToken, owner.CsrfToken);
+        using var ownerDeleteResponse = await client.SendAsync(ownerDelete);
+        Assert.Equal(HttpStatusCode.OK, ownerDeleteResponse.StatusCode);
+        Assert.Equal(["https://github.com/example/repo.git", "https://example.test/owner-update.git", null],
+            projectRegistry.RepositoryAudit().Select(row => row.RepositoryUrl).ToArray());
+    }
+
+    [Fact]
+    public async Task Networked_generic_url_routes_guard_and_audit_the_selected_repository()
+    {
+        using var factory = BuildFactory(SecurityProfiles.Networked);
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var owner = store.Bootstrap(new BootstrapRequest("first.owner", Password, "Owner"));
+        var oper = Invite(store, "site.operator", StudioRoles.Operator);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+
+        async Task<(HttpStatusCode Status, JsonElement Body)> Send(HttpMethod method, string path,
+            object? body, (StudioUser User, string SessionToken, string CsrfToken) caller)
+        {
+            using var request = new HttpRequestMessage(method, path);
+            if (body is not null) request.Content = JsonContent.Create(body);
+            Session(request, caller.SessionToken, caller.CsrfToken);
+            using var response = await client.SendAsync(request);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            return (response.StatusCode, json);
+        }
+
+        var created = await Send(HttpMethod.Post, "/api/projects",
+            new { displayName = "URL Guard", workspaceId = "ws-default" }, owner);
+        Assert.Equal(HttpStatusCode.Created, created.Status);
+        var project = created.Body.GetProperty("id").GetString()!;
+        var path = $"/api/projects/{project}/urls";
+        var first = "https://example.test/first.git";
+        var second = "https://example.test/second.git";
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = first }, oper)).Status);
+        Assert.Empty(factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>().RepositoryAudit());
+        Assert.Equal(HttpStatusCode.BadRequest, (await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = "https://user@example.test/repo.git" }, owner)).Status);
+        Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = first }, owner)).Status);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = second }, oper)).Status);
+        Assert.Equal(first, AgentStudio.Tasks.RemoteProjectRepositoryResolver.ResolveRepositoryUrl(
+            factory.Services.GetRequiredService<ProjectRegistry>().FindById(project)));
+        Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = second }, owner)).Status);
+        var registry = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        var ids = registry.FindById(project)!.Urls.Select(url => url.Id).ToArray();
+        Assert.Equal(2, ids.Length);
+        var auditBeforeInvalid = registry.RepositoryAudit().ToArray();
+        Assert.Equal(HttpStatusCode.BadRequest, (await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = "https://user@example.test/hidden.git" }, owner)).Status);
+        Assert.Equal(HttpStatusCode.BadRequest, (await Send(HttpMethod.Put, path + "/" + ids[1],
+            new { label = "Repository", url = "https://example.test/hidden.git?token=secret" }, owner)).Status);
+        Assert.Equal(ids, registry.FindById(project)!.Urls.Select(url => url.Id).ToArray());
+        Assert.Equal(auditBeforeInvalid, registry.RepositoryAudit());
+        var reordered = new { orderedUrlIds = ids.Reverse().ToArray() };
+        Assert.Equal(HttpStatusCode.Forbidden, (await Send(HttpMethod.Post, path + "/reorder", reordered, oper)).Status);
+        Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Post, path + "/reorder", reordered, owner)).Status);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Send(HttpMethod.Put, path + "/" + ids[1],
+            new { label = "Repository", url = "https://example.test/redirect.git" }, oper)).Status);
+        Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Put, path + "/" + ids[1],
+            new { label = "Repository", url = "https://example.test/owner-update.git" }, owner)).Status);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Send(HttpMethod.Delete, path + "/" + ids[1], null, oper)).Status);
+        Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Delete, path + "/" + ids[1], null, owner)).Status);
+        Assert.Equal(first, AgentStudio.Tasks.RemoteProjectRepositoryResolver.ResolveRepositoryUrl(registry.FindById(project)));
+        Assert.Equal([(null, first), (first, first), (first, second), (second, "https://example.test/owner-update.git"),
+            ("https://example.test/owner-update.git", first)],
+            registry.RepositoryAudit().Select(row => (row.PreviousRepositoryUrl, row.RepositoryUrl)).ToArray());
+        Assert.Equal(2, registry.RepositoryAudit()[1].CandidatesAfter.Count);
+
+        Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Post, path,
+            new { label = "Preview", url = "https://example.test/preview?token=secret" }, owner)).Status);
+        var preview = registry.FindById(project)!.Urls.Single(url => url.Label == "Preview");
+        var auditBeforeRename = registry.RepositoryAudit().ToArray();
+        Assert.Equal(HttpStatusCode.BadRequest, (await Send(HttpMethod.Put, path + "/" + preview.Id,
+            new { label = "Repository", url = preview.Url }, owner)).Status);
+        Assert.Equal("Preview", registry.FindById(project)!.Urls.Single(url => url.Id == preview.Id).Label);
+        Assert.Equal(auditBeforeRename, registry.RepositoryAudit());
+    }
+
+    [Fact]
+    public async Task Networked_url_delete_keeps_control_and_audit_when_process_stop_fails()
+    {
+        var stopper = new ControlledUrlStopper(_clock);
+        using var factory = BuildFactory(SecurityProfiles.Networked, stopper: stopper);
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var owner = store.Bootstrap(new BootstrapRequest("first.owner", Password, "Owner"));
+        var oper = Invite(store, "site.operator", StudioRoles.Operator);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+
+        async Task<HttpResponseMessage> Send(HttpMethod method, string path, object? body,
+            (StudioUser User, string SessionToken, string CsrfToken) caller)
+        {
+            using var request = new HttpRequestMessage(method, path);
+            if (body is not null) request.Content = JsonContent.Create(body);
+            Session(request, caller.SessionToken, caller.CsrfToken);
+            return await client.SendAsync(request);
+        }
+
+        using var created = await Send(HttpMethod.Post, "/api/projects",
+            new { displayName = "Stop Guard", workspaceId = "ws-default" }, owner);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var project = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var path = $"/api/projects/{project}/urls";
+        using var added = await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = "https://example.test/repo.git" }, owner);
+        Assert.Equal(HttpStatusCode.OK, added.StatusCode);
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var urlId = Assert.Single(registry.FindById(project)!.Urls).Id;
+        var auditCount = registry.RepositoryAudit().Count;
+
+        using var rejected = await Send(HttpMethod.Delete, path + "/" + urlId, null, oper);
+        Assert.Equal(HttpStatusCode.Forbidden, rejected.StatusCode);
+        Assert.Equal(0, stopper.Calls);
+
+        using var failed = await Send(HttpMethod.Delete, path + "/" + urlId, null, owner);
+        Assert.Equal(HttpStatusCode.InternalServerError, failed.StatusCode);
+        Assert.Contains("Could not stop the process", await failed.Content.ReadAsStringAsync());
+        Assert.Equal(1, stopper.Calls);
+        Assert.Single(registry.FindById(project)!.Urls);
+        Assert.Equal(auditCount, registry.RepositoryAudit().Count);
+
+        stopper.State = ProjectUrlProcessStates.Stopped;
+        using var removed = await Send(HttpMethod.Delete, path + "/" + urlId, null, owner);
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+        Assert.Equal(2, stopper.Calls);
+        Assert.Empty(registry.FindById(project)!.Urls);
+        Assert.Equal(auditCount + 1, registry.RepositoryAudit().Count);
+    }
+
+    [Fact]
+    public async Task Networked_operator_cannot_stage_or_change_a_hidden_repository_candidate()
+    {
+        using var factory = BuildFactory(SecurityProfiles.Networked);
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var owner = store.Bootstrap(new BootstrapRequest("first.owner", Password, "Owner"));
+        var oper = Invite(store, "site.operator", StudioRoles.Operator);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+
+        async Task<HttpResponseMessage> Send(HttpMethod method, string path, object? body,
+            (StudioUser User, string SessionToken, string CsrfToken) caller)
+        {
+            using var request = new HttpRequestMessage(method, path);
+            if (body is not null) request.Content = JsonContent.Create(body);
+            Session(request, caller.SessionToken, caller.CsrfToken);
+            return await client.SendAsync(request);
+        }
+
+        using var created = await Send(HttpMethod.Post, "/api/projects",
+            new { displayName = "Hidden Candidate", workspaceId = "ws-default" }, owner);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var project = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var path = $"/api/projects/{project}/urls";
+        using var selected = await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = "https://example.test/selected.git" }, owner);
+        Assert.Equal(HttpStatusCode.OK, selected.StatusCode);
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var before = registry.RepositoryAudit().Count;
+        using var staged = await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = "https://example.test/hidden.git" }, oper);
+        Assert.Equal(HttpStatusCode.Forbidden, staged.StatusCode);
+        Assert.Equal(before, registry.RepositoryAudit().Count);
+
+        using var ownerStage = await Send(HttpMethod.Post, path,
+            new { label = "Repository", url = "https://example.test/hidden.git" }, owner);
+        Assert.Equal(HttpStatusCode.OK, ownerStage.StatusCode);
+        var ids = registry.FindById(project)!.Urls.Select(url => url.Id).ToArray();
+        Assert.Equal(2, ids.Length);
+        Assert.Equal("https://example.test/selected.git",
+            AgentStudio.Tasks.RemoteProjectRepositoryResolver.ResolveRepositoryUrl(registry.FindById(project)));
+        using var changed = await Send(HttpMethod.Put, path + "/" + ids[1],
+            new { label = "Repository", url = "https://example.test/redirect.git" }, oper);
+        using var removed = await Send(HttpMethod.Delete, path + "/" + ids[1], null, oper);
+        Assert.Equal(HttpStatusCode.Forbidden, changed.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, removed.StatusCode);
+        Assert.Equal(before + 1, registry.RepositoryAudit().Count);
+        Assert.Equal("https://example.test/hidden.git", registry.RepositoryAudit().Last()
+            .CandidatesAfter.Single(candidate => candidate.Id == ids[1]).Url);
+
+        using var ownerClear = await Send(HttpMethod.Delete, path + "/" + ids[0], null, owner);
+        Assert.Equal(HttpStatusCode.OK, ownerClear.StatusCode);
+        Assert.Equal("https://example.test/hidden.git",
+            AgentStudio.Tasks.RemoteProjectRepositoryResolver.ResolveRepositoryUrl(registry.FindById(project)));
+    }
+
+    [Fact]
+    public async Task Url_start_waits_for_concurrent_removal_and_cannot_launch_deleted_record()
+    {
+        using var enteredStop = new ManualResetEventSlim();
+        using var releaseStop = new ManualResetEventSlim();
+        var stopper = new BlockingUrlStopper(_clock, enteredStop, releaseStop);
+        var starter = new RecordingUrlStarter(_clock);
+        using var factory = BuildFactory(SecurityProfiles.Local, stopper: stopper, starter: starter);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        using var created = await client.PostAsJsonAsync("/api/projects",
+            new { displayName = "Concurrent Preview", workspaceId = "ws-default" });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var project = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var path = $"/api/projects/{project}/urls";
+        using var added = await client.PostAsJsonAsync(path, new
+        {
+            label = "Preview", url = "http://localhost:4200",
+            startRule = new { command = "echo ready" },
+        });
+        Assert.Equal(HttpStatusCode.OK, added.StatusCode);
+        var urlId = Assert.Single(factory.Services.GetRequiredService<ProjectRegistry>().FindById(project)!.Urls).Id;
+
+        var delete = Task.Run(() => client.DeleteAsync(path + "/" + urlId));
+        Assert.True(enteredStop.Wait(TimeSpan.FromSeconds(10)));
+        var start = Task.Run(() => client.PostAsync(path + "/" + urlId + "/start", null));
+        releaseStop.Set();
+        using var removed = await delete;
+        using var rejectedStart = await start;
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, rejectedStart.StatusCode);
+        Assert.Equal(0, starter.Calls);
+    }
+
+    [Fact]
+    public async Task Url_removal_waits_for_a_start_that_already_resolved_the_record()
+    {
+        using var enteredStart = new ManualResetEventSlim();
+        using var releaseStart = new ManualResetEventSlim();
+        using var enteredStop = new ManualResetEventSlim();
+        var starter = new RecordingUrlStarter(_clock, enteredStart, releaseStart);
+        var stopper = new OrderedUrlStopper(_clock, starter, enteredStop);
+        using var factory = BuildFactory(SecurityProfiles.Local, stopper: stopper, starter: starter);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        using var created = await client.PostAsJsonAsync("/api/projects",
+            new { displayName = "Start Before Delete", workspaceId = "ws-default" });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var project = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var path = $"/api/projects/{project}/urls";
+        using var added = await client.PostAsJsonAsync(path, new
+        {
+            label = "Preview", url = "http://localhost:4200",
+            startRule = new { command = "echo ready" },
+        });
+        Assert.Equal(HttpStatusCode.OK, added.StatusCode);
+        var urlId = Assert.Single(factory.Services.GetRequiredService<ProjectRegistry>().FindById(project)!.Urls).Id;
+
+        var start = Task.Run(() => client.PostAsync(path + "/" + urlId + "/start", null));
+        Assert.True(enteredStart.Wait(TimeSpan.FromSeconds(10)));
+        var delete = Task.Run(() => client.DeleteAsync(path + "/" + urlId));
+        var stoppedBeforeLaunch = enteredStop.Wait(TimeSpan.FromSeconds(2));
+        releaseStart.Set();
+        using var started = await start;
+        using var removed = await delete;
+        Assert.False(stoppedBeforeLaunch);
+        Assert.Equal(HttpStatusCode.OK, started.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+        Assert.True(stopper.SawLaunchAtStop);
+        Assert.Empty(factory.Services.GetRequiredService<ProjectRegistry>().FindById(project)!.Urls);
+    }
+
+    [Fact]
+    public async Task Networked_repository_audit_tracks_settings_rollback_and_failed_compensation()
+    {
+        var writer = new ControllableAtomicJsonFileWriter();
+        using var factory = BuildFactory(SecurityProfiles.Networked, writer);
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var owner = store.Bootstrap(new BootstrapRequest("first.owner", Password, "Owner"));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        using var create = new HttpRequestMessage(HttpMethod.Post, "/api/projects")
+        { Content = JsonContent.Create(new { displayName = "Rollback Project", workspaceId = "ws-default" }) };
+        Session(create, owner.SessionToken, owner.CsrfToken);
+        using var created = await client.SendAsync(create);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var project = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var projectsPath = RegistryPaths.ProjectsFilePath(_workspace);
+        var settingsPath = Path.Combine(_workspace, "project-settings.json");
+
+        async Task<HttpStatusCode> Change(string url)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/projects/{project}")
+            { Content = JsonContent.Create(new { displayName = "Renamed Project", repositoryUrl = url }) };
+            Session(request, owner.SessionToken, owner.CsrfToken);
+            using var response = await client.SendAsync(request);
+            return response.StatusCode;
+        }
+
+        writer.ShouldFail = (path, _) => path == settingsPath;
+        Assert.Equal(HttpStatusCode.InternalServerError, await Change("https://example.test/rolled-back.git"));
+        Assert.Null(AgentStudio.Tasks.RemoteProjectRepositoryResolver.ResolveRepositoryUrl(registry.FindById(project)));
+        Assert.Empty(registry.RepositoryAudit());
+
+        var nextWrite = writer.WritesFor(projectsPath) + 1;
+        writer.ShouldFail = (path, number) => path == settingsPath
+            || path == projectsPath && number == nextWrite + 1;
+        Assert.Equal(HttpStatusCode.InternalServerError, await Change("https://example.test/retained.git"));
+        Assert.Equal("https://example.test/retained.git",
+            AgentStudio.Tasks.RemoteProjectRepositoryResolver.ResolveRepositoryUrl(registry.FindById(project)));
+        Assert.Single(registry.RepositoryAudit());
+        Assert.Single(new ProjectRegistry(factory.Services.GetRequiredService<IConfiguration>(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ProjectRegistry>.Instance).RepositoryAudit());
     }
 
     [Fact]
@@ -169,10 +524,18 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
     private static void Bearer(HttpRequestMessage request, string secret)
         => request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secret);
 
-    private WebApplicationFactory<Program> BuildFactory(string profile) => new TestHostFactory().WithWebHostBuilder(builder =>
+    private WebApplicationFactory<Program> BuildFactory(string profile, IAtomicJsonFileWriter? writer = null,
+        IProjectUrlProcessStopper? stopper = null, IProjectUrlProcessStarter? starter = null) =>
+        new TestHostFactory().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
         builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(_clock));
+        if (writer is not null)
+            builder.ConfigureTestServices(services => services.AddSingleton(writer));
+        if (stopper is not null)
+            builder.ConfigureTestServices(services => services.AddSingleton(stopper));
+        if (starter is not null)
+            builder.ConfigureTestServices(services => services.AddSingleton(starter));
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _workspace,
@@ -181,6 +544,64 @@ public sealed class FirstRunOwnerAccessTests : IDisposable
             ["AllowedHosts"] = profile == SecurityProfiles.Networked ? "studio.test" : "*",
         }));
     });
+
+    private sealed class ControlledUrlStopper(FakeTimeProvider clock) : IProjectUrlProcessStopper
+    {
+        public string State { get; set; } = ProjectUrlProcessStates.Failed;
+        public int Calls { get; private set; }
+
+        public ProjectUrlProcessSnapshot Stop(string projectId, string urlId)
+        {
+            Calls++;
+            return new ProjectUrlProcessSnapshot(projectId, urlId, "preview", "/tmp", State,
+                1234, clock.GetUtcNow(), null, null, []);
+        }
+    }
+
+    private sealed class BlockingUrlStopper(FakeTimeProvider clock, ManualResetEventSlim entered,
+        ManualResetEventSlim release) : IProjectUrlProcessStopper
+    {
+        public ProjectUrlProcessSnapshot Stop(string projectId, string urlId)
+        {
+            entered.Set();
+            if (!release.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("The test did not release URL removal.");
+            return new ProjectUrlProcessSnapshot(projectId, urlId, "preview", "/tmp",
+                ProjectUrlProcessStates.Stopped, 1234, clock.GetUtcNow(), null, null, []);
+        }
+    }
+
+    private sealed class RecordingUrlStarter(FakeTimeProvider clock,
+        ManualResetEventSlim? entered = null, ManualResetEventSlim? release = null) : IProjectUrlProcessStarter
+    {
+        public int Calls { get; private set; }
+
+        public ProjectUrlProcessSnapshot StartWithReadiness(ProjectRecord project, ProjectUrlRecord url)
+        {
+            entered?.Set();
+            if (release is not null && !release.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("The test did not release URL start.");
+            Calls++;
+            return new ProjectUrlProcessSnapshot(project.Id, url.Id, url.StartRule!.Command, "/tmp",
+                ProjectUrlProcessStates.Starting, 1234, clock.GetUtcNow(), null, null, []);
+        }
+
+        public ProjectUrlDiagnostic? Latest(ProjectRecord project, ProjectUrlRecord url) => null;
+    }
+
+    private sealed class OrderedUrlStopper(FakeTimeProvider clock, RecordingUrlStarter starter,
+        ManualResetEventSlim entered) : IProjectUrlProcessStopper
+    {
+        public bool SawLaunchAtStop { get; private set; }
+
+        public ProjectUrlProcessSnapshot Stop(string projectId, string urlId)
+        {
+            SawLaunchAtStop = starter.Calls > 0;
+            entered.Set();
+            return new ProjectUrlProcessSnapshot(projectId, urlId, "preview", "/tmp",
+                ProjectUrlProcessStates.Stopped, 1234, clock.GetUtcNow(), null, null, []);
+        }
+    }
 
     public void Dispose()
     {

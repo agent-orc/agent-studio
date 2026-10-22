@@ -10,7 +10,7 @@ services:
       HOME: /data/home
       Security__Profile: networked
       Security__BootstrapCode: ${STUDIO_BOOTSTRAP_CODE:?Run setup.sh}
-      Security__TrustedProxyAddresses: 172.30.83.3
+      Security__TrustedProxyAddresses: 172.30.83.3,172.30.83.2
       AllowedHosts: ${STUDIO_DOMAIN:?Set STUDIO_DOMAIN}
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
     volumes:
@@ -37,8 +37,7 @@ services:
     restart: unless-stopped
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
-      # Caddyfile.cloudflare only: true admits peers outside Cloudflare's ranges
-      # and drops the Authenticated Origin Pulls client certificate requirement.
+      # Caddyfile.cloudflare only: true admits peers outside Cloudflare's ranges.
       STUDIO_CLOUDFLARE_ALLOW_DIRECT: ${STUDIO_CLOUDFLARE_ALLOW_DIRECT:-false}
     ports:
       - '80:80'
@@ -46,7 +45,6 @@ services:
     volumes:
       - ${STUDIO_CADDYFILE:-./Caddyfile.public}:/etc/caddy/Caddyfile:ro
       - ./cloudflare-ips.caddy:/etc/caddy/cloudflare-ips.caddy:ro
-      - ./cloudflare-origin-pull-ca.pem:/etc/caddy/cloudflare-origin-pull-ca.pem:ro
       - ${STUDIO_DATA_DIR}/caddy-data:/data
       - ${STUDIO_DATA_DIR}/caddy-config:/config
     depends_on:

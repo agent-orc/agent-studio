@@ -528,6 +528,17 @@ the dedicated `PUT /api/projects/{projectName}/execution-runner` contract.
 Project id, source type, storage location, creation time, and the task and
 document key counters are immutable and are never accepted as update fields.
 
+Deleting a project URL checks repository authority before stopping its owned
+preview process. If stopping fails, the URL and its repository audit state stay
+in the registry so the process remains reachable for another stop attempt.
+Every URL whose id or label can identify a repository is checked against the
+repository URL rules when project URLs change, even if another URL currently
+takes precedence. This prevents a later reorder or deletion from selecting an
+unchecked repository URL. In the networked profile, every candidate change
+requires the Owner and records both candidate lists in the same registry write.
+Process start holds the registry URL lock through launch, so removal cannot
+delete the record between lookup and launch.
+
 The project registry is fail-closed. If an existing
 `<TaskRepository>/.metadata/projects.json` is not deserializable, startup
 terminates with `ProjectRegistryLoadException` and
@@ -1691,8 +1702,8 @@ filesystem paths. The existing `task-op` Server-Timing duration and background
 `git-index-run` rollups retain their distinct boundaries. The capture and
 offline reducer protocol is in [measurement.md](../../task-switch-performance/measurement.md).
 
-The full-detail route resolves its card and dependency graph from published
-per-card facts. Other cards' mutations cannot make it wait for `EnsureFresh`;
+The full-detail route resolves its card and dependency targets from published
+resident core facts. Other cards' mutations cannot make it wait for `EnsureFresh`;
 a safety-TTL or watcher repair runs in the background. It emits
 `X-Task-Detail-Freshness: ready|stale|warming`; a cold, unindexed lookup returns
 `202` while the first snapshot or that card's publication is pending; a card
@@ -1740,8 +1751,9 @@ deletion; an unrelated dirty task does not force a core request to scan. The
 sidecar watcher refreshes changed heads outside HTTP requests.
 
 The legacy full-detail route reads the resident per-card facts without waiting
-for a workspace scan. A folder move swaps its old and new core locations under
-one publication lock. Background scans merge per folder, retaining cards
+for a workspace scan. A folder move starts a core publication before the disk move and swaps its old
+and new core locations under one publication lock. Cross-project moves remove
+the source card in that same swap. Background scans merge per folder, retaining cards
 published after the scan began and adopting unrelated scanned changes. A
 changed or missing task.json is repaired from that card's folder on read.
 During cold hydration the route returns a JSON 202 warming reply, which the
@@ -1749,7 +1761,9 @@ client retries with a bounded backoff before exposing a TaskDetail. Successful
 detail replies carry
 `X-Task-Detail-Freshness` and `X-Task-Token-Freshness`; token usage is served
 from a nonblocking card cache. The separate usage resource awaits one shared
-background project ledger load asynchronously and returns the completed summary.
+background project ledger load asynchronously. A request whose receipt or bus
+version changed after that load began awaits a follow-up load before returning
+its summary.
 The detail live-status overlay derives runner queue positions from the last
 published board generation, so it never enters the global freshness gate.
 
@@ -1930,9 +1944,10 @@ disk for runner state.
   through `/api/v1/studio/board`) and `GET /api/tasks/` take one published
   generation of the index (`TaskIndexCache.AcquireBoardReadAsync`) and pin it
   for the request (`TaskScannerService.PinBoardRead`). Every nested index read
-  of that request answers from it: the task list, the reference graph the body's
-  dependency lookups receive, the runner status that the validator and the
-  live-status strip read, and the `tasks` generation the validator folds. The
+  of that request answers from it for task cards and runner state. Dependency
+  targets are resolved against the resident core graph so release, completion,
+  and moves are visible before a board rescan. Its dependency generation is
+  part of the board response signature. The
   shared body build pins the same generation itself, so the tag always names the
   generation the body came from.
 - **A dirty index refreshes in the background.** A dirty or TTL-expired index

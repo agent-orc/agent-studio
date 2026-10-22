@@ -4,12 +4,7 @@
 # unless STUDIO_CLOUDFLARE_ALLOW_DIRECT is true, in which case the peer
 # itself is the client and its CF-Connecting-IP is ignored.
 #
-# A Cloudflare address alone does not prove the request came through this
-# zone: any Cloudflare customer can point a hostname at this origin. With
-# direct access off, the TLS handshake therefore also requires Cloudflare's
-# Authenticated Origin Pulls client certificate (enable it in the zone under
-# SSL/TLS > Origin Server). cloudflare-origin-pull-ca.pem is Cloudflare's
-# public origin-pull CA.
+# AGT-3298 owns origin authentication and host firewall enforcement.
 {
     servers {
         import /etc/caddy/cloudflare-ips.caddy
@@ -19,19 +14,13 @@
 }
 
 (origin-direct-false) {
-    tls {
-        client_auth {
-            mode require_and_verify
-            trust_pool file /etc/caddy/cloudflare-origin-pull-ca.pem
-        }
-    }
 }
 
 (origin-direct-true) {
 }
 
 {$STUDIO_DOMAIN} {
-    # Any other value than true or false has no snippet and stops Caddy.
+    # An invalid direct-access value has no snippet and stops Caddy.
     import origin-direct-{$STUDIO_CLOUDFLARE_ALLOW_DIRECT:false}
     encode zstd gzip
     header {

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -63,7 +64,7 @@ public static class AccessSecurityEndpoints
 
             return Execute(() =>
             {
-                var key = $"{(request.Username ?? string.Empty).Trim().ToLowerInvariant()}|{LoginThrottleKeys.Client(context.Connection.RemoteIpAddress)}";
+                var key = ClientThrottleKey(context.Connection.RemoteIpAddress);
                 var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken));
@@ -300,6 +301,17 @@ public static class AccessSecurityEndpoints
         return secureToken ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName];
     }
 
+    internal static string ClientThrottleKey(IPAddress? address)
+    {
+        if (address is null) return "unknown";
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+            return address.ToString();
+        var bytes = address.GetAddressBytes();
+        Array.Clear(bytes, 8, 8);
+        return new IPAddress(bytes).ToString() + "/64";
+    }
+
     // Only a direct loopback connection may skip the installer code; a
     // forwarded 127.0.0.1 comes from whoever controls the proxy header.
     private static bool RequiresBootstrapCode(HttpContext context, IConfiguration configuration)
@@ -328,10 +340,10 @@ public static class AccessSecurityEndpoints
 
     private static void SetSessionCookies(HttpContext context, string token, string csrfToken)
     {
-        // __Host--Cookies erfordern Secure+HTTPS; ueber HTTP (lokaler Dev-Betrieb
-        // via ng-serve-Proxy) wuerde der Browser sie stumm verwerfen und der Login
-        // bliebe wirkungslos. Namen und Secure-Flag folgen daher dem Schema.
-        var https = context.Request.IsHttps;
+        // Local HTTP needs a fallback cookie name. Networked sessions always
+        // use the Secure __Host- name, even if a proxy failed to mark HTTPS.
+        var https = context.Request.IsHttps
+            || SecurityProfiles.IsNetworked(context.RequestServices.GetRequiredService<IConfiguration>());
         context.Response.Cookies.Append(
             https ? AccessSecurityStore.SessionCookieName : AccessSecurityStore.InsecureSessionCookieName,
             token, SessionCookieOptions(https));

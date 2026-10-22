@@ -35,6 +35,7 @@ public sealed partial class TaskServerStore
             request.SchemaVersion == CapabilityProtocol.LegacySchemaVersion && request.CredentialHealthVersion is not null)
             throw new ArgumentException("Credential health version requires capability schema 2.");
 
+        IReadOnlyList<ConfiguredModelRouteDto> configuredRoutes = [];
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var runner = await ReadCapabilityRunnerAsync(
@@ -91,6 +92,13 @@ public sealed partial class TaskServerStore
                     throw new TaskServerConflictException("stale-capability-advertisement",
                         $"A newer credential observation already exists for {key}.");
                 var advertisedStatus = capability.Status.Trim().ToLowerInvariant();
+                if (key.StartsWith("model-acceptance:", StringComparison.Ordinal))
+                    advertisedStatus = await ApplyModelRejectionAsync(connection, transaction, request,
+                        key, advertisedStatus, capability.ProbeSequence, ct);
+                var advertisedDetail = advertisedStatus == "unavailable" &&
+                                       string.Equals(capability.Status, "ready", StringComparison.OrdinalIgnoreCase)
+                    ? ModelRefusedDetail
+                    : capability.Detail;
                 var tracksProbeHistory = key.StartsWith("provider-auth:", StringComparison.Ordinal);
                 var positiveRecovery = request.CredentialHealthVersion != 2 && tracksProbeHistory
                                        && advertisedStatus == ProviderAuthProbeStatuses.Ready
@@ -204,7 +212,7 @@ public sealed partial class TaskServerStore
                     ("$status", advertisedStatus),
                     ("$version", capability.Version),
                     ("$identity", capability.Identity),
-                    ("$detail", capability.Detail),
+                    ("$detail", advertisedDetail),
                     ("$signal", capability.Signal),
                     ("$expires", capability.ExpiresAt is null ? null : Iso(capability.ExpiresAt.Value.ToUniversalTime())),
                     ("$limited", capability.LimitedUntil is null ? null : Iso(capability.LimitedUntil.Value.ToUniversalTime())),
@@ -279,10 +287,12 @@ public sealed partial class TaskServerStore
                     telemetryAt = request.Telemetry?.ObservedAt,
                 }),
                 ct);
+            configuredRoutes = await ReadConfiguredModelRoutesAsync(connection, transaction, ct);
         }, ct);
         await EvaluateHostCliPolicyAsync(request.RunnerId, actorId, ct);
         return (await ListRunnerCapabilitySnapshotsAsync(ct))
-            .Single(item => string.Equals(item.RunnerId, request.RunnerId, StringComparison.Ordinal));
+            .Single(item => string.Equals(item.RunnerId, request.RunnerId, StringComparison.Ordinal))
+            with { ConfiguredModelRoutes = configuredRoutes };
     }
 
     private static void ValidateCredentialCapability(

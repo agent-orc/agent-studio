@@ -2,9 +2,7 @@
 # Runs the networked website edge and frontend Caddyfiles in real Caddy
 # containers and drives them from fixed fake client addresses (AGT-3230):
 # one peer stands in for a Cloudflare range, another for a direct client. A
-# test CA stands in for Cloudflare's origin-pull CA, so the Authenticated
-# Origin Pulls requirement is exercised with real client certificates. A
-# stand-in API echoes the forwarded client address. Needs Docker and openssl.
+# stand-in API echoes the forwarded client address. Needs Docker.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -59,27 +57,6 @@ cat > "$work/Caddyfile.api" <<'CADDY'
 CADDY
 printf 'trusted_proxies static %s/32\n' "$cloudflare_peer" > "$work/cloudflare-ips.caddy"
 
-# Origin-pull PKI: the edge trusts pull-ca.pem; pull-client is what Cloudflare
-# presents, other-client comes from an unrelated CA.
-mkdir -p "$work/pki"
-issue_client() {
-  local ca="$1" name="$2"
-  openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj "/CN=$name" \
-    -keyout "$work/pki/$name.key" -out "$work/pki/$name.csr" 2> /dev/null
-  printf 'extendedKeyUsage=clientAuth\n' > "$work/pki/client.ext"
-  openssl x509 -req -in "$work/pki/$name.csr" -CA "$work/pki/$ca.pem" -CAkey "$work/pki/$ca.key" \
-    -CAcreateserial -days 2 -extfile "$work/pki/client.ext" -out "$work/pki/$name.pem" 2> /dev/null
-}
-for ca in pull-ca other-ca; do
-  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 -subj "/CN=$ca" \
-    -keyout "$work/pki/$ca.key" -out "$work/pki/$ca.pem" 2> /dev/null
-done
-issue_client pull-ca pull-client
-issue_client other-ca other-client
-chmod 644 "$work/pki/"*
-pull_cert=(--cert /pki/pull-client.pem --key /pki/pull-client.key)
-other_cert=(--cert /pki/other-client.pem --key /pki/other-client.key)
-
 docker run -d --name "$run_id-api" --network "$net" --ip "$prefix.4" --network-alias api \
   -v "$work/Caddyfile.api:/etc/caddy/Caddyfile:ro" "$caddy_image" > /dev/null
 docker run -d --name "$run_id-frontend" --network "$net" --ip "$prefix.3" --network-alias frontend \
@@ -92,7 +69,6 @@ start_edge() {
     -e STUDIO_DOMAIN=studio.localhost -e STUDIO_CLOUDFLARE_ALLOW_DIRECT="$2" \
     -v "$stack/$1:/etc/caddy/Caddyfile:ro" \
     -v "$work/cloudflare-ips.caddy:/etc/caddy/cloudflare-ips.caddy:ro" \
-    -v "$work/pki/pull-ca.pem:/etc/caddy/cloudflare-origin-pull-ca.pem:ro" \
     "$caddy_image" > /dev/null
 }
 
@@ -100,7 +76,7 @@ start_edge() {
 request() {
   local peer="$1" path="$2"
   shift 2
-  docker run --rm --network "$net" --ip "$peer" -v "$work/pki:/pki:ro" "$caddy_image" \
+  docker run --rm --network "$net" --ip "$peer" "$caddy_image" \
     curl --silent --show-error --insecure --max-time 10 --dump-header - \
     --resolve "studio.localhost:443:$edge_ip" "$@" "https://studio.localhost$path"
 }
@@ -135,45 +111,21 @@ reject() {
 
 spoof=(-H 'CF-Connecting-IP: 198.51.100.7' -H 'X-Forwarded-For: 192.0.2.66')
 
-# refuse_tls <label> <peer address> [curl arguments...]: the handshake must fail.
-refuse_tls() {
-  local label="$1" peer="$2" output
-  shift 2
-  if output="$(request "$peer" /api/whoami "$@" 2>&1)"; then
-    printf '%s: expected a refused TLS handshake, got\n%s\n' "$label" "$output" >&2
-    exit 1
-  fi
-  reject "$label" "$output" 'client='
-}
-
-# Cloudflare mode, direct access refused: Cloudflare range and origin-pull
-# client certificate are both required.
+# Cloudflare mode uses the versioned range to accept its proxy peer and
+# rejects a direct peer unless direct access is explicitly enabled.
 start_edge Caddyfile.cloudflare false
-wait_ready "$cloudflare_peer" "${pull_cert[@]}"
-response="$(request "$cloudflare_peer" /api/whoami "${pull_cert[@]}" "${spoof[@]}")"
+wait_ready "$cloudflare_peer"
+response="$(request "$cloudflare_peer" /api/whoami "${spoof[@]}")"
 expect 'Cloudflare peer' "$response" '^HTTP/[0-9.]* 200'
 expect 'Cloudflare peer' "$response" '^client=198\.51\.100\.7 proto=https$'
-response="$(request "$cloudflare_peer" /api/whoami "${pull_cert[@]}")"
+response="$(request "$cloudflare_peer" /api/whoami)"
 expect 'Cloudflare peer without CF-Connecting-IP' "$response" "^client=${cloudflare_peer//./\\.} proto=https\$"
-refuse_tls 'Cloudflare peer without origin-pull certificate' "$cloudflare_peer" "${spoof[@]}"
-refuse_tls 'Cloudflare peer with a foreign client certificate' "$cloudflare_peer" "${other_cert[@]}" "${spoof[@]}"
-response="$(request "$direct_peer" /api/whoami "${pull_cert[@]}" "${spoof[@]}")"
+response="$(request "$direct_peer" /api/whoami "${spoof[@]}")"
 expect 'Direct peer' "$response" '^HTTP/[0-9.]* 403'
 reject 'Direct peer' "$response" 'client='
-refuse_tls 'Direct peer without origin-pull certificate' "$direct_peer" "${spoof[@]}"
-# Another SNI value selects Caddy's catch-all TLS policy, which asks for no
-# client certificate; strict SNI-Host matching must still keep the site shut.
-for sni in other.localhost "$edge_ip"; do
-  if output="$(docker run --rm --network "$net" --ip "$cloudflare_peer" "$caddy_image" \
-    curl --silent --show-error --insecure --max-time 10 --dump-header - \
-    --resolve "other.localhost:443:$edge_ip" -H 'Host: studio.localhost' "${spoof[@]}" \
-    "https://$sni/api/whoami" 2>&1)"; then
-    reject "SNI $sni with Studio Host" "$output" 'client='
-  fi
-done
-echo 'Cloudflare mode: origin-pull certificate required; CF-Connecting-IP trusted only from the range; direct peers refused.'
+echo 'Cloudflare mode: CF-Connecting-IP trusted only from the range; direct peers refused.'
 
-response="$(request "$cloudflare_peer" / "${pull_cert[@]}")"
+response="$(request "$cloudflare_peer" /)"
 expect 'Shell' "$response" '^HTTP/[0-9.]* 200'
 expect 'Shell' "$response" "^content-security-policy: .*frame-ancestors 'self'"
 expect 'Shell' "$response" '^x-frame-options: SAMEORIGIN'
@@ -185,7 +137,7 @@ if [ "$(grep -ci '^strict-transport-security:' <<< "$response")" -ne 1 ]; then
   echo "Shell: expected one Strict-Transport-Security header in\n$response" >&2
   exit 1
 fi
-response="$(request "$cloudflare_peer" /api/sandboxed "${pull_cert[@]}")"
+response="$(request "$cloudflare_peer" /api/sandboxed)"
 expect 'Sandboxed API route' "$response" '^content-security-policy: sandbox allow-scripts'
 reject 'Sandboxed API route' "$response" '^x-frame-options:'
 expect 'Sandboxed API route' "$response" '^strict-transport-security: max-age=31536000; includeSubDomains'
@@ -198,12 +150,12 @@ response="$(request "$direct_peer" /api/whoami "${spoof[@]}")"
 expect 'Allowed direct peer' "$response" '^HTTP/[0-9.]* 200'
 expect 'Allowed direct peer' "$response" "^client=${direct_peer//./\\.} proto=https\$"
 response="$(request "$cloudflare_peer" /api/whoami "${spoof[@]}")"
-expect 'Allowed direct mode, Cloudflare peer without certificate' "$response" '^client=198\.51\.100\.7 proto=https$'
-echo 'Cloudflare mode with direct access allowed: no client certificate; the peer is the client, its CF-Connecting-IP is ignored.'
+expect 'Allowed direct mode, Cloudflare peer' "$response" '^client=198\.51\.100\.7 proto=https$'
+echo 'Cloudflare mode with direct access allowed: the direct peer is the client and its CF-Connecting-IP is ignored.'
 
-# Public mode trusts no proxy headers at all.
+# Public mode ignores headers from the fake peer, which is outside the published ranges.
 start_edge Caddyfile.public false
 wait_ready "$cloudflare_peer"
 response="$(request "$cloudflare_peer" /api/whoami "${spoof[@]}")"
 expect 'Public mode' "$response" "^client=${cloudflare_peer//./\\.} proto=https\$"
-echo 'Public mode: forwarded and Cloudflare headers from clients are ignored.'
+echo 'Public mode: untrusted peer headers are ignored.'

@@ -50,6 +50,7 @@ Log.Logger = new LoggerConfiguration()
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<TaskDetailLatencyMetrics>();
+builder.Services.AddSingleton<AgentStudio.Review.ReviewObservationStore>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunRepositoryProbe>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunGitSetup>();
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();
@@ -74,7 +75,7 @@ builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    options.ForwardLimit = 1;
+    options.ForwardLimit = 2;
     foreach (var raw in (builder.Configuration["Security:TrustedProxyAddresses"] ?? "")
                  .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
     {
@@ -405,6 +406,10 @@ builder.Services.AddSingleton<AgentStudio.Registry.OrchestratorDefaultsProvider>
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlDetectionService>();
 builder.Services.AddSingleton<AgentStudio.Registry.IProjectUrlPortInspector, AgentStudio.Registry.ProjectUrlPortInspector>();
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlProcessService>();
+builder.Services.AddSingleton<AgentStudio.Registry.IProjectUrlProcessStarter>(provider =>
+    provider.GetRequiredService<AgentStudio.Registry.ProjectUrlProcessService>());
+builder.Services.AddSingleton<AgentStudio.Registry.IProjectUrlProcessStopper>(provider =>
+    provider.GetRequiredService<AgentStudio.Registry.ProjectUrlProcessService>());
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlReadinessService>();
 // AGT-2180: bounded HTTP client shared by the readiness probe and the URL
 // diagnostics (an unconfigured named client would wait 100 s per probe).
@@ -435,6 +440,7 @@ builder.Services.AddSingleton<LaneMutexRegistry>();
 // See backend/Services/Jobs/TaskChangeNotifier.cs.
 builder.Services.AddSingleton<TaskChangeNotifier>();
 builder.Services.AddSingleton<TaskStateMachine>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.TaskGateCancellationRegistry>();
 builder.Services.AddSingleton<TaskMutationService>();
 builder.Services.AddSingleton<ITaskHistoryGitRunner, ProcessTaskHistoryGitRunner>();
 builder.Services.AddSingleton<TaskFileHistoryService>();
@@ -457,6 +463,8 @@ builder.Services.AddSingleton<AgentStudio.Tasks.DeliveryClaimSweep>();
 builder.Services.AddSingleton<FixtureMigrationService>();
 builder.Services.AddSingleton<TaskSessionLog>();
 builder.Services.AddSingleton<TimelineLog>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.OperatorCandidateAuditRepair>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.OperatorCandidateAuditRepair>());
 builder.Services.AddSingleton<ProjectThroughputService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.PullGateStore(
@@ -534,6 +542,9 @@ builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<AgentStudio.Deploy.CardPreviewSweep>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<AgentStudio.Deploy.DeploymentInterventionWorker>();
 builder.Services.AddSingleton<ProjectPipelineDefinitionService>();
@@ -914,13 +925,16 @@ builder.Services.AddHttpClient<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
 builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteGateTransport>();
+builder.Services.AddHostedService<AgentStudio.Pipeline.RemoteGateOrphanSweepService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PullGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ConventionalGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateShardTimingStore>();
 // AGT-3232: the conventional pull-or-SSH transport stays the primary gate host;
 // a subject that declares a sharded suite also spreads shards across
 // RemoteGate:ShardHosts (SSH) with a free slot.
-builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.ShardedRemoteGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.ShardedRemoteGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport>(services =>
+    services.GetRequiredService<AgentStudio.Pipeline.ShardedRemoteGateTransport>());
 builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
     AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();
@@ -1882,6 +1896,7 @@ var jobStatsMetadataCache = app.Services.GetRequiredService<JobStatsMetadataCach
 var taskScanner = app.Services.GetRequiredService<TaskScannerService>();
 taskScanner.SetIndexCache(jobIndexCache);
 taskScanner.SetStatsMetadataCache(jobStatsMetadataCache);
+taskScanner.SetOrchestrationStore(app.Services.GetRequiredService<MonolithOrchestrationStore>());
 watcher.OnJobChanged += _ => jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
 // AGT-3088: board reads serve the last published snapshot and refresh it in
 // the background; once that refresh catches up with an invalidation a board
