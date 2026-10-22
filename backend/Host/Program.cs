@@ -427,6 +427,7 @@ builder.Services.AddSingleton<LaneMutexRegistry>();
 // See backend/Services/Jobs/TaskChangeNotifier.cs.
 builder.Services.AddSingleton<TaskChangeNotifier>();
 builder.Services.AddSingleton<TaskStateMachine>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.TaskGateCancellationRegistry>();
 builder.Services.AddSingleton<TaskMutationService>();
 builder.Services.AddSingleton<ITaskHistoryGitRunner, ProcessTaskHistoryGitRunner>();
 builder.Services.AddSingleton<TaskFileHistoryService>();

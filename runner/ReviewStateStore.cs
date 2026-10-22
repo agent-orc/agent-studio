@@ -47,7 +47,7 @@ public sealed class ReviewStateStore
 
     public ReviewStateStore(string runnerStateRoot)
     {
-        Root = Path.Combine(Path.GetFullPath(runnerStateRoot), "reviews");
+        Root = Path.Combine(RunnerStateRootGuard.Validate(runnerStateRoot), "reviews");
         Directory.CreateDirectory(Root);
     }
 
