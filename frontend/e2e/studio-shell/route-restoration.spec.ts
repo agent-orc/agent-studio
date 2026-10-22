@@ -11,6 +11,11 @@ const TASK_ID = 'route-restoration-task';
 const WATCH_PATH = '/tmp/route-project';
 const TASK_KEY = `${WATCH_PATH}::${TASK_ID}`;
 const WORKBENCH_KEY = 'ROU-W4';
+const PROJECT_RECORD = {
+  id: PROJECT_ID, displayName: PROJECT, shortCode: 'ROU', workspaceId: 'WS-ROUTE',
+  storageLocation: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH,
+  sortOrder: 0, archived: false, urls: [],
+};
 const WORKBENCH = {
   id: 'route-lab',
   key: WORKBENCH_KEY,
@@ -116,13 +121,9 @@ async function stubRouteData(page: Page): Promise<void> {
     }
     if (url.pathname === '/api/v1/workspaces') return json([{
       id: 'WS-ROUTE', displayName: 'Route workspace', sortOrder: 0, isDefault: true,
-      projects: [{
-        id: 'PROJ-ROUTE', displayName: PROJECT, shortCode: 'ROU', workspaceId: 'WS-ROUTE',
-        storageLocation: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH,
-        sortOrder: 0, archived: false, urls: [],
-      }],
+      projects: [PROJECT_RECORD],
     }]);
-    if (url.pathname === '/api/v1/projects') return json([]);
+    if (url.pathname === '/api/v1/projects') return json([PROJECT_RECORD]);
     if (url.pathname === '/api/cli/quota') return json({ snapshots: [], ttlSeconds: 600 });
     if (url.pathname === '/api/usage/cockpit') return json({
       snapshotVersion: 1, workspaceId: 'WS-ROUTE', timeZone: 'Europe/Berlin', weekStart: 1,
@@ -480,7 +481,7 @@ test.describe('Studio route restoration', () => {
     await expect(page.frameLocator('iframe')
       .getByRole('heading', { name: 'Route Lab' })).toBeVisible();
     await expect.poll(() => new URL(page.url()).hash)
-      .toBe(`#/projects/${PROJECT_SLUG}/workbenches/route-lab`);
+      .toBe(`#/projects/${PROJECT_ID}/workbenches/route-lab`);
     await expect(page.getByTestId('error-dialog')).toHaveCount(0);
 
     const projectRow = page.getByTestId(`studio-explorer-project-${PROJECT}`);
