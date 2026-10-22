@@ -14,8 +14,6 @@ export {
 } from './state/project-hub-route';
 
 // container components
-export { ProjectOverlaysComponent } from './components/project-overlays/project-overlays.component';
-export { ProjectDetailComponent } from './components/project-detail/project-detail';
 export { ProjectOverviewDashboardComponent } from './components/project-overview-dashboard/project-overview-dashboard';
 export { ProjectDeploymentPanelComponent } from './components/project-deployment-panel/project-deployment-panel.component';
 export { ProjectEnvironmentOverviewComponent } from './components/project-environment-overview/project-environment-overview.component';

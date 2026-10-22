@@ -1,7 +1,6 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
 import {
   ProjectShellComponent,
-  ProjectDetailComponent,
   ProjectOverviewDashboardComponent,
   ProjectEnvironmentOverviewComponent,
   ProjectSettingsPanelComponent,
@@ -19,6 +18,7 @@ import {
   ProjectTestRunsPanelComponent,
   OwnershipMappingPanelComponent,
 } from '../../../project-detail';
+import { ProjectDetailComponent } from '../../../project-detail/lazy';
 import { ProjectTokenUsagePanelComponent } from '../../../project-token-usage';
 import { ProjectCycleTimePanelComponent } from '../../../project-cycle-time';
 import { PromptAdminPanelComponent } from '../../../orchestrator';
