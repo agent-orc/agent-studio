@@ -22,6 +22,20 @@ with actor, host, provider and outcome, without the code. Timeout and cancel
 clear the instructions. Each runner keeps its own native credential store;
 neither Task Server nor Studio distributes ChatGPT login files.
 
+The coding host also probes the small set of primary and fallback model ids
+with a real request in an isolated scratch context. It adds the valid model ids
+the server returns as operator-configured quota routes or ready-card models in
+the capability response. Each verdict is bound to
+the local credential generation and advertised as `model-acceptance:<provider>:<model>`.
+The quota view lists accepted models by host. A launch-time model refusal with
+no salvage marks that host model unavailable and puts the card back in Ready.
+Task Server claims and work-permit offers and acceptances require fresh
+acceptance of the effective named model; a blank model uses the CLI default.
+A refused model stays held until the same runner instance advertises it as not
+ready and then advertises a ready verdict with a larger runner-local probe
+sequence. Runner and server clock order never clears the hold. A refused
+fallback does not hold the card once quota admission can use its primary route.
+
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable
 `execution-placement` hold. The picker skips it before `RunCliAsync`, records
@@ -368,8 +382,14 @@ unreported claim expires with its lease and is queued again.
   dependency trees, and build output, then uploads one manifest-bound file per
   request. The attempt-scoped host evidence copy survives a later task results
   reset. Deterministic skips are
-  written to `results/deliverables.md` before the manifest is created. A later
-  HTTP 413/507 never rewrites a manifested file; it is recorded as the
+  written to `results/deliverables.md` before the manifest is created. A legacy
+  repository-root `status.md` edited by a coding run is copied to the card's
+  `results/legacy-repository-status.md` only when the repository opts in with
+  `.agent-studio/legacy-status-reports`. The runner excludes it from the salvage
+  commit and restores tracked reports or removes untracked reports before durable
+  handoff checks the worktree. New result reports belong in `JOB_RESULTS_DIR`, which is transferred
+  to the card. The generated card Result records the immutable handoff SHA.
+  A later HTTP 413/507 never rewrites a manifested file; it is recorded as the
   non-fatal `ArtifactTooLarge` / `artifacts: partial` board fact instead. The
   artifact routes return HTTP 413 as `application/problem+json` with the
   machine-readable `type: "artifact-request-too-large"`, the applicable
@@ -736,7 +756,10 @@ unreported claim expires with its lease and is queued again.
   only). The Coding daemon caches the last accepted version under
   `RUNNER_STATE_DIR/configuration/runtime-capacity.json`, reports the exact
   applied version on claim polls, and never treats registration delivery alone
-  as an acknowledgement. The Task Server audits the first exact value/version
+  as an acknowledgement. A cache entry for another host is discarded; the first
+  valid server response replaces a cached version even when that cached version
+  is higher. Runner startup defaults to `$RUNNER_WORKDIR/.runner-state`, and detached workers
+  do not inherit its environment variable. The Task Server audits the first exact value/version
   confirmation. It then uses fenced leases + heartbeat, per-task linked git
   worktrees, log/artifact upload, and fenced normal completion into auto-review.
   Host project access is also versioned in the Task Server, but is enforced
@@ -2280,6 +2303,46 @@ no reported release identity has no comparable running-version fact and is
 not labelled as drift. The policy accepts a deployment start error when one is
 provided by a release source; the current collector does not yet receive
 compose errors or image digests for arbitrary containers.
+
+## Operator deploy targets (AGT-3263)
+
+The runner's DeployTargetExecutor is the call seam for the deploy executor
+(AGT-3233). Its input pairs one schema 2 ProjectDeployStep and an artifact
+from the immutable release snapshot with an operator-owned DeployTarget.
+The artifact must be present in the snapshot, bound to the step's artifact
+name by the release's name-to-digest mapping, and pinned by SHA-256. A local
+release package is hashed again before extraction. Archives have size, entry,
+and expanded-byte limits; extraction rejects paths outside its private root.
+Command output is bounded before it reaches the adapter. Target credentials are
+secret-provider references in operator inventory, not values in project.yml.
+The claimed deploy job must declare those secret names; the runner resolves
+them through /api/runner/secrets/resolve with the job lease and a
+deploy:<environment> purpose. The server enforces the claim, project,
+environment and declared-name scope.
+
+Adapters currently supplied by runner/DeployAdapters/:
+
+| Target kind | Required operator fields | Deployment |
+|---|---|---|
+| ssh-docker | host, user, SSH identity and known-hosts secret references | A schema 2 static-site step copies a verified tar bundle into a fresh /srv/.../.releases/<digest>-<unique> directory for each attempt and switches current; a container step requires an existing compose file whose selected service resolves to the release's pinned image, then pulls and starts it. |
+| kubernetes | namespace, kubeconfig secret, package artifact, manifest path and imageResource Deployment name | A schema 2 start-container step replaces __AGENT_STUDIO_IMAGE__ in every YAML file of the manifest path, including nested folders, refuses JSON manifests, parses the objects recursively the objects with a client dry run, and checks every container in the named Deployment uses the release image and every object targets the namespace before a recursive apply of the same files. A Helm target supplies helmRelease and imageResource; the chart is rendered once with helm template, the rendered objects receive the same validation, and kubectl applies exactly that verified file before the rollout check. Rendered Helm hooks are refused because they cannot be applied as verified objects. |
+| cloud-run | Google project, region, service, workload pool project number, pool, provider, impersonated service account and a short-lived OIDC subject-token secret | A schema 2 start-container step uses an isolated CLOUDSDK_CONFIG with Workload Identity Federation and deploys the pinned image without a stored cloud key. |
+
+SSH requires strict host-key checking. Temporary identity, known-hosts,
+kubeconfig, OIDC token and federation configuration files are private and
+removed after each attempt.
+The Kubernetes kubeconfig must be authorized only for its target namespace;
+the command's namespace flag chooses the default for objects that omit one.
+For Cloud Run the operator provides a fresh OIDC subject token through the
+secret provider and configures a Google workload identity pool that trusts its
+issuer. The adapter writes Google's external-account credential configuration
+for that one attempt. See [Google's deployment-pipeline federation guide](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines)
+for the pool and service-account grants.
+The adapters return an error on failure; the owning deploy executor records
+the run's evidence and performs its normal health/report sequence. The
+AGT-3176 local deploy-poll path remains a separate compatibility path until
+AGT-3233 supplies the operator target inventory and dispatches through this
+seam.
 
 ## Verification
 

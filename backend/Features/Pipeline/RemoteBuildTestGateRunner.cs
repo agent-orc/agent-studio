@@ -40,7 +40,8 @@ public interface IRemoteGateTransport
 /// </summary>
 public sealed class RemoteBuildTestGateRunner(
     IRemoteGateTransport transport,
-    ILogger<RemoteBuildTestGateRunner> logger) : IBuildTestGateRunner
+    ILogger<RemoteBuildTestGateRunner> logger,
+    TaskGateCancellationRegistry? cancellationRegistry = null) : IBuildTestGateRunner
 {
     internal const int MaxTransportAttempts = 3;
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -59,13 +60,19 @@ public sealed class RemoteBuildTestGateRunner(
         if (timeout <= TimeSpan.Zero || timeout > TimeSpan.FromHours(12))
             return Failure(request, BuildTestGateFailureKind.Environment,
                 "Remote verification requires a positive run budget of at most 12 hours.");
+        using var gateCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var registration = cancellationRegistry?.Register(request.Project, request.JobId, gateCancellation,
+            cancelOnIntegration: !request.DeliveryIntegratedAtStart);
+        // The caller's token stays the shutdown signal; the registry only
+        // cancels a gate whose card was completed or integrated meanwhile.
+        var gateToken = gateCancellation.Token;
         var started = Stopwatch.StartNew();
         for (var attempt = 1; attempt <= MaxTransportAttempts; attempt++)
         {
             try
             {
-                ct.ThrowIfCancellationRequested();
-                var result = await transport.RunAsync(request, changedFiles, profile, mode, timeout, ct);
+                gateToken.ThrowIfCancellationRequested();
+                var result = await transport.RunAsync(request, changedFiles, profile, mode, timeout, gateToken);
                 if (!string.Equals(result.ExpectedSha, request.ExpectedSha, StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(result.GateId, request.GateId, StringComparison.Ordinal)
                     || (result.Verdict is BuildTestGateVerdict.Ok or BuildTestGateVerdict.Warn or BuildTestGateVerdict.NotApplicable
@@ -89,8 +96,9 @@ public sealed class RemoteBuildTestGateRunner(
                     "Remote verification was cancelled.") with
                     {
                         DurationMs = started.ElapsedMilliseconds,
-                        CancellationReason = ct.IsCancellationRequested
-                            ? GateCancellationReasons.Shutdown : GateCancellationReasons.Operator,
+                        CancellationReason = ct.IsCancellationRequested ? GateCancellationReasons.Shutdown
+                            : gateToken.IsCancellationRequested ? GateCancellationReasons.Superseded
+                            : GateCancellationReasons.Operator,
                     };
             }
             catch (Exception exception) when (exception is IOException or TimeoutException or System.Net.Sockets.SocketException)

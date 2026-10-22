@@ -168,6 +168,37 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         Assert.True(item.GetProperty("resolved").GetBoolean());
         Assert.True(item.GetProperty("fulfilled").GetBoolean());
         Assert.False(Flag(waitsOn, "blocked"));
+
+    }
+
+    [Fact]
+    public async Task PutState_CompletedDependencyUnblocksCrossProjectDetailImmediately()
+    {
+        WriteJob(_libWatch, TaskStates.HumanReview, "dep", "LIB-1");
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1",
+            dependsOn: new[] { "LIB-1" });
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var libWatchPath = Uri.EscapeDataString(_libWatch);
+        var appWatchPath = Uri.EscapeDataString(_appWatch);
+
+        using (var before = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/tasks/consumer?watchPath={appWatchPath}")))
+            Assert.True(Flag(before.RootElement.GetProperty("info").GetProperty("waitsOn"), "blocked"));
+
+        using var completed = await client.PutAsJsonAsync(
+            $"/api/tasks/dep/state?watchPath={libWatchPath}",
+            new { targetState = TaskStates.Completed, operatorOverride = true,
+                reason = "Dependency completed for the projection regression" });
+        completed.EnsureSuccessStatusCode();
+
+        using var after = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/tasks/consumer?watchPath={appWatchPath}"));
+        var waitsOn = after.RootElement.GetProperty("info").GetProperty("waitsOn");
+        Assert.True(Assert.Single(waitsOn.GetProperty("items").EnumerateArray())
+            .GetProperty("fulfilled").GetBoolean());
+        Assert.False(Flag(waitsOn, "blocked"));
     }
 
     [Fact]
@@ -598,6 +629,11 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         Assert.False(item.GetProperty("waitingForRelease").GetBoolean());
         Assert.True(item.GetProperty("fulfilled").GetBoolean());
         Assert.False(Flag(waitsOn, "blocked"));
+        using var grouped = JsonDocument.Parse(await client.GetStringAsync("/api/tasks/grouped"));
+        var card = FindCard(grouped.RootElement.GetProperty("ready"), "consumer");
+        var chip = Assert.Single(card.GetProperty("waitsOn").GetProperty("items").EnumerateArray());
+        Assert.True(Flag(chip, "fulfilled"));
+        Assert.False(Flag(card.GetProperty("waitsOn"), "blocked"));
     }
 
     [Fact]

@@ -577,6 +577,7 @@ public sealed class RemoteTaskRunner
                 outcome,
                 lease.AttemptId ?? lease.LeaseId,
                 workspace.WorkBranch);
+            await workspace.CaptureLegacyRepositoryReportsAsync(stopRun.Token);
             artifactPlan = await PrepareResultsSafeAsync(
                 taskKey, outbox?.Authority.RunId ?? lease.AttemptId ?? lease.LeaseId,
                 artifactLimits, outbox);
@@ -1581,6 +1582,9 @@ public sealed class RemoteTaskRunner
                         shipper.Add(
                             "system",
                             $"[runner] provider rejected model request provider={invocation.CliType}; provider-auth capability unchanged");
+                        if (!string.IsNullOrWhiteSpace(invocation.Model)
+                            && RunnerModelAcceptanceProbe.IsModelRejection(processResult, invocation.Model))
+                            RunnerModelAcceptanceProbe.Shared.RecordRejection(invocation.CliType, invocation.Model);
                     }
                     if (classified.Decision.RecoveryAction == ExecutionRecoveryAction.ResumeSameSession
                         && slot.InputSessionId is null

@@ -78,6 +78,16 @@ captured SHA, attempt chain and Auto Review lane with the live card, including
 any pending continuation. A superseded result keeps its gate log and a
 `gate-result-superseded` timeline receipt with the original verdict; it does
 not rewrite the newer attempt's pipeline step or move the card (AGT-3151).
+Acceptance cancels gates still running or waiting in the remote machine queue,
+and every gate that registers while the card stays Completed; any move out of
+Completed lets the next gate run. The delivery-chain sweep cancels only the
+gates already running when it finds the delivery on the integration branch.
+Such a cancellation reports `superseded`, never `shutdown`, so it schedules no
+infrastructure retry. A late merge-gate result for a card completed since that
+gate started, or a delivery published while it waited, records
+`gate-result-superseded` on the live card and cannot apply its failure step or
+move the card. With guarded delivery on, the acceptance worker leaves a
+completed card in place when an older gate failure arrives.
 Local aspect review also checks the captured subject after its asynchronous
 verdict and grade work. A superseded review records `review-result-superseded`
 with the original aspect statuses and leaves the newer round alone.
@@ -262,6 +272,9 @@ stall event has `episodeId`, `project`, `raisedAtUtc`, `queueDepth`,
 `episodeOpenedAtUtc`. Times are UTC; durations are milliseconds. An open
 episode survives a restart and a reminder increments `raise` without creating
 a new episode. `advisory` and `episodeOpenedAtUtc` can be null.
+Batch planning assesses the shared machine gate queue across projects and
+planning groups, including live requests waiting for a slot. Each project's
+stall report and release route remain scoped to that project.
 
 Release considers cards escalated for a machine gate queue overrun of their
 current passed review. It moves each eligible card to Auto Review and admits
@@ -2560,6 +2573,35 @@ new fact even when its operator-facing summary is unchanged.
   `backend.Tests/Architecture/RunTimeoutContinuationBreakerTest.cs`.
 
 ## Project deployment definition (P1)
+
+### Card previews
+
+The preview environment kind is per card, outside the ordered Staging and
+Production release lifecycle. A matching passed Remote Review build for the
+card's current immutable delivery SHA queues a preview job. The job carries
+that commit, the project build commands, a static or container template, and
+an address under `Preview:BaseDomain` (default `preview.internal`).
+`Preview:HostId` defaults to `preview-host`. The same deploy host claim, lease,
+and report queue handles preview creation, updates, and removal. The run zone
+implements `IPreviewRunZone` to build, route, check health, and capture a PNG;
+the ordinary stage and production executor does not process preview source
+commits. A preview is ready only after a healthy host report with a PNG.
+
+A project may declare a `preview` environment under
+`docs/deployments/environments/` for its host, template, and preview-only
+secret references. Preview references must be disjoint from Staging and
+Production references. Preview jobs never inherit their secret references.
+The deploy queue rejects a preview host used by any project's current
+Production declaration. Host claims also refuse queued preview and removal
+jobs if that host later becomes a Production host.
+The card's `card-preview.json` sidecar records its delivery, job, address,
+screenshot, and seven-day idle expiry. Reconciliation queues removal after
+integration, archive rejection, or expiry. `Hosting:MaxEnvironments` is the
+shared capacity limit when configured; otherwise `Preview:MaxActive` defaults
+to 20. The run zone is responsible for removing the hosted route and files
+before reporting a removal job healthy.
+After removal, the sidecar keeps the removed delivery as a tombstone. A new
+green delivery can replace an expired preview; the same SHA cannot recreate it.
 
 `.agent-studio/project.yml` schema 1 remains valid for preparation and verification.
 Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,

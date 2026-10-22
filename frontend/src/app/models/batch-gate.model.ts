@@ -106,3 +106,23 @@ export function batchMemberFor(state: BatchGateState | null, ...keys: (string | 
   }
   return null;
 }
+
+/** AGT-3219: cards parked by a machine gate queue overrun, from `/batch-gate/queue-stalls`. */
+export interface GateQueueStallReport {
+  project: string;
+  releasable: string[];
+}
+
+/** Outcome of the one-step release of queue-stalled cards back to the batch queue. */
+export interface GateQueueStallRelease {
+  released: string[];
+  refused: { taskKey: string; reason: string }[];
+}
+
+/**
+ * True for a park reason that names the machine gate queue budget spent in
+ * its queue phase: the card's gate never ran, so its code was not judged.
+ */
+export function isGateQueueOverrunReason(reason: string | null | undefined): boolean {
+  return !!reason && reason.includes('machine-gate-queue') && reason.includes('phase=queue');
+}

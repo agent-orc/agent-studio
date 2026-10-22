@@ -50,9 +50,13 @@ public sealed class TaskServerClient : IDisposable
     private int? _roleMaxParallelism;
     private long? _centralRuntimeCapacityVersion;
     private readonly RuntimeCapacityCache? _runtimeCapacityCache;
+    private readonly Action<string> _capacityWarning;
+    private bool _restoredCapacityFromCache;
+    private bool _capacityWarningWritten;
 
     public TaskServerClient(RunnerOptions options)
     {
+        _capacityWarning = message => Console.Error.WriteLine($"WARNING: {message}");
         _options = options;
         _deviceLoginRunnerId = options.RunnerId;
         _http = new HttpClient(CreateServiceHandler(options))
@@ -118,8 +122,10 @@ public sealed class TaskServerClient : IDisposable
         bool usesDurableTaskServer = false,
         RunnerOptions? options = null,
         string? runnerInstanceId = null,
-        bool supportsHostOrchestrator = false)
+        bool supportsHostOrchestrator = false,
+        Action<string>? capacityWarning = null)
     {
+        _capacityWarning = capacityWarning ?? (message => Console.Error.WriteLine($"WARNING: {message}"));
         _http = http;
         _options = options;
         _deviceLoginRunnerId = runnerId;
@@ -876,8 +882,15 @@ public sealed class TaskServerClient : IDisposable
         {
             return;
         }
-        if (_centralRuntimeCapacityVersion > capacity.Version) return;
-        if (_centralRuntimeCapacityVersion == capacity.Version
+        if (_options is not null && !string.Equals(capacity.HostId, _options.Hostname, StringComparison.OrdinalIgnoreCase))
+        {
+            WarnCapacityOnce("Discarding runtime capacity for a foreign host.");
+            return;
+        }
+        if (_restoredCapacityFromCache && _centralRuntimeCapacityVersion > capacity.Version)
+            WarnCapacityOnce("Discarding runtime capacity cache version not issued by this server for this host.");
+        if (!_restoredCapacityFromCache && _centralRuntimeCapacityVersion > capacity.Version) return;
+        if (!_restoredCapacityFromCache && _centralRuntimeCapacityVersion == capacity.Version
             && _centralHostMaxParallelism == capacity.MaxParallelism)
         {
             return;
@@ -887,7 +900,15 @@ public sealed class TaskServerClient : IDisposable
         _centralHostMaxParallelism = capacity.MaxParallelism;
         _centralHostMaxParallelismAppliedAt = adoptedAt;
         _centralRuntimeCapacityVersion = capacity.Version;
+        _restoredCapacityFromCache = false;
         _runtimeCapacityCache?.Save(capacity, adoptedAt);
+    }
+
+    private void WarnCapacityOnce(string message)
+    {
+        if (_capacityWarningWritten) return;
+        _capacityWarningWritten = true;
+        _capacityWarning(message);
     }
 
     /// <summary>
@@ -912,8 +933,9 @@ public sealed class TaskServerClient : IDisposable
     private void RestoreRuntimeCapacityCache()
     {
         if (_runtimeCapacityCache is null || _options is null) return;
-        var cached = _runtimeCapacityCache.Load(_options.Hostname);
+        var cached = _runtimeCapacityCache.Load(_options.Hostname, WarnCapacityOnce);
         if (cached is null) return;
+        _restoredCapacityFromCache = true;
         _centralHostMaxParallelism = cached.Capacity.MaxParallelism;
         _centralHostMaxParallelismAppliedAt = cached.AdoptedAt;
         _centralRuntimeCapacityVersion = cached.Capacity.Version;
@@ -1389,6 +1411,8 @@ public sealed class TaskServerClient : IDisposable
             request,
             ct);
         AdoptRoleMaxParallelism(snapshot?.RoleMaxParallelism);
+        if (snapshot?.ConfiguredModelRoutes is { } configuredRoutes)
+            RunnerModelAcceptanceProbe.Shared.UseConfiguredModels(configuredRoutes);
     }
 
     /// <summary>

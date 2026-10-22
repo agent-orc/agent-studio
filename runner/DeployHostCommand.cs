@@ -16,10 +16,21 @@ public static class DeployHostCommand
     private sealed record Job(string Id, string Project, string EnvironmentId, string HostId,
         string Artifact, string Template, string Destination, string? HealthUrl,
         string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken,
-        string? RetryStep);
+        string? RetryStep)
+    {
+        public string Kind { get; init; } = "standard";
+        public string? CardKey { get; init; }
+        public string? SourceCommit { get; init; }
+        public string? SourceRepository { get; init; }
+        public string? SourceRef { get; init; }
+        public string? ArtifactPath { get; init; }
+        public string? Dockerfile { get; init; }
+        public string? Address { get; init; }
+        public string[] BuildCommands { get; init; } = [];
+    }
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
-        HttpClient? transport = null)
+        HttpClient? transport = null, IPreviewRunZone? previewZone = null)
     {
         if (args.Length < 4 || args.Length > 5)
         {
@@ -36,21 +47,51 @@ public static class DeployHostCommand
         if (job is null) return 0;
         var evidence = "deploy-step-failed";
         var healthy = false;
+        string? screenshotBase64 = null;
         try
         {
             var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
-            if (job.RetryStep is null)
+            if (job.Kind is "preview" or "preview-remove")
             {
-                if (job.Template == "container")
-                    await DeployContainer(job, secretRoot, cancellationToken);
-                else if (job.Template == "static")
-                    await DeployStatic(job, args[3], cancellationToken);
-                else throw new InvalidOperationException("Unknown template.");
+                if (previewZone is null)
+                {
+                    Console.Error.WriteLine("Preview run zone is not configured for this deploy host.");
+                    return 2;
+                }
+                if (job.CardKey is null || job.SourceCommit is null || job.Address is null
+                    || job.SourceRepository is null || job.SourceRef is null)
+                    throw new InvalidDataException("Preview job has no card, repository, commit, ref, or address.");
+                var preview = new PreviewRunZoneJob(job.Project, job.CardKey, job.SourceCommit,
+                    job.SourceRepository, job.SourceRef, job.Address, job.Template, job.Destination,
+                    job.ArtifactPath, job.Dockerfile, job.BuildCommands, job.SecretRefs, job.ContainerPort);
+                if (job.Kind == "preview-remove")
+                {
+                    await previewZone.RemoveAsync(preview, cancellationToken);
+                    healthy = true;
+                }
+                else
+                {
+                    var result = await previewZone.DeployAsync(preview, cancellationToken);
+                    healthy = result.Healthy && result.ScreenshotPng is { Length: > 0 };
+                    screenshotBase64 = healthy ? Convert.ToBase64String(result.ScreenshotPng!) : null;
+                }
+                evidence = healthy ? "health-ok" : "deploy-step-failed";
             }
-            else if (job.RetryStep != "health") throw new InvalidOperationException("Unknown retry step.");
-            evidence = "health-http-failed";
-            healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
-            if (healthy) evidence = "health-ok";
+            else
+            {
+                if (job.RetryStep is null)
+                {
+                    if (job.Template == "container")
+                        await DeployContainer(job, secretRoot, cancellationToken);
+                    else if (job.Template == "static")
+                        await DeployStatic(job, args[3], cancellationToken);
+                    else throw new InvalidOperationException("Unknown template.");
+                }
+                else if (job.RetryStep != "health") throw new InvalidOperationException("Unknown retry step.");
+                evidence = "health-http-failed";
+                healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
+                if (healthy) evidence = "health-ok";
+            }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
             or HttpRequestException or System.ComponentModel.Win32Exception)
@@ -59,7 +100,7 @@ public static class DeployHostCommand
         }
         using var report = await client.PostAsJsonAsync(
             $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/report",
-            new { job.LeaseToken, Healthy = healthy, Evidence = evidence }, cancellationToken);
+            new { job.LeaseToken, Healthy = healthy, Evidence = evidence, ScreenshotBase64 = screenshotBase64 }, cancellationToken);
         report.EnsureSuccessStatusCode();
         return healthy ? 0 : 1;
     }
