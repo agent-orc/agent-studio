@@ -146,6 +146,8 @@ public sealed class DeepReviewDecisionTests
             Assert.Equal("gpt-6-sol", command.Model);
             Assert.Equal("xhigh", command.ThinkingLevel);
             Assert.Equal(ReviewCommandKinds.AgentAspect, command.ExecutionKind);
+            Assert.Contains($"Decision receipt: {active.DeepReviewDecision!.ReceiptId}", command.Prompt);
+            Assert.Contains("Review the immutable delivery for concrete defects", command.Prompt);
             Assert.Contains("deep-review", active.RequiredAspects);
             Assert.Equal("active", active.DeepReviewDecision!.Mode);
         }

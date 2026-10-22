@@ -516,7 +516,8 @@ public sealed class AspectRunnerService
         AspectRunInputs inputs,
         string model,
         string? promptOverride = null,
-        string? pipelineStepId = null)
+        string? pipelineStepId = null,
+        IReadOnlyDictionary<string, string?>? extraValues = null)
     {
         if (!string.IsNullOrWhiteSpace(promptOverride))
         {
@@ -549,6 +550,9 @@ public sealed class AspectRunnerService
                 ? ReviewCardMode.Describe(null)
                 : inputs.CardMode
         };
+        if (extraValues is not null)
+            foreach (var (key, value) in extraValues)
+                values[key] = value;
         try
         {
             return _prompts.Render(

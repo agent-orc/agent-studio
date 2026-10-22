@@ -19,7 +19,8 @@ public static class ReviewFindingMergePolicy
         var merged = new List<ReviewFollowUpFinding>();
         foreach (var item in ordered)
         {
-            if (string.Equals(item.Status, "pass", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(item.Status, "pass", StringComparison.OrdinalIgnoreCase)
+                || IsMalformedReply(item))
             {
                 merged.Add(item);
                 continue;
@@ -37,6 +38,12 @@ public static class ReviewFindingMergePolicy
         }
         return merged;
     }
+
+    private static bool IsMalformedReply(ReviewFollowUpFinding item)
+        => item.InfrastructureFailure
+           || item.Classification?.Contains("malformed:", StringComparison.OrdinalIgnoreCase) == true
+           || string.Equals(item.Classification, "review:unparseable", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(item.Classification, ReviewOutcomeKinds.ReviewInfra, StringComparison.OrdinalIgnoreCase);
 
     public static string Fingerprint(ReviewFollowUpFinding item)
     {
