@@ -23,6 +23,7 @@ public sealed record DeploymentRecord
     public DateTime? ApprovedAtUtc { get; init; }
     public string? CancelledBy { get; init; }
     public string? JobId { get; init; }
+    public List<string> PriorJobIds { get; init; } = [];
     public string? HostId { get; init; }
     /// <summary>Claims of the job seen so far; a higher count on the job is a reclaim.</summary>
     public int HostClaims { get; init; }
@@ -32,6 +33,14 @@ public sealed record DeploymentRecord
     public DateTime CreatedAtUtc { get; init; }
     public DateTime? StartedAtUtc { get; init; }
     public DateTime? FinishedAtUtc { get; init; }
+    public bool GuidedFailure { get; init; }
+    public int InterventionTimeoutMinutes { get; init; } = 60;
+    public DateTime? InterventionExpiresAtUtc { get; init; }
+    public string? FailedStep { get; init; }
+    /// <summary>The step executed by the current retry job, if this run is retrying.</summary>
+    public string? RetryStep { get; init; }
+    public string? InterventionDecidedBy { get; init; }
+    public string? InterventionDecision { get; init; }
     public List<DeploymentStepRecord> Steps { get; init; } = [];
 }
 
@@ -83,21 +92,32 @@ public static class DeploymentStepPlan
         }
 
         var healthFailed = run.Evidence == DeployEvidence.HealthFailed;
+        var healthRetry = run.RetryStep == DeployStepNames.Health;
+        var completedDeploy = healthRetry
+            ? run.Steps.FirstOrDefault(step => step.Name == run.DeployStep && step.State == DeploymentStates.Succeeded)
+            : null;
         var deployState = run.State switch
         {
+            _ when healthRetry => DeploymentStates.Succeeded,
             DeploymentStates.Running => DeploymentStates.Running,
+            DeploymentStates.Succeeded when run.InterventionDecision == "skip" && !healthFailed => DeploymentStepStates.Skipped,
             DeploymentStates.Succeeded => DeploymentStates.Succeeded,
             DeploymentStates.Failed => healthFailed ? DeploymentStates.Succeeded : DeploymentStates.Failed,
+            DeploymentStates.WaitingForIntervention => healthFailed ? DeploymentStates.Succeeded : DeploymentStates.Failed,
             DeploymentStates.Cancelled => DeploymentStates.Cancelled,
             _ => DeploymentStepStates.Pending,
         };
         var finished = DeploymentStates.IsFinished(run.State) && run.StartedAtUtc is not null;
-        steps.Add(new(run.DeployStep, deployState, run.StartedAtUtc, finished ? run.FinishedAtUtc : null));
+        steps.Add(new(run.DeployStep, deployState,
+            completedDeploy is not null ? completedDeploy.StartedAtUtc : run.StartedAtUtc,
+            completedDeploy is not null ? completedDeploy.FinishedAtUtc : finished ? run.FinishedAtUtc : null));
 
         var healthState = run.State switch
         {
+            DeploymentStates.Succeeded when run.InterventionDecision == "skip" => DeploymentStepStates.Skipped,
             DeploymentStates.Succeeded => DeploymentStates.Succeeded,
             DeploymentStates.Failed => healthFailed ? DeploymentStates.Failed : DeploymentStepStates.Skipped,
+            DeploymentStates.WaitingForIntervention => healthFailed ? DeploymentStates.Failed : DeploymentStepStates.Skipped,
             DeploymentStates.Cancelled => DeploymentStates.Cancelled,
             _ => DeploymentStepStates.Pending,
         };

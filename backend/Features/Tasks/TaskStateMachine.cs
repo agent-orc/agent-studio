@@ -45,6 +45,7 @@ public class TaskStateMachine
             && task.References?.DependsOn.Count is > 0);
     private readonly TaskIntegrationStatusService? _integrationStatus;
     private readonly AgentStudio.Runner.AttemptAuthorityService? _attemptAuthority;
+    private readonly AgentStudio.Pipeline.TaskGateCancellationRegistry? _gateCancellation;
     private readonly bool _guardedDelivery;
 
     public TaskStateMachine(
@@ -57,7 +58,8 @@ public class TaskStateMachine
         AgentStudio.Pipeline.WorkspaceEvidenceQueue? evidenceQueue = null,
         TaskIntegrationStatusService? integrationStatus = null,
         IConfiguration? configuration = null,
-        AgentStudio.Runner.AttemptAuthorityService? attemptAuthority = null)
+        AgentStudio.Runner.AttemptAuthorityService? attemptAuthority = null,
+        AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null)
     {
         _scanner = scanner;
         _logger = logger;
@@ -71,6 +73,7 @@ public class TaskStateMachine
         _evidenceQueue = evidenceQueue;
         _integrationStatus = integrationStatus;
         _attemptAuthority = attemptAuthority;
+        _gateCancellation = gateCancellation;
         _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
 
@@ -204,6 +207,7 @@ public class TaskStateMachine
                 {
                     TaskJsonFile.UpdateField(recheck.FolderPath, "phase", LifecyclePhases.Integrating, _logger);
                     _scanner.InvalidateCache();
+                    _scanner.PublishCoreFromKnownFolder(recheck.FolderPath);
                 }
                 return new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
                     $"{admission.Category}: {admission.RecoveryAction} Current status: {status?.Status ?? "unknown"}.");
@@ -286,6 +290,7 @@ public class TaskStateMachine
                     _scanner.PublishCoreFromFolder(recheck.FolderPath, recheck.WatchPath, recheck.ProjectName, targetState);
                     EnqueueEvidence(recheck.WatchPath, recheck.ProjectName, recheck.Id, recheck.State, targetState);
                     ClearReviewPriorityOnExit(recheck, targetState);
+                    UpdateCompletionGateCancellation(recheck, targetState);
                 }
                 return new MoveJobOutcome(MoveJobStatus.Success, NewFolderPath: recheck.FolderPath);
             }
@@ -327,6 +332,7 @@ public class TaskStateMachine
                 $"A non-folder path named '{targetSlug}' already exists in {targetState}.");
         }
 
+        var endCoreMove = _scanner.BeginCoreMove(recheck);
         try
         {
             var moveFailure = MoveDirectoryWithRetry(
@@ -360,10 +366,11 @@ public class TaskStateMachine
             // pre-move snapshot. The 250 ms FileSystemWatcher debounce alone
             // is too slow for that round-trip.
             _scanner.InvalidateCache();
-            _scanner.RemoveCore(recheck);
-            _scanner.PublishCoreFromFolder(targetDir, recheck.WatchPath, recheck.ProjectName, targetState);
+            _scanner.MoveCoreFromFolder(recheck.FolderPath, targetDir,
+                recheck.WatchPath, recheck.ProjectName, targetState);
             EnqueueEvidence(recheck.WatchPath, recheck.ProjectName, targetSlug, recheck.State, targetState);
             ClearReviewPriorityOnExit(recheck, targetState);
+            UpdateCompletionGateCancellation(recheck, targetState);
             // Hand the post-move path back to the caller so chat-log writes
             // and follow-up files cannot land in the now-vanished source
             // folder via a stale FindJob result (see MoveJobOutcome docs).
@@ -374,6 +381,16 @@ public class TaskStateMachine
             _logger.LogError(ex, "Failed to move job {JobId} to {State}", jobId, targetState);
             return new MoveJobOutcome(MoveJobStatus.Failure, ex.Message);
         }
+        finally { endCoreMove(); }
+    }
+
+    // Keep the registry and the lane mutation atomic with respect to reopen.
+    private void UpdateCompletionGateCancellation(TaskInfo card, string targetState)
+    {
+        if (targetState == TaskStates.Completed && card.State != TaskStates.Completed)
+            _gateCancellation?.CancelOnCompletion(card.ProjectName, card.Id);
+        if (card.State == TaskStates.Completed && targetState != TaskStates.Completed)
+            _gateCancellation?.Reopen(card.ProjectName, card.Id);
     }
 
     private void ClearReviewPriorityOnExit(TaskInfo card, string targetState)
@@ -1094,6 +1111,9 @@ public class TaskStateMachine
                 TaskLayoutIndex.Rebuild(recheck.WatchPath, _logger);
                 TaskLayoutIndex.Rebuild(canonicalTarget, _logger);
                 _scanner.InvalidateCache();
+                _scanner.PublishCoreFromKnownFolder(recheck.FolderPath);
+                foreach (var update in appliedReferenceUpdates)
+                    _scanner.PublishCoreFromKnownFolder(update.FolderPath);
             }
             catch (Exception rollbackEx)
             {
@@ -1109,8 +1129,10 @@ public class TaskStateMachine
             TaskLayoutIndex.Rebuild(recheck.WatchPath, _logger);
             TaskLayoutIndex.Rebuild(canonicalTarget, _logger);
             _scanner.InvalidateCache();
-            _scanner.RemoveCore(recheck);
-            _scanner.PublishCoreFromFolder(targetDir, canonicalTarget, destinationProject.DisplayName, recheck.State);
+            _scanner.MoveCoreFromFolder(recheck.FolderPath, targetDir,
+                canonicalTarget, destinationProject.DisplayName, recheck.State);
+            foreach (var update in appliedReferenceUpdates)
+                _scanner.PublishCoreFromKnownFolder(update.FolderPath);
             _notifier?.PublishMoved(destinationProject.DisplayName, jobId, canonicalTarget, recheck.State, recheck.State);
         }
         catch (Exception ex)
@@ -1122,6 +1144,8 @@ public class TaskStateMachine
                 "change-project-post-commit-refresh-failed job={JobId} newKey={NewKey} destinationProject={DestinationProject}",
                 jobId, destinationKey, destinationProject.Id);
             _scanner.InvalidateCache();
+            _scanner.MoveCoreFromFolder(recheck.FolderPath, targetDir,
+                canonicalTarget, destinationProject.DisplayName, recheck.State);
         }
 
         _logger.LogInformation(
@@ -1367,6 +1391,7 @@ public class TaskStateMachine
                     var renamed = NeutralizeFolder(loser.FolderPath);
                     if (renamed != null)
                     {
+                        _scanner.PublishCoreFromFolder(loser.FolderPath, entry.Path, entry.Name, loser.State);
                         neutralised.Add(renamed);
                         renamedTotal++;
                     }

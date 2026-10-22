@@ -11,7 +11,7 @@ public sealed class WorkstationProfileTests
     public void Workstation_options_parse_named_roots_and_bounded_preview()
     {
         using var temp = new TempDirectory();
-        var (options, _, _, _) = RunnerOptions.Parse(
+        var (options, _, _, _) = RunnerTestOptions.Parse(
         [
             "--workstation", "1",
             "--workstation-roots", $"studio={temp.Path}",
@@ -26,7 +26,7 @@ public sealed class WorkstationProfileTests
         Assert.Single(RunnerCapabilityProbe.Advertise(options, gitPushReady: false),
             capability => capability.Key == "toolchain:dotnet");
         Assert.Equal(1800, options.WorkstationPreview!.MaxLifetimeSeconds);
-        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(
+        Assert.Throws<ArgumentException>(() => RunnerTestOptions.Parse(
             ["--workstation", "0", "--workstation-roots", $"studio={temp.Path}"]));
     }
 

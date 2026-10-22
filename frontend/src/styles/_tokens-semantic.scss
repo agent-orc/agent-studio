@@ -189,7 +189,7 @@
                        0 4px 12px color-mix(in srgb, var(--studio-accent-3) 14%, transparent);
 
   // Standard task-card surface (ASS-737). Board lanes, Backlog lane cards,
-  // and epic sub-task cards all render through <app-job-card>,
+  // and Dossier task cards all render through <app-job-card>,
   // so card chrome lives here instead of per-lane CSS. State colours are
   // applied as a uniform border/ring around every side, never as a side rail.
   --studio-card-bg:              var(--studio-bg-elevated);

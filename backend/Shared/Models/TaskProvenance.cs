@@ -1,7 +1,7 @@
 namespace AgentStudio.Shared;
 
 /// <summary>
-/// Append-only commit-provenance record for one task (ASS-1724, epic ASS-1720).
+/// Append-only commit-provenance record for one task (ASS-1724).
 /// Anchored on the per-task worktree branch <c>task/&lt;id&gt;</c> so the board can
 /// answer "where does this work live" graph-based across the
 /// worktree -&gt; develop -&gt; main path, instead of guessing from a wall-clock

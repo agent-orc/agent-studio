@@ -22,6 +22,216 @@ public class TaskIndexCacheTests : IDisposable
     private readonly TaskScannerService _scanner;
     private readonly TaskIndexCache _cache;
 
+    [Fact]
+    public void AbsentCardOnDirtySnapshot_DoesNotRemainWarming()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "Present");
+        _cache.GetSnapshot();
+        _cache.Invalidate();
+
+        var missing = _cache.GetDetailFacts("card-gone", _watchPath);
+
+        Assert.Null(missing.Info);
+        Assert.False(missing.Warming);
+    }
+
+    [Fact]
+    public async Task DetailFacts_DoNotWaitForUnrelatedRefresh_AndKeepOwnPublication()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "First");
+        WriteJob(TaskStates.Ready, "card-b", "Second");
+        var clock = new FakeTimeProvider();
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scans = 0;
+        var cache = new TaskIndexCache(_scanner, NullLogger<TaskIndexCache>.Instance, _config,
+            () =>
+            {
+                if (Interlocked.Increment(ref scans) > 1)
+                {
+                    entered.TrySetResult(true);
+                    release.Task.GetAwaiter().GetResult();
+                }
+                return _scanner.ScanAllJobsRaw();
+            }, timeProvider: clock);
+        _scanner.SetIndexCache(cache);
+        cache.GetSnapshot();
+        cache.Invalidate();
+        try
+        {
+            var first = cache.GetDetailFacts("card-a", _watchPath);
+            Assert.Equal("First", first.Info?.Title);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(30), clock);
+
+            var unrelated = cache.GetDetailFacts("card-a", _watchPath);
+            Assert.Equal("First", unrelated.Info?.Title);
+
+            cache.PublishCore(first.Info! with { Title = "Published A" });
+            Assert.Equal("Published A", cache.GetDetailFacts("card-a", _watchPath).Info?.Title);
+            WriteJob(TaskStates.Ready, "card-b", "Adopted B");
+        }
+        finally
+        {
+            release.TrySetResult(true);
+        }
+        if (cache.RefreshInFlight is { } refresh)
+            await refresh.WaitAsync(TimeSpan.FromSeconds(30), clock);
+        Assert.Equal("Published A", cache.GetDetailFacts("card-a", _watchPath).Info?.Title);
+        Assert.Equal("Adopted B", cache.GetDetailFacts("card-b", _watchPath).Info?.Title);
+    }
+
+    [Fact]
+    public async Task Rescan_DoesNotClearWatcherStalenessForAChangedFolder()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "Before");
+        var clock = new FakeTimeProvider();
+        var scanned = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scans = 0;
+        var cache = new TaskIndexCache(_scanner, NullLogger<TaskIndexCache>.Instance, _config,
+            () =>
+            {
+                var facts = _scanner.ScanAllJobsRaw();
+                if (Interlocked.Increment(ref scans) > 1)
+                {
+                    scanned.TrySetResult(true);
+                    release.Task.GetAwaiter().GetResult();
+                }
+                return facts;
+            }, timeProvider: clock);
+        _scanner.SetIndexCache(cache);
+        cache.GetSnapshot();
+        cache.Invalidate();
+        _ = cache.GetDetailFacts("card-a", _watchPath);
+        try
+        {
+            await scanned.Task;
+            WriteJob(TaskStates.Ready, "card-a", "After changed");
+            cache.NotifyCoreFileChanged(Path.Combine(_watchPath, TaskStates.Ready, "card-a", "task.json"));
+        }
+        finally { release.TrySetResult(true); }
+        if (cache.RefreshInFlight is { } refresh) await refresh;
+        var detail = cache.GetDetailFacts("card-a", _watchPath);
+        Assert.Equal("Before", detail.Info?.Title);
+        Assert.True(detail.Stale);
+    }
+
+    [Fact]
+    public async Task DetailFacts_WaitsForItsPublication_AndMarksABoundedTimeout()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "Before");
+        var clock = new FakeTimeProvider();
+        var cache = new TaskIndexCache(_scanner, NullLogger<TaskIndexCache>.Instance,
+            _config, timeProvider: clock);
+        _scanner.SetIndexCache(cache);
+        cache.GetSnapshot();
+        var old = cache.GetDetailFacts("card-a", _watchPath).Info!;
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var publishing = Task.Run(() => cache.PublishCoreFromFolder(old.FolderPath, () =>
+        {
+            entered.TrySetResult(true);
+            release.Task.GetAwaiter().GetResult();
+            return old with { Title = "After" };
+        }));
+        await entered.Task;
+        var timedRead = cache.GetDetailFactsAsync("card-a", _watchPath, CancellationToken.None).AsTask();
+        clock.Advance(TimeSpan.FromMilliseconds(25));
+        var timed = await timedRead;
+        Assert.Equal("Before", timed.Info?.Title);
+        Assert.True(timed.Stale);
+        release.TrySetResult(true);
+        await publishing;
+        var after = await cache.GetDetailFactsAsync("card-a", _watchPath, CancellationToken.None);
+        Assert.Equal("After", after.Info?.Title);
+        Assert.False(after.Stale);
+    }
+
+    [Fact]
+    public async Task DetailFacts_DuringDiskMoveKeepsPublishedCardUntilMoveCompletes()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "Before");
+        var clock = new FakeTimeProvider();
+        var cache = new TaskIndexCache(_scanner, NullLogger<TaskIndexCache>.Instance,
+            _config, timeProvider: clock);
+        _scanner.SetIndexCache(cache);
+        cache.GetSnapshot();
+        var old = cache.GetDetailFacts("card-a", _watchPath).Info!;
+        var target = Path.Combine(_watchPath, TaskStates.Progress, "card-a");
+        var endMove = cache.BeginCoreMove(old);
+        try
+        {
+            Directory.Move(old.FolderPath, target);
+            var during = cache.GetDetailFactsAsync("card-a", _watchPath,
+                CancellationToken.None).AsTask();
+            clock.Advance(TimeSpan.FromMilliseconds(25));
+            var facts = await during;
+            Assert.Equal("Before", facts.Info?.Title);
+            Assert.True(facts.Stale);
+            Assert.False(facts.Warming);
+
+            cache.MoveCoreFromFolder(old.FolderPath, target,
+                () => old with { FolderPath = target, State = TaskStates.Progress });
+        }
+        finally { endMove(); }
+        var after = cache.GetDetailFacts("card-a", _watchPath);
+        Assert.Equal(target, after.Info?.FolderPath);
+    }
+
+    [Fact]
+    public void DependencyProjection_UsesCoreTargetWhenBoardGraphHasNotRescanned()
+    {
+        WriteJob(TaskStates.Completed, "dep", "Dependency");
+        WriteJob(TaskStates.Ready, "consumer", "Consumer");
+        _cache.GetSnapshot();
+        var target = _cache.GetDetailFacts("dep", _watchPath).Info! with
+        {
+            Key = "LIB-1", Released = false,
+        };
+        var consumer = _cache.GetDetailFacts("consumer", _watchPath).Info! with
+        {
+            Key = "APP-1",
+            References = new TaskReferences
+            {
+                DependsOn = [new TaskDependencyReference("LIB-1", releaseGate: true)],
+            },
+        };
+        _cache.PublishCore(target);
+        _cache.PublishCore(consumer);
+        var boardGraph = _cache.GetReferenceIndex();
+        Assert.Null(boardGraph.Resolve("LIB-1"));
+        var before = TaskEndpointHelpers.BuildDependencyGraphLookups([consumer], _scanner);
+        Assert.True(before.WaitsOn[consumer.TaskKey].Blocked);
+
+        _cache.PublishCore(target with { Released = true });
+        var after = TaskEndpointHelpers.BuildDependencyGraphLookups([consumer], _scanner);
+        Assert.False(after.WaitsOn[consumer.TaskKey].Blocked);
+        Assert.True(Assert.Single(after.WaitsOn[consumer.TaskKey].Items).TargetReleased);
+        Assert.Same(boardGraph, _cache.GetReferenceIndex());
+    }
+
+    [Fact]
+    public async Task OrderedFolderReads_KeepTheLaterPublication()
+    {
+        WriteJob(TaskStates.Ready, "card-a", "Before");
+        _cache.GetSnapshot();
+        var old = _cache.GetDetailFacts("card-a", _watchPath).Info!;
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var watcher = Task.Run(() => _cache.PublishCoreFromFolder(old.FolderPath, () =>
+        {
+            entered.TrySetResult(true);
+            release.Task.GetAwaiter().GetResult();
+            return old;
+        }));
+        await entered.Task;
+        var writer = Task.Run(() => _cache.PublishCoreFromFolder(old.FolderPath,
+            () => old with { Title = "After" }));
+        release.TrySetResult(true);
+        await Task.WhenAll(watcher, writer);
+        Assert.Equal("After", _cache.GetDetailFacts("card-a", _watchPath).Info?.Title);
+    }
+
     public TaskIndexCacheTests()
     {
         _watchPath = Path.Combine(Path.GetTempPath(), "atp-cache-" + Guid.NewGuid().ToString("N"));
@@ -260,6 +470,24 @@ public class TaskIndexCacheTests : IDisposable
         var second = Assert.Single(_scanner.ScanArchivedJobs());
 
         Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void PublishCoreFromFolder_ReadsDiskWhenFolderFingerprintIsUnchanged()
+    {
+        WriteJob(TaskStates.Ready, "job-1", "Before");
+        SettleWriteTime(TaskStates.Ready, "job-1");
+        var folder = Path.Combine(_watchPath, TaskStates.Ready, "job-1");
+        var taskJson = Path.Combine(folder, "task.json");
+        var stamp = File.GetLastWriteTimeUtc(taskJson);
+        Assert.Equal("Before", Assert.Single(_cache.GetSnapshot()).Title);
+
+        WriteJob(TaskStates.Ready, "job-1", "After!");
+        File.SetLastWriteTimeUtc(taskJson, stamp);
+
+        _scanner.PublishCoreFromFolder(folder, _watchPath, "cache-test", TaskStates.Ready);
+
+        Assert.Equal("After!", _cache.GetDetailFacts("job-1", _watchPath).Info?.Title);
     }
 
     [Fact]
@@ -1024,12 +1252,12 @@ public class TaskIndexCacheTests : IDisposable
             Assert.Same(pinned.References, _scanner.GetReferenceIndex());
             Assert.Equal(pinned.Generation, await Task.Run(() => _scanner.SnapshotGeneration));
 
-            // The dependency lookups of the body build take the pinned graph.
+            // Dependency targets use the latest core graph even while the
+            // task list and runner status remain pinned to the board snapshot.
             var lookups = TaskEndpointHelpers.BuildDependencyGraphLookups(
                 [new TaskInfo { Id = "waiter", TaskKey = "waiter-key", Key = "W-1", State = TaskStates.Ready,
-                    References = new TaskReferences { DependsOn = ["DONE-1"] } }],
-                _scanner,
-                references: pinned.References);
+                    References = new TaskReferences { DependsOn = ["DONE-2"] } }],
+                _scanner);
             Assert.True(lookups.WaitsOn["waiter-key"].Items.Single().Fulfilled);
 
             Assert.Equal(hits, cache.Hits);
