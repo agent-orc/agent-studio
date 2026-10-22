@@ -224,7 +224,8 @@ public static class RemoteReviewSettlementPolicy
             new DeliveredReviewRound(entry.AttemptId,
                 MonolithTransitionAdapter.ReviewRoundBudgetPolicyCountedBlockingAspects(originalVerdicts),
                 budget.DegradedAspects,
-                SpentBy: budget.SpentBy));
+                SpentBy: budget.SpentBy,
+                BlockingFindingKeys: MonolithTransitionAdapter.BlockingReviewFindingKeys(originalVerdicts)));
         return V1ReviewPlaneEndpoints.CreateReviewBudgetFollowUpCard(
             task, entry.AttemptId, originalVerdicts, budget, mutations, scanner) is not null;
     }

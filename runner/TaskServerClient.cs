@@ -1402,6 +1402,8 @@ public sealed class TaskServerClient : IDisposable
             request,
             ct);
         AdoptRoleMaxParallelism(snapshot?.RoleMaxParallelism);
+        if (snapshot?.ConfiguredModelRoutes is { } configuredRoutes)
+            RunnerModelAcceptanceProbe.Shared.UseConfiguredModels(configuredRoutes);
     }
 
     /// <summary>

@@ -16,7 +16,8 @@ public sealed partial class TaskServerStore
         ProviderRequestRejection Rejection,
         string Model,
         int RefusalCount,
-        string EscalationReason)
+        string EscalationReason,
+        bool HostModelUnavailable = false)
     {
         public bool Continue => Fallback is not null;
     }
@@ -91,6 +92,11 @@ public sealed partial class TaskServerStore
             && string.Equals(item.From, model, StringComparison.OrdinalIgnoreCase));
         var count = await CountProviderRefusalsAsync(connection, transaction, taskId, model, ct);
         var safeReason = $"Provider refused the request ({DescribeProviderRejection(rejection)}): {rejection.Message}";
+        if (ProviderRequestRejectionClassifier.IsModelUnavailable(rejection, model)
+            && string.IsNullOrWhiteSpace(request.SalvageCommitSha))
+            return new(null, rejection, model, count,
+                safeReason + " Host model capability is unavailable; the card waits in Ready.",
+                HostModelUnavailable: true);
         if (string.IsNullOrWhiteSpace(request.SalvageBranch)
             || string.IsNullOrWhiteSpace(request.SalvageCommitSha)
             || decision.RecoveryAction != ExecutionRecoveryAction.StartFreshAttemptFromSalvage)
@@ -113,7 +119,7 @@ public sealed partial class TaskServerStore
     private async Task<ProviderRejectionClaimContinuation?> ReadProviderFallbackForClaimAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        TaskDto task,
+        string taskId,
         CancellationToken ct)
     {
         string? payload = null;
@@ -127,7 +133,7 @@ public sealed partial class TaskServerStore
                AND event.kind = 'execution.outcome.classified'
              ORDER BY event.cursor DESC
              LIMIT 1;
-            """, transaction, ("$task", task.TaskId)))
+            """, transaction, ("$task", taskId)))
         await using (var reader = await command.ExecuteReaderAsync(ct))
         {
             if (await reader.ReadAsync(ct))
@@ -153,7 +159,7 @@ public sealed partial class TaskServerStore
             SalvageBranch: salvageBranch,
             SalvageCommitSha: salvageCommitSha);
         var fallback = (await PlanProviderRejectionAsync(
-            connection, transaction, task.TaskId, synthetic, ct))?.Fallback;
+            connection, transaction, taskId, synthetic, ct))?.Fallback;
         return fallback is null
                || string.IsNullOrWhiteSpace(salvageBranch)
                || string.IsNullOrWhiteSpace(salvageCommitSha)

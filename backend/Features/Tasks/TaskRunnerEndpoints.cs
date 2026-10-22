@@ -168,19 +168,25 @@ public static class TaskRunnerEndpoints
                 : Results.NotFound();
         });
 
-        group.MapPost("/{jobId}/continue", async (string jobId, string? project, string? watchPath, ContinueJobRequest req, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects, HttpContext context, CancellationToken ct) =>
+        group.MapPost("/{jobId}/continue", async (string jobId, string? project, string? watchPath, ContinueJobRequest req, TaskRunnerService runner, AgentStudio.Registry.ProjectRegistry projects, MonolithOrchestrationStore orchestration, TaskScannerService scanner, HttpContext context, CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (string.IsNullOrWhiteSpace(req?.Prompt))
                 return Results.BadRequest(new { error = "Prompt is required" });
 
             var mode = ContinueModes.Normalize(req.Mode);
+            var prior = scanner.FindJob(jobId, watchPath);
+            IReadOnlyList<string> openDecisions = prior is null
+                ? [] : orchestration.OpenLaneDecisionIds(prior.ProjectName, prior.Id);
             try
             {
                 var caller = context.User.Identity?.Name
                     ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
                     ?? "local-default";
                 var resp = await runner.ContinueJobAsync(jobId, req.Prompt, watchPath, req.Model, req.CliType, req.ThinkingLevel, mode, req.ModeOverride, author: TimelineActors.Human(caller), ct: ct, reason: req.Reason, triggeredBy: caller);
+                if (prior is not null && scanner.FindJob(jobId, watchPath) is { } current)
+                    await orchestration.SupersedeRunsAsync(prior.ProjectName, prior.Id,
+                        openDecisions, current.State, "operator-continue", ct);
                 return resp.Status is "queued" or "saved"
                     ? Results.Accepted(value: resp)
                     : Results.Ok(resp);

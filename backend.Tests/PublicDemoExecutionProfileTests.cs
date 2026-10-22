@@ -199,29 +199,14 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3264 adds guided-failure intervention on Continue.
         // AGT-3221 added the project.yml schema 2 migration confirm on PostStep:
         // it commits and pushes project.yml through the managed repository write.
+        // AGT-3233 streams deploy-host step messages and renews its fenced lease
+        // through PostStep routes.
         // AGT-3068 adds three rule mutations (Continue) and one host occurrence (Start),
         // and maps the engine decision-job (Start) and receipt (Continue) routes in
         // every profile.
-        // AGT-3233 registers deploy-host log and lease-renewal writes together.
-        // Require both PostStep routes when either reaches this branch.
-        var deployHostRoutes = new[]
-        {
-            "/api/deploy/jobs/{project}/{jobId}/log",
-            "/api/deploy/jobs/{project}/{jobId}/renew",
-        };
-        var registeredDeployHostRoutes = deployHostRoutes
-            .Select(path => allRoutes.SingleOrDefault(route => route.RoutePattern.RawText == path))
-            .ToArray();
-        Assert.Equal(registeredDeployHostRoutes[0] is not null,
-            registeredDeployHostRoutes[1] is not null);
-        foreach (var route in registeredDeployHostRoutes.OfType<RouteEndpoint>())
-        {
-            Assert.Contains(route, routes);
-            Assert.Equal(ExecutionAdmissionPath.PostStep,
-                route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
-            Assert.Contains("POST", route.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
-        }
-        Assert.Equal(126 + registeredDeployHostRoutes.Count(route => route is not null), routes.Count);
+        // AGT-3239 added the operator candidate verification record on PostStep:
+        // it appends immutable integrated-verified evidence after a passed suite.
+        Assert.Equal(129, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -234,7 +219,10 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         foreach (var (routePath, admissionPath) in new[]
         {
             ("/api/runner/lease/{attemptId}/revoked-reference", ExecutionAdmissionPath.PostStep),
+            ("/api/projects/{project}/operator-candidate-verifications", ExecutionAdmissionPath.PostStep),
             ("/api/deploy/gate-releases", ExecutionAdmissionPath.Start),
+            ("/api/deploy/jobs/{project}/{jobId}/log", ExecutionAdmissionPath.PostStep),
+            ("/api/deploy/jobs/{project}/{jobId}/renew", ExecutionAdmissionPath.PostStep),
             ("/api/projects/{projectName}/deploy/releases/{releaseId}/deployments", ExecutionAdmissionPath.Start),
             ("/api/projects/{projectName}/deploy/environments/{environmentId}/redeploy", ExecutionAdmissionPath.Start),
             ("/api/projects/{projectName}/deploy/environments/{environmentId}/rollback", ExecutionAdmissionPath.Start),
@@ -285,8 +273,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 28,
-                [ExecutionAdmissionPath.PostStep] =
-                    17 + registeredDeployHostRoutes.Count(route => route is not null),
+                [ExecutionAdmissionPath.PostStep] = 20,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));
