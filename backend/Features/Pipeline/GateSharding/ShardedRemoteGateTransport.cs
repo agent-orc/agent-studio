@@ -1,4 +1,5 @@
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Runner;
 
 namespace AgentStudio.Pipeline;
 
@@ -88,10 +89,11 @@ public sealed class ShardedRemoteGateTransport : IRemoteGateTransport
         IConfiguration configuration,
         ILoggerFactory loggers,
         GateShardTimingStore timings,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null)
         : this(
             new GateShardHost(configuration["RemoteGate:SshHost"] ?? "primary", primary, primarySlots),
-            AdditionalHosts(configuration, loggers, clock),
+            AdditionalHosts(configuration, loggers, clock, activity, scanner),
             timings,
             loggers.CreateLogger<ShardedRemoteGateTransport>(),
             clock)
@@ -168,6 +170,13 @@ public sealed class ShardedRemoteGateTransport : IRemoteGateTransport
         return result;
     }
 
+    internal async Task CancelOrphanedRunsAsync(CancellationToken ct)
+    {
+        foreach (var host in _additional)
+            if (host.Transport is RemoteGateTransport transport)
+                await transport.CancelOrphanedRunsAsync(ct).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// One host's share. A transport exception becomes that share's
     /// infrastructure result so the merge, not the first failing host, decides
@@ -235,7 +244,8 @@ public sealed class ShardedRemoteGateTransport : IRemoteGateTransport
     }
 
     private static IReadOnlyList<GateShardHost> AdditionalHosts(
-        IConfiguration configuration, ILoggerFactory loggers, TimeProvider? clock)
+        IConfiguration configuration, ILoggerFactory loggers, TimeProvider? clock,
+        OrchestratorLog? activity, AgentStudio.Tasks.TaskScannerService? scanner)
         => configuration.GetSection("RemoteGate:ShardHosts").GetChildren()
             .Where(section => !string.IsNullOrWhiteSpace(section["SshHost"]))
             .OrderBy(section => section.Key, StringComparer.Ordinal)
@@ -243,7 +253,7 @@ public sealed class ShardedRemoteGateTransport : IRemoteGateTransport
             {
                 var slots = new GateSlotUsageTracker(clock: clock);
                 var transport = new RemoteGateTransport(configuration, loggers.CreateLogger<RemoteGateTransport>(),
-                    section.Path, slots, clock);
+                    section.Path, slots, clock, activity, scanner);
                 return new GateShardHost(section["SshHost"]!.Trim(), transport, slots);
             })
             .ToArray();

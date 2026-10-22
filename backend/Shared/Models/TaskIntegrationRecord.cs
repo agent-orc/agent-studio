@@ -60,9 +60,20 @@ public sealed record TaskIntegrationRecord
     [JsonPropertyName("suiteSummary")]
     public string? SuiteSummary { get; init; }
 
+    [JsonPropertyName("verificationSuites")]
+    public List<TaskIntegrationSuite> VerificationSuites { get; init; } = [];
+
     [JsonPropertyName("logHash")]
     public string? LogHash { get; init; }
+
+    [JsonPropertyName("verificationStartedAtUtc")]
+    public DateTime? VerificationStartedAtUtc { get; init; }
+
+    [JsonPropertyName("verificationEndedAtUtc")]
+    public DateTime? VerificationEndedAtUtc { get; init; }
 }
+
+public sealed record TaskIntegrationSuite(string Command, int Passed, int Failed, int Skipped);
 
 /// <summary>Durable classifications produced by the historical integration sweep.</summary>
 public static class IntegrationRecordClasses

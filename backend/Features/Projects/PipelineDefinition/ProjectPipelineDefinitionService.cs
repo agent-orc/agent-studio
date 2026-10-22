@@ -86,7 +86,7 @@ public sealed class ProjectPipelineDefinitionService
     {
         if (Repository(projectName) is not { } root)
             return PipelineDefinitionResult<PipelineDefinitionResponse>.Fail("not-found", $"Unknown project '{projectName}'.");
-        var (text, read) = ReadCurrent(root, Hosts(Declarations(projectName)));
+        var (text, read) = ReadCurrent(root, HostsFor(projectName, root));
         return PipelineDefinitionResult<PipelineDefinitionResponse>.Ok(View(projectName, text is not null, read));
     }
 
@@ -100,7 +100,7 @@ public sealed class ProjectPipelineDefinitionService
         if (Repository(projectName) is not { } root)
             return PipelineDefinitionResult<PipelineDefinitionResponse>.Fail("not-found", $"Unknown project '{projectName}'.");
         return PipelineDefinitionResult<PipelineDefinitionResponse>.Ok(
-            View(projectName, true, ProjectDefinitionReader.Parse(yaml, root, Hosts(Declarations(projectName)))));
+            View(projectName, true, ProjectDefinitionReader.Parse(yaml, root, OptionalHosts(HostsFor(projectName, root)))));
     }
 
     public PipelineDefinitionResult<PipelineMigrationResponse> DryRun(string projectName)
@@ -146,7 +146,7 @@ public sealed class ProjectPipelineDefinitionService
         _logger.LogInformation(
             "project-definition-migrated project={Project} from={Base} to={Proposal} changed={Changed} sha={Sha} pushQueued={PushQueued}",
             projectName, request.BaseSha256, confirmed?.ProposalSha256, mutation.Changed, mutation.CommitSha, mutation.PushQueued);
-        var (_, after) = ReadCurrent(root, Hosts(Declarations(projectName)));
+        var (_, after) = ReadCurrent(root, HostsFor(projectName, root));
         return PipelineDefinitionResult<PipelineMigrationConfirmResponse>.Ok(new(
             mutation.Changed, mutation.CommitSha, mutation.PushQueued, View(projectName, true, after)));
     }
@@ -169,7 +169,7 @@ public sealed class ProjectPipelineDefinitionService
         string projectName, string root)
     {
         var declarations = Declarations(projectName);
-        var hosts = Hosts(declarations);
+        var hosts = HostsFor(projectName, root);
         var (text, read) = ReadCurrent(root, hosts);
         var facts = new PipelineMigrationFacts(
             PipelineMigrationPolicy.ProjectIdFor(projectName),
@@ -191,6 +191,17 @@ public sealed class ProjectPipelineDefinitionService
             .ToDictionary(group => group.Key,
                 group => (IReadOnlyList<string>)group.Select(item => item.TargetHostId).Distinct(StringComparer.Ordinal).ToArray(),
                 StringComparer.Ordinal));
+
+    private static ProjectDeployHostRegistry? OptionalHosts(ProjectDeployHostRegistry hosts)
+        => hosts.HostsByEnvironment.Count == 0 ? null : hosts;
+
+    private ProjectDeployHostRegistry HostsFor(string projectName, string root)
+    {
+        var directory = Path.Combine(root, ProjectEnvironmentService.DeclarationDirectory);
+        return Directory.Exists(directory) && Directory.EnumerateFiles(directory, "*.json").Any()
+            ? Hosts(Declarations(projectName))
+            : new ProjectDeployHostRegistry(new Dictionary<string, IReadOnlyList<string>>());
+    }
 
     private IReadOnlyList<EnvironmentDeclaration> Declarations(string projectName)
     {
@@ -251,7 +262,7 @@ public sealed class ProjectPipelineDefinitionService
         var path = DefinitionPath(root);
         if (!File.Exists(path)) return (null, ProjectDefinitionReader.ReadWorkspace(root));
         var text = File.ReadAllText(path);
-        return (text, ProjectDefinitionReader.Parse(text, root, hosts));
+        return (text, ProjectDefinitionReader.Parse(text, root, OptionalHosts(hosts)));
     }
 
     private static bool HasUtf8Bom(string path)
