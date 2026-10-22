@@ -173,7 +173,6 @@ public sealed class StudioTaskMetadataTests
         Assert.Equal("resource-version-mismatch", (await stale.Content.ReadFromJsonAsync<ApiError>())!.Code);
     }
 
-
     [Fact]
     public async Task References_replaces_the_set_validates_existence_and_rejects_a_stale_expected_version()
     {
@@ -284,6 +283,5 @@ public sealed class StudioTaskMetadataTests
 
     private static async Task InsertTagAsync(TaskServerStore store, string tagId, string name)
         => await store.CreateTagAsync(new CreateTagRequest(name, TagId: tagId), "test", default);
-
 
 }

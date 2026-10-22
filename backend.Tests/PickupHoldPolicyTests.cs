@@ -348,7 +348,6 @@ public class PickupHoldPolicyTests
         Assert.Equal(PickupHoldMechanisms.DependencyGate, hold!.Mechanism);
     }
 
-
     [Fact]
     public void HumanAgent_IsAPickupPolicyHold()
     {

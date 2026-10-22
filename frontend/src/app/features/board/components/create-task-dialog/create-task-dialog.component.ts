@@ -81,7 +81,6 @@ export class CreateTaskDialogComponent implements AfterViewInit {
   readonly newMode = model<TaskMode>('coding');
   readonly newAllowWebAccess = model<boolean>(false);
 
-
   readonly tagRegistryStore = inject(TagRegistryStore);
   readonly availableTags = computed(() => this.tagRegistryStore.tags());
 
