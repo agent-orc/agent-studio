@@ -131,7 +131,8 @@ public class TaskStateMachine
         DecisionReopenPermit? decisionReopenPermit = null,
         bool archiveOverride = false,
         bool archiveOverrideRollback = false,
-        bool historicalAcceptanceRepair = false)
+        bool historicalAcceptanceRepair = false,
+        bool operatorDecisionPark = false)
     {
         if (!TaskStates.All.Contains(targetState))
             return new MoveJobOutcome(MoveJobStatus.Failure, $"Invalid state: {targetState}");
@@ -199,16 +200,14 @@ public class TaskStateMachine
             var status = targetState == TaskStates.Completed
                 ? _integrationStatus.BuildForCompletion(recheck)
                 : _integrationStatus.BuildLookup([recheck]).GetValueOrDefault(recheck.TaskKey);
+            var authorizedPark = operatorDecisionPark && cause == "engine-decision"
+                && authorityWrite is not null && expectedSourceState == TaskStates.AutoReview
+                && recheck.State == TaskStates.AutoReview && targetState == TaskStates.HumanReview;
             var admission = DeliveryLanePolicy.Decide(recheck.State, targetState,
-                AcceptanceIntegrationPolicy.IsIntegrationRequired(recheck), status?.Status, archiveOverride);
+                AcceptanceIntegrationPolicy.IsIntegrationRequired(recheck), status?.Status,
+                archiveOverride, authorizedPark);
             if (!admission.Allowed && !historicalAcceptanceRepair)
             {
-                if (recheck.State == TaskStates.AutoReview && targetState == TaskStates.HumanReview)
-                {
-                    TaskJsonFile.UpdateField(recheck.FolderPath, "phase", LifecyclePhases.Integrating, _logger);
-                    _scanner.InvalidateCache();
-                    _scanner.PublishCoreFromKnownFolder(recheck.FolderPath);
-                }
                 return new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
                     $"{admission.Category}: {admission.RecoveryAction} Current status: {status?.Status ?? "unknown"}.");
             }

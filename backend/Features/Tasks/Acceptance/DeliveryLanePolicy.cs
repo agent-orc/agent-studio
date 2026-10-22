@@ -41,13 +41,16 @@ public static class DeliveryLanePolicy
 
     public static DeliveryLaneDecision Decide(
         string source, string target, bool requiresIntegration, string? status,
-        bool archiveOverride = false)
+        bool archiveOverride = false, bool operatorDecisionPark = false)
     {
         if (target is not (TaskStates.HumanReview or TaskStates.Completed or TaskStates.Archive))
             return new(true);
         if (!requiresIntegration)
             return new(true);
         if (status == IntegrationStatuses.Integrated)
+            return new(true);
+        if (operatorDecisionPark && source == TaskStates.AutoReview
+            && target == TaskStates.HumanReview)
             return new(true);
         if (target == TaskStates.Archive && archiveOverride)
             return new(true);

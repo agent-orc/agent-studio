@@ -27,7 +27,12 @@ public sealed record MonolithOrchestrationOccurrence(
     OrchestrationDecisionReceipt? MonolithIntent = null,
     string? MonolithIntentTarget = null,
     string? ShadowResolution = null,
-    long CreationSequence = 0);
+    long CreationSequence = 0,
+    int ApplicationAttempts = 0,
+    string? ApplicationFailure = null);
+
+/// <summary>A lane admission refused a decision without changing the card.</summary>
+public sealed class OrchestrationApplicationRefusedException(string reason) : Exception(reason);
 
 public interface IMonolithOrchestrationApplier
 {
@@ -52,6 +57,7 @@ public interface IOrchestrationSupersessionAudit
 /// </summary>
 public sealed class MonolithOrchestrationStore
 {
+    internal const int MaximumApplicationAttempts = 3;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly object _gate = new();
     private readonly string? _directory;
@@ -719,7 +725,7 @@ public sealed class MonolithOrchestrationStore
                 if (item.Completion is null || item.Completion.Stage != request.Stage
                     || item.Completion.Action != request.Action || item.Completion.OutputJson != request.OutputJson)
                     throw new InvalidOperationException("orchestration-idempotency-conflict");
-                if (item.Run.Status == "completed") return item.Run;
+                if (item.Run.Status is "completed" or "failed") return item.Run;
                 if (item.EngineReceipt is null)
                 {
                     item = item with { EngineReceipt = EngineReceipt(item, request) };
@@ -764,11 +770,41 @@ public sealed class MonolithOrchestrationStore
                 Supersede(runId, exception.ObservedState);
                 return Get(runId)!;
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception exception) when (exception is InvalidDataException or JsonException
+                or FormatException or NotSupportedException or ArgumentException) { throw; }
+            catch (Exception exception)
+            {
+                lock (_gate)
+                {
+                    item = Required(runId);
+                    var attempts = item.ApplicationAttempts + 1;
+                    var terminal = exception is OrchestrationApplicationRefusedException
+                        || attempts >= MaximumApplicationAttempts;
+                    var now = _time.GetUtcNow().UtcDateTime;
+                    item = item with
+                    {
+                        ApplicationAttempts = attempts,
+                        ApplicationFailure = exception.Message,
+                        Lease = terminal ? item.Lease! with { Status = "settled" } : item.Lease,
+                        Run = item.Run with
+                        {
+                            Status = terminal ? "failed" : "applying",
+                            UpdatedAt = now,
+                            CompletedAt = terminal ? now : null,
+                        },
+                    };
+                    Save(item);
+                    _runs[runId] = item;
+                    if (terminal) return item.Run;
+                }
+                throw;
+            }
         }
         lock (_gate)
         {
             item = Required(runId);
-            if (item.Run.Status == "completed") return item.Run;
+            if (item.Run.Status is "completed" or "failed") return item.Run;
             var now = _time.GetUtcNow().UtcDateTime;
             var result = new OrchestrationStageResultDto(1, request.Stage, request.Action,
                 request.OutputJson, now);

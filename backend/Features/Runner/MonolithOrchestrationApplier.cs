@@ -316,9 +316,17 @@ public sealed class MonolithOrchestrationApplier(
                 engineDecisionRequeue: activeChoice is { Action: DecisionActionKinds.Retry,
                     Target: "card:ready" } or { Action: DecisionActionKinds.Adapt,
                     Target: "salvage-handoff" },
-                engineContinuationBase: salvageBase);
+                engineContinuationBase: salvageBase,
+                operatorDecisionPark: occurrence.Profile == "ReviewReport"
+                    && decision?.Action == TransitionAction.HumanReview
+                    && HasPayloadProperty(occurrence.Run.PayloadJson, "reviewOutcome"));
             if (move.Status != MoveJobStatus.Success)
-                throw new InvalidOperationException($"Engine lane move failed: {move.Status} {move.Message}");
+            {
+                var reason = $"Engine lane move failed: {move.Status} {move.Message}";
+                if (move.Status == MoveJobStatus.IntegrationFailed)
+                    throw new OrchestrationApplicationRefusedException(reason);
+                throw new InvalidOperationException(reason);
+            }
             scanner.InvalidateCache();
             scanner.PublishCoreFromKnownFolder(task.FolderPath);
             task = scanner.FindJob(task.Id, task.WatchPath) ?? task with
