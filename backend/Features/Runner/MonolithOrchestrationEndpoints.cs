@@ -445,7 +445,11 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         }
     }
 
-    internal void RecoverOnce(Action? afterTaskSnapshot = null)
+    internal void RecoverOnce() => RecoverOnceCore(null);
+
+    internal void RecoverOnceForTest(Action afterTaskSnapshot) => RecoverOnceCore(afterTaskSnapshot);
+
+    private void RecoverOnceCore(Action? afterTaskSnapshot)
     {
         var tasks = scanner.ScanAllJobs();
         afterTaskSnapshot?.Invoke();
@@ -465,11 +469,14 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         {
             try
             {
-                store.SupersedeStaleLaneDecisionAsync(occurrence.Run.RunId, () =>
+                store.TrySupersedeStaleLaneDecision(occurrence.Run.RunId, () =>
                 {
-                    var card = scanner.FindPublishedJob(occurrence.Run.TaskId);
-                    return card?.ProjectName == occurrence.Run.ProjectId ? card.State : null;
-                }).GetAwaiter().GetResult();
+                    var watchPath = scanner.GetWatchPaths().FirstOrDefault(item =>
+                        item.Name == occurrence.Run.ProjectId)?.Path;
+                    var card = watchPath is null ? null
+                        : scanner.FindPublishedJob(occurrence.Run.TaskId, watchPath);
+                    return card?.State;
+                });
             }
             catch (Exception exception)
             {
@@ -479,57 +486,57 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         }
         foreach (var occurrence in store.AwaitingActivation())
         {
-            var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
-                && item.ProjectName == occurrence.Run.ProjectId)
-                ?? scanner.ScanAllJobsWithArchive().FirstOrDefault(item =>
-                    item.Id == occurrence.Run.TaskId && item.ProjectName == occurrence.Run.ProjectId);
             try
             {
-                if (card?.State != occurrence.ExpectedSourceState)
+                store.TryWithCardGate(occurrence.Run.ProjectId, occurrence.Run.TaskId, () =>
                 {
-                    store.Supersede(occurrence.Run.RunId, card?.State, includeApplying: false);
-                    continue;
-                }
-                if (occurrence.Run.CurrentStage == OrchestrationStage.ReviewInputDecision)
-                {
-                    if (decisionInputs.GetInputs(occurrence.Run.RunId) is not null)
+                    var current = store.GetOccurrence(occurrence.Run.RunId);
+                    if (current is null || current.Claimable) return;
+                    var watchPath = scanner.GetWatchPaths().FirstOrDefault(item =>
+                        item.Name == occurrence.Run.ProjectId)?.Path;
+                    var card = watchPath is null ? null
+                        : scanner.FindPublishedJob(occurrence.Run.TaskId, watchPath);
+                    if (card is null || card.State != occurrence.ExpectedSourceState)
                     {
+                        store.Supersede(occurrence.Run.RunId, card?.State, includeApplying: false);
+                        return;
+                    }
+                    if (occurrence.Run.CurrentStage == OrchestrationStage.ReviewInputDecision)
+                    {
+                        if (decisionInputs.GetInputs(occurrence.Run.RunId) is not null)
+                        {
+                            store.Activate(occurrence.Run.RunId);
+                            markersChanged |= RecordMarker(card.FolderPath,
+                                MarkWaiting(card.FolderPath, occurrence.Run.RunId));
+                        }
+                        else if (time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt >= PreparationGrace)
+                            store.CancelUnactivated(occurrence.Run.RunId, "review-input-grounds-not-frozen");
+                        return;
+                    }
+                    markersChanged |= RecordMarker(card.FolderPath,
+                        EngineDecisionWaitMarker.Clear(card.FolderPath, occurrence.Run.RunId));
+                    var accepted = authority.GetReview(occurrence.AuthorityAttemptId)?.Reports.Any(report =>
+                        report.AuthorityStatus == AttemptWriteStatus.Accepted
+                        && occurrence.IdempotencyKey ==
+                            $"review-report:{occurrence.AuthorityAttemptId}:{report.IdempotencyKey}") == true;
+                    if (accepted)
+                    {
+                        if (occurrence.Run.CurrentStage == OrchestrationStage.ReviewDecision
+                            && !occurrence.Shadow)
+                        {
+                            var payload = JsonSerializer.Deserialize<StagePayload>(occurrence.Run.PayloadJson,
+                                new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                                ?? throw new InvalidDataException("The prepared review decision is missing its payload.");
+                            ReviewRoundBudgetStore.RecordAcceptedEngineReview(card.FolderPath, payload);
+                        }
                         store.Activate(occurrence.Run.RunId);
-                        if (card is not null && card.State == occurrence.ExpectedSourceState)
+                        if (!occurrence.Shadow)
                             markersChanged |= RecordMarker(card.FolderPath,
                                 MarkWaiting(card.FolderPath, occurrence.Run.RunId));
                     }
                     else if (time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt >= PreparationGrace)
-                        store.CancelUnactivated(occurrence.Run.RunId, "review-input-grounds-not-frozen");
-                    continue;
-                }
-                if (card is not null)
-                    markersChanged |= RecordMarker(card.FolderPath,
-                        EngineDecisionWaitMarker.Clear(card.FolderPath, occurrence.Run.RunId));
-                var accepted = authority.GetReview(occurrence.AuthorityAttemptId)?.Reports.Any(report =>
-                    report.AuthorityStatus == AttemptWriteStatus.Accepted
-                    && occurrence.IdempotencyKey ==
-                        $"review-report:{occurrence.AuthorityAttemptId}:{report.IdempotencyKey}") == true;
-                if (accepted)
-                {
-                    if (card is not null && occurrence.Run.CurrentStage == OrchestrationStage.ReviewDecision
-                        && !occurrence.Shadow)
-                    {
-                        var payload = JsonSerializer.Deserialize<StagePayload>(occurrence.Run.PayloadJson,
-                            new JsonSerializerOptions(JsonSerializerDefaults.Web))
-                            ?? throw new InvalidDataException("The prepared review decision is missing its payload.");
-                        ReviewRoundBudgetStore.RecordAcceptedEngineReview(card.FolderPath, payload);
-                    }
-                    store.Activate(occurrence.Run.RunId);
-                    if (!occurrence.Shadow && card is not null && card.State == occurrence.ExpectedSourceState)
-                        markersChanged |= RecordMarker(card.FolderPath,
-                            MarkWaiting(card.FolderPath, occurrence.Run.RunId));
-                }
-                else
-                {
-                    if (time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt >= PreparationGrace)
                         store.CancelUnactivated(occurrence.Run.RunId, "review-settlement-not-accepted");
-                }
+                });
             }
             catch (Exception exception)
             {
@@ -553,17 +560,20 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         // engine wait until it leaves the lane.
         foreach (var card in tasks.Where(item => EngineDecisionWaitMarker.Read(item.FolderPath) is not null))
         {
-            // RecoverOnce runs outside the loop's per-step catches, so a lane move
-            // or a concurrent clear that races this read must not end the loop.
             try
             {
-                if (EngineDecisionWaitMarker.Read(card.FolderPath) is { } runId
-                    && store.GetOccurrence(runId) is { } named
-                    && (named.ExpectedSourceState != card.State
-                        || named.Run.Status is ("cancelled" or "failed")
-                        || named.Run.Status == "completed" && !MayHoldCard(named)))
-                    markersChanged |= RecordMarker(card.FolderPath,
-                        EngineDecisionWaitMarker.Clear(card.FolderPath, runId));
+                store.TryWithCardGate(card.ProjectName, card.Id, () =>
+                {
+                    var current = scanner.FindPublishedJob(card.Id, card.WatchPath);
+                    if (current is null) return;
+                    if (EngineDecisionWaitMarker.Read(current.FolderPath) is { } runId
+                        && store.GetOccurrence(runId) is { } named
+                        && (named.ExpectedSourceState != current.State
+                            || named.Run.Status is ("cancelled" or "failed")
+                            || named.Run.Status == "completed" && !MayHoldCard(named)))
+                        markersChanged |= RecordMarker(current.FolderPath,
+                            EngineDecisionWaitMarker.Clear(current.FolderPath, runId));
+                });
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
                 or JsonException)
