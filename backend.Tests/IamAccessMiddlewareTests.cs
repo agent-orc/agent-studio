@@ -338,6 +338,8 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         context.Request.Method = "PATCH";
         context.Request.Path = "/api/projects/alpha/snapshot";
         context.Request.Scheme = "https";
+        context.Request.Host = new HostString("studio.test");
+        context.Request.Headers.Origin = "https://studio.test";
         context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={owner.SessionToken}");
         context.Request.Headers["X-CSRF-Token"] = new StringValues(owner.CsrfToken);
         context.SetEndpoint(new Endpoint(_ => Task.CompletedTask, EndpointMetadataCollection.Empty, "405 HTTP Method Not Supported"));
@@ -400,6 +402,8 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         context.Request.Method = method;
         context.Request.Path = path;
         context.Request.Scheme = "https";
+        context.Request.Host = new HostString("studio.test");
+        context.Request.Headers.Origin = "https://studio.test";
         authenticate(context);
         context.SetEndpoint(new RouteEndpoint(_ => Task.CompletedTask, RoutePatternFactory.Parse(pattern), 0,
             new EndpointMetadataCollection([new HttpMethodMetadata([method]), .. metadata ?? []]), pattern));

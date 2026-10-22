@@ -189,6 +189,8 @@ public static class RoutePermissionCatalog
 
         // --- Runner and engine service routes (credential scopes decide) ----
         Add("R", IamPermissions.RunnerService, "/api/quota/admission/{}");
+        Add("R", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/desired-state");
+        Add("POST", IamPermissions.RunnerService, "/api/deploy/run-targets/{}/observed-state");
         Add("*", IamPermissions.RunnerService,
             "/api/v1/orchestration/**", "/api/v1/runners/**", "/api/v1/gates/**", "/api/v1/runs/**",
             "/api/runner/artifacts/**", "/api/runner/lease/**", "/api/pull-gates/**", "/api/gate-artifacts/**");
@@ -217,7 +219,11 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/environments/{}/rollback", null, "environmentId");
         Environment("PUT", IamPermissions.EnvironmentProductionDeployApprove, "/api/tasks/{}/release",
             IamEnvironments.Production);
-        Add("R", IamPermissions.WorkspaceRead, "/api/deploy/matrix");
+        Add("R", IamPermissions.WorkspaceRead, "/api/deploy/matrix", "/api/deploy/cards");
+        Environment("POST", IamPermissions.EnvironmentProductionDeploy,
+            "/api/projects/{}/environments/{}/stop", null, "environmentId");
+        Environment("POST", IamPermissions.EnvironmentProductionDeploy,
+            "/api/projects/{}/environments/{}/run-target-removal/confirm", null, "environmentId");
         Add("R", IamPermissions.ProjectRead,
             "/api/projects/{}/deploy/environments", "/api/projects/{}/deploy/status",
             "/api/projects/{}/deploy/releases", "/api/projects/{}/deploy/releases/page",

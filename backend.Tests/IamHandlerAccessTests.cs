@@ -630,6 +630,7 @@ public sealed class IamHandlerAccessTests : IDisposable
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
         client.DefaultRequestHeaders.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={user.Session}");
         client.DefaultRequestHeaders.Add("X-CSRF-Token", user.Csrf);
+        client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
         return client;
     }
 

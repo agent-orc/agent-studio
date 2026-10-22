@@ -112,6 +112,7 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         client.DefaultRequestHeaders.Authorization = null;
         client.DefaultRequestHeaders.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={owner.SessionToken}");
         client.DefaultRequestHeaders.Add("X-CSRF-Token", owner.CsrfToken);
+        client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
         using var first = await client.PostAsJsonAsync(path, summary);
         first.EnsureSuccessStatusCode();
         using var body = JsonDocument.Parse(await first.Content.ReadAsStringAsync());

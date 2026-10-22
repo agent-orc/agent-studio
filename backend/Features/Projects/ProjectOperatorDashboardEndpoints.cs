@@ -87,8 +87,7 @@ public static class ProjectOperatorDashboardEndpoints
             HttpContext context, string projectName, string environmentId, RunTargetRemovalConfirmRequest? request,
             ProjectEnvironmentService environments) =>
             environments.ConfirmRunTargetRemoval(projectName, environmentId, request?.HostId,
-                context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
-                    ? human.User.Id : "local-operator")
+                AccessSecurityMiddleware.ActorId(context, "local-operator"))
                 ? Results.Accepted() : Results.Conflict(new { error = "No removal is pending for this environment." }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 

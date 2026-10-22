@@ -228,6 +228,11 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   observation writes require `project.runs.operate`; recording operator
   candidate verification additionally requires a human Admin or Owner and
   `workspace.operate` on the workspace.
+- The deployment card matrix requires `workspace.read` and filters project
+  rows. Run targets use Runner credentials with the deploy scope for desired
+  and observed state, and the handler checks the enrolled host id. Stopping
+  an environment or confirming its removal from a run target requires
+  `environment.production.deploy` on the environment's declared key.
 - Application telemetry queries and ingest-token lists require `project.read`.
   Issuing or revoking an ingest token requires `project.settings.write` for
   that project. OTLP intake authenticates the ingest token itself and grants
@@ -262,6 +267,10 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   management, hosts, sweeps, recovery). The same holds for unaddressed writes
   in general. Give such a user Admin on the workspace to restore it. Only
   the Owner reads or manages access, as before the rights model.
+- Quota admission for the Task Server and Runner declares `runner.service`;
+  its dedicated service credential or Runner claim check still applies.
+  Reading quota audit or changing quotas requires `workspace.administer` and
+  the Owner handler check. Service accounts do not satisfy that Owner check.
 - Service accounts are non-human principals with their own bearer tokens
   (`sat.` prefix), stored as hashes with expiry (default 90 days, at most one
   year), last use, and revocation. They need no CSRF token, can hold Admin,

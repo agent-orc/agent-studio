@@ -192,6 +192,7 @@ public sealed class IamEndpointTests : IDisposable
 
     private static async Task<string> LoginAsync(HttpClient client, string username, string password)
     {
+        client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
         var response = await client.PostAsJsonAsync("/api/auth/login", new { username, password });
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<AuthStatusResponse>())!.CsrfToken!;

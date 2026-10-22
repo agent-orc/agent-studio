@@ -59,6 +59,11 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("POST", "/api/projects/{projectName}/environments/releases", IamPermissions.EnvironmentDeploy)]
     [InlineData("POST", "/api/projects/{projectName}/environments/{environmentId}/rollback", IamPermissions.EnvironmentProductionDeploy)]
     [InlineData("GET", "/api/deploy/matrix", IamPermissions.WorkspaceRead)]
+    [InlineData("GET", "/api/deploy/cards", IamPermissions.WorkspaceRead)]
+    [InlineData("GET", "/api/deploy/run-targets/{hostId}/desired-state", IamPermissions.RunnerService)]
+    [InlineData("POST", "/api/deploy/run-targets/{hostId}/observed-state", IamPermissions.RunnerService)]
+    [InlineData("POST", "/api/projects/{projectName}/environments/{environmentId}/stop", IamPermissions.EnvironmentProductionDeploy)]
+    [InlineData("POST", "/api/projects/{projectName}/environments/{environmentId}/run-target-removal/confirm", IamPermissions.EnvironmentProductionDeploy)]
     [InlineData("GET", "/api/projects/{projectName}/deploy/environments", IamPermissions.ProjectRead)]
     [InlineData("GET", "/api/projects/{projectName}/deploy/status", IamPermissions.ProjectRead)]
     [InlineData("GET", "/api/projects/{projectName}/deploy/releases", IamPermissions.ProjectRead)]
@@ -138,6 +143,10 @@ public sealed class RoutePermissionInventoryTests : IDisposable
 
         Assert.Equal("production", approve?.Environment);
         Assert.Equal("environmentId", rollback?.EnvironmentRouteValue);
+        Assert.Equal("environmentId", RoutePermissionCatalog.Resolve("POST",
+            "/api/projects/{}/environments/{}/stop")?.EnvironmentRouteValue);
+        Assert.Equal("environmentId", RoutePermissionCatalog.Resolve("POST",
+            "/api/projects/{}/environments/{}/run-target-removal/confirm")?.EnvironmentRouteValue);
         Assert.Equal("environmentId", RoutePermissionCatalog.Resolve("POST",
             "/api/projects/{}/deploy/releases/{}/deployments")?.EnvironmentBodyField);
         Assert.Equal("environment", RoutePermissionCatalog.Resolve("GET", "/api/projects/{}/environments/{}/secrets")?.EnvironmentRouteValue);
