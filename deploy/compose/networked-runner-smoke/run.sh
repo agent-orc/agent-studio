@@ -72,12 +72,12 @@ fi
 owner_password=$(openssl rand -hex 24)
 cookie="$smoke_dir/cookie"
 session=$(curl --silent --show-error --fail --cacert "$ca" -c "$cookie" -b "$cookie" \
-  -H 'Content-Type: application/json' -d "$(jq -nc --arg password "$owner_password" \
+  -H "Origin: $origin" -H 'Content-Type: application/json' -d "$(jq -nc --arg password "$owner_password" \
   '{username:"smoke.owner",password:$password,displayName:"Smoke Owner"}')" \
   "$origin/api/auth/bootstrap")
 csrf=$(jq -er '.csrfToken' <<< "$session")
 enrollment=$(curl --silent --show-error --fail --cacert "$ca" -c "$cookie" -b "$cookie" \
-  -H 'Content-Type: application/json' -H "X-CSRF-Token: $csrf" \
+  -H 'Content-Type: application/json' -H "X-CSRF-Token: $csrf" -H "Origin: $origin" \
   -d '{"name":"smoke-runner"}' "$origin/api/auth/runner-enrollments")
 code=$(jq -er '.enrollmentCode' <<< "$enrollment")
 identity=$(curl --silent --show-error --fail --cacert "$ca" -H 'Content-Type: application/json' \
@@ -86,7 +86,7 @@ runner_id=$(jq -er '.runnerId' <<< "$identity")
 runner_name=$(jq -er '.runnerName' <<< "$identity")
 token=$(jq -er '.secret' <<< "$identity")
 curl --silent --show-error --fail --cacert "$ca" -c "$cookie" -b "$cookie" \
-  -X PUT -H 'Content-Type: application/json' -H "X-CSRF-Token: $csrf" \
+  -X PUT -H 'Content-Type: application/json' -H "X-CSRF-Token: $csrf" -H "Origin: $origin" \
   -d "$(jq -nc --arg id "$runner_id" '{executionRunner:$id,remoteExecutionEnabled:true,pickupMode:"manual"}')" \
   "$origin/api/projects/networked-smoke/execution-runner" >/dev/null
 

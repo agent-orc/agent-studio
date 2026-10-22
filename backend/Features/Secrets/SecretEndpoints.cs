@@ -249,10 +249,7 @@ public static class SecretEndpoints
         {
             if (SecurityProfiles.IsPublicDemo(configuration))
                 throw new SecretAccessDeniedException("public-demo-denied", "Secrets are not available in the public demo.");
-            var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal
-                        ?? security.AuthenticateSession(
-                            context.Request.Cookies[AccessSecurityStore.SessionCookieName]
-                            ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName], touch: false);
+            var human = AccessSecurityEndpoints.FindHuman(context, security, touch: false);
             if (human is not null) return new Caller(SecretActor.Human(human.User.Username), human.User, registry);
             if (SecurityProfiles.IsLocal(configuration)) return new Caller(SecretActor.Human(LocalOperator), null, registry);
             throw new CallerUnauthenticatedException();

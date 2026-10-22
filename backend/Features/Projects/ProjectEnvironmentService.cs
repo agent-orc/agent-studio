@@ -37,8 +37,9 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
     string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0,
     string? ReleaseId = null, string? RollbackOfJobId = null,
-    bool GuidedFailure = false, bool GuidedResolved = false, string? RetryStep = null,
-    string? RetryOfJobId = null, DateTime? FirstClaimedAt = null, RunTargetHosting? Hosting = null)
+    bool ReservedSlot = false, bool IsStop = false, bool GuidedFailure = false,
+    bool GuidedResolved = false, string? RetryStep = null, string? RetryOfJobId = null,
+    DateTime? FirstClaimedAt = null, RunTargetHosting? Hosting = null)
 {
     public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
@@ -89,6 +90,9 @@ public sealed record ReleaseArtifactRequest(string Artifact, string Commit);
 public sealed record PromotionDecisionRequest(string Artifact);
 public sealed record GateArtifactRequest(string Project, string Artifact, string Commit);
 
+/// <summary>A deploy action refused by workspace or project quota admission.</summary>
+public sealed class DeployQuotaRefusedException(string message) : InvalidOperationException(message);
+
 /// <summary>Repository declarations and a separate, durable host-deploy queue.</summary>
 public sealed partial class ProjectEnvironmentService
 {
@@ -111,11 +115,12 @@ public sealed partial class ProjectEnvironmentService
     private readonly GitService _git;
     private readonly ProjectSettingsService _settings;
     private readonly TimeProvider _clock;
+    private readonly AgentStudio.Quota.WorkspaceQuotaService? _quota;
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public ProjectEnvironmentService(IConfiguration configuration, TaskScannerService scanner,
         GitService git, ProjectSettingsService settings, TimeProvider clock, ReleaseArtifactRegistry? registry = null,
-        DeployStore? deployStore = null)
+        DeployStore? deployStore = null, AgentStudio.Quota.WorkspaceQuotaService? quota = null)
     {
         _configuration = configuration;
         _registry = registry ?? new ReleaseArtifactRegistry(configuration);
@@ -124,6 +129,40 @@ public sealed partial class ProjectEnvironmentService
         _git = git;
         _settings = settings;
         _clock = clock;
+        _quota = quota;
+    }
+
+    public static string SlotKey(string environmentId) => "env:" + environmentId;
+
+    private string? QuotaRefusal(string project, string environmentId)
+    {
+        if (_quota is null) return null;
+        var admission = _quota.Admit(project,
+            hosting: !_quota.HasProjectEnvironment(project, SlotKey(environmentId)));
+        return admission.Allowed ? null : admission.Message ?? "Quota reached.";
+    }
+
+    private void RequireQuota(string project, string environmentId)
+    {
+        if (QuotaRefusal(project, environmentId) is { } refusal)
+            throw new DeployQuotaRefusedException(refusal);
+    }
+
+    private bool TryAdmitClaim(string project, DeployJob job, out bool reserved)
+    {
+        reserved = false;
+        if (_quota is null) return true;
+        try
+        {
+            var key = SlotKey(job.EnvironmentId);
+            if (_quota.HasProjectEnvironment(project, key)) return _quota.Admit(project).Allowed;
+            reserved = _quota.ReserveProjectEnvironment(project, key);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     public IReadOnlyList<EnvironmentDeclaration>? Declarations(string project)
@@ -410,10 +449,10 @@ public sealed partial class ProjectEnvironmentService
                 var history = state.History.Where(row => row.EnvironmentId == item.Id)
                     .Reverse().Take(30).Select(row => row.Item).ToArray();
                 var latest = history.FirstOrDefault();
-                var pending = state.Jobs.LastOrDefault(job => job.EnvironmentId == item.Id
+                var pending = state.Jobs.LastOrDefault(job => job.EnvironmentId == item.Id && !job.IsStop
                     && (job.Status is "queued" or "claimed"));
                 return new ProjectEnvironmentView(item, latest?.Artifact,
-                    latest is null ? "unknown" : latest.Status == "failed" ? "failed" : "healthy",
+                    latest is null ? "unknown" : latest.Status is "failed" or "stopped" ? latest.Status : "healthy",
                     pending?.Artifact, history,
                     state.Observed.LastOrDefault(row => row.EnvironmentId == item.Id)?.Observation);
             }).ToArray(), state.Promotions.ToArray(), state.Jobs.Select(Sanitize).ToArray(),
@@ -478,6 +517,7 @@ public sealed partial class ProjectEnvironmentService
                 || !HasVerifiedArtifact(project, artifact, commit, production.Template)) return null;
             var state = Load(project);
             if (HasOpenPromotion(state, artifact)) return null;
+            RequireQuota(project, stage.Id);
             state.Promotions.Add(new(artifact, stage.Id, production.Id, DateTime.MinValue, "stage-queued"));
             var job = Queue(project, RouteToCurrentHost(stage, current!), artifact, state,
                 actor: "release-gate", releaseId: releaseId);
@@ -494,7 +534,6 @@ public sealed partial class ProjectEnvironmentService
     /// </summary>
     public DeployJob? QueueDeployment(string project, EnvironmentDeclaration target, string artifact, string actor,
         bool rollback, string? releaseId = null, string? retryStep = null)
-
     {
         if (!Digest.IsMatch(artifact)) return null;
         lock (_gate)
@@ -502,8 +541,9 @@ public sealed partial class ProjectEnvironmentService
             var current = Declarations(project);
             if (!IsDeclared(current, target.Id)) return null;
             var state = Load(project);
-            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor, releaseId: releaseId, retryStep: retryStep);
-
+            RequireQuota(project, target.Id);
+            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor,
+                releaseId: releaseId, retryStep: retryStep);
             Save(project, state);
             return job;
         }
@@ -522,6 +562,7 @@ public sealed partial class ProjectEnvironmentService
             var index = state.Jobs.FindIndex(item => item.Id == failedJobId && item.Status == "failed"
                 && item.EnvironmentId == target.Id);
             if (index < 0 || state.Jobs.Skip(index + 1).Any(item => item.EnvironmentId == target.Id)) return null;
+            RequireQuota(project, target.Id);
             var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state,
                 rollback: state.Jobs[index].IsRollback, actor: actor,
                 releaseId: state.Jobs[index].ReleaseId, retryStep: retryStep,
@@ -606,7 +647,7 @@ public sealed partial class ProjectEnvironmentService
                 Status = "cancelled", LeaseToken = null, FinishedAt = now,
                 Evidence = aborted ? AbortedEvidence : null,
             };
-            if (aborted)
+            if (aborted && !job.IsStop)
                 state.History.Add(new(job.EnvironmentId, now,
                     new(now, "failed", job.Artifact, job.PreviousArtifact, AbortedEvidence)));
             var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact
@@ -718,6 +759,7 @@ public sealed partial class ProjectEnvironmentService
                 || promotion.ExpiresAt <= _clock.GetUtcNow().UtcDateTime) return (false, null);
             var production = declarations.FirstOrDefault(item => item.Id == promotion.ProductionId);
             if (production is null || target is not null && target.Id != production.Id) return (false, null);
+            if (approve) RequireQuota(project, production.Id);
             state.Promotions[state.Promotions.IndexOf(promotion)] = promotion with
             { Status = approve ? "production-queued" : "rejected", Actor = actor };
             var job = approve
@@ -747,6 +789,7 @@ public sealed partial class ProjectEnvironmentService
                 && (row.Item.Status is "healthy" or "rolled-back")
                 && row.Item.Artifact != currentArtifact);
             if (previous is null || acceptTarget?.Invoke(previous.Item.Artifact) == false) return false;
+            RequireQuota(project, environmentId);
             Queue(project, DeployedSpec(state, declaration, previous.Item.Artifact), previous.Item.Artifact, state,
                 rollback: true, actor: actor);
             Save(project, state);
@@ -802,9 +845,10 @@ public sealed partial class ProjectEnvironmentService
                     if (retryableEnvironments.Contains(job.EnvironmentId)) continue;
                     // The queue filename is normalized; provenance keeps the
                     // project's original case. Never use the filename as its identity.
-                    var verification = string.Equals(job.Project, project, StringComparison.OrdinalIgnoreCase)
-                        ? VerifyRelease(job.Project, job, state, requireVerifiedRelease)
-                        : new ReleaseVerification(null);
+                    var verification = !string.Equals(job.Project, project, StringComparison.OrdinalIgnoreCase)
+                        ? new ReleaseVerification(null)
+                        : job.IsStop ? new ReleaseVerification(job)
+                        : VerifyRelease(job.Project, job, state, requireVerifiedRelease);
                     if (verification.Retryable)
                     {
                         retryableEnvironments.Add(job.EnvironmentId);
@@ -816,17 +860,57 @@ public sealed partial class ProjectEnvironmentService
                         Save(project, state);
                         continue;
                     }
+                    var reserved = false;
+                    if (!verified.IsStop && verified.Kind != "preview-remove"
+                        && !TryAdmitClaim(project, verified, out reserved)) continue;
                     var claimed = verified with
                     {
                         Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N"),
-                        Claims = job.Claims + 1,
+                        Claims = job.Claims + 1, ReservedSlot = job.ReservedSlot || reserved,
                     };
                     state.Jobs[state.Jobs.IndexOf(job)] = claimed;
                     Save(project, state);
+                    if (!claimed.IsStop) _quota?.RecordDeployStart(project, claimed.Id, claimed.EnvironmentId);
                     return claimed;
                 }
             }
             return null;
+        }
+    }
+
+    /// <summary>Releases reservations for removed environments and expired deploy leases.</summary>
+    public void ReconcileHostingSlots()
+    {
+        if (_quota is null || !_quota.HasLimits()) return;
+        lock (_gate)
+        {
+            var root = StoreRoot();
+            if (!Directory.Exists(root)) return;
+            var now = _clock.GetUtcNow().UtcDateTime;
+            foreach (var file in Directory.EnumerateFiles(root, "*.json").ToArray())
+            {
+                var project = Uri.UnescapeDataString(Path.GetFileNameWithoutExtension(file));
+                var state = Load(project);
+                var declarations = Declarations(project);
+                // Preview slots use the job lifecycle; removal reports release them explicitly.
+                if (declarations is not null)
+                    foreach (var environmentId in _quota.ProjectEnvironmentIds(project))
+                        if (environmentId.StartsWith("env:", StringComparison.Ordinal)
+                            && !environmentId.StartsWith("env:preview-", StringComparison.Ordinal)
+                            && declarations.All(item => SlotKey(item.Id) != environmentId))
+                            _quota.SetProjectEnvironment(project, environmentId, false);
+                // A report settles its reservation (it clears ReservedSlot), so only a claim that
+                // expired, was lost or was aborted without a report still holds one here.
+                var expired = state.Jobs.Where(job => job.ReservedSlot && job.Status != "healthy"
+                    && (job.Status != "claimed" || job.ClaimedAt <= now - LeaseDuration)).ToList();
+                foreach (var job in expired)
+                {
+                    _quota.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
+                    _quota.RecordDeployEnd(project, job.Id);
+                    state.Jobs[state.Jobs.IndexOf(job)] = job with { ReservedSlot = false };
+                }
+                if (expired.Count > 0) Save(project, state);
+            }
         }
     }
 
@@ -868,7 +952,8 @@ public sealed partial class ProjectEnvironmentService
                     System.Text.Encoding.UTF8.GetBytes(item.LeaseToken), System.Text.Encoding.UTF8.GetBytes(leaseToken)));
             if (job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration)
                 return (null, false);
-            var verification = VerifyRelease(project, job, state, requireVerifiedRelease);
+            var verification = job.IsStop ? new ReleaseVerification(job)
+                : VerifyRelease(project, job, state, requireVerifiedRelease);
             var verified = verification.Job;
             if (verified is null) return (null, verification.Retryable);
             if (verified != job)
@@ -937,6 +1022,28 @@ public sealed partial class ProjectEnvironmentService
     }
 
     /// <summary>
+    /// Queues a stop for the environment's host. The environment stays running and keeps its
+    /// hosting slot until that host claims the stop job and reports it done (see <see cref="Report"/>).
+    /// </summary>
+    public bool Stop(string project, string environmentId, string actor)
+    {
+        lock (_gate)
+        {
+            var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == environmentId);
+            if (declaration is null) return false;
+            var state = Load(project);
+            var current = state.History.LastOrDefault(row => row.EnvironmentId == environmentId)?.Item;
+            if (current is null || current.Status == "stopped") return false;
+            if (state.Jobs.Any(job => job.IsStop && job.EnvironmentId == environmentId
+                    && job.Status is "queued" or "claimed")) return false;
+            var job = Queue(project, declaration, current.Artifact, state, actor: actor);
+            state.Jobs[state.Jobs.IndexOf(job)] = job with { IsStop = true };
+            Save(project, state);
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Accepts the host's result while its lease token is valid. The token
     /// changes on a reclaim and is cleared when the claim fails as
     /// <c>host-lost</c> or is aborted, so only the current claim reports.
@@ -954,7 +1061,8 @@ public sealed partial class ProjectEnvironmentService
                 if (advanced) Save(project, state);
                 return false;
             }
-            var verification = VerifyRelease(project, job, state, requireVerifiedRelease);
+            var verification = job.IsStop ? new ReleaseVerification(job)
+                : VerifyRelease(project, job, state, requireVerifiedRelease);
             if (verification.Retryable)
             {
                 if (advanced) Save(project, state);
@@ -973,6 +1081,12 @@ public sealed partial class ProjectEnvironmentService
             }
             var now = _clock.GetUtcNow().UtcDateTime;
             if (job.ClaimedAt < now - LeaseDuration) return false;
+            if (job.IsStop)
+            {
+                ReportStop(project, state, job, report.Healthy, now);
+                Save(project, state);
+                return true;
+            }
             var expectedSteps = job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}").ToArray();
             var reportedSteps = report.Steps ?? [];
             if (reportedSteps.Count > expectedSteps.Length || reportedSteps.Where((step, index) =>
@@ -992,12 +1106,19 @@ public sealed partial class ProjectEnvironmentService
             // Host output is deliberately not accepted as an audit string. Keep a bounded status code only.
             var evidence = report.Evidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
                 ? report.Evidence : success ? "health-ok" : "deploy-step-failed";
+            // The report settles the reservation: a healthy deploy keeps its slot as a running
+            // environment, a failed one returns it below. The reconciler only releases unsettled claims.
             state.Jobs[state.Jobs.IndexOf(job)] = job with
-            { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence,
-                StepResults = reportedSteps, ScreenshotUrl = screenshotUrl };
+            {
+                Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence,
+                ReservedSlot = false, StepResults = reportedSteps, ScreenshotUrl = screenshotUrl,
+            };
             var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
+            _quota?.RecordDeployEnd(project, job.Id);
+            if (success) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), job.Kind != "preview-remove");
+            else if (job.ReservedSlot) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
             if (success || !job.GuidedFailure) ClosePromotionForResult(state, job, success, now);
             // A job already queued for the environment replaces the failed
             // one; a rollback queued behind it would replace a newer release.
@@ -1017,6 +1138,24 @@ public sealed partial class ProjectEnvironmentService
         }
     }
 
+    /// <summary>
+    /// The host acknowledged a stop job: only a confirmed stop marks the environment stopped and
+    /// releases its hosting slot. A failed stop leaves the environment running and counted.
+    /// </summary>
+    private void ReportStop(string project, State state, DeployJob job, bool stopped, DateTime now)
+    {
+        state.Jobs[state.Jobs.IndexOf(job)] = job with
+        {
+            Status = stopped ? "stopped" : "failed", LeaseToken = null, FinishedAt = now,
+            Evidence = stopped ? "stop-ok" : "stop-failed",
+        };
+        _quota?.RecordDeployEnd(project, job.Id);
+        if (!stopped) return;
+        state.History.Add(new(job.EnvironmentId, now, new(now, "stopped", job.Artifact, job.Artifact,
+            "stopped-by:" + job.RequestedBy)));
+        _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
+    }
+
     private void Complete(string project, State state, DeployJob job, bool success, string? reportedEvidence,
         Func<IReadOnlyList<EnvironmentDeclaration>?> declarations)
     {
@@ -1024,10 +1163,14 @@ public sealed partial class ProjectEnvironmentService
         var evidence = reportedEvidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
             ? reportedEvidence : success ? "health-ok" : "deploy-step-failed";
         state.Jobs[state.Jobs.IndexOf(job)] = job with
-        { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence };
+        { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence,
+            ReservedSlot = false };
         var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
         state.History.Add(new(job.EnvironmentId, now,
             new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
+        _quota?.RecordDeployEnd(project, job.Id);
+        if (success) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), true);
+        else if (job.ReservedSlot) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
         if (success || !job.GuidedFailure) ClosePromotionForResult(state, job, success, now);
         if (!success && !job.GuidedFailure && !job.IsRollback && job.PreviousArtifact is not null
             && !state.Jobs.Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "queued"))
@@ -1070,10 +1213,12 @@ public sealed partial class ProjectEnvironmentService
         {
             var lost = job with { Status = "failed", LeaseToken = null, FinishedAt = now, Evidence = HostLostEvidence };
             state.Jobs[state.Jobs.IndexOf(job)] = lost;
+            changed = true;
+            // A lost stop leaves the environment as it was: running and counted.
+            if (job.IsStop) continue;
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, "failed", job.Artifact, job.PreviousArtifact, HostLostEvidence)));
             if (!job.GuidedFailure) ClosePromotionForResult(state, lost, success: false, now);
-            changed = true;
         }
         return changed;
     }

@@ -46,6 +46,9 @@ public sealed class PublicDemoHostFixture : IAsyncLifetime
         {
             ["TaskRepository"] = workspace,
             ["Security:Profile"] = ExecutionAdmissionPolicy.PublicDemoProfile,
+            // The route inventory probes every executable route in one client
+            // window; keep its own requests below the public-demo edge limit.
+            ["Security:PublicDemoEdge:RateLimit:PermitLimit"] = "500",
         };
         if (overrides is not null)
             foreach (var (key, value) in overrides)

@@ -264,6 +264,8 @@ public sealed record PipelineStepExecution
     public DateTime? StartedAt { get; init; }
     public DateTime? CompletedAt { get; init; }
     public long DurationMs { get; init; }
+    /// <summary>Cores granted to this execution; legacy records use one core for metering.</summary>
+    public int? GrantedCores { get; init; }
     public long InputTokens { get; init; }
     public long OutputTokens { get; init; }
     public long CacheReadTokens { get; init; }
@@ -375,6 +377,7 @@ public sealed record PipelineStepRunSummary
     public DateTime? StartedAt { get; init; }
     public DateTime? CompletedAt { get; init; }
     public long DurationMs { get; init; }
+    public int? GrantedCores { get; init; }
     public string? Model { get; init; }
     public string? ReviewedResultSha { get; init; }
     public string? ExecutionAttemptId { get; init; }

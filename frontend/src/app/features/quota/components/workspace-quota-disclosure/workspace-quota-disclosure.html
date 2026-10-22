@@ -1,0 +1,10 @@
+<button type="button" class="workspace-quota-disclosure__toggle" [attr.aria-expanded]="open()"
+        [attr.data-testid]="'settings-workspace-quota-' + workspaceId()" (click)="open.set(!open())">
+  <app-disclosure-marker [open]="open()" [size]="10" />
+  {{ workspaceName() }} quota
+</button>
+@if (open()) {
+  @defer {
+    <app-workspace-quota [workspaceId]="workspaceId()" />
+  }
+}

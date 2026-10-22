@@ -135,7 +135,8 @@ rotate() {
   log "rotate: begin (origin=$origin runner=$runner_id)"
 
   local cookie=(--cookie "__Host-agentstudio-session=$STUDIO_COOKIE")
-  local csrf=(-H "X-CSRF-Token: $STUDIO_CSRF")
+  # Session changes need the CSRF token and a matching Origin (AGT-3230).
+  local csrf=(-H "X-CSRF-Token: $STUDIO_CSRF" -H "Origin: $origin")
 
   # 1) Mint an overlapping credential. The one-time secret stays in a variable
   #    and is never logged; only its non-secret credential id is recorded.
@@ -152,7 +153,7 @@ rotate() {
   printf '%s' "$listed" | grep -q "$new_cred_id" || fail "new credential not visible in runner list"
   log "rotate: new credential visible in GET /api/auth/runners"
   log "rotate: NEXT (operator) — install the new secret, restart the daemon, wait for its lastUsedAt, then revoke the OLD credential id:"
-  log "rotate:   curl -X DELETE \"$origin/api/auth/runners/$runner_id/credentials/<OLD_CREDENTIAL_ID>\" (owner session + CSRF)"
+  log "rotate:   curl -X DELETE \"$origin/api/auth/runners/$runner_id/credentials/<OLD_CREDENTIAL_ID>\" (owner session, CSRF and Origin)"
   log "rotate: fail-closed invariants (old secret -> 401, new secret still claims) are pinned by RunbookRehearsalTests"
   log "rotate: PASS — observable overlapping-rotation workflow exercised"
 }

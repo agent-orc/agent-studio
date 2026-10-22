@@ -102,6 +102,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | OrchestratorPrepHostedService | !PD, off by default | decide, local | Monolith until an engine occurrence can apply its prep verdict. |
 | ChatNoteHostedService | !PD | report | Authority host |
 | PipelineHealthService | always | report | Authority host |
+| PublishEnvironmentReconciliationService | always | infra | Authority host. Polls website deployment state and releases stopped hosting reservations; no lane transition. |
 | RemoteGateOrphanSweepService | always | infra | Authority host. Cancels unowned SSH gate runs from prior Studio process instances and clears their durable records once the remote run directory is gone. |
 | WorkspaceArtifactPushWorker | !PD | infra | Authority host |
 | WorkspaceRepositoryMaintenanceWorker | !PD | infra | Authority host |

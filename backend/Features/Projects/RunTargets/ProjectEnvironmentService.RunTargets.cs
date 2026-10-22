@@ -135,6 +135,7 @@ public sealed partial class ProjectEnvironmentService
                         state.Placements.Remove(placement);
                         state.Observed.RemoveAll(row => row.EnvironmentId == observation.EnvironmentId);
                         state.RunTargetRemovals.Add(RunTargetDesiredStatePolicy.Removed(placement, now));
+                        _quota?.SetProjectEnvironment(group.Key, SlotKey(observation.EnvironmentId), false);
                         if (state.RunTargetRemovals.Count > RunTargetDesiredStatePolicy.MaxRemovalRecords)
                             state.RunTargetRemovals.RemoveRange(0,
                                 state.RunTargetRemovals.Count - RunTargetDesiredStatePolicy.MaxRemovalRecords);
@@ -207,14 +208,20 @@ public sealed partial class ProjectEnvironmentService
             Complete(read.Project, state, job, success: false, "deploy-step-failed", () => read.Declarations);
             return null;
         }
+        var reserved = false;
+        if (action == RunTargetLeaseAction.Claim && !TryAdmitClaim(read.Project, job, out reserved))
+            return null;
         var leased = job with
         {
             Status = "claimed",
             ClaimedAt = now,
             LeaseToken = action == RunTargetLeaseAction.Renew ? job.LeaseToken : Guid.NewGuid().ToString("N"),
             FirstClaimedAt = job.FirstClaimedAt ?? now,
+            ReservedSlot = job.ReservedSlot || reserved,
         };
         state.Jobs[state.Jobs.IndexOf(job)] = leased;
+        if (action == RunTargetLeaseAction.Claim && job.Status == "queued")
+            _quota?.RecordDeployStart(read.Project, leased.Id, leased.EnvironmentId);
         return leased;
     }
 

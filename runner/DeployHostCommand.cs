@@ -18,7 +18,7 @@ public static class DeployHostCommand
     private sealed record Job(string Id, string Project, string EnvironmentId, string HostId,
         string Artifact, string Template, string Destination, string? HealthUrl,
         string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken,
-        string? RetryStep)
+        bool IsStop = false, string? RetryStep = null)
     {
         public ProjectDeployStep[] SshSteps { get; init; } = [];
         public ProjectVariableDefinition[] Variables { get; init; } = [];
@@ -62,6 +62,13 @@ public static class DeployHostCommand
             leaseLost = true;
             lease.Cancel();
         }, lease.Token);
+        if (job.IsStop)
+        {
+            var stopped = await StopEnvironment(client, job, lease.Token);
+            lease.Cancel();
+            await renewal;
+            return leaseLost ? 1 : stopped;
+        }
         var evidence = "deploy-step-failed";
         var healthy = false;
         var stepResults = new List<object>();
@@ -239,6 +246,45 @@ public static class DeployHostCommand
         response.EnsureSuccessStatusCode();
     }
 
+    /// <summary>Stops the environment on this host and acknowledges it, so the server releases its slot.</summary>
+    private static async Task<int> StopEnvironment(HttpClient client, Job job, CancellationToken ct)
+    {
+        var stopped = false;
+        try
+        {
+            if (job.Template == "container")
+                await Command("docker", ["rm", "-f", ContainerName(job)], ct);
+            else if (job.Template == "static")
+            {
+                if (!Path.IsPathFullyQualified(job.Destination) || job.Destination.Contains("..", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Invalid destination.");
+                var link = Path.Combine(job.Destination, "current");
+                if (File.Exists(link) || Directory.Exists(link)) File.Delete(link);
+            }
+            else throw new InvalidOperationException("Unknown template.");
+            stopped = true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+            or System.ComponentModel.Win32Exception)
+        {
+            Console.Error.WriteLine($"Stop job {job.Id} failed: {ex.GetType().Name}");
+        }
+        using var report = await client.PostAsJsonAsync(
+            $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/report",
+            new { job.LeaseToken, Healthy = stopped, Evidence = stopped ? "stop-ok" : "stop-failed" }, ct);
+        report.EnsureSuccessStatusCode();
+        return stopped ? 0 : 1;
+    }
+
+    private static string ContainerName(Job job)
+    {
+        var projectName = job.Project.Length <= 64
+            && job.Project.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')
+            ? job.Project
+            : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(job.Project)))[..16].ToLowerInvariant();
+        return "deploy-" + projectName + "-" + job.EnvironmentId;
+    }
+
     private static async Task RenewWhileRunning(HttpClient client, Job job, TimeProvider clock,
         Action onLost, CancellationToken ct)
     {
@@ -351,11 +397,7 @@ public static class DeployHostCommand
     {
         if (!int.TryParse(job.Destination, out var port) || port is < 1 or > 65535)
             throw new InvalidOperationException("Invalid proxy port.");
-        var projectName = job.Project.Length <= 64
-            && job.Project.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')
-            ? job.Project
-            : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(job.Project)))[..16].ToLowerInvariant();
-        var name = "deploy-" + projectName + "-" + job.EnvironmentId;
+        var name = ContainerName(job);
         var envFile = Path.Combine(Path.GetTempPath(), "deploy-env-" + Guid.NewGuid().ToString("N"));
         try
         {
