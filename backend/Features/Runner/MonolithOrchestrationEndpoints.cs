@@ -115,6 +115,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
     IAiOperatorDecisionQueue aiOperator,
     OrchestratorLog operatorLog,
     EngineBatchAdmission batchAdmission,
+    OrchestrationEngineReadiness readiness,
     TimeProvider time,
     ILogger<MonolithOrchestrationRecoveryService> logger) : BackgroundService
 {
@@ -145,7 +146,15 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             {
                 aiOperator.RecoverPending();
                 RecoverOnce();
-                try { await store.RecoverApplyingAsync(stoppingToken); }
+                try { await store.RecoverApplyingAsync(stoppingToken, (item, exception) =>
+                    logger.LogWarning(exception,
+                        "orchestration-application-retry-pending run={RunId} task={TaskId}",
+                        item.Run.RunId, item.Run.TaskId), item =>
+                    logger.LogInformation("orchestration-application-superseded run={RunId} task={TaskId}",
+                        item.Run.RunId, item.Run.TaskId), (item, exception) =>
+                    logger.LogError(exception,
+                        "orchestration-application-malformed run={RunId} task={TaskId}",
+                        item.Run.RunId, item.Run.TaskId)); }
                 catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
                 {
                     logger.LogWarning(exception, "orchestration-application-retry-pending");
@@ -385,6 +394,24 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 Reasoning = "The occurrence remains uncompleted and will resume after an engine instance claims or reclaims it.",
             });
         }
+        if (readiness.State != OrchestrationEngineReadiness.Ready) return;
+        foreach (var occurrence in store.WaitingOccurrences().Where(item =>
+            ShouldAlertHealthyLongWait(item, now)))
+        {
+            var card = scanner.ScanAllJobs().FirstOrDefault(item =>
+                item.Id == occurrence.Run.TaskId && item.ProjectName == occurrence.Run.ProjectId);
+            if (card is null || card.State != occurrence.ExpectedSourceState) continue;
+            var topic = "engine-decision-long-wait:" + occurrence.Run.RunId;
+            if (operatorLog.Read(card.WatchPath).Any(item => item.Topic == topic)) continue;
+            operatorLog.Append(card.WatchPath, new OrchestratorLogEntry
+            {
+                Kind = OrchestratorLogKinds.Alert,
+                Topic = topic,
+                JobId = card.Id,
+                Summary = $"{card.Key ?? card.Id} has waited over 15 minutes for an engine decision while the engine is live.",
+                Reasoning = $"Occurrence {occurrence.Run.RunId} remains {occurrence.Run.Status}.",
+            });
+        }
     }
 
     internal static bool ShouldAlert(MonolithOrchestrationOccurrence occurrence, DateTime now)
@@ -392,6 +419,11 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             && now - occurrence.Run.CreatedAt > TimeSpan.FromMinutes(1)
             || occurrence.Run.Status == "leased"
                 && occurrence.Lease is { ExpiresAt: var expiry } && expiry <= now;
+
+    internal static bool ShouldAlertHealthyLongWait(MonolithOrchestrationOccurrence occurrence,
+        DateTime now)
+        => occurrence.Run.Status is ("pending" or "leased" or "applying")
+            && now - occurrence.Run.CreatedAt >= TimeSpan.FromMinutes(15);
 
     /// <summary>
     /// A process can stop after the monolith applied a shadow transition but
@@ -413,9 +445,10 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         }
     }
 
-    internal void RecoverOnce()
+    internal void RecoverOnce(Action? afterTaskSnapshot = null)
     {
         var tasks = scanner.ScanAllJobs();
+        afterTaskSnapshot?.Invoke();
         // Of the card state this pass writes, the scanner projects only the wait
         // marker. A pass that wrote or removed none must not invalidate the task
         // index: a mutation invalidation makes the next freshness reader, task
@@ -427,12 +460,36 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             if (changed) changedFolders.Add(folder);
             return changed;
         }
+        foreach (var occurrence in store.WaitingOccurrences().Where(item =>
+            item.Run.Status is "pending" or "leased"))
+        {
+            try
+            {
+                store.SupersedeStaleLaneDecisionAsync(occurrence.Run.RunId, () =>
+                {
+                    var card = scanner.FindPublishedJob(occurrence.Run.TaskId);
+                    return card?.ProjectName == occurrence.Run.ProjectId ? card.State : null;
+                }).GetAwaiter().GetResult();
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "orchestration-supersession-pending run={RunId}",
+                    occurrence.Run.RunId);
+            }
+        }
         foreach (var occurrence in store.AwaitingActivation())
         {
             var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
-                && item.ProjectName == occurrence.Run.ProjectId);
+                && item.ProjectName == occurrence.Run.ProjectId)
+                ?? scanner.ScanAllJobsWithArchive().FirstOrDefault(item =>
+                    item.Id == occurrence.Run.TaskId && item.ProjectName == occurrence.Run.ProjectId);
             try
             {
+                if (card?.State != occurrence.ExpectedSourceState)
+                {
+                    store.Supersede(occurrence.Run.RunId, card?.State, includeApplying: false);
+                    continue;
+                }
                 if (occurrence.Run.CurrentStage == OrchestrationStage.ReviewInputDecision)
                 {
                     if (decisionInputs.GetInputs(occurrence.Run.RunId) is not null)
@@ -494,7 +551,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         // A marker that names a cancelled occurrence, or a completed one that
         // did not hold its card, waits for nothing; the card would show an
         // engine wait until it leaves the lane.
-        foreach (var card in tasks.Where(item => item.WaitingForEngineDecision))
+        foreach (var card in tasks.Where(item => EngineDecisionWaitMarker.Read(item.FolderPath) is not null))
         {
             // RecoverOnce runs outside the loop's per-step catches, so a lane move
             // or a concurrent clear that races this read must not end the loop.
@@ -502,7 +559,8 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             {
                 if (EngineDecisionWaitMarker.Read(card.FolderPath) is { } runId
                     && store.GetOccurrence(runId) is { } named
-                    && (named.Run.Status == "cancelled"
+                    && (named.ExpectedSourceState != card.State
+                        || named.Run.Status is ("cancelled" or "failed")
                         || named.Run.Status == "completed" && !MayHoldCard(named)))
                     markersChanged |= RecordMarker(card.FolderPath,
                         EngineDecisionWaitMarker.Clear(card.FolderPath, runId));
