@@ -12,7 +12,8 @@ namespace AgentStudio.Deploy;
 /// these declarations, so a later change in the working tree cannot alter
 /// what the release deploys.
 /// </summary>
-public sealed record ReleaseRecord(Release Release, IReadOnlyList<EnvironmentDeclaration> Environments);
+public sealed record ReleaseRecord(Release Release, IReadOnlyList<EnvironmentDeclaration> Environments,
+    IReadOnlyDictionary<string, string>? CardTitles = null);
 
 /// <summary>Release identity, numbering and snapshot versions. Pure.</summary>
 public static class ReleaseSnapshot
