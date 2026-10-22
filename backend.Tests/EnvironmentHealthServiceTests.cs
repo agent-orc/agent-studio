@@ -162,7 +162,7 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         };
         environmentState.IncidentCardId = null;
         store.Save(Project, state);
-        var slug = $"health-stage-{_clock.GetUtcNow().AddMinutes(-90):yyyyMMddHHmm}";
+        var slug = $"health-stage-{_clock.GetUtcNow().AddMinutes(-90):yyyyMMddHHmmss}";
         var lost = fixture.Mutations.CreateJob(new CreateTaskRequest
         {
             Id = slug, Title = "lost", PromptMarkdown = "lost", WatchPath = fixture.WatchPath, TargetState = TaskStates.Backlog,
@@ -401,6 +401,49 @@ public sealed class EnvironmentHealthServiceTests : IDisposable
         Assert.Equal(("invalid", "stage"), (other.Status, other.EnvironmentId));
         Assert.Contains("requires name", other.Error);
         Assert.Equal(3, fixture.Service.Overview().Environments.Count);
+    }
+
+    [Fact]
+    public async Task Broken_file_with_a_different_name_keeps_its_environment_incident_open()
+    {
+        var fixture = Build();
+        await Sequence(fixture, false, false, false);
+        var opened = fixture.Store.Load(Project).Environments["stage"].OpenIncident;
+        Assert.NotNull(opened);
+
+        File.Move(Path.Combine(fixture.Declarations, "stage.json"),
+            Path.Combine(fixture.Declarations, "renamed.json"));
+        File.WriteAllText(Path.Combine(fixture.Declarations, "renamed.json"),
+            Stage(null).Replace("\"name\": \"Stage\", ", "", StringComparison.Ordinal));
+        await Sequence(fixture, true);
+
+        var environment = Assert.Single(fixture.Service.Read(Project)!.Environments);
+        Assert.Equal(("stage", "invalid"), (environment.EnvironmentId, environment.Status));
+        Assert.Equal(opened.Id, fixture.Store.Load(Project).Environments["stage"].OpenIncident?.Id);
+        Assert.DoesNotContain(fixture.Activity(), entry => entry.Topic == OrchestratorLogTopics.EnvironmentIncidentRecovered);
+    }
+
+    [Fact]
+    public async Task Recovered_card_comment_is_not_repeated_when_activity_append_retries()
+    {
+        var fixture = Build();
+        await Sequence(fixture, false, false, false, true);
+        var card = Assert.Single(fixture.Cards());
+        var activityPath = Path.Combine(fixture.WatchPath, ".orchestrator", "orchestrator.jsonl");
+        var savedPath = activityPath + ".saved";
+        File.Move(activityPath, savedPath);
+        Directory.CreateDirectory(activityPath);
+
+        await Sequence(fixture, true);
+        Assert.Single(fixture.Comments(card), comment => comment.Details!["change"] == "recovered");
+        Assert.False(fixture.Store.Load(Project).Environments["stage"].LastIncident!.RecoveryReported);
+
+        Directory.Delete(activityPath);
+        File.Move(savedPath, activityPath);
+        await Sequence(fixture, true);
+
+        Assert.Single(fixture.Comments(card), comment => comment.Details!["change"] == "recovered");
+        Assert.Single(fixture.Activity(), entry => entry.Topic == OrchestratorLogTopics.EnvironmentIncidentRecovered);
     }
 
     [Fact]

@@ -2662,7 +2662,7 @@ in
   registry `image` without tag or digest). Artifact paths are
   repository-relative. Their segments contain only letters, digits, `.`, `_`, and
   `-`; no segment is empty, `.`, or `..`, or starts with `-`. A lone `.` names
-  the repository root as a build context.
+  the repository root only for a container build context.
 - `environments` are ordered and exactly Staging, then Production. Production
   must be `protected`: every deploy, redeploy, or rollback into it needs an
   Owner or Maintainer approval. Staging deploys automatically after
@@ -2685,12 +2685,17 @@ in
   digits, `.`, `_`, and `-`, and no segment that is empty, `.`, or `..`, or
   starts with `-`. `composeFile` also ends in `.yml` or `.yaml`. `target` and
   `service` are lower-case identifiers; credentials never appear in the file.
+  A static bundle `path` must name a directory below the repository root,
+  and `dockerfile` must name a file there; only a container build context may
+  be `.`.
   When the pipeline-definition API reads, validates, or migrates a file, it
   checks each `target` against the project's effective environment hosts for
   every environment the step deploys to. Schema 2 steps supply those hosts
   when no legacy JSON declaration exists. A target missing from an existing
-  registration is reported as `deploy-target-unregistered`. Preparation reads
-  only the checkout and checks just the target's shape. The AGT-3198 steps `publish-static`,
+  registration is reported as `deploy-target-unregistered`. An unreadable
+  declaration set produces one `declarations-unreadable` issue instead of
+  target registration errors. Preparation reads only the checkout and checks
+  just the target's shape. The AGT-3198 steps `publish-static`,
   `start-container` (configuration placeholder), `run`, `health`, and
   `approval` stay valid for the pipeline diagram, but a release with these
   step kinds is refused until they have an executor.
@@ -2737,6 +2742,8 @@ text stays as it is apart from the `schemaVersion` line, the new sections are
 appended with the file's own line ending, Staging and Production deploy steps
 come from the AGT-3176 declarations under `docs/deployments/environments/`, and
 every default the proposal had to choose is listed as a note.
+Static destinations outside `/srv/` stay quoted in the proposal and receive
+an explicit note that they must be changed before confirmation.
 The migration proposal is the one-time conversion of legacy declarations into
 schema 2. After migration, existing JSON declarations are checked for
 divergence; a project may run from schema 2 without JSON. project.yml owns
@@ -2830,6 +2837,8 @@ To import legacy `docs/deployments/**/deployment.json` descriptors once, run
 from the Studio checkout. The command converts executable legacy commands to
 Production `run` steps and Caddy site templates to `publish-static` steps, validates the result, and writes `project.yml` while
 preserving its line endings. Legacy descriptors remain in place for review.
+The imported static artifact uses `dist` as a safe placeholder; set it to the
+actual bundle directory before enabling a static publish.
 When a deployment section already exists, the import is a no-op. Unsupported descriptors
 yield a clear error and leave the repository unchanged.
 Review the generated process before committing it; imported commands retain
