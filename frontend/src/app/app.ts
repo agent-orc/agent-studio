@@ -59,7 +59,13 @@ import {
   OrchestratorFeedStore,
   OrchestratorSideSheetComponent,
 } from './features/orchestrator';
-import { DEFAULT_PROJECT_RAIL_KEY, ProjectOverlaysService, type ProjectRailKey, ProjectUrlPreviewTabComponent, WorkbenchTabHostComponent } from './features/project-detail/runtime';
+import {
+  DEFAULT_PROJECT_RAIL_KEY,
+  ProjectOverlaysService,
+  type ProjectRailKey,
+  ProjectUrlPreviewTabComponent,
+  WorkbenchTabHostComponent,
+} from './features/project-detail/runtime';
 import {
   AutoReviewIndicatorComponent,
   StatusBarComponent,

@@ -191,7 +191,7 @@
               }
             }
             @case ('task') {
-              @defer (when studioTabState.activeTab()?.kind === 'task') {
+              @defer (on immediate) {
               @if (detailPreview(); as preview) {
                 <main class="workspace__main workspace__main--studio" data-testid="studio-task">
                   <app-task-detail-load-sections [info]="preview" [core]="selectedCore()" [resources]="detailResourceStates()" [errorMessage]="detailLoadError()?.message ?? null"
@@ -235,16 +235,16 @@
               }
             }
             @case ('hub') {
-              @defer (when studioTabState.activeTab()?.kind === 'hub') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'hub') {
-                  <app-project-hub-view
-                    [projectName]="tab.projectName" [projectId]="projectHubUrls.projectIdForName(tab.projectName)"
-                    [initialSection]="tab.section ?? 'overview'" [wikiTarget]="tab.wikiTarget"
-                    [pipelineStepId]="tab.pipelineStepId"
-                    (openTask)="onOpenTaskFromReel($event)" />
+                  @defer (on immediate) {
+                    <app-project-hub-view
+                      [projectName]="tab.projectName" [projectId]="projectHubUrls.projectIdForName(tab.projectName)"
+                      [initialSection]="tab.section ?? 'overview'" [wikiTarget]="tab.wikiTarget"
+                      [pipelineStepId]="tab.pipelineStepId"
+                      (openTask)="onOpenTaskFromReel($event)" />
+                  }
                 }
-              }
               }
             }
             @case ('workbenches') {
@@ -259,21 +259,21 @@
               }
             }
             @case ('diff') {
-              @defer (when studioTabState.activeTab()?.kind === 'diff') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'diff') {
-                  <app-studio-diff-view [commitSha]="tab.commitSha" />
+                  @defer (on immediate) {
+                    <app-studio-diff-view [commitSha]="tab.commitSha" />
+                  }
                 }
-              }
               }
             }
             @case ('activity') {
-              @defer (when studioTabState.activeTab()?.kind === 'activity') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'activity') {
-                  <app-studio-activity-view [taskKey]="tab.taskKey" />
+                  @defer (on immediate) {
+                    <app-studio-activity-view [taskKey]="tab.taskKey" />
+                  }
                 }
-              }
               }
             }
             @case ('url-preview') {
