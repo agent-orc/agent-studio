@@ -132,11 +132,14 @@ test('fixture dataset paints every surface', async ({ page }) => {
 test('level + subsystem filters narrow the events table; reset restores the original count', async ({ page }) => {
   await openRuntimePanel(page);
   const empty = page.getByTestId('product-runtime-empty');
-  await expect(empty.or(page.getByTestId('product-runtime-counters'))).toBeVisible();
-  if (await empty.isVisible().catch(() => false)) {
+  const counters = page.getByTestId('product-runtime-counters');
+  await expect(empty.or(counters)).toBeVisible();
+  if (!await counters.isVisible()) {
+    await expect(empty).toBeVisible();
     await page.getByTestId('product-runtime-load-fixture').click();
   }
 
+  await expect(counters).toBeVisible();
   await page.getByTestId('product-runtime-filter-range').selectOption({ value: '0' });
 
   const allRows = page.getByTestId('product-runtime-event-row');
