@@ -660,6 +660,12 @@ export class StudioShellComponent {
     this.tabState.open({ kind: 'hub', projectName, section: 'deployment' });
   }
 
+  openDeliveryCard(key: string): void {
+    const card = this.jobService.jobs().find(job =>
+      (job.displayKey ?? job.taskKey).toLowerCase() === key.toLowerCase());
+    if (card) this.openTask(card);
+  }
+
   openFeed(): void {
     this.orchestratorFeed.markAlertsSeen();
     this.tabState.open({ kind: 'feed' });

@@ -13,6 +13,9 @@ public static class DeployEndpoints
         project.MapGet("/status", (string projectName, DeployService deploy) =>
             deploy.Status(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
+        project.MapGet("/delivery-lanes", (string projectName, DeployService deploy) =>
+            deploy.DeliveryLanes(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
         project.MapGet("/releases", (string projectName, DeployService deploy) =>
             deploy.Releases(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
