@@ -343,6 +343,25 @@ public sealed class GitWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Teardown_limits_and_replaces_the_legacy_report_artifact()
+    {
+        await SeedOriginAsync(legacyReports: true);
+        var workspace = CreateWorkspace();
+        await workspace.PrepareAsync(CancellationToken.None);
+        var report = Path.Combine(workspace.RepoPath, "status.md");
+        var artifact = Path.Combine(_workDir, "tasks", "AGT-2147", "results",
+            "legacy-repository-status.md");
+        await File.WriteAllTextAsync(report, new string('é', 10_000) + "first tail");
+        await workspace.CaptureLegacyRepositoryReportsAsync(CancellationToken.None);
+        Assert.True(new FileInfo(artifact).Length <= 16 * 1024);
+        Assert.EndsWith("first tail", await File.ReadAllTextAsync(artifact));
+
+        await File.WriteAllTextAsync(report, "second round\n");
+        await workspace.CaptureLegacyRepositoryReportsAsync(CancellationToken.None);
+        Assert.Equal("second round\n", await File.ReadAllTextAsync(artifact));
+    }
+
+    [Fact]
     public async Task Teardown_keeps_root_status_as_content_without_project_opt_in()
     {
         await SeedOriginAsync();

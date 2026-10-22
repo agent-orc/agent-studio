@@ -6,14 +6,15 @@ namespace AgentRunner;
 internal static class ReviewCommandExitDiagnosis
 {
     private const int TailLimit = 2048;
+    private const int RedactionWindow = 16 * 1024;
     private static readonly Regex Secret = new(
         @"(?ix)(?:
-          https?://[^\s/@:]+:[^\s/@]+@
-          | authorization\s*:\s*(?:bearer|basic)\s+[^\s,;]+
-          | [""']?(?:[\w]+[_-])*(?:token|password|secret|api[_-]?key)(?:[_-][\w]+)*[""']?\s*[:=]\s*(?:""[^""\r\n]*""|'[^'\r\n]*'|[^\s,;]+)
-          | (?<![\w])sk-[A-Za-z0-9_-]{6,}(?![\w])
+          https?://[^\s/@]+@[^\s/]+
+          | [""']?authorization[""']?\s*:\s*[""']?(?:bearer|basic)\s+[^\s,""';]+[""']?
+          | [""']?(?:[A-Za-z0-9]+[_-])*(?:token|password|secret|api[_-]?key)(?:[_-][A-Za-z0-9]+)*[""']?\s*[:=]\s*(?:""[^""\r\n]*""|'[^'\r\n]*'|[^\s,;]+)
+          | (?<![A-Za-z0-9_])(?:sk-[A-Za-z0-9_-]{6,}|ghp_[A-Za-z0-9_]{6,}|github_pat_[A-Za-z0-9_]{6,}|glpat-[A-Za-z0-9_-]{6,}|xox[a-z]-[A-Za-z0-9-]{6,})(?![A-Za-z0-9_])
         )",
-        RegexOptions.Compiled);
+        RegexOptions.Compiled, TimeSpan.FromMilliseconds(100));
 
     internal static bool Reproduced(int baselineExit, int firstExit, int? repeatExit,
         string? firstSignal = null, string? repeatSignal = null)
@@ -25,8 +26,8 @@ internal static class ReviewCommandExitDiagnosis
     internal static string Evidence(string command, string baselineSha, string candidateSha,
         int baselineExit, int firstExit, int repeatExit, string stdout, string stderr)
     {
-        var safeStdout = Secret.Replace(stdout, "[redacted]");
-        var safeStderr = Secret.Replace(stderr, "[redacted]");
+        var safeStdout = RedactTail(stdout);
+        var safeStderr = RedactTail(stderr);
         var stderrTail = safeStderr.Length > TailLimit / 4 ? safeStderr[^(TailLimit / 4)..] : safeStderr;
         var stdoutLimit = TailLimit - stderrTail.Length - (stderrTail.Length > 0 ? 1 : 0);
         var stdoutTail = safeStdout.Length > stdoutLimit ? safeStdout[^stdoutLimit..] : safeStdout;
@@ -34,5 +35,18 @@ internal static class ReviewCommandExitDiagnosis
         return $"command={command}; baseline={baselineSha} exit={baselineExit}; " +
                $"candidate={candidateSha} exit={firstExit}; clean-repeat exit={repeatExit}; " +
                $"candidate-output-tail:\n{tail}";
+    }
+
+    private static string RedactTail(string output)
+    {
+        var tail = output.Length > RedactionWindow ? output[^RedactionWindow..] : output;
+        try
+        {
+            return Secret.Replace(tail, "[redacted]");
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return "[output withheld]";
+        }
     }
 }

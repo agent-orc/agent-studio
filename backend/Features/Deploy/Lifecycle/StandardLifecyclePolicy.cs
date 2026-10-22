@@ -41,10 +41,10 @@ public static class StandardLifecyclePolicy
     public const string ApprovalRoles = "Owner or Maintainer";
 
     public static bool IsAutomatic(DeployEnvironment environment)
-        => environment.Kind == EnvironmentKinds.Staging;
+        => environment.Automatic ?? environment.Kind == EnvironmentKinds.Staging;
 
     public static bool RequiresApproval(DeployEnvironment environment)
-        => environment.Kind == EnvironmentKinds.Production;
+        => environment.Protected ?? environment.Kind == EnvironmentKinds.Production;
 
     public static DeployIntent IntentFor(string trigger) => trigger switch
     {
