@@ -45,8 +45,8 @@ public static class TransitionDecisionPolicy
     {
         // An uncited block is not an actionable finding. The former Council loop
         // skipped it before deciding whether to reissue the reviewed delivery.
-        var findings = facts.Review.Findings.Where(item =>
-            !ReviewRoundBudgetPolicy.IsUncitedBlock(item.Classification)).ToArray();
+        var findings = ReviewFindingMergePolicy.Merge(facts.Review.Findings.Where(item =>
+            !ReviewRoundBudgetPolicy.IsUncitedBlock(item.Classification)));
         var verdicts = (facts.Review.Verdicts ?? []).Where(item =>
             !ReviewRoundBudgetPolicy.IsUncitedBlock(item.Classification)).ToArray();
         var review = ReviewBudgetPolicy.Decide(new ReviewBudgetFacts(
