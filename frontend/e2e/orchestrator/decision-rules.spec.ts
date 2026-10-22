@@ -36,9 +36,14 @@ test('workspace rules can be drafted, replayed and activated with a reason', asy
   await page.route(/\/api\/workspaces\/ws-test\/decision-rules\/versions\/drv_test\/activate(?:\?.*)?$/,
     route => { active = true; return route.fulfill({ json: { versionId: version.versionId } }); });
 
+  const initialRules = page.waitForResponse(response =>
+    /\/api\/workspaces\/ws-test\/decision-rules(?:\?.*)?$/.test(response.url())
+      && response.request().method() === 'GET');
   await page.goto('/#/workspace/settings/orchestrator');
+  await initialRules;
   const panel = page.getByTestId('decision-rules-panel');
   await expect(panel).toBeVisible();
+  await expect(panel.getByLabel('Workspace').locator('option[value="ws-test"]')).toHaveCount(1);
   await expect(panel).toContainText('platform defaults');
   await panel.getByRole('button', { name: 'Add rule' }).click();
   await expect(panel.getByLabel('Trigger').locator('option[value="deep-review"]')).toHaveCount(1);
