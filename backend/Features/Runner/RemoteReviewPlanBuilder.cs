@@ -1,8 +1,12 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using AgentStudio.Pipeline;
 using AgentStudio.Git;
+using AgentStudio.Cli;
+using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Registry;
 using Microsoft.Extensions.Logging;
 using Contract = AgentStudio.TaskServer.Contracts;
 
@@ -31,6 +35,13 @@ public sealed class RemoteReviewPlanBuilder
         Title: "Concept fit",
         FallbackSystem: "Compare the delivered Dossier with the current prompt.md. Block a missing required section, contradicted operator direction, open decision without a recommendation, or absent implementation cards. Cite the exact brief direction and Dossier location.");
 
+    private static readonly AspectDefinition DeepReviewDefinition = new(
+        Id: "deep-review",
+        ConcernNamespace: "review",
+        PromptTemplate: "review-aspect-deep-review.md",
+        Title: "Deep review",
+        FallbackSystem: "Review the delivered change for concrete defects and cite the exact missing contract.");
+
     // The deterministic tool aspects a no-change result skips (AGT-3079).
     private static readonly string[] NoChangeSkippedToolAspects =
     [
@@ -44,19 +55,31 @@ public sealed class RemoteReviewPlanBuilder
     private readonly GitService? _git;
     private readonly TimeProvider _time;
     private readonly ILogger<RemoteReviewPlanBuilder>? _logger;
+    private readonly DecisionRuleVersionStore? _rules;
+    private readonly ProjectRegistry? _projects;
+    private readonly QuotaAdmissionService? _quota;
+    private readonly ModelRoutingPolicyRegistry? _routing;
 
     public RemoteReviewPlanBuilder(
         AspectRunnerService aspects,
         IConfiguration configuration,
         GitService? git = null,
         TimeProvider? time = null,
-        ILogger<RemoteReviewPlanBuilder>? logger = null)
+        ILogger<RemoteReviewPlanBuilder>? logger = null,
+        DecisionRuleVersionStore? rules = null,
+        ProjectRegistry? projects = null,
+        QuotaAdmissionService? quota = null,
+        ModelRoutingPolicyRegistry? routing = null)
     {
         _aspects = aspects;
         _configuration = configuration;
         _git = git;
         _time = time ?? TimeProvider.System;
         _logger = logger;
+        _rules = rules;
+        _projects = projects;
+        _quota = quota;
+        _routing = routing;
     }
 
     /// <summary>
@@ -130,10 +153,10 @@ public sealed class RemoteReviewPlanBuilder
         var resultRef = immutableResultRef ?? subject?.ImmutableResultRef;
         var resultSha = expectedResultSha ?? subject?.ResultSha;
         var changedPaths = changedFiles ?? (_git is null || string.IsNullOrWhiteSpace(repositoryPath)
-            || string.IsNullOrWhiteSpace(integrationRef) || string.IsNullOrWhiteSpace(resultRef)
+            || string.IsNullOrWhiteSpace(integrationRef) || !ReviewSubjectStore.IsValidResultSha(resultSha)
             ? null
             : _git.ChangedPathsAgainstMergeBase(
-                repositoryPath, integrationRef, resultRef));
+                repositoryPath, integrationRef, resultSha!));
         var deferBuildTest = projectSettings?.BatchGate.Enabled == true
             && task is not null && !TaskModes.IsReportOnly(task.Mode)
             && (projectSettings.BatchGate.EffectiveScope == "code"
@@ -306,6 +329,39 @@ public sealed class RemoteReviewPlanBuilder
                 ThinkingLevel: thinking));
         }
 
+        var deepDecision = isConcept ? null : DecideDeepReview(task, inputs.TaskBody, projectSettings, changedPaths,
+            noChange ? 0 : _git is null || string.IsNullOrWhiteSpace(repositoryPath)
+                || string.IsNullOrWhiteSpace(integrationRef) || !ReviewSubjectStore.IsValidResultSha(resultSha)
+                    ? -1 : _git.ChangedLinesAgainstMergeBase(repositoryPath, integrationRef, resultSha!) ?? -1,
+            resultSha ?? string.Empty);
+        if (deepDecision is { Dispatched: true })
+        {
+            var prompt = _aspects.BuildAspectPrompt(DeepReviewDefinition, inputs, deepDecision.Model,
+                pipelineStepId: "aspect-deep-review",
+                extraValues: new Dictionary<string, string?>
+                {
+                    ["decision_receipt"] = deepDecision.ReceiptId,
+                    ["acceptance_scope_json"] = JsonSerializer.Serialize(inputs.AcceptanceScope),
+                    ["task_body_json"] = JsonSerializer.Serialize(inputs.TaskBody),
+                    ["results_inventory_json"] = JsonSerializer.Serialize(inputs.ResultsInventory),
+                    ["previous_deep_findings_json"] = PreviousDeepFindings(task),
+                });
+            var reviewCli = deepDecision.Model.StartsWith("claude-", StringComparison.OrdinalIgnoreCase)
+                ? "claude" : "codex";
+            var budget = ReviewAspectTimeoutPolicy.Derive(reviewCli, deepDecision.Model,
+                deepDecision.ThinkingLevel, Contract.ReviewAspectBudgetPolicy.MaterialCharacters(prompt),
+                _configuration);
+            commands.Add(new Contract.ReviewCommandDto(
+                "aspect-deep-review", "deep-review", reviewCli, [],
+                TimeoutSeconds: budget.Seconds,
+                ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
+                Prompt: prompt, CliType: reviewCli, Model: deepDecision.Model,
+                ThinkingLevel: deepDecision.ThinkingLevel));
+        }
+        else if (deepDecision is { Mode: not DeepReviewPolicy.Shadow })
+            skipped.Add(new("deep-review", $"{deepDecision.Mode} decision {deepDecision.ReceiptId}: "
+                + string.Join(", ", deepDecision.Grounds)));
+
         var hasModelReview = commands.Any(command =>
             Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind));
         if (deferBuildTest && !hasModelReview)
@@ -336,6 +392,10 @@ public sealed class RemoteReviewPlanBuilder
             BriefSha256 = isConcept ? BriefHash(task.FolderPath) : BriefVersionStore.ReadOrCreate(task.FolderPath),
             SkippedAspects = skipped,
             TaskMode = isConcept ? TaskModes.Concept : null,
+            DeepReviewDecision = deepDecision is null ? null : new Contract.DeepReviewDecisionDto(
+                deepDecision.ReceiptId, deepDecision.Mode, deepDecision.Selected,
+                deepDecision.Dispatched, deepDecision.Model, deepDecision.ThinkingLevel,
+                deepDecision.Grounds, deepDecision.RuleVersionId),
         };
         if (isConcept) return plan;
         plan = ApplyScopedReview(
@@ -358,6 +418,68 @@ public sealed class RemoteReviewPlanBuilder
                     .ToArray(),
             }
             : plan;
+    }
+
+    private DeepReviewDecision DecideDeepReview(TaskInfo task, string taskBody, ProjectSettings? settings,
+        IReadOnlyList<string>? changedPaths, int changedLines, string resultSha)
+    {
+        ReviewRoundBudgetLedger ledger;
+        try { ledger = ReviewRoundBudgetStore.Read(task.FolderPath); }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException)
+        {
+            _logger?.LogWarning(ex, "Invalid review round budget for {TaskId}; using empty history", task.Id);
+            ledger = ReviewRoundBudgetLedger.Empty;
+        }
+        var blocked = ledger.Rounds.SelectMany(round => round.BlockingAspects).ToArray();
+        var gateFailures = blocked.Count(aspect => aspect is "build-tests" or "lint" or "review-verification");
+        var project = _projects?.FindByIdOrDisplayName(task.ProjectName);
+        var ruleSet = project?.WorkspaceId is { } workspaceId && _rules is not null
+            ? _rules.EffectiveRules(workspaceId, project.Id) : [];
+        var rules = ruleSet.Where(rule => rule.Trigger == DecisionRuleTriggers.DeepReview)
+            .OrderBy(rule => rule.Id, StringComparer.Ordinal).ToArray();
+        var values = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["review.changed-lines"] = changedLines,
+            ["review.previous-blocks"] = blocked.Length,
+            ["review.gate-failures"] = gateFailures,
+            ["review.delivered-rounds"] = ledger.Delivered,
+        };
+        var matching = rules.LastOrDefault(rule => values.TryGetValue(rule.FactId, out var value)
+            && (rule.WarningThreshold is null
+                || int.TryParse(rule.WarningThreshold, out var threshold) && value >= threshold));
+        var ruleSelection = matching is null ? (bool?)null
+            : matching.CandidateActions.Contains(Contract.DecisionActionKinds.Prepare, StringComparer.Ordinal);
+        var critical = _routing?.CorrectnessFloor(task.TaskType, task.Title, taskBody)?.Id == "sol-xhigh"
+            || task.Tags.Any(tag => tag.Equals("p0", StringComparison.OrdinalIgnoreCase)
+            || tag.Contains("security", StringComparison.OrdinalIgnoreCase)
+            || tag.Contains("data-loss", StringComparison.OrdinalIgnoreCase));
+        var ruleVersion = project?.WorkspaceId is { } id && _rules is not null
+            ? _rules.ActiveVersionId(id, project.Id) ?? _rules.ActiveVersionId(id) : null;
+        var preliminaryFacts = new DeepReviewGrounds(task.Id, resultSha,
+            critical ? "critical" : "routine", changedPaths ?? [], changedLines,
+            task.Model, task.ThinkingLevel, blocked.Length, ledger.Delivered,
+            settings?.MaxDeliveredReviewRounds ?? ReviewRoundBudgetPolicy.DefaultMaximumRounds,
+            gateFailures, "unknown");
+        var preliminary = MonolithTransitionAdapter.DeepReview(preliminaryFacts, DeepReviewPolicy.Shadow,
+            ruleVersion, ruleSelection, matching?.Model, matching?.ThinkingLevel);
+        var reviewCli = preliminary.Model.StartsWith("claude-", StringComparison.OrdinalIgnoreCase)
+            ? "claude" : "codex";
+        var quota = _quota?.Plan(new QuotaAdmissionRequest(reviewCli, preliminary.Model,
+            preliminary.ThinkingLevel, task.ProjectName, 0, "remote-deep-review-plan"));
+        var quotaState = quota is null ? "unknown" : !quota.ShouldLaunch ? "capped"
+            : quota.IsFallback ? "unavailable" : "available";
+        return MonolithTransitionAdapter.DeepReview(preliminaryFacts with { QuotaState = quotaState },
+            _configuration["DeepReview:Mode"] ?? DeepReviewPolicy.Shadow,
+            ruleVersion, ruleSelection, matching?.Model, matching?.ThinkingLevel);
+    }
+
+    private static string PreviousDeepFindings(TaskInfo task)
+    {
+        var attempts = AgentStudio.Review.ReviewProjectionReader.Read(task, [], null).Attempts;
+        return JsonSerializer.Serialize(attempts.SelectMany(attempt => attempt.Aspects)
+            .Where(aspect => string.Equals(aspect.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase)
+                && Contract.ReviewGradingPolicy.IsBlockingToken(aspect.Status))
+            .Select(aspect => new { aspect.Summary, aspect.Classification }).TakeLast(3));
     }
 
     /// <summary>
@@ -429,7 +551,8 @@ public sealed class RemoteReviewPlanBuilder
                 ledger.ReviewedIntegrationTipSha,
                 Math.Max(0, settings?.ScopedReviewMaximumDeltaFiles ?? 20),
                 ledger.AspectIds,
-                ledger.PreviousVerdicts),
+                ledger.PreviousVerdicts.Where(verdict =>
+                    !string.Equals(verdict.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase)).ToArray()),
         };
         if (string.IsNullOrWhiteSpace(repositoryPath)
             || string.IsNullOrWhiteSpace(expectedResultSha))
@@ -439,7 +562,8 @@ public sealed class RemoteReviewPlanBuilder
             .Where(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
             .ToArray();
         var previous = ledger.PreviousVerdicts
-            .Where(verdict => semanticCommands.Any(command =>
+            .Where(verdict => !string.Equals(verdict.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase)
+                && semanticCommands.Any(command =>
                 string.Equals(command.Aspect, verdict.Aspect, StringComparison.OrdinalIgnoreCase)))
             .GroupBy(verdict => verdict.Aspect, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);

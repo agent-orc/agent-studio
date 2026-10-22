@@ -14,6 +14,47 @@ public sealed class BatchGateReviewPlanTests
     private static readonly DateTimeOffset Now = DateTimeOffset.UnixEpoch.AddDays(20_000);
 
     [Fact]
+    public void Deep_review_size_uses_the_merge_base_diff_line_count()
+    {
+        var fixture = CreateFixture();
+        try
+        {
+            Git(fixture.Repo, "switch", "-qc", "agent-studio/results/deep-size");
+            File.WriteAllText(Path.Combine(fixture.Repo, "change.txt"), "one\ntwo\nthree\n");
+            Git(fixture.Repo, "add", ".");
+            Git(fixture.Repo, "commit", "-qm", "delivery");
+            var resultSha = Git(fixture.Repo, "rev-parse", "HEAD").Trim();
+            Git(fixture.Repo, "switch", "-q", "develop");
+            Git(fixture.Repo, "update-ref", "refs/remotes/origin/agent-studio/results/deep-size", resultSha);
+            Git(fixture.Repo, "update-ref", "-d", "refs/heads/agent-studio/results/deep-size");
+            Assert.Null(fixture.Git.ChangedLinesAgainstMergeBase(
+                fixture.Repo, "develop", "refs/heads/agent-studio/results/deep-size"));
+            Assert.Equal(3, fixture.Git.ChangedLinesAgainstMergeBase(fixture.Repo, "develop", resultSha));
+            var plan = fixture.Builder.Build(fixture.Task, fixture.Repo, new ProjectSettings(),
+                "develop", resultSha, null, "refs/heads/agent-studio/results/deep-size");
+            Assert.NotNull(plan.DeepReviewDecision);
+            Assert.False(plan.DeepReviewDecision.Selected);
+            Assert.DoesNotContain("diff-size-unavailable", plan.DeepReviewDecision.Grounds);
+        }
+        finally { DeleteDirectory(fixture.Root); }
+    }
+
+    [Fact]
+    public void Corrupt_round_budget_does_not_stop_review_plan_creation()
+    {
+        var fixture = CreateFixture();
+        try
+        {
+            File.WriteAllText(Path.Combine(fixture.Folder, ReviewRoundBudgetStore.FileName), "{broken");
+            var plan = fixture.Builder.Build(fixture.Task, fixture.Repo, new ProjectSettings(),
+                "develop", new string('a', 40), ["change.txt"], "refs/heads/agent-studio/results/task");
+            Assert.NotNull(plan.DeepReviewDecision);
+            Assert.False(plan.DeepReviewDecision.Selected);
+        }
+        finally { DeleteDirectory(fixture.Root); }
+    }
+
+    [Fact]
     public void DocumentationOnlyResultDefersBuildTestsButKeepsModelReview()
     {
         var fixture = CreateFixture();
@@ -396,11 +437,11 @@ public sealed class BatchGateReviewPlanTests
         var fixture = CreateFixture(LintCommand);
         try
         {
-            var resultSha = Git(fixture.Repo, "rev-parse", "develop").Trim();
+            var resultSha = new string('f', 40);
             var settings = new ProjectSettings { BatchGate = new(Enabled: true, Scope: "code") };
 
-            // The result ref is unknown to this checkout, so the builder's own
-            // diff is null and must not be read as "no change".
+            // Neither the immutable result SHA nor its ref is present in this
+            // checkout, so the diff is unknown rather than a no-change result.
             var plan = fixture.Builder.Build(fixture.Task, fixture.Repo, settings, "develop",
                 resultSha, null, "refs/heads/agent-studio/results/missing");
 

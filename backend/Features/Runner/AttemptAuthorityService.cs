@@ -197,6 +197,7 @@ public sealed class AttemptAuthorityService
     /// out-of-order deferrals of concurrent claims exact (AGT-2987).
     /// </summary>
     private readonly Dictionary<(string AttemptId, long Fence), DateTime> _deferrableReviewClaims = new();
+    private readonly Dictionary<string, DateTime> _quotaDeferredReviews = new(StringComparer.Ordinal);
     /// <summary>Sets the priority of this card and its current or future review attempt.</summary>
     public bool SetReviewPriority(string taskKey, string priority, Func<bool>? isInAutoReview = null)
     {
@@ -1267,6 +1268,8 @@ public sealed class AttemptAuthorityService
                     // AGT-W57: a card parked behind an open cause breaker keeps
                     // its pending attempt but is not handed out until released.
                     .Where(review => heldTaskKeys is null || !heldTaskKeys.Contains(review.TaskKey))
+                    .Where(review => !_quotaDeferredReviews.TryGetValue(review.AttemptId, out var retryAt)
+                        || retryAt <= now)
                     .Where(review => capabilities is null
                         || ((review.Subject.Plan is null
                                 || AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy.Supports(
@@ -1490,7 +1493,8 @@ public sealed class AttemptAuthorityService
     /// The fence remains consumed, while the undelivered claim key is removed
     /// so the same executor instance can claim the attempt after recovery.
     /// </summary>
-    public bool DeferReviewClaim(string attemptId, string executorId, string instanceId)
+    public bool DeferReviewClaim(string attemptId, string executorId, string instanceId,
+        bool quotaLimited = false)
     {
         lock (_gate)
         {
@@ -1510,6 +1514,7 @@ public sealed class AttemptAuthorityService
             review.CurrentClaimDeliveryKey = null;
             review.Lease = null;
             review.State = AttemptLifecycleState.Pending;
+            if (quotaLimited) _quotaDeferredReviews[attemptId] = _utcNow().AddMinutes(1);
             PersistLocked();
             return true;
         }

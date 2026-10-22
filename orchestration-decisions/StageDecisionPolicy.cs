@@ -51,7 +51,13 @@ public static class StageDecisionPolicy
                 && ReviewRoundBudgetPolicy.IsDeliveredOutcome(payload.ReviewOutcome))
             .GroupBy(payload => payload.ReviewAttemptId, StringComparer.Ordinal).Select(group => group.Last())
             .Select(payload => new DeliveredReviewRound(payload.ReviewAttemptId!,
-                ReviewRoundBudgetPolicy.CountedBlockingAspects(payload.Verdicts ?? []), [])).ToArray());
+                ReviewRoundBudgetPolicy.CountedBlockingAspects(ReviewFindingMergePolicy.Merge((payload.Verdicts ?? [])
+                    .Select(item => new ReviewFollowUpFinding(item.Aspect, item.Status, item.Summary,
+                        item.EvidenceChecked, item.Missing, item.Classification)))), [],
+                BlockingFindingKeys: ReviewFindingMergePolicy.BlockingFingerprints((payload.Verdicts ?? [])
+                    .Select(item => new ReviewFollowUpFinding(item.Aspect, item.Status, item.Summary,
+                        item.EvidenceChecked, item.Missing, item.Classification)))))
+            .ToArray());
 
     public static int ConcernRoundsUsed(IEnumerable<StagePayload> priorReports)
         => priorReports.Count(payload => TransitionDecisionPolicy.Decide(Facts(

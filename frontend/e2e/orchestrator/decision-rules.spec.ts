@@ -41,6 +41,11 @@ test('workspace rules can be drafted, replayed and activated with a reason', asy
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('platform defaults');
   await panel.getByRole('button', { name: 'Add rule' }).click();
+  await expect(panel.getByLabel('Trigger').locator('option[value="deep-review"]')).toHaveCount(1);
+  await panel.getByLabel('Trigger').selectOption('deep-review');
+  await expect(panel.getByLabel('Review reasoning')).toBeVisible();
+  await panel.getByLabel('Review reasoning').selectOption('xhigh');
+  await panel.getByLabel('Trigger').selectOption('capacity-check');
   await panel.getByLabel('Rule id').fill('queue-pressure');
   await panel.getByLabel('Fact id').fill('host.queue');
   await expect(panel.getByRole('button', { name: 'Save draft' })).toBeDisabled();
@@ -50,7 +55,7 @@ test('workspace rules can be drafted, replayed and activated with a reason', asy
   await expect(panel.getByTestId('decision-rules-dry-run')).toContainText('counterfactual');
   await panel.getByRole('button', { name: 'Activate draft' }).click();
   await expect(panel).toContainText('Active version: drv_test');
-  await panel.screenshot({ path: path.join(shots, 'decision-rules-light.png') });
+  await panel.screenshot({ path: path.join(shots, 'decision-rules-light--mocked.png') });
   await page.evaluate(() => { document.documentElement.dataset['studioTheme'] = 'dark'; });
-  await panel.screenshot({ path: path.join(shots, 'decision-rules-dark.png') });
+  await panel.screenshot({ path: path.join(shots, 'decision-rules-dark--mocked.png') });
 });

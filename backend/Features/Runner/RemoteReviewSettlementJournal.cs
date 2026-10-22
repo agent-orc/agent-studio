@@ -220,13 +220,15 @@ public static class RemoteReviewSettlementPolicy
         var legacy = AgentStudio.Review.ReviewProjectionReader.Read(task, [], null).Attempts
             .Where(attempt => attempt.AttemptId != entry.AttemptId).ToArray();
         var seed = ReviewRoundBudgetStore.Read(task.FolderPath, legacy);
+        var mergedVerdicts = MonolithTransitionAdapter.MergeReviewVerdicts(originalVerdicts);
         ReviewRoundBudgetStore.Record(task.FolderPath, seed,
             new DeliveredReviewRound(entry.AttemptId,
-                MonolithTransitionAdapter.ReviewRoundBudgetPolicyCountedBlockingAspects(originalVerdicts),
+                MonolithTransitionAdapter.ReviewRoundBudgetPolicyCountedBlockingAspects(mergedVerdicts),
                 budget.DegradedAspects,
-                SpentBy: budget.SpentBy));
+                SpentBy: budget.SpentBy,
+                BlockingFindingKeys: MonolithTransitionAdapter.BlockingReviewFindingKeys(mergedVerdicts)));
         return V1ReviewPlaneEndpoints.CreateReviewBudgetFollowUpCard(
-            task, entry.AttemptId, originalVerdicts, budget, mutations, scanner) is not null;
+            task, entry.AttemptId, mergedVerdicts, budget, mutations, scanner) is not null;
     }
 
     public static bool MatchesAcceptedReview(RemoteReviewSettlementEntry entry, ReviewAttemptDto? review)

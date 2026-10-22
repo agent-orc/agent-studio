@@ -86,6 +86,28 @@ public sealed class ReviewClaimCapabilityRegistrationTests : IDisposable
     }
 
     [Fact]
+    public void Quota_deferred_review_yields_to_the_next_card_until_its_clock_retry()
+    {
+        var now = new DateTime(2026, 10, 22, 10, 0, 0, DateTimeKind.Utc);
+        var authority = NewAuthority(() => now);
+        CreatePendingReviewAttempt(authority, "AGT-1", new string('1', 40), DotNetPlan());
+        now = now.AddSeconds(1);
+        CreatePendingReviewAttempt(authority, "AGT-2", new string('2', 40), DotNetPlan());
+        var capabilities = RunnerProbe.ReviewRegistrationCapabilities(
+            ReviewOptions(), onPath: tool => tool == "dotnet").ToHashSet(StringComparer.Ordinal);
+
+        var first = authority.ClaimNextReview(RunnerId, "review-host", Instance, 60, capabilities);
+        Assert.Equal("AGT-1", first.ReviewAttempt!.TaskKey);
+        Assert.True(authority.DeferReviewClaim(first.ReviewAttempt.AttemptId,
+            RunnerId, Instance, quotaLimited: true));
+        var second = authority.ClaimNextReview(RunnerId, "review-host", Instance, 60, capabilities);
+        Assert.Equal("AGT-2", second.ReviewAttempt!.TaskKey);
+        now = now.AddMinutes(1);
+        var resumed = authority.ClaimNextReview(RunnerId, "review-host", Instance, 60, capabilities);
+        Assert.Equal("AGT-1", resumed.ReviewAttempt!.TaskKey);
+    }
+
+    [Fact]
     public void Operator_required_capabilities_stay_an_additive_override()
     {
         var options = ReviewOptions(requiredCapabilities: ["toolchain:custom"]);
