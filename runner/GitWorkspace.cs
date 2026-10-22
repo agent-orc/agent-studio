@@ -801,6 +801,72 @@ public sealed class GitWorkspace
             quarantine,
             ct);
 
+    /// <summary>Preserves legacy repository reports in the card artifact folder.</summary>
+    public async Task CaptureLegacyRepositoryReportsAsync(CancellationToken ct)
+    {
+        if (!UsesLegacyRepositoryReports()) return;
+        foreach (var (relativePath, artifactName) in new[]
+        {
+            ("status.md", "legacy-repository-status.md"),
+            ("results/status.md", "legacy-repository-results-status.md")
+        })
+        {
+            var source = Path.Combine(RepoPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(source)) continue;
+
+            var dirty = await ProjectGitAsync(
+                ["status", "--porcelain=v1", "--", relativePath], RepoPath, ct);
+            var changedInHistory = false;
+            if (!string.IsNullOrWhiteSpace(BaseSha))
+            {
+                var history = await ProjectGitAsync(
+                    ["diff", "--name-only", BaseSha!, "HEAD", "--", relativePath], RepoPath, ct);
+                changedInHistory = history.Success && !string.IsNullOrWhiteSpace(history.StdOut);
+            }
+            if (!changedInHistory && dirty.Success && string.IsNullOrWhiteSpace(dirty.StdOut)) continue;
+
+            try
+            {
+                var results = Path.Combine(_options.WorkDir, "tasks", _safeTaskKey, "results");
+                Directory.CreateDirectory(results);
+                var content = await File.ReadAllBytesAsync(source, ct);
+                const int reportLimit = 16 * 1024;
+                var start = Math.Max(0, content.Length - reportLimit);
+                while (start < content.Length && (content[start] & 0xC0) == 0x80) start++;
+                await File.WriteAllBytesAsync(Path.Combine(results, artifactName), content[start..], ct);
+                _log($"legacy-repository-report-preserved task={_safeTaskKey} artifact=results/{artifactName}");
+            }
+            catch (Exception ex)
+            {
+                throw new IOException(
+                    $"Could not preserve legacy repository report '{relativePath}' for task '{_safeTaskKey}'.",
+                    ex);
+            }
+        }
+    }
+
+    private bool UsesLegacyRepositoryReports()
+        => File.Exists(Path.Combine(RepoPath, ".agent-studio", "legacy-status-reports"));
+
+    private async Task RestoreLegacyRepositoryReportsAsync(CancellationToken ct)
+    {
+        foreach (var relativePath in new[] { "status.md", "results/status.md" })
+        {
+            var tracked = (await Git(["ls-files", "--cached", "--", relativePath], RepoPath, ct))
+                .StdOut.Trim();
+            if (string.IsNullOrEmpty(tracked))
+            {
+                var path = Path.Combine(RepoPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
+                if (File.Exists(path)) File.Delete(path);
+            }
+            else
+            {
+                await Git(["restore", "--source=HEAD", "--staged", "--worktree", "--", relativePath],
+                    RepoPath, ct);
+            }
+        }
+    }
+
     private async Task<WorktreeTeardownResult> SecureAsync(
         string outcome,
         string? sourceRunAttemptId,
@@ -826,13 +892,26 @@ public sealed class GitWorkspace
             return WorktreeTeardownResult.NoResult;
         }
 
-        var status = (await Git(["status", "--porcelain=v1", "--untracked-files=all"], RepoPath, ct)).StdOut;
+        var reportPathsEnabled = UsesLegacyRepositoryReports();
+        if (reportPathsEnabled)
+        {
+            await CaptureLegacyRepositoryReportsAsync(ct);
+            // Keep report edits out of the product commit, including staged edits.
+            await Git(["reset", "-q", "HEAD", "--", "status.md", "results/status.md"], RepoPath, ct);
+        }
+        var statusArgs = new List<string> { "status", "--porcelain=v1", "--untracked-files=all", "--", "." };
+        if (reportPathsEnabled)
+            statusArgs.AddRange([":(exclude)status.md", ":(exclude)results/status.md"]);
+        var status = (await Git(statusArgs, RepoPath, ct)).StdOut;
         var wasDirty = !string.IsNullOrWhiteSpace(status);
         _log($"worktree-salvage-status path={RepoPath} dirty={wasDirty} outcome={outcome}");
 
         if (wasDirty)
         {
-            await Git(["add", "--all"], RepoPath, ct);
+            var addArgs = new List<string> { "add", "--all", "--", "." };
+            if (reportPathsEnabled)
+                addArgs.AddRange([":(exclude)status.md", ":(exclude)results/status.md"]);
+            await Git(addArgs, RepoPath, ct);
             if (await ScanStagedDiffAsync(ct) is { } cause)
                 throw new WorktreeSalvageException(RepoPath, _workBranch,
                     new InvalidOperationException(cause.Summary),
@@ -844,6 +923,11 @@ public sealed class GitWorkspace
             ], RepoPath, ct);
             _log($"worktree-salvage-commit-created path={RepoPath} outcome={outcome}");
         }
+
+        // Durable handoff checks the entire worktree. Remove only the report
+        // copies already preserved on the card, leaving all other edits intact.
+        if (reportPathsEnabled)
+            await RestoreLegacyRepositoryReportsAsync(ct);
 
         var head = (await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim();
         var salvageBranch = quarantine

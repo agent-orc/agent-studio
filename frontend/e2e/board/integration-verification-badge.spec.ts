@@ -63,6 +63,13 @@ const verified = card('verified-delivery', 'AGT-3101', 'Gate passed on the merge
   reason: `The gate ran once on the current branch tip ${TREE.slice(0, 7)} and returned Ok.`,
 });
 
+const operatorVerified = card('operator-verified-delivery', 'AGT-3166', 'Operator candidate verified', '6-completed', {
+  state: 'integrated-verified',
+  sha: TREE,
+  evidence: 'integration-record',
+  reason: `Verified by operator candidate ${TREE}: 120 tests passed on gate-host. Log SHA-256 ${'a'.repeat(64)}.`,
+});
+
 const unverified = card('unverified-delivery', 'AGT-3102', 'Pushed to develop without a passing gate', '5-human-review', {
   state: 'integrated-unverified',
   sha: TREE,
@@ -92,7 +99,7 @@ const GROUPED = {
   autoReview: [],
   humanReview: [unverified],
   escalated: [],
-  completed: [verified],
+  completed: [verified, operatorVerified],
   archive: [],
 };
 
@@ -103,6 +110,9 @@ async function installRoutes(page: Page): Promise<void> {
     // BFF; the legacy routes below stay for the remaining board widgets.
     if (url.includes('/api/v1/studio/auth/status')) {
       return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
+    }
+    if (new URL(url).pathname === '/api/v1/projects') {
+      return json(route, [{ id: 'PROJ-001', displayName: PROJECT, archived: false }]);
     }
     if (url.includes('/api/v1/studio/board')) return json(route, GROUPED);
     if (url.includes('/api/v1/studio/runner/status')) return json(route, { projects: {} });
@@ -115,11 +125,29 @@ async function installRoutes(page: Page): Promise<void> {
     if (url.includes('/api/cli/usage')) {
       return json(route, { at: '2026-09-29T06:00:00Z', sections: [] });
     }
+    if (new URL(url).pathname === '/api/usage/cockpit') {
+      const observedAt = '2026-09-29T06:00:00Z';
+      const calendar = {
+        timeZone: 'UTC', weekStart: 1, dayStartUtc: observedAt, dayEndUtc: observedAt,
+        weekStartUtc: observedAt, weekEndUtc: observedAt,
+      };
+      return json(route, {
+        snapshotVersion: 1, workspaceId: 'fixture', timeZone: 'UTC', weekStart: 1,
+        generatedAt: observedAt, calendar, clis: [],
+        cost: {
+          currency: 'USD', calendar, todayUsd: 0, weekUsd: 0, projects: [],
+          coverage: { status: 'complete', observedAt, ttlSeconds: 600 },
+          pricingVersion: 'fixture', normalizationVersion: 'fixture',
+          ledgerEndpointTemplate: '',
+        },
+        runs: [], slots: [], sources: {},
+      });
+    }
     if (url.includes('/api/orchestrator/global')) {
       return json(route, { session: null });
     }
     if (url.includes('/api/tasks/grouped')) return json(route, GROUPED);
-    if (/\/api\/tasks(\?|$)/.test(url)) return json(route, [unverified, verified]);
+    if (/\/api\/tasks(\?|$)/.test(url)) return json(route, [unverified, verified, operatorVerified]);
     if (url.includes('/api/watch-paths')) {
       return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
     }
@@ -154,6 +182,7 @@ test('the board badge tells integrated-verified from integrated-unverified cards
 
   const unverifiedCard = page.locator('[data-testid="task-card"]', { hasText: 'Pushed to develop without a passing gate' });
   await expect(unverifiedCard).toBeVisible();
+  await dismissDevErrorDialog(page);
   const unverifiedBadge = unverifiedCard.getByTestId('integration-status-badge');
   await expect(unverifiedBadge).toContainText('merged @aaaaaaa · unverified');
   await expect(unverifiedBadge).toHaveAttribute('data-integration-verification', 'integrated-unverified');
@@ -166,14 +195,24 @@ test('the board badge tells integrated-verified from integrated-unverified cards
   await expect(verifiedBadge).toHaveAttribute('data-integration-verification', 'integrated-verified');
   await expect(verifiedBadge).toHaveAttribute('data-kind', 'integrated');
 
-  await dismissDevErrorDialog(page);
+  const operatorCard = page.locator('[data-testid="task-card"]', { hasText: 'Operator candidate verified' });
+  await expect(operatorCard).toBeVisible();
+  const operatorBadge = operatorCard.getByTestId('integration-status-badge');
+  await expect(operatorBadge).toContainText(`verified by operator candidate ${TREE.slice(0, 7)}`);
+  await expect(operatorBadge).toHaveAttribute('data-kind', 'integrated');
+  await expect(operatorBadge).toHaveAttribute('aria-label', /verified by operator candidate bbbbbbb/);
+
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
+    await dismissDevErrorDialog(page);
     await unverifiedCard.screenshot({
       path: path.join(RESULTS_DIR, `integration-verification-badge--unverified--${theme}--mocked.png`),
     });
     await verifiedCard.screenshot({
       path: path.join(RESULTS_DIR, `integration-verification-badge--verified--${theme}--mocked.png`),
+    });
+    await operatorCard.screenshot({
+      path: path.join(RESULTS_DIR, `integration-verification-badge--operator--${theme}--mocked.png`),
     });
   }
 });

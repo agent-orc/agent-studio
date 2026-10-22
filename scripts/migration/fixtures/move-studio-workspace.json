@@ -1,0 +1,88 @@
+{
+  "workspace": "C:\\Studio\\agent-taskboard-workspace",
+  "home": "C:\\Users\\operator",
+  "files": {
+    ".gitignore": ".runtime/\nlogs/\n",
+    ".metadata/projects.json": "{}",
+    ".metadata/attempt-authority.json": "{\"schemaVersion\":7}",
+    ".metadata/attempt-authority.archive-2026-10.json": "[]",
+    ".metadata/workspaces.json": "{\"Workspaces\":[]}",
+    ".security/access-state.json": "{\"Users\":[]}",
+    ".runtime/cli-output/AGT-1.log": "run output",
+    ".runtime/global-orchestrator-session.json": "{}",
+    ".orchestration-occurrences/occurrence-1.json": "{}",
+    ".orchestration-ai-asks/ask-1.json": "{}",
+    "logs/bus/2026-10-18.jsonl": "{\"event\":\"x\"}\n",
+    "logs/api.log": "started\n",
+    "projects/demo/tasks/3-done/AGT-1/task.md": "# AGT-1\n",
+    "projects/demo/tasks/3-done/AGT-1/status.md": "done, edited after commit\n",
+    "projects/demo/tasks/3-done/AGT-1/results/report.html": "<p>report</p>",
+    "projects/demo/tasks/3-done/AGT-1/attachments/screenshot.png": "png",
+    "projects/demo/tasks/3-done/AGT-1/write.json.tmp": "partial",
+    "projects/docs/tasks/0-backlog/DOC-1/task.md": "# DOC-1\n",
+    "notes/scratch.md": "untracked note\n"
+  },
+  "tracked": [
+    ".gitignore",
+    ".metadata/projects.json",
+    ".metadata/workspaces.json",
+    "projects/demo/tasks/3-done/AGT-1/task.md",
+    "projects/demo/tasks/3-done/AGT-1/status.md",
+    "projects/demo/tasks/3-done/AGT-2/task.md",
+    "projects/docs/tasks/0-backlog/DOC-1/task.md"
+  ],
+  "dirty": [
+    "projects/demo/tasks/3-done/AGT-1/status.md",
+    "projects/demo/tasks/3-done/AGT-2/task.md"
+  ],
+  "registry": {
+    "Version": 1,
+    "NextProjectIdSeq": 6,
+    "Projects": [
+      {
+        "Id": "PROJ-001",
+        "DisplayName": "Demo",
+        "StorageLocation": "C:\\Studio\\agent-taskboard-workspace\\projects\\demo\\tasks",
+        "RepositoryPath": "D:\\Code\\Demo",
+        "RootPath": "D:\\Code\\Demo\\app",
+        "Urls": [{ "Id": "repo", "Label": "Repository", "Url": "git@github.com:example/demo.git" }]
+      },
+      {
+        "Id": "PROJ-002",
+        "DisplayName": "Demo docs",
+        "StorageLocation": "C:\\Studio\\agent-taskboard-workspace\\projects\\docs\\tasks",
+        "RepositoryPath": "d:\\code\\demo\\",
+        "RootPath": null,
+        "Urls": []
+      },
+      {
+        "Id": "PROJ-003",
+        "DisplayName": "Second demo",
+        "StorageLocation": "C:\\Studio\\agent-taskboard-workspace\\projects\\demo-two\\tasks",
+        "RepositoryPath": "E:\\Other\\Demo",
+        "RootPath": "E:\\Other\\Demo",
+        "Urls": []
+      },
+      {
+        "Id": "PROJ-004",
+        "DisplayName": "Task only",
+        "StorageLocation": "C:\\Studio\\agent-taskboard-workspace\\projects\\task-only\\tasks",
+        "RepositoryPath": null,
+        "RootPath": null,
+        "Urls": []
+      },
+      {
+        "Id": "PROJ-005",
+        "DisplayName": "Legacy",
+        "StorageLocation": "F:\\Legacy\\.orchestrator\\jobs",
+        "RepositoryPath": "F:\\Legacy",
+        "RootPath": "G:\\Elsewhere\\legacy-root",
+        "Archived": true,
+        "Urls": [{ "Id": "site", "Label": "Preview", "Url": "http://127.0.0.1:4200" }]
+      }
+    ]
+  },
+  "remotes": {
+    "PROJ-003": "https://github.com/example/demo-two.git"
+  }
+}

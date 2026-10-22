@@ -41,6 +41,35 @@ public sealed class NoOpIntegrationTests : IDisposable
     }
 
     [Fact]
+    public void CandidateContainment_AcceptsAncestorAndPatchEquivalent_ButRefusesMissingDelivery()
+    {
+        var repo = SeedRepo("candidate-containment");
+        RunGit(repo, "checkout -q -b develop");
+        var baseSha = RunGit(repo, "rev-parse develop").Out.Trim();
+        RunGit(repo, "checkout -q -b task/candidate");
+        File.WriteAllText(Path.Combine(repo, "delivery.txt"), "delivered\n");
+        Commit(repo, "feat: delivered");
+        var delivery = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+
+        var config = new ConfigurationBuilder().Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        Assert.False(git.IsDeliveryInPublished(repo, delivery, baseSha));
+
+        RunGit(repo, $"cherry-pick -x {delivery}");
+        var patchEquivalent = RunGit(repo, "rev-parse develop").Out.Trim();
+        Assert.False(git.IsAncestor(repo, delivery, patchEquivalent));
+        Assert.True(git.IsDeliveryInPublished(repo, delivery, patchEquivalent));
+
+        RunGit(repo, "merge -q -s ours -m \"record delivery\" task/candidate");
+        var ancestorCandidate = RunGit(repo, "rev-parse develop").Out.Trim();
+        Assert.True(git.IsAncestor(repo, delivery, ancestorCandidate));
+        Assert.True(git.IsDeliveryInPublished(repo, delivery, ancestorCandidate));
+    }
+
+    [Fact]
     public async Task ContainedDelivery_IntegratesWithoutAGateRunOrAPush_AndReleasesTheReservation()
     {
         var (repo, remote) = SeedRepoWithOrigin("contained-on-origin");

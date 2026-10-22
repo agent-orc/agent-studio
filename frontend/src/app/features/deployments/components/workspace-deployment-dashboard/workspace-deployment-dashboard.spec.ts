@@ -1,5 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { describe, expect, it } from 'vitest';
 import { DEPLOYMENT_CLOCK, DeploymentStatusService } from '../../services/deployment-status.service';
 import { WorkspaceDeploymentDashboardComponent } from './workspace-deployment-dashboard';
@@ -20,12 +22,20 @@ const group: RegistryWorkspaceListItem = {
 describe('WorkspaceDeploymentDashboardComponent', () => {
   it('renders typed fixture statuses, filters both axes, and opens the project deployment area', async () => {
     TestBed.configureTestingModule({
-      providers: [provideZonelessChangeDetection(), { provide: DEPLOYMENT_CLOCK, useValue: () => fixedNow }],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+        { provide: DEPLOYMENT_CLOCK, useValue: () => fixedNow }],
     });
     const fixture = TestBed.createComponent(WorkspaceDeploymentDashboardComponent);
     fixture.componentRef.setInput('projectNames', ['Website', 'Other']);
     fixture.componentRef.setInput('projectStorageByName', new Map([['Website', '/repo/site']]));
     fixture.componentRef.setInput('workspaces', [group]);
+    fixture.detectChanges();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const http = TestBed.inject(HttpTestingController);
+    for (const name of ['Website', 'Other']) {
+      http.expectOne(`/api/projects/${name}/deploy/delivery-lanes`)
+        .flush({ projectId: name, lanes: [] });
+    }
     await fixture.whenStable();
     const root = fixture.nativeElement as HTMLElement;
     expect(root.textContent).toContain('Release 2026.10.16.3');

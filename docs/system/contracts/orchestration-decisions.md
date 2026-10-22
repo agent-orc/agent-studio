@@ -32,6 +32,19 @@ claimable occurrences. An unaccepted preparation has no wait marker and, after
 a bounded grace period, receives a durable cancellation receipt. A later valid
 report can prepare the same idempotency key again.
 
+An operator lane move or accepted `/continue` supersedes open Engine-mode
+lane-decision occurrences for that card. Shadow occurrences remain available
+for comparing the monolith outcome. The card move and engine application serialize on
+the card, so a decision cannot apply between the move and cancellation. A
+restarted host also cancels a pending or leased occurrence whose source lane
+is gone; applying recovery cancels a source-state mismatch, settles malformed
+decision data as failed, and retries transient application failures. A
+superseded occurrence records the observed lane and reason, and the card
+timeline records `orchestration_decision_superseded`.
+Board wait state checks the occurrence and current lane, so an old marker file
+cannot block Ready pickup. A card still waiting after 15 minutes while engine
+readiness is `ready` raises one operator-feed alert per occurrence.
+
 AGT-3059 adds a per-profile rollout journal at
 `<TaskRepository>/.orchestration-rollout.json`. Coding completion, review report,
 and gate or batch result can be switched independently from Monolith to Shadow and then
@@ -597,6 +610,56 @@ writes while the tick takes the older one stays for the next tick (or gets a
 `superseded` receipt) and is never deleted unread. Tick receipts in
 `engine-intent-receipts/` are kept for seven days and pruned when a new
 receipt is recorded.
+
+`GateQueueStallPolicy` (AGT-3219) decides what a per-task batch gate result
+does after the gate returned. The host reads the generation again first: a
+result of any verdict for a review generation that is no longer current (a
+newer delivery or review, or a pending follow-up) or for a card outside Auto
+Review is `Supersede`. It resolves the queued record as superseded with a lane
+event and never moves or escalates the card. The fallback escalation also names
+`expectedSourceState: AutoReview` and the review's authority write, so a card
+that moved in the meantime is refused instead of parked. Only a
+`machine-gate-queue` budget spent in the `queue` phase, for the current review
+of a card in Auto Review, is requeued:
+the request never held a slot, so the card stays in Auto Review, a queued
+member keeps its pending record and sequence, and an emergency gate is admitted
+to the batch queue when the batch accepts it (otherwise its per-task marker
+stays active with a fresh start budget, so the admission retry resumes it). An
+execution-phase overrun keeps its escalation. Every requeue adds its wait to a
+durable ledger of the review generation; once the summed wait reaches
+`QueueWaitCap` (four queue budgets) the card escalates under the distinct
+`gate-capacity` category instead of looping, and an operator release resets the
+ledger; a passed, superseded or escalated review deletes it. A batch candidate whose
+request overruns the queue budget is no GateInfra red: the batch is abandoned
+without a same-candidate retry, its members return to the queue for the next
+batch, and their waits count toward the same cap. The batch pilot raises one
+`GateQueueStallEvent` per queue episode
+(queue depth, oldest wait, busy and total slots, estimated drain time, idle
+configured slots and an advisory) into the batch store and the operator feed.
+The episode is durable in the batch store, so a restart keeps it open, and the
+host restores the per-task gates it resumes as waiting requests (from the
+active per-task markers, with the start from the queue wait ledger), so the first
+tick after a restart does not read a drained queue; while it stays open
+`RemindsStall` raises the event again every four hours, and it ends when the
+queue drains. The store keeps the newest 50 events per project.
+`Assess` marks the queue backlogged when the slots in use cannot drain it inside
+one request's queue budget. Both planners then prefer a batch: the look-ahead
+planner closes the other cards instead of a per-task gate for a high-risk
+oldest card and waits for a due partner instead of a lone per-task gate, and
+the threshold planner closes at pressure size and holds a lone card while
+reviews are pending. A card deferred this way ages out to its own per-task gate
+after two batch deadlines (`BatchGateLookAheadPlanner.AgedOut`), and an ETA in
+the past never counts as a due partner, so a sustained backlog cannot starve a
+card. Configured but unused gate slots are only reported as an
+advisory; host capacity never changes. `Releasable` lets one operator action
+(`POST /api/projects/{project}/batch-gate/queue-stalls/release`, offered in the
+escalation summary) return every card escalated for a queue overrun, by an
+earlier build or at the queue wait cap, to Auto Review and the batch queue.
+`ReleaseRefusal` refuses a card whose last move into Escalated was not the
+fallback's escalation out of Auto Review (cause `escalated`, category
+`auto-review-escalation` or `gate-capacity`) or that carries a pending
+follow-up; the release reports the refusal instead of returning an outdated
+delivery to Auto Review.
 
 ## Verification and architecture guard
 

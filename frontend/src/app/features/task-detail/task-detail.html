@@ -44,6 +44,7 @@
   <!-- AGT-2378: the live strip reads the board-fresh runtime overlay, not the
        detail snapshot frozen at open time. -->
   <app-task-live-status [task]="liveRunInfo()" variant="detail" />
+  @defer (when !!detail().info.preview) { <app-task-preview [preview]="detail().info.preview" variant="detail" /> }
   <app-batch-detail [task]="detail().info" />
   <app-older-brief-offer [task]="detail().info" (saved)="fileSaved.emit()" (failed)="showError($event)" />
 
