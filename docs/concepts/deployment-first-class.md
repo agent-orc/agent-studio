@@ -91,12 +91,21 @@ stays the only executor; releases and runs describe and steer it.
 - **Release.** A green gate release (`POST /api/deploy/gate-releases`, or the
   operator route `POST /api/projects/{project}/environments/releases`) records an
   immutable release: version `yyyy.MM.dd.N`, commit, artifact digests, a process
-  version (hash of the project.yml schema 2 artifacts, standard lifecycle and
+  version (hash of the project.yml schema 2 artifacts, lifecycles, channels and
   deploy steps at the release commit plus the environment declarations), a
   variables version (hash of the project.yml schema 2 `variables` section at the
   release commit, where a secret counts only by name, environment protection,
-  and secret reference names), the
-  cards it adds, and channel `default`. Each release is one write-once file under
+  and secret reference names per environment), the
+  cards it adds, and exactly one channel. Schema 2 `channels` select a named
+  lifecycle using `versionRules.prereleaseTag` and/or
+  `versionRules.branchPattern`; exactly one
+  channel has `default: true` as the fallback. The release request may supply
+  `versionTag`, `branch`, and `channel`; Owner or Maintainer can override rule
+  matching. Rule refusals name the rule. Variables may add `channels` alongside
+  `environments`; both scopes must match and the most specific scope wins.
+  A named lifecycle's approval list is checked against the caller's resolved
+  Owner or Maintainer role.
+  Each release is one write-once file under
   `<TaskRepository>/deployments/projects/<project>/releases/`, written as a
   flushed temporary file and moved into place without overwrite. The same
   project, commit and artifacts always resolve to the same release. Card

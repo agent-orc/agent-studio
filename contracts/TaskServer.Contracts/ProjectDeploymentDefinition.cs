@@ -35,7 +35,13 @@ public sealed record ProjectDeployStep(
 /// resolved by the secret provider for the environment at deploy time.
 /// </summary>
 public sealed record ProjectVariableDefinition(
-    string Name, string? Value, string? Secret, IReadOnlyList<string> Environments);
+    string Name, string? Value, string? Secret, IReadOnlyList<string> Environments)
+{
+    public IReadOnlyList<string> Channels { get; init; } = [];
+}
+
+public sealed record ProjectChannelDefinition(string Name, string Lifecycle, string? PrereleaseTag,
+    string? BranchPattern, bool Default);
 
 /// <summary>
 /// Deploy hosts registered for one project, per P1 environment. The backend
@@ -59,13 +65,16 @@ public sealed record ProjectDeploymentDefinition(
     IReadOnlyList<ProjectDeployStep> Deploy)
 {
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
+    public IReadOnlyList<ProjectChannelDefinition> Channels { get; init; } = [];
+    public IReadOnlyDictionary<string, IReadOnlyList<ProjectLifecyclePhase>> Lifecycles { get; init; }
+        = new Dictionary<string, IReadOnlyList<ProjectLifecyclePhase>>(StringComparer.Ordinal);
     /// <summary>True when the file omits environments and the P1 default applies.</summary>
     public bool EnvironmentsDefaulted { get; init; }
     /// <summary>True when the file omits lifecycles and the P1 standard lifecycle applies.</summary>
     public bool LifecycleDefaulted { get; init; }
 
     public bool IsConfigured => Artifacts.Count > 0 || Environments.Count > 0
-        || StandardLifecycle.Count > 0 || Deploy.Count > 0 || Variables.Count > 0;
+        || StandardLifecycle.Count > 0 || Deploy.Count > 0 || Variables.Count > 0 || Channels.Count > 0;
 }
 
 /// <summary>
@@ -75,14 +84,15 @@ public sealed record ProjectDeploymentDefinition(
 public static class ProjectDeploymentVocabulary
 {
     public static readonly IReadOnlyList<string> Sections =
-        ["pipeline", "artifacts", "environments", "lifecycles", "deploy", "variables"];
+        ["pipeline", "artifacts", "environments", "lifecycles", "deploy", "variables", "channels"];
     public static readonly IReadOnlyList<string> ArtifactTypes = ["static", "container"];
     public static readonly IReadOnlyList<string> ArtifactKeys = ["name", "type", "path", "dockerfile", "image"];
     public static readonly IReadOnlyList<string> EnvironmentNames = ["staging", "production"];
     public static readonly IReadOnlyList<string> EnvironmentKeys = ["name", "protected"];
     public static readonly IReadOnlyList<string> LifecyclePhaseKeys = ["phase", "automatic", "approval", "requires"];
     public static readonly IReadOnlyList<string> ApprovalRoles = ["Owner", "Maintainer"];
-    public static readonly IReadOnlyList<string> VariableKeys = ["name", "value", "secret", "environments"];
+    public static readonly IReadOnlyList<string> VariableKeys = ["name", "value", "secret", "environments", "channels"];
+    public static readonly IReadOnlyList<string> ChannelKeys = ["name", "lifecycle", "versionRules", "prereleaseTag", "branchPattern", "default"];
     public static readonly IReadOnlyList<string> StepKinds =
         ["static-site", "container", "publish-static", "start-container", "run", "health", "approval"];
     public const int MaxHealthTimeoutSeconds = 900;
@@ -157,7 +167,13 @@ public static partial class ProjectDefinitionReader
             return null;
 
         CheckKeys(Section(lines, "pipeline"), 2, ["build", "test"], "pipeline", issues);
-        CheckKeys(Section(lines, "lifecycles"), 2, ["standard"], "lifecycles", issues);
+        var lifecycleNames = Section(lines, "lifecycles").Where(line => line.Indent == 2)
+            .Select(line => KeyValue(line.Text).Key).ToArray();
+        foreach (var name in lifecycleNames.GroupBy(name => name, StringComparer.Ordinal).Where(group => group.Count() > 1))
+            issues.Add(new($"lifecycles.{name.Key}", "lifecycle-duplicate", "Lifecycle names must be unique."));
+        var lifecycles = lifecycleNames.Where(name => name != "standard").Distinct(StringComparer.Ordinal)
+            .ToDictionary(name => name, name => (IReadOnlyList<ProjectLifecyclePhase>)ParsePhases(lines, name, issues),
+                StringComparer.Ordinal);
         var artifacts = SequenceMaps(lines, "artifacts", 2, 4, issues)
             .Select((item, index) =>
             {
@@ -166,17 +182,7 @@ public static partial class ProjectDefinitionReader
                     Get(item, "path"), Get(item, "dockerfile")) { Image = Get(item, "image") };
             }).ToArray();
         var environments = Environments(lines, issues);
-        var phases = SequenceMaps(lines, "lifecycles.standard", 4, 6, issues)
-            .Select((item, index) =>
-            {
-                CheckMapKeys(item, ProjectDeploymentVocabulary.LifecyclePhaseKeys, $"lifecycles.standard[{index}]", issues);
-                var automaticText = Get(item, "automatic");
-                if (automaticText is not null && !bool.TryParse(automaticText, out _))
-                    issues.Add(new($"lifecycles.standard[{index}].automatic", "lifecycle-automatic-invalid", "automatic must be true or false."));
-                return new ProjectLifecyclePhase(Get(item, "phase") ?? "",
-                    bool.TryParse(automaticText, out var automatic) && automatic,
-                    List(item, "approval"), Get(item, "requires"));
-            }).ToArray();
+        var phases = ParsePhases(lines, "standard", issues);
         var steps = SequenceMaps(lines, "deploy", 2, 4, issues)
             .Select((item, index) =>
             {
@@ -207,12 +213,26 @@ public static partial class ProjectDefinitionReader
                 CheckMapKeys(item, ProjectDeploymentVocabulary.VariableKeys, $"variables[{index}]", issues);
                 return new ProjectVariableDefinition(Get(item, "name") ?? "",
                     item.TryGetValue("value", out var value) ? value : null,
-                    Get(item, "secret"), List(item, "environments"));
+                    Get(item, "secret"), List(item, "environments")) { Channels = List(item, "channels") };
+            }).ToArray();
+        var channels = SequenceMaps(lines, "channels", 2, 4, issues)
+            .Select((item, index) =>
+            {
+                CheckMapKeys(item, ProjectDeploymentVocabulary.ChannelKeys, $"channels[{index}]", issues);
+                if (Get(item, "versionRules") is not null)
+                    issues.Add(new($"channels[{index}].versionRules", "channel-rules-shape-invalid",
+                        "versionRules must be a map of prereleaseTag and branchPattern."));
+                var defaultText = Get(item, "default");
+                if (defaultText is not null && !bool.TryParse(defaultText, out _))
+                    issues.Add(new($"channels[{index}].default", "channel-default-invalid", "default must be true or false."));
+                return new ProjectChannelDefinition(Get(item, "name") ?? "", Get(item, "lifecycle") ?? "",
+                    Get(item, "prereleaseTag"), Get(item, "branchPattern"),
+                    bool.TryParse(defaultText, out var isDefault) && isDefault);
             }).ToArray();
 
         // Staging and Production with the standard lifecycle are the P1 default
         // once the file starts describing a deployment.
-        var deploying = artifacts.Length > 0 || steps.Length > 0 || phases.Length > 0 || variables.Length > 0
+        var deploying = artifacts.Length > 0 || steps.Length > 0 || phases.Length > 0 || variables.Length > 0 || channels.Length > 0
             || Declared("environments");
         var defaultEnvironments = deploying && !Declared("environments");
         var defaultLifecycle = deploying && !Declared("lifecycles");
@@ -223,10 +243,26 @@ public static partial class ProjectDefinitionReader
             steps)
         {
             Variables = variables,
+            Channels = channels,
+            Lifecycles = lifecycles,
             EnvironmentsDefaulted = defaultEnvironments,
             LifecycleDefaulted = defaultLifecycle,
         };
     }
+
+    private static ProjectLifecyclePhase[] ParsePhases(IReadOnlyList<YamlLine> lines, string name,
+        List<ProjectDefinitionIssue> issues)
+        => SequenceMaps(lines, $"lifecycles.{name}", 4, 6, issues)
+            .Select((item, index) =>
+            {
+                CheckMapKeys(item, ProjectDeploymentVocabulary.LifecyclePhaseKeys, $"lifecycles.{name}[{index}]", issues);
+                var automaticText = Get(item, "automatic");
+                if (automaticText is not null && !bool.TryParse(automaticText, out _))
+                    issues.Add(new($"lifecycles.{name}[{index}].automatic", "lifecycle-automatic-invalid", "automatic must be true or false."));
+                return new ProjectLifecyclePhase(Get(item, "phase") ?? "",
+                    bool.TryParse(automaticText, out var automatic) && automatic,
+                    List(item, "approval"), Get(item, "requires"));
+            }).ToArray();
 
     /// <summary>
     /// Environments are either the inline shorthand <c>[staging, production]</c>
@@ -269,10 +305,11 @@ public static partial class ProjectDefinitionReader
         List<ProjectDefinitionIssue> issues)
     {
         IReadOnlyList<YamlLine> content;
-        if (section == "lifecycles.standard")
+        if (section.StartsWith("lifecycles.", StringComparison.Ordinal))
         {
+            var lifecycle = section["lifecycles.".Length..];
             var start = Section(lines, "lifecycles").FirstOrDefault(line =>
-                line.Indent == 2 && KeyValue(line.Text).Key == "standard");
+                line.Indent == 2 && KeyValue(line.Text).Key == lifecycle);
             content = start is null ? [] : lines.Skip(lines.IndexOf(start) + 1)
                 .TakeWhile(line => line.Indent > 2).ToArray();
         }
@@ -292,6 +329,13 @@ public static partial class ProjectDefinitionReader
             {
                 var (key, value) = KeyValue(line.Text);
                 if (key.Length > 0) current[key] = Value(value);
+            }
+            else if (section == "channels" && line.Indent == fieldIndent + 2 && current is not null
+                && current.ContainsKey("versionRules"))
+            {
+                var (key, value) = KeyValue(line.Text);
+                if (key is "prereleaseTag" or "branchPattern") current[key] = Value(value);
+                else issues.Add(new($"line:{line.Number}", "channel-rule-unknown", $"Unsupported version rule '{key}'."));
             }
             else issues.Add(new($"line:{line.Number}", "deployment-yaml-shape-invalid",
                 $"Unsupported YAML shape in {section}; use a list of maps with two-space indentation."));
@@ -336,11 +380,12 @@ public static partial class ProjectDefinitionValidator
         var environments = ValidateEnvironments(value, issues);
         var names = ValidateArtifacts(value, issues);
         ValidateLifecycle(value, issues);
+        ValidateChannels(value, issues);
         if (value.Artifacts.Count > 0 && value.Deploy.Count == 0)
             issues.Add(new("deploy", "deploy-steps-required", "Declared artifacts need at least one deploy step."));
         for (var i = 0; i < value.Deploy.Count; i++)
             ValidateStep(value, value.Deploy[i], $"deploy[{i}]", environments, names, hosts, issues);
-        ValidateVariables(value.Variables, environments, issues);
+        ValidateVariables(value.Variables, environments, value.Channels, issues);
         return issues;
     }
 
@@ -423,6 +468,54 @@ public static partial class ProjectDefinitionValidator
         if (value.StandardLifecycle[1].Requires is not ("staging" or "{ staging: success }" or "{staging: success}"))
             issues.Add(new("lifecycles.standard[1].requires", "production-requires-staging",
                 "Production must require successful staging. Use 'requires: staging'."));
+        foreach (var (name, phases) in value.Lifecycles)
+        {
+            if (!Identifier().IsMatch(name) || name == "standard" || phases.Count == 0)
+                issues.Add(new($"lifecycles.{name}", "lifecycle-invalid", "A named lifecycle needs a unique lower-case name and phases."));
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            for (var i = 0; i < phases.Count; i++)
+            {
+                var phase = phases[i];
+                var path = $"lifecycles.{name}[{i}]";
+                if (phase.Requires is { } required && !seen.Contains(required))
+                    issues.Add(new($"{path}.requires", "lifecycle-requires-invalid", "requires must name an earlier phase."));
+                if (!value.Environments.Any(environment => environment.Name == phase.Phase) || !seen.Add(phase.Phase))
+                    issues.Add(new($"{path}.phase", "lifecycle-phase-invalid", "A phase must name a declared environment once."));
+                if (phase.Approval.Any(role => !ProjectDeploymentVocabulary.ApprovalRoles.Contains(role)))
+                    issues.Add(new($"{path}.approval", "lifecycle-approval-invalid", "Approval must name Owner or Maintainer."));
+            }
+        }
+    }
+
+    private static void ValidateChannels(ProjectDeploymentDefinition value, List<ProjectDefinitionIssue> issues)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var defaults = 0;
+        for (var i = 0; i < value.Channels.Count; i++)
+        {
+            var channel = value.Channels[i];
+            var path = $"channels[{i}]";
+            if (!Identifier().IsMatch(channel.Name) || !names.Add(channel.Name))
+                issues.Add(new($"{path}.name", "channel-name-invalid", "Channel names must be unique lower-case identifiers."));
+            if (channel.Lifecycle != "standard" && !value.Lifecycles.ContainsKey(channel.Lifecycle))
+                issues.Add(new($"{path}.lifecycle", "channel-lifecycle-unknown", "Channel lifecycle must name standard or a declared lifecycle."));
+            if (channel.PrereleaseTag is { } tag && !Identifier().IsMatch(tag))
+                issues.Add(new($"{path}.prereleaseTag", "channel-tag-invalid", "prereleaseTag must be a lower-case identifier."));
+            if (channel.BranchPattern is { } pattern && (!Regex.IsMatch(pattern, @"^refs/heads/[A-Za-z0-9._/*-]+$",
+                    RegexOptions.CultureInvariant) || pattern.Count(ch => ch == '*') > 1))
+                issues.Add(new($"{path}.branchPattern", "channel-branch-pattern-invalid",
+                    "branchPattern must start with refs/heads/ and may contain one '*' wildcard."));
+            if (channel.Default)
+            {
+                defaults++;
+                if (channel.PrereleaseTag is not null || channel.BranchPattern is not null)
+                    issues.Add(new($"{path}.default", "channel-default-rule-invalid", "The default channel cannot have version rules."));
+            }
+            else if (channel.PrereleaseTag is null && channel.BranchPattern is null)
+                issues.Add(new(path, "channel-rule-required", "A non-default channel needs a prereleaseTag or branchPattern rule."));
+        }
+        if (value.Channels.Count > 0 && defaults != 1)
+            issues.Add(new("channels", "channel-default-required", "Exactly one channel must have default: true."));
     }
 
     private static void ValidateStep(ProjectDeploymentDefinition value, ProjectDeployStep step, string path,
@@ -491,7 +584,8 @@ public static partial class ProjectDefinitionValidator
     }
 
     private static void ValidateVariables(IReadOnlyList<ProjectVariableDefinition> variables,
-        HashSet<string> environments, List<ProjectDefinitionIssue> issues)
+        HashSet<string> environments, IReadOnlyList<ProjectChannelDefinition> channels,
+        List<ProjectDefinitionIssue> issues)
     {
         for (var i = 0; i < variables.Count; i++)
         {
@@ -509,16 +603,23 @@ public static partial class ProjectDefinitionValidator
                     "Secret values are refused in project.yml. Store the value in the secret provider and reference it with 'secret: <name>'."));
             if (variable.Environments.Any(environment => !environments.Contains(environment)))
                 issues.Add(new($"{path}.environments", "variable-environment-unknown", "Variable environments must be declared in environments."));
+            if (variable.Channels.Any(channel => !channels.Any(item => item.Name == channel)))
+                issues.Add(new($"{path}.channels", "variable-channel-unknown", "Variable channels must be declared in channels."));
             for (var j = 0; j < i; j++)
             {
-                if (variables[j].Name != variable.Name || !ScopesOverlap(variables[j].Environments, variable.Environments))
+                if (variables[j].Name != variable.Name || !ScopesOverlap(variables[j].Environments, variable.Environments)
+                    || !ScopesOverlap(variables[j].Channels, variable.Channels)
+                    || ScopeSpecificity(variables[j]) != ScopeSpecificity(variable))
                     continue;
                 issues.Add(new($"{path}.name", "variable-duplicate",
-                    $"Variable '{variable.Name}' is already defined for an overlapping environment scope."));
+                    $"Variable '{variable.Name}' already has an equally specific overlapping scope."));
                 break;
             }
         }
     }
+
+    private static int ScopeSpecificity(ProjectVariableDefinition variable)
+        => (variable.Environments.Count > 0 ? 1 : 0) + (variable.Channels.Count > 0 ? 1 : 0);
 
     /// <summary>The target must be registered for every environment the step deploys to.</summary>
     private static void ValidateRegisteredTarget(ProjectDeploymentDefinition value, ProjectDeployStep step, string path,

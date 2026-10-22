@@ -13,7 +13,10 @@ namespace AgentStudio.Deploy;
 /// what the release deploys.
 /// </summary>
 public sealed record ReleaseRecord(Release Release, IReadOnlyList<EnvironmentDeclaration> Environments,
-    IReadOnlyDictionary<string, string>? CardTitles = null);
+    IReadOnlyDictionary<string, string>? CardTitles = null)
+{
+    public IReadOnlyList<ProjectLifecyclePhase> Lifecycle { get; init; } = [];
+}
 
 /// <summary>Release identity, numbering and snapshot versions. Pure.</summary>
 public static class ReleaseSnapshot
@@ -48,6 +51,8 @@ public static class ReleaseSnapshot
         {
             artifacts = definition?.Artifacts,
             lifecycle = definition?.StandardLifecycle,
+            lifecycles = definition?.Lifecycles,
+            channels = definition?.Channels,
             deploy = definition?.Deploy,
             environments = declarations.OrderBy(item => item.Id, StringComparer.Ordinal).Select(item => new
             {
@@ -70,6 +75,7 @@ public static class ReleaseSnapshot
             variables = (definition?.Variables ?? []).OrderBy(item => item.Name, StringComparer.Ordinal).Select(item => new
             {
                 item.Name, item.Value, item.Secret, environments = item.Environments.Order(StringComparer.Ordinal),
+                channels = item.Channels.Order(StringComparer.Ordinal),
             }),
             protection = declarations.OrderBy(item => item.Id, StringComparer.Ordinal)
                 .Select(item => new { item.Id, item.Protected, item.Automatic, item.Requires }),
