@@ -239,6 +239,13 @@ public sealed partial class TaskServerStore
                 throw new TaskServerConflictException(
                     "work-permit-" + placementRefusal,
                     $"Project '{projectId}' refuses runner '{request.RunnerId}': {placementRefusal}.");
+            // Rechecked in the accept transaction: a rejection or a stale probe
+            // after the offer must not become a lease.
+            if (await ModelAcceptanceRefusalAsync(connection, transaction, taskId, request.RunnerId, ct)
+                is { } modelRefusal)
+                throw new TaskServerConflictException(
+                    "work-permit-model-unverified",
+                    $"Runner '{request.RunnerId}' has no fresh acceptance for the task route ({modelRefusal}).");
             if (expiresAt <= UtcNow)
                 throw new TaskServerConflictException("work-permit-expired", $"Permit '{permitId}' has expired.");
             if (!string.Equals(taskState, "2-ready", StringComparison.Ordinal))
@@ -573,7 +580,11 @@ public sealed partial class TaskServerStore
             if (!refusals.TryGetValue(permit.Task.ProjectId, out var refusal))
                 refusals[permit.Task.ProjectId] = refusal = await PermitPlacementRefusalAsync(
                     connection, transaction, permit.Task.ProjectId, runnerId, ct);
-            if (refusal is null) admitted.Add(permit);
+            // A permit re-offered after a launch rejection stays hidden until
+            // this runner proves the effective model again.
+            if (refusal is null
+                && await ModelAcceptanceRefusalAsync(connection, transaction, permit.Task.TaskId, runnerId, ct) is null)
+                admitted.Add(permit);
         }
         return admitted;
     }

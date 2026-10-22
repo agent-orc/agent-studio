@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Security.Cryptography;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Projects;
 
@@ -8,7 +9,16 @@ public sealed record EnvironmentDeclaration(
     string Id, string Name, string Kind, string TargetHostId, string Address,
     string Template, string Destination, string? HealthUrl, string Approval,
     IReadOnlyList<string> SecretRefs, int ContainerPort,
-    IReadOnlyList<HealthCheckDefinition>? HealthChecks = null, bool HealthChecksAllowPrivateNetwork = false);
+    IReadOnlyList<HealthCheckDefinition>? HealthChecks = null, bool HealthChecksAllowPrivateNetwork = false,
+    bool GuidedFailure = false, int InterventionTimeoutMinutes = 60)
+{
+    public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
+    public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
+    public IReadOnlyList<ProjectArtifactDefinition> Artifacts { get; init; } = [];
+    public bool? Protected { get; init; }
+    public bool? Automatic { get; init; }
+    public string? Requires { get; init; }
+}
 
 /// <summary>One declaration file: the parsed environment, or the error that makes it unusable.</summary>
 public sealed record EnvironmentDeclarationFile(string EnvironmentId, EnvironmentDeclaration? Declaration, string? Error);
@@ -23,7 +33,38 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     string Artifact, string Template, string Destination, string? HealthUrl,
     IReadOnlyList<string> SecretRefs, int ContainerPort, string? PreviousArtifact, string Status,
     DateTime CreatedAt, DateTime? ClaimedAt = null, string? LeaseToken = null, bool IsRollback = false,
-    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0);
+    string? RequestedBy = null, DateTime? FinishedAt = null, string? Evidence = null, int Claims = 0,
+    bool GuidedFailure = false, bool GuidedResolved = false, string? RetryStep = null,
+    string? RetryOfJobId = null)
+{
+    public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
+    public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
+    public IReadOnlyList<ProjectArtifactDefinition> Artifacts { get; init; } = [];
+    public IReadOnlyList<DeployStepResult> StepResults { get; init; } = [];
+    /// <summary>Preview jobs share the normal claim, lease and report queue.</summary>
+    public string Kind { get; init; } = "standard";
+    public string? CardKey { get; init; }
+    public string? SourceCommit { get; init; }
+    public string? SourceRepository { get; init; }
+    public string? SourceRef { get; init; }
+    public string? ArtifactPath { get; init; }
+    public string? Dockerfile { get; init; }
+    public string? Address { get; init; }
+    public IReadOnlyList<string> BuildCommands { get; init; } = [];
+    public string? ScreenshotUrl { get; init; }
+}
+
+public sealed record DeployStepResult(string Name, bool Succeeded);
+
+public sealed record PreviewJobSpec(string Project, string CardKey, string SourceCommit,
+    string HostId, string Address, string Template, string Destination,
+    IReadOnlyList<string> BuildCommands, IReadOnlyList<string> SecretRefs, int ContainerPort)
+{
+    public string SourceRepository { get; init; } = "";
+    public string SourceRef { get; init; } = "";
+    public string? ArtifactPath { get; init; }
+    public string? Dockerfile { get; init; }
+}
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -35,7 +76,10 @@ public sealed record ProjectEnvironmentsResponse(string Project, IReadOnlyList<P
     IReadOnlyList<EnvironmentPromotion> Promotions, IReadOnlyList<DeployJob> Jobs,
     IReadOnlyList<DeploymentFailureCard> FailureCards);
 
-public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string? Evidence);
+public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string? Evidence,
+    IReadOnlyList<DeployStepResult>? Steps = null, string? ScreenshotBase64 = null);
+public sealed record DeployStepLogRequest(string LeaseToken, string Step, string Message);
+public sealed record DeployLeaseRequest(string LeaseToken);
 public sealed record DeployClaimRequest(string HostId);
 public sealed record ReleaseArtifactRequest(string Artifact, string Commit);
 public sealed record PromotionDecisionRequest(string Artifact);
@@ -91,9 +135,16 @@ public sealed class ProjectEnvironmentService
         var root = _git.ResolveRepoRootForProject(project);
         if (root is null) return [];
         var directory = Path.Combine(root, "docs", "deployments", "environments");
-        if (!Directory.Exists(directory)) return [];
-        return ParseDeclarationFiles(Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
+        var parsed = ParseDeclarationFiles((Directory.Exists(directory)
+                ? Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly) : Enumerable.Empty<string>())
             .Select(file => (Path.GetFileName(file), File.ReadAllText(file))));
+        var yamlPath = Path.Combine(root, ProjectPreparationPaths.Definition);
+        if (!File.Exists(yamlPath)) return parsed;
+        try { return ApplyDefinition(parsed, File.ReadAllText(yamlPath)); }
+        catch (JsonException ex)
+        {
+            return parsed.Select(file => file with { Declaration = null, Error = ex.Message }).ToArray();
+        }
     }
 
     /// <summary>
@@ -119,7 +170,80 @@ public sealed class ProjectEnvironmentService
         }
         var parsed = ParseDeclarationFiles(files);
         if (parsed.FirstOrDefault(item => item.Error is not null) is { Error: { } error }) throw new JsonException(error);
-        return parsed.Select(item => item.Declaration!).ToArray();
+        var yaml = _git.GetFileAtCommit(root, commit, ProjectPreparationPaths.Definition);
+        var effective = yaml is null ? parsed : ApplyDefinition(parsed, yaml);
+        if (effective.FirstOrDefault(item => item.Error is not null) is { Error: { } mismatch }) throw new JsonException(mismatch);
+        return effective.Select(item => item.Declaration!).ToArray();
+    }
+
+    /// <summary>Schema 2 owns deploy behavior. JSON retains only host registration and legacy compatibility.</summary>
+    public static IReadOnlyList<EnvironmentDeclarationFile> ApplyDefinition(
+        IReadOnlyList<EnvironmentDeclarationFile> files, string yaml)
+    {
+        var read = ProjectDefinitionReader.Parse(yaml);
+        if (read.Parsed?.SchemaVersion != 2
+            && !Regex.IsMatch(yaml, @"(?m)^schemaVersion:[ ]*2[ ]*(?=\r?$)")) return files;
+        if (read.Parsed?.Deployment is null || read.Parsed.Deployment.Deploy.Count == 0)
+            throw new JsonException("Schema 2 project.yml must declare the deploy steps before a release can run.");
+        if (!read.IsValid || read.Definition?.Deployment is not { } definition)
+            throw new JsonException("Schema 2 project.yml is invalid: " + string.Join("; ", read.Issues.Select(item => item.Message)));
+        if (definition.Deploy.Any(item => item.Step is not ("static-site" or "container")))
+            throw new JsonException("Schema 2 release deployment only supports static-site and container SSH steps.");
+        var output = new List<EnvironmentDeclarationFile>();
+        foreach (var environment in definition.Environments.Where(item =>
+                     !files.Any(file => PipelineMigrationPolicy.EnvironmentFor(file.Declaration?.Kind ?? "") == item.Name)))
+        {
+            var steps = definition.Deploy.Where(item => item.Environments.Count == 0
+                || item.Environments.Contains(environment.Name, StringComparer.Ordinal)).ToArray();
+            if (steps.Length == 0 || steps.Select(item => item.Target).Distinct(StringComparer.Ordinal).Count() != 1)
+                throw new JsonException($"Schema 2 {environment.Name} requires deploy steps on one host.");
+            var first = steps[0];
+            var phase = definition.StandardLifecycle.First(item => item.Phase == environment.Name);
+            var variables = definition.Variables.Where(item => item.Environments.Count == 0
+                || item.Environments.Contains(environment.Name, StringComparer.Ordinal)).ToArray();
+            var id = environment.Name == "staging" ? "stage" : environment.Name;
+            var declaration = new EnvironmentDeclaration(id, environment.Name, id, first.Target!,
+                first.HealthUrl ?? "", first.Step == "static-site" ? "static" : "container",
+                first.Directory ?? "1", first.HealthUrl,
+                environment.Protected ? "person" : "stage-healthy-10m",
+                variables.Where(item => item.Secret is not null).Select(item => item.Secret!).ToArray(), 8080)
+            {
+                SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
+                Protected = environment.Protected, Automatic = phase.Automatic, Requires = phase.Requires,
+            };
+            output.Add(new(id, declaration, null));
+        }
+        foreach (var file in files)
+        {
+            if (file.Declaration is not { } legacy) { output.Add(file); continue; }
+            var name = PipelineMigrationPolicy.EnvironmentFor(legacy.Kind);
+            if (name is null) { output.Add(file); continue; }
+            var environment = definition.Environments.FirstOrDefault(item => item.Name == name);
+            var phase = definition.StandardLifecycle.FirstOrDefault(item => item.Phase == name);
+            var steps = definition.Deploy.Where(item => (item.Step is "static-site" or "container")
+                && (item.Environments.Count == 0 || item.Environments.Contains(name, StringComparer.Ordinal))).ToArray();
+            var variables = definition.Variables.Where(item => item.Environments.Count == 0
+                || item.Environments.Contains(name, StringComparer.Ordinal)).ToArray();
+            var secrets = variables.Where(item => item.Secret is not null).Select(item => item.Secret!).Order(StringComparer.Ordinal).ToArray();
+            var first = steps.FirstOrDefault();
+            if (environment is null || phase is null || first is null || steps.Any(item => item.Target != legacy.TargetHostId)
+                || first.Target != legacy.TargetHostId || legacy.Template != (first.Step == "static-site" ? "static" : "container")
+                || first.HealthUrl != legacy.HealthUrl
+                || first.Step == "static-site" && first.Directory != legacy.Destination
+                || !secrets.SequenceEqual(legacy.SecretRefs.Order(StringComparer.Ordinal)))
+            {
+                output.Add(file with { Declaration = null,
+                    Error = $"{file.EnvironmentId}.json diverges from schema 2 project.yml; migrate the declaration before deploying." });
+                continue;
+            }
+            output.Add(file with { Declaration = legacy with
+            {
+                SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
+                Protected = environment.Protected,
+                Automatic = phase.Automatic, Requires = phase.Requires,
+            } });
+        }
+        return output;
     }
 
     private bool IsWatched(string project)
@@ -184,7 +308,7 @@ public sealed class ProjectEnvironmentService
             : refs.ValueKind == JsonValueKind.Array && refs.EnumerateArray().All(item => item.ValueKind == JsonValueKind.String)
                 ? refs.EnumerateArray().Select(item => item.GetString()!).ToArray()
                 : throw new JsonException($"Environment {Path.GetFileName(file)} secretRefs must be an array of strings.");
-        if (!Identifier.IsMatch(id) || !Identifier.IsMatch(host) || kind is not ("stage" or "production" or "other")
+        if (!Identifier.IsMatch(id) || !Identifier.IsMatch(host) || kind is not ("stage" or "production" or "preview" or "other")
             || template is not ("container" or "static") || secrets.Any(item => !SecretIdentifier.IsMatch(item)))
             throw new JsonException($"Environment {Path.GetFileName(file)} has invalid identifiers, kind, template or secret refs.");
         var destination = Required("destination");
@@ -204,10 +328,17 @@ public sealed class ProjectEnvironmentService
             : containerPortValue.ValueKind == JsonValueKind.Number && containerPortValue.TryGetInt32(out var parsedPort)
                 ? parsedPort : throw new JsonException("Invalid container port.");
         if (containerPort is < 1 or > 65535) throw new JsonException("Invalid container port.");
+        var guidedFailure = !value.TryGetProperty("guidedFailure", out var guided) ? false
+            : guided.ValueKind is JsonValueKind.True or JsonValueKind.False ? guided.GetBoolean()
+            : throw new JsonException("guidedFailure must be a boolean.");
+        var timeout = !value.TryGetProperty("interventionTimeoutMinutes", out var timeoutValue) ? 60
+            : timeoutValue.ValueKind == JsonValueKind.Number && timeoutValue.TryGetInt32(out var parsedTimeout)
+                ? parsedTimeout : throw new JsonException("Invalid intervention timeout.");
+        if (timeout is < 1 or > 10080) throw new JsonException("Intervention timeout must be 1 to 10080 minutes.");
         return new(id, Required("name"), kind, host, Required("address"), template,
             destination, healthUrl, approval, secrets, containerPort,
             HealthCheckDeclarations.Parse(value, Path.GetFileName(file)),
-            HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)));
+            HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)), guidedFailure, timeout);
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -299,7 +430,7 @@ public sealed class ProjectEnvironmentService
     /// deployment may start.
     /// </summary>
     public DeployJob? QueueDeployment(string project, EnvironmentDeclaration target, string artifact, string actor,
-        bool rollback)
+        bool rollback, string? retryStep = null)
     {
         if (!Digest.IsMatch(artifact)) return null;
         lock (_gate)
@@ -307,8 +438,83 @@ public sealed class ProjectEnvironmentService
             var current = Declarations(project);
             if (!IsDeclared(current, target.Id)) return null;
             var state = Load(project);
-            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor);
+            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state, rollback, actor, retryStep);
             Save(project, state);
+            return job;
+        }
+    }
+
+    /// <summary>Retry only while no newer job has entered this environment.</summary>
+    public DeployJob? QueueRetry(string project, EnvironmentDeclaration target, string artifact, string actor,
+        string failedJobId, string? retryStep)
+    {
+        if (!Digest.IsMatch(artifact) || retryStep is not (null or "health")) return null;
+        lock (_gate)
+        {
+            var current = Declarations(project);
+            if (!IsDeclared(current, target.Id)) return null;
+            var state = Load(project);
+            var index = state.Jobs.FindIndex(item => item.Id == failedJobId && item.Status == "failed"
+                && item.EnvironmentId == target.Id);
+            if (index < 0 || state.Jobs.Skip(index + 1).Any(item => item.EnvironmentId == target.Id)) return null;
+            var job = Queue(project, RouteToCurrentHost(target, current!), artifact, state,
+                rollback: state.Jobs[index].IsRollback, actor: actor, retryStep: retryStep,
+                retryOfJobId: failedJobId);
+            Save(project, state);
+            return job;
+        }
+    }
+
+    /// <summary>Queues a card build and deployment on the same fenced host queue as release deployments.</summary>
+    public DeployJob QueuePreview(PreviewJobSpec spec)
+    {
+        if (!Commit.IsMatch(spec.SourceCommit) || string.IsNullOrWhiteSpace(spec.SourceRepository)
+            || string.IsNullOrWhiteSpace(spec.SourceRef) || !Identifier.IsMatch(spec.HostId)
+            || !Identifier.IsMatch(spec.CardKey.ToLowerInvariant())
+            || spec.Template is not ("static" or "container")
+            || spec.SecretRefs.Any(secret => !SecretIdentifier.IsMatch(secret)))
+            throw new ArgumentException("Invalid preview job specification.", nameof(spec));
+        lock (_gate)
+        {
+            EnsurePreviewHostIsNotProduction(spec.HostId);
+            var state = Load(spec.Project);
+            var job = new DeployJob(Guid.NewGuid().ToString("N"), spec.Project,
+                "preview-" + spec.CardKey.ToLowerInvariant(), spec.HostId,
+                "source:" + spec.SourceCommit, spec.Template, spec.Destination, spec.Address,
+                spec.SecretRefs, spec.ContainerPort, null, "queued", _clock.GetUtcNow().UtcDateTime,
+                RequestedBy: "card-preview")
+            {
+                Kind = "preview", CardKey = spec.CardKey, SourceCommit = spec.SourceCommit,
+                SourceRepository = spec.SourceRepository, SourceRef = spec.SourceRef,
+                ArtifactPath = spec.ArtifactPath, Dockerfile = spec.Dockerfile,
+                Address = spec.Address, BuildCommands = spec.BuildCommands,
+            };
+            state.Jobs.Add(job);
+            Save(spec.Project, state);
+            return job;
+        }
+    }
+
+    /// <summary>Removal is fenced and retried by the same host queue.</summary>
+    public DeployJob QueuePreviewRemoval(PreviewJobSpec spec)
+    {
+        lock (_gate)
+        {
+            EnsurePreviewHostIsNotProduction(spec.HostId);
+            var state = Load(spec.Project);
+            var job = new DeployJob(Guid.NewGuid().ToString("N"), spec.Project,
+                "preview-" + spec.CardKey.ToLowerInvariant(), spec.HostId,
+                "source:" + spec.SourceCommit, spec.Template, spec.Destination, null,
+                [], spec.ContainerPort, null, "queued", _clock.GetUtcNow().UtcDateTime,
+                RequestedBy: "card-preview-cleanup")
+            {
+                Kind = "preview-remove", CardKey = spec.CardKey,
+                SourceCommit = spec.SourceCommit, Address = spec.Address,
+                SourceRepository = spec.SourceRepository, SourceRef = spec.SourceRef,
+                ArtifactPath = spec.ArtifactPath, Dockerfile = spec.Dockerfile,
+            };
+            state.Jobs.Add(job);
+            Save(spec.Project, state);
             return job;
         }
     }
@@ -488,6 +694,7 @@ public sealed class ProjectEnvironmentService
     {
         lock (_gate)
         {
+            var productionHost = IsProductionHost(hostId);
             var root = StoreRoot();
             if (!Directory.Exists(root)) return null;
             var now = _clock.GetUtcNow().UtcDateTime;
@@ -504,7 +711,8 @@ public sealed class ProjectEnvironmentService
                 return null;
             foreach (var (project, state) in states)
             {
-                var job = state.Jobs.FirstOrDefault(item => item.HostId == hostId &&
+                var job = state.Jobs.FirstOrDefault(item => item.HostId == hostId
+                    && (!productionHost || item.Kind is not ("preview" or "preview-remove")) &&
                     (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration));
                 if (job is null) continue;
                 var claimed = job with
@@ -519,6 +727,26 @@ public sealed class ProjectEnvironmentService
         }
     }
 
+    private void EnsurePreviewHostIsNotProduction(string hostId)
+    {
+        if (IsProductionHost(hostId))
+            throw new InvalidOperationException($"Host {hostId} is assigned to production and cannot run preview jobs.");
+    }
+
+    private bool IsProductionHost(string hostId)
+    {
+        foreach (var project in _scanner.GetWatchPaths())
+        {
+            var files = DeclarationFiles(project.Name);
+            if (files is null) continue;
+            if (files.Any(file => file.Error is not null)) return true;
+            if (files.Any(file => file.Declaration is { Kind: "production" } declaration
+                && string.Equals(declaration.TargetHostId, hostId, StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
+        return false;
+    }
+
     /// <summary>A claimed job whose lease token matches and has not gone stale, for secret issuance.</summary>
     public DeployJob? FindClaimedJob(string project, string jobId, string leaseToken)
     {
@@ -531,6 +759,30 @@ public sealed class ProjectEnvironmentService
                     System.Text.Encoding.UTF8.GetBytes(item.LeaseToken), System.Text.Encoding.UTF8.GetBytes(leaseToken)));
             return job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration ? null : job;
         }
+    }
+
+    /// <summary>Extends a live claim without changing its fencing token.</summary>
+    public bool RenewClaim(string project, string jobId, string leaseToken)
+    {
+        if (string.IsNullOrWhiteSpace(leaseToken)) return false;
+        lock (_gate)
+        {
+            var job = FindClaimedJob(project, jobId, leaseToken);
+            if (job is null) return false;
+            var state = Load(project);
+            var index = state.Jobs.FindIndex(item => item.Id == jobId && item.LeaseToken == leaseToken);
+            if (index < 0) return false;
+            state.Jobs[index] = state.Jobs[index] with { ClaimedAt = _clock.GetUtcNow().UtcDateTime };
+            Save(project, state);
+            return true;
+        }
+    }
+
+    public DeployJob? PreviewJob(string project, string jobId)
+    {
+        lock (_gate)
+            return Load(project).Jobs.FirstOrDefault(job => job.Id == jobId && job.Kind.StartsWith("preview", StringComparison.Ordinal))
+                is { } job ? Sanitize(job) : null;
     }
 
     /// <summary>
@@ -552,19 +804,37 @@ public sealed class ProjectEnvironmentService
                 return false;
             }
             var now = _clock.GetUtcNow().UtcDateTime;
+            if (job.ClaimedAt < now - LeaseDuration) return false;
+            var expectedSteps = job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}").ToArray();
+            var reportedSteps = report.Steps ?? [];
+            if (reportedSteps.Count > expectedSteps.Length || reportedSteps.Where((step, index) =>
+                    step.Name != expectedSteps[index]).Any() || reportedSteps.SkipLast(1).Any(step => !step.Succeeded)
+                || report.Healthy && (reportedSteps.Count != expectedSteps.Length
+                    || reportedSteps.Any(step => !step.Succeeded)))
+                return false;
             var success = report.Healthy;
+            string? screenshotUrl = null;
+            if (success && job.Kind == "preview")
+            {
+                if (!TrySavePreviewScreenshot(project, job.CardKey!, job.SourceCommit!, report.ScreenshotBase64, out screenshotUrl))
+                    return false;
+            }
+            if (success && job.Kind == "preview-remove")
+                DeletePreviewScreenshot(project, job.CardKey!);
             // Host output is deliberately not accepted as an audit string. Keep a bounded status code only.
             var evidence = report.Evidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
                 ? report.Evidence : success ? "health-ok" : "deploy-step-failed";
             state.Jobs[state.Jobs.IndexOf(job)] = job with
-            { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence };
+            { Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence,
+                StepResults = reportedSteps, ScreenshotUrl = screenshotUrl };
             var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
-            ClosePromotionForResult(state, job, success, now);
+            if (success || !job.GuidedFailure) ClosePromotionForResult(state, job, success, now);
             // A job already queued for the environment replaces the failed
             // one; a rollback queued behind it would replace a newer release.
-            if (!success && !job.IsRollback && job.PreviousArtifact is not null
+            if (!success && job.Kind == "standard" && !job.GuidedFailure && !job.IsRollback
+                && job.PreviousArtifact is not null
                 && !state.Jobs.Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "queued"))
             {
                 var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == job.EnvironmentId);
@@ -610,7 +880,7 @@ public sealed class ProjectEnvironmentService
             state.Jobs[state.Jobs.IndexOf(job)] = lost;
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, "failed", job.Artifact, job.PreviousArtifact, HostLostEvidence)));
-            ClosePromotionForResult(state, lost, success: false, now);
+            if (!job.GuidedFailure) ClosePromotionForResult(state, lost, success: false, now);
             changed = true;
         }
         return changed;
@@ -629,20 +899,50 @@ public sealed class ProjectEnvironmentService
             {
                 Template = deployed.Template, Destination = deployed.Destination,
                 HealthUrl = deployed.HealthUrl, SecretRefs = deployed.SecretRefs, ContainerPort = deployed.ContainerPort,
+                SshSteps = deployed.SshSteps, Variables = deployed.Variables, Artifacts = deployed.Artifacts,
             }
             : current;
 
+    /// <summary>Resume the usual rollback after a guided failure is aborted or times out.</summary>
+    public bool RollbackFailedJob(string project, string jobId, bool rollback = true)
+    {
+        lock (_gate)
+        {
+            var state = Load(project);
+            var job = state.Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "failed");
+            if (job is null) return false;
+            if (job.GuidedResolved) return true;
+            ClosePromotionForResult(state, job, success: false, now: _clock.GetUtcNow().UtcDateTime);
+            var newerJob = state.Jobs.Skip(state.Jobs.IndexOf(job) + 1)
+                .Any(item => item.EnvironmentId == job.EnvironmentId);
+            if (rollback && !newerJob && job.Evidence != HostLostEvidence && job.PreviousArtifact is not null && !job.IsRollback
+                && !state.Jobs.Any(item => item.EnvironmentId == job.EnvironmentId && item.Status is "queued" or "claimed"))
+            {
+                var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == job.EnvironmentId);
+                if (declaration is not null)
+                    Queue(project, DeployedSpec(state, declaration, job.PreviousArtifact), job.PreviousArtifact,
+                        state, rollback: true, actor: "automatic-rollback");
+            }
+            state.Jobs[state.Jobs.IndexOf(job)] = job with { GuidedResolved = true };
+            Save(project, state);
+            return true;
+        }
+    }
+
     /// <summary>
     /// BD-1: the release snapshot decides what is deployed (template,
-    /// destination, health check, secrets); the current declaration decides
-    /// where. After an environment moves to another host, a rollback or a late
-    /// approval of an older release goes to the new host instead of waiting
-    /// for a retired host that never claims.
+    /// destination, health check, secrets, SSH targets); the current declaration
+    /// decides which host claims the job. After a host move, an older schema 2
+    /// release retains its target so the executor refuses to run it on the new
+    /// host. Legacy jobs have no SSH target and can use the new host.
     /// </summary>
     private static EnvironmentDeclaration RouteToCurrentHost(EnvironmentDeclaration snapshot,
         IReadOnlyList<EnvironmentDeclaration> current)
         => current.FirstOrDefault(item => item.Id == snapshot.Id) is { } declared
-            ? snapshot with { TargetHostId = declared.TargetHostId }
+            ? snapshot with
+            {
+                TargetHostId = declared.TargetHostId,
+            }
             : snapshot;
 
     private static bool HasOpenPromotion(State state, string artifact)
@@ -653,7 +953,7 @@ public sealed class ProjectEnvironmentService
         => declarations?.Any(item => item.Id == environmentId) == true;
 
     private DeployJob Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
-        bool rollback = false, string? actor = null)
+        bool rollback = false, string? actor = null, string? retryStep = null, string? retryOfJobId = null)
     {
         var previous = state.History.Where(row => row.EnvironmentId == declaration.Id
             && (row.Item.Status is "healthy" or "rolled-back"))
@@ -662,9 +962,57 @@ public sealed class ProjectEnvironmentService
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
             declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
-            IsRollback: rollback, RequestedBy: actor);
+            IsRollback: rollback, RequestedBy: actor, GuidedFailure: declaration.GuidedFailure,
+            RetryStep: retryStep, RetryOfJobId: retryOfJobId)
+        { SshSteps = declaration.SshSteps, Variables = declaration.Variables, Artifacts = declaration.Artifacts };
         state.Jobs.Add(job);
         return job;
+    }
+
+    public string? PreviewScreenshotPath(string project, string cardKey)
+    {
+        if (!Identifier.IsMatch(cardKey.ToLowerInvariant())) return null;
+        var path = Path.Combine(StoreRoot(), "preview-screenshots", SafeProjectName(project),
+            cardKey.ToLowerInvariant() + ".png");
+        return File.Exists(path) ? path : null;
+    }
+
+    private bool TrySavePreviewScreenshot(string project, string cardKey, string sourceCommit,
+        string? encoded, out string? url)
+    {
+        url = null;
+        if (string.IsNullOrWhiteSpace(encoded) || encoded.Length > 3_000_000) return false;
+        byte[] bytes;
+        try { bytes = Convert.FromBase64String(encoded); }
+        catch (FormatException) { return false; }
+        if (bytes.Length is < 8 or > 2_000_000 || !bytes.AsSpan(0, 8).SequenceEqual(
+                new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 })) return false;
+        try
+        {
+            var image = SixLabors.ImageSharp.Image.Identify(bytes);
+            if (image is null || image.Width is < 1 or > 4096 || image.Height is < 1 or > 4096)
+                return false;
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "ProjectEnvironmentService: invalid preview screenshot");
+            return false;
+        }
+        var directory = Path.Combine(StoreRoot(), "preview-screenshots", SafeProjectName(project));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, cardKey.ToLowerInvariant() + ".png");
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        File.WriteAllBytes(temporary, bytes);
+        File.Move(temporary, path, true);
+        url = $"/api/projects/{Uri.EscapeDataString(project)}/previews/{Uri.EscapeDataString(cardKey)}/screenshot"
+            + $"?delivery={Uri.EscapeDataString(sourceCommit)}";
+        return true;
+    }
+
+    private void DeletePreviewScreenshot(string project, string cardKey)
+    {
+        var path = PreviewScreenshotPath(project, cardKey);
+        if (path is not null) File.Delete(path);
     }
 
     private string StoreRoot() => Path.Combine(_configuration["TaskRepository"] ??

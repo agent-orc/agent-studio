@@ -3,14 +3,16 @@ import {
   DEPLOYMENT_STATES,
   RUN_STATE_LABEL,
   STEP_STATE_LABEL,
+  artifactLookupKey,
+  artifactReleaseLookups,
   buildDeployRuns,
   buildEnvironmentCards,
+  carriesArtifact,
   environmentNames,
   filterDeployRuns,
   formatAge,
   formatDuration,
   groupStepLog,
-  releaseForArtifact,
   runActions,
   runState,
   shortArtifact,
@@ -22,10 +24,11 @@ import {
   ARTIFACT_B,
   ARTIFACT_C,
   DEPLOY_FIXTURE_NOW,
+  RELEASE_1,
+  RELEASE_2,
   RELEASE_3,
   deployDeploymentsFixture,
   deployEnvironmentsFixture,
-  deployReleasesFixture,
   deployRunsFixture,
   deploySourcesFixture,
   deployStatusFixture,
@@ -37,7 +40,7 @@ import {
  * Copied from AGT-3201 backend/Features/Deploy/DeployContract.cs. A new server
  * state belongs in these lists; the mapping tests then fail until the UI maps it.
  */
-const SERVER_DEPLOYMENT_STATES = ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'awaiting-approval'];
+const SERVER_DEPLOYMENT_STATES = ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'awaiting-approval', 'waiting-for-intervention'];
 const SERVER_STEP_ONLY_STATES = ['pending', 'skipped'];
 const SERVER_TRIGGERS = ['deploy', 'redeploy', 'rollback', 'automatic-rollback'];
 
@@ -60,8 +63,10 @@ describe('deploy area model', () => {
   });
 
   it('matches a release by digest regardless of the registry prefix', () => {
-    expect(releaseForArtifact(ARTIFACT_C, deployReleasesFixture())?.version).toBe('2026.10.19.2');
-    expect(releaseForArtifact(ARTIFACT_C, null)).toBeNull();
+    expect(carriesArtifact(RELEASE_3, ARTIFACT_C)).toBe(true);
+    expect(carriesArtifact(RELEASE_3, `other.registry/site@${ARTIFACT_C.split('@')[1]}`)).toBe(true);
+    expect(carriesArtifact(RELEASE_2, ARTIFACT_C)).toBe(false);
+    expect(carriesArtifact(null, ARTIFACT_C)).toBe(false);
   });
 
   describe('state mapping', () => {
@@ -104,6 +109,7 @@ describe('deploy area model', () => {
       expect(actions).toEqual({
         queued: ['cancel'], running: ['cancel'], succeeded: [], failed: [], cancelled: [],
         'awaiting-approval': ['approve', 'reject', 'cancel'], unknown: [],
+        'waiting-for-intervention': ['retry', 'abort'],
       });
     });
   });
@@ -174,10 +180,45 @@ describe('deploy area model', () => {
         previousArtifact: ARTIFACT_C, evidence: 'host-migration' });
       sources.statuses![0].currentRelease = RELEASE_3;
       sources.statuses![0].currentDeployment = sources.deployments!.find(run => run.id === 'run-c-stage')!;
+      expect(artifactReleaseLookups(sources)).toEqual([
+        { key: artifactLookupKey(ARTIFACT_B, '2026-10-19T11:57:00Z'), artifact: ARTIFACT_B, notAfterUtc: '2026-10-19T11:57:00Z' },
+      ]);
+      sources.artifactReleases = new Map([[artifactLookupKey(ARTIFACT_B, '2026-10-19T11:57:00Z'), { status: 'ready', value: RELEASE_2 }]]);
       const card = buildEnvironmentCards(sources)[0];
       expect(card).toMatchObject({ artifact: ARTIFACT_B, releaseVersion: '2026.10.19.1',
         deployedAt: '2026-10-19T11:57:00Z', cards: { status: 'known', keys: ['WEB-33', 'WEB-34'] },
         lastRun: { deploymentId: null, at: '2026-10-19T11:57:00Z' } });
+    });
+
+    it('names the release of the latest successful run, not the first visible release with the same digest', () => {
+      const sources = deploySourcesFixture();
+      // A newer release re-packages the deployed artifact; it sits first on the visible page.
+      const repackaged = { ...RELEASE_3, id: 'release-3b', version: '2026.10.19.3', cardKeys: ['WEB-36'], createdAtUtc: '2026-10-19T11:50:00Z' };
+      sources.releases = [repackaged, ...sources.releases!];
+      const staging = buildEnvironmentCards(sources)[0];
+      expect(staging).toMatchObject({ releaseVersion: RELEASE_3.version, cards: { status: 'known', keys: ['WEB-35'] } });
+      expect(artifactReleaseLookups(sources)).toEqual([]);
+    });
+
+    it('resolves a migrated host artifact whose release is beyond the first release page', () => {
+      const sources = deploySourcesFixture();
+      sources.releases = [RELEASE_3];
+      const host = sources.environments!.environments[1];
+      host.deployedArtifact = ARTIFACT_B;
+      host.history.unshift({ at: '2026-10-19T11:30:00Z', status: 'healthy', artifact: ARTIFACT_B,
+        previousArtifact: host.history[0]?.artifact ?? null, evidence: 'host-migration' });
+      const key = artifactLookupKey(ARTIFACT_B, '2026-10-19T11:30:00Z');
+      expect(artifactReleaseLookups(sources).map(item => item.key)).toEqual([key]);
+
+      sources.artifactReleases = new Map([[key, { status: 'loading' }]]);
+      expect(buildEnvironmentCards(sources)[1]).toMatchObject({ releaseVersion: null,
+        cards: { status: 'unknown', reason: 'Looking up the release record' } });
+      sources.artifactReleases = new Map([[key, { status: 'ready', value: RELEASE_2 }]]);
+      expect(buildEnvironmentCards(sources)[1]).toMatchObject({ releaseVersion: RELEASE_2.version,
+        deployedAt: '2026-10-19T11:30:00Z', cards: { status: 'known', keys: RELEASE_2.cardKeys } });
+      // A lookup answer that does not carry the artifact never names the card.
+      sources.artifactReleases = new Map([[key, { status: 'ready', value: RELEASE_1 }]]);
+      expect(buildEnvironmentCards(sources)[1].releaseVersion).toBeNull();
     });
 
     it('shows an unmapped host artifact without assigning a stale release and uses the host time', () => {
@@ -189,6 +230,40 @@ describe('deploy area model', () => {
       const card = buildEnvironmentCards(sources)[0];
       expect(card).toMatchObject({ artifact: host.deployedArtifact, releaseVersion: null,
         deployedAt: '2026-10-19T11:58:00Z', cards: { status: 'unknown', reason: 'No release record for this artifact' } });
+    });
+
+    it('keeps the last successful release on a card while a guided failure is pending', () => {
+      const sources = deploySourcesFixture();
+      sources.environments!.environments[0].deployedArtifact = ARTIFACT_B;
+      sources.statuses![0].currentRelease = RELEASE_1;
+      sources.statuses![0].intervention = {
+        deploymentId: 'failed-run', failedStep: 'health', expiresAtUtc: '2026-10-19T13:00:00Z',
+        decision: null, decidedBy: null,
+      };
+      const card = buildEnvironmentCards(sources)[0];
+      expect(card.releaseVersion).toBe('2026.10.18.1');
+      expect(card.intervention?.failedStep).toBe('health');
+    });
+
+    it('shows the deployed release with failed health after a health-step skip', () => {
+      const sources = deploySourcesFixture();
+      sources.environments!.environments[0].deployedArtifact = ARTIFACT_B;
+      sources.environments!.environments[0].history.unshift({
+        at: '2026-10-19T11:50:00Z', status: 'failed', artifact: ARTIFACT_C,
+        previousArtifact: ARTIFACT_B, evidence: 'health-http-failed',
+      });
+      sources.statuses![0].currentRelease = RELEASE_3;
+      sources.statuses![0].health = 'unhealthy';
+      sources.statuses![0].intervention = {
+        deploymentId: 'skipped-health', failedStep: 'health', expiresAtUtc: null,
+        decision: 'skip', decidedBy: 'local.owner',
+      };
+
+      expect(buildEnvironmentCards(sources)[0]).toMatchObject({
+        artifact: ARTIFACT_C, releaseVersion: RELEASE_3.version,
+        health: { status: 'reported', state: 'unhealthy' },
+        intervention: { deploymentId: 'skipped-health', decision: 'skip', decidedBy: 'local.owner' },
+      });
     });
 
     it('uses currentDeployment when host history is absent, and host history when release runs are empty', () => {

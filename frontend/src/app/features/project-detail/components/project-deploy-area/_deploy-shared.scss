@@ -46,7 +46,7 @@
   &[data-tone='succeeded'], &[data-tone='healthy'], &[data-tone='up'] { @include m.chip(var(--studio-success)); text-transform: none; letter-spacing: 0; }
   &[data-tone='failed'], &[data-tone='unhealthy'], &[data-tone='down'], &[data-tone='invalid'] { @include m.chip(var(--studio-error)); text-transform: none; letter-spacing: 0; }
   &[data-tone='degraded'] { @include m.chip(var(--studio-warn)); text-transform: none; letter-spacing: 0; }
-  &[data-tone='running'], &[data-tone='queued'], &[data-tone='awaiting-approval'] {
+  &[data-tone='running'], &[data-tone='queued'], &[data-tone='awaiting-approval'], &[data-tone='waiting-for-intervention'] {
     @include m.chip(var(--studio-accent)); text-transform: none; letter-spacing: 0;
   }
 }

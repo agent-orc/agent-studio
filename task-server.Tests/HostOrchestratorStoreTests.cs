@@ -30,6 +30,7 @@ public sealed class HostOrchestratorStoreTests
         await first.UpdateTaskAsync(project.ProjectId, task.TaskKey,
             new UpdateTaskRequest(null, null, "2-ready", task.Version, delta), "test", default);
         await first.RegisterRunnerAsync("runner-a", Runner("instance-a"), "runner-a", default);
+        await ModelAcceptanceTestSupport.AcceptRoutedModelsAsync(first, task.CreatedAt);
 
         var report1 = Report(
             sequence: 1,

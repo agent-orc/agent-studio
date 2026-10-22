@@ -25,6 +25,19 @@ public static class ProjectOperatorDashboardEndpoints
             ProjectEnvironmentService environments) => environments.Read(projectName) is { } value
                 ? Results.Ok(value) : Results.NotFound());
 
+        app.MapGet("/api/projects/{projectName}/previews/{cardKey}/screenshot", (
+            HttpContext context, string projectName, string cardKey,
+            ProjectEnvironmentService environments, ProjectRegistry projects) =>
+        {
+            var project = projects.FindByIdOrDisplayName(projectName) ?? projects.FindByShortCode(projectName);
+            if (project is null) return Results.NotFound();
+            if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                && !ProjectAccessAuthorization.Allows(human.User, project.Id, projects))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return environments.PreviewScreenshotPath(projectName, cardKey) is { } path
+                ? Results.File(path, "image/png") : Results.NotFound();
+        });
+
         app.MapPost("/api/projects/{projectName}/environments/releases", (HttpContext context, string projectName,
             ReleaseArtifactRequest request, DeployService deploy) =>
             ReleaseCreated(deploy.CreateRelease(projectName, request.Artifact, request.Commit,
@@ -80,6 +93,16 @@ public static class ProjectOperatorDashboardEndpoints
             deploy.SyncAfterHostCall(project);
             return Results.Ok();
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
+        app.MapPost("/api/deploy/jobs/{project}/{jobId}/log", (string project, string jobId,
+            DeployStepLogRequest request, DeployService deploy) =>
+            deploy.AppendHostStepLog(project, jobId, request) ? Results.Ok() : Results.Conflict())
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
+        app.MapPost("/api/deploy/jobs/{project}/{jobId}/renew", (string project, string jobId,
+            DeployLeaseRequest request, ProjectEnvironmentService environments) =>
+            environments.RenewClaim(project, jobId, request.LeaseToken) ? Results.Ok() : Results.Conflict())
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
         app.MapGet("/api/projects/{projectName}/throughput", (
             string projectName,

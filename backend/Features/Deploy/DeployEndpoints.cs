@@ -13,11 +13,15 @@ public static class DeployEndpoints
         project.MapGet("/status", (string projectName, DeployService deploy) =>
             deploy.Status(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
+        project.MapGet("/delivery-lanes", (string projectName, DeployService deploy) =>
+            deploy.DeliveryLanes(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
         project.MapGet("/releases", (string projectName, DeployService deploy) =>
             deploy.Releases(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
-        project.MapGet("/releases/page", (string projectName, int? offset, int? limit, DeployService deploy) =>
-            deploy.ReleasePage(projectName, offset ?? 0, limit ?? 25) is { } value
+        project.MapGet("/releases/page", (string projectName, int? offset, int? limit, string? artifact,
+            DateTime? notAfterUtc, DeployService deploy) =>
+            deploy.ReleasePage(projectName, offset ?? 0, limit ?? 25, artifact, notAfterUtc) is { } value
                 ? Results.Ok(value) : UnknownProject(projectName));
 
         project.MapGet("/releases/{releaseId}", (string projectName, string releaseId, DeployService deploy) =>
@@ -61,8 +65,8 @@ public static class DeployEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapPost("/deployments/{deploymentId}/approve", (HttpContext context, string projectName,
-            string deploymentId, DeployService deploy) =>
-            Respond(deploy.Approve(projectName, deploymentId, Actor(context, projectName))))
+            string deploymentId, DeploymentApprovalRequest? request, DeployService deploy) =>
+            Respond(deploy.Approve(projectName, deploymentId, Actor(context, projectName), request?.GuidedFailure)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         project.MapPost("/deployments/{deploymentId}/reject", (HttpContext context, string projectName,
@@ -75,16 +79,21 @@ public static class DeployEndpoints
             Respond(deploy.Cancel(projectName, deploymentId, Actor(context, projectName))))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
+        project.MapPost("/deployments/{deploymentId}/intervention", (HttpContext context, string projectName,
+            string deploymentId, InterventionDecisionRequest request, DeployService deploy) =>
+            Respond(deploy.DecideIntervention(projectName, deploymentId, request, Actor(context, projectName))))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+
         project.MapPost("/environments/{environmentId}/redeploy", (HttpContext context, string projectName,
             string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
             Respond(deploy.Redeploy(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName)), accepted: true))
+                Actor(context, projectName), request?.GuidedFailure), accepted: true))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapPost("/environments/{environmentId}/rollback", (HttpContext context, string projectName,
             string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
             Respond(deploy.Rollback(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName)), accepted: true))
+                Actor(context, projectName), request?.GuidedFailure), accepted: true))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapGet("/api/deploy/matrix", (HttpContext context, DeployService deploy, ProjectRegistry projects) =>

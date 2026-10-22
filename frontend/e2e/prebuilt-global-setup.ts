@@ -17,12 +17,19 @@ export default async function globalSetup(): Promise<void> {
   }
   const response = await fetch(`${process.env.PW_BACKEND_URL}/healthz`);
   if (!response.ok) throw new Error(`Prebuilt backend health returned ${response.status}`);
-  const pathsResponse = await fetch(`${process.env.PW_BACKEND_URL}/api/watch-paths`);
-  if (!pathsResponse.ok) throw new Error(`Prebuilt backend watch paths returned ${pathsResponse.status}`);
-  const paths = await pathsResponse.json() as { path?: string }[];
-  const expected = resolve(process.env.PW_E2E_WORKSPACE!, 'projects', process.env.PW_E2E_PROFILE === 'demo' ? 'demo-app' : 'agent-studio-worktree');
-  if (!paths.some(item => item.path === expected)) {
-    throw new Error('Prebuilt backend is not using the isolated Playwright workspace.');
+  if (process.env.PW_E2E_PROFILE === 'networked-monolith') {
+    const auth = await fetch(`${process.env.PW_BASE_URL}/api/auth/status`);
+    const status = await auth.json() as { profile?: string; bootstrapRequired?: boolean };
+    if (!auth.ok || status.profile !== 'networked' || status.bootstrapRequired !== true)
+      throw new Error('Prebuilt backend is not a fresh networked monolith.');
+  } else {
+    const pathsResponse = await fetch(`${process.env.PW_BACKEND_URL}/api/watch-paths`);
+    if (!pathsResponse.ok) throw new Error(`Prebuilt backend watch paths returned ${pathsResponse.status}`);
+    const paths = await pathsResponse.json() as { path?: string }[];
+    const expected = resolve(process.env.PW_E2E_WORKSPACE!, 'projects', process.env.PW_E2E_PROFILE === 'demo' ? 'demo-app' : 'agent-studio-worktree');
+    if (!paths.some(item => item.path === expected)) {
+      throw new Error('Prebuilt backend is not using the isolated Playwright workspace.');
+    }
   }
   if (process.env.PW_E2E_TIMING_FILE && process.env.PW_E2E_TEST_START_MS) {
     writeFileSync(process.env.PW_E2E_TIMING_FILE, JSON.stringify({

@@ -1,3 +1,10 @@
+{
+    servers {
+        trusted_proxies static 172.30.83.2
+        trusted_proxies_strict
+    }
+}
+
 :8080 {
     encode zstd gzip
 
