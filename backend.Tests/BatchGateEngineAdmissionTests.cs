@@ -471,7 +471,9 @@ public sealed partial class BatchGatePilotServiceTests
         else if (!claimable)
             journal.CancelUnactivated(run.RunId, "review-settlement-rejected");
         EngineDecisionWaitMarker.Write(folder, run.RunId);
-        factory.Services.GetRequiredService<TaskScannerService>().InvalidateCache();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.PublishCoreFromFolder(folder, _watchPath, ProjectName, TaskStates.AutoReview);
+        scanner.InvalidateCache();
         return new MarkedOccurrence(folder, run.RunId);
     }
 
