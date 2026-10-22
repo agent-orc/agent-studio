@@ -3,6 +3,38 @@
 Version: 2026-10-12
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
+## Deep review selection (AGT-3268)
+
+`RemoteReviewPlanBuilder` freezes a `deepReviewDecision` receipt on each coding
+delivery's ReviewSubject. `DeepReview:Mode` defaults to `shadow`: the receipt
+records the selection and route, but no command runs. `active` adds one
+`post-deep-review` semantic command to the remote review plan. The review host
+executes it in the same read-only, exact-SHA workspace as the aspects. Its
+command evidence includes model, reasoning level, token usage, and host identity,
+and its verdict is reported as `deep-review` beside the aspect verdicts.
+The run-completion timeline names the receipt, and report projection records a
+`post-deep-review-decision` pipeline row before the deep-review verdict row.
+
+The engine policy in `orchestration-decisions/DeepReviewPolicy.cs` selects from
+the card's Token Economy correctness floor, changed paths and line count, prior
+blocks, gate failures, delivered rounds, and quota admission. It defaults to
+`gpt-6-sol` at `medium`; P0, critical correctness floors, and touched security,
+fencing, lease, migration, concurrency, or orchestration-decision code require
+`xhigh`. Available quota never raises the effort. A capped route can suppress
+discretionary review, but a critical review retains its floor and waits for
+quota. The plan refuses a quota fallback that would replace its frozen route.
+The AGT-3068 rules editor accepts the `deep-review` trigger with numeric
+`review.changed-lines`, `review.previous-blocks`, `review.gate-failures`, and
+`review.delivered-rounds` facts. A matching `prepare` rule selects review;
+`observe` declines it. The critical floor cannot be waived. Model and reasoning
+level can be configured within the validated catalogue and the critical floor.
+
+The plan stops deep review after three delivered rounds or the lower project
+review limit. Aspect and deep findings with the same cited evidence and missing
+contract form one fix item. A third consecutive block of the same cited deep
+finding escalates to a person rather than opening another automatic fix round. The existing card
+round and reissue budgets still govern every review result.
+
 ## Review host placement (D19 A, AGT-3069)
 
 Remote Review subjects retain the source coding host, and each claimed attempt
@@ -734,12 +766,22 @@ failure, or exception. Before comparison, every attempt-local path (candidate
 `repository`, `clean-repeat-<hash>-<guid>`, baseline workspace, and runtime
 home, temp, and cache directories) becomes a placeholder, and all timestamps
 and durations are removed. Output without a diagnostic line falls back to the
-exit status. A reproducible build or lint regression therefore produces the
-same fingerprint in both runs and can be classified as `product`.
+exit status. When the merge-base command passes and the candidate command
+fails on both its original run and clean repeat with ordinary nonzero exit
+codes, the runner classifies the delivery as `product` even if diagnostics
+change or no test name can be parsed, unless the same failure fingerprint was
+seen on another card in the last 24 hours. That cross-card evidence remains
+`environment`, including when a green baseline result came from the cache.
+Exit 127, timeout and abnormal termination (including signal exits 128 and
+above) remain review infrastructure. A first-run timeout receives a clean
+repeat before settlement; a passing repeat does not charge the card. The
+blocking verdict carries the command, both SHAs, all three exit codes and a
+bounded, secret-scrubbed candidate output tail. The fix-round prompt includes
+that verdict.
 
 | Evidence | Diagnosis | Card charge |
 |---|---|---|
-| Baseline green, clean repeat red with the same fingerprint, no other card matches | `product` | yes |
+| Baseline green, candidate and clean repeat both have ordinary nonzero exits | `product` | yes |
 | Baseline red or same fingerprint on the baseline or other cards | `environment` | no |
 | Clean repeat green and fingerprint has known intermittent pattern or prior occurrence | `intermittent` | no |
 | Clean repeat green without history, or required evidence unavailable | `unclassified-first-occurrence` | no |
@@ -752,7 +794,8 @@ management endpoint exposes the store without a new UI. Only confirmed
 `product` diagnoses spend the retry budget, anti-churn limit, and reissue
 counter. `environment` evacuates the participating dependency cache entry and
 frozen review state. An unavailable fingerprint store cannot establish a
-card-specific failure, so it cannot produce `product`.
+card-specific failure from one run. The green-baseline and repeated-red
+exit-status proof is independent of that store.
 
 The older `ReviewFailureAttributionPolicy` still explains pre-AGT-2916
 reports, but does not authorize a new card charge. For evidence that carries a
@@ -1134,3 +1177,45 @@ usually exists only under `refs/remotes/origin` in the Studio checkout.
   remain review infrastructure failures. The shared report diagnosis policy
   and standalone Task Server accept a failed prerequisite build only when it
   matches the planned preceding step and baseline SHA.
+# Review observations and later evidence (AGT-3269)
+
+Studio projects executed aspect and grade steps from each task's durable
+`pipeline-execution.json`, including prior attempts and repeated step runs, into
+review observations. Each observation keeps the recorded model, thinking level,
+four token dimensions, duration, verdict, severity counts, historical list-price
+estimate and evidence reference. New local and remote aspect projections, grades,
+and product gate projections bind the exact delivered Result-SHA. Older rows without that SHA remain
+visible for cost analysis but cannot receive an automatic miss attribution.
+
+`POST /api/tasks/{jobId}/review-observations?project=...` records an externally
+performed deep review (or a review outside the pipeline) in the task-local
+`results/review-observations.jsonl` journal. The request includes its exact SHA,
+measurements and cited artifact. When its cost is omitted, Studio uses the
+historical price catalogue at the review date if the model is priced.
+`POST /api/tasks/{jobId}/review-observations/{reviewId}/later-evidence?project=...`
+links a later review, gate, operator finding or production incident to an earlier
+approved review of the same SHA. The later evidence must be dated after approval
+and cite an artifact. A later blocking review or product-class remote gate on the
+same SHA supplies the link automatically. Replayed journal IDs do not duplicate
+records.
+
+`POST /api/tasks/{jobId}/review-observations/{reviewId}/finding-outcomes?project=...`
+records a cited confirmation and dismissal count for findings reported by a
+review. The journal keeps each assessment; the latest one supplies cost per
+real finding and the optional Token Economy `outcomes` field.
+
+`GET /api/projects/{projectName}/token-usage/review-observations` returns the
+per-review records, later evidence links and model/reasoning aggregates. The
+`/export` suffix returns a dated manifest with its method and
+`studio-observation` status. Eligible `runs` use Token Economy's
+`quality-studio-review-run-v1` drop shape; rows without a measured positive
+file count, CLI, model or reasoning level appear under `excludedObservations`
+instead of receiving invented values. The export does not claim publication in
+Token Economy. `/export/{reviewId}` returns one importer-ready version-1
+review-run JSON document when that review has the required fields.
+Unpriced reviews retain null cost. Cost per real finding is null unless reported
+findings have an explicit confirmed count. When a model/reasoning cohort has at
+least five approvals and two cited misses with a miss rate of at least 20%, the
+remote review plan runs every semantic aspect on a follow-up round instead of
+carrying previous verdicts over. This affects review depth only, not the task's
+acceptance or transition decision.

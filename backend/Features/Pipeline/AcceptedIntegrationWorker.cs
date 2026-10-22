@@ -23,6 +23,8 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
     private readonly GitService? _git;
     private readonly BranchReclaimTriggerService? _branchReclaim;
     private readonly AgentMessageBusBridge? _bus;
+    private readonly TimeProvider _time;
+    private readonly bool _guardedDelivery;
 
     public AcceptedIntegrationWorker(
         AcceptedIntegrationQueue queue,
@@ -35,7 +37,9 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
         TimelineLog? timeline = null,
         GitService? git = null,
         BranchReclaimTriggerService? branchReclaim = null,
-        AgentMessageBusBridge? bus = null)
+        AgentMessageBusBridge? bus = null,
+        TimeProvider? timeProvider = null,
+        IConfiguration? configuration = null)
     {
         _queue = queue;
         _runner = runner;
@@ -48,6 +52,8 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
         _git = git;
         _branchReclaim = branchReclaim;
         _bus = bus;
+        _time = timeProvider ?? TimeProvider.System;
+        _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -215,6 +221,34 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
     {
         var job = _scanner.FindJob(request.JobId, request.WatchPath);
         if (job == null) return;
+
+        var failureCode = AcceptedIntegrationFailureCodes.For(result);
+        var lateGateFailure = failureCode is AcceptedIntegrationFailureCodes.BuildGateFailed
+                or AcceptedIntegrationFailureCodes.DeliveryGateFailed
+                or AcceptedIntegrationFailureCodes.GateEnvironmentFailure
+                or AcceptedIntegrationFailureCodes.GateInterrupted
+                or AcceptedIntegrationFailureCodes.StaleAttempt;
+        // Without guarded delivery a gate failure here can be the acceptance
+        // integration itself; only a published delivery keeps it Completed.
+        if (job.State == TaskStates.Completed
+            && (lateGateFailure && _guardedDelivery
+                || AcceptedIntegrationPublishedDeliveryGuard.HasPublishedCurrentAcceptance(
+                    job, request.IntegrationBranch, _git)))
+        {
+            if (lateGateFailure && failureCode != AcceptedIntegrationFailureCodes.StaleAttempt)
+                _timeline?.Append(job.FolderPath, new TimelineEvent
+                {
+                    Ts = _time.GetUtcNow().UtcDateTime, Kind = "gate-result-superseded",
+                    Actor = TimelineActors.System,
+                    Summary = "A gate failure arrived after acceptance completed.",
+                    Details = new Dictionary<string, string>
+                    {
+                        ["failureCode"] = failureCode ?? "",
+                        ["verdict"] = "Fail",
+                    },
+                });
+            return;
+        }
 
         var decision = AcceptanceIntegrationPolicy.Decide(
             result.Outcome,

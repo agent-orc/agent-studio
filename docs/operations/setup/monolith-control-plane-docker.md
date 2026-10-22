@@ -40,7 +40,7 @@ node scripts/migration/relocate-workspace-paths.mjs --workspace /srv/agent-studi
 node scripts/migration/relocate-workspace-paths.mjs --workspace /srv/agent-studio/workspace --mapping /srv/agent-studio/path-map.json --config /srv/agent-studio/config/appsettings.Production.json --checkout /srv/agent-studio/checkouts/demo --apply
 ```
 
-Apply backs up every changed file and writes a restore manifest beside the workspace in `workspace.migration-backups/<timestamp>/`. It preserves JSON layout and line endings. Check the reported paths and the zero unresolved count before starting the container. Use the registry API for later live changes to project paths.
+Apply backs up every changed file and writes a restore manifest beside the workspace in `workspace.migration-backups/<timestamp>/`. It preserves JSON layout and line endings. Check the reported paths and the zero unresolved count before starting the container. Use the registry API for later live changes to project paths. For the Studio move to the server, [move-studio-to-server.md](./move-studio-to-server.md) generates the mapping and runs this tool on copies of the transferred state.
 
 ## Start, update, and recover
 

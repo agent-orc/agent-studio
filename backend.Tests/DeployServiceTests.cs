@@ -29,10 +29,252 @@ public sealed class DeployServiceTests : IDisposable
     private string _repo = "";
     private string _watch = "";
     private ProjectEnvironmentService? _environments;
+    private IConfiguration? _configuration;
 
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
+    }
+
+    [Fact]
+    public void GuidedFailure_Pauses_AndRetrySucceedsWithOneRunAndAuditTrail()
+    {
+        var (deploy, environments, _) = Build(guidedStage: true);
+        CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: false);
+        var waiting = Assert.Single(deploy.Deployments("demo", "stage")!);
+        Assert.Equal(DeploymentStates.WaitingForIntervention, waiting.State);
+        Assert.Equal(DeployStepNames.StartContainer, waiting.FailedStep);
+        Assert.NotNull(waiting.InterventionExpiresAtUtc);
+        Assert.Null(environments.Claim("stage-host"));
+        Assert.Equal(DeploymentStates.WaitingForIntervention,
+            deploy.Status("demo")![0].CurrentDeployment?.State);
+        Assert.Contains(deploy.Log("demo", waiting.Id, null)!.Lines,
+            line => line.Message.Contains("Waiting for intervention", StringComparison.Ordinal));
+        Assert.Contains(deploy.Audit("demo")!, entry => entry.Action == "intervention-requested");
+
+        var retried = deploy.DecideIntervention("demo", waiting.Id, new("retry"), Owner);
+        Assert.Equal(DeployOutcomeKind.Ok, retried.Kind);
+        Assert.Equal(DeploymentStates.Queued, retried.Value?.State);
+        Report(deploy, environments, "stage-host", healthy: true);
+        Assert.Equal(DeploymentStates.Succeeded, Assert.Single(deploy.Deployments("demo", "stage")!).State);
+        Assert.Contains(deploy.Log("demo", waiting.Id, null)!.Lines,
+            line => line.Message.Contains("Retry of", StringComparison.Ordinal));
+        Assert.Contains(deploy.Audit("demo")!, entry => entry.Action == "intervention-retry" && entry.Actor == Owner.Id);
+        Assert.Equal("pending", Assert.Single(environments.Read("demo")!.Promotions).Status);
+    }
+
+    [Fact]
+    public void GuidedFailure_SkipRequiresReasonAndApprover_AndDoesNotPromoteSkippedRelease()
+    {
+        var (deploy, environments, _) = Build(guidedStage: true);
+        CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: false);
+        var waiting = Assert.Single(deploy.Deployments("demo", "stage")!);
+        Assert.Equal(DeployOutcomeKind.Forbidden,
+            deploy.DecideIntervention("demo", waiting.Id, new("retry"), Operator).Kind);
+        Assert.Equal(DeployOutcomeKind.Forbidden,
+            deploy.DecideIntervention("demo", waiting.Id, new("abort"), Operator).Kind);
+        Assert.Equal(DeployOutcomeKind.Invalid,
+            deploy.DecideIntervention("demo", waiting.Id, new("skip", " "), Owner).Kind);
+        Assert.Equal(DeployOutcomeKind.Forbidden,
+            deploy.DecideIntervention("demo", waiting.Id, new("skip", "test"), Operator).Kind);
+
+        var skipped = deploy.DecideIntervention("demo", waiting.Id, new("skip", "Known optional step"), Owner);
+        Assert.Equal(DeployOutcomeKind.Ok, skipped.Kind);
+        Assert.Equal(DeploymentStepStates.Skipped, skipped.Value?.Steps[0].State);
+        Assert.Null(deploy.Status("demo")![0].CurrentRelease);
+        Assert.Contains(deploy.Log("demo", waiting.Id, null)!.Lines,
+            line => line.Message.Contains("Known optional step", StringComparison.Ordinal));
+        Assert.Contains(deploy.Audit("demo")!, entry => entry.Action == "intervention-skip"
+            && entry.Detail.Contains("Known optional step", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GuidedFailure_HealthSkipKeepsReleaseCurrentAndPreviousReleaseAsRollbackTarget()
+    {
+        var (deploy, environments, _) = Build(guidedStage: true);
+        var first = CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        var second = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        Report(deploy, environments, "stage-host", healthy: false, evidence: DeployEvidence.HealthFailed);
+        var waiting = deploy.Deployments("demo", "stage")!.First(item => item.ReleaseId == second.Id);
+        Assert.Equal((DeploymentStates.WaitingForIntervention, DeployStepNames.Health),
+            (waiting.State, waiting.FailedStep));
+
+        Assert.Equal(DeployOutcomeKind.Ok,
+            deploy.DecideIntervention("demo", waiting.Id, new("skip", "Health endpoint is optional"), Owner).Kind);
+        Assert.Null(environments.Claim("stage-host"));
+        var stage = deploy.Status("demo")!.Single(item => item.Environment.Id == "stage");
+        Assert.Equal(second.Id, stage.CurrentRelease?.Id);
+        Assert.Equal(EnvironmentHealth.Unhealthy, stage.Health);
+        Assert.Equal((waiting.Id, "skip", Owner.Id), (stage.Intervention?.DeploymentId,
+            stage.Intervention?.Decision, stage.Intervention?.DecidedBy));
+
+        var rollback = deploy.Rollback("demo", "stage", approve: true, Owner);
+        Assert.Equal(DeployOutcomeKind.Ok, rollback.Kind);
+        Assert.Equal(first.Id, rollback.Value?.ReleaseId);
+        Assert.Equal(Artifact('a'), environments.Claim("stage-host")?.Artifact);
+    }
+
+    [Fact]
+    public void GuidedFailure_AbortResumesTheExistingRollbackRule()
+    {
+        var (deploy, environments, _) = Build(guidedStage: true);
+        CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        CreateRelease(deploy, Artifact('b'), Commit("second"));
+        Report(deploy, environments, "stage-host", healthy: false);
+        var waiting = deploy.Deployments("demo", "stage")!.First();
+        Assert.Equal(DeploymentStates.WaitingForIntervention, waiting.State);
+        Assert.Equal(DeployOutcomeKind.Forbidden, deploy.Cancel("demo", waiting.Id, Operator).Kind);
+        Assert.Equal(DeployOutcomeKind.Ok,
+            deploy.Cancel("demo", waiting.Id, Owner).Kind);
+        Assert.Equal(DeploymentStates.Cancelled, deploy.DeploymentById("demo", waiting.Id)?.State);
+        Assert.Equal(Artifact('a'), environments.Claim("stage-host")?.Artifact);
+        Assert.Contains(deploy.Audit("demo")!, entry => entry.Action == "intervention-abort");
+        Assert.Equal(("abort", Owner.Id),
+            (deploy.Status("demo")![0].Intervention?.Decision, deploy.Status("demo")![0].Intervention?.DecidedBy));
+
+    }
+
+    [Fact]
+    public void GuidedFailure_TimeoutFailsAndQueuesRollback()
+    {
+        var (deploy, environments, _) = Build(guidedStage: true);
+        CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        CreateRelease(deploy, Artifact('b'), Commit("second"));
+        Report(deploy, environments, "stage-host", healthy: false);
+        var timed = deploy.Deployments("demo", "stage")!.First();
+        _clock.Advance(TimeSpan.FromMinutes(61));
+        Assert.Equal(DeploymentStates.Failed, deploy.DeploymentById("demo", timed.Id)?.State);
+        Assert.Contains(deploy.Audit("demo")!, entry => entry.Action == "intervention-expired");
+        Assert.Contains(deploy.Log("demo", timed.Id, null)!.Lines,
+            line => line.Message.Contains("timed out", StringComparison.Ordinal));
+        Assert.Equal(Artifact('a'), environments.Claim("stage-host")?.Artifact);
+    }
+
+    [Fact]
+    public void GuidedFailure_PerRunOverrideEnablesInterventionInProduction()
+    {
+        var (deploy, environments, _) = Build();
+        CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        var waiting = Assert.Single(deploy.Deployments("demo", "production")!);
+        var started = deploy.Approve("demo", waiting.Id, Owner, guidedFailure: true);
+        Assert.Equal(DeployOutcomeKind.Ok, started.Kind);
+        Report(deploy, environments, "prod-host", healthy: false, evidence: DeployEvidence.HealthFailed);
+        Assert.Equal(DeploymentStates.WaitingForIntervention,
+            deploy.DeploymentById("demo", started.Value!.Id)?.State);
+        Assert.Null(environments.Claim("prod-host"));
+        Assert.Equal(DeployOutcomeKind.Ok,
+            deploy.DecideIntervention("demo", started.Value.Id, new("retry"), Owner).Kind);
+        var queued = deploy.DeploymentById("demo", started.Value.Id)!;
+        Assert.Equal((DeploymentStates.Succeeded, DeploymentStepStates.Pending),
+            (queued.Steps[1].State, queued.Steps[2].State));
+        var retry = environments.Claim("prod-host")!;
+        Assert.Equal(DeployStepNames.Health, retry.RetryStep);
+        deploy.SyncAfterHostCall("demo");
+        var running = deploy.DeploymentById("demo", started.Value.Id)!;
+        Assert.Equal(DeploymentStates.Succeeded, running.Steps[1].State);
+        Assert.True(environments.Report("demo", retry.Id, new(retry.LeaseToken!, true, DeployEvidence.HealthOk)));
+        deploy.SyncAfterHostCall("demo");
+        var complete = deploy.DeploymentById("demo", started.Value.Id)!;
+        Assert.Equal((DeploymentStates.Succeeded, DeploymentStates.Succeeded, DeploymentStates.Succeeded),
+            (complete.State, complete.Steps[1].State, complete.Steps[2].State));
+        Assert.Contains(deploy.Log("demo", started.Value.Id, null)!.Lines,
+            line => line.Message.Contains("Health check passed on retry", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GuidedFailure_AutomaticProductionApprovalUsesTheReleaseSnapshot()
+    {
+        var (deploy, environments, store) = Build(guidedProduction: true);
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: true);
+        var waiting = Assert.Single(deploy.Deployments("demo", "production")!);
+        Assert.Equal(DeploymentStates.AwaitingApproval, waiting.State);
+        Assert.True(Assert.Single(store.ReadDeployments("demo"), item => item.Id == waiting.Id).GuidedFailure);
+        Assert.Equal(23, store.ReadDeployments("demo").Single(item => item.Id == waiting.Id).InterventionTimeoutMinutes);
+
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting.Id, Owner).Kind);
+        Report(deploy, environments, "prod-host", healthy: false);
+        var paused = deploy.DeploymentById("demo", waiting.Id)!;
+        Assert.Equal(DeploymentStates.WaitingForIntervention, paused.State);
+        Assert.Equal(_clock.GetUtcNow().UtcDateTime.AddMinutes(22), paused.InterventionExpiresAtUtc);
+    }
+
+    [Fact]
+    public void GuidedFailure_RetryJobSavedBeforeRun_RestartAttachesTheOriginalRun()
+    {
+        var (deploy, environments, store) = Build(guidedStage: true);
+        var release = CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: false);
+        var waiting = Assert.Single(deploy.Deployments("demo", "stage")!);
+        var failedJobId = Assert.Single(environments.Read("demo")!.Jobs).Id;
+        var target = store.ReadReleaseRecords("demo").Single(item => item.Release.Id == release.Id)
+            .Environments.Single(item => item.Id == "stage");
+        var retry = environments.QueueRetry("demo", target, Artifact('a'), Owner.Id, failedJobId, null)!;
+        Assert.Equal(failedJobId, retry.RetryOfJobId);
+        Assert.Single(store.ReadDeployments("demo"));
+        Assert.Equal(DeploymentStates.WaitingForIntervention, store.ReadDeployments("demo")[0].State);
+
+        var restarted = Reopen();
+        var attached = Assert.Single(restarted.Deployments("demo", "stage")!);
+        Assert.Equal((waiting.Id, retry.Id, DeploymentStates.Queued), (attached.Id,
+            store.ReadDeployments("demo")[0].JobId, attached.State));
+        Assert.Contains(restarted.Audit("demo")!, entry => entry.Action == "intervention-retry" && entry.Actor == Owner.Id);
+        Assert.Contains(restarted.Log("demo", waiting.Id, null)!.Lines,
+            line => line.Message.Contains("Retry of", StringComparison.Ordinal));
+        Report(restarted, environments, "stage-host", healthy: true);
+        Assert.Equal(DeploymentStates.Succeeded, Assert.Single(restarted.Deployments("demo", "stage")!).State);
+        Assert.Equal("pending", Assert.Single(environments.Read("demo")!.Promotions).Status);
+        Assert.Single(restarted.Deployments("demo", "stage")!);
+    }
+
+    [Fact]
+    public void GuidedFailure_ManualRollbackCanPauseAndRetryAsRollback()
+    {
+        var (deploy, environments, _) = Build(guidedProduction: true);
+        var first = CreateRelease(deploy, Artifact('a'), Head());
+        DeployThroughProduction(deploy, environments, first, Owner);
+        var second = CreateRelease(deploy, Artifact('b'), Commit("second"));
+        DeployThroughProduction(deploy, environments, second, Owner);
+
+        var rollback = deploy.Rollback("demo", "production", approve: true, Owner);
+        Assert.Equal(DeployOutcomeKind.Ok, rollback.Kind);
+        var originalJob = environments.Read("demo")!.Jobs.Last(item => item.EnvironmentId == "production");
+        Assert.True(originalJob.IsRollback);
+        Report(deploy, environments, "prod-host", healthy: false);
+        Assert.Equal(DeploymentStates.WaitingForIntervention,
+            deploy.DeploymentById("demo", rollback.Value!.Id)?.State);
+        Assert.Equal(DeployOutcomeKind.Ok,
+            deploy.DecideIntervention("demo", rollback.Value.Id, new("retry"), Owner).Kind);
+        var retried = environments.Read("demo")!.Jobs.Last(item => item.EnvironmentId == "production");
+        Assert.True(retried.IsRollback);
+        Assert.Equal(originalJob.Id, retried.RetryOfJobId);
+        Report(deploy, environments, "prod-host", healthy: true);
+        var run = deploy.DeploymentById("demo", rollback.Value.Id)!;
+        Assert.Equal((DeploymentTriggers.Rollback, DeploymentStates.Succeeded), (run.Trigger, run.State));
+        Assert.Equal(first.Id, deploy.Status("demo")![1].CurrentRelease?.Id);
+    }
+
+    [Fact]
+    public void GuidedFailure_OlderRunCannotRetryOrRollBackOverANewerJob()
+    {
+        var (deploy, environments, _) = Build(guidedStage: true);
+        CreateRelease(deploy, Artifact('a'), Head());
+        Report(deploy, environments, "stage-host", healthy: false);
+        var older = Assert.Single(deploy.Deployments("demo", "stage")!);
+        CreateRelease(deploy, Artifact('b'), Commit("second"));
+        Report(deploy, environments, "stage-host", healthy: true);
+
+        Assert.Equal(DeployOutcomeKind.Conflict,
+            deploy.DecideIntervention("demo", older.Id, new("retry"), Owner).Kind);
+        Assert.Equal(DeployOutcomeKind.Ok,
+            deploy.DecideIntervention("demo", older.Id, new("abort"), Owner).Kind);
+        Assert.Null(environments.Claim("stage-host"));
     }
 
     [Fact]
@@ -112,6 +354,23 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(2, deploy.DeploymentPage("demo", "stage", null, null, 0, 1)!.Total);
         Assert.Single(deploy.DeploymentPage("demo", "stage", null, null, 1, 1)!.Items);
         Assert.Empty(deploy.DeploymentPage("demo", "stage", null, _clock.GetUtcNow().UtcDateTime.AddMinutes(1), 0, 25)!.Items);
+    }
+
+    [Fact]
+    public void ReleasePage_FindsTheReleaseOfAnArtifactByDigestAndDeployTime()
+    {
+        var (deploy, _, _) = Build();
+        var first = CreateRelease(deploy, Artifact('a'), Head());
+        var firstCreated = _clock.GetUtcNow().UtcDateTime;
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        var second = CreateRelease(deploy, Artifact('b'), Commit("second"));
+
+        var byDigest = deploy.ReleasePage("demo", 0, 1, "other.registry/app@sha256:" + new string('a', 64))!;
+        Assert.Equal((1, first.Id), (byDigest.Total, Assert.Single(byDigest.Items).Id));
+        Assert.Equal(second.Id, Assert.Single(deploy.ReleasePage("demo", 0, 1, Artifact('b'))!.Items).Id);
+        Assert.Empty(deploy.ReleasePage("demo", 0, 1, Artifact('b'), firstCreated)!.Items);
+        Assert.Empty(deploy.ReleasePage("demo", 0, 1, Artifact('c'))!.Items);
+        Assert.Equal(2, deploy.ReleasePage("demo", 0, 25)!.Total);
     }
 
     [Fact]
@@ -394,13 +653,17 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
-    public void ReportAfterTheLease_IsAcceptedWhileTheClaimStands()
+    public void ReportAfterTheLease_RequiresAReclaimedToken()
     {
         var (deploy, environments, _) = Build();
         CreateRelease(deploy, Artifact('a'), Head());
         var job = environments.Claim("stage-host")!;
         _clock.Advance(TimeSpan.FromMinutes(8));
-        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
+        Assert.False(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
+        var reclaimed = environments.Claim("stage-host")!;
+        Assert.Equal(job.Id, reclaimed.Id);
+        Assert.NotEqual(job.LeaseToken, reclaimed.LeaseToken);
+        Assert.True(environments.Report("demo", reclaimed.Id, new(reclaimed.LeaseToken!, true, "health-ok")));
         deploy.SyncAfterHostCall("demo");
         Assert.Equal(DeploymentStates.Succeeded, deploy.Deployments("demo", "stage")!.Single().State);
     }
@@ -701,17 +964,102 @@ public sealed class DeployServiceTests : IDisposable
         var (deploy, environments, _) = Build();
         var r1 = CreateRelease(deploy, Artifact('a'), Head());
         Report(deploy, environments, "stage-host", healthy: true);
-        WriteProjectYml("variables:\n  - name: LOG_LEVEL\n    value: info\n");
+        WriteProjectYml("  - name: LOG_LEVEL\n    value: info\n");
         var r2 = CreateRelease(deploy, Artifact('b'), Commit("variables"));
         Report(deploy, environments, "stage-host", healthy: true);
         var r3 = CreateRelease(deploy, Artifact('c'), Commit("unrelated"));
         Report(deploy, environments, "stage-host", healthy: true);
-        WriteProjectYml("variables:\n  - name: LOG_LEVEL\n    value: debug\n");
+        WriteProjectYml("  - name: LOG_LEVEL\n    value: debug\n");
         var r4 = CreateRelease(deploy, Artifact('d'), Commit("debug"));
 
         Assert.NotEqual(r1.VariablesVersion, r2.VariablesVersion);
         Assert.Equal(r2.VariablesVersion, r3.VariablesVersion);
         Assert.NotEqual(r2.VariablesVersion, r4.VariablesVersion);
+    }
+
+    [Fact]
+    public void Schema_two_jobs_keep_snapshot_steps_and_automatic_rollback_uses_previous_artifact()
+    {
+        var (deploy, environments, _) = Build();
+        WriteSshProjectYml();
+        var first = CreateRelease(deploy, Artifact('a'), Commit("ssh-definition"));
+        var firstJob = environments.Claim("stage-host")!;
+        Assert.Equal("container", Assert.Single(firstJob.SshSteps).Step);
+        Assert.True(environments.Report("demo", firstJob.Id, new(firstJob.LeaseToken!, true, "health-ok",
+            [new("deploy[0]:container", true)])));
+        deploy.SyncAfterHostCall("demo");
+
+        var second = CreateRelease(deploy, Artifact('b'), Commit("new-release"));
+        var secondJob = environments.Claim("stage-host")!;
+        Assert.Equal(second.ArtifactDigests[0], secondJob.Artifact);
+        Assert.True(environments.Report("demo", secondJob.Id, new(secondJob.LeaseToken!, false, "deploy-step-failed",
+            [new("deploy[0]:container", false)])));
+        deploy.SyncAfterHostCall("demo");
+
+        var rollback = environments.Claim("stage-host")!;
+        Assert.True(rollback.IsRollback);
+        Assert.Equal(first.ArtifactDigests[0], rollback.Artifact);
+        Assert.Equal(firstJob.SshSteps.Select(step => (step.Step, step.Target, step.ComposeFile, step.Service)),
+            rollback.SshSteps.Select(step => (step.Step, step.Target, step.ComposeFile, step.Service)));
+        var failed = deploy.Deployments("demo", "stage")!.First(item => item.ReleaseId == second.Id);
+        Assert.Equal(DeploymentStates.Failed, failed.State);
+        Assert.Equal(DeploymentStates.Failed, failed.Steps[0].State);
+    }
+
+    [Fact]
+    public void Schema_two_guided_health_retry_reexecutes_the_snapshot_steps()
+    {
+        var (deploy, environments, _) = Build(guidedStage: true);
+        WriteSshProjectYml();
+        var release = CreateRelease(deploy, Artifact('a'), Commit("guided-ssh"));
+        Report(deploy, environments, "stage-host", healthy: false, evidence: DeployEvidence.HealthFailed);
+        var waiting = Assert.Single(deploy.Deployments("demo", "stage")!);
+        Assert.Equal(DeploymentStates.WaitingForIntervention, waiting.State);
+
+        Assert.Equal(DeployOutcomeKind.Ok,
+            deploy.DecideIntervention("demo", waiting.Id, new("retry"), Owner).Kind);
+        var retry = environments.Claim("stage-host")!;
+        Assert.Null(retry.RetryStep);
+        Assert.Equal("container", Assert.Single(retry.SshSteps).Step);
+        Assert.True(environments.Report("demo", retry.Id,
+            new(retry.LeaseToken!, true, DeployEvidence.HealthOk, [new("deploy[0]:container", true)])));
+        deploy.SyncAfterHostCall("demo");
+
+        var complete = Assert.Single(deploy.Deployments("demo", "stage")!);
+        Assert.Equal(release.Id, complete.ReleaseId);
+        Assert.Equal(DeploymentStates.Succeeded, complete.State);
+        Assert.Equal(DeploymentStates.Succeeded, complete.Steps[0].State);
+    }
+
+    [Fact]
+    public void Schema_two_release_refuses_current_declaration_divergence()
+    {
+        var (deploy, _, _) = Build();
+        WriteSshProjectYml();
+        var commit = Commit("ssh-definition");
+        WriteProduction(host: "different-host", destination: "8082");
+
+        var result = deploy.CreateRelease("demo", Artifact('a'), commit, "release-gate");
+
+        Assert.Equal(DeployOutcomeKind.Invalid, result.Kind);
+        Assert.Contains("diverges", result.Error);
+    }
+
+    [Fact]
+    public void Schema_two_release_runs_without_legacy_json_declarations()
+    {
+        var (deploy, environments, _) = Build();
+        WriteSshProjectYml();
+        Directory.Delete(Path.Combine(_repo, "docs", "deployments", "environments"), true);
+        var commit = Commit("schema-two-only");
+
+        var release = CreateRelease(deploy, Artifact('a'), commit);
+        var job = environments.Claim("stage-host");
+
+        Assert.NotNull(release);
+        Assert.Equal("stage", job?.EnvironmentId);
+        Assert.Equal("container", Assert.Single(job!.SshSteps).Step);
+        Assert.Equal(["stage", "production"], environments.Declarations("demo")!.Select(item => item.Id));
     }
 
     [Fact]
@@ -821,9 +1169,25 @@ public sealed class DeployServiceTests : IDisposable
         using var refusedPromotion = await agent.PostAsJsonAsync("/api/projects/demo/environments/promotions/approve",
             new PromotionDecisionRequest(Artifact('a')));
         Assert.Equal(HttpStatusCode.Forbidden, refusedPromotion.StatusCode);
-        using var approved = await client.PostAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve", null);
+        using var approved = await client.PostAsJsonAsync($"/api/projects/demo/deploy/deployments/{production.Id}/approve",
+            new DeploymentApprovalRequest(GuidedFailure: true));
         Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
         Assert.Equal(auth.User!.Id, service.DeploymentById("demo", production.Id)!.ApprovedBy);
+        var productionJob = hosts.Claim("prod-host")!;
+        Assert.True(hosts.Report("demo", productionJob.Id,
+            new(productionJob.LeaseToken!, false, DeployEvidence.HealthFailed)));
+        service.SyncAfterHostCall("demo");
+        Assert.Equal(DeploymentStates.WaitingForIntervention, service.DeploymentById("demo", production.Id)!.State);
+        using var unauthorizedIntervention = await agent.PostAsJsonAsync(
+            $"/api/projects/demo/deploy/deployments/{production.Id}/intervention",
+            new InterventionDecisionRequest("skip", "Optional health check"));
+        Assert.Equal(HttpStatusCode.Forbidden, unauthorizedIntervention.StatusCode);
+        using var skipped = await client.PostAsJsonAsync(
+            $"/api/projects/demo/deploy/deployments/{production.Id}/intervention",
+            new InterventionDecisionRequest("skip", "Optional health check"));
+        Assert.Equal(HttpStatusCode.OK, skipped.StatusCode);
+        Assert.Contains(service.Audit("demo")!, entry => entry.Action == "intervention-skip"
+            && entry.Actor == auth.User.Id);
     }
 
     [Theory]
@@ -897,13 +1261,17 @@ public sealed class DeployServiceTests : IDisposable
         Report(deploy, environments, "prod-host", healthy: true);
     }
 
-    private void Report(DeployService deploy, ProjectEnvironmentService environments, string host, bool healthy)
+    private void Report(DeployService deploy, ProjectEnvironmentService environments, string host, bool healthy,
+        string? evidence = null)
     {
         var job = environments.Claim(host)!;
         deploy.SyncAfterHostCall("demo");
         _clock.Advance(TimeSpan.FromMinutes(1));
+        var steps = job.SshSteps.Select((step, index) =>
+            new DeployStepResult($"deploy[{index}]:{step.Step}", healthy))
+            .Take(healthy ? job.SshSteps.Count : 1).ToArray();
         Assert.True(environments.Report("demo", job.Id,
-            new(job.LeaseToken!, healthy, healthy ? "health-ok" : "deploy-step-failed")));
+            new(job.LeaseToken!, healthy, evidence ?? (healthy ? "health-ok" : "deploy-step-failed"), steps)));
         deploy.SyncAfterHostCall("demo");
         _clock.Advance(TimeSpan.FromMinutes(1));
     }
@@ -957,7 +1325,8 @@ public sealed class DeployServiceTests : IDisposable
         }));
     }
 
-    private (DeployService Deploy, ProjectEnvironmentService Environments, DeployStore Store) Build()
+    private (DeployService Deploy, ProjectEnvironmentService Environments, DeployStore Store) Build(
+        bool guidedStage = false, bool guidedProduction = false)
     {
         _repo = Path.Combine(_root, "repo");
         _watch = Path.Combine(_root, "workspace", "projects", "demo");
@@ -973,8 +1342,9 @@ public sealed class DeployServiceTests : IDisposable
             id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
             address = "https://stage.example", template = "container", destination = "8081",
             healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
+            guidedFailure = guidedStage,
         }));
-        WriteProduction(host: "prod-host", destination: "8082");
+        WriteProduction(host: "prod-host", destination: "8082", guidedFailure: guidedProduction);
         Commit("initial");
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -983,6 +1353,7 @@ public sealed class DeployServiceTests : IDisposable
             ["WatchPaths:0:Name"] = "demo", ["WatchPaths:0:Path"] = _watch,
             ["WatchPaths:0:RootPath"] = _repo, ["WatchPaths:0:RepositoryPath"] = _repo,
         }).Build();
+        _configuration = config;
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
@@ -994,13 +1365,26 @@ public sealed class DeployServiceTests : IDisposable
             environments, store);
     }
 
-    private void WriteProduction(string host, string destination)
+    private DeployService Reopen()
+    {
+        var config = _configuration!;
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        var environments = new ProjectEnvironmentService(config, scanner, git, settings, _clock);
+        return new DeployService(environments, new DeployStore(config), git, scanner, _clock,
+            NullLogger<DeployService>.Instance);
+    }
+
+    private void WriteProduction(string host, string destination, bool guidedFailure = false)
         => File.WriteAllText(Path.Combine(_repo, "docs", "deployments", "environments", "production.json"),
             JsonSerializer.Serialize(new
             {
                 id = "production", name = "Production", kind = "production", targetHostId = host,
                 address = "https://example", template = "container", destination,
                 healthUrl = "https://example/health", approval = "person", secretRefs = new[] { "DATABASE_URL" },
+                guidedFailure, interventionTimeoutMinutes = 23,
             }));
 
     private string Head() => Git("rev-parse", "HEAD").Trim();
@@ -1023,9 +1407,35 @@ public sealed class DeployServiceTests : IDisposable
             environment:
             project:
               id: demo
-
-            """ + sections);
+            artifacts:
+              - name: app
+                type: container
+                dockerfile: Dockerfile
+            deploy:
+              - step: container
+                artifact: app
+                target: stage-host
+                composeFile: /srv/apps/demo/stage/compose.yml
+                service: demo
+                healthUrl: https://stage.example/health
+                healthTimeoutSeconds: 60
+                environments: [staging]
+              - step: container
+                artifact: app
+                target: prod-host
+                composeFile: /srv/apps/demo/production/compose.yml
+                service: demo
+                healthUrl: https://example/health
+                healthTimeoutSeconds: 60
+                environments: [production]
+            variables:
+              - name: DATABASE_URL
+                secret: DATABASE_URL
+                environments: [production]
+            """ + "\n" + sections);
     }
+
+    private void WriteSshProjectYml() => WriteProjectYml(string.Empty);
 
     // Git for Windows writes loose objects read-only, so File.Delete alone throws there.
     private void DeleteLooseObject(string sha)

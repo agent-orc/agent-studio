@@ -70,6 +70,18 @@ export class ProjectDeployDataService {
       { params: { offset, limit: 25 } }), 'Releases could not be loaded.', true);
   }
 
+  /**
+   * The newest release that carries the artifact's digest and existed at `notAfterUtc`,
+   * one bounded read instead of scanning the release history for a host artifact.
+   */
+  releaseForArtifact(projectName: string, artifact: string, notAfterUtc: string | null): Observable<DeployPanel<Release | null>> {
+    const params: Record<string, string | number> = { offset: 0, limit: 1, artifact };
+    if (notAfterUtc) params['notAfterUtc'] = notAfterUtc;
+    const request = this.http.get<DeployPage<Release>>(`${deployRoot(projectName)}/releases/page`, { params })
+      .pipe(map(page => page.items[0] ?? null));
+    return panel(request, 'The release of the deployed artifact could not be loaded.', true);
+  }
+
   /** AGT-3201 deploy runs, newest first. */
   deployments(projectName: string): Observable<DeployPanel<Deployment[]>> {
     return panel(this.http.get<Deployment[]>(`${deployRoot(projectName)}/deployments`),
@@ -88,6 +100,12 @@ export class ProjectDeployDataService {
       'Deploy runs could not be loaded.', true);
   }
 
+  /** One run by id, for a run that no loaded page contains. */
+  deployment(projectName: string, deploymentId: string): Observable<DeployPanel<Deployment>> {
+    return panel(this.http.get<Deployment>(`${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}`),
+      'The deploy run could not be loaded.', true);
+  }
+
   deploymentLog(projectName: string, deploymentId: string): Observable<DeployPanel<DeploymentLogLine[]>> {
     const request = this.http
       .get<DeploymentLogResponse>(`${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}/log`)
@@ -96,9 +114,11 @@ export class ProjectDeployDataService {
   }
 
   /** Approve, reject, or cancel a run; the server checks role and state. */
-  act(projectName: string, deploymentId: string, action: DeployRunAction): Observable<Deployment> {
+  act(projectName: string, deploymentId: string, action: DeployRunAction, reason?: string): Observable<Deployment> {
     return this.http.post<Deployment>(
-      `${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}/${action}`, {});
+      `${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}/${
+        action === 'retry' || action === 'skip' || action === 'abort' ? 'intervention' : action}`,
+      action === 'retry' || action === 'skip' || action === 'abort' ? { action, reason } : {});
   }
 
   pipeline(projectName: string): Observable<DeployPanel<PipelineDefinitionResponse>> {

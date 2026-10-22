@@ -18,7 +18,8 @@ internal sealed record DetachedReviewSpec(
     int? CommandSilenceWatchdogSeconds = null,
     int? ReviewNoCpuProgressSeconds = null,
     // AGT-3077: the path only; the worker reads the credential itself.
-    string? ReviewGitCredentialsFile = null);
+    string? ReviewGitCredentialsFile = null,
+    string? StateDir = null);
 
 internal sealed record DetachedReviewIdentity(
     int ProcessId,
@@ -352,7 +353,8 @@ internal sealed class DurableReviewProcess
             options.ClaudeCliBin,
             options.CommandSilenceWatchdogSeconds,
             options.ReviewNoCpuProgressSeconds,
-            options.ReviewGitCredentialsFile);
+            options.ReviewGitCredentialsFile,
+            options.StateDir);
 
     /// <summary>
     /// Options for the detached worker. Everything the workspace needs comes
@@ -371,6 +373,7 @@ internal sealed class DurableReviewProcess
             Role = "review",
             WorkDir = Path.Combine(spec.ReviewWorkDir, ".coding-not-used"),
             ReviewWorkDir = spec.ReviewWorkDir,
+            StateDir = spec.StateDir ?? "",
             ReviewCredentialEnvironment = spec.ReviewCredentialEnvironment,
             ReviewGitCredentialsFile = spec.ReviewGitCredentialsFile,
             BaseBranch = "main",

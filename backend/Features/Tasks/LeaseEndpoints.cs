@@ -899,9 +899,20 @@ public static class LeaseEndpoints
                         task.ThinkingLevel,
                         task.ProjectName,
                         hostActiveRuns,
-                        "remote-coding-claim"));
+                        "remote-coding-claim",
+                        (provider, model) => capabilityRegistry.AcceptsModel(
+                            req.RunnerId.Trim(), req.CapabilityInstanceId, provider, model)));
                     if (quotaPlan.IsDeferred)
                     {
+                        if (quotaPlan.Outcome == QuotaAdmissionOutcome.Wait)
+                            QuotaWaitMarker.Write(task.FolderPath, new QuotaWaitRecord
+                            {
+                                CliType = task.CliType ?? "claude",
+                                StartedAt = now,
+                                ResetAt = quotaPlan.NextResetAt ?? now.AddMinutes(10),
+                                Reason = quotaPlan.Reason,
+                                Scope = "quota",
+                            });
                         quotaAdmissionRecorder.EmitAdmissionDecision(task, quotaPlan, source: "remote-claim");
                         RecordRejection(task, "quota-admission", quotaPlan.Reason);
                         logger.LogInformation(
@@ -911,6 +922,33 @@ public static class LeaseEndpoints
                             quotaPlan.Outcome,
                             quotaPlan.Reason);
                         continue;
+                    }
+                    if (quotaPlan.IsFallback)
+                    {
+                        var promptPath = Path.Combine(task.FolderPath, "prompt.md");
+                        var promptText = File.Exists(promptPath)
+                            ? File.ReadAllText(promptPath) : string.Empty;
+                        var floor = modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
+                        if (!modelRouting.RouteMeetsFloor(quotaPlan.Model ?? string.Empty, quotaPlan.ThinkingLevel, floor))
+                        {
+                            var held = quotaPlan with
+                            {
+                                Outcome = QuotaAdmissionOutcome.Wait,
+                                IsFallback = false,
+                                Reason = $"waiting: no host-accepted fallback clears this card's correctness floor; next reset {quotaPlan.NextResetAt:O}",
+                            };
+                            QuotaWaitMarker.Write(task.FolderPath, new QuotaWaitRecord
+                            {
+                                CliType = task.CliType ?? "claude",
+                                StartedAt = now,
+                                ResetAt = held.NextResetAt ?? now.AddMinutes(10),
+                                Reason = held.Reason,
+                                Scope = "quota",
+                            });
+                            quotaAdmissionRecorder.EmitAdmissionDecision(task, held, source: "remote-claim");
+                            RecordRejection(task, "quota-admission", held.Reason);
+                            continue;
+                        }
                     }
                     var cliType = quotaPlan.CliType;
                     var modelCapability = capabilityRegistry.CliModelCapabilityFor(
@@ -1262,6 +1300,7 @@ public static class LeaseEndpoints
                 // Publish the new lane synchronously instead of waiting for
                 // the filesystem watcher's debounce window.
                 scanner.InvalidateCache();
+                scanner.PublishCoreFromKnownFolder(candidate.FolderPath);
                 logger.LogInformation(
                     "remote-runner-task-claimed project={Project} projectId={ProjectId} task={TaskKey} runner={Runner} lease={LeaseId} token={FencingToken} repositorySource={RepositorySource} defaultBranch={DefaultBranch}",
                     candidate.ProjectName, repository.ProjectId, taskKey, req.RunnerName, acquire.Lease.LeaseId,
@@ -1277,6 +1316,7 @@ public static class LeaseEndpoints
                 {
                     var claimedInfo = candidate with { FolderPath = claimedFolderPath };
                     quotaAdmissionRecorder.EmitAdmissionDecision(claimedInfo, candidateQuotaPlan, source: "remote-claim");
+                    QuotaWaitMarker.Clear(claimedInfo.FolderPath);
                     if (candidateQuotaPlan.IsFallback)
                     {
                         QuotaFallbackMarker.Write(claimedFolderPath, new QuotaFallbackRecord
@@ -1450,6 +1490,8 @@ public static class LeaseEndpoints
             RemoteRunStopRequestStore stops,
             ProviderRejectionContinuationService providerRejectionContinuations,
             ModelRoutingPolicyRegistry modelRouting,
+            V1ReviewExecutorRegistry capabilityRegistry,
+            QuotaAdmissionService quotaAdmission,
             MonolithOrchestrationStore orchestration,
             DecisionGroundsCollector decisionGrounds,
             AiOperatorDecisionGateway aiOperator,
@@ -1727,6 +1769,7 @@ public static class LeaseEndpoints
                         ["currentBriefVersion"] = currentBriefVersion,
                     });
                 scanner.InvalidateCache();
+                scanner.PublishCoreFromKnownFolder(offerFolder);
                 return Results.Ok(new RemoteRunCompletionResponse(
                     req.TaskKey, reportedOutcome, TaskStates.Escalated,
                     "Delivered against an older brief; operator decision required.",
@@ -2025,6 +2068,15 @@ public static class LeaseEndpoints
                     _ => $"TASK_{outcome.ToUpperInvariant()}",
                 },
             };
+            if (reviewAttemptRequest?.Plan?.DeepReviewDecision is { } deepReview)
+            {
+                details["deepReviewReceiptId"] = deepReview.ReceiptId;
+                details["deepReviewMode"] = deepReview.Mode;
+                details["deepReviewSelected"] = deepReview.Selected ? "true" : "false";
+                details["deepReviewModel"] = deepReview.Model;
+                details["deepReviewThinkingLevel"] = deepReview.ThinkingLevel;
+                details["deepReviewGrounds"] = string.Join(",", deepReview.Grounds);
+            }
             if (!string.IsNullOrWhiteSpace(salvageBranch))
                 details["salvageBranch"] = salvageBranch;
             if (!string.IsNullOrWhiteSpace(salvageCommitSha))
@@ -2380,6 +2432,57 @@ public static class LeaseEndpoints
 
             if (targetState == TaskStates.Escalated)
             {
+                if (ProviderModelCapabilityRecoveryPolicy.ShouldHold(
+                        providerRejection, providerRejectionModel,
+                        providerRejectionSalvage is not null,
+                        unverifiedDelivery is not null,
+                        decisionStop))
+                {
+                    capabilityRegistry.MarkModelRejected(
+                        req.RunnerId.Trim(),
+                        req.OutcomeDecision?.RawFacts.EffectiveCliType ?? task.CliType ?? "codex",
+                        providerRejectionModel!);
+                    var holdPlan = quotaAdmission.Plan(new QuotaAdmissionRequest(
+                        task.CliType, task.Model, task.ThinkingLevel, task.ProjectName, 0,
+                        "remote-model-rejection",
+                        (provider, model) => capabilityRegistry.AcceptsModel(
+                            req.RunnerId.Trim(),
+                            capabilityRegistry.CurrentInstanceId(req.RunnerId.Trim()), provider, model)));
+                    var holdReason = $"Host {req.RunnerId} refused {providerRejectionModel}: {providerRejection.Message}. {holdPlan.Reason}";
+                    var requeued = await transitions.MoveAsync(
+                        task.Id, TaskStates.Ready, task.WatchPath, ct,
+                        cause: $"remote-model-capability:{source}", authorityWrite: laneWrite,
+                        suppressProductExecution: true,
+                        transitionCause: LaneChangeCauses.RunnerRequeue,
+                        transitionDetail: "model-capability-hold");
+                    if (requeued.Status != MoveJobStatus.Success)
+                        return Results.Conflict(new RemoteRunCompletionResponse(
+                            req.TaskKey, responseOutcome, task.State,
+                            $"Model capability hold lane move refused: {requeued.Status} {requeued.Message}",
+                            RunAttemptId: attemptId));
+                    var holdFolder = requeued.NewFolderPath ?? task.FolderPath;
+                    QuotaWaitMarker.Write(holdFolder, new QuotaWaitRecord
+                    {
+                        CliType = task.CliType ?? "claude",
+                        StartedAt = DateTime.UtcNow,
+                        ResetAt = holdPlan.NextResetAt ?? DateTime.UtcNow.AddMinutes(10),
+                        Reason = holdReason,
+                        Scope = "model-capability",
+                    });
+                    scanner.InvalidateCache();
+                    timeline.Append(holdFolder, TimelineEventKinds.QuotaAdmissionDecision,
+                        TimelineActors.System, holdReason, runId: attemptId,
+                        details: new Dictionary<string, string>
+                        {
+                            ["outcome"] = "Wait",
+                            ["reason"] = "host-model-unavailable",
+                            ["host"] = req.RunnerId,
+                            ["model"] = providerRejectionModel!,
+                        });
+                    return Results.Ok(new RemoteRunCompletionResponse(
+                        req.TaskKey, responseOutcome, TaskStates.Ready, holdReason,
+                        RunAttemptId: attemptId));
+                }
                 if (providerRejection is not null && providerRejectionPlan is not null)
                 {
                     if (providerRejectionPlan.Action == ProviderRejectionContinuationAction.StartContinuation
@@ -2508,6 +2611,7 @@ public static class LeaseEndpoints
                             req.FencingToken, epoch, timeoutSignal));
                         EngineDecisionWaitMarker.Write(task.FolderPath, occurrence.RunId);
                         scanner.InvalidateCache();
+                        scanner.PublishCoreFromKnownFolder(task.FolderPath);
                         return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
                             task.State, "Waiting for engine decision.", RunAttemptId: attemptId));
                     }
@@ -2521,6 +2625,7 @@ public static class LeaseEndpoints
                     if (submission.WaitsForEngine)
                     {
                         scanner.InvalidateCache();
+                        scanner.PublishCoreFromKnownFolder(task.FolderPath);
                         return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
                             task.State, "Waiting for engine decision.", RunAttemptId: attemptId));
                     }
@@ -2706,6 +2811,7 @@ public static class LeaseEndpoints
                 if (occurrenceIsEngine)
                 {
                     scanner.InvalidateCache();
+                    scanner.PublishCoreFromKnownFolder(task.FolderPath);
                     return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
                         task.State, "Waiting for engine decision.", RunAttemptId: attemptId,
                         ReviewAttemptId: reviewAttempt?.AttemptId,

@@ -1,0 +1,36 @@
+<section class="review-observations" data-testid="review-observations" aria-label="Review observations">
+  <header class="review-observations__head">
+    <div>
+      <h3>Review observations</h3>
+      <p>Measured review cost and defects found after approval, by model and reasoning level.</p>
+    </div>
+    <a [href]="exportHref()" data-testid="review-observations-export">Export evidence</a>
+  </header>
+  @if (error(); as message) {
+    <p role="status">{{ message }}</p>
+  } @else if (report(); as data) {
+    @if (data.byModelAndReasoning.length === 0) {
+      <p class="review-observations__empty">No review measurements recorded for this project yet.</p>
+    } @else {
+      <div class="review-observations__scroll">
+        <table>
+          <thead><tr><th scope="col">Model</th><th scope="col">Reasoning</th><th scope="col">Reviews</th><th scope="col">Cost / review</th><th scope="col">Blocker rate</th><th scope="col">Miss rate</th><th scope="col">Cost / finding</th></tr></thead>
+          <tbody>
+            @for (row of data.byModelAndReasoning; track row.model + ':' + row.reasoningLevel) {
+              <tr>
+                <th scope="row">{{ row.model }}</th><td>{{ row.reasoningLevel }}</td>
+                <td>{{ row.reviews }}</td><td>{{ money(row.costPerReview) }}</td>
+                <td>{{ percent(row.blockerRate) }}</td><td>{{ percent(row.missRate) }}</td>
+                <td>{{ money(row.costPerRealFinding) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+    @if (data.laterEvidence.length > 0) {
+      <p class="review-observations__note">{{ data.laterEvidence.length }} cited later defect link{{ data.laterEvidence.length === 1 ? '' : 's' }} across these reviews.</p>
+    }
+    <p class="review-observations__note">{{ data.method }}</p>
+  }
+</section>

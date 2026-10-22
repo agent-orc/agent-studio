@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using AgentStudio.Projects;
 using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -21,6 +22,222 @@ namespace AgentRunner.Tests;
 
 public sealed class DeployHostCommandTests
 {
+    [Fact]
+    public async Task First_step_health_failure_stops_second_step_and_reports_failing_step()
+    {
+        var tokenFile = Path.GetTempFileName();
+        await File.WriteAllTextAsync(tokenFile, "test-token");
+        try
+        {
+            var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 12, 0, 0, TimeSpan.Zero));
+            var healthStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var sshCalls = 0;
+            var executor = new SshDeployExecutor((_, _, _, _) =>
+            {
+                sshCalls++;
+                return Task.FromResult(new ProcessResult(0, "", ""));
+            });
+            var steps = new[] { "first", "second" }.Select(name =>
+                new ProjectDeployStep("container", "app", "host-a", null, null, null, [], ["staging"])
+                { ComposeFile = "/srv/apps/" + name + "/compose.yml", Service = name,
+                    HealthUrl = "https://health.example/" + name, HealthTimeoutSeconds = 3 }).ToArray();
+            var job = new
+            {
+                id = "job-a", project = "demo", environmentId = "stage", hostId = "host-a",
+                artifact = "image@sha256:" + new string('a', 64), template = "container",
+                destination = "1", healthUrl = (string?)null, secretRefs = Array.Empty<string>(),
+                containerPort = 8080, previousArtifact = (string?)null, status = "claimed",
+                leaseToken = "lease-a", sshSteps = steps,
+                variables = Array.Empty<ProjectVariableDefinition>(), artifacts = Array.Empty<ProjectArtifactDefinition>(),
+            };
+            string? report = null;
+            using var client = new HttpClient(new StubHandler(async request =>
+            {
+                var path = request.RequestUri!.AbsolutePath;
+                if (path.EndsWith("/claim", StringComparison.Ordinal))
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(job) };
+                if (path.EndsWith("/report", StringComparison.Ordinal))
+                    report = await request.Content!.ReadAsStringAsync();
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            })) { BaseAddress = new Uri("https://studio.example/") };
+
+            var run = DeployHostCommand.RunAsync(
+                [client.BaseAddress.ToString(), "host-a", tokenFile, "/unused"], CancellationToken.None,
+                client, executor, async (_, ct) =>
+                {
+                    healthStarted.SetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                    return true;
+                }, clock);
+            await healthStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            clock.Advance(TimeSpan.FromSeconds(3));
+            var result = await run.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(1, result);
+            Assert.Equal(1, sshCalls);
+            Assert.Contains("health-http-failed", report);
+            Assert.Contains("deploy[0]:container", report);
+            Assert.DoesNotContain("deploy[1]:container", report);
+        }
+        finally { File.Delete(tokenFile); }
+    }
+
+    private sealed class StubHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> send) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => send(request);
+    }
+
+    [Fact]
+    public async Task Lost_lease_cancels_ssh_and_never_reports_stale_result()
+    {
+        var tokenFile = Path.GetTempFileName();
+        await File.WriteAllTextAsync(tokenFile, "test-token");
+        try
+        {
+            var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 12, 0, 0, TimeSpan.Zero));
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var cancelled = false;
+            var reports = 0;
+            var renewals = 0;
+            var executor = new SshDeployExecutor(async (_, _, _, ct) =>
+            {
+                started.SetResult();
+                try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { cancelled = true; throw; }
+                return new ProcessResult(0, "", "");
+            });
+            var step = new ProjectDeployStep("container", "app", "host-a", null, null, null, [], ["staging"])
+            { ComposeFile = "/srv/apps/demo/compose.yml", Service = "demo" };
+            var job = new
+            {
+                id = "job-a", project = "demo", environmentId = "stage", hostId = "host-a",
+                artifact = "image@sha256:" + new string('a', 64), template = "container",
+                destination = "1", healthUrl = (string?)null, secretRefs = Array.Empty<string>(),
+                containerPort = 8080, previousArtifact = (string?)null, status = "claimed",
+                leaseToken = "lease-a", sshSteps = new[] { step },
+                variables = Array.Empty<ProjectVariableDefinition>(), artifacts = Array.Empty<ProjectArtifactDefinition>(),
+            };
+            using var client = new HttpClient(new StubHandler(request =>
+            {
+                var path = request.RequestUri!.AbsolutePath;
+                if (path.EndsWith("/claim", StringComparison.Ordinal))
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(job) });
+                if (path.EndsWith("/renew", StringComparison.Ordinal))
+                {
+                    renewals++;
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict));
+                }
+                if (path.EndsWith("/report", StringComparison.Ordinal)) reports++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            })) { BaseAddress = new Uri("https://studio.example/") };
+
+            var run = DeployHostCommand.RunAsync([client.BaseAddress.ToString(), "host-a", tokenFile, "/unused"],
+                CancellationToken.None, client, executor, clock: clock);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            clock.Advance(TimeSpan.FromMinutes(1));
+            Assert.Equal(1, await run.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.True(cancelled);
+            Assert.Equal(1, renewals);
+            Assert.Equal(0, reports);
+        }
+        finally { File.Delete(tokenFile); }
+    }
+
+    [Fact]
+    public async Task StaticPreviewJob_UsesRunZoneBoundaryAndReportsScreenshotThenRemoval()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "static-preview-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var tokenFile = Path.Combine(root, "token");
+        await File.WriteAllTextAsync(tokenFile, $"test-{Guid.NewGuid():N}");
+        var commit = new string('a', 40);
+        var png = Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC");
+        var zone = new StaticPreviewZone(root, png);
+        var handler = new PreviewTransport(commit, root);
+        try
+        {
+            using (var first = new HttpClient(handler, disposeHandler: false)
+                { BaseAddress = new Uri("https://studio.test/") })
+                Assert.Equal(0, await DeployHostCommand.RunAsync(
+                    ["https://studio.test", "preview-host", tokenFile, root], CancellationToken.None, first,
+                    previewZone: zone));
+            Assert.Equal(commit, zone.DeployedCommit);
+            Assert.True(File.Exists(Path.Combine(root, "deployed", "index.html")));
+            Assert.Equal(Convert.ToBase64String(png), handler.Reports[0].GetProperty("screenshotBase64").GetString());
+            using (var second = new HttpClient(handler, disposeHandler: false)
+                { BaseAddress = new Uri("https://studio.test/") })
+                Assert.Equal(0, await DeployHostCommand.RunAsync(
+                    ["https://studio.test", "preview-host", tokenFile, root], CancellationToken.None, second,
+                    previewZone: zone));
+            Assert.False(File.Exists(Path.Combine(root, "deployed", "index.html")));
+            Assert.True(zone.Removed);
+            Assert.Equal(2, handler.Reports.Count);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private sealed class StaticPreviewZone(string root, byte[] png) : IPreviewRunZone
+    {
+        public string? DeployedCommit { get; private set; }
+        public bool Removed { get; private set; }
+
+        public Task<PreviewRunZoneResult> DeployAsync(PreviewRunZoneJob job, CancellationToken cancellationToken)
+        {
+            Assert.Equal("static", job.Template);
+            Assert.Equal("dist", job.ArtifactPath);
+            Assert.Equal(job.SourceCommit, job.SourceRef);
+            Assert.Equal(root, job.SourceRepository);
+            Assert.Equal(["npm run build"], job.BuildCommands);
+            Assert.Empty(job.SecretRefs);
+            DeployedCommit = job.SourceCommit;
+            Directory.CreateDirectory(Path.Combine(root, "deployed"));
+            File.WriteAllText(Path.Combine(root, "deployed", "index.html"), "<h1>Preview</h1>");
+            return Task.FromResult(new PreviewRunZoneResult(true, png));
+        }
+
+        public Task RemoveAsync(PreviewRunZoneJob job, CancellationToken cancellationToken)
+        {
+            File.Delete(Path.Combine(root, "deployed", "index.html"));
+            Removed = true;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class PreviewTransport(string commit, string root) : HttpMessageHandler
+    {
+        private int _claims;
+        public List<JsonElement> Reports { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/claim", StringComparison.Ordinal))
+            {
+                var kind = Interlocked.Increment(ref _claims) == 1 ? "preview" : "preview-remove";
+                return new(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new
+                    {
+                        id = kind, project = "demo", environmentId = "preview-agt-3180",
+                        hostId = "preview-host", artifact = "source:" + commit,
+                        template = "static", destination = Path.Combine(root, "deployed"),
+                        healthUrl = (string?)null, secretRefs = Array.Empty<string>(), containerPort = 8080,
+                        previousArtifact = (string?)null, status = "claimed", leaseToken = "lease-1",
+                        kind, cardKey = "agt-3180", sourceCommit = commit,
+                        sourceRepository = root, sourceRef = commit, artifactPath = "dist", dockerfile = (string?)null,
+                        address = "https://agt-3180.demo.preview.internal",
+                        buildCommands = new[] { "npm run build" },
+                    }),
+                };
+            }
+            using var document = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+            Reports.Add(document.RootElement.Clone());
+            return new(HttpStatusCode.OK);
+        }
+    }
+
     [Fact]
     [Trait("Category", "MachineBound")]
     public async Task RealServer_Claim_Deploy_HealthCheck_AndReport_LocalContainer()

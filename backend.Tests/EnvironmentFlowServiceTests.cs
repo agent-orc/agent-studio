@@ -64,6 +64,7 @@ public sealed class EnvironmentFlowServiceTests
         Assert.Equal(control.WaitingReasons, result.WaitingReasons);
     }
 
+
     private static TaskInfo Task(string id, string lane, DateTime at) => new()
     {
         Id = id, Kind = TaskKinds.Task, State = lane, CreatedAt = at,

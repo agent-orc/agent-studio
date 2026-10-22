@@ -32,6 +32,7 @@ an agent CLI, first tasks, and troubleshooting.
 | [presentation-capture.md](./presentation-capture.md) | Regenerating deterministic presentation stills and recording safe silent loops or narrated backup footage against the ADR-0056 demo workspace. |
 | [hosted-wiki-publication.md](./hosted-wiki-publication.md) | Publishing the accepted documentation revision to the hosted Wiki: published-revision rules, freshness SLO, read-only fetch credentials, scheduled and forced triggers, atomic promotion, typed deployment failures, and the rehearsed rollback drill. |
 | [docker-compose-connector-gap.md](./docker-compose-connector-gap.md) | Option C decision and the remaining Connector route-coverage limit for the one-box deployment. |
+| [move-studio-to-server.md](./move-studio-to-server.md) | Move Studio from Stable on the workstation to the networked monolith stack on the server with one script: inventory, rehearsal, apply, and rollback. |
 
 ## Related references
 

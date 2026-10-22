@@ -1220,6 +1220,22 @@ public static class ProjectSettingsEndpoints
                 return Results.NotFound(new { error = $"Batch member '{taskKey}' was not found." });
             return Results.Accepted(value: new { accepted = true });
         });
+        // AGT-3219: cards escalated for a machine gate queue overrun, and their one-step release.
+        app.MapGet("/api/projects/{projectName}/batch-gate/queue-stalls", (string projectName,
+            BatchGatePilotService pilot, TaskScannerService scanner) =>
+            scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
+                ? Results.Ok(pilot.QueueStallReport(projectName))
+                : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
+        app.MapPost("/api/projects/{projectName}/batch-gate/queue-stalls/release", async (
+            string projectName, HttpContext context, BatchGatePilotService pilot, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (string.IsNullOrWhiteSpace(context.Request.Headers["X-Client-Id"]))
+                return Results.BadRequest(new { error = "X-Client-Id is required.", field = "X-Client-Id" });
+            return Results.Ok(await pilot.ReleaseQueueStalledAsync(projectName,
+                AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(context), context.RequestAborted));
+        });
 
         app.MapGet("/api/projects/{projectName}/gate-result-cache", (
             string projectName, TaskScannerService scanner) =>
