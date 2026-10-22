@@ -7,11 +7,9 @@ import {
   inject,
   input,
   output,
-  signal,
-  effect,
+  signal, effect,
   OnDestroy,
-  ViewChild,
-  ViewEncapsulation,
+  ViewChild, ViewEncapsulation,
 } from '@angular/core';
 import { ModalStackService } from '../../services/modal-stack.service';
 import { FormsModule } from '@angular/forms';
@@ -60,6 +58,7 @@ import { DecisionBlockedNoticeComponent } from './components/decision-blocked-no
 import { decisionBlockReason, decisionBlockers } from '../../models/decision-card-presentation';
 import { DetailHeaderComponent } from './components/detail-header/detail-header.component';
 import { TaskLiveStatusComponent } from '../../components/task-live-status/task-live-status.component';
+import { TaskPreviewComponent } from '../../components/task-preview/task-preview.component';
 import { freshestRunInfo, isTaskRunActive } from '../../services/run-activity.util';
 import { PaneToggleBarComponent } from './components/pane-toggle-bar/pane-toggle-bar.component';
 import { TriageActionPayload, laneLabelFor } from './state/triage-actions.model';
@@ -91,6 +90,7 @@ import { BatchDetailComponent } from '../batch-gate/batch-detail/batch-detail';
     DecisionBlockedNoticeComponent,
     DetailHeaderComponent,
     TaskLiveStatusComponent,
+    TaskPreviewComponent,
     PaneToggleBarComponent,
     ArchivedTaskNoticeComponent,
     TooltipDirective,

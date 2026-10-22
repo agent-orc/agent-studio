@@ -1,13 +1,13 @@
 // Run: node --test scripts/migration/move-studio-to-server.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
   buildInventory, classifyPath, classifyWorkspace, credentialChecklist, fileTokenPattern, findTokenPattern, generateMapping,
-  readProjectRegistry, runCli, scanWorkspace, screenTokens, selectDelta, stripUrlCredentials, taskRoots, tokenStateIssues,
+  readProjectRegistry, runCli, scanFileContent, scanWorkspace, screenTokens, selectDelta, stripUrlCredentials, taskRoots, tokenStateIssues,
 } from './move-studio-to-server.mjs';
 import { relocate } from './relocate-workspace-paths.mjs';
 
@@ -266,7 +266,7 @@ test('finds known token shapes and leaves ordinary text alone', () => {
   }
 });
 
-test('token screen excludes archive files with a token, keeps the access state, and reuses unchanged results', () => {
+test('token screen reads every archive file even when size and time match', () => {
   const entry = (file, size, mtimeMs, extra = {}) => ({ path: file, size, mtimeMs, area: 'runtime', state: 'untracked', transfer: 'archive', ...extra });
   const scanned = [];
   const scan = file => { scanned.push(file); return file.includes('leak') ? 'github-token' : null; };
@@ -277,7 +277,7 @@ test('token screen excludes archive files with a token, keeps the access state, 
     entry('projects/demo/tasks/AGT-1/task.md', 10, 1000, { transfer: 'git', state: 'tracked' }),
   ];
   const first = screenTokens(entries, { scan });
-  assert.deepEqual(scanned, ['.runtime/leak.log', '.runtime/clean.log']);
+  assert.deepEqual(scanned, ['.runtime/leak.log', '.runtime/clean.log', '.security/access-state.json']);
   assert.deepEqual(first.map(item => [item.path, item.transfer, item.reason ?? null, item.token ?? null]), [
     ['.runtime/leak.log', 'exclude', 'token-pattern', 'github-token'],
     ['.runtime/clean.log', 'archive', null, null],
@@ -286,10 +286,41 @@ test('token screen excludes archive files with a token, keeps the access state, 
   ]);
 
   scanned.length = 0;
-  const second = screenTokens([entry('.runtime/leak.log', 10, 1000), entry('.runtime/clean.log', 12, 2000)], { scan, previous: first });
-  assert.deepEqual(scanned, ['.runtime/clean.log']);
+  const second = screenTokens([entry('.runtime/leak.log', 10, 1000), entry('.runtime/clean.log', 12, 2000)], { scan });
+  assert.deepEqual(scanned, ['.runtime/leak.log', '.runtime/clean.log']);
   assert.equal(second[0].reason, 'token-pattern');
   assert.equal(second[1].transfer, 'archive');
+  const tracked = entry('notes/modified.md', 40, 1000, { state: 'tracked-modified' });
+  const clean = screenTokens([tracked], { scan: () => ({ hash: 'before', token: null }) });
+  assert.equal(clean[0].transfer, 'archive');
+  const changed = screenTokens([tracked], { scan: () => ({ hash: 'after', token: 'github-token' }) });
+  assert.equal(changed[0].transfer, 'exclude');
+  assert.equal(changed[0].token, 'github-token');
+});
+
+test('same-metadata token in a modified tracked file is screened again', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'move-studio-token-'));
+  try {
+    const file = path.join(root, 'status.md');
+    const token = fakeToken.github();
+    await writeFile(file, 'a'.repeat(token.length));
+    await utimes(file, fixedClock(), fixedClock());
+    const time = await stat(file);
+    const entry = { path: 'projects/demo/tasks/AGT-1/status.md', size: token.length, mtimeMs: Math.trunc(time.mtimeMs),
+      area: 'other', state: 'tracked-modified', transfer: 'archive' };
+    const first = screenTokens([entry], { scan: () => scanFileContent(file) });
+    await writeFile(file, token);
+    await utimes(file, time.atime, time.mtime);
+    const after = await stat(file);
+    assert.equal(after.size, time.size);
+    assert.equal(Math.trunc(after.mtimeMs), Math.trunc(time.mtimeMs));
+    const second = screenTokens([entry], { scan: () => scanFileContent(file) });
+    assert.notEqual(second[0].hash, first[0].hash);
+    assert.equal(second[0].transfer, 'exclude');
+    assert.deepEqual(tokenStateIssues(second, ['projects/demo/tasks']).map(issue => issue.code), ['token-in-state']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('file token scan finds a token across a chunk border and skips symbolic links', async () => {
@@ -333,7 +364,7 @@ test('strips credentials from repository URLs before they are logged or planned'
 });
 
 test('delta selection sends new and changed files once and removes vanished ones', () => {
-  const entry = (file, size, mtimeMs, extra = {}) => ({ path: file, size, mtimeMs, transfer: 'archive', state: 'untracked', ...extra });
+  const entry = (file, size, mtimeMs, extra = {}) => ({ path: file, size, mtimeMs, hash: `${size}-${mtimeMs}`, transfer: 'archive', state: 'untracked', ...extra });
   const first = selectDelta({ entries: [
     entry('.runtime/a.log', 10, 1000),
     entry('logs/bus/b.jsonl', 5, 1000),
@@ -364,8 +395,15 @@ test('delta selection sends new and changed files once and removes vanished ones
   assert.deepEqual(Object.keys(second.manifest.files), ['.runtime/a.log', 'logs/bus/c.jsonl']);
 });
 
+test('delta selection copies a task edit with unchanged size and modification time', () => {
+  const task = { path: 'AGT-1/task.md', size: 12, mtimeMs: 1000, hash: 'before', transfer: 'archive', state: 'untracked' };
+  const first = selectDelta({ entries: [task] });
+  assert.deepEqual(selectDelta({ entries: [{ ...task, hash: 'after' }], previous: first.manifest }).copy, ['AGT-1/task.md']);
+  assert.deepEqual(selectDelta({ entries: [task], previous: first.manifest }).copy, []);
+});
+
 test('delta selection removes files sent earlier that are excluded now, except modified tracked files', () => {
-  const entry = (file, extra = {}) => ({ path: file, size: 10, mtimeMs: 1000, transfer: 'archive', state: 'untracked', ...extra });
+  const entry = (file, extra = {}) => ({ path: file, size: 10, mtimeMs: 1000, hash: 'unchanged', transfer: 'archive', state: 'untracked', ...extra });
   const first = selectDelta({ entries: [
     entry('.runtime/cli-output/AGT-1.log'),
     entry('notes/scratch.md'),
@@ -467,6 +505,8 @@ test('delta selection refuses paths that could escape the server workspace', () 
 test('inventory carries the injected clock and the CLI writes plan files and a repeatable delta', async () => {
   const { root, workspace } = await materialize({ ...fixture.files, ...credentialFiles });
   try {
+    const task = path.join(root, 'external', '.orchestrator', 'jobs', 'AGT-1', 'task.md');
+    await utimes(task, fixedClock(), fixedClock());
     const inventory = buildInventory({
       workspace: fixture.workspace,
       files: scanWorkspace(workspace),
@@ -523,7 +563,9 @@ test('inventory carries the injected clock and the CLI writes plan files and a r
     assert.equal(JSON.parse(await readFile(path.join(state, 'manifest.json'), 'utf8')).generatedAt, '2026-10-19T08:30:00.000Z');
 
     const later = new Date('2026-10-19T09:00:00.000Z');
-    await utimes(path.join(workspace, 'logs', 'bus', '2026-10-18.jsonl'), later, later);
+    const bus = path.join(workspace, 'logs', 'bus', '2026-10-18.jsonl');
+    await writeFile(bus, 'changed bus contents\n');
+    await utimes(bus, later, later);
     assert.equal(run(['inventory', '--workspace', workspace, '--source-workspace', fixture.workspace, '--tracked', path.join(state, 'tracked.z'), '--dirty', path.join(state, 'dirty.z'),
       '--remotes', path.join(state, 'remotes.tsv'), '--extra-mapping', path.join(state, 'extra.json'), '--home', fixture.home, '--out-dir', state]), 0);
     assert.equal(run([...deltaArgs.slice(0, 7), '--previous', path.join(state, 'manifest.json'), '--manifest', path.join(state, 'manifest.next.json')]), 0);
@@ -540,6 +582,19 @@ test('inventory carries the injected clock and the CLI writes plan files and a r
     assert.equal(run([...storageDelta, '--previous', path.join(state, 'storage-manifest.json'),
       '--manifest', path.join(state, 'storage-manifest.next.json')]), 0);
     assert.deepEqual((await readFile(path.join(state, 'storage-copy.z'), 'utf8')).split('\0').filter(Boolean), ['AGT-2/task.md']);
+    const taskTime = await stat(task);
+    await writeFile(task, '# revised  task\n');
+    await utimes(task, taskTime.atime, taskTime.mtime);
+    const taskAfter = await stat(task);
+    assert.equal(taskAfter.size, taskTime.size);
+    assert.equal(Math.trunc(taskAfter.mtimeMs), Math.trunc(taskTime.mtimeMs));
+    assert.equal(run(['inventory', '--workspace', workspace, '--source-workspace', fixture.workspace,
+      '--tracked', path.join(state, 'tracked.z'), '--dirty', path.join(state, 'dirty.z'),
+      '--remotes', path.join(state, 'remotes.tsv'), '--extra-mapping', path.join(state, 'extra.json'),
+      '--home', fixture.home, '--out-dir', state]), 0);
+    assert.equal(run([...storageDelta, '--previous', path.join(state, 'storage-manifest.next.json'),
+      '--manifest', path.join(state, 'storage-manifest.changed.json')]), 0);
+    assert.deepEqual((await readFile(path.join(state, 'storage-copy.z'), 'utf8')).split('\0').filter(Boolean), ['AGT-1/task.md']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

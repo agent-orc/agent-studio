@@ -9,6 +9,8 @@ public record TaskInfo
     [JsonIgnore] internal string TokenReceiptStamp { get; init; } = "none";
     public string Id { get; init; } = "";
     public string TaskKey { get; init; } = "";
+    /// <summary>Current card preview, projected from its sidecar rather than task.json.</summary>
+    public TaskPreview? Preview { get; init; }
     /// <summary>
     /// Stable Linear-style reference key minted from the project's prefix
     /// plus a monotonic counter (<c>ATP-130</c>, <c>RB-42</c>). Unique

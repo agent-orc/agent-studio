@@ -3,7 +3,8 @@
 // classification, path mapping generation, and delta selection. The shell
 // script owns every process, SSH, Git, tar, and Docker side effect; this module
 // only reads the workspace and writes plan files into the local state directory.
-import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -161,19 +162,21 @@ export function classifyWorkspace({ files, tracked = [], dirty = [] }) {
 const scanChunk = 1 << 20;
 const scanOverlap = 4096;
 
-/** Token shape found in one regular file, read in overlapping chunks so a token across a chunk border still counts. */
-export function fileTokenPattern(file) {
-  if (!lstatSync(file).isFile()) return null;
+/** Read once for both the delta digest and token screen. Symlinks hash their link text. */
+export function scanFileContent(file) {
+  if (lstatSync(file).isSymbolicLink()) return { hash: createHash('sha256').update(readlinkSync(file)).digest('hex'), token: null };
   const descriptor = openSync(file, 'r');
   try {
+    const digest = createHash('sha256');
     const buffer = Buffer.alloc(scanChunk);
     let tail = '';
+    let token = null;
     for (;;) {
       const read = readSync(descriptor, buffer, 0, scanChunk, null);
-      if (read === 0) return null;
+      if (read === 0) return { hash: digest.digest('hex'), token };
+      digest.update(buffer.subarray(0, read));
       const text = tail + buffer.toString('latin1', 0, read);
-      const found = findTokenPattern(text);
-      if (found) return found;
+      token ??= findTokenPattern(text);
       tail = text.slice(-scanOverlap);
     }
   } finally {
@@ -181,21 +184,25 @@ export function fileTokenPattern(file) {
   }
 }
 
+/** Name of the first known token shape in one regular file. */
+export function fileTokenPattern(file) {
+  return scanFileContent(file).token;
+}
+
 /**
  * Moves archive entries that contain a known token shape to the exclusions.
  * The access state is exempt: it is the account store the move must carry.
- * A previous screened entry with the same size and modification time is reused,
- * so a delta pass reads only new and changed files.
+ * Scan every candidate on every pass. Size and modification time do not prove
+ * content stayed unchanged, including for modified tracked files.
  */
-export function screenTokens(entries, { scan, previous = [] }) {
-  const before = new Map(previous.map(entry => [entry.path, entry]));
+export function screenTokens(entries, { scan }) {
   return entries.map(entry => {
-    if (entry.transfer !== 'archive' || entry.area === 'access-state') return entry;
-    const last = before.get(entry.path);
-    const known = last && last.size === entry.size && last.mtimeMs === entry.mtimeMs
-      && (last.transfer === 'archive' || last.reason === 'token-pattern');
-    const token = known ? last.token ?? null : scan(entry.path);
-    return token ? { ...entry, transfer: 'exclude', reason: 'token-pattern', token } : entry;
+    if (entry.transfer !== 'archive') return entry;
+    const result = scan(entry.path);
+    const { hash, token } = typeof result === 'string' || result === null ? { token: result } : result;
+    const screened = { ...entry, ...(hash ? { hash } : {}) };
+    return token && entry.area !== 'access-state'
+      ? { ...screened, transfer: 'exclude', reason: 'token-pattern', token } : screened;
   });
 }
 
@@ -337,8 +344,9 @@ export function generateMapping({ workspace, projects, remotes = {}, extra = {} 
 
   const mapped = value => covered(value) || checkouts.some(checkout => isUnder(value, checkout.source));
   for (const project of projects) {
-    for (const [kind, value] of [['RootPath', project.rootPath]]) {
-      if (value && windowsPath.test(value) && !mapped(value)) issues.push({ code: 'unmapped-path', projects: [project.id], field: kind, path: value });
+    const rootPath = project.rootPath;
+    if (rootPath && windowsPath.test(rootPath) && !mapped(rootPath)) {
+      issues.push({ code: 'unmapped-path', projects: [project.id], field: 'RootPath', path: rootPath });
     }
   }
   for (const [from, to] of Object.entries(extra)) {
@@ -386,7 +394,7 @@ export function credentialChecklist({ home, exists, credentialHelper = '' }) {
 
 /**
  * Picks what the next archive pass must send. A file is copied when it is new
- * or its size or modification time changed since the previous manifest.
+ * or its content digest changed since the previous manifest.
  * Modified tracked files are always copied because the Git sync resets the
  * server working tree first. Paths that vanished from the source, tracked
  * files deleted in the working tree, and untracked files sent earlier but
@@ -406,9 +414,9 @@ export function selectDelta({ entries, previous = null }) {
     assertSafeRelative(entry.path);
     if (entry.transfer === 'remove') { remove.push(entry.path); continue; }
     if (entry.transfer !== 'archive') continue;
-    files[entry.path] = { size: entry.size, mtimeMs: entry.mtimeMs };
+    files[entry.path] = { size: entry.size, mtimeMs: entry.mtimeMs, hash: entry.hash };
     const last = before[entry.path];
-    if (entry.state === 'tracked-modified' || !last || last.size !== entry.size || last.mtimeMs !== entry.mtimeMs) copy.push(entry.path);
+    if (entry.state === 'tracked-modified' || !last || !entry.hash || !last.hash || last.hash !== entry.hash) copy.push(entry.path);
   }
   for (const relative of Object.keys(before)) {
     assertSafeRelative(relative);
@@ -452,15 +460,15 @@ export function tokenStateIssues(entries, roots = []) {
 
 /**
  * Inventory plan for the state directory. The clock is injected so the plan is
- * reproducible in tests. `scanTokens` (relative path -> token shape or null)
- * screens the archive; `previousEntries` are the entries of the last screened plan.
+ * reproducible in tests. `scanTokens` returns a content digest and token shape
+ * for each archive candidate, so delta selection compares the current bytes.
  */
 export function buildInventory({
   workspace, files, tracked, dirty, projects, remotes, extra, home, exists, credentialHelper, now,
-  scanTokens = null, previousEntries = [], storageSnapshots = [],
+  scanTokens = null, storageSnapshots = [],
 }) {
   const classified = classifyWorkspace({ files, tracked, dirty });
-  const entries = scanTokens ? screenTokens(classified, { scan: scanTokens, previous: previousEntries }) : classified;
+  const entries = scanTokens ? screenTokens(classified, { scan: scanTokens }) : classified;
   const plan = generateMapping({ workspace, projects, remotes, extra });
   return {
     generatedAt: now().toISOString(),
@@ -564,7 +572,6 @@ export function runCli(argv, {
   }
   if (command === 'inventory') {
     const out = options['out-dir'];
-    const previous = readJson(path.join(out, 'inventory.json'), null);
     const registry = readProjectRegistry(options.workspace);
     const plan = generateMapping({ workspace: options['source-workspace'] ?? options.workspace,
       projects: registry, remotes: readRemotes(options.remotes), extra: readJson(options['extra-mapping'], {}) });
@@ -576,8 +583,7 @@ export function runCli(argv, {
         if (!statSync(root.source).isDirectory()) throw new Error('the source is not a directory');
         const classified = classifyWorkspace({ files: scanWorkspace(root.source) });
         const entries = screenTokens(classified, {
-          scan: relative => fileTokenPattern(path.join(root.source, ...relative.split('/'))),
-          previous: previous?.storageRoots?.find(item => item.id === root.id)?.entries ?? [],
+          scan: relative => scanFileContent(path.join(root.source, ...relative.split('/'))),
         });
         return { ...root, entries, summary: summarize(entries), issues: entries
           .filter(entry => entry.reason === 'token-pattern')
@@ -599,8 +605,7 @@ export function runCli(argv, {
       exists: existsSync,
       credentialHelper: options['credential-helper'] ?? '',
       now,
-      scanTokens: relative => fileTokenPattern(path.join(options.workspace, ...relative.split('/'))),
-      previousEntries: previous?.tokenScreened ? previous.entries : [],
+      scanTokens: relative => scanFileContent(path.join(options.workspace, ...relative.split('/'))),
       storageSnapshots,
     });
     writeFileSync(path.join(out, 'inventory.json'), JSON.stringify(inventory, null, 2) + '\n');
