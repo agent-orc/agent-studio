@@ -170,6 +170,8 @@ public static class TaskIntegrationRecordAppendPolicy
         var id = request.Id.Trim();
         if (id.Length is < 3 or > 96 || !IsRecordId(id))
             return new(false, false, "id must be 3-96 lowercase letters, digits, or hyphens.");
+        if (id.StartsWith("operator-candidate-", StringComparison.Ordinal))
+            return new(false, false, "id uses a reserved integration record prefix.");
 
         var classification = request.Classification.Trim().ToLowerInvariant();
         if (!IntegrationRecordClasses.All.Contains(classification, StringComparer.Ordinal))

@@ -67,6 +67,13 @@ public sealed class TaskIntegrationRecordEndpointTests : IDisposable
     }
 
     [Fact]
+    public void AppendPolicy_ReservesOperatorCandidateRecordIds()
+    {
+        Assert.False(TaskIntegrationRecordAppendPolicy.Validate(TaskStates.Completed,
+            Request() with { Id = "operator-candidate-check" }).Allowed);
+    }
+
+    [Fact]
     public async Task AppendCuratedMapping_PersistsSourceAndIntegrationShaInAutoReview()
     {
         WriteTask(TaskStates.AutoReview);

@@ -829,7 +829,9 @@ public sealed class GitWorkspace
             {
                 var results = Path.Combine(_options.WorkDir, "tasks", _safeTaskKey, "results");
                 Directory.CreateDirectory(results);
-                File.Copy(source, Path.Combine(results, artifactName), overwrite: true);
+                var report = await File.ReadAllTextAsync(source, ct);
+                await File.WriteAllTextAsync(Path.Combine(results, artifactName),
+                    BoundLegacyReport(report), ct);
                 _log($"legacy-repository-report-preserved task={_safeTaskKey} artifact=results/{artifactName}");
             }
             catch (Exception ex)
@@ -839,6 +841,14 @@ public sealed class GitWorkspace
                     ex);
             }
         }
+    }
+
+    private static string BoundLegacyReport(string report)
+    {
+        const string marker = "\n[report middle omitted]\n";
+        const int limit = 16 * 1024;
+        var side = (limit - marker.Length) / 2;
+        return report.Length <= limit ? report : report[..side] + marker + report[^side..];
     }
 
     private bool UsesLegacyRepositoryReports()

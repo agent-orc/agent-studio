@@ -890,7 +890,7 @@ public sealed partial class MergeIntoDevelopRunner
                 if (content is null) continue;
                 var stem = path == "status.md" ? "legacy-repository-status" : "legacy-repository-results-status";
                 var name = $"{stem}-{deliverySha[..12]}.md";
-                File.WriteAllText(Path.Combine(jobFolderPath, name), content);
+                File.WriteAllText(Path.Combine(jobFolderPath, name), BoundLegacyReport(content));
             }
         }
         catch (Exception ex)
@@ -1441,6 +1441,14 @@ public sealed partial class MergeIntoDevelopRunner
             ? "project-override:ProjectSettings.BuildTestGateTimeoutSeconds"
             : "policy-default:GateRunBudgetPolicy";
         return (TimeSpan.FromSeconds(resolvedSeconds), source);
+    }
+
+    private static string BoundLegacyReport(string report)
+    {
+        const string marker = "\n[report middle omitted]\n";
+        const int limit = 16 * 1024;
+        var side = (limit - marker.Length) / 2;
+        return report.Length <= limit ? report : report[..side] + marker + report[^side..];
     }
 
     private TimeSpan ResolveGateInfrastructureTimeout() => TimeSpan.FromSeconds(Math.Max(1,

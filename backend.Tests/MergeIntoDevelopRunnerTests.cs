@@ -1107,6 +1107,13 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         File.WriteAllText(Path.Combine(repo, "status.md"), "integration report\n");
         Commit(repo, "docs: update integration report");
 
+        var hook = Path.Combine(repo, ".git", "hooks", "pre-commit");
+        File.WriteAllText(hook, "#!/bin/sh\nexit 1\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(hook,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        Assert.NotEqual(0, RunGit(repo, "commit --allow-empty -m hook-probe").Code);
+
         var (git, log) = Build(repo);
         var jobFolder = BeginRun(log, repo, jobId: "66");
         var outcome = new MergeIntoDevelopRunner(git, log,
@@ -1122,6 +1129,37 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal("delivery report\n", File.ReadAllText(artifact));
         Assert.False(File.Exists(Path.Combine(jobFolder, "results", Path.GetFileName(artifact))));
         Assert.Equal(PipelineStepStatus.Passed, ReadMergeStep(log, jobFolder)?.Status);
+    }
+
+    [Fact]
+    public void Run_LongRootStatusConflict_PreservesTopDeliveryEntry()
+    {
+        var repo = SeedRepo("runner-long-status-conflict");
+        EnableLegacyReports(repo);
+        File.WriteAllText(Path.Combine(repo, "status.md"), "base report\n");
+        Commit(repo, "docs: seed report");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/long");
+        File.WriteAllText(Path.Combine(repo, "status.md"),
+            "new delivery entry\n" + new string('x', 165 * 1024) + "\nold entry\n");
+        Commit(repo, "docs: update report");
+        var deliverySha = RunGit(repo, "rev-parse task/long").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "status.md"), "integration report\n");
+        Commit(repo, "docs: update integration report");
+
+        var (git, log) = Build(repo);
+        var jobFolder = BeginRun(log, repo, jobId: "long");
+        var outcome = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance)
+            .Run("Fixture", "long", jobFolder, repo, "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        var report = File.ReadAllText(Path.Combine(jobFolder,
+            $"legacy-repository-status-{deliverySha[..12]}.md"));
+        Assert.StartsWith("new delivery entry", report);
+        Assert.EndsWith("old entry\n", report);
+        Assert.True(report.Length <= 16 * 1024);
     }
 
     [Fact]

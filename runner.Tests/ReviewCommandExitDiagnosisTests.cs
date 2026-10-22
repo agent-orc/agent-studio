@@ -30,7 +30,7 @@ public sealed class ReviewCommandExitDiagnosisTests
         var credential = "token=" + new string('s', 50);
         var evidence = ReviewCommandExitDiagnosis.Evidence(
             "npm --prefix frontend run build", new string('a', 40), new string('b', 40),
-            0, 1, 1, new string('x', 4000) + credential + "\nerror: compile failed", "");
+            0, 1, 1, new string('x', 4000) + "\n" + credential + "\nerror: compile failed", "");
 
         Assert.Contains("candidate-output-tail:", evidence);
         Assert.Contains("error: compile failed", evidence);
@@ -45,12 +45,29 @@ public sealed class ReviewCommandExitDiagnosisTests
     [InlineData("AWS_SECRET_ACCESS_KEY=ghi", "ghi")]
     [InlineData("{\"password\": \"jkl\"}", "jkl")]
     [InlineData("Authorization: Basic bW5v", "bW5v")]
+    [InlineData("Authorization: token abc123", "abc123")]
+    [InlineData("ghs_abcdefghijkl", "abcdefghijkl")]
+    [InlineData("gho_abcdefghijkl", "abcdefghijkl")]
+    [InlineData("ghu_abcdefghijkl", "abcdefghijkl")]
+    [InlineData("ghr_abcdefghijkl", "abcdefghijkl")]
     [InlineData("https://user:pass@example.invalid/path", "pass")]
     public void Evidence_scrubs_common_credential_forms(string output, string secret)
     {
         var evidence = ReviewCommandExitDiagnosis.Evidence("build", "base", "candidate", 0, 1, 1, output, "");
         Assert.Contains("[redacted]", evidence);
         Assert.DoesNotContain(secret, evidence);
+    }
+
+    [Theory]
+    [InlineData("a_")]
+    [InlineData("token_")]
+    public void Long_key_shaped_output_keeps_the_real_error(string fragment)
+    {
+        var output = string.Concat(Enumerable.Repeat(fragment, 16 * 1024 / fragment.Length));
+        var evidence = ReviewCommandExitDiagnosis.Evidence("build", "base", "candidate", 0, 1, 1,
+            output + "\nerror: compile failed", "");
+        Assert.Contains("error: compile failed", evidence);
+        Assert.DoesNotContain("[output withheld]", evidence);
     }
 
     [Fact]

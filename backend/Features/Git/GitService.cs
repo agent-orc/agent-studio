@@ -5977,7 +5977,9 @@ public partial class GitService
                         error: $"Could not retain integration report paths: {restoreError.Trim()}");
                 }
             }
-            var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit");
+            var (_, commitError, commitCode) = reportOnlyConflict
+                ? RunGitArgs(repoRoot, "commit", "--no-edit", "--no-verify")
+                : RunGitArgs(repoRoot, "commit", "--no-edit");
             if (commitCode != 0)
             {
                 RunGitArgs(repoRoot, "merge", "--abort");
