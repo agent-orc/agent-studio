@@ -1488,8 +1488,10 @@ public sealed class DeployServiceTests : IDisposable
             && entry.Actor == auth.User.Id);
     }
 
-    [Fact]
-    public async Task NetworkedArtifactRoute_RequiresDeployCredentialAndReturnsDigest()
+    [Theory]
+    [InlineData("networked")]
+    [InlineData("local")]
+    public async Task ArtifactRoute_RequiresDeployCredentialAndReturnsDigest(string profile)
     {
         Build();
         await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
@@ -1501,7 +1503,7 @@ public sealed class DeployServiceTests : IDisposable
             builder.UseSetting("WatchPaths:0:Path", _watch);
             builder.UseSetting("WatchPaths:0:RootPath", _repo);
             builder.UseSetting("WatchPaths:0:RepositoryPath", _repo);
-            builder.UseSetting("Security:Profile", "networked");
+            builder.UseSetting("Security:Profile", profile);
             builder.UseSetting("AllowedHosts", "studio.test");
             builder.UseSetting("Logging:BackendFile:LogDirectory", Path.Combine(_root, "logs"));
             builder.ConfigureTestServices(services =>
@@ -1534,7 +1536,8 @@ public sealed class DeployServiceTests : IDisposable
         using var missingRequest = new HttpRequestMessage(HttpMethod.Get, url);
         missingRequest.Headers.Add("X-Deploy-Lease", job.LeaseToken);
         using var missing = await client.SendAsync(missingRequest);
-        Assert.Equal(HttpStatusCode.Unauthorized, missing.StatusCode);
+        Assert.Equal(profile == "networked" ? HttpStatusCode.Unauthorized : HttpStatusCode.Forbidden,
+            missing.StatusCode);
 
         client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
             "Bearer", releaseCredential.Secret);
