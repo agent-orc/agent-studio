@@ -405,24 +405,31 @@ public sealed class RemoteReviewPlanBuilder
         if (ReviewConcernRoundStore.Read(task.FolderPath) is { StillOpen: true, PreviousVerdicts.Count: > 0 }
             && _observations is not null)
         {
-            var cohorts = _observations.Project(task.ProjectName, task.WatchPath).ByModelAndReasoning
-                .Where(row => plan.Commands.Any(command =>
-                    Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
-                    && string.Equals(AgentStudio.Tokens.ModelIdentity.StoredId(command.Model),
-                        row.Model, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(command.ThinkingLevel ?? "unknown",
-                        row.ReasoningLevel, StringComparison.OrdinalIgnoreCase)))
-                .ToArray();
-            requireFullReview = ReviewObservationPolicy.RequireFullReview(cohorts);
+            try
+            {
+                var cohorts = _observations.Project(task.ProjectName, task.WatchPath).ByModelAndReasoning
+                    .Where(row => plan.Commands.Any(command =>
+                        Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                        && string.Equals(AgentStudio.Tokens.ModelIdentity.StoredId(command.Model),
+                            row.Model, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(command.ThinkingLevel ?? "unknown",
+                            row.ReasoningLevel, StringComparison.OrdinalIgnoreCase)))
+                    .ToArray();
+                requireFullReview = ReviewObservationPolicy.RequireFullReview(cohorts);
+            }
+            catch (Exception ex)
+            {
+                SilentCatch.Note(ex, "RemoteReviewPlanBuilder: observation lookup unavailable; use scoped review");
+            }
         }
-        if (!requireFullReview)
-            plan = ApplyScopedReview(
+        plan = ApplyScopedReview(
                 plan,
                 task,
                 repositoryPath,
                 projectSettings,
                 integrationRef,
-                expectedResultSha);
+                expectedResultSha,
+                requireFullReview);
         // A scoped review drops carried-over agent commands. A no-change plan
         // has no tool command left to keep it non-empty, so it falls back to
         // the completion-only command the Task Server can admit.
@@ -537,7 +544,8 @@ public sealed class RemoteReviewPlanBuilder
         string? repositoryPath,
         ProjectSettings? settings,
         string? integrationRef,
-        string? expectedResultSha)
+        string? expectedResultSha,
+        bool noCarryOver)
     {
         var ledger = ReviewConcernRoundStore.Read(task.FolderPath);
         if (ledger is not { StillOpen: true, PreviousVerdicts.Count: > 0 }
@@ -548,7 +556,7 @@ public sealed class RemoteReviewPlanBuilder
         plan = plan with
         {
             ScopedReview = new Contract.ScopedReviewPlanDto(
-                settings?.ScopedReviewAfterFinding ?? true,
+                !noCarryOver && (settings?.ScopedReviewAfterFinding ?? true),
                 ledger.ReviewAttemptId,
                 ledger.ReviewedResultSha,
                 ledger.ReviewedIntegrationTipSha,
@@ -588,7 +596,7 @@ public sealed class RemoteReviewPlanBuilder
         var deltaAvailable = delta is not null;
         var changes = ParseDelta(delta);
         var facts = new Contract.ScopedReviewFacts(
-            Enabled: settings?.ScopedReviewAfterFinding ?? true,
+            Enabled: !noCarryOver && (settings?.ScopedReviewAfterFinding ?? true),
             ReviewedTreeIdentityMatches: identityMatches && deltaAvailable,
             DeltaFileCount: deltaAvailable ? changes.Count : -1,
             MaximumDeltaFiles: Math.Max(0, settings?.ScopedReviewMaximumDeltaFiles ?? 20),
@@ -609,6 +617,7 @@ public sealed class RemoteReviewPlanBuilder
             if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
                 || !decisions.TryGetValue(command.Aspect, out var decision)
                 || decision.Run
+                || noCarryOver
                 || !previous.TryGetValue(command.Aspect, out var priorVerdict))
             {
                 if (Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
