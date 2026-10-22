@@ -716,9 +716,6 @@ function writeWorkspaceRootFiles(root) {
       IntegrationBranch: 'develop',
       IntegrationStrategy: 'direct-merge',
       CliModes: null,
-      EpicPlanningModel: null,
-      EpicPlanningThinkingLevel: null,
-      EpicSubTasksToReady: null,
     };
   }
   writeJson(join(root, 'project-settings.json'), settings);

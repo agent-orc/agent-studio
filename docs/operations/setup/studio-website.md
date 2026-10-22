@@ -11,7 +11,7 @@ The operator owns the host, DNS, TLS, backups, and access to it. Studio users ne
 
 The API and frontend have no published ports. Caddy is the only public listener. `AllowedHosts` is the configured hostname. The frontend container has fixed address `172.30.83.3`; only that address may supply HTTPS forwarding information to the API. Do not connect untrusted containers to the Compose network. For a different subnet, change the frontend address and `Security__TrustedProxyAddresses` together. The Update Service is not part of this stack and Studio does not poll port 5039 on HTTPS unless explicitly configured.
 
-This stack starts an empty workspace. Add projects, runner credentials, and CLI authentication through their normal owner/operator flows before running jobs. An existing installation needs a planned workspace and project-checkout migration; copy their data during the agreed outage, then verify runner access and job execution.
+This stack starts an empty workspace. Add projects, runner credentials, and CLI authentication through their normal owner/operator flows before running jobs. An existing installation needs a planned workspace and project-checkout migration; [move-studio-to-server.md](./move-studio-to-server.md) performs it with a rehearsal before the agreed outage, then verify runner access and job execution.
 
 ## Backup and restore
 

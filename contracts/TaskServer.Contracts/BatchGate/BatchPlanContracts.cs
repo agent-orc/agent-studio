@@ -13,7 +13,7 @@ public sealed record BatchPlanInput(
     IReadOnlyList<BatchPlanUpcoming> Upcoming, int MinimumSize,
     int MaximumSize, int DeadlineMinutes, int LookAheadMinutes,
     IReadOnlyList<string> UrgentTags, string RiskPolicy, string Overlap,
-    bool CloseNow = false, bool IdleGateHost = false);
+    bool CloseNow = false, bool IdleGateHost = false, bool GateBacklog = false);
 
 public sealed record BatchPlanUpcomingView(
     string TaskKey, string Stage, DateTimeOffset? EtaUtc,

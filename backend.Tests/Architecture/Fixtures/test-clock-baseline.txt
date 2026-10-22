@@ -90,7 +90,7 @@ wall-clock backend.Tests/GitStateIndexServiceTests.cs 11
 wall-clock backend.Tests/GlobalSearchDossierTests.cs 1
 wall-clock backend.Tests/GlobalSearchEndpointAccessTests.cs 6
 wall-clock backend.Tests/HostTelemetryStoreTests.cs 6
-wall-clock backend.Tests/HumanReviewVerdictBackfillTests.cs 11
+wall-clock backend.Tests/HumanReviewVerdictBackfillTests.cs 10
 wall-clock backend.Tests/InMemoryStoreTests.cs 2
 wall-clock backend.Tests/IntegrationGateReusePolicyTests.cs 1
 wall-clock backend.Tests/InterruptedIntegrationGateRecoveryTests.cs 2
@@ -331,7 +331,6 @@ fixed-date backend.Tests/DossierImplementationContractTests.cs
 fixed-date backend.Tests/DossierMaintenanceServiceTests.cs
 fixed-date backend.Tests/DriftReportValidatorTests.cs
 fixed-date backend.Tests/DuplicateTaskKeyTests.cs
-fixed-date backend.Tests/EpicAssignmentTests.cs
 fixed-date backend.Tests/ExternalCompletionEndpointsTests.cs
 fixed-date backend.Tests/FailureInterventionTests.cs
 fixed-date backend.Tests/FileGenerationIndexTests.cs
