@@ -2514,6 +2514,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             if (gateMode == OrchestrationExecutionMode.Engine
                 && buildGateResult.Verdict == BuildTestGateVerdict.Fail)
                 throw new InvalidDataException("A failed engine gate cannot continue through the monolith gate handler.");
+            // AGT-3218: the durable gate dispatch the applier canary checks.
+            if (gateMode == OrchestrationExecutionMode.Engine && _timeline is not null)
+                EngineGateDispatchReceipt.Record(_timeline, current.FolderPath, occurrence.RunId);
         }
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail)
         {

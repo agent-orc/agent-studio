@@ -78,6 +78,7 @@
       }
     </section>
   }<div class="task-card__badges">
+    @defer (on immediate) { <app-card-environment-badges [task]="job()" /> }
     @if (job().waitingForEngineDecision) {
       <span class="task-card__engine-wait" data-testid="task-card-engine-wait" role="status">Waiting for engine decision</span>
     }
