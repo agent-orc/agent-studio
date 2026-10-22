@@ -28,6 +28,13 @@ should explain when a pin is below the policy floor.
 | `gpt-6-sol` / `medium` (`sol-medium`) | Default for new feature and bug cards, including demanding implementation, investigation, or analysis with several interacting concepts. | Correctness-critical control-plane work that meets a hard floor. | The GPT-6 route is provisional. Its predecessor Sol/medium had seven standard chore/feature runs with zero reissues. Five had known grades and all five were A or B. This is the strongest favorable historical signal, although the sample is still small and observational. |
 | `gpt-6-sol` / `xhigh` (`sol-xhigh`) | Correctness-critical work: P0, fencing, leases, distributed authority, security boundaries, destructive migrations, data-loss prevention, or subtle concurrent state machines. | Routine work merely because quota is available. More thinking is not a substitute for tighter scope or deterministic tests. | The xhigh cohort was heavily selected for difficult and incident-driven work: 78 runs, 32 reissued, with only 22 known grades. Its high reissue rate is a warning about cohort and pipeline churn, not proof that xhigh causes poor outcomes. This tier is selected by the correctness floor while controlled benchmarks remain open. |
 
+Deep review uses the same floor: `gpt-6-sol` at `medium` for discretionary
+large-diff or history-triggered review, and `xhigh` for P0 or critical touched
+areas. Its frozen decision is attached to the remote ReviewSubject. Shadow
+mode records the decision without spending review tokens; active mode executes
+on the review host and attributes usage to the review command. Quota can defer
+the critical command, but cannot substitute a route below its frozen floor.
+
 `high` and `ultra` are supported reasoning levels but are not default core-task
 routes in this policy. Add a default tier only after controlled comparisons
 show a repeatable benefit over `medium` or `xhigh`.
@@ -544,6 +551,15 @@ path-to-test map is the CLI domain's
 [quota admission coverage](cli.md#quota-admission-coverage), and the
 load-bearing boundary is recorded in
 [ADR-0069](../architecture/decisions/adr-archive.md#adr-0069---quota-admission-is-one-run-scoped-boundary-for-every-cli-execution-path-2026-09-08).
+
+Remote coding claims also require fresh model-acceptance evidence from the
+claiming host for the effective model. CLI catalogue discovery alone does not
+prove that the current login can run a listed model. The host sends one small
+real request per candidate model, caches the result by credential generation,
+and advertises accepted or refused models. When the primary quota is capped
+and the comparable fallback is not accepted on that host, admission waits for
+the quota reset instead of launching the refused model. A launch-time model
+refusal with no salvage returns the card to Ready with a host capability hold.
 
 The equivalence adapter reads Token Economy's published, embedded model-routing
 knowledge base and price catalogue from the exactly pinned NuGet package. It

@@ -68,6 +68,21 @@ describe('IntegrationStatusBadgeComponent', () => {
       expect(badge.getAttribute('aria-label')).toBe('Integrated into develop, verified by a gate');
     });
 
+    it('names the operator candidate and its evidence on the card', () => {
+      const sha = 'abc1234'.padEnd(40, '0');
+      const reason = `Verified by operator candidate ${sha}: 120 tests passed on gate-host. Log SHA-256 ${'a'.repeat(64)}.`;
+      const fixture = render(integration('integrated', {
+        sha: sha.slice(0, 7),
+        verification: { state: 'integrated-verified', sha, evidence: 'integration-record', reason },
+      }));
+      const badge = badgeOf(fixture);
+
+      expect(badge.textContent).toContain('verified by operator candidate abc1234');
+      expect(badge.getAttribute('aria-label')).toContain('verified by operator candidate abc1234');
+      expect(fixture.componentInstance.tooltip()).toContain(reason);
+      expect(fixture.componentInstance.tooltip()).not.toContain('a gate passed');
+    });
+
     it('marks a contained delivery without gate evidence as acute and unverified', () => {
       const fixture = render(integration('integrated', {
         sha: 'deadbee',

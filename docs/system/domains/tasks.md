@@ -528,6 +528,17 @@ the dedicated `PUT /api/projects/{projectName}/execution-runner` contract.
 Project id, source type, storage location, creation time, and the task and
 document key counters are immutable and are never accepted as update fields.
 
+Deleting a project URL checks repository authority before stopping its owned
+preview process. If stopping fails, the URL and its repository audit state stay
+in the registry so the process remains reachable for another stop attempt.
+Every URL whose id or label can identify a repository is checked against the
+repository URL rules when project URLs change, even if another URL currently
+takes precedence. This prevents a later reorder or deletion from selecting an
+unchecked repository URL. In the networked profile, every candidate change
+requires the Owner and records both candidate lists in the same registry write.
+Process start holds the registry URL lock through launch, so removal cannot
+delete the record between lookup and launch.
+
 The project registry is fail-closed. If an existing
 `<TaskRepository>/.metadata/projects.json` is not deserializable, startup
 terminates with `ProjectRegistryLoadException` and

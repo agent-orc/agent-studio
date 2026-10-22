@@ -340,7 +340,7 @@
                 <app-section-header title="Permission modes" [divider]="true" />
                 @if (activeProjectName(); as proj) {
                   <div class="studio-cli__modes" data-testid="studio-cli-permission-modes">
-                    <app-project-detail [projectName]="proj" view="cli" />
+                    @defer (on immediate) { <app-project-detail [projectName]="proj" view="cli" /> }
                   </div>
                 } @else {
                   <p class="studio-empty studio-empty--note" data-testid="studio-cli-permission-modes-empty">
@@ -492,11 +492,14 @@
         -->
         <ng-content select="[studioContent]"></ng-content>
         @if (activeTab()?.kind === 'deployment-dashboard') {
+          @defer (on idle) {
           <app-workspace-deployment-dashboard
             [projectNames]="knownProjectNames()"
             [projectStorageByName]="projectStorageByName()"
             [workspaces]="registryWorkspaces()"
-            (openDeployment)="openProjectDeployment($event)" />
+            (openDeployment)="openProjectDeployment($event)"
+            (openCard)="openDeliveryCard($event)" />
+          }
         }
         @if (activeTab() === null) {
           <app-studio-welcome

@@ -3,6 +3,7 @@ using AgentStudio.Deploy;
 using AgentStudio.Search;
 using AgentStudio.Proposals;
 using AgentStudio.Telemetry;
+using AgentStudio.Review;
 
 namespace AgentStudio.Host;
 
@@ -35,6 +36,7 @@ public static class EndpointMapping
         tasks.MapTaskGitEndpoints();
         tasks.MapTaskClaudeEndpoints();
         tasks.MapTaskReviewEvidenceEndpoints();
+        tasks.MapTaskReviewObservationEndpoints();
         tasks.MapTaskExternalCompletionEndpoints();
         tasks.MapTaskCodeReviewEndpoints();
         tasks.MapReviewProjectionEndpoints();
@@ -43,6 +45,7 @@ public static class EndpointMapping
         tasks.MapTaskMergeEndpoints();
         tasks.MapTaskIntegrationRecordEndpoints();
         app.MapExternalPublishedVerificationEndpoints();
+        app.MapOperatorCandidateVerificationEndpoints();
         tasks.MapTaskDeliveryClaimEndpoint();
         tasks.MapTaskIntegrationRecoveryEndpoints();
         tasks.MapTaskIntegrationRetryEndpoints();
@@ -81,7 +84,7 @@ public static class EndpointMapping
         app.MapDemoReplayEndpoints();
         app.MapArtifactIngestionEndpoints();
         app.MapRegistryEndpoints();
-        if (mapsLocalV1)
+        if (SecurityProfiles.IsLocal(app.Configuration))
         {
             app.MapLocalFirstRunRepositoryEndpoints();
             app.MapLocalFirstRunGitSetupEndpoints();
@@ -102,6 +105,7 @@ public static class EndpointMapping
         app.MapDesignSurfaceEndpoints();
         app.MapProjectTokenUsageEndpoints();
         app.MapReviewStatisticsEndpoints();
+        app.MapReviewObservationEndpoints();
         app.MapUsageCockpitEndpoints();
         app.MapPipelineHealthEndpoints();
         app.MapGateEconomicsEndpoints();

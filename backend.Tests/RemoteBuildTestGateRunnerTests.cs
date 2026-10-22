@@ -386,7 +386,8 @@ public sealed class RemoteBuildTestGateRunnerTests
 
     private static BuildTestGateRequest Request() => new("/operator/repository", Sha, "integration-gate");
     private static RemoteGateInvocation Invocation(BuildTestGateRequest request) => new(
-        1, new string('a', 32), new string('b', 64), request, [], null, PostStepMode.Fail, 60, 180);
+        1, new string('a', 32), new string('b', 64), request, [], null, PostStepMode.Fail, 60, 180)
+        { InstallationId = new string('c', 32) };
     private static BuildTestGateResult Passed() => new(BuildTestGateVerdict.Ok, 0, 1, "", "passed", true, false)
     {
         ExpectedSha = Sha, TestedSha = Sha, GateId = PipelineCatalogue.BuildTestGateStepId,

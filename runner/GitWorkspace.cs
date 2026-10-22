@@ -829,7 +829,11 @@ public sealed class GitWorkspace
             {
                 var results = Path.Combine(_options.WorkDir, "tasks", _safeTaskKey, "results");
                 Directory.CreateDirectory(results);
-                File.Copy(source, Path.Combine(results, artifactName), overwrite: true);
+                var content = await File.ReadAllBytesAsync(source, ct);
+                const int reportLimit = 16 * 1024;
+                var start = Math.Max(0, content.Length - reportLimit);
+                while (start < content.Length && (content[start] & 0xC0) == 0x80) start++;
+                await File.WriteAllBytesAsync(Path.Combine(results, artifactName), content[start..], ct);
                 _log($"legacy-repository-report-preserved task={_safeTaskKey} artifact=results/{artifactName}");
             }
             catch (Exception ex)

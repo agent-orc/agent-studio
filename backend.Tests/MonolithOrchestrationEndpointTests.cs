@@ -8,6 +8,7 @@ using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Runner;
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -29,6 +30,83 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
 {
     private readonly string _workspace = Path.Combine(Path.GetTempPath(),
         "monolith-orchestration-endpoints-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task Operator_move_supersedes_open_review_occurrence_and_clears_claim_wait()
+    {
+        const string project = "agent-runner-01";
+        const string card = "AGT-REVIEW-FIX-ROUND";
+        var projectPath = Path.Combine(_workspace, "projects", project);
+        foreach (var state in TaskStates.All)
+            Directory.CreateDirectory(Path.Combine(projectPath, state));
+        var cardFolder = Path.Combine(projectPath, TaskStates.AutoReview, card);
+        Directory.CreateDirectory(cardFolder);
+        File.WriteAllText(Path.Combine(cardFolder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = card, title = "Review fix round", state = TaskStates.AutoReview,
+            order = 1, agent = "codex", kind = TaskKinds.Task,
+        }));
+        File.WriteAllText(Path.Combine(cardFolder, "prompt.md"), "Fix review findings.");
+        File.WriteAllText(Path.Combine(cardFolder, "status.md"), "Review result.");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 21, 0, 45, 0, TimeSpan.Zero));
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["WatchPaths:0:Name"] = project,
+                    ["WatchPaths:0:Path"] = projectPath,
+                    ["WatchPaths:0:RootPath"] = projectPath,
+                    ["WatchPaths:0:RepositoryPath"] = projectPath,
+                    ["DeliveryChain:Guarded"] = "false",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(clock);
+            });
+        });
+        using var client = factory.CreateClient();
+        var store = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var run = store.Create(project, card, OrchestrationStage.ReviewDecision,
+            "{\"reviewOutcome\":\"Pass\"}", "review:fix-round", TaskStates.AutoReview,
+            "review_attempt", 3, 4);
+        EngineDecisionWaitMarker.Write(cardFolder, run.RunId);
+        var claim = store.Claim(new("engine_one", "instance_one",
+            [OrchestrationStage.ReviewDecision]));
+        await Assert.ThrowsAsync<InvalidDataException>(() => store.CompleteAsync(run.RunId,
+            new("engine_one", "instance_one", claim.Lease!.LeaseId, claim.Lease.Fence,
+                OrchestrationStage.ReviewDecision, OrchestrationAction.Continue,
+                "{\"decision\":\"DegradeWithFollowUp\"}", "bad-review-receipt"), default));
+        Assert.Equal("applying", store.Get(run.RunId)!.Status);
+        scanner.InvalidateCache();
+        Assert.True(scanner.FindJob(card, projectPath)!.WaitingForEngineDecision);
+
+        var moved = await factory.Services.GetRequiredService<TaskTransitionService>()
+            .MoveAsync(card, TaskStates.Ready, projectPath, cause: "human:operator",
+                reason: "Operator requested a fix round.");
+
+        Assert.Equal(MoveJobStatus.Success, moved.Status);
+        Assert.Equal("cancelled", store.Get(run.RunId)!.Status);
+        Assert.Equal("empty", store.Claim(new("engine_one", "instance_one",
+            [OrchestrationStage.ReviewDecision])).Status);
+        var ready = scanner.FindJob(card, projectPath)!;
+        Assert.Equal(TaskStates.Ready, ready.State);
+        Assert.False(ready.WaitingForEngineDecision);
+        Assert.Null(EngineDecisionWaitMarker.Read(ready.FolderPath));
+        var audit = Assert.Single(factory.Services.GetRequiredService<TimelineLog>()
+            .ReadAll(ready.FolderPath), entry => entry.Kind == TimelineEventKinds.OrchestrationDecisionSuperseded);
+        Assert.Equal(run.RunId, audit.Details!["orchestrationRunId"]);
+        Assert.Equal(TaskStates.Ready, audit.Details["observedState"]);
+        Assert.Equal("cancelled", new MonolithOrchestrationStore(
+            Path.Combine(_workspace, ".orchestration-occurrences"), clock,
+            factory.Services.GetRequiredService<IMonolithOrchestrationApplier>())
+            .Get(run.RunId)!.Status);
+    }
 
     [Fact]
     public async Task Scoped_engine_client_negotiates_claims_and_applies_a_review_decision_once()
@@ -326,6 +404,7 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
                 }));
             builder.ConfigureTestServices(services =>
             {
+                services.RemoveAll<IHostedService>();
                 services.RemoveAll<TimeProvider>();
                 services.AddSingleton<TimeProvider>(clock);
             });
@@ -340,8 +419,8 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
             store.CancelUnactivated(prepared.RunId, "review-settlement-rejected");
         clock.Advance(TimeSpan.FromSeconds(31));
 
-        factory.Services.GetServices<IHostedService>()
-            .OfType<MonolithOrchestrationRecoveryService>().Single().RecoverOnce();
+        ActivatorUtilities.CreateInstance<MonolithOrchestrationRecoveryService>(factory.Services)
+            .RecoverOnce();
 
         Assert.Equal("cancelled", store.Get(prepared.RunId)!.Status);
         Assert.Null(EngineDecisionWaitMarker.Read(cardFolder));
