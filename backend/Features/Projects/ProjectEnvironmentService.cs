@@ -101,6 +101,8 @@ public sealed class ProjectEnvironmentService
     private const string HostLostEvidence = "host-lost";
     private const string AbortedEvidence = "deploy-aborted";
     private readonly object _gate = new();
+    private readonly Dictionary<string, (string Signature, IReadOnlyList<EnvironmentDeclarationFile> Files)>
+        _productionDeclarationCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly IConfiguration _configuration;
     private readonly TaskScannerService _scanner;
     private readonly GitService _git;
@@ -759,8 +761,25 @@ public sealed class ProjectEnvironmentService
     {
         foreach (var project in _scanner.GetWatchPaths())
         {
-            var files = DeclarationFiles(project.Name);
-            if (files is null) continue;
+            var root = _git.ResolveRepoRootForProject(project.Name);
+            if (root is null) continue;
+            var directory = Path.Combine(root, "docs", "deployments", "environments");
+            var paths = Directory.Exists(directory)
+                ? Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
+                : Enumerable.Empty<string>();
+            var yaml = Path.Combine(root, ProjectPreparationPaths.Definition);
+            var signature = string.Join('|', paths.Append(yaml).Order(StringComparer.Ordinal).Select(path =>
+            {
+                var info = new FileInfo(path);
+                return path + ":" + (info.Exists ? $"{info.Length}:{info.LastWriteTimeUtc.Ticks}" : "missing");
+            }));
+            if (!_productionDeclarationCache.TryGetValue(project.Name, out var cached)
+                || cached.Signature != signature)
+            {
+                cached = (signature, DeclarationFiles(project.Name) ?? []);
+                _productionDeclarationCache[project.Name] = cached;
+            }
+            var files = cached.Files;
             if (files.Any(file => file.Error is not null)) return true;
             if (files.Any(file => file.Declaration is { Kind: "production" } declaration
                 && string.Equals(declaration.TargetHostId, hostId, StringComparison.OrdinalIgnoreCase)))

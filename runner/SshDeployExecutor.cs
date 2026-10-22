@@ -110,9 +110,10 @@ public sealed class SshDeployExecutor
         IReadOnlyDictionary<string, string>? secrets = null)
     {
         var result = await _run(file, args, input, ct);
-        var tail = result.StdErr.Length > 400 ? result.StdErr[^400..] : result.StdErr;
+        var tail = result.StdErr;
         foreach (var secret in secrets?.Values ?? [])
             if (!string.IsNullOrEmpty(secret)) tail = tail.Replace(secret, "[masked]", StringComparison.Ordinal);
+        if (tail.Length > 400) tail = tail[^400..];
         tail = new string(tail.Where(ch => !char.IsControl(ch)).ToArray());
         if (tail.Length > 0) await log($"{file} stderr: {tail}");
         if (result.ExitCode != 0)

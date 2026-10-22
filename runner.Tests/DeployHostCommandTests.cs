@@ -180,6 +180,50 @@ public sealed class DeployHostCommandTests
             => send(request);
     }
 
+    [Fact]
+    public async Task Legacy_health_timeout_reports_failure_even_while_lease_renews()
+    {
+        var tokenFile = Path.GetTempFileName();
+        await File.WriteAllTextAsync(tokenFile, "test-token");
+        try
+        {
+            var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 20, 12, 0, 0, TimeSpan.Zero));
+            var healthStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            string? report = null;
+            var job = new
+            {
+                id = "job-a", project = "demo", environmentId = "stage", hostId = "host-a",
+                artifact = "image@sha256:" + new string('a', 64), template = "container",
+                destination = "1", healthUrl = "https://health.example/", secretRefs = Array.Empty<string>(),
+                containerPort = 8080, previousArtifact = (string?)null, status = "claimed",
+                leaseToken = "lease-a", retryStep = "health",
+            };
+            using var client = new HttpClient(new StubHandler(async request =>
+            {
+                var path = request.RequestUri!.AbsolutePath;
+                if (path.EndsWith("/claim", StringComparison.Ordinal))
+                    return new(HttpStatusCode.OK) { Content = JsonContent.Create(job) };
+                if (path.EndsWith("/report", StringComparison.Ordinal))
+                    report = await request.Content!.ReadAsStringAsync();
+                return new(HttpStatusCode.OK);
+            })) { BaseAddress = new Uri("https://studio.example/") };
+
+            var run = DeployHostCommand.RunAsync([client.BaseAddress.ToString(), "host-a", tokenFile, "/unused"],
+                CancellationToken.None, client, checkHealth: async (_, ct) =>
+                {
+                    healthStarted.SetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                    return true;
+                }, clock: clock);
+            await healthStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            clock.Advance(TimeSpan.FromSeconds(60));
+            Assert.Equal(1, await run.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Contains("\"healthy\":false", report);
+            Assert.Contains("health-http-failed", report);
+        }
+        finally { File.Delete(tokenFile); }
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.ServiceUnavailable, 2)]
     [InlineData(HttpStatusCode.NotFound, 1)]

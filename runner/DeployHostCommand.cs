@@ -146,7 +146,15 @@ public static class DeployHostCommand
                 else if (job.RetryStep != "health") throw new InvalidOperationException("Unknown retry step.");
                 evidence = "health-http-failed";
                 var healthUrl = job.SshSteps.Length > 0 ? null : job.HealthUrl;
-                healthy = healthUrl is null || await (checkHealth ?? CheckHealth)(healthUrl, lease.Token);
+                if (healthUrl is null) healthy = true;
+                else
+                {
+                    using var healthLimit = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
+                    using var timer = (clock ?? TimeProvider.System).CreateTimer(_ => healthLimit.Cancel(), null,
+                        TimeSpan.FromSeconds(60), Timeout.InfiniteTimeSpan);
+                    try { healthy = await (checkHealth ?? CheckHealth)(healthUrl, healthLimit.Token); }
+                    catch (OperationCanceledException) when (!lease.IsCancellationRequested) { healthy = false; }
+                }
                 if (healthy) evidence = "health-ok";
             }
         }
@@ -343,21 +351,23 @@ public static class DeployHostCommand
 
     private static async Task<bool> CheckHealth(string url, CancellationToken ct)
     {
-        using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-        while (!ct.IsCancellationRequested)
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        while (true)
         {
             try
             {
                 using var response = await client.GetAsync(url, ct);
                 if (response.IsSuccessStatusCode) return true;
             }
-            catch (HttpRequestException)
+            catch (HttpRequestException) when (!ct.IsCancellationRequested)
             {
-                await Task.Delay(TimeSpan.FromSeconds(2), ct);
-                continue;
+                // A transient transport failure gets another probe within the outer health budget.
+            }
+            catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // The per-request timeout expired; the outer health budget still controls the job.
             }
             await Task.Delay(TimeSpan.FromSeconds(2), ct);
         }
-        return false;
     }
 }
