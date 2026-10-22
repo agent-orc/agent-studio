@@ -306,10 +306,9 @@ public static class RoutePermissionCatalog
         // the handler; title and prompt helpers touch no project.
         AddProjectChecked("POST", IamPermissions.ProjectCardsWrite, "/api/tasks", "/api/tasks/reorder", "/api/tasks/batch-move",
             "/api/title/generate", "/api/prompt/enhance");
-        Add("POST", IamPermissions.ProjectCardsWrite, "/api/epics/{}/sub-tasks");
         Add("DELETE", IamPermissions.ProjectCardsWrite, "/api/tasks/{}");
         Under("W", IamPermissions.ProjectCardsWrite, "/api/tasks/{}",
-            "title", "tags", "references", "waits-on", "files/{}", "state", "epic", "dossier", "task-type", "model",
+            "title", "tags", "references", "waits-on", "files/{}", "state", "dossier", "task-type", "model",
             "cli-type", "thinking-level", "requires-integration", "move", "move-to-top", "attachments",
             "preview-comments", "change-project", "intake", "review-priority", "decision", "decision/migrate",
             "decision/reopen", "promote-concept", "concept-dossier", "planning-closure");
@@ -353,7 +352,7 @@ public static class RoutePermissionCatalog
             "/api/projects/**", "/api/tasks/**", "/api/runner/{}/**", "/api/runner/project:{}/**",
             "/api/runner/task:{}/**", "/api/runner/workbench:{}/**", "/api/runner/integration-lease/**",
             "/api/orchestrator/**", "/api/analysis/**", "/api/drift/**", "/api/bus/**", "/api/runtime/**",
-            "/api/supervisor/**", "/api/git/**", "/api/attempts/**", "/api/audits/**", "/api/epics/**",
+            "/api/supervisor/**", "/api/git/**", "/api/attempts/**", "/api/audits/**",
             "/api/workbenches/**", "/api/orchestration/**");
         Add("POST", IamPermissions.ProjectRead, "/api/projects/{}/deployment/compile");
         return rules;

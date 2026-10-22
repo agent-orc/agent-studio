@@ -972,14 +972,6 @@ public sealed class AccessSecurityMiddleware
              || path.StartsWith("/api/runtime/", StringComparison.OrdinalIgnoreCase))
             && IsParameterSegment(endpoint, 2))
             return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(path.Split('/', StringSplitOptions.RemoveEmptyEntries)[2]));
-        // An Epic is a card: its sub-task routes address the Epic's project.
-        if (path.StartsWith("/api/epics/", StringComparison.OrdinalIgnoreCase))
-        {
-            var epicId = path["/api/epics/".Length..].Split('/', 2)[0];
-            return epicId.Equals("completed", StringComparison.OrdinalIgnoreCase)
-                ? ProjectRouteAddress.Unaddressed
-                : ProjectRouteAddress.Addressed(ResolveTaskProjects(Uri.UnescapeDataString(epicId), request));
-        }
         if (path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase))
         {
             var taskId = path["/api/tasks/".Length..].Split('/', 2)[0];

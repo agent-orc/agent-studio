@@ -105,7 +105,6 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("PUT", "/api/pull-gates/runs/{runId}/artifacts/{name}", IamPermissions.RunnerService)]
     [InlineData("GET", "/api/gate-artifacts/{runId}/{name}", IamPermissions.RunnerService)]
     [InlineData("POST", "/api/tasks", IamPermissions.ProjectCardsWrite)]
-    [InlineData("POST", "/api/epics/{epicId}/sub-tasks", IamPermissions.ProjectCardsWrite)]
     [InlineData("GET", "/api/secrets", IamPermissions.SecretsRead)]
     [InlineData("POST", "/api/secrets/workspace", IamPermissions.SecretsWrite)]
     [InlineData("GET", "/api/projects/{project}/secrets/{name}", IamPermissions.SecretsRead)]
