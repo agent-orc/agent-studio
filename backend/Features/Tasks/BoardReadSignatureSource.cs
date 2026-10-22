@@ -25,8 +25,8 @@ namespace AgentStudio.Tasks;
 /// <item><description><b>Task index</b> - <c>TaskScannerService.SnapshotGeneration</c>.
 /// Covers <c>task.json</c> semantics, lane membership, folder structure, and
 /// everything the lane sort orders by. Inside a board read this is the pinned
-/// generation the body is built from (AGT-3088), so a publish that lands
-/// mid-request cannot tag an older body with a newer generation.</description></item>
+/// generation the task cards are built from (AGT-3088). The separately
+/// published dependency graph has its own generation in the signature.</description></item>
 /// <item><description><b>Generated sidecars</b> -
 /// <see cref="TaskSidecarGeneration"/>. The task index deliberately ignores
 /// them, but the response projects them (pipeline execution record, step prompt
@@ -117,6 +117,7 @@ public sealed class BoardReadSignatureSource(
             route,
             variant,
             Part("tasks", scanner.SnapshotGeneration),
+            Part("coreDependencies", scanner.CoreDependencyGeneration),
             Part("sidecars", sidecars.Generation),
             Part("git", gitProjection.Generation),
             Part("gitStateAt", freshness.GitStateAt?.UtcDateTime.Ticks ?? -1),

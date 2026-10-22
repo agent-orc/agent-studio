@@ -520,8 +520,6 @@ internal static class PromptDescriptionCatalog
             "Control-arm prompt used by the versioned reissue experiment.", "Runner"),
         ["runner-reissue-treatment-v1.md"] = new("Runner: reissue treatment",
             "Structured treatment-arm prompt used by the versioned reissue experiment.", "Runner"),
-        ["epic-decomposition.md"] = new("Epic decomposition",
-            "Decomposes an epic-sized task into smaller child tasks.", "Runner"),
         ["mode-framing-readonly.md"] = new("Mode framing: read-only",
             "Framing block injected for read-only modes (planning / research) to forbid mutations.", "Runner"),
         ["mode-framing-research.md"] = new("Mode framing: research",

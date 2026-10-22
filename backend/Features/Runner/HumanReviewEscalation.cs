@@ -144,6 +144,10 @@ public static class HumanReviewEscalationCategories
     /// configured conflict-requeue budget.</summary>
     public const string IntegrationRecoveryExhausted = "integration-recovery-exhausted";
 
+    /// <summary>AGT-3219: a passed review waited its queue wait cap for a
+    /// machine gate slot. The gate host lacks capacity; the code was not judged.</summary>
+    public const string GateCapacity = AgentStudio.OrchestrationDecisions.GateQueueStallPolicy.GateCapacityCategory;
+
     /// <summary>An unanswered steer / NeedsInput question timed out (Run-Liveness
     /// Slice B, concept Rule 2) and the answer was not derivable from the task
     /// context. Routed to 5e-escalated with a clear reason instead of waiting
@@ -241,13 +245,16 @@ public sealed class HumanReviewEscalation
         string jobId, string watchPath, string project,
         string category, string reason, CancellationToken ct = default,
         AttemptWriteReference? authorityWrite = null,
-        string? statusDetail = null)
+        string? statusDetail = null,
+        string? expectedSourceState = null)
     {
         var beforeFolder = ResolveSourceFolder(jobId, watchPath);
         // Write the Result scaffold before the lane mutation. The folder moves
         // with status.md on success, and a refused/interrupted move still leaves
         // reviewable evidence at the source instead of a verdict-less card.
-        if (!string.IsNullOrWhiteSpace(beforeFolder))
+        // A card outside the expected source lane gets no verdict stub: its
+        // move is refused and the card keeps its own Result.
+        if (!string.IsNullOrWhiteSpace(beforeFolder) && InSourceLane(jobId, watchPath, beforeFolder, expectedSourceState))
             WriteStatusStubIfMissing(beforeFolder, category, reason, statusDetail);
         var outcome = await _transitions.MoveAsync(
             jobId,
@@ -258,6 +265,9 @@ public sealed class HumanReviewEscalation
             reason: reason,
             authorityWrite: authorityWrite,
             suppressProductExecution: authorityWrite is not null,
+            // A caller that read the source lane passes it, so a concurrent
+            // move (an operator drag, a follow-up) refuses the escalation.
+            expectedSourceState: expectedSourceState,
             transitionCause: LaneChangeCauses.Escalated,
             transitionDetail: category);
         if (outcome.Status == MoveJobStatus.Success)
@@ -433,6 +443,8 @@ public sealed class HumanReviewEscalation
     {
         var c = string.IsNullOrWhiteSpace(category) ? HumanReviewEscalationCategories.UnknownLegacy : category.Trim();
         var r = (reason ?? string.Empty).Trim();
+        // A reason the caller already formatted for the lane move keeps its one prefix.
+        if (r.StartsWith($"[{c}]", StringComparison.Ordinal)) return r;
         return r.Length == 0 ? $"[{c}]" : $"[{c}] {r}";
     }
 
@@ -555,6 +567,13 @@ public sealed class HumanReviewEscalation
             || value.Equals("- Result: pending.", StringComparison.OrdinalIgnoreCase)
             || value.Equals("- Result: pending", StringComparison.OrdinalIgnoreCase);
     }
+
+    // The flat layout does not name the lane in the path; the scanner knows it.
+    private bool InSourceLane(string jobId, string watchPath, string folder, string? expectedSourceState)
+        => expectedSourceState is null
+           || string.Equals(_scanner?.FindJob(jobId, watchPath)?.State
+                   ?? Path.GetFileName(Path.GetDirectoryName(folder)), expectedSourceState,
+               StringComparison.OrdinalIgnoreCase);
 
     private string? ResolveSourceFolder(string jobId, string watchPath)
     {

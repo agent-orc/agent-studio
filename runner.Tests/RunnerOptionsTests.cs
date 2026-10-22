@@ -8,7 +8,7 @@ public class RunnerOptionsTests
     [Fact]
     public void Positional_argument_is_the_task_key()
     {
-        var (_, taskKey, once, help) = RunnerOptions.Parse(["AGT-1939"]);
+        var (_, taskKey, once, help) = RunnerTestOptions.Parse(["AGT-1939"]);
         Assert.Equal("AGT-1939", taskKey);
         Assert.True(once);
         Assert.False(help);
@@ -18,7 +18,7 @@ public class RunnerOptionsTests
     public void Flags_override_task_and_server()
     {
         using var token = new TemporaryTokenFile();
-        var (options, taskKey, _, _) = RunnerOptions.Parse(
+        var (options, taskKey, _, _) = RunnerTestOptions.Parse(
             ["--task", "AGT-1", "--server", "https://central/", "--runner-name", "agent-runner-01", "--auth-token-file", token.Path]);
         Assert.Equal("AGT-1", taskKey);
         Assert.Equal("https://central", options.ServerUrl); // trailing slash trimmed
@@ -28,7 +28,7 @@ public class RunnerOptionsTests
     [Fact]
     public void Help_flag_is_detected_without_a_task()
     {
-        var (_, taskKey, _, help) = RunnerOptions.Parse(["--help"]);
+        var (_, taskKey, _, help) = RunnerTestOptions.Parse(["--help"]);
         Assert.True(help);
         Assert.Null(taskKey);
     }
@@ -36,14 +36,14 @@ public class RunnerOptionsTests
     [Fact]
     public void Poll_flag_disables_once()
     {
-        var (_, _, once, _) = RunnerOptions.Parse(["AGT-1", "--poll"]);
+        var (_, _, once, _) = RunnerTestOptions.Parse(["AGT-1", "--poll"]);
         Assert.False(once);
     }
 
     [Fact]
     public void Daemon_slot_flags_are_parsed()
     {
-        var (options, _, _, _) = RunnerOptions.Parse(
+        var (options, _, _, _) = RunnerTestOptions.Parse(
             [
                 "--poll",
                 "--max-parallelism", "4",
@@ -72,7 +72,7 @@ public class RunnerOptionsTests
             ("RUNNER_WORKER_CPU_BURST", null),
             ("RUNNER_WORKER_ENVELOPE", null));
 
-        var (options, _, _, _) = RunnerOptions.Parse(["--poll", "--max-parallelism", "2"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--poll", "--max-parallelism", "2"]);
 
         Assert.Equal(2, options.HostCodingSlots);
         Assert.Equal(2, options.HostReviewSlots);
@@ -91,7 +91,7 @@ public class RunnerOptionsTests
             ("RUNNER_WORKER_CPU_BURST", "1.5"),
             ("RUNNER_WORKER_ENVELOPE", "0"));
 
-        var (options, _, _, _) = RunnerOptions.Parse(["--poll"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--poll"]);
 
         Assert.Equal(3, options.HostCodingSlots);
         Assert.Equal(0, options.HostReviewSlots);
@@ -110,7 +110,7 @@ public class RunnerOptionsTests
             ("AGENT_HOST_ID", "agent-runner-01"),
             ("AGENT_HOST_MAX_PARALLELISM", "3"));
 
-        var (options, _, _, _) = RunnerOptions.Parse(["--poll"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--poll"]);
 
         Assert.Equal("http://127.0.0.1:5031", options.ServerUrl);
         Assert.Equal("agent-runner-01", options.RunnerId);
@@ -124,7 +124,7 @@ public class RunnerOptionsTests
             ("RUNNER_NAME", "agent-runner-01"),
             ("AGENT_HOST_NAME", "new-host-name"));
 
-        var (options, _, _, _) = RunnerOptions.Parse(["--poll"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--poll"]);
 
         Assert.Equal("agent-runner-01", options.RunnerName);
     }
@@ -132,7 +132,7 @@ public class RunnerOptionsTests
     [Fact]
     public void Provider_specific_card_binaries_are_configurable_in_both_directions()
     {
-        var (options, _, _, _) = RunnerOptions.Parse([
+        var (options, _, _, _) = RunnerTestOptions.Parse([
             "--cli-type", "codex",
             "--claude-cli", "/opt/bin/claude",
             "--codex-cli", "/opt/bin/codex-card",
@@ -144,21 +144,51 @@ public class RunnerOptionsTests
     }
 
     [Fact]
-    public void Durable_state_defaults_below_the_configured_work_directory()
+    public void Production_state_defaults_to_the_work_directory_without_a_service_environment()
     {
-        var work = Path.Combine("runner", "persistent-work");
-
-        var (options, _, _, _) = RunnerOptions.Parse(["--poll", "--workdir", work]);
-
+        var work = Path.Combine(Path.GetTempPath(), "runner-production-work");
+        var (options, _, _, _) = RunnerOptions.Parse(["--poll", "--workdir", work], _ => null);
         Assert.Equal(Path.Combine(work, ".runner-state"), options.StateDir);
+    }
+
+    [Fact]
+    public void Health_check_uses_work_directory_fallback_with_only_workdir_in_environment()
+    {
+        var work = Path.Combine(Path.GetTempPath(), "runner-health-work");
+        var (options, _, _, _) = RunnerOptions.Parse(
+            ["--health-check", "--server", "http://127.0.0.1:5030"],
+            name => name == "RUNNER_WORKDIR" ? work : null);
+        Assert.True(options.HealthCheckOnly);
+        Assert.Equal(Path.Combine(work, ".runner-state"), options.StateDir);
+    }
+
+    [Fact]
+    [Trait("Category", "Guard")]
+    public void Test_process_state_root_is_under_its_temporary_home()
+    {
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--poll"]);
+        var (second, _, _, _) = RunnerTestOptions.Parse(["--poll"]);
+        Assert.StartsWith(Path.GetFullPath(Path.GetTempPath()), Path.GetFullPath(options.StateDir));
+        Assert.NotEqual(options.StateDir, second.StateDir);
+        Assert.Throws<InvalidOperationException>(() => RunnerOptions.Parse(["--poll"]));
+    }
+
+    [Fact]
+    [Trait("Category", "Guard")]
+    public void Test_process_rejects_a_state_root_outside_its_temporary_home()
+    {
+        var outside = Path.Combine(Path.GetPathRoot(Path.GetTempPath())!, "runner-live-state");
+        Assert.Throws<InvalidOperationException>(() => RunnerOptions.Parse(
+            ["--poll", "--state-dir", outside]));
+        Assert.Throws<InvalidOperationException>(() => new RuntimeCapacityCache(outside));
     }
 
     [Fact]
     public void Durable_state_directory_can_be_configured_separately()
     {
-        var state = Path.Combine("runner", "persistent-state");
+        var state = Path.Combine(Path.GetTempPath(), "persistent-state");
 
-        var (options, _, _, _) = RunnerOptions.Parse(["--poll", "--state-dir", state]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--poll", "--state-dir", state]);
 
         Assert.Equal(state, options.StateDir);
     }
@@ -166,7 +196,7 @@ public class RunnerOptionsTests
     [Fact]
     public void Existing_client_identity_can_be_pinned_from_the_cli()
     {
-        var (options, _, _, _) = RunnerOptions.Parse(["--client-id", "  agent-runner-01  "]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--client-id", "  agent-runner-01  "]);
 
         Assert.Equal("agent-runner-01", options.ClientId);
     }
@@ -174,7 +204,7 @@ public class RunnerOptionsTests
     [Fact]
     public void Fetch_and_push_remotes_can_be_configured_separately()
     {
-        var (options, _, _, _) = RunnerOptions.Parse([
+        var (options, _, _, _) = RunnerTestOptions.Parse([
             "--git-remote", "https://github.com/acme/repo.git",
             "--git-push-remote", "git@github.com:acme/repo.git"]);
 
@@ -185,7 +215,7 @@ public class RunnerOptionsTests
     [Fact]
     public void Private_workspace_origin_and_required_write_are_separate_from_product_remote()
     {
-        var (options, _, _, _) = RunnerOptions.Parse([
+        var (options, _, _, _) = RunnerTestOptions.Parse([
             "--git-remote", "https://github.com/acme/product.git",
             "--workspace-git-remote", "https://github.com/acme/private-workspace.git",
             "--workspace-git-requires-push", "true"]);
@@ -221,7 +251,7 @@ public class RunnerOptionsTests
     [Fact]
     public void Health_check_flag_sets_health_check_only_and_needs_no_task_key()
     {
-        var (options, taskKey, _, help) = RunnerOptions.Parse(["--health-check"]);
+        var (options, taskKey, _, help) = RunnerTestOptions.Parse(["--health-check"]);
         Assert.True(options.HealthCheckOnly);
         Assert.Null(taskKey);
         Assert.False(help);
@@ -230,17 +260,17 @@ public class RunnerOptionsTests
     [Fact]
     public void Health_check_only_defaults_false_for_a_normal_run()
     {
-        var (options, _, _, _) = RunnerOptions.Parse(["AGT-1"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["AGT-1"]);
         Assert.False(options.HealthCheckOnly);
     }
 
     [Fact]
     public void Non_loopback_server_requires_https_and_service_credential()
     {
-        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["--server", "http://tasks.example.com"]));
-        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["--server", "https://tasks.example.com"]));
+        Assert.Throws<ArgumentException>(() => RunnerTestOptions.Parse(["--server", "http://tasks.example.com"]));
+        Assert.Throws<ArgumentException>(() => RunnerTestOptions.Parse(["--server", "https://tasks.example.com"]));
         using var token = new TemporaryTokenFile();
-        var (options, _, _, _) = RunnerOptions.Parse([
+        var (options, _, _, _) = RunnerTestOptions.Parse([
             "--server", "https://tasks.example.com", "--auth-token-file", token.Path]);
         Assert.Equal("https://tasks.example.com", options.ServerUrl);
     }
@@ -252,12 +282,12 @@ public class RunnerOptionsTests
         // A container-network Task Server is addressed by service name over plain
         // HTTP and never published outside that network. Without the opt-in this
         // stays refused; the error names the way out.
-        var refused = Assert.Throws<ArgumentException>(() => RunnerOptions.Parse([
+        var refused = Assert.Throws<ArgumentException>(() => RunnerTestOptions.Parse([
             "--server", "http://orchestrator-api:5031", "--auth-token-file", token.Path]));
         Assert.Contains("RUNNER_ALLOW_INSECURE_HTTP", refused.Message, StringComparison.Ordinal);
 
         using var environment = new EnvironmentVariableScope(("RUNNER_ALLOW_INSECURE_HTTP", "1"));
-        var (options, _, _, _) = RunnerOptions.Parse([
+        var (options, _, _, _) = RunnerTestOptions.Parse([
             "--server", "http://orchestrator-api:5031", "--auth-token-file", token.Path]);
 
         Assert.True(options.AllowInsecureHttp);
@@ -268,18 +298,18 @@ public class RunnerOptionsTests
     public void Insecure_http_opt_in_stays_off_by_default_and_never_admits_another_scheme()
     {
         using var token = new TemporaryTokenFile();
-        var (secure, _, _, _) = RunnerOptions.Parse([
+        var (secure, _, _, _) = RunnerTestOptions.Parse([
             "--server", "https://tasks.example.com", "--auth-token-file", token.Path]);
         Assert.False(secure.AllowInsecureHttp);
 
         using var environment = new EnvironmentVariableScope(("RUNNER_ALLOW_INSECURE_HTTP", "true"));
-        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse([
+        Assert.Throws<ArgumentException>(() => RunnerTestOptions.Parse([
             "--server", "ftp://tasks.example.com", "--auth-token-file", token.Path]));
     }
 
     [Fact]
     public void Command_line_secret_is_rejected_to_keep_it_out_of_process_diagnostics()
-        => Assert.Throws<ArgumentException>(() => RunnerOptions.Parse([
+        => Assert.Throws<ArgumentException>(() => RunnerTestOptions.Parse([
             "--server", "https://tasks.example.com", "--auth-token", "rnr.test.secret-value-long-enough"]));
 
     [Fact]
@@ -287,7 +317,7 @@ public class RunnerOptionsTests
     {
         using var token = new TemporaryTokenFile();
         var fingerprint = new string('A', 64);
-        var (options, _, _, _) = RunnerOptions.Parse([
+        var (options, _, _, _) = RunnerTestOptions.Parse([
             "--server", "https://tasks.example.com",
             "--auth-token-file", token.Path,
             "--tls-certificate-sha256", fingerprint]);
@@ -305,7 +335,7 @@ public class RunnerOptionsTests
             ("RUNNER_SALVAGE_MAX_PER_CARD", null),
             ("RUNNER_SALVAGE_SWEEP_HOURS", null));
 
-        var (options, _, _, _) = RunnerOptions.Parse(["--poll"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--poll"]);
 
         Assert.Equal(RunnerOptions.DefaultSalvageDir, options.SalvageDir);
         Assert.Equal("apply", options.SalvageRetentionMode);
@@ -334,14 +364,14 @@ public class RunnerOptionsTests
             ("RUNNER_SALVAGE_MAX_PER_CARD", "5"),
             ("RUNNER_SALVAGE_SWEEP_HOURS", "12"));
 
-        var (options, _, _, _) = RunnerOptions.Parse(["--poll"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--poll"]);
 
         Assert.Equal("/srv/salvage", options.SalvageDir);
         Assert.Equal("report", options.SalvageRetentionMode);
         Assert.Equal(30, options.SalvageRetentionDays);
         Assert.Equal(5, options.SalvageMaxPerCard);
         Assert.Equal(12, options.SalvageSweepHours);
-        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["--poll", "--salvage-retention", "purge"]));
+        Assert.Throws<ArgumentException>(() => RunnerTestOptions.Parse(["--poll", "--salvage-retention", "purge"]));
     }
 
     [Theory]
@@ -353,7 +383,7 @@ public class RunnerOptionsTests
     {
         using var environment = new EnvironmentVariableScope((name, "legacy-value"));
 
-        var error = Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["AGT-1"]));
+        var error = Assert.Throws<ArgumentException>(() => RunnerTestOptions.Parse(["AGT-1"]));
 
         Assert.Contains(name, error.Message, StringComparison.Ordinal);
         Assert.Contains("RUNNER_CLI_TYPE", error.Message, StringComparison.Ordinal);

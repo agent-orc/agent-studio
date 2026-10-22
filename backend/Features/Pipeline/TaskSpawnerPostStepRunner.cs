@@ -177,7 +177,9 @@ public sealed class TaskSpawnerPostStepRunner
     {
         try
         {
-            var lane = EpicSubTaskFactory.ClampTargetState(ctx.SpawnLane);
+            var lane = string.Equals(ctx.SpawnLane, TaskStates.Ready, StringComparison.Ordinal)
+                ? TaskStates.Ready
+                : TaskStates.Backlog;
             var title = string.IsNullOrWhiteSpace(decision.Title)
                 ? DefaultTitle(ctx.Source)
                 : decision.Title!.Trim();

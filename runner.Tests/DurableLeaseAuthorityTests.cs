@@ -373,6 +373,7 @@ public sealed class DurableLeaseAuthorityTests
         Hostname = "autonomy-host",
         BackendName = "test",
         WorkDir = root,
+        StateDir = Path.Combine(root, ".runner-state"),
         BaseBranch = "main",
         ClaudeCliBin = "/bin/sh",
         TtlSeconds = 900,

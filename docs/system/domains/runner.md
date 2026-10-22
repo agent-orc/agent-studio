@@ -201,8 +201,14 @@ unreported claim expires with its lease and is queued again.
   dependency trees, and build output, then uploads one manifest-bound file per
   request. The attempt-scoped host evidence copy survives a later task results
   reset. Deterministic skips are
-  written to `results/deliverables.md` before the manifest is created. A later
-  HTTP 413/507 never rewrites a manifested file; it is recorded as the
+  written to `results/deliverables.md` before the manifest is created. A legacy
+  repository-root `status.md` edited by a coding run is copied to the card's
+  `results/legacy-repository-status.md` only when the repository opts in with
+  `.agent-studio/legacy-status-reports`. The runner excludes it from the salvage
+  commit and restores tracked reports or removes untracked reports before durable
+  handoff checks the worktree. New result reports belong in `JOB_RESULTS_DIR`, which is transferred
+  to the card. The generated card Result records the immutable handoff SHA.
+  A later HTTP 413/507 never rewrites a manifested file; it is recorded as the
   non-fatal `ArtifactTooLarge` / `artifacts: partial` board fact instead. The
   artifact routes return HTTP 413 as `application/problem+json` with the
   machine-readable `type: "artifact-request-too-large"`, the applicable
@@ -344,7 +350,7 @@ unreported claim expires with its lease and is queued again.
   `GuardFirstGatePlan.GuardFilter` on every dotnet `commands.test` project (a
   guard in one project polices the others), and run `commands.lint`; unfiltered
   `commands.test` entries and coverage runs stay with the gates. Concept,
-  planning, research, and Epic planning framing omit it. Failure continuation
+  planning and research framing omit it. Failure continuation
   briefs (`TaskFailureContinuationService`) carry the reason of the current
   attempt's failed `post-build-test-gate` step, bounded to 2 KB, even when a
   later escalation step is the selected failure, and
@@ -569,7 +575,10 @@ unreported claim expires with its lease and is queued again.
   only). The Coding daemon caches the last accepted version under
   `RUNNER_STATE_DIR/configuration/runtime-capacity.json`, reports the exact
   applied version on claim polls, and never treats registration delivery alone
-  as an acknowledgement. The Task Server audits the first exact value/version
+  as an acknowledgement. A cache entry for another host is discarded; the first
+  valid server response replaces a cached version even when that cached version
+  is higher. Runner startup defaults to `$RUNNER_WORKDIR/.runner-state`, and detached workers
+  do not inherit its environment variable. The Task Server audits the first exact value/version
   confirmation. It then uses fenced leases + heartbeat, per-task linked git
   worktrees, log/artifact upload, and fenced normal completion into auto-review.
   Host project access is also versioned in the Task Server, but is enforced
@@ -1409,16 +1418,7 @@ unreported claim expires with its lease and is queued again.
   result for that project. A failure remains visible on the Execution Hosts card
   and project execution card.
 
-- A fresh `2-ready` Epic is remotely claimable as an Epic planning run. It
-  occupies a normal host slot and holds the same fenced lease, heartbeat,
-  cancellation, drain, and telemetry contract as a coding task, but it is not a
-  coding work item. The server renders `epic-decomposition.md`, and the remote
-  host runs it in a detached disposable checkout. No task branch, salvage
-  commit, or push is created. Only the children produced by the plan enter the
-  coding pipeline. A valid plan completes the Epic into `5-human-review`, never
-  `4-auto-review`: the run carries no Result-SHA, so the code-review lane would
-  hold it against a ReviewAttempt that can never be minted.
-  An interrupted assigned card whose lease is free is requeued
+- An interrupted assigned card whose lease is free is requeued
   to Ready inside the next atomic claim before a higher fence is issued. Before
   any `3-progress` to `2-ready` requeue, `TaskTransitionService` queries attempt
   authority. If the current RunAttempt is Completed and its immutable
@@ -1567,7 +1567,7 @@ unreported claim expires with its lease and is queued again.
   not just parallel slots. The shared main checkout is read-only reference + the
   integration target; on a failed worktree prepare the run is deferred, never
   run in the main checkout, and a coding run that resolves to the main checkout
-  is refused + escalated. Read-only (planning / research) and epic-planning runs
+  is refused + escalated. Read-only (planning / research) runs
   run in-place. See
   [ADR-0057](../architecture/decisions/adr-archive.md#adr-0057---always-worktree-garantie-every-coding-run-is-worktree-isolated-including-single-slot-resumereissue-with-a-main-checkout-guard-2026-06-22).
 - A local run owns every process it starts, including detached preview servers.
@@ -1644,7 +1644,7 @@ unreported claim expires with its lease and is queued again.
   and returns the card to Ready. The durable failure counter survives the lane
   move and process restarts. A second consecutive failure reaches Escalated with
   category `unverified-delivery`. A valid envelope or a non-coding completion
-  resets the counter. Epic planning, report-only modes, and repository or
+  resets the counter. Report-only modes and repository or
   environment preparation failures are exempt because they produce no coding
   delivery. A failed salvage-fence push is not eligible for this retry: the
   runner retains the worktree and keeps the existing `worktree-blocked`
@@ -1722,10 +1722,6 @@ unreported claim expires with its lease and is queued again.
   attributed `commits[].branch`, fenced `runner/<runner-id>/<task-key>`, then the
   legacy local `task/<slug>` fallback. Remote sources remain fenced to the
   reviewed result SHA.
-- Epic planning is the deliberate exception: its detached checkout is checked
-  for mutations and discarded without salvage. Any mutation invalidates the
-  plan and returns the Epic to Backlog because planning is source-read-only
-  (AGT-2178).
 - Remote `agent-host` delivery admission is repository-scoped. The startup
   probe still checks the configured fallback fetch URL and Git `pushurl`, but
   publishes that result as diagnostics only: it never grants or denies another
