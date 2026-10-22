@@ -22,7 +22,8 @@ public static class TokenUsageHost
     {
         if (!string.IsNullOrWhiteSpace(host)) return host.Trim();
         return !string.IsNullOrWhiteSpace(participantId)
-               && participantId.Trim().StartsWith(RemoteRunnerParticipantPrefix, StringComparison.OrdinalIgnoreCase)
+               && (participantId.Trim().StartsWith(RemoteRunnerParticipantPrefix, StringComparison.OrdinalIgnoreCase)
+                   || participantId.Trim().StartsWith("support:remote-review:", StringComparison.OrdinalIgnoreCase))
             ? UnrecordedRemote
             : Local;
     }

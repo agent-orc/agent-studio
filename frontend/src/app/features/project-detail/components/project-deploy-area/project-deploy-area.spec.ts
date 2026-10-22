@@ -3,7 +3,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { HttpErrorResponse } from '@angular/common/http';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { DeferBlockState, TestBed, type ComponentFixture } from '@angular/core/testing';
-import { BehaviorSubject, Subject, map, type Observable } from 'rxjs';
+import { BehaviorSubject, Subject, map, of, type Observable } from 'rxjs';
 import { vi } from 'vitest';
 import { ProjectDeployAreaComponent } from './project-deploy-area';
 import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
@@ -48,6 +48,11 @@ class FakeDeployData {
     return read;
   }
   releases(): Observable<DeployPanel<unknown>> { return this.releasesPanel; }
+  releaseNotes(_project: string, id: string): Observable<DeployPanel<unknown>> {
+    const release = deployReleasesFixture().find(item => item.id === id);
+    return of(release ? { status: 'ready', value: { releaseId: id, version: release.version, preview: true,
+      notes: release.cardKeys.map(cardKey => ({ cardKey, text: `Delivered ${cardKey}` })) } } : { status: 'unavailable' });
+  }
   deployments(): Observable<DeployPanel<unknown>> { this.requests.push('deployments'); return this.deploymentsPanel; }
   releasePage(project: string, offset: number): Observable<DeployPanel<unknown>> {
     this.requests.push(`releases:${offset}`);

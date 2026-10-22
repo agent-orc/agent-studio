@@ -389,6 +389,82 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void SquashedCommitMessage_KeepsIntegratedCardMapping()
+    {
+        var (deploy, _, _) = Build();
+        var commit = Commit("feat(DEMO-4) improve the product");
+        Card("DEMO-4", new string('0', 40));
+
+        var release = CreateRelease(deploy, Artifact('d'), commit);
+
+        Assert.Equal(["DEMO-4"], release.CardKeys);
+        Assert.Equal(release.CardKeys, Assert.Single(deploy.Releases("demo")!).CardKeys);
+    }
+
+    [Fact]
+    public void RewrittenCommitWithoutCardKey_UsesDurableIntegrationVerification()
+    {
+        var (deploy, _, _) = Build();
+        var first = Head();
+        CreateRelease(deploy, Artifact('a'), first);
+        var integrated = Commit("integrated");
+        Card("DEMO-5", integrated);
+        // A squash from develop onto the release branch keeps the integrated tree but neither the SHA nor the key.
+        var rewritten = Git("commit-tree", integrated + "^{tree}", "-p", first,
+            "-m", "Improve the product after integration").Trim();
+        Git("checkout", "-b", "main", rewritten);
+
+        var release = CreateRelease(deploy, Artifact('b'), rewritten);
+
+        Assert.Equal(["DEMO-5"], release.CardKeys);
+        Assert.Equal(release.CardKeys, deploy.ReleaseDetail("demo", release.Id)!.Release.CardKeys);
+    }
+
+    [Fact]
+    public void ReleaseWithoutTheIntegratedTree_DoesNotClaimEarlierVerifiedCard()
+    {
+        var (deploy, _, _) = Build();
+        var first = Head();
+        CreateRelease(deploy, Artifact('a'), first);
+        Card("DEMO-7", Commit("integrated"));
+        _clock.Advance(TimeSpan.FromHours(1));
+        Git("checkout", "-b", "hotfix", first);
+        var hotfix = Commit("hotfix");
+
+        var release = CreateRelease(deploy, Artifact('b'), hotfix);
+
+        Assert.Empty(release.CardKeys);
+    }
+
+    [Fact]
+    public void SquashMessageNamingAReleasedCard_AddsOnlyTheNewCard()
+    {
+        var (deploy, _, _) = Build();
+        var first = Head();
+        Card("DEMO-1", first);
+        CreateRelease(deploy, Artifact('a'), first);
+        var squashed = Commit("Squash DEMO-1 and DEMO-2");
+        Card("DEMO-2", new string('0', 40));
+
+        var release = CreateRelease(deploy, Artifact('b'), squashed);
+
+        Assert.Equal(["DEMO-2"], release.CardKeys);
+    }
+
+    [Fact]
+    public void DelayedGateForOlderCommit_DoesNotClaimLaterVerifiedCard()
+    {
+        var (deploy, _, _) = Build();
+        var olderCommit = Head();
+        _clock.Advance(TimeSpan.FromHours(1));
+        Card("DEMO-6", new string('0', 40));
+
+        var release = CreateRelease(deploy, Artifact('a'), olderCommit);
+
+        Assert.Empty(release.CardKeys);
+    }
+
+    [Fact]
     public void Production_WaitsForApproval_ByOwnerOrMaintainerOnly()
     {
         var (deploy, environments, _) = Build();
@@ -1115,6 +1191,7 @@ public sealed class DeployServiceTests : IDisposable
         Build();
         var older = Head();
         var commit = Commit("second");
+        Card("DEMO-1", commit, title: "Faster page loading");
         WriteReleaseEvidence(Artifact('a'), commit);
         WriteReleaseEvidence(Artifact('b'), older);
         await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
@@ -1194,6 +1271,14 @@ public sealed class DeployServiceTests : IDisposable
                      "variablesVersion", "cardKeys", "createdAtUtc", "channel" })
             Assert.True(release.RootElement.GetProperty("release").TryGetProperty(name, out _), name);
 
+        using var notes = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/demo/deploy/releases/{releaseId}/notes"));
+        Assert.Equal("Faster page loading", notes.RootElement.GetProperty("notes")[0].GetProperty("text").GetString());
+        using var cards = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/cards"));
+        Assert.Equal("DEMO-1", cards.RootElement[0].GetProperty("cardKey").GetString());
+        Assert.Equal("not-deployed", cards.RootElement[0].GetProperty("environments")[1]
+            .GetProperty("state").GetString());
+
         var deploymentId = run.GetProperty("id").GetString();
         using var approve = await client.PostAsync($"/api/projects/demo/deploy/deployments/{deploymentId}/approve", null);
         Assert.Equal(HttpStatusCode.Conflict, approve.StatusCode);
@@ -1235,12 +1320,18 @@ public sealed class DeployServiceTests : IDisposable
             $"/api/projects/demo/deploy/deployments/{production.Id}/intervention",
             new InterventionDecisionRequest("skip", "Optional health check"));
         Assert.Equal(HttpStatusCode.Forbidden, unauthorizedIntervention.StatusCode);
-        using var skipped = await client.PostAsJsonAsync(
+        using var aborted = await client.PostAsJsonAsync(
             $"/api/projects/demo/deploy/deployments/{production.Id}/intervention",
-            new InterventionDecisionRequest("skip", "Optional health check"));
-        Assert.Equal(HttpStatusCode.OK, skipped.StatusCode);
-        Assert.Contains(service.Audit("demo")!, entry => entry.Action == "intervention-skip"
+            new InterventionDecisionRequest("abort", "Health check failed"));
+        Assert.Equal(HttpStatusCode.OK, aborted.StatusCode);
+        Assert.Contains(service.Audit("demo")!, entry => entry.Action == "intervention-abort"
             && entry.Actor == auth.User.Id);
+        service.SyncAfterHostCall("demo");
+        var failures = factory.Services.GetRequiredService<TaskScannerService>().ScanAllJobsRaw()
+            .Where(item => item.Id == "production-deploy-failed-" + production.Id).ToArray();
+        var failure = Assert.Single(failures);
+        Assert.Equal("bug", failure.TaskType);
+        Assert.Contains(releaseId!, File.ReadAllText(Path.Combine(failure.FolderPath, "prompt.md")));
     }
 
     [Theory]
@@ -1341,13 +1432,13 @@ public sealed class DeployServiceTests : IDisposable
 
     private static string Artifact(char fill) => "registry.example/app@sha256:" + new string(fill, 64);
 
-    private void Card(string key, string sha, IReadOnlyList<string>? deliveryShas = null)
+    private void Card(string key, string sha, IReadOnlyList<string>? deliveryShas = null, string? title = null)
     {
         var folder = Path.Combine(_watch, "6-completed", key.ToLowerInvariant());
         Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
         {
-            id = key.ToLowerInvariant(), key, title = "Card " + key, state = "6-completed", agent = "claude",
+            id = key.ToLowerInvariant(), key, title = title ?? "Card " + key, state = "6-completed", agent = "claude",
             createdAt = _clock.GetUtcNow(),
         }));
         File.WriteAllText(Path.Combine(folder, "prompt.md"), "fixture");
@@ -1414,7 +1505,7 @@ public sealed class DeployServiceTests : IDisposable
         var environments = new ProjectEnvironmentService(config, scanner, git, settings, _clock);
         var store = new DeployStore(config);
         _environments = environments;
-        return (new DeployService(environments, store, git, scanner, _clock, NullLogger<DeployService>.Instance),
+        return (new DeployService(environments, store, git, scanner, _clock, NullLogger<DeployService>.Instance, null),
             environments, store);
     }
 
@@ -1427,7 +1518,7 @@ public sealed class DeployServiceTests : IDisposable
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         var environments = new ProjectEnvironmentService(config, scanner, git, settings, _clock);
         return new DeployService(environments, new DeployStore(config), git, scanner, _clock,
-            NullLogger<DeployService>.Instance);
+            NullLogger<DeployService>.Instance, null);
     }
 
     private void WriteProduction(string host, string destination, bool guidedFailure = false)
@@ -1510,6 +1601,13 @@ public sealed class DeployServiceTests : IDisposable
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = _repo,
             RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        if (arguments.Length > 0 && arguments[0] == "commit")
+        {
+            var when = _clock.GetUtcNow().ToString("yyyy-MM-ddTHH:mm:sszzz",
+                System.Globalization.CultureInfo.InvariantCulture);
+            start.Environment["GIT_AUTHOR_DATE"] = when;
+            start.Environment["GIT_COMMITTER_DATE"] = when;
+        }
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();

@@ -2240,7 +2240,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         using var pipelineAttempt = pipelineRecord == null
             ? null
             : _pipelineLog!.EnterAttempt(current.FolderPath, pipelineRecord.Attempt);
-
         var isResearch = TaskModes.Normalize(current.Mode) == TaskModes.Research;
         var primaryReport = Path.Combine(current.FolderPath, "results", "report.html");
         var hasPrimaryResult = isResearch
@@ -2381,6 +2380,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         using var pipelineAttempt = pipelineRecord == null
             ? null
             : _pipelineLog!.EnterAttempt(current.FolderPath, pipelineRecord.Attempt);
+        inputs = inputs with { ReviewAttemptId = pipelineRecord?.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture) };
 
         // Post-core completeness gate. Persist the exact requirement source,
         // machine evidence, blockers, and lifecycle states before review. Never
@@ -5329,6 +5329,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 DeferGradeWrites = true,
                 Commit = commitLabel,
                 ThinkingLevel = thinkingLevel,
+                ReviewAttemptId = _pipelineLog?.Read(job.FolderPath)?.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ResultsInventory = ResultsInventory.Render(job.FolderPath),
                 CardMode = ReviewCardMode.Describe(job.Mode),
             };

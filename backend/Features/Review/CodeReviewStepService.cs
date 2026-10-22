@@ -130,8 +130,13 @@ public sealed class CodeReviewStepService
             rawResponse = string.Empty;
         }
 
-        AdHocClaudeInvoker.Record(_usage, UsageSource, request.Model, callUsage,
-            sw.ElapsedMilliseconds, ok, project: request.Project, jobId: request.JobId);
+        AdHocClaudeInvoker.Record(_usage,
+            request.Mode == CodeReviewMode.Grade ? "post-code-review-grade" : UsageSource,
+            request.Model, callUsage,
+            sw.ElapsedMilliseconds, ok, project: request.Project, jobId: request.JobId,
+            thinkingLevel: request.ThinkingLevel,
+            participantId: string.IsNullOrWhiteSpace(request.ReviewAttemptId) ? null
+                : $"support:review-attempt:{request.ReviewAttemptId}:step:post-code-review-grade");
 
         CodeReviewGrade? grade = null;
         IReadOnlyList<string> findings = Array.Empty<string>();
@@ -542,6 +547,7 @@ public sealed record CodeReviewStepRequest(
     string CliType,
     string Model)
 {
+    public string? ReviewAttemptId { get; init; }
     public string? ThinkingLevel { get; init; }
 
     /// <summary>Optional commit SHA. When null, the prompt records HEAD.</summary>
