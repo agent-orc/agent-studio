@@ -101,6 +101,13 @@ STOP_TIMEOUT_SECS="${API_STOP_TIMEOUT_SECS:-20}"
 START_TIMEOUT_SECS="${API_START_TIMEOUT_SECS:-180}"
 # Set by cmd_start before it launches; read by the ownership check afterwards.
 PRE_LAUNCH_IDS=""
+# studio-moved-to-server-guard: scripts/migration/move-studio-to-server.sh
+# --apply leaves this file beside the stable checkout once Studio runs on a
+# server. Starting Stable past it would put two Studios on the same remotes
+# and runners, so start-stable.sh and the watchdog (both via `api.sh start`)
+# stop here. docs/operations/setup/move-studio-to-server.md#rollback says how
+# to lift it.
+STUDIO_MOVED_GUARD="$(dirname "${SCRIPT_DIR}")/.studio-moved-to-server"
 
 is_windows() {
   case "$(uname -s 2>/dev/null)" in
@@ -786,6 +793,16 @@ NODE
     --contentRoot "${SCRIPT_DIR}/backend" --urls "${BASE_URL}")
 }
 
+refuse_moved_stable() {
+  [[ -e "${STUDIO_MOVED_GUARD}" ]] || return 0
+  echo "ERROR: Studio has moved to a server; refusing to start Stable." >&2
+  sed 's/^/       /' "${STUDIO_MOVED_GUARD}" >&2
+  echo "       Guard: ${STUDIO_MOVED_GUARD}" >&2
+  echo "       To roll back, stop the server stack first, then remove the guard (and" >&2
+  echo "       .stable-maintenance if the move set it) and start Stable again." >&2
+  exit 1
+}
+
 cmd_start() {
   # ADR-0044: dev backend boot policy gate. The dev checkout is the regression-
   # test target, not a second pickup driver on the shared workspace. The
@@ -798,7 +815,7 @@ cmd_start() {
   # on a shared workspace. The stable checkout (folder name ends in -stable)
   # is unaffected by this gate.
   case "$(basename "${SCRIPT_DIR}")" in
-    *-stable) ;;
+    *-stable) refuse_moved_stable ;;
     *)
       if [[ "${ATP_DEV_BACKEND_FROM_FIXTURE:-}" != "1" \
          && "${ATP_ALLOW_DEV_BACKEND:-}" != "1" \

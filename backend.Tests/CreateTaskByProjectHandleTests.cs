@@ -130,6 +130,48 @@ public class CreateTaskByProjectHandleTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateTaskEndpoint_IgnoresDeprecatedEpicIdAndRejectsRetiredKind()
+    {
+        using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Test");
+                builder.ConfigureAppConfiguration((_, config) =>
+                    config.AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["TaskRepository"] = _workspace,
+                        ["WatchPaths:0:Name"] = Project,
+                        ["WatchPaths:0:Path"] = _watchPath,
+                        ["WatchPaths:0:RootPath"] = _watchPath,
+                    }));
+            });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+
+        var response = await client.PostAsJsonAsync("/api/tasks", new
+        {
+            title = "Legacy parent field",
+            watchPath = _watchPath,
+            epicId = "old-parent",
+        });
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("true", Assert.Single(response.Headers.GetValues("Deprecation")));
+        Assert.Contains("epicId", Assert.Single(response.Headers.GetValues("Warning")));
+        var task = Assert.Single(factory.Services.GetRequiredService<TaskScannerService>().ScanAllJobs(),
+            item => item.Title == "Legacy parent field");
+        Assert.DoesNotContain("epicId", System.Text.Json.JsonSerializer.Serialize(task));
+
+        var rejected = await client.PostAsJsonAsync("/api/tasks", new
+        {
+            title = "Retired container",
+            watchPath = _watchPath,
+            kind = "epic",
+        });
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, rejected.StatusCode);
+    }
+
+    [Fact]
     public void CreateTask_ProjectHandle_TakesPrecedenceOverWatchPath()
     {
         var (machine, scanner, mutations, registry) = Build();

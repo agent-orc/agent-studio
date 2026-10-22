@@ -1,4 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { api } from '../helpers/api';
 import { createJob } from '../helpers/jobs';
 import { setTheme } from '../helpers/theme';
@@ -7,7 +9,7 @@ import { setTheme } from '../helpers/theme';
  * Header-toolbar polish (operator request, 2026-06-04).
  *
  * Locks the structure behind the visual cleanup of the top-right controls:
- *  - the board tab-bar actions (Lanes/Epics + Full/Compact toggles and the
+ *  - the board tab-bar actions (Lanes/Dossiers + Full/Compact toggles and the
  *    primary "+ Add task") live in a single `studio-board-actions` flex row
  *    with an in-cluster separator before the primary, instead of loose
  *    whitespace-spaced buttons; and
@@ -27,7 +29,7 @@ async function dismissTransientErrors(page: Page): Promise<void> {
     const overlay = page.locator('.overlay--error');
     if ((await overlay.count()) === 0) break;
     if (!(await overlay.first().isVisible({ timeout: 200 }).catch(() => false))) break;
-    await page.locator('.error-dialog__close').first().click({ timeout: 1_000 }).catch(() => {});
+    await page.locator('.error-dialog__close').first().click({ timeout: 1_000 }).catch(() => false);
     await page.waitForTimeout(150);
   }
 }
@@ -36,15 +38,16 @@ async function gotoBoard(page: Page): Promise<void> {
   await page.goto('/');
   const studio = page.getByTestId('studio-board');
   const welcome = page.getByTestId('studio-welcome');
-  await Promise.race([
-    studio.first().waitFor({ state: 'visible', timeout: 8_000 }),
-    welcome.first().waitFor({ state: 'visible', timeout: 8_000 }),
-  ]).catch(() => { /* fall through */ });
+  await expect.poll(async () => {
+    if (await studio.first().isVisible()) return 'board';
+    if (await welcome.first().isVisible()) return 'welcome';
+    return 'loading';
+  }, { timeout: 30_000 }).not.toBe('loading');
 
-  if ((await welcome.count()) > 0 && (await welcome.first().isVisible().catch(() => false))) {
+  if (await welcome.first().isVisible()) {
     const allProjects = welcome.first().getByRole('button', { name: 'All projects' });
-    await allProjects.click({ timeout: 3_000 }).catch(() => { /* nothing */ });
-    await studio.first().waitFor({ state: 'visible', timeout: 5_000 }).catch(() => { /* nothing */ });
+    await allProjects.click({ timeout: 10_000 });
+    await studio.first().waitFor({ state: 'visible', timeout: 20_000 });
   }
 
   await dismissTransientErrors(page);
@@ -70,27 +73,23 @@ test.describe('Header toolbar polish', () => {
     await gotoBoard(page);
 
     const chatButton = page.getByTestId('studio-titlebar-chat');
-    if ((await chatButton.count()) === 0) {
-      test.skip(true, 'vsCodeLayout shell not active; header toolbar only exists there');
-      return;
-    }
+    await expect(chatButton).toBeVisible({ timeout: 20_000 });
 
     // Board cluster wrapper present with its controls inside it. (AGT-2035
     // removed the Full/Compact toggle along with the abolished card density,
     // leaving the Lanes/Dossiers toggle + Add task.)
     const cluster = page.getByTestId('studio-board-actions');
     await expect(cluster).toBeVisible();
-    const epicToggle = page.getByTestId('studio-board-dossier-toggle');
+    const dossierToggle = page.getByTestId('studio-board-dossier-toggle');
     const addTask = page.getByTestId('studio-board-add-task');
-    await expect(epicToggle).toBeVisible();
+    await expect(dossierToggle).toBeVisible();
     await expect(addTask).toBeVisible();
     await expect(cluster.getByTestId('studio-board-compact-toggle')).toHaveCount(0);
-    await expect(cluster.getByTestId('studio-board-epic-toggle')).toHaveCount(0);
     await expect(cluster.getByTestId('studio-board-dossier-toggle')).toHaveCount(1);
     await expect(cluster.getByTestId('studio-board-add-task')).toHaveCount(1);
 
     // The Lanes/Dossiers toggle exposes a pressed state so it reads as a switch.
-    await expect(epicToggle).toHaveAttribute('aria-pressed', /true|false/);
+    await expect(dossierToggle).toHaveAttribute('aria-pressed', /true|false/);
 
     // Titlebar action trio is grouped together.
     const titleActions = page.getByTestId('studio-titlebar-actions');
@@ -103,14 +102,23 @@ test.describe('Header toolbar polish', () => {
     await cluster.screenshot({ path: 'test-results/header-board-actions-rest.png' });
 
     // Flip the toggle so the active (pressed) pill state is captured.
-    const epicPressedBefore = await epicToggle.getAttribute('aria-pressed');
-    if (epicPressedBefore === 'false') await epicToggle.click();
-    await expect(epicToggle).toHaveAttribute('aria-pressed', 'true');
+    const dossierPressedBefore = await dossierToggle.getAttribute('aria-pressed');
+    if (dossierPressedBefore === 'false') await dossierToggle.click();
+    await expect(dossierToggle).toHaveAttribute('aria-pressed', 'true');
     await page.waitForTimeout(150);
     await cluster.screenshot({ path: 'test-results/header-board-actions-active.png' });
 
+    const results = process.env['JOB_RESULTS_DIR'];
+    if (results) {
+      fs.mkdirSync(results, { recursive: true });
+      for (const theme of ['dark', 'light'] as const) {
+        await setTheme(page, theme);
+        await cluster.screenshot({ path: path.join(results, `board-dossier-actions-${theme}.png`) });
+      }
+    }
+
     // Restore original toggle state so the spec leaves no board change.
-    if (epicPressedBefore === 'false') await epicToggle.click();
+    if (dossierPressedBefore === 'false') await dossierToggle.click();
   });
 
   test('task pane header buttons expose active pressed state', async ({ page }) => {
@@ -127,14 +135,10 @@ test.describe('Header toolbar polish', () => {
     try {
       await page.setViewportSize({ width: 1600, height: 1000 });
       await page.addInitScript(() => {
-        try {
-          localStorage.setItem(
-            'taskboard.panesVisible',
-            JSON.stringify({ prompt: true, protocol: true, git: false }),
-          );
-        } catch {
-          /* private mode */
-        }
+        localStorage.setItem(
+          'taskboard.panesVisible',
+          JSON.stringify({ prompt: true, protocol: true, git: false }),
+        );
       });
 
       await page.goto(`/?job=${encodeURIComponent(job.id)}&watchPath=${encodeURIComponent(watchPath)}`);
@@ -209,7 +213,9 @@ test.describe('Header toolbar polish', () => {
       await setTheme(page, 'light');
       await cluster.screenshot({ path: 'test-results/header-pane-toggles-active-light.png' });
     } finally {
-      await deleteJob(job.id, watchPath).catch(() => {});
+      await deleteJob(job.id, watchPath).catch((error) => {
+        console.warn('Could not clean up header toolbar test task', error);
+      });
     }
   });
 });

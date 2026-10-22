@@ -277,6 +277,7 @@ public sealed class TunnelLossDrillTests
                 Hostname = "drill-host",
                 BackendName = "test",
                 WorkDir = root,
+                StateDir = Path.Combine(root, ".runner-state"),
                 BaseBranch = "main",
                 ClaudeCliBin = "test",
                 TtlSeconds = TtlSeconds,

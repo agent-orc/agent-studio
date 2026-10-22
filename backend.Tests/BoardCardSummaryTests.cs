@@ -223,7 +223,6 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         Assert.False(item.TryGetProperty("targetWatchPath", out _));
         Assert.False(item.TryGetProperty("fulfilled", out _));
         Assert.Equal("AGT-1", root.GetProperty("waitsOn").GetProperty("releaseTargetKeys")[0].GetString());
-        Assert.False(root.TryGetProperty("epicId", out _));
     }
 
     /// <summary>

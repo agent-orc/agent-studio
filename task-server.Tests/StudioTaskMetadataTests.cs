@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Json;
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -174,37 +173,6 @@ public sealed class StudioTaskMetadataTests
         Assert.Equal("resource-version-mismatch", (await stale.Content.ReadFromJsonAsync<ApiError>())!.Code);
     }
 
-    [Fact]
-    public async Task Epic_assigns_clears_validates_existence_and_rejects_a_stale_expected_version()
-    {
-        using var temp = new TempDirectory();
-        await using var factory = new StudioTestApiFactory(temp.Path);
-        using var client = StudioTestClient.Create(factory);
-        var store = factory.Services.GetRequiredService<TaskServerStore>();
-        var (project, task) = await CreateProjectAndTaskAsync(store, "Epic");
-        var basePath = TaskPath(project.ProjectId, task.TaskId);
-
-        var missingEpic = await client.PutAsJsonAsync($"{basePath}/epic", new SetTaskEpicRequest("epic-missing", 0));
-        Assert.Equal(HttpStatusCode.NotFound, missingEpic.StatusCode);
-
-        await InsertEpicAsync(store, "epic-1", project.ProjectId, "Epic One");
-        var assign = await client.PutAsJsonAsync($"{basePath}/epic", new SetTaskEpicRequest("epic-1", 0));
-        assign.EnsureSuccessStatusCode();
-        var assigned = (await assign.Content.ReadFromJsonAsync<TaskStudioFieldsDto>())!;
-        Assert.Equal("epic-1", assigned.EpicId);
-        Assert.Equal(1, assigned.Version);
-        Assert.Equal(1, await CountEpicTaskRowsAsync(store, task.TaskId));
-
-        var stale = await client.PutAsJsonAsync($"{basePath}/epic", new SetTaskEpicRequest("epic-1", 0));
-        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
-        Assert.Equal("resource-version-mismatch", (await stale.Content.ReadFromJsonAsync<ApiError>())!.Code);
-
-        var clear = await client.PutAsJsonAsync($"{basePath}/epic", new SetTaskEpicRequest(null, 1));
-        clear.EnsureSuccessStatusCode();
-        var cleared = (await clear.Content.ReadFromJsonAsync<TaskStudioFieldsDto>())!;
-        Assert.Null(cleared.EpicId);
-        Assert.Equal(0, await CountEpicTaskRowsAsync(store, task.TaskId));
-    }
 
     [Fact]
     public async Task References_replaces_the_set_validates_existence_and_rejects_a_stale_expected_version()
@@ -314,19 +282,8 @@ public sealed class StudioTaskMetadataTests
         return (project, task);
     }
 
-    private static async Task InsertEpicAsync(TaskServerStore store, string epicId, string projectId, string name)
-        => await store.CreateEpicAsync(projectId, new CreateEpicRequest(name, epicId), "test", default);
-
     private static async Task InsertTagAsync(TaskServerStore store, string tagId, string name)
         => await store.CreateTagAsync(new CreateTagRequest(name, TagId: tagId), "test", default);
 
-    private static async Task<long> CountEpicTaskRowsAsync(TaskServerStore store, string taskId)
-    {
-        await using var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False");
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM epic_tasks WHERE task_id = $task;";
-        command.Parameters.AddWithValue("$task", taskId);
-        return (long)(await command.ExecuteScalarAsync())!;
-    }
+
 }

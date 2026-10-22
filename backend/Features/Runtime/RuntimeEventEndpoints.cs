@@ -14,6 +14,9 @@ public static class RuntimeEventEndpoints
     {
         var group = app.MapGroup("/api/runtime");
 
+        group.MapGet("/task-detail-latency", (AgentStudio.Tasks.TaskDetailLatencyMetrics metrics) =>
+            Results.Ok(metrics.Snapshot()));
+
         group.MapGet("/{project}/events", (
             string project,
             IConfiguration config,
