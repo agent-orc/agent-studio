@@ -545,6 +545,15 @@ path-to-test map is the CLI domain's
 load-bearing boundary is recorded in
 [ADR-0069](../architecture/decisions/adr-archive.md#adr-0069---quota-admission-is-one-run-scoped-boundary-for-every-cli-execution-path-2026-09-08).
 
+Remote coding claims also require fresh model-acceptance evidence from the
+claiming host for the effective model. CLI catalogue discovery alone does not
+prove that the current login can run a listed model. The host sends one small
+real request per candidate model, caches the result by credential generation,
+and advertises accepted or refused models. When the primary quota is capped
+and the comparable fallback is not accepted on that host, admission waits for
+the quota reset instead of launching the refused model. A launch-time model
+refusal with no salvage returns the card to Ready with a host capability hold.
+
 The equivalence adapter reads Token Economy's published, embedded model-routing
 knowledge base and price catalogue from the exactly pinned NuGet package. It
 selects another provider only within the same capability class, excludes
