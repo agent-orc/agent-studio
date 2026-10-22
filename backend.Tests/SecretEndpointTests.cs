@@ -430,6 +430,7 @@ public sealed class SecretEndpointTests : IDisposable
         {
             request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={session.Token}");
             request.Headers.Add("X-CSRF-Token", session.Csrf);
+            request.Headers.Add("Sec-Fetch-Site", "same-origin");
         }
         if (bearer is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
         using var response = await client.SendAsync(request);

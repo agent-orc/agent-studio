@@ -88,6 +88,14 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
         options.KnownProxies.Add(address);
     }
 });
+// AGT-3230: the networked edge sends a one-year HSTS with includeSubDomains;
+// the API's own header must not advertise a weaker policy.
+builder.Services.AddOptions<Microsoft.AspNetCore.HttpsPolicy.HstsOptions>().Configure<IConfiguration>((options, configuration) =>
+{
+    if (!SecurityProfiles.IsNetworked(configuration)) return;
+    options.MaxAge = TimeSpan.FromDays(365);
+    options.IncludeSubDomains = true;
+});
 var publicDemoBodyCap = SecurityProfiles.IsPublicDemo(builder.Configuration);
 var maxRequestBodyBytes = builder.Configuration.GetValue<long>(
     publicDemoBodyCap ? "Security:PublicDemoMaxRequestBodyBytes" : "Security:MaxRequestBodyBytes",
@@ -1377,7 +1385,14 @@ var projectScopedSignalRProfile = networkedSecurityProfile || publicDemoExecutio
 var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
     && app.Configuration.GetValue<bool>("ErrorHandling:IncludeExceptionDetails");
 
+// Loopback trust (first-owner bootstrap) is decided on the connection peer,
+// which forwarding replaces below (AGT-3230).
+app.UseConnectionPeerCapture();
 app.UseForwardedHeaders();
+// Directly after forwarding, so every later short-circuit (Task Server proxy
+// 404, rejections, exception handler) carries the framing and content policy
+// too (AGT-3230).
+if (networkedSecurityProfile) app.UseStudioResponseHeaders();
 // Before routing, so the versioned core-attach paths Angular calls reach the
 // same legacy handlers, guards, and security checks as before (AGT-2983).
 app.UseStudioV1LegacyRouteAlias(TaskServerPlaneProxy.IsConfigured(app.Configuration));
