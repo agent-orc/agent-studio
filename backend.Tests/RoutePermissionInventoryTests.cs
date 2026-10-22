@@ -150,7 +150,9 @@ public sealed class RoutePermissionInventoryTests : IDisposable
             .Where(endpoint => endpoint.Metadata.GetMetadata<StudioRoleRequirement>()?.MinimumRole == StudioRoles.Owner)
             .ToList();
 
-        Assert.NotEmpty(ownerRoutes);
+        var accessRead = RoutePermissionCatalog.Resolve("GET", "/api/auth/iam")?.Permission;
+        Assert.Equal(IamPermissions.AccessRead, accessRead);
+        Assert.Equal([IamRoles.Owner], IamRoles.All.Where(role => role.Permissions.Contains(accessRead!)).Select(role => role.Id));
         foreach (var endpoint in ownerRoutes)
         foreach (var method in RoutePermissionCatalog.Methods(endpoint))
         {

@@ -107,6 +107,11 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
             Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Secret);
+        using (var tokenRefused = await client.PostAsJsonAsync(path, summary))
+            Assert.Equal(HttpStatusCode.Forbidden, tokenRefused.StatusCode);
+        client.DefaultRequestHeaders.Authorization = null;
+        client.DefaultRequestHeaders.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={owner.SessionToken}");
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", owner.CsrfToken);
         using var first = await client.PostAsJsonAsync(path, summary);
         first.EnsureSuccessStatusCode();
         using var body = JsonDocument.Parse(await first.Content.ReadAsStringAsync());
