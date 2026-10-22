@@ -5962,29 +5962,26 @@ public partial class GitService
         var reportOnlyConflict = directMergeCode != 0
             && DeliveryReportPathPolicy.IsEnabled(repoRoot)
             && DeliveryReportPathPolicy.AreOnlyReportConflicts(directConflicts);
-        if (directMergeCode == 0)
+        if (directMergeCode == 0 || reportOnlyConflict)
         {
-            var directMergedSha = ReadHeadShaAt(repoRoot);
-            return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged,
-                mergedSha: directMergedSha);
-        }
-        if (reportOnlyConflict)
-        {
-            var restoreArgs = new[] { "restore", "--source=HEAD", "--staged", "--worktree", "--" }
-                .Concat(directConflicts).ToArray();
-            var (_, restoreError, restoreCode) = RunGitArgs(repoRoot, restoreArgs);
-            if (restoreCode != 0)
+            if (reportOnlyConflict)
             {
-                RunGitArgs(repoRoot, "merge", "--abort");
-                return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
-                    error: $"Could not retain integration report paths: {restoreError.Trim()}");
-            }
-            var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit");
-            if (commitCode != 0)
-            {
-                RunGitArgs(repoRoot, "merge", "--abort");
-                return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
-                    error: $"Could not commit the delivery merge: {commitError.Trim()}");
+                var restoreArgs = new[] { "restore", "--source=HEAD", "--staged", "--worktree", "--" }
+                    .Concat(directConflicts).ToArray();
+                var (_, restoreError, restoreCode) = RunGitArgs(repoRoot, restoreArgs);
+                if (restoreCode != 0)
+                {
+                    RunGitArgs(repoRoot, "merge", "--abort");
+                    return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
+                        error: $"Could not retain integration report paths: {restoreError.Trim()}");
+                }
+                var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit");
+                if (commitCode != 0)
+                {
+                    RunGitArgs(repoRoot, "merge", "--abort");
+                    return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
+                        error: $"Could not commit the delivery merge: {commitError.Trim()}");
+                }
             }
             var directMergedSha = ReadHeadShaAt(repoRoot);
             _logger.LogInformation(
@@ -5996,7 +5993,7 @@ public partial class GitService
             return MergeIntoIntegrationResult.Of(
                 MergeIntoIntegrationOutcome.Merged,
                 mergedSha: directMergedSha) with
-                { ConflictsResolved = true };
+                { ConflictsResolved = reportOnlyConflict };
         }
 
         RunGitArgs(repoRoot, "merge", "--abort");
