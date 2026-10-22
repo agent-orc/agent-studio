@@ -65,6 +65,8 @@ reason, or `abort` to
 Retry queues the failed deploy step again under the same run. A failed health
 step retries only the health check, without redeploying the artifact. Abort and timeout
 use the existing automatic rollback rule, including its host-lost exception.
+An aborted run with a failed step leaves the same linked Production failure
+card as a run that fails without intervention.
 Manual rollback runs can pause and retry as rollbacks; automatic rollbacks never
 pause. Retry jobs retain their parent job id so reconciliation restores the
 same run if the control plane restarts after queuing but before saving the run.
