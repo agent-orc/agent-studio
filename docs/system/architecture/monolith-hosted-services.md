@@ -80,6 +80,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | DeliveryChainReconciler | always | decide, operator | AI Operator decider `delivery-chain` (`DeliveryChainPolicy`). Effect: `DeliveryChainReconciler` moves the card; a red merge gate is still routed by `GateFailureRouter` before it may park (gate triage, a host rule in the baseline). |
 | BatchMoveJobCoordinator | !PD | apply-recover | Authority (applies an operator command) |
 | TaskIndexCacheDiagnosticsService | always | infra | Authority host |
+| OperatorCandidateAuditRepair | always | apply-recover | Authority host. Restores missing timeline audits from persisted operator candidate receipts at startup; makes no transition decision. |
 | ResultSummaryRetryScheduler | !PD | apply-recover | Authority |
 | AttemptArchiveIndexWarmupService | always | infra | Authority host |
 | RemoteQueueStarvationWatchdog | !PD | report | Authority host |

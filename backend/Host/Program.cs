@@ -50,6 +50,7 @@ Log.Logger = new LoggerConfiguration()
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<TaskDetailLatencyMetrics>();
+builder.Services.AddSingleton<AgentStudio.Review.ReviewObservationStore>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunRepositoryProbe>();
 builder.Services.AddSingleton<AgentStudio.Registry.LocalFirstRunGitSetup>();
 builder.Services.AddSingleton<IMonolithOrchestrationApplier, MonolithOrchestrationApplier>();
@@ -74,7 +75,7 @@ builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    options.ForwardLimit = 1;
+    options.ForwardLimit = 2;
     foreach (var raw in (builder.Configuration["Security:TrustedProxyAddresses"] ?? "")
                  .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
     {
@@ -397,6 +398,10 @@ builder.Services.AddSingleton<AgentStudio.Registry.OrchestratorDefaultsProvider>
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlDetectionService>();
 builder.Services.AddSingleton<AgentStudio.Registry.IProjectUrlPortInspector, AgentStudio.Registry.ProjectUrlPortInspector>();
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlProcessService>();
+builder.Services.AddSingleton<AgentStudio.Registry.IProjectUrlProcessStarter>(provider =>
+    provider.GetRequiredService<AgentStudio.Registry.ProjectUrlProcessService>());
+builder.Services.AddSingleton<AgentStudio.Registry.IProjectUrlProcessStopper>(provider =>
+    provider.GetRequiredService<AgentStudio.Registry.ProjectUrlProcessService>());
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlReadinessService>();
 // AGT-2180: bounded HTTP client shared by the readiness probe and the URL
 // diagnostics (an unconfigured named client would wait 100 s per probe).
@@ -450,6 +455,8 @@ builder.Services.AddSingleton<AgentStudio.Tasks.DeliveryClaimSweep>();
 builder.Services.AddSingleton<FixtureMigrationService>();
 builder.Services.AddSingleton<TaskSessionLog>();
 builder.Services.AddSingleton<TimelineLog>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.OperatorCandidateAuditRepair>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentStudio.Pipeline.OperatorCandidateAuditRepair>());
 builder.Services.AddSingleton<ProjectThroughputService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateSlotUsageTracker>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.PullGateStore(
@@ -1874,6 +1881,7 @@ var jobStatsMetadataCache = app.Services.GetRequiredService<JobStatsMetadataCach
 var taskScanner = app.Services.GetRequiredService<TaskScannerService>();
 taskScanner.SetIndexCache(jobIndexCache);
 taskScanner.SetStatsMetadataCache(jobStatsMetadataCache);
+taskScanner.SetOrchestrationStore(app.Services.GetRequiredService<MonolithOrchestrationStore>());
 watcher.OnJobChanged += _ => jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
 // AGT-3088: board reads serve the last published snapshot and refresh it in
 // the background; once that refresh catches up with an invalidation a board
