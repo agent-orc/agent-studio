@@ -22,6 +22,20 @@ with actor, host, provider and outcome, without the code. Timeout and cancel
 clear the instructions. Each runner keeps its own native credential store;
 neither Task Server nor Studio distributes ChatGPT login files.
 
+The coding host also probes the small set of primary and fallback model ids
+with a real request in an isolated scratch context. It adds the valid model ids
+the server returns as operator-configured quota routes or ready-card models in
+the capability response. Each verdict is bound to
+the local credential generation and advertised as `model-acceptance:<provider>:<model>`.
+The quota view lists accepted models by host. A launch-time model refusal with
+no salvage marks that host model unavailable and puts the card back in Ready.
+Task Server claims and work-permit offers and acceptances require fresh
+acceptance of the effective named model; a blank model uses the CLI default.
+A refused model stays held until the same runner instance advertises it as not
+ready and then advertises a ready verdict with a larger runner-local probe
+sequence. Runner and server clock order never clears the hold. A refused
+fallback does not hold the card once quota admission can use its primary route.
+
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable
 `execution-placement` hold. The picker skips it before `RunCliAsync`, records
