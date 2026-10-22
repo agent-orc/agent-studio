@@ -65,7 +65,8 @@ public sealed class CliQuotaFallbackService
         string? requestedModel,
         string? requestedThinkingLevel,
         Func<string?, CapEvaluation> evaluateQuota,
-        bool preferFallback = false)
+        bool preferFallback = false,
+        Func<string, string?, bool>? modelAccepted = null)
     {
         var cli = Clean(requestedCliType)?.ToLowerInvariant() ?? CliTypes.Claude;
         EnsureLoaded();
@@ -84,6 +85,9 @@ public sealed class CliQuotaFallbackService
                 preferFallback ? "operator prefers fallback, but no comparable route is available" : cap.DescribeReason(), cap);
 
         var (fallbackCli, fallbackModel, fallbackThinking) = effective.Value;
+        if (modelAccepted is not null && !modelAccepted(fallbackCli, fallbackModel))
+            return new(cli, primaryModel, primaryThinking, false,
+                $"fallback {fallbackCli}/{fallbackModel} is not accepted by the claiming host", cap);
         var fallbackCap = string.Equals(fallbackCli, cli, StringComparison.OrdinalIgnoreCase)
             ? CapEvaluation.NotBlocked
             : evaluateQuota(fallbackCli);

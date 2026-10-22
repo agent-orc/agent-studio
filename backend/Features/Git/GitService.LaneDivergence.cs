@@ -121,7 +121,7 @@ public partial class GitService
     }
 
     /// <summary>Ancestry, full-tree containment, or patch equivalence of every delivery commit.</summary>
-    private bool IsDeliveryInPublished(string repoRoot, string deliverySha, string publishedTip)
+    public bool IsDeliveryInPublished(string repoRoot, string deliverySha, string publishedTip)
         => IsDeliveryPublished(repoRoot, deliverySha, publishedTip)
            || IsDeliveryPatchEquivalent(repoRoot, deliverySha, publishedTip);
 

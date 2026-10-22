@@ -18,8 +18,9 @@ public static class DeployEndpoints
         project.MapGet("/releases", (string projectName, DeployService deploy) =>
             deploy.Releases(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
-        project.MapGet("/releases/page", (string projectName, int? offset, int? limit, DeployService deploy) =>
-            deploy.ReleasePage(projectName, offset ?? 0, limit ?? 25) is { } value
+        project.MapGet("/releases/page", (string projectName, int? offset, int? limit, string? artifact,
+            DateTime? notAfterUtc, DeployService deploy) =>
+            deploy.ReleasePage(projectName, offset ?? 0, limit ?? 25, artifact, notAfterUtc) is { } value
                 ? Results.Ok(value) : UnknownProject(projectName));
 
         project.MapGet("/releases/{releaseId}", (string projectName, string releaseId, DeployService deploy) =>

@@ -1091,6 +1091,33 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
+    public void Run_CleanMerge_SucceedsWithFailingPreCommitHook()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var repo = SeedRepo("runner-merge-hook");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/67");
+        File.WriteAllText(Path.Combine(repo, "feature.txt"), "delivered feature\n");
+        Commit(repo, "feat: deliver feature");
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "integration.txt"), "integration change\n");
+        Commit(repo, "feat: integration change");
+        var hook = Path.Combine(repo, ".git", "hooks", "pre-commit");
+        File.WriteAllText(hook, "#!/bin/sh\nexit 1\n");
+        File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite |
+            UnixFileMode.UserExecute);
+
+        var (git, log) = Build(repo);
+        var jobFolder = BeginRun(log, repo, jobId: "67");
+        var outcome = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance)
+            .Run("Fixture", "67", jobFolder, repo, "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.Equal("delivered feature\n", RunGit(repo, $"show {outcome.MergedSha}:feature.txt").Out);
+    }
+
+    [Fact]
     public void Run_RootStatusConflict_MergesCodeAndPreservesDeliveryReportOnCard()
     {
         var repo = SeedRepo("runner-status-conflict");
@@ -1099,7 +1126,7 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Commit(repo, "docs: seed report");
         RunGit(repo, "checkout -q -b develop");
         RunGit(repo, "checkout -q -b task/66");
-        File.WriteAllText(Path.Combine(repo, "status.md"), "delivery report\n");
+        File.WriteAllText(Path.Combine(repo, "status.md"), new string('é', 10_000) + "delivery report\n");
         File.WriteAllText(Path.Combine(repo, "feature.txt"), "delivered feature\n");
         Commit(repo, "feat: deliver feature and report");
         var deliverySha = RunGit(repo, "rev-parse task/66").Out.Trim();
@@ -1118,10 +1145,44 @@ public sealed partial class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal("integration report\n", File.ReadAllText(Path.Combine(repo, "status.md")));
         Assert.Equal("integration report\n", RunGit(repo, $"show {outcome.MergedSha}:status.md").Out);
         Assert.Equal("delivered feature\n", RunGit(repo, $"show {outcome.MergedSha}:feature.txt").Out);
-        var artifact = Path.Combine(jobFolder, $"legacy-repository-status-{deliverySha[..12]}.md");
-        Assert.Equal("delivery report\n", File.ReadAllText(artifact));
+        var artifact = Path.Combine(jobFolder, "legacy-repository-status.md");
+        Assert.True(new FileInfo(artifact).Length <= 16 * 1024);
+        Assert.EndsWith("delivery report\n", File.ReadAllText(artifact));
         Assert.False(File.Exists(Path.Combine(jobFolder, "results", Path.GetFileName(artifact))));
         Assert.Equal(PipelineStepStatus.Passed, ReadMergeStep(log, jobFolder)?.Status);
+    }
+
+    [Fact]
+    public void Run_ReusesRunnerReportWithoutWritingAnotherCopy()
+    {
+        var repo = SeedRepo("runner-report-reuse");
+        EnableLegacyReports(repo);
+        File.WriteAllText(Path.Combine(repo, "status.md"), "base report\n");
+        Commit(repo, "docs: seed report");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/69");
+        File.WriteAllText(Path.Combine(repo, "status.md"), "delivery report\n");
+        Commit(repo, "docs: delivery report");
+        RunGit(repo, "checkout -q develop");
+        var (git, log) = Build(repo);
+        var jobFolder = BeginRun(log, repo, jobId: "69");
+        var results = Path.Combine(jobFolder, "results");
+        Directory.CreateDirectory(results);
+        var runnerArtifact = Path.Combine(results, "legacy-repository-status.md");
+        File.WriteAllText(runnerArtifact, "runner report\n");
+        File.WriteAllText(Path.Combine(jobFolder, "legacy-repository-status.md"), "stale fallback\n");
+        File.WriteAllText(Path.Combine(jobFolder, "legacy-repository-status-deadbeefcafe.md"),
+            "stale snapshot\n");
+
+        var outcome = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance)
+            .Run("Fixture", "69", jobFolder, repo, "develop");
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
+        Assert.Equal("runner report\n", File.ReadAllText(runnerArtifact));
+        Assert.False(File.Exists(Path.Combine(jobFolder, "legacy-repository-status.md")));
+        Assert.False(File.Exists(Path.Combine(jobFolder,
+            "legacy-repository-status-deadbeefcafe.md")));
     }
 
     [Fact]

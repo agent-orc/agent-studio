@@ -183,6 +183,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Wiki hosting options and recommendation (full networked Studio vs read-only service vs static export; AGT-2276) | [concepts/wiki-hosting-options-2026-07.html](../concepts/wiki-hosting-options-2026-07.html) |
 | Deployment as a first-class citizen (Deployment page, scenario templates, prompt-defined dynamic UI over CLI tasks; DEP-1..5) | [concept](../concepts/deployment-first-class.md) · [interactive mockup](../concepts/mockups/deployment-first-class.html) |
 | Project environment declaration schema | [schemas/project-environment.schema.json](../app/schemas/project-environment.schema.json) |
+| Deploy host API: claim, step logs, reports, lease and secret resolution | [contracts/deploy-host-api.md](../system/contracts/deploy-host-api.md) |
 | Environment health checks from the control plane: declared and derived checks, uptime and latency, incidents as Activity entries and cards, 30-day raw and hourly retention (IP-14) | [operations/environment-health-checks.md](../operations/environment-health-checks.md) |
 | Release semantics (integration vs acceptance vs release vs stable freeze; transparent watering-can model) | [concept](../concepts/release-semantics.md) |
 | Project Overview operator dashboard (metrics, Visual Evidence Queue, Project URLs, deployment summary, Wiki entry) | [mockup contract](../concepts/project-overview-dashboard/README.md) · [interactive mockup](../concepts/project-overview-dashboard/ui.html) |
@@ -222,6 +223,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Private Hetzner Task Server with local Angular Studio (Phase A architecture, migration, security, and rollback) | [operations/remote-task-server-local-studio.md](../operations/remote-task-server-local-studio.md) |
 | Control plane on Docker (task-server-01): install, update, rollback, backup restore, firewall, WireGuard | [operations/setup/control-plane-docker.md](../operations/setup/control-plane-docker.md) |
 | Temporary Linux Docker placement for the existing monolith control plane, path relocation, and smoke | [operations/setup/monolith-control-plane-docker.md](../operations/setup/monolith-control-plane-docker.md) |
+| Move Studio from the workstation to the server (D15 option B): dry run, rehearsal, apply, delta transfer, rollback | [operations/setup/move-studio-to-server.md](../operations/setup/move-studio-to-server.md) |
 | Installation upgrade and rollback contract: installation manifest, one updater per placement, drain/backup/canary/resume and schema-safe rollback (I06) | [operations/setup/installation-upgrade-contract.md](../operations/setup/installation-upgrade-contract.md) |
 | Single-host Task Server rehearsal handoff: daily health, backup verification, update, rollback, and maintenance-window checklist | [operations/setup/single-host-task-server.md](../operations/setup/single-host-task-server.md) |
 | Windows Task Server fallback runbook (Phase B slice B4: install, warm standby, sub-15-minute switch drill both directions; AGT-2735) | [operations/setup/windows-fallback-runbook.md](../operations/setup/windows-fallback-runbook.md) |
