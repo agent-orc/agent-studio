@@ -910,13 +910,16 @@ builder.Services.AddHttpClient<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
 builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.RemoteGateTransport>();
+builder.Services.AddHostedService<AgentStudio.Pipeline.RemoteGateOrphanSweepService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PullGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ConventionalGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateShardTimingStore>();
 // AGT-3232: the conventional pull-or-SSH transport stays the primary gate host;
 // a subject that declares a sharded suite also spreads shards across
 // RemoteGate:ShardHosts (SSH) with a free slot.
-builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.ShardedRemoteGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.ShardedRemoteGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport>(services =>
+    services.GetRequiredService<AgentStudio.Pipeline.ShardedRemoteGateTransport>());
 builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
     AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();
