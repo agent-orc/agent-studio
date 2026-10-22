@@ -41,6 +41,11 @@ test('workspace rules can be drafted, replayed and activated with a reason', asy
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('platform defaults');
   await panel.getByRole('button', { name: 'Add rule' }).click();
+  await expect(panel.getByLabel('Trigger').locator('option[value="deep-review"]')).toHaveCount(1);
+  await panel.getByLabel('Trigger').selectOption('deep-review');
+  await expect(panel.getByLabel('Review reasoning')).toBeVisible();
+  await panel.getByLabel('Review reasoning').selectOption('xhigh');
+  await panel.getByLabel('Trigger').selectOption('capacity-check');
   await panel.getByLabel('Rule id').fill('queue-pressure');
   await panel.getByLabel('Fact id').fill('host.queue');
   await expect(panel.getByRole('button', { name: 'Save draft' })).toBeDisabled();

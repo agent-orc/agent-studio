@@ -508,6 +508,13 @@ public static class TimelineEventKinds
     public const string WatcherCaseLinked = "watcher_case_linked";
 
     /// <summary>
+    /// AGT-3218: the monolith gate handler took a passed engine gate decision
+    /// and dispatched the aspect review. Details carry <c>orchestrationRunId</c>;
+    /// the applier canary reads it as the durable gate dispatch.
+    /// </summary>
+    public const string EngineGateDispatched = "engine_gate_dispatched";
+
+    /// <summary>
     /// IP-14: an environment health incident or certificate warning that owns
     /// this card changed (reopened, recovered, certificate closer to expiry).
     /// Details carry <c>incidentId</c> or <c>certificateNotAfter</c>,

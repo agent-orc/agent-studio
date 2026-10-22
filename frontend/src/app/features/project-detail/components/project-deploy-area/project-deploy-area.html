@@ -52,6 +52,6 @@
       @defer { <app-deploy-run-drawer class="deploy-area__drawer" [run]="run" [log]="logPanel()" [action]="actionState()"
         (act)="act($event)" (skip)="act('skip', $event)" (closeRequest)="closeRun()" /> }
       @placeholder { <p>Loading run details…</p> }
-    }
+    } @else if (fetchedRun()?.status === 'loading') { <p class="deploy-muted" role="status" data-testid="deploy-run-fetching">Loading run details…</p> }
   </div>
 </div>

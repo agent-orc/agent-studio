@@ -357,6 +357,23 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void ReleasePage_FindsTheReleaseOfAnArtifactByDigestAndDeployTime()
+    {
+        var (deploy, _, _) = Build();
+        var first = CreateRelease(deploy, Artifact('a'), Head());
+        var firstCreated = _clock.GetUtcNow().UtcDateTime;
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        var second = CreateRelease(deploy, Artifact('b'), Commit("second"));
+
+        var byDigest = deploy.ReleasePage("demo", 0, 1, "other.registry/app@sha256:" + new string('a', 64))!;
+        Assert.Equal((1, first.Id), (byDigest.Total, Assert.Single(byDigest.Items).Id));
+        Assert.Equal(second.Id, Assert.Single(deploy.ReleasePage("demo", 0, 1, Artifact('b'))!.Items).Id);
+        Assert.Empty(deploy.ReleasePage("demo", 0, 1, Artifact('b'), firstCreated)!.Items);
+        Assert.Empty(deploy.ReleasePage("demo", 0, 1, Artifact('c'))!.Items);
+        Assert.Equal(2, deploy.ReleasePage("demo", 0, 25)!.Total);
+    }
+
+    [Fact]
     public void Release_IncludesOnlyCardsIntegratedSincePreviousRelease()
     {
         var (deploy, _, _) = Build();
@@ -369,6 +386,82 @@ public sealed class DeployServiceTests : IDisposable
         var release = CreateRelease(deploy, Artifact('b'), second);
         Assert.Equal("2026.10.16.2", release.Version);
         Assert.Equal(["DEMO-2", "DEMO-3"], release.CardKeys);
+    }
+
+    [Fact]
+    public void SquashedCommitMessage_KeepsIntegratedCardMapping()
+    {
+        var (deploy, _, _) = Build();
+        var commit = Commit("feat(DEMO-4) improve the product");
+        Card("DEMO-4", new string('0', 40));
+
+        var release = CreateRelease(deploy, Artifact('d'), commit);
+
+        Assert.Equal(["DEMO-4"], release.CardKeys);
+        Assert.Equal(release.CardKeys, Assert.Single(deploy.Releases("demo")!).CardKeys);
+    }
+
+    [Fact]
+    public void RewrittenCommitWithoutCardKey_UsesDurableIntegrationVerification()
+    {
+        var (deploy, _, _) = Build();
+        var first = Head();
+        CreateRelease(deploy, Artifact('a'), first);
+        var integrated = Commit("integrated");
+        Card("DEMO-5", integrated);
+        // A squash from develop onto the release branch keeps the integrated tree but neither the SHA nor the key.
+        var rewritten = Git("commit-tree", integrated + "^{tree}", "-p", first,
+            "-m", "Improve the product after integration").Trim();
+        Git("checkout", "-b", "main", rewritten);
+
+        var release = CreateRelease(deploy, Artifact('b'), rewritten);
+
+        Assert.Equal(["DEMO-5"], release.CardKeys);
+        Assert.Equal(release.CardKeys, deploy.ReleaseDetail("demo", release.Id)!.Release.CardKeys);
+    }
+
+    [Fact]
+    public void ReleaseWithoutTheIntegratedTree_DoesNotClaimEarlierVerifiedCard()
+    {
+        var (deploy, _, _) = Build();
+        var first = Head();
+        CreateRelease(deploy, Artifact('a'), first);
+        Card("DEMO-7", Commit("integrated"));
+        _clock.Advance(TimeSpan.FromHours(1));
+        Git("checkout", "-b", "hotfix", first);
+        var hotfix = Commit("hotfix");
+
+        var release = CreateRelease(deploy, Artifact('b'), hotfix);
+
+        Assert.Empty(release.CardKeys);
+    }
+
+    [Fact]
+    public void SquashMessageNamingAReleasedCard_AddsOnlyTheNewCard()
+    {
+        var (deploy, _, _) = Build();
+        var first = Head();
+        Card("DEMO-1", first);
+        CreateRelease(deploy, Artifact('a'), first);
+        var squashed = Commit("Squash DEMO-1 and DEMO-2");
+        Card("DEMO-2", new string('0', 40));
+
+        var release = CreateRelease(deploy, Artifact('b'), squashed);
+
+        Assert.Equal(["DEMO-2"], release.CardKeys);
+    }
+
+    [Fact]
+    public void DelayedGateForOlderCommit_DoesNotClaimLaterVerifiedCard()
+    {
+        var (deploy, _, _) = Build();
+        var olderCommit = Head();
+        _clock.Advance(TimeSpan.FromHours(1));
+        Card("DEMO-6", new string('0', 40));
+
+        var release = CreateRelease(deploy, Artifact('a'), olderCommit);
+
+        Assert.Empty(release.CardKeys);
     }
 
     [Fact]
@@ -636,7 +729,7 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
-    public void ReclaimedJobRejectsOldLeaseToken()
+    public void ReportAfterTheLease_RequiresAReclaimedToken()
     {
         var (deploy, environments, _) = Build();
         CreateRelease(deploy, Artifact('a'), Head());
@@ -961,6 +1054,53 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void Release_creation_uses_committed_channel_rules_and_preserves_the_snapshot()
+    {
+        var (deploy, environments, store) = Build();
+        WriteProjectYml("""
+            lifecycles:
+              standard:
+                - phase: staging
+                  automatic: true
+                - phase: production
+                  approval: [Owner]
+                  requires: staging
+              hotfix:
+                - phase: staging
+                  automatic: true
+                - phase: production
+                  automatic: true
+                  requires: staging
+            channels:
+              - name: default
+                lifecycle: standard
+                default: true
+              - name: hotfix
+                lifecycle: hotfix
+                branchPattern: refs/heads/hotfix/*
+            variables:
+              - name: LOG_LEVEL
+                value: debug
+                channels: [hotfix]
+            """);
+        var commit = Commit("channel-definition");
+        var artifact = Artifact('a');
+        WriteReleaseEvidence(artifact, commit);
+        Assert.True(environments.RegisterGateArtifact("demo", artifact, commit));
+        var refused = deploy.CreateRelease("demo", artifact, commit, "release-gate", branch: "refs/heads/main",
+            requestedChannel: "hotfix");
+        Assert.Equal(DeployOutcomeKind.Invalid, refused.Kind);
+        Assert.Contains("branchPattern=refs/heads/hotfix/*", refused.Error);
+        var created = deploy.CreateRelease("demo", artifact, commit, "release-gate",
+            branch: "refs/heads/hotfix/urgent");
+        Assert.Equal(DeployOutcomeKind.Ok, created.Kind);
+        Assert.Equal("hotfix", created.Value!.Channel);
+        Assert.Equal("staging", Assert.Single(store.ReadReleaseRecords("demo")).Lifecycle[1].Requires);
+        Report(deploy, environments, "stage-host", healthy: true);
+        Assert.Contains(deploy.Deployments("demo", "production")!, item => item.State == DeploymentStates.Queued);
+    }
+
+    [Fact]
     public void Schema_two_jobs_keep_snapshot_steps_and_automatic_rollback_uses_previous_artifact()
     {
         var (deploy, environments, _) = Build();
@@ -1023,6 +1163,31 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void Schema_two_guided_health_retry_reexecutes_the_snapshot_steps()
+    {
+        var (deploy, environments, _) = Build(guidedStage: true);
+        WriteSshProjectYml();
+        var release = CreateRelease(deploy, Artifact('a'), Commit("guided-ssh"));
+        Report(deploy, environments, "stage-host", healthy: false, evidence: DeployEvidence.HealthFailed);
+        var waiting = Assert.Single(deploy.Deployments("demo", "stage")!);
+        Assert.Equal(DeploymentStates.WaitingForIntervention, waiting.State);
+
+        Assert.Equal(DeployOutcomeKind.Ok,
+            deploy.DecideIntervention("demo", waiting.Id, new("retry"), Owner).Kind);
+        var retry = environments.Claim("stage-host")!;
+        Assert.Null(retry.RetryStep);
+        Assert.Equal("container", Assert.Single(retry.SshSteps).Step);
+        Assert.True(environments.Report("demo", retry.Id,
+            new(retry.LeaseToken!, true, DeployEvidence.HealthOk, [new("deploy[0]:container", true)])));
+        deploy.SyncAfterHostCall("demo");
+
+        var complete = Assert.Single(deploy.Deployments("demo", "stage")!);
+        Assert.Equal(release.Id, complete.ReleaseId);
+        Assert.Equal(DeploymentStates.Succeeded, complete.State);
+        Assert.Equal(DeploymentStates.Succeeded, complete.Steps[0].State);
+    }
+
+    [Fact]
     public void Schema_two_release_refuses_current_declaration_divergence()
     {
         var (deploy, _, _) = Build();
@@ -1059,6 +1224,7 @@ public sealed class DeployServiceTests : IDisposable
         Build();
         var older = Head();
         var commit = Commit("second");
+        Card("DEMO-1", commit, title: "Faster page loading");
         WriteReleaseEvidence(Artifact('a'), commit);
         WriteReleaseEvidence(Artifact('b'), older);
         await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
@@ -1091,6 +1257,11 @@ public sealed class DeployServiceTests : IDisposable
         Assert.True(factory.Services.GetRequiredService<ProjectEnvironmentService>()
             .RegisterGateArtifact("demo", Artifact('a'), commit));
 
+        using var unknownChannel = await client.PostAsJsonAsync("/api/projects/demo/environments/releases",
+            new ReleaseArtifactRequest(Artifact('a'), commit, Channel: "hotfix"));
+        Assert.Equal(HttpStatusCode.BadRequest, unknownChannel.StatusCode);
+        Assert.Contains("Channel 'hotfix' is not declared", await unknownChannel.Content.ReadAsStringAsync());
+
         using var created = await client.PostAsJsonAsync("/api/projects/demo/environments/releases",
             new ReleaseArtifactRequest(Artifact('a'), commit));
         Assert.Equal(HttpStatusCode.Accepted, created.StatusCode);
@@ -1115,6 +1286,7 @@ public sealed class DeployServiceTests : IDisposable
         using var releasePage = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/releases/page?offset=0&limit=1"));
         Assert.Equal(1, releasePage.RootElement.GetProperty("total").GetInt32());
         Assert.Single(releasePage.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal("default", releasePage.RootElement.GetProperty("items")[0].GetProperty("channel").GetString());
         using var runPage = JsonDocument.Parse(await client.GetStringAsync(
             "/api/projects/demo/deploy/deployments/page?environmentId=stage&state=queued&offset=0&limit=1"));
         Assert.Equal(1, runPage.RootElement.GetProperty("total").GetInt32());
@@ -1131,6 +1303,14 @@ public sealed class DeployServiceTests : IDisposable
         foreach (var name in new[] { "id", "projectId", "version", "commitSha", "artifactDigests", "processVersion",
                      "variablesVersion", "cardKeys", "createdAtUtc", "channel" })
             Assert.True(release.RootElement.GetProperty("release").TryGetProperty(name, out _), name);
+
+        using var notes = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/demo/deploy/releases/{releaseId}/notes"));
+        Assert.Equal("Faster page loading", notes.RootElement.GetProperty("notes")[0].GetProperty("text").GetString());
+        using var cards = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/cards"));
+        Assert.Equal("DEMO-1", cards.RootElement[0].GetProperty("cardKey").GetString());
+        Assert.Equal("not-deployed", cards.RootElement[0].GetProperty("environments")[1]
+            .GetProperty("state").GetString());
 
         var deploymentId = run.GetProperty("id").GetString();
         using var approve = await client.PostAsync($"/api/projects/demo/deploy/deployments/{deploymentId}/approve", null);
@@ -1173,12 +1353,18 @@ public sealed class DeployServiceTests : IDisposable
             $"/api/projects/demo/deploy/deployments/{production.Id}/intervention",
             new InterventionDecisionRequest("skip", "Optional health check"));
         Assert.Equal(HttpStatusCode.Forbidden, unauthorizedIntervention.StatusCode);
-        using var skipped = await client.PostAsJsonAsync(
+        using var aborted = await client.PostAsJsonAsync(
             $"/api/projects/demo/deploy/deployments/{production.Id}/intervention",
-            new InterventionDecisionRequest("skip", "Optional health check"));
-        Assert.Equal(HttpStatusCode.OK, skipped.StatusCode);
-        Assert.Contains(service.Audit("demo")!, entry => entry.Action == "intervention-skip"
+            new InterventionDecisionRequest("abort", "Health check failed"));
+        Assert.Equal(HttpStatusCode.OK, aborted.StatusCode);
+        Assert.Contains(service.Audit("demo")!, entry => entry.Action == "intervention-abort"
             && entry.Actor == auth.User.Id);
+        service.SyncAfterHostCall("demo");
+        var failures = factory.Services.GetRequiredService<TaskScannerService>().ScanAllJobsRaw()
+            .Where(item => item.Id == "production-deploy-failed-" + production.Id).ToArray();
+        var failure = Assert.Single(failures);
+        Assert.Equal("bug", failure.TaskType);
+        Assert.Contains(releaseId!, File.ReadAllText(Path.Combine(failure.FolderPath, "prompt.md")));
     }
 
     [Theory]
@@ -1260,7 +1446,7 @@ public sealed class DeployServiceTests : IDisposable
         _clock.Advance(TimeSpan.FromMinutes(1));
         var steps = job.SshSteps.Select((step, index) =>
             new DeployStepResult($"deploy[{index}]:{step.Step}", healthy))
-            .Take(healthy ? job.SshSteps.Length : 1).ToArray();
+            .Take(healthy ? job.SshSteps.Count : 1).ToArray();
         Assert.True(environments.Report("demo", job.Id,
             new(job.LeaseToken!, healthy, evidence ?? (healthy ? "health-ok" : "deploy-step-failed"), Steps: steps)));
         deploy.SyncAfterHostCall("demo");
@@ -1279,13 +1465,13 @@ public sealed class DeployServiceTests : IDisposable
 
     private static string Artifact(char fill) => "registry.example/app@sha256:" + new string(fill, 64);
 
-    private void Card(string key, string sha, IReadOnlyList<string>? deliveryShas = null)
+    private void Card(string key, string sha, IReadOnlyList<string>? deliveryShas = null, string? title = null)
     {
         var folder = Path.Combine(_watch, "6-completed", key.ToLowerInvariant());
         Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
         {
-            id = key.ToLowerInvariant(), key, title = "Card " + key, state = "6-completed", agent = "claude",
+            id = key.ToLowerInvariant(), key, title = title ?? "Card " + key, state = "6-completed", agent = "claude",
             createdAt = _clock.GetUtcNow(),
         }));
         File.WriteAllText(Path.Combine(folder, "prompt.md"), "fixture");
@@ -1352,7 +1538,7 @@ public sealed class DeployServiceTests : IDisposable
         var environments = new ProjectEnvironmentService(config, scanner, git, settings, _clock);
         var store = new DeployStore(config);
         _environments = environments;
-        return (new DeployService(environments, store, git, scanner, _clock, NullLogger<DeployService>.Instance),
+        return (new DeployService(environments, store, git, scanner, _clock, NullLogger<DeployService>.Instance, null),
             environments, store);
     }
 
@@ -1365,7 +1551,7 @@ public sealed class DeployServiceTests : IDisposable
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         var environments = new ProjectEnvironmentService(config, scanner, git, settings, _clock);
         return new DeployService(environments, new DeployStore(config), git, scanner, _clock,
-            NullLogger<DeployService>.Instance);
+            NullLogger<DeployService>.Instance, null);
     }
 
     private void WriteProduction(string host, string destination, bool guidedFailure = false)
@@ -1448,6 +1634,13 @@ public sealed class DeployServiceTests : IDisposable
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = _repo,
             RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        if (arguments.Length > 0 && arguments[0] == "commit")
+        {
+            var when = _clock.GetUtcNow().ToString("yyyy-MM-ddTHH:mm:sszzz",
+                System.Globalization.CultureInfo.InvariantCulture);
+            start.Environment["GIT_AUTHOR_DATE"] = when;
+            start.Environment["GIT_COMMITTER_DATE"] = when;
+        }
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEnd();

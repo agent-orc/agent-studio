@@ -67,9 +67,6 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
         Assert.Contains("conflicts-with-running", reason);
     }
 
-
-
-
     private static TaskInfo? InvokeDisplayedPicker(ProjectRunner runner, int slotMax)
     {
         var method = typeof(ProjectRunner).GetMethod("PickNextDisplayedCandidate", BindingFlags.Instance | BindingFlags.NonPublic);

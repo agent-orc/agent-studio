@@ -1,7 +1,61 @@
 # Review Domain Map
 
-Version: 2026-10-12
+Version: 2026-10-21
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Review economics (AGT-3278)
+
+`GET /api/projects/{projectName}/token-usage/reviews` folds the canonical
+deduplicated project token ledger into delivery review attempts. Query filters
+are `days` (1 to 90, default 30), `model`, `level`, and `host`. The endpoint
+returns median and nearest-rank p90 tokens and historical list-price USD per
+delivery review, accepted-card review rounds and spend, review share of card
+tokens, step and model/level splits, daily 7-day and 30-day median series, and
+the underlying review call rows. The ledger snapshot and the derived response
+are cached for at most 60 seconds against the task index generation.
+
+Remote Review receipts now preserve `support:remote-review:{attempt}:step:{stepId}`
+on each agent command. Replaying an attempt replaces all of its step rows.
+Local aspect and grade usage emits project-scoped ledger rows with the pipeline
+attempt and step; a local call made without a pipeline attempt remains a
+distinct legacy round. Review decision calls are attributed to the card.
+Older receipts retain their attempt attribution but appear under
+`review, step unknown`. Calls without a historical catalog price remain in
+token statistics and are omitted from USD samples. The project overview and
+usage cockpit show the same read-only tiles and link each tile to the matching
+review rows. Miss-rate feedback awaits AGT-3269.
+
+## Deep review selection (AGT-3268)
+
+`RemoteReviewPlanBuilder` freezes a `deepReviewDecision` receipt on each coding
+delivery's ReviewSubject. `DeepReview:Mode` defaults to `shadow`: the receipt
+records the selection and route, but no command runs. `active` adds one
+`post-deep-review` semantic command to the remote review plan. The review host
+executes it in the same read-only, exact-SHA workspace as the aspects. Its
+command evidence includes model, reasoning level, token usage, and host identity,
+and its verdict is reported as `deep-review` beside the aspect verdicts.
+The run-completion timeline names the receipt, and report projection records a
+`post-deep-review-decision` pipeline row before the deep-review verdict row.
+
+The engine policy in `orchestration-decisions/DeepReviewPolicy.cs` selects from
+the card's Token Economy correctness floor, changed paths and line count, prior
+blocks, gate failures, delivered rounds, and quota admission. It defaults to
+`gpt-6-sol` at `medium`; P0, critical correctness floors, and touched security,
+fencing, lease, migration, concurrency, or orchestration-decision code require
+`xhigh`. Available quota never raises the effort. A capped route can suppress
+discretionary review, but a critical review retains its floor and waits for
+quota. The plan refuses a quota fallback that would replace its frozen route.
+The AGT-3068 rules editor accepts the `deep-review` trigger with numeric
+`review.changed-lines`, `review.previous-blocks`, `review.gate-failures`, and
+`review.delivered-rounds` facts. A matching `prepare` rule selects review;
+`observe` declines it. The critical floor cannot be waived. Model and reasoning
+level can be configured within the validated catalogue and the critical floor.
+
+The plan stops deep review after three delivered rounds or the lower project
+review limit. Aspect and deep findings with the same cited evidence and missing
+contract form one fix item. A third consecutive block of the same cited deep
+finding escalates to a person rather than opening another automatic fix round. The existing card
+round and reissue budgets still govern every review result.
 
 ## Review host placement (D19 A, AGT-3069)
 
@@ -1145,3 +1199,45 @@ usually exists only under `refs/remotes/origin` in the Studio checkout.
   remain review infrastructure failures. The shared report diagnosis policy
   and standalone Task Server accept a failed prerequisite build only when it
   matches the planned preceding step and baseline SHA.
+# Review observations and later evidence (AGT-3269)
+
+Studio projects executed aspect and grade steps from each task's durable
+`pipeline-execution.json`, including prior attempts and repeated step runs, into
+review observations. Each observation keeps the recorded model, thinking level,
+four token dimensions, duration, verdict, severity counts, historical list-price
+estimate and evidence reference. New local and remote aspect projections, grades,
+and product gate projections bind the exact delivered Result-SHA. Older rows without that SHA remain
+visible for cost analysis but cannot receive an automatic miss attribution.
+
+`POST /api/tasks/{jobId}/review-observations?project=...` records an externally
+performed deep review (or a review outside the pipeline) in the task-local
+`results/review-observations.jsonl` journal. The request includes its exact SHA,
+measurements and cited artifact. When its cost is omitted, Studio uses the
+historical price catalogue at the review date if the model is priced.
+`POST /api/tasks/{jobId}/review-observations/{reviewId}/later-evidence?project=...`
+links a later review, gate, operator finding or production incident to an earlier
+approved review of the same SHA. The later evidence must be dated after approval
+and cite an artifact. A later blocking review or product-class remote gate on the
+same SHA supplies the link automatically. Replayed journal IDs do not duplicate
+records.
+
+`POST /api/tasks/{jobId}/review-observations/{reviewId}/finding-outcomes?project=...`
+records a cited confirmation and dismissal count for findings reported by a
+review. The journal keeps each assessment; the latest one supplies cost per
+real finding and the optional Token Economy `outcomes` field.
+
+`GET /api/projects/{projectName}/token-usage/review-observations` returns the
+per-review records, later evidence links and model/reasoning aggregates. The
+`/export` suffix returns a dated manifest with its method and
+`studio-observation` status. Eligible `runs` use Token Economy's
+`quality-studio-review-run-v1` drop shape; rows without a measured positive
+file count, CLI, model or reasoning level appear under `excludedObservations`
+instead of receiving invented values. The export does not claim publication in
+Token Economy. `/export/{reviewId}` returns one importer-ready version-1
+review-run JSON document when that review has the required fields.
+Unpriced reviews retain null cost. Cost per real finding is null unless reported
+findings have an explicit confirmed count. When a model/reasoning cohort has at
+least five approvals and two cited misses with a miss rate of at least 20%, the
+remote review plan runs every semantic aspect on a follow-up round instead of
+carrying previous verdicts over. This affects review depth only, not the task's
+acceptance or transition decision.

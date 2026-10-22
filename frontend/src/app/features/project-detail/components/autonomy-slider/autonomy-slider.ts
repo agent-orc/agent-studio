@@ -3,13 +3,14 @@ import { FormsModule } from '@angular/forms';
 import { TaskService } from '../../../../services/task.service';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
-interface AutonomyStop {
+export interface AutonomyStop {
   level: number;
   name: string;
   desc: string;
 }
 
-const STOPS: AutonomyStop[] = [
+/** ADR-0026 autonomy stops; Project Settings shows the same labels. */
+export const AUTONOMY_STOPS: readonly AutonomyStop[] = [
   { level: 0, name: 'Manual', desc: 'Orchestrator never moves a task forward without a human click. Queue may be empty.' },
   { level: 1, name: 'Cautious', desc: 'Orchestrator may sharpen prompts once. Every borderline task is bounced to NeedsClar for clarification.' },
   { level: 2, name: 'Balanced', desc: 'Default. Orchestrator iterates up to 3 times and decides on clear cases. Bounces only the genuinely-unclear.' },
@@ -33,13 +34,13 @@ const STOPS: AutonomyStop[] = [
 })
 export class AutonomySliderComponent implements OnInit {
   readonly projectName = input.required<string>();
-  readonly stops = STOPS;
+  readonly stops = AUTONOMY_STOPS;
 
   private readonly jobService = inject(TaskService);
 
   readonly level = signal<number>(2);
 
-  readonly currentStop = computed(() => STOPS[this.level()] ?? STOPS[2]);
+  readonly currentStop = computed(() => AUTONOMY_STOPS[this.level()] ?? AUTONOMY_STOPS[2]);
 
   ngOnInit() {
     this.jobService.getProjectAutonomyLevel(this.projectName()).subscribe({

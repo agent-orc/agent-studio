@@ -631,8 +631,8 @@ public sealed class RunnerOptions
                 + "network (for example a container network such as http://orchestrator-api:5031).");
         if (!serverUri.IsLoopback && string.IsNullOrWhiteSpace(options.AuthToken))
             throw new ArgumentException("RUNNER_AUTH_TOKEN is required for a non-loopback Task Server.");
-        if (options.Role is not ("coding" or "review" or "gate" or "integration"))
-            throw new ArgumentException("RUNNER_ROLE must be 'coding', 'review', 'gate', or 'integration'.");
+        if (options.Role is not ("coding" or "review" or "gate" or "integration" or "run-target"))
+            throw new ArgumentException("RUNNER_ROLE must be 'coding', 'review', 'gate', 'integration', or 'run-target'.");
         if (options.Role is "review" or "gate"
             && string.Equals(
                 Path.GetFullPath(options.WorkDir),

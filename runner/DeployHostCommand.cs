@@ -17,7 +17,7 @@ public static class DeployHostCommand
     private sealed record Job(string Id, string Project, string EnvironmentId, string HostId,
         string Artifact, string Template, string Destination, string? HealthUrl,
         string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken,
-        string? RetryStep)
+        bool IsStop = false, string? RetryStep = null)
     {
         public string Kind { get; init; } = "standard";
         public string? CardKey { get; init; }
@@ -34,9 +34,9 @@ public static class DeployHostCommand
     }
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
-        HttpClient? transport = null, IPreviewRunZone? previewZone = null,
-        SshDeployExecutor? sshExecutor = null,
-        Func<string, CancellationToken, Task<bool>>? checkHealth = null, TimeProvider? clock = null)
+        HttpClient? transport = null, SshDeployExecutor? sshExecutor = null,
+        Func<string, CancellationToken, Task<bool>>? checkHealth = null, TimeProvider? clock = null,
+        IPreviewRunZone? previewZone = null)
     {
         if (args.Length < 4 || args.Length > 5)
         {
@@ -58,10 +58,17 @@ public static class DeployHostCommand
             leaseLost = true;
             lease.Cancel();
         }, lease.Token);
+        if (job.IsStop)
+        {
+            var stopped = await StopEnvironment(client, job, lease.Token);
+            lease.Cancel();
+            await renewal;
+            return leaseLost ? 1 : stopped;
+        }
         var evidence = "deploy-step-failed";
         var healthy = false;
-        string? screenshotBase64 = null;
         var stepResults = new List<object>();
+        string? screenshotBase64 = null;
         try
         {
             var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
@@ -69,8 +76,7 @@ public static class DeployHostCommand
             {
                 if (previewZone is null)
                 {
-                    Console.Error.WriteLine("Preview run zone is not configured for this deploy host.");
-                    return 2;
+                    throw new InvalidOperationException("Preview run zone is not configured for this deploy host.");
                 }
                 if (job.CardKey is null || job.SourceCommit is null || job.Address is null
                     || job.SourceRepository is null || job.SourceRef is null)
@@ -93,29 +99,31 @@ public static class DeployHostCommand
             }
             else
             {
-                if (job.SshSteps.Length > 0)
+                if (job.RetryStep is null && job.SshSteps.Length > 0)
                 {
                     var executor = sshExecutor ?? new SshDeployExecutor();
-                    foreach (var (step, index) in job.SshSteps.Select((value, index) => (value, index)))
+                    for (var index = 0; index < job.SshSteps.Length; index++)
                     {
+                        var step = job.SshSteps[index];
                         var name = $"deploy[{index}]:{step.Step}";
                         try
                         {
                             var variables = await ResolveVariables(job, client, lease.Token);
                             var bundlePath = step.Step == "static-site"
                                 ? job.Artifacts.FirstOrDefault(item => item.Name == step.Artifact && item.Type == "static")?.Path
-                                    ?? throw new InvalidDataException("Static artifact is missing from release snapshot.")
+                                    ?? throw new InvalidDataException("Static artifact is missing from the release snapshot.")
                                 : null;
                             await executor.ExecuteAsync(job.HostId, step, job.Artifact, args[3], variables,
-                                message => AppendLog(client, job, name, message, lease.Token), lease.Token, bundlePath);
+                                message => AppendLog(client, job, name, message, lease.Token), lease.Token,
+                                bundlePath);
                             if (step.HealthUrl is { } stepHealth)
                             {
-                                using var healthLimit = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
-                                using var timer = (clock ?? TimeProvider.System).CreateTimer(_ => healthLimit.Cancel(), null,
+                                using var limit = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
+                                using var timeout = (clock ?? TimeProvider.System).CreateTimer(_ => limit.Cancel(), null,
                                     TimeSpan.FromSeconds(step.HealthTimeoutSeconds ?? 60), Timeout.InfiniteTimeSpan);
                                 var passed = false;
-                                try { passed = await (checkHealth ?? CheckHealth)(stepHealth, healthLimit.Token); }
-                                catch (OperationCanceledException) when (!lease.IsCancellationRequested) { }
+                                try { passed = await (checkHealth ?? CheckHealth)(stepHealth, limit.Token); }
+                                catch (OperationCanceledException) when (!lease.IsCancellationRequested) { passed = false; }
                                 if (!passed)
                                 {
                                     evidence = "health-http-failed";
@@ -135,26 +143,18 @@ public static class DeployHostCommand
                         }
                     }
                 }
-                else if (job.RetryStep is null)
-                {
-                    if (job.Template == "container")
-                        await DeployContainer(job, secretRoot, lease.Token);
-                    else if (job.Template == "static")
-                        await DeployStatic(job, args[3], lease.Token);
-                    else throw new InvalidOperationException("Unknown template.");
-                }
-                else if (job.RetryStep != "health") throw new InvalidOperationException("Unknown retry step.");
+                else if (job.RetryStep is null && job.Template == "container")
+                    await DeployContainer(job, secretRoot, lease.Token);
+                else if (job.RetryStep is null && job.Template == "static")
+                    await DeployStatic(job, args[3], lease.Token);
+                else if (job.RetryStep is not "health") throw new InvalidOperationException("Unknown template or retry step.");
                 evidence = "health-http-failed";
-                var healthUrl = job.SshSteps.Length > 0 ? null : job.HealthUrl;
-                if (healthUrl is null) healthy = true;
-                else
-                {
-                    using var healthLimit = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
-                    using var timer = (clock ?? TimeProvider.System).CreateTimer(_ => healthLimit.Cancel(), null,
-                        TimeSpan.FromSeconds(60), Timeout.InfiniteTimeSpan);
-                    try { healthy = await (checkHealth ?? CheckHealth)(healthUrl, healthLimit.Token); }
-                    catch (OperationCanceledException) when (!lease.IsCancellationRequested) { healthy = false; }
-                }
+                var healthUrl = job.SshSteps.Length > 0 && job.RetryStep is null ? null : job.HealthUrl;
+                using var healthLimit = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
+                using var legacyTimeout = (clock ?? TimeProvider.System).CreateTimer(_ => healthLimit.Cancel(), null,
+                    TimeSpan.FromSeconds(60), Timeout.InfiniteTimeSpan);
+                try { healthy = healthUrl is null || await (checkHealth ?? CheckHealth)(healthUrl, healthLimit.Token); }
+                catch (OperationCanceledException) when (!lease.IsCancellationRequested) { healthy = false; }
                 if (healthy) evidence = "health-ok";
             }
         }
@@ -169,10 +169,49 @@ public static class DeployHostCommand
         if (leaseLost) return 1;
         using var report = await client.PostAsJsonAsync(
             $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/report",
-            new { job.LeaseToken, Healthy = healthy, Evidence = evidence, ScreenshotBase64 = screenshotBase64,
-                Steps = stepResults }, cancellationToken);
+            new { job.LeaseToken, Healthy = healthy, Evidence = evidence, Steps = stepResults,
+                ScreenshotBase64 = screenshotBase64 }, cancellationToken);
         report.EnsureSuccessStatusCode();
         return healthy ? 0 : 1;
+    }
+
+    /// <summary>Stops the environment on this host and acknowledges it, so the server releases its slot.</summary>
+    private static async Task<int> StopEnvironment(HttpClient client, Job job, CancellationToken ct)
+    {
+        var stopped = false;
+        try
+        {
+            if (job.Template == "container")
+                await Command("docker", ["rm", "-f", ContainerName(job)], ct);
+            else if (job.Template == "static")
+            {
+                if (!Path.IsPathFullyQualified(job.Destination) || job.Destination.Contains("..", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Invalid destination.");
+                var link = Path.Combine(job.Destination, "current");
+                if (File.Exists(link) || Directory.Exists(link)) File.Delete(link);
+            }
+            else throw new InvalidOperationException("Unknown template.");
+            stopped = true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+            or System.ComponentModel.Win32Exception)
+        {
+            Console.Error.WriteLine($"Stop job {job.Id} failed: {ex.GetType().Name}");
+        }
+        using var report = await client.PostAsJsonAsync(
+            $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/report",
+            new { job.LeaseToken, Healthy = stopped, Evidence = stopped ? "stop-ok" : "stop-failed" }, ct);
+        report.EnsureSuccessStatusCode();
+        return stopped ? 0 : 1;
+    }
+
+    private static string ContainerName(Job job)
+    {
+        var projectName = job.Project.Length <= 64
+            && job.Project.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')
+            ? job.Project
+            : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(job.Project)))[..16].ToLowerInvariant();
+        return "deploy-" + projectName + "-" + job.EnvironmentId;
     }
 
     private static async Task RenewWhileRunning(HttpClient client, Job job, TimeProvider clock,
@@ -301,11 +340,7 @@ public static class DeployHostCommand
     {
         if (!int.TryParse(job.Destination, out var port) || port is < 1 or > 65535)
             throw new InvalidOperationException("Invalid proxy port.");
-        var projectName = job.Project.Length <= 64
-            && job.Project.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')
-            ? job.Project
-            : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(job.Project)))[..16].ToLowerInvariant();
-        var name = "deploy-" + projectName + "-" + job.EnvironmentId;
+        var name = ContainerName(job);
         var envFile = Path.Combine(Path.GetTempPath(), "deploy-env-" + Guid.NewGuid().ToString("N"));
         try
         {

@@ -242,7 +242,7 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Null(shadow.MonolithReceipt);
         AssertLane(member.Key, TaskStates.AutoReview);
 
-        rollout.Switch("GateResult", "engine", "operator", "matched canary");
+        rollout.Switch("GateResult", "canary", "operator", "matched canary");
         File.Delete(blocker);
         await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
             authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
@@ -277,7 +277,7 @@ public sealed partial class BatchGatePilotServiceTests
         var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
         await DecideGateResultAsEngineAsync(factory,
             Assert.Single(GateResultOccurrences(orchestration, matched.Key)).Run.RunId);
-        rollout.Switch("GateResult", "engine", "operator", "matched canary");
+        rollout.Switch("GateResult", "canary", "operator", "matched canary");
 
         var member = SeedMember(factory, "DOC-GR-CONTAIN-ENGINE", "docs/gr-contain-engine.md");
         var firstTip = PublishPatchEquivalent(member.ResultSha);
