@@ -184,8 +184,8 @@ public static class TransitionDecisionPolicy
             _ => string.Empty,
         };
 
-    public static bool CreateReview(bool epicPlanning, string outcome, bool verifiedDelivery, bool reportOnly)
-        => !epicPlanning && outcome is CompletionOutcomeKinds.Done or CompletionOutcomeKinds.NoOp && verifiedDelivery && !reportOnly;
+    public static bool CreateReview(string outcome, bool verifiedDelivery, bool reportOnly)
+        => outcome is CompletionOutcomeKinds.Done or CompletionOutcomeKinds.NoOp && verifiedDelivery && !reportOnly;
 
     public static TransitionAction Salvage(string? outcome, bool hasCommit, int roundsUsed)
         => !string.Equals(outcome?.Trim(), CompletionOutcomeKinds.Unknown, StringComparison.OrdinalIgnoreCase)

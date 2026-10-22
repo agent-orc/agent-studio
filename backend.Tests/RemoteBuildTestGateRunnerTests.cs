@@ -173,6 +173,27 @@ public sealed class RemoteBuildTestGateRunnerTests
         Assert.Equal(expectedReason, result.CancellationReason);
     }
 
+    [Fact]
+    public async Task Registry_cancellation_is_reported_as_superseded_not_shutdown()
+    {
+        var registry = new TaskGateCancellationRegistry();
+        var request = Request() with { Project = "Fixture", JobId = "integrated" };
+        var transport = new RecordingTransport
+        {
+            Exception = new OperationCanceledException(),
+            OnRun = _ => registry.Cancel("Fixture", "integrated"),
+        };
+
+        var result = await new RemoteBuildTestGateRunner(transport,
+                NullLogger<RemoteBuildTestGateRunner>.Instance, registry)
+            .RunAsync(request, [], null, PostStepMode.Fail, TimeSpan.FromMinutes(1), CancellationToken.None);
+
+        Assert.Equal(BuildTestGateFailureKind.Cancellation, result.FailureKind);
+        Assert.Equal(GateCancellationReasons.Superseded, result.CancellationReason);
+        Assert.Equal(GateCancellationReasons.Superseded, GateCancellationPolicy.Decide(Sha, Sha,
+            TaskStates.AutoReview, TaskStates.AutoReview, false, false, result.CancellationReason));
+    }
+
     [Theory]
     [InlineData(true, GateCancellationReasons.Shutdown)]
     [InlineData(false, GateCancellationReasons.Operator)]

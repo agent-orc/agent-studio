@@ -111,7 +111,6 @@ describe('TaskTimelinePaneComponent', () => {
     expect(c.kindLabel(TIMELINE_KIND.runLostAcrossRestart)).toBe('Run lost across restart');
     expect(c.rowTone(TIMELINE_KIND.runContinuedAfterRestart)).toBe('neutral');
     expect(c.rowTone(TIMELINE_KIND.runLostAcrossRestart)).toBe('danger');
-    expect(c.kindLabel(TIMELINE_KIND.epicDecomposed)).toBe('Epic decomposed');
     expect(c.kindLabel(TIMELINE_KIND.readOnlyContainmentViolation)).toBe('Containment violation');
     expect(c.kindLabel(TIMELINE_KIND.externalCompletion)).toBe('Completed externally');
     expect(c.rowTone(TIMELINE_KIND.externalCompletion)).toBe('ok');

@@ -133,8 +133,6 @@ async function stubTwoProjectWorkspace(page: Page): Promise<void> {
       return json(detailFor(BETA_TASK));
     }
     if (url.pathname === '/api/v1/studio/runner/status') return json({ projects: {} });
-    if (url.pathname === '/api/epics') return json([]);
-    if (url.pathname === '/api/epics/completed/count') return json({ count: 0 });
     if (url.pathname === '/api/tags' || url.pathname.startsWith('/api/clients')) return json([]);
     if (url.pathname === '/api/cli/quota') return json({ snapshots: [], ttlSeconds: 600 });
     if (url.pathname === '/api/v1/management/remote-hosts') return json([]);

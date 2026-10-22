@@ -13,6 +13,7 @@ public static class TokenUsageServiceCollectionExtensions
         services.AddSingleton<ProjectTokenReceiptReader>();
         services.AddSingleton<ProjectTokenLedger>();
         services.AddSingleton<ReviewStatisticsService>();
+        services.AddSingleton<TaskTokenUsageCache>();
         services.AddSingleton<BusAdHocUsageReader>();
 
         // Price: one service owns all provider calls and per-entry timestamps.

@@ -5,13 +5,13 @@ import * as fs from 'fs';
 /**
  * AGT-2057 regression: the Explorer workspace tree renders three visible
  * levels: workspace folder -> project -> project destinations (Board /
- * Project Hub / Wiki / Epics, plus any Project URL rows). The destinations
+ * Project Hub / Wiki / Dossiers, plus any Project URL rows). The destinations
  * must be inset ONE level below their project row so the project reads as
  * clearly superordinate; they must never render flush beside it.
  *
  * How the regression shipped: the AGT-2037 nav "pull the 3rd level up to the
  * 2nd" change flattened the destination rows from `level="child"` (44px inset)
- * to `level="root"` (8px), so Board/Hub/Wiki/Epics aligned with the project
+ * to `level="root"` (8px), so Board/Hub/Wiki/Dossiers aligned with the project
  * avatar and looked like siblings. The unit spec had been updated to *expect*
  * the flat layout, so it stayed green; a real-browser geometry check is the
  * only thing that catches this, which is why this lives in E2E.

@@ -165,20 +165,6 @@ public class TaskMutationService
         return Updated(info);
     }
 
-    /// <summary>
-    /// Epics assignment way 2 (post-hoc): attach this task to a parent epic, or
-    /// detach it (<paramref name="epicId"/> null/empty clears the link). Writes
-    /// the <c>epicId</c> field on task.json via the mutation layer (API-only
-    /// job-folder rule, ADR-0024). Returns false when the task is not found.
-    /// </summary>
-    public bool SetJobEpic(string jobId, string? epicId, string? watchPath = null)
-    {
-        var info = _scanner.FindJob(jobId, watchPath);
-        if (info == null) return false;
-        TaskJsonFile.UpdateField(info.FolderPath, "epicId", epicId ?? "", _logger);
-        return Updated(info);
-    }
-
     public bool SetJobCliType(string jobId, string cliType, string? watchPath = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
@@ -1440,7 +1426,8 @@ public class TaskMutationService
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
-        TaskJsonFile.UpdateField(info.FolderPath, "released", released, _logger);
+        if (!TaskJsonFile.UpdateField(info.FolderPath, "released", released, _logger))
+            return false;
         var dependents = ReleaseGatedDependentKeys(info);
         _timeline?.Append(
             info.FolderPath,
@@ -1472,7 +1459,7 @@ public class TaskMutationService
         if (string.IsNullOrWhiteSpace(info.Key)) return [];
         try
         {
-            return _scanner.GetReferenceIndex()
+            return _scanner.GetCoreReferenceIndex()
                 .Dependents(info.Key, TaskReferenceKinds.DependsOn)
                 .Where(link => link.ReleaseGate && !string.IsNullOrWhiteSpace(link.SourceKey))
                 .Select(link => link.SourceKey!)
@@ -1989,11 +1976,8 @@ public class TaskMutationService
         jobJson["thinkingLevelExplicit"] = req.ThinkingLevelExplicit ?? !string.IsNullOrWhiteSpace(req.ThinkingLevel);
         if (!string.IsNullOrWhiteSpace(effectiveCliType))
             jobJson["cliType"] = effectiveCliType;
-        // Epics: card kind (task|epic) + optional parent epic (assignment way 1,
-        // at create time). kind is always written so a fresh task.json is explicit.
+        // Keep the normalized card kind explicit in new task metadata.
         jobJson["kind"] = TaskKinds.Normalize(req.Kind);
-        if (!string.IsNullOrWhiteSpace(req.EpicId))
-            jobJson["epicId"] = req.EpicId;
         if (req.Dossier is { Path.Length: > 0 })
             jobJson["dossier"] = req.Dossier;
         // Execution mode (coding|planning|research) + web-access. mode is always
@@ -2440,6 +2424,7 @@ public class TaskMutationService
 
             File.Delete(stash);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
             return PendingIntentAcknowledgeResult.Consumed;
         }
         catch (Exception ex)
@@ -2482,6 +2467,7 @@ public class TaskMutationService
             if (File.Exists(canonical)) File.Delete(canonical);
             if (File.Exists(stash)) File.Delete(stash);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
             return true;
         }
         catch (Exception ex)
@@ -2565,7 +2551,11 @@ public class TaskMutationService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info is null || info.ModelExplicit || info.ThinkingLevelExplicit) return false;
         var written = TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevel", level, _logger);
-        if (written) _scanner.InvalidateCache();
+        if (written)
+        {
+            _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(info.FolderPath);
+        }
         return written;
     }
 
@@ -2676,6 +2666,7 @@ public class TaskMutationService
                 TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevel", thinkingLevel, _logger);
 
             count++;
+            _scanner.PublishCoreFromKnownFolder(job.FolderPath);
             _logger.LogInformation(
                 "backfill-agent-defaults jobId={JobId} owner={Owner} agent={Agent} cliType={CliType} model={Model} thinkingLevel={ThinkingLevel}",
                 job.Id, ownerId, cliType ?? job.Agent, cliType, model, thinkingLevel);
@@ -2717,6 +2708,7 @@ public class TaskMutationService
                 TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevel", resolved, _logger);
                 TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevelExplicit", false, _logger);
                 touched++;
+                _scanner.PublishCoreFromKnownFolder(job.FolderPath);
             }
         }
         if (touched > 0) _scanner.InvalidateCache();
@@ -2827,6 +2819,7 @@ public class TaskMutationService
             // must never do is report a backfill that did not happen.
             if (!TaskJsonFile.UpdateField(job.FolderPath, "key", key, _logger, _keyFileWriter)) continue;
             stamped++;
+            _scanner.PublishCoreFromKnownFolder(job.FolderPath);
         }
 
         if (stamped > 0) _scanner.InvalidateCache();
@@ -2906,6 +2899,7 @@ public class TaskMutationService
                     continue;
                 }
                 rekeyed++;
+                _scanner.PublishCoreFromKnownFolder(ordered[i].FolderPath);
                 _logger.LogInformation(
                     "task-key-dedup project={ProjectId} oldKey={OldKey} newKey={NewKey} jobId={JobId} keeper={KeeperId}",
                     projectId, oldKey, newKey, ordered[i].Id, keeper.Id);

@@ -18,16 +18,6 @@ using AgentStudio.TaskServer.Contracts;
 /// </summary>
 public sealed class RemoteTaskRunner
 {
-    internal static RunSpecDto ResolveEpicPlanningRunSpec(
-        RunSpecDto? claimed,
-        RemoteEpicPlanningPromptResponse planning)
-        => (claimed ?? new RunSpecDto()) with
-        {
-            CliType = claimed?.CliType ?? planning.CliType,
-            Model = claimed?.Model ?? planning.Model,
-            ThinkingLevel = claimed?.ThinkingLevel ?? planning.ThinkingLevel,
-        };
-
     internal static int? EffectiveRunTimeoutSeconds(RunSpecDto? runSpec, bool mechanicalResume)
         => mechanicalResume
             ? Math.Min(runSpec?.RunTimeoutSeconds ?? int.MaxValue,
@@ -229,13 +219,12 @@ public sealed class RemoteTaskRunner
         GitWorkspace workspace,
         LogShipper shipper,
         RunStopDirectiveDto directive,
-        Task heartbeatTask,
-        bool epicPlanning)
+        Task heartbeatTask)
     {
         await SafeAwait(heartbeatTask);
         DurableAgentProcess.Attach(slot).Kill();
         var killed = WorkerCgroup.ReleaseFor(slot.WorkerDirectory);
-        if (!epicPlanning && Directory.Exists(workspace.RepoPath))
+        if (Directory.Exists(workspace.RepoPath))
             await WorktreeProcessReaper.ReapAsync(workspace.RepoPath, _log, CancellationToken.None);
         var line =
             $"[runner] operator-stop attempt={slot.AttemptId} reason={directive.Reason} " +
@@ -375,7 +364,7 @@ public sealed class RemoteTaskRunner
 
         var action = LostWorkerRecoveryPolicy.Decide(
             Directory.Exists(workspace.RepoPath),
-            readOnlyCheckout: string.Equals(slot.TaskKind, "epic", StringComparison.OrdinalIgnoreCase),
+            readOnlyCheckout: false,
             hasFencedGeneration: true);
         if (action == LostWorkerRecoveryAction.None)
             return new LostWorkerHandoff(null, null, evidence.CrashLine);
@@ -515,9 +504,7 @@ public sealed class RemoteTaskRunner
             lease.AttemptId ?? lease.LeaseId,
             ExecutionAttemptKind.Coding,
             DurableOutputState: DurableOutputState.Missing));
-        var epicPlanning = string.Equals(slot.TaskKind, "epic", StringComparison.OrdinalIgnoreCase);
         IReadOnlyList<string> outputLines = [];
-        var sourceMutated = false;
         var handedBack = false;
         var teardownAttempted = false;
         var releaseOnly = false;
@@ -568,7 +555,6 @@ public sealed class RemoteTaskRunner
                     stopRun,
                     shutdown,
                     daemonShutdown,
-                    epicPlanning,
                     heartbeat);
             outcome = execution.Outcome;
             outcomeDecision = execution.Decision;
@@ -591,6 +577,7 @@ public sealed class RemoteTaskRunner
                 outcome,
                 lease.AttemptId ?? lease.LeaseId,
                 workspace.WorkBranch);
+            await workspace.CaptureLegacyRepositoryReportsAsync(stopRun.Token);
             artifactPlan = await PrepareResultsSafeAsync(
                 taskKey, outbox?.Authority.RunId ?? lease.AttemptId ?? lease.LeaseId,
                 artifactLimits, outbox);
@@ -606,16 +593,7 @@ public sealed class RemoteTaskRunner
             WorktreeTeardownResult teardown;
             ResultHandoffAck? handoffAcknowledgement = null;
             string? envelopeDigest = null;
-            if (epicPlanning)
-            {
-                // Epic planning is source-read-only: verify no mutation and
-                // discard the detached checkout without salvage or a coding
-                // branch. The mutation verdict rides the additive completion
-                // fields; develop's salvage protocol stays untouched.
-                sourceMutated = await workspace.TeardownReadOnlyAsync(CancellationToken.None);
-                teardown = WorktreeTeardownResult.NoWork;
-            }
-            else if (outbox is not null)
+            if (outbox is not null)
             {
                 teardown = securedTeardown ?? await SecureForHandoffWithRetryAsync(
                     taskKey,
@@ -695,7 +673,7 @@ public sealed class RemoteTaskRunner
             outcomeDecision = WithDurableOutput(outcomeDecision, teardown);
             var currentSlot = _state.LoadAll().FirstOrDefault(candidate =>
                 string.Equals(candidate.AttemptId, slot.AttemptId, StringComparison.Ordinal)) ?? slot;
-            var continuationEntry = epicPlanning ? null : SessionContinuationEvidence.Build(
+            var continuationEntry = SessionContinuationEvidence.Build(
                 currentSlot, workspace, teardown, _options.Hostname,
                 CliSelection.Resolve(_options, currentSlot.RunSpec).CliType) with
                 { FallbackReason = mechanicalFallbackReason };
@@ -726,7 +704,7 @@ public sealed class RemoteTaskRunner
                     envelopeDigest,
                     stopRun.Token);
             }
-            if (outbox is not null && !epicPlanning)
+            if (outbox is not null)
             {
                 // AGT-2820: the durable plane completes through the outbox and
                 // never reaches CompleteOrReconcileAsync, so the missing-sentinel
@@ -781,7 +759,6 @@ public sealed class RemoteTaskRunner
                     workspace.IntegrationBranchRef,
                     artifactManifest?.Digest,
                     outputLines,
-                    sourceMutated,
                     shutdown,
                     continuationEntry);
             }
@@ -842,13 +819,10 @@ public sealed class RemoteTaskRunner
                     var failedTeardown = WorktreeTeardownResult.NoWork;
                     if (Directory.Exists(workspace.RepoPath))
                     {
-                        if (epicPlanning)
-                            sourceMutated = await workspace.TeardownReadOnlyAsync(CancellationToken.None);
-                        else
-                            failedTeardown = await workspace.TeardownAsync(
-                                outcome.Kind.ToString(),
-                                lease.AttemptId,
-                                CancellationToken.None);
+                        failedTeardown = await workspace.TeardownAsync(
+                            outcome.Kind.ToString(),
+                            lease.AttemptId,
+                            CancellationToken.None);
                     }
                     outcomeDecision = WithDurableOutput(outcomeDecision, failedTeardown);
                     await _client.CompleteHostPostProcessingAsync(
@@ -866,7 +840,6 @@ public sealed class RemoteTaskRunner
                         workspace.IntegrationBranchRef,
                         artifactManifestDigest: null,
                         outputLines,
-                        sourceMutated: false,
                         CancellationToken.None);
                     handedBack = true;
                 }
@@ -984,12 +957,9 @@ public sealed class RemoteTaskRunner
                 workspace,
                 shipper,
                 heartbeat.StopRequest!,
-                heartbeatTask,
-                epicPlanning);
+                heartbeatTask);
             teardownAttempted = true;
-            var stopTeardown = epicPlanning
-                ? WorktreeTeardownResult.NoWork
-                : await SecureStoppedWorktreeAsync(slot, workspace);
+            var stopTeardown = await SecureStoppedWorktreeAsync(slot, workspace);
             outcomeDecision = WithDurableOutput(outcomeDecision, stopTeardown);
             artifactPlan = await PrepareResultsSafeAsync(
                 taskKey, outbox?.Authority.RunId ?? lease.AttemptId ?? lease.LeaseId,
@@ -1007,7 +977,6 @@ public sealed class RemoteTaskRunner
                 workspace.IntegrationBranchRef,
                 artifactManifest?.Digest,
                 outputLines,
-                sourceMutated,
                 CancellationToken.None);
             handedBack = true;
             _log($"task '{taskKey}' handed back after an operator stop: {outcome.Kind}");
@@ -1072,7 +1041,6 @@ public sealed class RemoteTaskRunner
             if (!daemonHandedOff
                 && !finalizationDeferred
                 && heartbeat.LeaseLost
-                && !epicPlanning
                 && Directory.Exists(workspace.RepoPath))
             {
                 try
@@ -1124,14 +1092,10 @@ public sealed class RemoteTaskRunner
                     // An artifact fault must never leave the only code copy as
                     // uncommitted files in a retained checkout.
                     teardownAttempted = true;
-                    var teardown = epicPlanning
-                        ? WorktreeTeardownResult.NoWork
-                        : await workspace.TeardownAsync(
-                            outcome.Kind.ToString(),
-                            lease.AttemptId,
-                            CancellationToken.None);
-                    if (epicPlanning)
-                        sourceMutated = await workspace.TeardownReadOnlyAsync(CancellationToken.None);
+                    var teardown = await workspace.TeardownAsync(
+                        outcome.Kind.ToString(),
+                        lease.AttemptId,
+                        CancellationToken.None);
                     // A checkout is always secured before release, but a fault
                     // before the worker produced a result is still the legacy
                     // release path rather than an invented completion. Once a
@@ -1155,7 +1119,6 @@ public sealed class RemoteTaskRunner
                             workspace.IntegrationBranchRef,
                             artifactManifest?.Digest,
                             outputLines,
-                            sourceMutated,
                             CancellationToken.None);
                         handedBack = true;
                     }
@@ -1217,7 +1180,7 @@ public sealed class RemoteTaskRunner
         PersistedRunnerSlot slot, GitWorkspace workspace, LogShipper shipper,
         DurableRunOutbox? outbox, ArtifactTransferLimitsResponse artifactLimits,
         CancellationTokenSource stopRun,
-        CancellationToken shutdown, CancellationToken daemonShutdown, bool epicPlanning,
+        CancellationToken shutdown, CancellationToken daemonShutdown,
         LeaseHeartbeat heartbeat)
     {
         var taskKey = slot.TaskKey;
@@ -1245,9 +1208,7 @@ public sealed class RemoteTaskRunner
         {
             throw new RunnerResultsPreparationException(ex.Message, ex);
         }
-        Func<CancellationToken, Task<string>> prepare = epicPlanning
-            ? workspace.PrepareReadOnlyAsync
-            : workspace.PrepareAsync;
+        Func<CancellationToken, Task<string>> prepare = workspace.PrepareAsync;
         string branch;
         try
         {
@@ -1275,9 +1236,7 @@ public sealed class RemoteTaskRunner
             throw new RemoteClaimPreparationException(DescribePreparationFailure(ex), ex);
         }
         shipper.Add("system", $"[runner] working tree ready on branch '{branch}'");
-        var projectPreparation = epicPlanning
-            ? ProjectPreparationResult.NotConfigured()
-            : await ProjectPreparationExecutor.RunAsync(
+        var projectPreparation = await ProjectPreparationExecutor.RunAsync(
                 workspace.RepoPath,
                 workspace.PreparationCachePath,
                 Path.Combine(resultsDir, ProjectPreparationPaths.ManifestFileName),
@@ -1295,7 +1254,7 @@ public sealed class RemoteTaskRunner
         shipper.Add("system", projectPreparation.Configured
             ? $"[runner] project preparation ready; manifest={ProjectPreparationPaths.ManifestFileName}; cacheHit={projectPreparation.CacheHit}"
             : "[runner] repository has no .agent-studio/project.yml; compatibility preparation remains active");
-        if (outbox is not null && !epicPlanning)
+        if (outbox is not null)
         {
             outbox.Enqueue(
                 "run-context",
@@ -1326,23 +1285,6 @@ public sealed class RemoteTaskRunner
         var runSpec = slot.RunSpec;
         string prompt;
         FollowUpDeliveryDto? acknowledgedFollowUp = null;
-        if (epicPlanning)
-        {
-            var planning = await _client.GetEpicPlanningPromptAsync(new RemoteEpicPlanningPromptRequest(
-                taskKey, lease.LeaseId, lease.FencingToken, _options.RunnerId, workspace.RepoPath), shutdown)
-                ?? throw new InvalidOperationException("Server returned no Epic planning prompt.");
-            prompt = planning.Prompt;
-            shipper.Add("system", $"[runner] server-rendered Epic decomposition prompt; cli={planning.CliType ?? "default"} model={planning.Model ?? "default"} thinking={planning.ThinkingLevel ?? "default"}");
-            // T0b: the planning endpoint has always answered with the Epic's CLI
-            // selection and the runner has always thrown it away ("logged only").
-            // The claim spec resolves the same source and additionally validates
-            // the reasoning rung against the model, so it wins where it speaks;
-            // the planning response fills whatever it leaves open, which is what a
-            // server without T0b sends.
-            runSpec = ResolveEpicPlanningRunSpec(runSpec, planning);
-        }
-        else
-        {
             var taskPrompt = await _client.ReadTaskFileAsync(taskKey, "prompt.md", shutdown)
                              ?? throw new InvalidOperationException($"Task '{taskKey}' has no prompt.md to run.");
             var followUpApplication = RemoteRunPrompt.ApplyClaimedFollowUp(taskPrompt, runSpec?.FollowUp);
@@ -1362,8 +1304,6 @@ public sealed class RemoteTaskRunner
                     ? "[runner] results-dir context + remote-completion-protocol appended to task prompt"
                     : "[runner] server-composed mode framing + results-dir context + remote-completion-protocol appended to task prompt"
                 : $"[runner] claimed follow-up claim={acknowledgedFollowUp.ClaimId ?? "legacy"} mode={acknowledgedFollowUp.Mode} hash={acknowledgedFollowUp.PromptSha256} delivered as this run's prompt");
-        }
-
         // Record the effective typed provider selection in the durable journal
         // and the task's shipped log.
         var invocation = CliSelection.Resolve(_options, runSpec);
@@ -1439,9 +1379,8 @@ public sealed class RemoteTaskRunner
             // replacement daemon reattaching to the detached worker reads it back
             // from here to complete with a full Result-Envelope.
             BaseSha = workspace.BaseSha ?? slot.BaseSha,
-            // Persist the spec this run actually starts with (an Epic run refines
-            // it from the planning response), so a same-session resume or a
-            // reattaching daemon relaunches the same CLI selection.
+            // Persist the spec this run actually starts with so a same-session
+            // resume or a reattaching daemon relaunches the same CLI selection.
             RunSpec = runSpec,
             Phase = "launching",
         });
@@ -2380,14 +2319,13 @@ public sealed class RemoteTaskRunner
         string integrationBranch,
         string? artifactManifestDigest,
         IReadOnlyList<string> outputLines,
-        bool sourceMutated,
         CancellationToken ct,
         IReadOnlyList<string>? gateItems = null,
         SessionContinuationLedgerEntry? sessionContinuation = null)
     {
         var request = BuildCompletionRequest(
             _options, taskKey, lease, outcome, outcomeDecision, teardown, repository, baseSha,
-            integrationBranch, artifactManifestDigest, outputLines, sourceMutated, gateItems,
+            integrationBranch, artifactManifestDigest, outputLines, gateItems,
             sessionContinuation);
         var resp = await _client.CompleteRunAsync(request, ct);
         _log($"remote-runner-completion recorded: outcome {resp?.Outcome}, state {resp?.TargetState}, result-envelope {(request.ImmutableResultRef is null ? "absent" : "attached")}");
@@ -2410,7 +2348,6 @@ public sealed class RemoteTaskRunner
         string integrationBranch,
         string? artifactManifestDigest,
         IReadOnlyList<string> outputLines,
-        bool sourceMutated,
         IReadOnlyList<string>? gateItems = null,
         SessionContinuationLedgerEntry? sessionContinuation = null)
     {
@@ -2432,8 +2369,6 @@ public sealed class RemoteTaskRunner
             SalvageRecoveryBranchUrl: null,
             SalvageAuthoritativeBaseBranch: teardown.Reconciliation?.AuthoritativeBaseBranch,
             SalvageAuthoritativeBaseSha: teardown.Reconciliation?.AuthoritativeBaseSha,
-            OutputLines: outputLines,
-            SourceMutated: sourceMutated,
             AttemptId: lease.AttemptId,
             AuthorityEpoch: lease.AuthorityEpoch,
             IdempotencyKey: $"completion:{lease.AttemptId}:{outcome.Kind}:{teardown.ResultSha ?? "none"}",
@@ -2458,7 +2393,6 @@ public sealed class RemoteTaskRunner
         string integrationBranch,
         string? artifactManifestDigest,
         IReadOnlyList<string> outputLines,
-        bool sourceMutated,
         CancellationToken ct,
         SessionContinuationLedgerEntry? sessionContinuation = null)
     {
@@ -2493,7 +2427,6 @@ public sealed class RemoteTaskRunner
             integrationBranch,
             artifactManifestDigest,
             outputLines,
-            sourceMutated,
             ct,
             incident is null ? null : [incident.GateItem],
             sessionContinuation);
