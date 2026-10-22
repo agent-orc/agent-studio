@@ -83,11 +83,9 @@ public sealed partial class BatchGatePilotServiceTests
     public async Task Applier_contract_applies_the_effect_of_every_engine_decision(string profile, string action,
         string variant)
     {
-        // The engine parks in Human Review without integrating only a delivery
-        // that needs no integration (and a batch member after its gate
-        // integrated it). The seeded card carries a changed result, so the
-        // guarded delivery chain is off for those cases, as in
-        // MonolithOrchestrationEndpointTests; the applier's effect is the subject here.
+        // HumanReview needs no integration. DegradeWithFollowUp replays a
+        // seeded follow-up while the integration push finishes asynchronously;
+        // the contract checks its applier effects without that delivery gate.
         using var factory = ContractFactory(action, variant);
         var (occurrence, arranged, handoff, lane, owed) = await ApplyContractCaseAsync(factory, profile, action,
             variant);
@@ -287,7 +285,8 @@ public sealed partial class BatchGatePilotServiceTests
 
     private WebApplicationFactory<Program> ContractFactory(string action, string variant)
         => BuildFactory(
-            configuration: action == nameof(TransitionAction.HumanReview) || variant == "batch-hold"
+            configuration: action is nameof(TransitionAction.HumanReview)
+                or nameof(TransitionAction.DegradeWithFollowUp) || variant == "batch-hold"
                 ? UnguardedDeliveryChain : null,
             testServices: variant == AgentRoundVariant ? ConflictingIntegration : PublishingIntegration);
 
