@@ -636,13 +636,17 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
-    public void ReportAfterTheLease_IsAcceptedWhileTheClaimStands()
+    public void ReclaimedJobRejectsOldLeaseToken()
     {
         var (deploy, environments, _) = Build();
         CreateRelease(deploy, Artifact('a'), Head());
         var job = environments.Claim("stage-host")!;
         _clock.Advance(TimeSpan.FromMinutes(8));
-        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
+        var reclaimed = environments.Claim("stage-host")!;
+        Assert.Equal(job.Id, reclaimed.Id);
+        Assert.NotEqual(job.LeaseToken, reclaimed.LeaseToken);
+        Assert.False(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
+        Assert.True(environments.Report("demo", reclaimed.Id, new(reclaimed.LeaseToken!, true, "health-ok")));
         deploy.SyncAfterHostCall("demo");
         Assert.Equal(DeploymentStates.Succeeded, deploy.Deployments("demo", "stage")!.Single().State);
     }
@@ -943,17 +947,110 @@ public sealed class DeployServiceTests : IDisposable
         var (deploy, environments, _) = Build();
         var r1 = CreateRelease(deploy, Artifact('a'), Head());
         Report(deploy, environments, "stage-host", healthy: true);
-        WriteProjectYml("variables:\n  - name: LOG_LEVEL\n    value: info\n");
+        WriteProjectYml("  - name: LOG_LEVEL\n    value: info\n");
         var r2 = CreateRelease(deploy, Artifact('b'), Commit("variables"));
         Report(deploy, environments, "stage-host", healthy: true);
         var r3 = CreateRelease(deploy, Artifact('c'), Commit("unrelated"));
         Report(deploy, environments, "stage-host", healthy: true);
-        WriteProjectYml("variables:\n  - name: LOG_LEVEL\n    value: debug\n");
+        WriteProjectYml("  - name: LOG_LEVEL\n    value: debug\n");
         var r4 = CreateRelease(deploy, Artifact('d'), Commit("debug"));
 
         Assert.NotEqual(r1.VariablesVersion, r2.VariablesVersion);
         Assert.Equal(r2.VariablesVersion, r3.VariablesVersion);
         Assert.NotEqual(r2.VariablesVersion, r4.VariablesVersion);
+    }
+
+    [Fact]
+    public void Schema_two_jobs_keep_snapshot_steps_and_automatic_rollback_uses_previous_artifact()
+    {
+        var (deploy, environments, _) = Build();
+        WriteSshProjectYml();
+        var first = CreateRelease(deploy, Artifact('a'), Commit("ssh-definition"));
+        var firstJob = environments.Claim("stage-host")!;
+        Assert.Equal("container", Assert.Single(firstJob.SshSteps).Step);
+        Assert.True(environments.Report("demo", firstJob.Id, new(firstJob.LeaseToken!, true, "health-ok", Steps:
+            [new("deploy[0]:container", true)])));
+        deploy.SyncAfterHostCall("demo");
+
+        var second = CreateRelease(deploy, Artifact('b'), Commit("new-release"));
+        var secondJob = environments.Claim("stage-host")!;
+        Assert.Equal(second.ArtifactDigests[0], secondJob.Artifact);
+        Assert.True(environments.Report("demo", secondJob.Id, new(secondJob.LeaseToken!, false, "deploy-step-failed", Steps:
+            [new("deploy[0]:container", false)])));
+        deploy.SyncAfterHostCall("demo");
+
+        var rollback = environments.Claim("stage-host")!;
+        Assert.True(rollback.IsRollback);
+        Assert.Equal(first.ArtifactDigests[0], rollback.Artifact);
+        Assert.Equal(firstJob.SshSteps.Select(step => (step.Step, step.Target, step.ComposeFile, step.Service)),
+            rollback.SshSteps.Select(step => (step.Step, step.Target, step.ComposeFile, step.Service)));
+        var failed = deploy.Deployments("demo", "stage")!.First(item => item.ReleaseId == second.Id);
+        Assert.Equal(DeploymentStates.Failed, failed.State);
+        Assert.Equal(DeploymentStates.Failed, failed.Steps[0].State);
+    }
+
+    [Fact]
+    public void Mixed_stage_json_and_generated_production_keep_lifecycle_order()
+    {
+        var (_, environments, _) = Build();
+        WriteSshProjectYml();
+        File.Delete(Path.Combine(_repo, "docs", "deployments", "environments", "production.json"));
+
+        var declarations = environments.Declarations("demo")!;
+        Assert.Equal(["stage", "production"], declarations.Select(item => item.Id));
+        Assert.All(declarations, item => Assert.Equal("ssh-v2", item.Template));
+        Assert.Equal(["stage", "production"], environments.Read("demo")!.Environments
+            .Select(item => item.Declaration.Id));
+    }
+
+    [Fact]
+    public void Host_step_log_validates_claim_step_content_and_rate()
+    {
+        var (deploy, environments, store) = Build();
+        WriteSshProjectYml();
+        CreateRelease(deploy, Artifact('a'), Commit("ssh-definition"));
+        var job = environments.Claim("stage-host")!;
+        const string step = "deploy[0]:container";
+
+        Assert.False(deploy.AppendHostStepLog("demo", job.Id, new("wrong", step, "message")));
+        Assert.False(deploy.AppendHostStepLog("demo", job.Id, new(job.LeaseToken!, "health", "message")));
+        Assert.False(deploy.AppendHostStepLog("demo", job.Id, new(job.LeaseToken!, step, "bad\nline")));
+        Assert.False(deploy.AppendHostStepLog("demo", job.Id, new(job.LeaseToken!, step, new string('x', 513))));
+        for (var i = 0; i < 30; i++)
+            Assert.True(deploy.AppendHostStepLog("demo", job.Id, new(job.LeaseToken!, step, "line " + i)));
+        Assert.False(deploy.AppendHostStepLog("demo", job.Id, new(job.LeaseToken!, step, "overflow")));
+        Assert.Equal(30, store.ReadLog("demo", job.Id).Count(item => item.Step == step));
+    }
+
+    [Fact]
+    public void Schema_two_release_refuses_current_declaration_divergence()
+    {
+        var (deploy, _, _) = Build();
+        WriteSshProjectYml();
+        var commit = Commit("ssh-definition");
+        WriteProduction(host: "different-host", destination: "8082");
+
+        var result = deploy.CreateRelease("demo", Artifact('a'), commit, "release-gate");
+
+        Assert.Equal(DeployOutcomeKind.Invalid, result.Kind);
+        Assert.Contains("diverges", result.Error);
+    }
+
+    [Fact]
+    public void Schema_two_release_runs_without_legacy_json_declarations()
+    {
+        var (deploy, environments, _) = Build();
+        WriteSshProjectYml();
+        Directory.Delete(Path.Combine(_repo, "docs", "deployments", "environments"), true);
+        var commit = Commit("schema-two-only");
+
+        var release = CreateRelease(deploy, Artifact('a'), commit);
+        var job = environments.Claim("stage-host");
+
+        Assert.NotNull(release);
+        Assert.Equal("stage", job?.EnvironmentId);
+        Assert.Equal("container", Assert.Single(job!.SshSteps).Step);
+        Assert.Equal(["stage", "production"], environments.Declarations("demo")!.Select(item => item.Id));
     }
 
     [Fact]
@@ -1161,8 +1258,11 @@ public sealed class DeployServiceTests : IDisposable
         var job = environments.Claim(host)!;
         deploy.SyncAfterHostCall("demo");
         _clock.Advance(TimeSpan.FromMinutes(1));
+        var steps = job.SshSteps.Select((step, index) =>
+            new DeployStepResult($"deploy[{index}]:{step.Step}", healthy))
+            .Take(healthy ? job.SshSteps.Length : 1).ToArray();
         Assert.True(environments.Report("demo", job.Id,
-            new(job.LeaseToken!, healthy, evidence ?? (healthy ? "health-ok" : "deploy-step-failed"))));
+            new(job.LeaseToken!, healthy, evidence ?? (healthy ? "health-ok" : "deploy-step-failed"), Steps: steps)));
         deploy.SyncAfterHostCall("demo");
         _clock.Advance(TimeSpan.FromMinutes(1));
     }
@@ -1298,9 +1398,35 @@ public sealed class DeployServiceTests : IDisposable
             environment:
             project:
               id: demo
-
-            """ + sections);
+            artifacts:
+              - name: app
+                type: container
+                dockerfile: Dockerfile
+            deploy:
+              - step: container
+                artifact: app
+                target: stage-host
+                composeFile: /srv/apps/demo/stage/compose.yml
+                service: demo
+                healthUrl: https://stage.example/health
+                healthTimeoutSeconds: 60
+                environments: [staging]
+              - step: container
+                artifact: app
+                target: prod-host
+                composeFile: /srv/apps/demo/production/compose.yml
+                service: demo
+                healthUrl: https://example/health
+                healthTimeoutSeconds: 60
+                environments: [production]
+            variables:
+              - name: DATABASE_URL
+                secret: DATABASE_URL
+                environments: [production]
+            """ + "\n" + sections);
     }
+
+    private void WriteSshProjectYml() => WriteProjectYml(string.Empty);
 
     // Git for Windows writes loose objects read-only, so File.Delete alone throws there.
     private void DeleteLooseObject(string sha)
