@@ -204,7 +204,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3068 adds three rule mutations (Continue) and one host occurrence (Start),
         // and maps the engine decision-job (Start) and receipt (Continue) routes in
         // every profile.
-        Assert.Equal(127, routes.Count);
+        Assert.Equal(128, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -270,7 +270,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 28,
-                [ExecutionAdmissionPath.PostStep] = 18,
+                [ExecutionAdmissionPath.PostStep] = 19,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));
