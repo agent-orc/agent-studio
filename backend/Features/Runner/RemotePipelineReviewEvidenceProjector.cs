@@ -123,9 +123,11 @@ public sealed class RemotePipelineReviewEvidenceProjector
     {
         var host = review.Lease?.HostId ?? report.Environment.HostId;
         var calls = new List<TaskTokenCall>();
+        var commandIndex = 0;
         foreach (var command in report.Commands.Where(command =>
                      Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)))
         {
+            var usageIndex = commandIndex++;
             var total = command.InputTokens + command.OutputTokens
                         + command.CacheReadTokens + command.CacheCreationTokens;
             if (total <= 0) continue;
@@ -141,6 +143,8 @@ public sealed class RemotePipelineReviewEvidenceProjector
                 ThinkingLevel = string.IsNullOrWhiteSpace(command.ThinkingLevel) ? null : command.ThinkingLevel.Trim(),
                 CliType = CliFromExecutable(command.FileName),
                 Host = string.IsNullOrWhiteSpace(command.HostId) ? host : command.HostId,
+                ParticipantId = ReviewParticipantPrefix + review.AttemptId + ":step:" + command.StepId
+                    + ":usage:" + review.AttemptId + ":" + usageIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 InputTokens = command.InputTokens,
                 OutputTokens = command.OutputTokens,
                 CacheReadTokens = command.CacheReadTokens,

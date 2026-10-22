@@ -37,6 +37,15 @@ public record ProjectSettings
     /// </summary>
     public Dictionary<string, string>? PublishAutomation { get; init; }
 
+    /// <summary>
+    /// IP-1: operator-owned domain suffixes the project's edge-hosted
+    /// environments may claim on a run target. <c>example.com</c> covers
+    /// <c>example.com</c> and <c>shop.example.com</c>. Kept in Studio settings,
+    /// never in the repository, so a declaration cannot widen it. Null or empty
+    /// allows no domain.
+    /// </summary>
+    public IReadOnlyList<string>? RunTargetDomainSuffixes { get; init; }
+
     /// <summary>When true, transition <c>3-progress → 4-auto-review</c> auto-commits and stamps the SHA on the job.</summary>
     public bool AutoCommit { get; init; } = true;
 
