@@ -1,3 +1,9 @@
+## AGT-3270 integration recovery, 22 October 2026 (final)
+
+- Result implementation SHA: `445840f235a60ff6baae901eb34b1dcf0ff8fd5b` (merge commit; this status entry follows it). It retains prior delivery `afdd2bacec6d9f6de21288e3a908ad84f25859de` and merges fetched `origin/develop` at `d855bdecdcc7490b9e0bcdef8d59ca5cdbbcb21b`. A final fetch found no newer develop commit. Both ancestry checks pass; no rebase or squash was used.
+- Resolved failed stage `merge-into-develop`: direct and mechanical merges conflicted in five files, and the rebase fallback could not retain one-to-one delivery commit mapping. The merge keeps Stop's host-lost settlement for abandoned redeploy claims, claim renewal, quota admission, review provenance fields, and both hosted services. Implemented option: retain both sides' behavior through a normal merge commit. [Resolution and verification evidence](/home/agent/runner-work/tasks/AGT-3270/results/integration-resolution-20261022.md).
+- Verification: .NET solution and frontend production builds passed. Backend class filters passed 117 and 4 tests; task-server class filter passed 107. Guard filter on all eight .NET test projects passed 99 backend and 2 runner tests with no matches in the other six. Three focused frontend specs passed 132 tests. `npm --prefix frontend run lint` and focused workspace-quota Playwright (2 tests) passed. `git diff --check` passed. Screenshots are in the task results directory.
+
 ## AGT-3270 integration recovery, 22 October 2026
 
 - Result implementation SHA: `e1a2f44db4df953dbac6cca46a3898f9f5495d72` (merge commit; this status entry follows it). It retains delivery `3cc199f1dada4e804c27753c43442dcf0920e2c2` and merges fetched `origin/develop` at `f822e5d8f5845b9b730e87ae9d1dde117acfbd43` as its second parent. A final fetch and merge found no newer develop commit. Both ancestry checks pass. No rebase or squash was used.
