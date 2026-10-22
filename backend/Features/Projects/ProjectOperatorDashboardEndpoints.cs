@@ -75,6 +75,28 @@ public static class ProjectOperatorDashboardEndpoints
             };
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
+        // IP-1: a production or stage environment that is no longer placed on
+        // its run target waits here for the operator's decision.
+        app.MapPost("/api/projects/{projectName}/environments/{environmentId}/run-target-removal/confirm", (
+            HttpContext context, string projectName, string environmentId, RunTargetRemovalConfirmRequest? request,
+            ProjectEnvironmentService environments) =>
+            environments.ConfirmRunTargetRemoval(projectName, environmentId, request?.HostId,
+                context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                    ? human.User.Id : "local-operator")
+                ? Results.Accepted() : Results.Conflict(new { error = "No removal is pending for this environment." }))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
+        app.MapPut("/api/projects/{projectName}/run-target-domain-suffixes", (string projectName,
+            RunTargetDomainSuffixesRequest request, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(item => string.Equals(item.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (RunTargetDesiredStatePolicy.NormalizeDomainSuffixes(request.Suffixes) is not { } suffixes)
+                return Results.BadRequest(new { error = "Every suffix must be a domain such as example.com." });
+            settings.SetRunTargetDomainSuffixes(projectName, suffixes);
+            return Results.Ok(new { suffixes });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
         app.MapPost("/api/deploy/jobs/claim", (HttpContext context, DeployClaimRequest request,
             ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration) =>
         {
@@ -94,6 +116,19 @@ public static class ProjectOperatorDashboardEndpoints
             deploy.SyncAfterHostCall(project);
             return Results.Ok();
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
+        // IP-1 run-target role: the host polls; Studio never dials in.
+        app.MapGet("/api/deploy/run-targets/{hostId}/desired-state", (HttpContext context, string hostId,
+            ProjectEnvironmentService environments, IConfiguration configuration) =>
+            RunTargetCallerDenied(context, hostId, configuration)
+                ? RunTargetForbidden() : Results.Ok(environments.DesiredState(hostId)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+
+        app.MapPost("/api/deploy/run-targets/{hostId}/observed-state", (HttpContext context, string hostId,
+            RunTargetObservedReport report, ProjectEnvironmentService environments, IConfiguration configuration) =>
+            RunTargetCallerDenied(context, hostId, configuration)
+                ? RunTargetForbidden() : Results.Ok(new { accepted = environments.RecordObserved(hostId, report) }))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
         app.MapPost("/api/deploy/jobs/{project}/{jobId}/log", (string project, string jobId,
             DeployStepLogRequest request, DeployService deploy) =>
@@ -157,6 +192,15 @@ public static class ProjectOperatorDashboardEndpoints
         });
     }
 
+    // Results.Forbid() needs an authentication scheme; Runner credentials are
+    // checked by AccessSecurityMiddleware, so answer 403 directly.
+    private static IResult RunTargetForbidden() => Results.Json(
+        new { error = "A run target may access only its enrolled host identity." }, statusCode: StatusCodes.Status403Forbidden);
+
+    private static bool RunTargetCallerDenied(HttpContext context, string hostId, IConfiguration configuration)
+        => SecurityProfiles.IsNetworked(configuration)
+            && (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
+                || principal.RunnerId != hostId);
     /// <summary>
     /// 202 with the release; 409 when the stored releases refuse it (an older
     /// commit than the newest release, with <c>"reason":"superseded"</c>, or an
