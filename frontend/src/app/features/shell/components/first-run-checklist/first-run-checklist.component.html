@@ -9,6 +9,12 @@
     </button>
   </header>
 
+  @if (taskServerUnavailable()) {
+    <p role="alert" data-testid="first-run-task-server-unavailable">
+      The networked first-run checklist needs a Task Server. This Studio is running without a Task Server connection, so installation, host enrollment, and repository setup are unavailable.
+    </p>
+  }
+
   <ol class="first-run__steps">
     <li data-testid="first-run-owner" [attr.data-state]="ownerReady() ? 'ready' : 'pending'">
       <span class="first-run__number">1</span>

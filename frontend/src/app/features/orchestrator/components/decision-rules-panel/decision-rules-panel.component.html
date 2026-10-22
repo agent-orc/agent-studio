@@ -61,6 +61,13 @@
         </select>
       </label>
       <label>Model <input [value]="rule.model ?? ''" (input)="updateRule(index, 'model', $any($event.target).value)" /></label>
+      @if (rule.trigger === 'deep-review') {
+        <label>Review reasoning
+          <select [value]="rule.thinkingLevel ?? 'medium'" (change)="updateRule(index, 'thinkingLevel', $any($event.target).value)">
+            <option>medium</option><option>high</option><option>xhigh</option>
+          </select>
+        </label>
+      }
       <label>Missing data
         <select [value]="rule.missingDataBehavior" (change)="updateRule(index, 'missingDataBehavior', $any($event.target).value)">
           <option>ask</option><option>hold</option><option>signal</option>

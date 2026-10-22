@@ -9,7 +9,10 @@ import { ProjectDeployAreaComponent } from './project-deploy-area';
 import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
 import { DEPLOY_CLOCK, type DeployPanel } from '../../state/deploy-area.model';
 import {
+  ARTIFACT_B,
   DEPLOY_FIXTURE_NOW,
+  RELEASE_2,
+  RELEASE_3,
   deployDeploymentsFixture,
   deployEnvironmentsFixture,
   deployReleasesFixture,
@@ -31,6 +34,10 @@ class FakeDeployData {
   controlledReads = false;
   readonly statusReads: Subject<DeployPanel<unknown>>[] = [];
   readonly deploymentReads: Subject<DeployPanel<unknown>>[] = [];
+  controlledReleases = false;
+  readonly releaseReads: { project: string; read: Subject<DeployPanel<unknown>> }[] = [];
+  readonly artifactLookups: { project: string; artifact: string; notAfterUtc: string | null; read: Subject<DeployPanel<unknown>> }[] = [];
+  readonly runsById = new Map<string, unknown>();
 
   environments(project: string): Observable<DeployPanel<unknown>> { this.requests.push(`environments:${project}`); return this.environmentsPanel; }
   statuses(): Observable<DeployPanel<unknown>> {
@@ -47,8 +54,13 @@ class FakeDeployData {
       notes: release.cardKeys.map(cardKey => ({ cardKey, text: `Delivered ${cardKey}` })) } } : { status: 'unavailable' });
   }
   deployments(): Observable<DeployPanel<unknown>> { this.requests.push('deployments'); return this.deploymentsPanel; }
-  releasePage(_project: string, offset: number): Observable<DeployPanel<unknown>> {
+  releasePage(project: string, offset: number): Observable<DeployPanel<unknown>> {
     this.requests.push(`releases:${offset}`);
+    if (this.controlledReleases) {
+      const read = new Subject<DeployPanel<unknown>>();
+      this.releaseReads.push({ project, read });
+      return read;
+    }
     return this.releasesPanel.pipe(map(panel => panel.status === 'ready'
       ? { status: 'ready', value: { items: (panel.value as unknown[]).slice(offset, offset + 25), total: (panel.value as unknown[]).length, offset, limit: 25 } }
       : panel));
@@ -67,6 +79,16 @@ class FakeDeployData {
       if (filter?.state && filter.state !== 'all') items = items.filter(item => item.state === filter.state);
       return { status: 'ready', value: { items: items.slice(offset, offset + 25), total: items.length, offset, limit: 25 } };
     }));
+  }
+  releaseForArtifact(project: string, artifact: string, notAfterUtc: string | null): Observable<DeployPanel<unknown>> {
+    const read = new Subject<DeployPanel<unknown>>();
+    this.artifactLookups.push({ project, artifact, notAfterUtc, read });
+    return read;
+  }
+  deployment(_project: string, id: string): Observable<DeployPanel<unknown>> {
+    this.requests.push(`deployment:${id}`);
+    const run = this.runsById.get(id);
+    return new BehaviorSubject<DeployPanel<unknown>>(run ? { status: 'ready', value: run } : { status: 'error', message: `Unknown deployment '${id}'.` });
   }
   pipeline(): Observable<DeployPanel<unknown>> { return this.pipelinePanel; }
   health(): Observable<DeployPanel<unknown>> { return this.healthPanel; }
@@ -394,6 +416,105 @@ describe('ProjectDeployAreaComponent', () => {
     await click('deploy-releases-next');
     expect(host().querySelectorAll('.releases__row')).toHaveLength(15);
     expect(data.requests).toContain('releases:25');
+  });
+
+  it('opens and approves a Production run from status that is beyond the first deployment page', async () => {
+    data.serveEverything();
+    const runs = deployDeploymentsFixture();
+    const stage = runs.find(run => run.id === 'run-c-stage')!;
+    const newer = Array.from({ length: 30 }, (_, index) => ({
+      ...stage, id: `run-stage-${index}`, createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    }));
+    data.deploymentsPanel.next({ status: 'ready', value: [...newer, ...runs] });
+    await settle();
+    expect(fixture.componentInstance.runs().some(run => run.id === 'run-c-production')).toBe(false);
+
+    await click('deploy-environment-review-approval');
+    expect(text('deploy-run-drawer')).toContain('Production');
+    expect(data.requests).not.toContain('deployment:run-c-production');
+    await click('deploy-run-approve');
+    expect(window.confirm).toHaveBeenCalledWith('Approve Production run run-c-production?');
+    expect(data.actions).toEqual(['approve:run-c-production']);
+  });
+
+  it('reads a selected run by id when no page or status contains it, and refreshes it after an action', async () => {
+    data.serveEverything();
+    const old = { ...deployDeploymentsFixture()[1], id: 'run-old-production', createdAtUtc: '2026-09-01T10:00:00Z' };
+    data.runsById.set(old.id, old);
+    await settle();
+    fixture.componentInstance.openRun(old.id);
+    await settle();
+
+    expect(data.requests).toContain(`deployment:${old.id}`);
+    expect(fixture.componentInstance.selectedRun()?.id).toBe(old.id);
+    data.runsById.set(old.id, { ...old, state: 'succeeded', approvedBy: 'local.owner' });
+    data.requests.length = 0;
+    await click('deploy-run-approve');
+    data.actionResult.next(old);
+    await settle();
+    expect(data.actions).toEqual([`approve:${old.id}`]);
+    expect(data.requests).toContain(`deployment:${old.id}`);
+    expect(fixture.componentInstance.selectedRun()?.state).toBe('succeeded');
+
+    fixture.componentInstance.openRun('run-missing');
+    await settle();
+    expect(byTestId('deploy-run-drawer')).toBeNull();
+    expect(text('deploy-source-notices')).toContain("Deploy run: Unknown deployment 'run-missing'.");
+  });
+
+  it('resolves a host artifact that status does not name with one bounded lookup', async () => {
+    data.serveEverything();
+    const environments = deployEnvironmentsFixture();
+    environments.environments[1].deployedArtifact = ARTIFACT_B;
+    environments.environments[1].history.unshift({ at: '2026-10-19T11:30:00Z', status: 'healthy', artifact: ARTIFACT_B,
+      previousArtifact: null, evidence: 'host-migration' });
+    data.environmentsPanel.next({ status: 'ready', value: environments });
+    data.releasesPanel.next({ status: 'ready', value: [RELEASE_3] });
+    await settle();
+
+    expect(data.artifactLookups.map(item => [item.artifact, item.notAfterUtc])).toEqual([[ARTIFACT_B, '2026-10-19T11:30:00Z']]);
+    expect(text('deploy-environment-production')).toContain('Looking up the release record');
+    data.artifactLookups[0].read.next({ status: 'ready', value: RELEASE_2 });
+    await settle();
+    expect(text('deploy-environment-production')).toContain(`Release ${RELEASE_2.version}`);
+    await click('deploy-refresh');
+    expect(data.artifactLookups).toHaveLength(1);
+  });
+
+  it('never shows the previous project releases or lookups under a new project, even when they answer late', async () => {
+    data.serveEverything();
+    data.controlledReleases = true;
+    data.releaseReads.length = 0;
+    fixture.componentInstance.refresh();
+    await settle();
+    data.releaseReads[0].read.next({ status: 'ready', value: { items: deployReleasesFixture(), offset: 0, limit: 25, total: 3 } });
+    await settle();
+    await click('deploy-tab-releases');
+    expect(host().querySelectorAll('.releases__row')).toHaveLength(3);
+    const environments = deployEnvironmentsFixture();
+    environments.environments[1].deployedArtifact = ARTIFACT_B;
+    data.environmentsPanel.next({ status: 'ready', value: environments });
+    await settle();
+    const websiteLookup = data.artifactLookups.at(-1)!;
+
+    fixture.componentInstance.show('overview');
+    fixture.componentRef.setInput('projectName', 'Intranet');
+    await settle();
+    expect(fixture.componentInstance.releasePanel().status).toBe('loading');
+    expect(fixture.componentInstance.releaseTotal()).toBe(0);
+    // The previous project's reads answer after the switch.
+    data.releaseReads[0].read.next({ status: 'ready', value: { items: deployReleasesFixture(), offset: 0, limit: 25, total: 3 } });
+    websiteLookup.read.next({ status: 'ready', value: RELEASE_2 });
+    await settle();
+    expect(fixture.componentInstance.releasePanel().status).toBe('loading');
+    expect([...fixture.componentInstance.artifactReleases().values()].map(panel => panel.status)).not.toContain('ready');
+    await click('deploy-tab-releases');
+    expect(host().querySelectorAll('.releases__row')).toHaveLength(0);
+    expect(data.releaseReads.at(-1)!.project).toBe('Intranet');
+
+    data.releaseReads.at(-1)!.read.next({ status: 'ready', value: { items: [RELEASE_3], offset: 0, limit: 25, total: 1 } });
+    await settle();
+    expect(host().querySelectorAll('.releases__row')).toHaveLength(1);
   });
 
   it('clears server history filters when leaving History so the reopened controls match the data', async () => {

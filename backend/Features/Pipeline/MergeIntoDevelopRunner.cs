@@ -886,11 +886,23 @@ public sealed partial class MergeIntoDevelopRunner
             if (string.IsNullOrWhiteSpace(deliverySha)) return;
             foreach (var path in changed.Where(DeliveryReportPathPolicy.IsReportPath))
             {
+                var stem = path == "status.md" ? "legacy-repository-status" : "legacy-repository-results-status";
+                foreach (var oldSnapshot in Directory.EnumerateFiles(jobFolderPath, $"{stem}-*.md"))
+                    File.Delete(oldSnapshot);
+                var fallbackArtifact = Path.Combine(jobFolderPath, $"{stem}.md");
+                var runnerArtifact = Path.Combine(jobFolderPath, "results", $"{stem}.md");
+                if (File.Exists(runnerArtifact))
+                {
+                    if (File.Exists(fallbackArtifact)) File.Delete(fallbackArtifact);
+                    continue;
+                }
                 var content = _git.GetFileAtCommit(repoRoot, deliverySha, path);
                 if (content is null) continue;
-                var stem = path == "status.md" ? "legacy-repository-status" : "legacy-repository-results-status";
-                var name = $"{stem}-{deliverySha[..12]}.md";
-                File.WriteAllText(Path.Combine(jobFolderPath, name), content);
+                const int reportLimit = 16 * 1024;
+                var bytes = System.Text.Encoding.UTF8.GetBytes(content);
+                var start = Math.Max(0, bytes.Length - reportLimit);
+                while (start < bytes.Length && (bytes[start] & 0xC0) == 0x80) start++;
+                File.WriteAllBytes(fallbackArtifact, bytes[start..]);
             }
         }
         catch (Exception ex)

@@ -1,0 +1,34 @@
+<section class="delivery-lanes" data-testid="delivery-lanes" [attr.aria-label]="heading()">
+  <h2>{{ heading() }}</h2>
+  @if (loading()) { <p role="status">Loading delivery lanes…</p> }
+  @if (error()) { <p role="status">Some delivery lanes could not be loaded.</p> }
+  @for (project of rows(); track project.projectId) {
+    <div class="delivery-lanes__project">
+      <h3>{{ project.projectId }}</h3>
+      <div class="delivery-lanes__track">
+        @for (lane of project.lanes; track lane.environmentId ?? 'waiting') {
+          <section class="delivery-lanes__lane" [attr.data-testid]="'delivery-lane-' + project.projectId + '-' + (lane.environmentId ?? 'waiting')">
+            @if (lane.environmentId) {
+              <button class="delivery-lanes__header" type="button" (click)="openEnvironment(project.projectId, lane.environmentId)">
+                Delivery to {{ lane.name }} <span>{{ lane.cards.length }}</span>
+              </button>
+            } @else {
+              <h4 class="delivery-lanes__header">{{ lane.name }} <span>{{ lane.cards.length }}</span></h4>
+            }
+            <div class="delivery-lanes__cards">
+              @for (card of lane.cards; track card.key) {
+                <button type="button" class="delivery-lanes__card" (click)="openCard.emit(card.key)"
+                        [attr.data-testid]="'delivery-card-' + card.key">
+                  <strong>{{ card.key }}</strong> {{ card.title }}
+                  @if (card.releaseVersion) {
+                    <small>Release {{ card.releaseVersion }} · {{ card.deployedAtUtc | date:'medium':undefined:'en-US' }}</small>
+                  }
+                </button>
+              } @empty { <p class="delivery-lanes__empty">No cards</p> }
+            </div>
+          </section>
+        }
+      </div>
+    </div>
+  }
+</section>
