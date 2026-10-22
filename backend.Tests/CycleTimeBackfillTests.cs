@@ -142,6 +142,18 @@ public sealed class CycleTimeBackfillTests : IDisposable
     }
 
     [Fact]
+    public void Analyze_ArchivedHistoricalParent_DoesNotUseBackfillOrLedgerCompletion()
+    {
+        var task = Task("old-parent", TaskStates.Archive, T0, T0.AddDays(1)) with { Kind = "epic" };
+        var events = new[] { Lane(T0.AddDays(1), TaskStates.Completed, TaskStates.Archive) };
+
+        var result = TaskCycleTimeAnalyzer.Analyze(task, events, null, ArchiveMove);
+
+        Assert.Null(result.Row);
+        Assert.Equal(TaskCycleAnalysis.ExcludedRetiredContainer, result.ExclusionReason);
+    }
+
+    [Fact]
     public void Analyze_ArchivedWithoutCompletion_WithoutBackfill_StaysExcluded()
     {
         var task = Task("legacy", TaskStates.Archive, createdAt: T0, enteredLaneAt: T0.AddDays(4));
@@ -231,6 +243,8 @@ public sealed class CycleTimeBackfillTests : IDisposable
             Lane(created.AddDays(1), TaskStates.HumanReview, TaskStates.Completed),
             Lane(created.AddDays(2), TaskStates.Completed, TaskStates.Archive),
         ], null);
+        SeedJob(watchPath, TaskStates.Archive, "old-parent", created, created.AddDays(3),
+            [], null, kind: "epic");
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -251,6 +265,7 @@ public sealed class CycleTimeBackfillTests : IDisposable
         var before = service.Build("Demo", "all");
         Assert.NotNull(before);
         Assert.Single(before!.Tasks);
+        Assert.Equal(2, before.Coverage.TasksInProject);
         Assert.Equal(1, before.Coverage.ExcludedNoCompletionTimestamp);
         Assert.Equal(0, before.Coverage.TasksBackfilled);
 
@@ -263,7 +278,8 @@ public sealed class CycleTimeBackfillTests : IDisposable
               "version": 1,
               "entries": {
                 "legacy-task": { "completedAt": "{{legacyCompleted:o}}", "source": "git-archive-move", "confidence": "medium", "commit": "abc123" },
-                "ledgered-task": { "completedAt": "{{created.AddDays(9).ToUniversalTime():o}}", "source": "status-mtime", "confidence": "low" }
+                "ledgered-task": { "completedAt": "{{created.AddDays(9).ToUniversalTime():o}}", "source": "status-mtime", "confidence": "low" },
+                "old-parent": { "completedAt": "{{created.AddDays(3).ToUniversalTime():o}}", "source": "status-mtime", "confidence": "low" }
               }
             }
             """);
@@ -271,6 +287,8 @@ public sealed class CycleTimeBackfillTests : IDisposable
         var after = service.Build("Demo", "30d");
         Assert.NotNull(after);
         Assert.Equal(2, after!.Tasks.Count);
+        Assert.Equal(2, after.Coverage.TasksInProject);
+        Assert.DoesNotContain(after.Tasks, task => task.TaskId == "old-parent");
         Assert.Equal(0, after.Coverage.ExcludedNoCompletionTimestamp);
         Assert.Equal(1, after.Coverage.TasksBackfilled);
 
@@ -369,12 +387,14 @@ public sealed class CycleTimeBackfillTests : IDisposable
         DateTime createdAt,
         DateTime enteredLaneAt,
         IEnumerable<TimelineEvent> events,
-        PipelineExecutionRecord? pipeline)
+        PipelineExecutionRecord? pipeline,
+        string? kind = null)
     {
         var dir = Path.Combine(watchPath, state, slug);
         Directory.CreateDirectory(Path.Combine(dir, "logs"));
+        var kindField = kind is null ? "" : $",\"kind\":\"{kind}\"";
         File.WriteAllText(Path.Combine(dir, "task.json"),
-            $"{{\"id\":\"{slug}\",\"title\":\"{slug} title\",\"state\":\"{state}\",\"order\":1,\"agent\":\"claude\",\"createdAt\":\"{createdAt:o}\",\"enteredLaneAt\":\"{enteredLaneAt:o}\"}}");
+            $"{{\"id\":\"{slug}\",\"title\":\"{slug} title\",\"state\":\"{state}\",\"order\":1,\"agent\":\"claude\",\"createdAt\":\"{createdAt:o}\",\"enteredLaneAt\":\"{enteredLaneAt:o}\"{kindField}}}");
         File.WriteAllText(Path.Combine(dir, "prompt.md"), $"# {slug}\n");
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         foreach (var evt in events) timeline.Append(dir, evt);

@@ -67,55 +67,8 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
         Assert.Contains("conflicts-with-running", reason);
     }
 
-    [Fact]
-    public void Epic_AtHeadOfReady_IsSkipped_NextRealTaskPicked()
-    {
-        // An epic is a container, not a work item: even sitting at the visible
-        // head of 2-ready it must never be picked. The picker skips it and
-        // returns the next real task below it.
-        WriteJob(TaskStates.Ready, "container-epic-head", order: 1, kind: TaskKinds.Epic);
-        WriteJob(TaskStates.Ready, "real-task-below", order: 2);
 
-        var (runner, _) = BuildRunner();
-        runner.SetMode("auto-continuous");
 
-        var picked = InvokeDisplayedPicker(runner, slotMax: 1);
-
-        Assert.NotNull(picked);
-        Assert.Equal("real-task-below", picked!.Id);
-    }
-
-    [Fact]
-    public void Epic_OnlyReadyCard_IsNeverPicked()
-    {
-        // A lane whose only 2-ready entry is an epic yields no pickup: the
-        // runner returns null rather than loading the epic into a slot.
-        WriteJob(TaskStates.Ready, "lonely-epic", order: 1, kind: TaskKinds.Epic);
-
-        var (runner, _) = BuildRunner();
-        runner.SetMode("auto-continuous");
-
-        var picked = InvokeDisplayedPicker(runner, slotMax: 1);
-
-        Assert.Null(picked);
-    }
-
-    [Fact]
-    public void Epic_StrayInProgress_IsSkipped_NextRealTaskPicked()
-    {
-        // Defensive: an epic that has come to rest in 3-progress (old data /
-        // stray move) is not resumed into a slot; visible ready work wins.
-        WriteJob(TaskStates.Progress, "stray-epic-progress", order: 1, kind: TaskKinds.Epic);
-        WriteJob(TaskStates.Ready, "real-ready-task", order: 2);
-
-        var (runner, _) = BuildRunner();
-        runner.SetMode("auto-continuous");
-
-        var picked = InvokeDisplayedPicker(runner, slotMax: 1);
-
-        Assert.NotNull(picked);
-        Assert.Equal("real-ready-task", picked!.Id);
-    }
 
     private static TaskInfo? InvokeDisplayedPicker(ProjectRunner runner, int slotMax)
     {

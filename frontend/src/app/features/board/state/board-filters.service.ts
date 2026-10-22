@@ -710,7 +710,7 @@ export class BoardFiltersService {
     if (this.waitingForReleaseOnly()) segments.push('release:waiting');
     if (this.environmentFilter() !== 'all') segments.push(`environment:${this.environmentFilter()}`);
     // Segment-aware upsert: the route segment of an open overlay (workspace
-    // settings, project shell, epics) and legacy segments survive; only the
+    // settings, project shell) and legacy segments survive; only the
     // filters= segment is owned here. See url-hash.util.ts for the contract.
     const value = segments.length > 0 ? encodeURIComponent(segments.join(';')) : null;
     const target = withKvSegment(window.location.hash || '', 'filters', value, ['filter']);

@@ -57,8 +57,8 @@ public static class DeployEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapPost("/deployments/{deploymentId}/approve", (HttpContext context, string projectName,
-            string deploymentId, DeployService deploy) =>
-            Respond(deploy.Approve(projectName, deploymentId, Actor(context, projectName))))
+            string deploymentId, DeploymentApprovalRequest? request, DeployService deploy) =>
+            Respond(deploy.Approve(projectName, deploymentId, Actor(context, projectName), request?.GuidedFailure)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         project.MapPost("/deployments/{deploymentId}/reject", (HttpContext context, string projectName,
@@ -71,16 +71,21 @@ public static class DeployEndpoints
             Respond(deploy.Cancel(projectName, deploymentId, Actor(context, projectName))))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
+        project.MapPost("/deployments/{deploymentId}/intervention", (HttpContext context, string projectName,
+            string deploymentId, InterventionDecisionRequest request, DeployService deploy) =>
+            Respond(deploy.DecideIntervention(projectName, deploymentId, request, Actor(context, projectName))))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+
         project.MapPost("/environments/{environmentId}/redeploy", (HttpContext context, string projectName,
             string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
             Respond(deploy.Redeploy(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName)), accepted: true))
+                Actor(context, projectName), request?.GuidedFailure), accepted: true))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapPost("/environments/{environmentId}/rollback", (HttpContext context, string projectName,
             string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
             Respond(deploy.Rollback(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName)), accepted: true))
+                Actor(context, projectName), request?.GuidedFailure), accepted: true))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapGet("/api/deploy/matrix", (HttpContext context, DeployService deploy, ProjectRegistry projects) =>

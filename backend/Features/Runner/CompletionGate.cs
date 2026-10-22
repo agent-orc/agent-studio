@@ -40,7 +40,7 @@ public static class CompletionGate
     // identifier or comment in the printed source (e.g. a parameter literally
     // named "pending"), not a status the run is reporting about itself. Without
     // this guard a run that merely greps its own code is reissued forever on a
-    // word it never claimed (ASS-794, Epic-776 orchestrator hardening).
+    // word it never claimed (ASS-794, ASS-776 orchestrator hardening).
     private static readonly Regex ToolSourceEchoRegex = new(
         @"^(?:\[[^\]]*\]\s*)*\s*\d{1,6}[:\t]\s*\S.*[(){};]",
         RegexOptions.Compiled);

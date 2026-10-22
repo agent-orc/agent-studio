@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace AgentStudio.TaskServer.Contracts;
 
 /// <summary>
@@ -14,7 +17,11 @@ public sealed record StudioCreateTaskRequest(
     string? Body = null,
     string? State = null,
     string? TaskId = null,
-    string? TaskKey = null);
+    string? TaskKey = null)
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? CompatibilityFields { get; init; }
+}
 
 public sealed record TaskDependentDto(string TaskId, string TaskKey, string Title, string State);
 

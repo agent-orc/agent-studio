@@ -75,6 +75,7 @@ import { TaskInspectorTabComponent } from '../task-inspector-tab/task-inspector-
 import { DecisionSurfaceComponent } from '../../decision-surface/decision-surface.component';
 import { TaskArtifactLinksDirective } from '../../task-artifact-links/task-artifact-links.directive';
 import { DetailKeyboardSurfaceDirective } from '../../detail-keyboard-surface/detail-keyboard-surface.directive';
+import { TaskPreviewComponent } from '../../../../../components/task-preview/task-preview.component';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { PaneHeaderComponent } from '../../../../../components/pane-header/pane-header.component';
@@ -139,6 +140,7 @@ interface InterimSummaryState {
     ActivityEventPresentationDirective,
     TaskArtifactLinksDirective,
     DetailKeyboardSurfaceDirective,
+    TaskPreviewComponent,
   ],
   templateUrl: './protocol-pane.component.html',
   styleUrls: ['./protocol-pane.component.scss'],

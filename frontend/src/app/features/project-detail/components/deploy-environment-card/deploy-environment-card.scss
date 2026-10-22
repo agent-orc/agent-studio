@@ -42,10 +42,14 @@
 
 .env-card__note {
   margin: 0;
+  border: 0;
   padding: var(--studio-spacing-2) var(--studio-spacing-3);
   border-radius: 6px;
   background: color-mix(in srgb, var(--studio-accent) 10%, var(--studio-surface));
   color: var(--studio-fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .env-card__actions {
