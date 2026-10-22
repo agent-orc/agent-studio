@@ -3,6 +3,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { setTheme } from '../helpers/theme';
 import {
+  ARTIFACT_A,
+  ARTIFACT_B,
   DEPLOY_FIXTURE_NOW,
   deployDeploymentsFixture,
   deployEnvironmentsFixture,
@@ -86,12 +88,18 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
     capturedAt: new Date(DEPLOY_FIXTURE_NOW).toISOString(), probeOrigin: 'mock', environments: [],
   }));
   await page.route(`**${DEPLOY}/status`, route => answer(route, deploy.status));
-  await page.route(`**${DEPLOY}/releases/page?*`, route => {
+  // A predicate, not a glob: the artifact query value contains "/", which a glob "*" does not match.
+  await page.route(url => url.pathname === `${DEPLOY}/releases/page`, route => {
     if (deploy.releases === MISSING || (deploy.releases && typeof deploy.releases === 'object' && 'status' in deploy.releases))
       return answer(route, deploy.releases);
-    const releases = deploy.releases as unknown[];
-    const offset = Number(new URL(route.request().url()).searchParams.get('offset') ?? 0);
-    return answer(route, { items: releases.slice(offset, offset + 25), offset, limit: 25, total: releases.length });
+    const params = new URL(route.request().url()).searchParams;
+    let releases = deploy.releases as ReturnType<typeof deployReleasesFixture>;
+    const digest = params.get('artifact')?.split('@').at(-1);
+    if (digest) releases = releases.filter(item => item.artifactDigests.some(value => value.split('@').at(-1) === digest));
+    if (params.has('notAfterUtc')) releases = releases.filter(item => Date.parse(item.createdAtUtc) <= Date.parse(params.get('notAfterUtc')!));
+    const offset = Number(params.get('offset') ?? 0);
+    const limit = Number(params.get('limit') ?? 25);
+    return answer(route, { items: releases.slice(offset, offset + limit), offset, limit, total: releases.length });
   });
   await page.route(`**${DEPLOY}/releases/*/page?*`, route => {
     if (deploy.releases === MISSING || (deploy.releases && typeof deploy.releases === 'object' && 'status' in deploy.releases))
@@ -114,6 +122,12 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
     const offset = Number(params.get('offset') ?? 0);
     return answer(route, { items: runs.slice(offset, offset + 25), offset, limit: 25, total: runs.length });
   });
+  await page.route(new RegExp(`${DEPLOY}/deployments/(?!page)[^/?]+$`), route => {
+    const id = decodeURIComponent(route.request().url().split('/').at(-1)!);
+    const runs = deploy.deployments as ReturnType<typeof deployDeploymentsFixture>;
+    const run = Array.isArray(runs) ? runs.find(item => item.id === id) : undefined;
+    return run ? answer(route, run) : answer(route, { status: 404, body: { error: `Unknown deployment '${id}'.` } });
+  });
   await page.route(`**${DEPLOY}/deployments/*/log`, route => {
     const id = route.request().url().split('/').at(-2)!;
     return deploy.deployments === MISSING ? answer(route, MISSING) : answer(route, { deploymentId: id, lines: deploymentLogFixture(id) });
@@ -135,7 +149,7 @@ async function openDeploy(page: Page, deploy: DeployMocks): Promise<void> {
     activeKey: `hub:${project}`,
   })), { project: PROJECT });
   await mockApp(page, deploy);
-  await page.goto('/');
+  await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"], vite-error-overlay')
     .forEach(element => ((element as HTMLElement).style.display = 'none')));
   await expect(page.getByTestId('project-deploy-area')).toBeVisible({ timeout: 60_000 });
@@ -472,6 +486,41 @@ test.describe('Project Deploy area (mocked)', () => {
     await expect(page.getByRole('list', { name: 'Releases, newest first' }).getByRole('button')).toHaveCount(25);
     await page.getByTestId('deploy-releases-next').click();
     await expect(page.getByRole('list', { name: 'Releases, newest first' }).getByRole('button')).toHaveCount(15);
+  });
+
+  test('acts on a status run beyond the first page and names a migrated host artifact by a bounded lookup', async ({ page }) => {
+    const calls: string[] = [];
+    const stage = deployDeploymentsFixture().find(run => run.id === 'run-c-stage')!;
+    const newer = Array.from({ length: 30 }, (_, index) => ({
+      ...stage, id: `newer-stage-${index}`, createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    }));
+    const release = deployReleasesFixture()[0];
+    const padding = Array.from({ length: 40 }, (_, index) => ({
+      ...release, id: `newer-release-${index}`, createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    }));
+    const environments = deployEnvironmentsFixture();
+    const production = environments.environments[1];
+    production.deployedArtifact = ARTIFACT_B;
+    production.history.unshift({ at: '2026-10-19T11:30:00Z', status: 'healthy', artifact: ARTIFACT_B,
+      previousArtifact: ARTIFACT_A, evidence: 'host-migration' });
+    const lookups: string[] = [];
+    page.on('request', request => {
+      const url = new URL(request.url());
+      if (url.pathname.endsWith('/deploy/releases/page') && url.searchParams.has('artifact')) lookups.push(url.search);
+    });
+    await openDeploy(page, fullMocks({
+      environments, deployments: [...newer, ...deployDeploymentsFixture()], releases: [...padding, ...deployReleasesFixture()],
+      act: (action, id) => { calls.push(`${action}:${id}`); return deployDeploymentsFixture().find(item => item.id === id); },
+    }));
+
+    const card = page.getByTestId('deploy-environment-production');
+    await expect(card).toContainText('Release 2026.10.19.1');
+    expect(lookups).toHaveLength(1);
+    expect(new URLSearchParams(lookups[0]).get('limit')).toBe('1');
+    await card.getByRole('button', { name: 'Review the pending approval for Production' }).click();
+    await expect(page.getByTestId('deploy-run-drawer')).toContainText('Production');
+    await page.getByTestId('deploy-run-approve').click();
+    await expect.poll(() => calls).toEqual(['approve:run-c-production']);
   });
 
   test('captures every view in light and dark at 1280 and 1920 px', async ({ page }) => {

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -125,6 +125,44 @@ test('reads the registry from the backup when the primary file is invalid', asyn
     const projects = readProjectRegistry(workspace);
     assert.deepEqual(projects.map(project => project.id), ['PROJ-001', 'PROJ-002', 'PROJ-003', 'PROJ-004', 'PROJ-005']);
     assert.equal(projects[4].archived, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('refuses a workspace without a project registry instead of planning an empty migration', async () => {
+  const { root, workspace } = await materialize({});
+  try {
+    await rm(path.join(workspace, '.metadata', 'projects.json'));
+    assert.throws(() => readProjectRegistry(workspace), /Project registry not found: .*projects\.json/);
+    const out = path.join(root, 'out');
+    await mkdir(out);
+    const output = [];
+    assert.throws(() => runCli(['projects', '--workspace', workspace], { write: text => output.push(text) }), /not found/);
+    assert.throws(() => runCli(['inventory', '--workspace', workspace, '--out-dir', out], { now: fixedClock, write: text => output.push(text) }),
+      /not found/);
+    assert.deepEqual(output, []);
+    assert.equal(existsSync(path.join(out, 'inventory.json')), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('refuses an invalid project registry that has no backup', async () => {
+  const { root, workspace } = await materialize({});
+  try {
+    await writeFile(path.join(workspace, '.metadata', 'projects.json'), '{ truncated');
+    assert.throws(() => readProjectRegistry(workspace), /Project registry is invalid and has no backup/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('accepts a registry that lists no projects', async () => {
+  const { root, workspace } = await materialize({});
+  try {
+    await writeFile(path.join(workspace, '.metadata', 'projects.json'), JSON.stringify({ Projects: [] }));
+    assert.deepEqual(readProjectRegistry(workspace), []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

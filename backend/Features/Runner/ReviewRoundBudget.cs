@@ -55,13 +55,17 @@ public static class ReviewRoundBudgetStore
         if (payload.ReviewAttemptId is null
             || !MonolithTransitionAdapter.ReviewRoundBudgetPolicyIsDeliveredOutcome(payload.ReviewOutcome))
             return;
-        var blocked = MonolithTransitionAdapter.ReviewRoundBudgetPolicyCountedBlockingAspects(payload.Verdicts ?? []);
+        var blocked = MonolithTransitionAdapter.ReviewRoundBudgetPolicyCountedBlockingAspects(
+            MonolithTransitionAdapter.MergeReviewFindings((payload.Verdicts ?? []).Select(verdict =>
+                new ReviewFollowUpFinding(verdict.Aspect, verdict.Status, verdict.Summary,
+                    verdict.EvidenceChecked, verdict.Missing, verdict.Classification))));
         var seed = payload.DeliveredRounds ?? ReviewRoundBudgetLedger.Empty;
         var decision = MonolithTransitionAdapter.ReviewRoundBudget(seed, payload.ReviewAttemptId, blocked,
             payload.MaximumDeliveredRounds, ReviewRoundBudgetPolicy.DefaultConsecutiveBlockRounds,
             payload.ReissuesUsed, payload.MaximumReissues);
         Record(folder, seed, new DeliveredReviewRound(payload.ReviewAttemptId, blocked,
-            decision.DegradedAspects, SpentBy: decision.SpentBy));
+            decision.DegradedAspects, SpentBy: decision.SpentBy,
+            BlockingFindingKeys: MonolithTransitionAdapter.BlockingReviewFindingKeys(payload.Verdicts ?? [])));
     }
 
     public static void MarkFollowUp(string folder, string attemptId, string taskKey)

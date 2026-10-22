@@ -2068,6 +2068,15 @@ public static class LeaseEndpoints
                     _ => $"TASK_{outcome.ToUpperInvariant()}",
                 },
             };
+            if (reviewAttemptRequest?.Plan?.DeepReviewDecision is { } deepReview)
+            {
+                details["deepReviewReceiptId"] = deepReview.ReceiptId;
+                details["deepReviewMode"] = deepReview.Mode;
+                details["deepReviewSelected"] = deepReview.Selected ? "true" : "false";
+                details["deepReviewModel"] = deepReview.Model;
+                details["deepReviewThinkingLevel"] = deepReview.ThinkingLevel;
+                details["deepReviewGrounds"] = string.Join(",", deepReview.Grounds);
+            }
             if (!string.IsNullOrWhiteSpace(salvageBranch))
                 details["salvageBranch"] = salvageBranch;
             if (!string.IsNullOrWhiteSpace(salvageCommitSha))

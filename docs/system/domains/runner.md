@@ -218,7 +218,8 @@ unreported claim expires with its lease and is queued again.
   written to `results/deliverables.md` before the manifest is created. A legacy
   repository-root `status.md` edited by a coding run is copied to the card's
   `results/legacy-repository-status.md` only when the repository opts in with
-  `.agent-studio/legacy-status-reports`. The runner excludes it from the salvage
+  `.agent-studio/legacy-status-reports`. This artifact keeps at most the final
+  16 KiB and is replaced on a later round. The runner excludes it from the salvage
   commit and restores tracked reports or removes untracked reports before durable
   handoff checks the worktree. New result reports belong in `JOB_RESULTS_DIR`, which is transferred
   to the card. The generated card Result records the immutable handoff SHA.

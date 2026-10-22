@@ -70,11 +70,22 @@ export class ProjectDeployDataService {
       { params: { offset, limit: 25 } }), 'Releases could not be loaded.', true);
   }
 
-
   releasePageContaining(projectName: string, releaseId: string): Observable<DeployPanel<DeployPage<Release>>> {
     return panel(this.http.get<DeployPage<Release>>(
       `${deployRoot(projectName)}/releases/${encodeURIComponent(releaseId)}/page`, { params: { limit: 25 } }),
     'The selected release could not be loaded.', true);
+  }
+
+  /**
+   * The newest release that carries the artifact's digest and existed at `notAfterUtc`,
+   * one bounded read instead of scanning the release history for a host artifact.
+   */
+  releaseForArtifact(projectName: string, artifact: string, notAfterUtc: string | null): Observable<DeployPanel<Release | null>> {
+    const params: Record<string, string | number> = { offset: 0, limit: 1, artifact };
+    if (notAfterUtc) params['notAfterUtc'] = notAfterUtc;
+    const request = this.http.get<DeployPage<Release>>(`${deployRoot(projectName)}/releases/page`, { params })
+      .pipe(map(page => page.items[0] ?? null));
+    return panel(request, 'The release of the deployed artifact could not be loaded.', true);
   }
 
   /** AGT-3201 deploy runs, newest first. */
@@ -93,6 +104,12 @@ export class ProjectDeployDataService {
     }
     return panel(this.http.get<DeployPage<Deployment>>(`${deployRoot(projectName)}/deployments/page`, { params }),
       'Deploy runs could not be loaded.', true);
+  }
+
+  /** One run by id, for a run that no loaded page contains. */
+  deployment(projectName: string, deploymentId: string): Observable<DeployPanel<Deployment>> {
+    return panel(this.http.get<Deployment>(`${deployRoot(projectName)}/deployments/${encodeURIComponent(deploymentId)}`),
+      'The deploy run could not be loaded.', true);
   }
 
   deploymentLog(projectName: string, deploymentId: string): Observable<DeployPanel<DeploymentLogLine[]>> {

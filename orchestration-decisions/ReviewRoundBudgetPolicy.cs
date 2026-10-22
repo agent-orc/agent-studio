@@ -5,7 +5,8 @@ public sealed record DeliveredReviewRound(
     IReadOnlyList<string> BlockingAspects,
     IReadOnlyList<string> DegradedAspects,
     string? FollowUpTaskKey = null,
-    string? SpentBy = null);
+    string? SpentBy = null,
+    IReadOnlyList<string>? BlockingFindingKeys = null);
 
 public sealed record ReviewRoundBudgetLedger(IReadOnlyList<DeliveredReviewRound> Rounds)
 {
