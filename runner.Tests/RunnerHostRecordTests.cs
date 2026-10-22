@@ -454,7 +454,7 @@ public sealed class RunnerHostRecordTests
                 try
                 {
                     foreach (var (key, value) in env) Environment.SetEnvironmentVariable(key, value);
-                    var (options, _, _, _) = RunnerOptions.Parse([]);
+                    var (options, _, _, _) = RunnerTestOptions.Parse([]);
                     Assert.Equal(role, options.Role);
                     Assert.Equal("build-02", options.Hostname);
                     Assert.Equal(own, options.HostMaxParallelism);

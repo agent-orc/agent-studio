@@ -56,7 +56,15 @@ public sealed class DeployService
             .ToArray();
 
     public IReadOnlyList<DeployEnvironment>? Environments(string project)
-        => _environments.Declarations(project) is { } declarations ? MapEnvironments(project, declarations) : null;
+        => _environments.Declarations(project) is { } declarations
+            ? MapEnvironments(project, declarations).Concat(PreviewEnvironments(project)).ToArray() : null;
+
+    private IReadOnlyList<DeployEnvironment> PreviewEnvironments(string project)
+        => _scanner.ScanAllJobs().Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)
+                && task.Preview is { Status: not "removing" })
+            .Select(task => new DeployEnvironment("preview-" + CardPreviewPolicy.Slug(task.Key ?? task.TaskKey),
+                project, $"Preview · {task.Key ?? task.TaskKey}", -1, EnvironmentKinds.Preview))
+            .ToArray();
 
     /// <summary>
     /// The integration branch built green: record the immutable release for
@@ -280,11 +288,24 @@ public sealed class DeployService
         lock (_gate)
         {
             var snapshot = SyncLocked(project);
-            if (snapshot is null) return null;
+            var previews = _scanner.ScanAllJobs().Where(task =>
+                    string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)
+                    && task.Preview is { Status: not ("removing" or "expired" or "removed") })
+                .Select(task => new EnvironmentStatus(
+                    new DeployEnvironment("preview-" + CardPreviewPolicy.Slug(task.Key ?? task.TaskKey), project,
+                        $"Preview · {task.Key ?? task.TaskKey}", -1, EnvironmentKinds.Preview),
+                    null, null, null, [], task.Preview!.Status == "ready" ? EnvironmentHealth.Healthy
+                        : task.Preview.Status == "failed" ? EnvironmentHealth.Unhealthy : EnvironmentHealth.Unknown));
+            if (snapshot is null)
+            {
+                var previewOnly = previews.ToArray();
+                return previewOnly.Length == 0 ? null : previewOnly;
+            }
             var hostHealth = snapshot.View.Environments.ToDictionary(item => item.Declaration.Id, item => item.Health,
                 StringComparer.Ordinal);
-            return EnvironmentStatusProjection.Project(snapshot.Environments, snapshot.Releases,
+            var current = EnvironmentStatusProjection.Project(snapshot.Environments, snapshot.Releases,
                 snapshot.Deployments(project), hostHealth);
+            return current.Concat(previews).ToArray();
         }
     }
 
@@ -299,8 +320,9 @@ public sealed class DeployService
                 // Reading the queue persists its state, so skip projects
                 // without environment declarations.
                 if (_environments.Declarations(project) is not { Count: > 0 }) continue;
-                var statuses = Status(project);
-                if (statuses is { Count: > 0 }) rows.Add(new(project, statuses, null));
+                var statuses = Status(project)?.Where(item => item.Environment.Kind is
+                    EnvironmentKinds.Staging or EnvironmentKinds.Production).ToArray();
+                if (statuses is { Length: > 0 }) rows.Add(new(project, statuses, null));
             }
             catch (JsonException ex)
             {

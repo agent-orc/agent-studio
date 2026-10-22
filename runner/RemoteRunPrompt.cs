@@ -134,6 +134,11 @@ public static class RemoteRunPrompt
             + "---" + PromptText.NewLine + PromptText.NewLine
             + framingBlock
             + resultsBlock
+            + "If the task asks for `status.md` or a result SHA, write the report under `JOB_RESULTS_DIR` "
+            + "(for example `JOB_RESULTS_DIR/status.md`). Do not create or commit a repository-root `status.md` "
+            + "for a card result report; edit that path only when the task explicitly treats it as project content. "
+            + "The runner records the immutable result SHA on the card after delivery."
+            + PromptText.NewLine + PromptText.NewLine
             + CompletionProtocol + PromptText.NewLine;
     }
 }

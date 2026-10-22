@@ -9,19 +9,21 @@ namespace AgentStudio.Tokens;
 public sealed class TaskTokenUsageCache
 {
     private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan WarmTimeout = TimeSpan.FromSeconds(30);
     private readonly ProjectTokenLedger _ledger;
     private readonly ITokenPricing _pricing;
     private readonly TaskIndexCache _index;
     private readonly TimeProvider _clock;
     private readonly ProjectRegistry? _projects;
     private readonly ILogger<TaskTokenUsageCache>? _logger;
+    private readonly Action? _beforeProjectWalk;
     private readonly ConcurrentDictionary<(string Project, string Path), ProjectEntry> _projectsCache = new();
     private readonly ConcurrentDictionary<(string Project, string Path, string Id), Entry> _entries = new();
     private readonly ConcurrentDictionary<(string Project, string Id), BusRevision> _busRevisions = new();
 
     public TaskTokenUsageCache(ProjectTokenLedger ledger, ITokenPricing pricing,
         TaskIndexCache index, TimeProvider clock, ProjectRegistry? projects = null,
-        ILogger<TaskTokenUsageCache>? logger = null)
+        ILogger<TaskTokenUsageCache>? logger = null, Action? beforeProjectWalk = null)
     {
         _ledger = ledger;
         _pricing = pricing;
@@ -29,57 +31,90 @@ public sealed class TaskTokenUsageCache
         _clock = clock;
         _projects = projects;
         _logger = logger;
+        _beforeProjectWalk = beforeProjectWalk;
         _index.CoreRescanCompleted += PruneAbsentEntries;
     }
 
     public TaskTokenSummary? Get(string projectName, string watchPath, string jobId)
         => GetAsync(projectName, watchPath, jobId).GetAwaiter().GetResult();
 
-    public async Task<TaskTokenSummary?> GetAsync(string projectName, string watchPath, string jobId)
+    public async Task<TaskTokenSummary?> GetAsync(string projectName, string watchPath, string jobId,
+        CancellationToken cancellationToken = default)
     {
         var key = (projectName, watchPath, jobId);
         var entry = _entries.GetOrAdd(key, _ => new Entry(_index.CoreScanSequence));
+        var project = _projectsCache.GetOrAdd((projectName, watchPath), _ => new ProjectEntry());
         var receipt = ReceiptStamp(_index.GetDetailFacts(jobId, watchPath).Info);
         var bus = _busRevisions.GetValueOrDefault((projectName, jobId)).Version;
         var last = Volatile.Read(ref entry.Last);
-        if (last is not null && last.Receipt == receipt && last.Bus == bus
+        if (last is not null && last.Receipt == receipt && last.Bus >= bus
             && last.ExpiresAt > _clock.GetUtcNow()) return last.Summary;
 
-        var project = _projectsCache.GetOrAdd((projectName, watchPath), _ => new ProjectEntry());
-        Task<ProjectSnapshot> load;
-        lock (project)
+        var followedUp = false;
+        while (true)
         {
-            var current = project.Current;
-            if (current is not null && current.ExpiresAt > _clock.GetUtcNow()
-                && (current.ReceiptStamps.GetValueOrDefault(jobId) ?? "none") == receipt
-                && current.BusRevisions.GetValueOrDefault(jobId) == bus)
-                load = Task.FromResult(current);
-            else
-                load = project.Loading ??= Task.Run(() => LoadProject(projectName, watchPath, project));
+            cancellationToken.ThrowIfCancellationRequested();
+            Task<ProjectSnapshot> load;
+            lock (project)
+            {
+                var current = project.Current;
+                if (current is not null && current.ExpiresAt > _clock.GetUtcNow()
+                    && (current.ReceiptStamps.GetValueOrDefault(jobId) ?? "none") == receipt
+                    && current.BusRevisions.GetValueOrDefault(jobId) >= bus)
+                    load = Task.FromResult(current);
+                else if (project.Loading is { } loading)
+                    load = loading;
+                else
+                {
+                    var resident = _index.GetAllResidentTasks();
+                    project.LoadingReceiptStamps = resident
+                        .Where(task => task.ProjectName == projectName && task.WatchPath == watchPath)
+                        .OrderBy(task => Array.IndexOf(TaskStates.All, task.State))
+                        .ThenBy(task => task.FolderPath, StringComparer.Ordinal)
+                        .GroupBy(task => task.Id, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(group => group.Key, group => ReceiptStamp(group.First()),
+                            StringComparer.OrdinalIgnoreCase);
+                    project.LoadingBusRevisions = _busRevisions
+                        .Where(pair => pair.Key.Project == projectName)
+                        .ToDictionary(pair => pair.Key.Id, pair => pair.Value.Version, StringComparer.Ordinal);
+                    var receipts = project.LoadingReceiptStamps;
+                    var revisions = project.LoadingBusRevisions;
+                    load = project.Loading = Task.Run(() => LoadProject(projectName, watchPath, project,
+                        receipts, revisions));
+                }
+            }
+            var snapshot = await load.WaitAsync(cancellationToken).ConfigureAwait(false);
+            // A joined older flight needs one fold started after this request.
+            // Later writes cannot keep this request in the ledger loop.
+            if (!followedUp && ((snapshot.ReceiptStamps.GetValueOrDefault(jobId) ?? "none") != receipt
+                || snapshot.BusRevisions.GetValueOrDefault(jobId) < bus))
+            {
+                followedUp = true;
+                continue;
+            }
+            var summary = snapshot.Summaries.GetValueOrDefault(jobId);
+            var snapshotReceipt = snapshot.ReceiptStamps.GetValueOrDefault(jobId) ?? "none";
+            var snapshotBus = snapshot.BusRevisions.GetValueOrDefault(jobId);
+            var liveReceipt = ReceiptStamp(_index.GetDetailFacts(jobId, watchPath).Info);
+            var liveBus = _busRevisions.GetValueOrDefault((projectName, jobId)).Version;
+            lock (project)
+            {
+                // A late older continuation cannot replace a newer card value.
+                if (ReferenceEquals(project.Current, snapshot) && liveReceipt == snapshotReceipt
+                    && liveBus <= snapshotBus)
+                    Volatile.Write(ref entry.Last, new CardSnapshot(snapshotReceipt, snapshotBus,
+                        snapshot.ExpiresAt, summary));
+            }
+            return summary;
         }
-        var snapshot = await load.ConfigureAwait(false);
-        // A change during the walk starts another load on the next request.
-        // Publish the summary that was actually captured by this walk.
-        var summary = snapshot.Summaries.GetValueOrDefault(jobId);
-        Volatile.Write(ref entry.Last, new CardSnapshot(
-            snapshot.ReceiptStamps.GetValueOrDefault(jobId) ?? "none",
-            snapshot.BusRevisions.GetValueOrDefault(jobId), snapshot.ExpiresAt, summary));
-        return summary;
     }
 
-    private ProjectSnapshot LoadProject(string projectName, string watchPath, ProjectEntry project)
+    private ProjectSnapshot LoadProject(string projectName, string watchPath, ProjectEntry project,
+        IReadOnlyDictionary<string, string> receiptStamps, IReadOnlyDictionary<string, long> busRevisions)
     {
         try
         {
-            // Capture versions before the ledger walk. An append or receipt
-            // publication during the walk must cause the next read to reload.
-            var resident = _index.GetAllResidentTasks();
-            var receiptStamps = resident
-                .Where(task => task.ProjectName == projectName && task.WatchPath == watchPath)
-                .ToDictionary(task => task.Id, ReceiptStamp, StringComparer.Ordinal);
-            var busRevisions = _busRevisions
-                .Where(pair => pair.Key.Project == projectName)
-                .ToDictionary(pair => pair.Key.Id, pair => pair.Value.Version, StringComparer.Ordinal);
+            _beforeProjectWalk?.Invoke();
             var ledger = _ledger.LoadFreshSnapshot(projectName, watchPath);
             var result = new ProjectSnapshot(TaskTokenSummaryFold.PerJob(_pricing.Price(ledger.Entries)),
                 receiptStamps, busRevisions, _clock.GetUtcNow() + Ttl);
@@ -112,7 +147,9 @@ public sealed class TaskTokenUsageCache
         {
             void StartWarm() => _ = Task.Run(async () =>
             {
-                try { await GetAsync(info.ProjectName, info.WatchPath, info.Id).ConfigureAwait(false); }
+                using var timeout = new CancellationTokenSource(WarmTimeout, _clock);
+                try { await GetAsync(info.ProjectName, info.WatchPath, info.Id, timeout.Token)
+                    .ConfigureAwait(false); }
                 catch (Exception ex) { _logger?.LogWarning(ex, "task-token-cache-warm-failed"); }
                 finally { Volatile.Write(ref entry.Warming, 0); }
             });
@@ -173,6 +210,8 @@ public sealed class TaskTokenUsageCache
     {
         public ProjectSnapshot? Current;
         public Task<ProjectSnapshot>? Loading;
+        public IReadOnlyDictionary<string, string> LoadingReceiptStamps = new Dictionary<string, string>();
+        public IReadOnlyDictionary<string, long> LoadingBusRevisions = new Dictionary<string, long>();
         public long LoadCount;
     }
 

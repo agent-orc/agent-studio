@@ -427,6 +427,7 @@ builder.Services.AddSingleton<LaneMutexRegistry>();
 // See backend/Services/Jobs/TaskChangeNotifier.cs.
 builder.Services.AddSingleton<TaskChangeNotifier>();
 builder.Services.AddSingleton<TaskStateMachine>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.TaskGateCancellationRegistry>();
 builder.Services.AddSingleton<TaskMutationService>();
 builder.Services.AddSingleton<ITaskHistoryGitRunner, ProcessTaskHistoryGitRunner>();
 builder.Services.AddSingleton<TaskFileHistoryService>();
@@ -529,6 +530,9 @@ builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
 builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
     AgentStudio.Projects.UnavailableOperationsTelemetryReader>();
 builder.Services.AddSingleton<AgentStudio.Projects.ProjectOperationsService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<AgentStudio.Deploy.CardPreviewSweep>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<AgentStudio.Deploy.DeploymentInterventionWorker>();
 builder.Services.AddSingleton<ProjectPipelineDefinitionService>();

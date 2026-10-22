@@ -146,7 +146,8 @@ public static class BatchGatePolicy
     public static BatchGateFormation Form(
         IEnumerable<BatchGateSubject> candidates, BatchGateScope scope,
         string baseSha, BatchGateFormationOptions options,
-        DateTimeOffset now, int reviewQueueLength = 0, bool loadThrottled = false)
+        DateTimeOffset now, int reviewQueueLength = 0, bool loadThrottled = false,
+        bool gateBacklog = false)
     {
         if (!options.IsValid) throw new ArgumentOutOfRangeException(nameof(options));
         var eligible = new List<BatchGateSubject>();
@@ -163,12 +164,17 @@ public static class BatchGatePolicy
             return new(null, exclusions, keys, UsePerTaskGate: !options.Enabled);
 
         var deadline = now - eligible[0].ReviewCompletedAtUtc >= TimeSpan.FromMinutes(options.DeadlineMinutes);
+        // AGT-3219: a backlogged gate queue closes at pressure size, and a lone
+        // card waits for a partner from the review queue instead of joining the
+        // slot queue alone as a per-task gate, until it aged out.
         var pressure = eligible.Count >= options.PressureSize
-            && (reviewQueueLength >= options.ReviewQueuePressure || loadThrottled);
+            && (reviewQueueLength >= options.ReviewQueuePressure || loadThrottled || gateBacklog);
         if (eligible.Count < options.CloseSize && !deadline && !pressure)
             return new(null, exclusions, keys, false);
         if (eligible.Count == 1 && deadline)
-            return new(null, exclusions, keys, true);
+            return new(null, exclusions, keys, !gateBacklog || reviewQueueLength == 0
+                || AgentStudio.Runner.MonolithTransitionAdapter.BatchBacklogAgedOut(
+                    eligible[0].ReviewCompletedAtUtc, now, options.DeadlineMinutes));
 
         var selected = eligible.Take(options.MaximumSize).ToArray();
         exclusions.AddRange(eligible.Skip(options.MaximumSize)

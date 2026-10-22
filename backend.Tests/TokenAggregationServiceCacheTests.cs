@@ -189,6 +189,108 @@ public sealed class TokenAggregationServiceCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task DetailUsageCache_ReceiptPublishedDuringWalkGetsFollowUpLoad()
+    {
+        var config = BuildConfig();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
+        scanner.SetIndexCache(index);
+        WriteReceipt("AGT-1", 5500, 5000, 500);
+        index.GetSnapshot();
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var walks = 0;
+        var ledger = new ProjectTokenLedger(new AgentMessageBusStore(), config,
+            new ProjectTokenReceiptReader(), index);
+        var usage = new TaskTokenUsageCache(ledger, TokenTestServices.Pricing(), index,
+            new FakeTimeProvider(), beforeProjectWalk: () =>
+            {
+                if (Interlocked.Increment(ref walks) != 1) return;
+                entered.Set();
+                release.Wait();
+            });
+
+        var first = usage.GetAsync(ProjectName, _watchPath, "AGT-1");
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
+        try
+        {
+            WriteReceipt("AGT-1", 99000, 90000, 9000);
+            scanner.PublishCoreFromKnownFolder(Path.Combine(_watchPath, TaskStates.Progress, "AGT-1"));
+            var second = usage.GetAsync(ProjectName, _watchPath, "AGT-1");
+            release.Set();
+            var refreshed = await second;
+            Assert.Equal(99000, refreshed?.TotalTokens);
+            Assert.Equal(2, usage.ProjectLoadCount(ProjectName, _watchPath));
+            await first;
+            Assert.Equal(99000, usage.Get(ProjectName, _watchPath, "AGT-1")?.TotalTokens);
+        }
+        finally { release.Set(); }
+    }
+
+    [Fact]
+    public async Task DetailUsageCache_DuplicateLaneIdUsesAliasWinnerAndTerminates()
+    {
+        var config = BuildConfig();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        WriteReceipt("AGT-1", 5500, 5000, 500);
+        WriteReceipt("AGT-1", 99000, 90000, 9000, TaskStates.Ready);
+        var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config,
+            () => scanner.ScanAllJobsRaw()
+                .OrderByDescending(task => Array.IndexOf(TaskStates.All, task.State)).ToList());
+        scanner.SetIndexCache(index);
+        index.GetSnapshot();
+        Assert.Equal(2, index.GetAllResidentTasks().Count(task => task.Id == "AGT-1"));
+        Assert.Equal(TaskStates.Progress, index.GetAllResidentTasks().First(task => task.Id == "AGT-1").State);
+        Assert.Equal(TaskStates.Ready, index.GetDetailFacts("AGT-1", _watchPath).Info?.State);
+        var ledger = new ProjectTokenLedger(new AgentMessageBusStore(), config,
+            new ProjectTokenReceiptReader(), index);
+        var walks = 0;
+        var usage = new TaskTokenUsageCache(ledger, TokenTestServices.Pricing(), index,
+            new FakeTimeProvider(), beforeProjectWalk: () =>
+            {
+                if (Interlocked.Increment(ref walks) > 2)
+                    throw new InvalidOperationException("Duplicate receipts caused repeated ledger walks.");
+            });
+
+        Assert.NotNull(await usage.GetAsync(ProjectName, _watchPath, "AGT-1"));
+        Assert.InRange(usage.ProjectLoadCount(ProjectName, _watchPath), 1, 2);
+    }
+
+    [Fact]
+    public async Task DetailUsageCache_BusAdvancesOnEveryWalkReturnsAfterOneFollowUp()
+    {
+        var config = BuildConfig();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
+        scanner.SetIndexCache(index);
+        WriteReceipt("AGT-1", 5500, 5000, 500);
+        index.GetSnapshot();
+        var ledger = new ProjectTokenLedger(new AgentMessageBusStore(), config,
+            new ProjectTokenReceiptReader(), index);
+        var walks = 0;
+        TaskTokenUsageCache? usage = null;
+        usage = new TaskTokenUsageCache(ledger, TokenTestServices.Pricing(), index,
+            new FakeTimeProvider(), beforeProjectWalk: () =>
+            {
+                var walk = Interlocked.Increment(ref walks);
+                if (walk > 2)
+                    throw new InvalidOperationException("A later bus revision caused repeated ledger walks.");
+                usage!.OnTokenUsageAppended(new AgentMessage
+                {
+                    Id = "change-" + walk, Kind = "token-usage", Project = ProjectName,
+                    JobId = "AGT-1", CreatedAt = new DateTime(2026, 10, 21, 8, 0, 0, DateTimeKind.Utc),
+                    ParticipantId = "agent:codex", Role = "actor",
+                });
+            });
+
+        Assert.NotNull(await usage.GetAsync(ProjectName, _watchPath, "AGT-1"));
+        Assert.InRange(usage.ProjectLoadCount(ProjectName, _watchPath), 1, 2);
+    }
+
+    [Fact]
     public void DetailUsageCache_PrunesAbsentCardAfterLaterCompletedRescan()
     {
         var config = BuildConfig();
@@ -228,15 +330,16 @@ public sealed class TokenAggregationServiceCacheTests : IDisposable
             })
             .Build();
 
-    private void WriteReceipt(string id, long totalTokens, long inputTokens, long outputTokens)
+    private void WriteReceipt(string id, long totalTokens, long inputTokens, long outputTokens,
+        string state = TaskStates.Progress)
     {
-        var dir = Path.Combine(_watchPath, "3-progress", id);
+        var dir = Path.Combine(_watchPath, state, id);
         Directory.CreateDirectory(dir);
         var payload = new
         {
             id,
             title = id,
-            state = "3-progress",
+            state,
             order = 1,
             tokenSummary = new
             {
