@@ -83,6 +83,21 @@ public sealed class ProviderRejectionContinuationTests : IDisposable
     }
 
     [Fact]
+    public void Unsupported_host_model_without_salvage_is_held_in_ready()
+    {
+        var refusal = new ProviderRequestRejection(
+            null, "model", "The gpt-6-sol model is not supported when using Codex with a ChatGPT account", 400);
+        Assert.True(ProviderModelCapabilityRecoveryPolicy.ShouldHold(
+            refusal, "gpt-6-sol", false, false, false));
+        Assert.False(ProviderModelCapabilityRecoveryPolicy.ShouldHold(
+            refusal, "gpt-6-sol", true, false, false));
+        Assert.False(ProviderModelCapabilityRecoveryPolicy.ShouldHold(
+            refusal, "gpt-6-sol", false, true, false));
+        Assert.False(ProviderModelCapabilityRecoveryPolicy.ShouldHold(
+            Rejection, "gpt-6-sol", false, false, false));
+    }
+
+    [Fact]
     public void Policy_keeps_first_fallback_run_scoped_and_pins_on_the_second_refusal()
     {
         var first = ProviderRejectionContinuationPolicy.Decide(true, true, Fallback, true, 1, false);
