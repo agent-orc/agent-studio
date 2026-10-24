@@ -2,6 +2,9 @@ using AgentRunner;
 using AgentStudio.CliHosting;
 using System.Runtime.InteropServices;
 
+if (WindowsProviderBridge.IsBridgeProcess(Environment.ProcessPath, out var bridgeProvider))
+    return await WindowsProviderBridge.RunAsync(bridgeProvider, args);
+
 // Standalone agent host. With a task key it performs the RM-5 one-shot run;
 // without one (or with --poll) it continuously fills bounded host slots. See
 // docs/operations/setup/linux-runner-host.md.
@@ -168,12 +171,18 @@ ProviderAuthProbe.Shared.UseLauncher(
     (fileName, arguments, ct) =>
     {
         var invocation = ProviderAuthProbe.LowPriorityInvocation(fileName, arguments);
-        var context = AuthProbeContext(RunnerCapabilityProbe.Provider(fileName));
+        var provider = RunnerCapabilityProbe.Provider(fileName);
+        var context = AuthProbeContext(provider);
+        var environment = context?.Environment.ToDictionary(kv => kv.Key, kv => (string?)kv.Value)
+            ?? new Dictionary<string, string?>();
+        // A device sign-in probes its unverified Claude token in this child only (AGT-3225).
+        if (ProviderAuthEnvironment.TryGetForCli(provider, out var authName, out var authValue))
+            environment[authName] = authValue;
         return ProcessRunner.RunAsync(
             invocation.FileName,
             invocation.Arguments,
             workingDirectory: context?.HomePath,
-            environment: context?.Environment.ToDictionary(kv => kv.Key, kv => (string?)kv.Value),
+            environment: environment,
             ct: ct);
     },
     Log);
@@ -373,7 +382,8 @@ try
     // The host polls for device-login commands independently of task slots.
     // Only coding and review service identities own provider CLI homes.
     var deviceLoginPoll = daemonMode && options.Role is ("coding" or "review")
-        ? new DeviceLoginPoller(client, Log, options.StateDir).RunAsync(shutdown.Token)
+        ? new DeviceLoginPoller(client, Log, options.StateDir, options.CodexCliBin, options.ClaudeCliBin)
+            .RunAsync(shutdown.Token)
         : Task.CompletedTask;
     _ = deviceLoginPoll.ContinueWith(task => Log($"device-login poll stopped: {task.Exception?.GetBaseException().GetType().Name}"),
         CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);

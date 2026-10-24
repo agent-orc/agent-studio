@@ -13,6 +13,7 @@ namespace AgentRunner;
 /// <summary>Host-local executor for claimable deploy jobs. No agent CLI is involved.</summary>
 public static class DeployHostCommand
 {
+    private sealed class RetryableRegistryException : Exception;
     private sealed record Claim(string HostId);
     private sealed record Job(string Id, string Project, string EnvironmentId, string HostId,
         string Artifact, string Template, string Destination, string? HealthUrl,
@@ -32,6 +33,9 @@ public static class DeployHostCommand
         public string? Address { get; init; }
         public string[] BuildCommands { get; init; } = [];
     }
+    private sealed record Provenance(string Project, string Commit, string Artifact, string Digest,
+        string GateRunId, string Template, string BuilderIdentity, string Location, string SourceDigest);
+
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
         HttpClient? transport = null, SshDeployExecutor? sshExecutor = null,
@@ -71,6 +75,12 @@ public static class DeployHostCommand
         string? screenshotBase64 = null;
         try
         {
+            if (job.Kind is not ("preview" or "preview-remove") && job.RetryStep is null)
+            {
+                var provenance = await VerifyArtifact(client, job, cancellationToken);
+                if (job.Template == "static")
+                    await DownloadArtifact(client, job, provenance, args[3], cancellationToken);
+            }
             var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
             if (job.Kind is "preview" or "preview-remove")
             {
@@ -156,8 +166,13 @@ public static class DeployHostCommand
                 if (healthy) evidence = "health-ok";
             }
         }
+        catch (RetryableRegistryException)
+        {
+            // Keep the claim for a later lease retry. No bytes were deployed.
+            return 0;
+        }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
-            or HttpRequestException or System.ComponentModel.Win32Exception or OperationCanceledException)
+            or HttpRequestException or JsonException or System.ComponentModel.Win32Exception or OperationCanceledException)
         {
             Console.Error.WriteLine($"Deploy job {job.Id} failed: {ex.GetType().Name}");
         }
@@ -170,6 +185,65 @@ public static class DeployHostCommand
                 ScreenshotBase64 = screenshotBase64 }, cancellationToken);
         report.EnsureSuccessStatusCode();
         return healthy ? 0 : 1;
+    }
+
+    private static string ArtifactUrl(Job job)
+        => $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/artifact";
+
+    private static HttpRequestMessage ArtifactRequest(Job job, bool content)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, ArtifactUrl(job) + (content ? "?content=1" : ""));
+        request.Headers.Add("X-Deploy-Lease", job.LeaseToken);
+        return request;
+    }
+
+    private static async Task<Provenance> VerifyArtifact(HttpClient client, Job job, CancellationToken ct)
+    {
+        using var request = ArtifactRequest(job, content: false);
+        using var response = await client.SendAsync(request, ct);
+        EnsureArtifactAvailable(response);
+        var record = await response.Content.ReadFromJsonAsync<Provenance>(cancellationToken: ct);
+        if (record is null || record.Project != job.Project || record.Artifact != job.Artifact
+            || record.Template != job.Template || string.IsNullOrWhiteSpace(record.Commit)
+            || string.IsNullOrWhiteSpace(record.GateRunId) || string.IsNullOrWhiteSpace(record.BuilderIdentity)
+            || !job.Artifact.EndsWith("@sha256:" + record.Digest, StringComparison.Ordinal)
+            || record.Location != (job.Template == "static" ? "built-in" : "external"))
+            throw new InvalidDataException("Artifact provenance does not match the deploy job.");
+        return record;
+    }
+
+    private static async Task DownloadArtifact(HttpClient client, Job job, Provenance record,
+        string artifactStore, CancellationToken ct)
+    {
+        Directory.CreateDirectory(artifactStore);
+        var target = Path.Combine(artifactStore, record.Digest);
+        if (File.Exists(target))
+        {
+            await using var existing = File.OpenRead(target);
+            if (Convert.ToHexString(await SHA256.HashDataAsync(existing, ct)).Equals(record.Digest,
+                    StringComparison.OrdinalIgnoreCase)) return;
+        }
+        using var request = ArtifactRequest(job, content: true);
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        EnsureArtifactAvailable(response);
+        var temporary = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await using (var output = File.Create(temporary))
+                await response.Content.CopyToAsync(output, ct);
+            await using var stream = File.OpenRead(temporary);
+            if (!Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).Equals(record.Digest,
+                    StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Artifact digest mismatch.");
+            File.Move(temporary, target, true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    private static void EnsureArtifactAvailable(HttpResponseMessage response)
+    {
+        if (response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+            throw new RetryableRegistryException();
+        response.EnsureSuccessStatusCode();
     }
 
     /// <summary>Stops the environment on this host and acknowledges it, so the server releases its slot.</summary>

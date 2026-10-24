@@ -182,17 +182,20 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
         Assert.Equal("claude", call.CliType);
     }
 
-    [Fact]
-    public void RemoteDeepReviewAttempt_ProducesLedgerRowsWithHostCliAndLevel()
+    [Theory]
+    [InlineData("aspect-security", "security", "high")]
+    [InlineData("post-deep-review", "deep-review", "xhigh")]
+    public void RemoteReviewAttempt_ProducesLedgerRowsWithHostCliAndLevel(
+        string stepId, string aspect, string thinkingLevel)
     {
         var head = new string('a', 40);
         var started = _now.AddMinutes(-10);
         var agentCommand = new Contract.ReviewCommandEvidenceDto(
-            "post-deep-review", "deep-review", "/usr/local/bin/codex", [], head, head, new string('b', 40),
+            stepId, aspect, "/usr/local/bin/codex", [], head, head, new string('b', 40),
             started, started.AddMinutes(2), 0, null, "", "",
             ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
             Model: "gpt-6-sol",
-            ThinkingLevel: "xhigh",
+            ThinkingLevel: thinkingLevel,
             InputTokens: 3_000,
             OutputTokens: 400,
             CacheReadTokens: 7_000,
@@ -219,9 +222,9 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
         Assert.Equal("gpt-6-sol", call.Model);
         Assert.Equal("agent-runner-01", call.Host);
         Assert.Equal("codex", call.CliType);
-        Assert.Equal("xhigh", call.ThinkingLevel);
+        Assert.Equal(thinkingLevel, call.ThinkingLevel);
         Assert.StartsWith("support:remote-review:", call.ParticipantId, StringComparison.Ordinal);
-        Assert.Contains(":step:post-deep-review:usage:", call.ParticipantId, StringComparison.Ordinal);
+        Assert.Contains($":step:{stepId}:usage:", call.ParticipantId, StringComparison.Ordinal);
         Assert.Equal(3_000, call.InputTokens);
         Assert.Equal(7_000, call.CacheReadTokens);
         Assert.Equal(started.AddMinutes(2), call.Ts);

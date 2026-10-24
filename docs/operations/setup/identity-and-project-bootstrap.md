@@ -178,9 +178,11 @@ repository-local SSH command for a deploy key, or includes the scoped token
 helper there. The local read/write probe runs in a temporary Git repository
 with clean URL configuration and the explicit registered transport, so a URL
 rewrite in the checkout cannot verify a different repository.
-Device login for Codex or Claude runs inside the selected
-runner process, including Compose containers, and Studio shows only the
-provider's verification URL and a code when the provider supplies one.
+Device login for Codex or Claude runs inside the selected runner process of the
+host, including Compose containers, and Studio shows only the
+provider's verification URL and a code when the provider supplies one. The
+checklist uses the same device-login service as the Access and Execution Hosts
+actions ([runner domain](../../system/domains/runner.md#host-owned-provider-device-login)).
 
 ```bash
 scripts/probe-project-repository.sh https://tasks.example.com build-02 prj-alpha \

@@ -1,10 +1,12 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
-import { TestBed } from '@angular/core/testing';
+import { DeferBlockBehavior, DeferBlockState, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 import { AuthSessionState, type AuthStatus } from '../../../services/auth.service';
 import { SecretsService, type SecretMetadata, type SecretOverview } from '../secrets.service';
 import { SecretsPanelComponent } from './secrets-panel.component';
+import { SecretBackendSettingsComponent } from '../secret-backend-settings/secret-backend-settings.component';
 
 function secret(scope: string, name: string, status: 'active' | 'revoked' = 'active'): SecretMetadata {
   return {
@@ -19,11 +21,12 @@ function secret(scope: string, name: string, status: 'active' | 'revoked' = 'act
   };
 }
 
-function setup(role: 'owner' | 'viewer' = 'owner') {
+async function setup(role: 'owner' | 'viewer' = 'owner') {
   const overview = signal<SecretOverview | null>({
-    store: 'builtin', keySource: 'key-file', canWriteWorkspace: true,
+    store: 'builtin', keySource: 'key-file', canWriteWorkspace: role === 'owner',
     secrets: [secret('workspace', 'MAIL_KEY'), secret('memowikis', 'DATABASE_URL'), secret('memowikis/stage', 'DATABASE_URL', 'revoked')],
     unreadable: [],
+    backends: [], backendHealth: [],
   });
   const service = {
     overview, state: signal('ready'), error: signal<string | null>(null), load: vi.fn(),
@@ -31,14 +34,17 @@ function setup(role: 'owner' | 'viewer' = 'owner') {
     add: vi.fn(() => of(secret('workspace', 'NEW_KEY'))),
     rotate: vi.fn(() => of(secret('workspace', 'MAIL_KEY'))),
     revoke: vi.fn(() => of(secret('workspace', 'MAIL_KEY'))),
+    selectBackend: vi.fn(binding => of(binding)),
   };
   const auth = { status: signal<AuthStatus | null>({ profile: 'networked', bootstrapRequired: false, authenticated: true,
     user: { id: 'u', username: 'u', displayName: 'U', role, projects: [], disabled: false, mustChangePassword: false } as never }) };
   TestBed.configureTestingModule({
     imports: [SecretsPanelComponent],
+    deferBlockBehavior: DeferBlockBehavior.Manual,
     providers: [provideZonelessChangeDetection(),
       { provide: SecretsService, useValue: service }, { provide: AuthSessionState, useValue: auth }],
   });
+  await TestBed.compileComponents();
   const fixture = TestBed.createComponent(SecretsPanelComponent);
   fixture.componentRef.setInput('projects', [{ name: 'memowikis', path: '/p', rootPath: '/p' }]);
   fixture.detectChanges();
@@ -46,8 +52,8 @@ function setup(role: 'owner' | 'viewer' = 'owner') {
 }
 
 describe('SecretsPanelComponent', () => {
-  it('lists the secrets of the selected scope with versions and metadata', () => {
-    const { fixture, service, element } = setup();
+  it('lists the secrets of the selected scope with versions and metadata', async () => {
+    const { fixture, service, element } = await setup();
     expect(element.querySelectorAll('[data-testid="secrets-row"]')).toHaveLength(1);
     expect(element.textContent).toContain('secret://workspace/MAIL_KEY');
 
@@ -62,8 +68,8 @@ describe('SecretsPanelComponent', () => {
     expect(row.querySelectorAll('.secrets__versions li')).toHaveLength(2);
   });
 
-  it('adds a secret through a password field and clears the value after saving', () => {
-    const { fixture, service, element } = setup();
+  it('adds a secret through a password field and clears the value after saving', async () => {
+    const { fixture, service, element } = await setup();
     const value = `value-${crypto.randomUUID()}`;
     fixture.componentInstance.newName.set('NEW_KEY');
     fixture.componentInstance.newValue.set(value);
@@ -76,8 +82,8 @@ describe('SecretsPanelComponent', () => {
     expect(element.innerHTML).not.toContain(value);
   });
 
-  it('rotates and revokes in the selected scope and warns before a replacing add', () => {
-    const { fixture, service, element } = setup();
+  it('rotates and revokes in the selected scope and warns before a replacing add', async () => {
+    const { fixture, service, element } = await setup();
     fixture.componentInstance.newName.set('MAIL_KEY');
     fixture.detectChanges();
     expect(element.textContent).toContain('Replacing revokes every earlier version');
@@ -90,8 +96,8 @@ describe('SecretsPanelComponent', () => {
     expect(service.revoke).toHaveBeenCalledWith('workspace', 'MAIL_KEY', 2);
   });
 
-  it('warns about stored items the configured key cannot open while still listing the rest', () => {
-    const { fixture, service, element } = setup();
+  it('warns about stored items the configured key cannot open while still listing the rest', async () => {
+    const { fixture, service, element } = await setup();
     expect(element.querySelector('[data-testid="secrets-unreadable"]')).toBeNull();
     service.overview.update(current => current && { ...current, unreadable: [
       { id: 'a1', scope: 'memowikis', name: 'API_TOKEN', problem: 'key-unavailable', reason: 'other key' },
@@ -105,10 +111,38 @@ describe('SecretsPanelComponent', () => {
     expect(element.querySelectorAll('[data-testid="secrets-row"]')).toHaveLength(1);
   });
 
-  it('shows metadata without write controls to a viewer', () => {
-    const { element } = setup('viewer');
+  it('shows metadata without write controls to a viewer', async () => {
+    const { element } = await setup('viewer');
     expect(element.querySelector('[data-testid="secrets-add"]')).toBeNull();
     expect(element.querySelector('[data-testid="secrets-rotate"]')).toBeNull();
+    expect(element.querySelector('[data-testid="secret-backend-kind"]')).toBeNull();
     expect(element.querySelectorAll('[data-testid="secrets-row"]')).toHaveLength(1);
+  });
+
+  it('shows backend health and saves the selected scope without a credential value', async () => {
+    const { fixture, service, element } = await setup();
+    service.overview.update(current => current && { ...current,
+      backends: [{ scope: 'workspace', kind: 'vault', url: 'https://vault.example.test', mount: 'secret', vaultId: null,
+        credentialReference: 'secret://workspace/VAULT_TOKEN', credentialEnvironmentVariable: null, ttlSeconds: 20 }],
+      backendHealth: [{ scope: 'workspace', kind: 'vault', state: 'healthy', reason: null }],
+    });
+    const [backendBlock] = await fixture.getDeferBlocks();
+    await backendBlock.render(DeferBlockState.Complete);
+    fixture.detectChanges();
+    expect(element.querySelector('[data-testid="secret-backend-health"]')?.textContent).toContain('healthy');
+    const settings = fixture.debugElement.query(By.directive(SecretBackendSettingsComponent))
+      .componentInstance as SecretBackendSettingsComponent;
+    settings.kind.set('onepassword');
+    settings.vaultId.set('vault-id');
+    settings.save();
+    expect(service.selectBackend).toHaveBeenCalledWith(expect.objectContaining({
+      scope: 'workspace', kind: 'onepassword', vaultId: 'vault-id',
+      credentialReference: 'secret://workspace/VAULT_TOKEN',
+    }));
+    expect(settings.notice()).toBe('Backend selection saved.');
+    fixture.componentInstance.selectProject('memowikis');
+    fixture.detectChanges();
+    expect(settings.notice()).toBeNull();
+    expect(element.innerHTML).not.toContain('value-');
   });
 });

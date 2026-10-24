@@ -168,11 +168,6 @@ internal static class CarWorkerExecution
             {
                 ["JOB_RESULTS_DIR"] = spec.ResultsDirectory,
             };
-            // Clean context redirects the provider's config home. Keep the
-            // service-provisioned headless credential independent of that home
-            // by explicitly admitting only Claude's supported environment token.
-            if (ProviderAuthEnvironment.TryGetForCli(cliType, out var authName, out var authValue))
-                extraEnvironment[authName] = authValue;
             if (cleanContext is not null)
             {
                 foreach (var pair in cleanContext.Environment)
@@ -182,6 +177,10 @@ internal static class CarWorkerExecution
             // repository preparation restored into for this run (TE-52).
             PreparationCacheEnvironment.Apply(extraEnvironment, spec.Environment);
             WorkerEdgeCredentialBoundary.RemoveFrom(extraEnvironment);
+            // The candidate token must win over the clean home's inherited environment.
+            // Only this sign-in's async flow sees it; other CAR children keep the accepted token.
+            if (ProviderAuthEnvironment.TryGetForCli(cliType, out var authName, out var authValue))
+                extraEnvironment[authName] = authValue;
 
             var request = new CliRunRequest
             {

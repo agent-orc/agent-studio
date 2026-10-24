@@ -745,6 +745,8 @@ public sealed class AccessSecurityMiddleware
             return RunnerScopes.Release;
         if (HttpMethods.IsPost(method) && path.StartsWith("/api/deploy/jobs/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Deploy;
+        if (HttpMethods.IsGet(method) && path.StartsWith("/api/deploy/jobs/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Deploy;
         if ((HttpMethods.IsGet(method) || HttpMethods.IsPost(method))
             && path.StartsWith("/api/deploy/run-targets/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Deploy;

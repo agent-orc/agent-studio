@@ -121,6 +121,26 @@ public sealed class AccessSecurityTests : IDisposable
     }
 
     [Fact]
+    public async Task Release_push_and_deploy_artifact_read_use_separate_service_scopes()
+    {
+        var (store, config, _) = NewStore();
+        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        var release = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("build-job", [RunnerScopes.Release], null, null)).Code);
+        var deploy = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("deploy-job", [RunnerScopes.Deploy], null, null)).Code);
+
+        Assert.True((await Invoke(config, store, "POST", "/api/deploy/gate-releases",
+            bearer: release.Secret)).Called.Value);
+        Assert.Equal(403, (await Invoke(config, store, "POST", "/api/deploy/gate-releases",
+            bearer: deploy.Secret)).Context.Response.StatusCode);
+        Assert.True((await Invoke(config, store, "GET", "/api/deploy/jobs/demo/job/artifact",
+            bearer: deploy.Secret)).Called.Value);
+        Assert.Equal(403, (await Invoke(config, store, "GET", "/api/deploy/jobs/demo/job/artifact",
+            bearer: release.Secret)).Context.Response.StatusCode);
+    }
+
+    [Fact]
     public void Runner_lifecycle_and_activity_share_the_credential_registry()
     {
         var (store, _, _) = NewStore();

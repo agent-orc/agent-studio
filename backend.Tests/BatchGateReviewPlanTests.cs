@@ -25,12 +25,18 @@ public sealed class BatchGateReviewPlanTests
             Git(fixture.Repo, "commit", "-qm", "delivery");
             var resultSha = Git(fixture.Repo, "rev-parse", "HEAD").Trim();
 
-            Assert.Equal(3, fixture.Git.ChangedLinesAgainstMergeBase(
+            Git(fixture.Repo, "switch", "develop");
+            Git(fixture.Repo, "update-ref", "refs/remotes/origin/agent-studio/results/deep-size", resultSha);
+            Git(fixture.Repo, "update-ref", "-d", "refs/heads/agent-studio/results/deep-size");
+            Assert.Null(fixture.Git.ChangedLinesAgainstMergeBase(
                 fixture.Repo, "develop", "refs/heads/agent-studio/results/deep-size"));
+            Assert.Equal(3, fixture.Git.ChangedLinesAgainstMergeBase(
+                fixture.Repo, "develop", resultSha));
             var plan = fixture.Builder.Build(fixture.Task, fixture.Repo, new ProjectSettings(),
                 "develop", resultSha, ["change.txt"], "refs/heads/agent-studio/results/deep-size");
             Assert.NotNull(plan.DeepReviewDecision);
             Assert.False(plan.DeepReviewDecision.Selected);
+            Assert.DoesNotContain("diff-size-unavailable", plan.DeepReviewDecision.Grounds);
         }
         finally { DeleteDirectory(fixture.Root); }
     }

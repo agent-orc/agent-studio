@@ -185,6 +185,9 @@ public sealed class SecretProvider : ISecretProvider
             case SecretKeyUnavailableException:
                 _logger.LogError("Secret {Action} for {Reference} has no usable key-encryption key: {Reason}", action, reference.Unpinned(), exception.Message);
                 return "failed:key-unavailable";
+            case SecretBackendException backend:
+                _logger.LogWarning("Secret {Action} for {Reference} failed at the selected backend: {Code}", action, reference.Unpinned(), backend.Code);
+                return "failed:" + backend.Code;
             case OperationCanceledException:
                 return "failed:cancelled";
             default:

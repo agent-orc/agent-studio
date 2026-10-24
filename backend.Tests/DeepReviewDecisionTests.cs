@@ -17,13 +17,16 @@ public sealed class DeepReviewDecisionTests
 
     [Theory]
     [InlineData("routine", "docs/readme.md", 20, 0, 0, "available", false, "medium")]
-    [InlineData("routine", "backend/Security/Auth.cs", 20, 0, 0, "available", true, "xhigh")]
+    [InlineData("routine", "backend/Features/Security/Auth.cs", 20, 0, 0, "available", true, "xhigh")]
+    [InlineData("routine", "orchestration-decisions/ReviewFollowUpPolicy.cs", 20, 0, 0, "available", false, "medium")]
+    [InlineData("routine", "docs/security-guide.md", 20, 0, 0, "available", false, "medium")]
     [InlineData("critical", "docs/readme.md", 20, 0, 0, "available", true, "xhigh")]
     [InlineData("routine", "docs/readme.md", 600, 0, 0, "available", true, "medium")]
     [InlineData("routine", "docs/readme.md", 20, 1, 0, "available", true, "medium")]
     [InlineData("routine", "docs/readme.md", 20, 0, 1, "available", true, "medium")]
     [InlineData("routine", "docs/readme.md", 600, 0, 0, "capped", false, "medium")]
     [InlineData("critical", "docs/readme.md", 20, 0, 0, "capped", true, "xhigh")]
+    [InlineData("routine", "docs/readme.md", -1, 0, 0, "available", false, "medium")]
     public void Selection_uses_risk_history_size_and_quota(string risk, string path,
         int lines, int blocks, int gates, string quota, bool selected, string effort)
     {
@@ -37,7 +40,7 @@ public sealed class DeepReviewDecisionTests
     [Fact]
     public void Shadow_receipt_is_stable_and_does_not_dispatch()
     {
-        var facts = Facts(paths: ["backend/Security/Auth.cs"]);
+        var facts = Facts(paths: ["backend/Features/Security/Auth.cs"]);
         var first = DeepReviewPolicy.Decide(facts, DeepReviewPolicy.Shadow, "rule-1");
         Assert.Equal(first.ReceiptId,
             DeepReviewPolicy.Decide(facts, DeepReviewPolicy.Shadow, "rule-1").ReceiptId);
@@ -56,7 +59,7 @@ public sealed class DeepReviewDecisionTests
         Assert.True(critical.Dispatched);
         Assert.Equal("gpt-6-sol", critical.Model);
         Assert.Equal("xhigh", critical.ThinkingLevel);
-        Assert.Equal("medium", DeepReviewPolicy.Decide(Facts(lines: 600), DeepReviewPolicy.Active,
+        Assert.Equal("xhigh", DeepReviewPolicy.Decide(Facts(lines: 600), DeepReviewPolicy.Active,
             ruleThinkingLevel: "xhigh").ThinkingLevel);
         var capped = DeepReviewPolicy.Decide(Facts(risk: "critical", rounds: 3), DeepReviewPolicy.Active);
         Assert.False(capped.Dispatched);
@@ -75,6 +78,39 @@ public sealed class DeepReviewDecisionTests
         Assert.Equal("deep-review", findings[0].Aspect);
         Assert.Equal(ReviewFollowUpAction.ReviewFindingRound,
             ReviewFollowUpPolicy.Decide(findings, 0, 1).Action);
+    }
+
+    [Fact]
+    public void Ordinary_aspects_with_the_same_summary_remain_separate_blocks()
+    {
+        var findings = ReviewFindingMergePolicy.Merge([
+            new ReviewFollowUpFinding("tests-and-evidence", "block", "Missing coverage"),
+            new ReviewFollowUpFinding("code-quality", "block", "Missing coverage"),
+        ]);
+        Assert.Equal(2, findings.Count);
+        Assert.Equal(["tests-and-evidence", "code-quality"],
+            ReviewRoundBudgetPolicy.CountedBlockingAspects(findings));
+        var payload = new StagePayload(ReviewOutcome: ReviewOutcomeKinds.ProductFailure,
+            ReviewAttemptId: "review-1", Verdicts: [
+                new ReviewVerdictDto("tests-and-evidence", "block", "quality:block", "Missing coverage"),
+                new ReviewVerdictDto("code-quality", "block", "quality:block", "Missing coverage"),
+            ]);
+        Assert.Equal(["tests-and-evidence", "code-quality"],
+            Assert.Single(StageDecisionPolicy.DeliveredHistory([payload]).Rounds).BlockingAspects);
+        var cited = ReviewFindingMergePolicy.Merge([
+            new ReviewFollowUpFinding("deep-review", "block", "Missing test", "backend/A.cs", "Test missing"),
+            new ReviewFollowUpFinding("tests-and-evidence", "block", "Missing test", "backend/A.cs", "Test missing"),
+        ]);
+        Assert.Equal(["deep-review", "tests-and-evidence"],
+            ReviewRoundBudgetPolicy.CountedBlockingAspects(cited));
+    }
+
+    [Fact]
+    public void Unknown_size_is_evidence_but_does_not_select_review()
+    {
+        var decision = DeepReviewPolicy.Decide(Facts(lines: -1), DeepReviewPolicy.Shadow);
+        Assert.False(decision.Selected);
+        Assert.Contains("diff-size-unavailable", decision.Grounds);
     }
 
     [Fact]
@@ -137,6 +173,7 @@ public sealed class DeepReviewDecisionTests
             Assert.True(shadow.DeepReviewDecision!.Selected);
             Assert.False(shadow.DeepReviewDecision.Dispatched);
             Assert.DoesNotContain(shadow.Commands, command => command.Aspect == "deep-review");
+            Assert.DoesNotContain(shadow.SkippedAspects, aspect => aspect.Aspect == "deep-review");
 
             var activeConfig = new ConfigurationBuilder().AddInMemoryCollection(
                 new Dictionary<string, string?> { ["DeepReview:Mode"] = "active" }).Build();
