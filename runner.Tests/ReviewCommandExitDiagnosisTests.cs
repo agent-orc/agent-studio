@@ -30,7 +30,7 @@ public sealed class ReviewCommandExitDiagnosisTests
         var credential = "token=" + new string('s', 50);
         var evidence = ReviewCommandExitDiagnosis.Evidence(
             "npm --prefix frontend run build", new string('a', 40), new string('b', 40),
-            0, 1, 1, new string('x', 4000) + credential + "\nerror: compile failed", "");
+            0, 1, 1, new string('x', 4000) + "\n" + credential + "\nerror: compile failed", "");
 
         Assert.Contains("candidate-output-tail:", evidence);
         Assert.Contains("error: compile failed", evidence);
@@ -49,6 +49,11 @@ public sealed class ReviewCommandExitDiagnosisTests
     [InlineData("{\"Authorization\": \"Bearer abcdefghi\"}", "abcdefghi")]
     [InlineData("https://abcdefghi@example.invalid/path", "abcdefghi")]
     [InlineData("ghp_abcdefghij", "ghp_abcdefghij")]
+    [InlineData("ghs_abcdefghij", "ghs_abcdefghij")]
+    [InlineData("gho_abcdefghij", "gho_abcdefghij")]
+    [InlineData("ghu_abcdefghij", "ghu_abcdefghij")]
+    [InlineData("ghr_abcdefghij", "ghr_abcdefghij")]
+    [InlineData("Authorization: token abcdefghi", "abcdefghi")]
     [InlineData("github_pat_abcdefghij", "github_pat_abcdefghij")]
     [InlineData("glpat-abcdefghij", "glpat-abcdefghij")]
     [InlineData("xoxb-123456-abcdef", "xoxb-123456-abcdef")]
@@ -68,6 +73,18 @@ public sealed class ReviewCommandExitDiagnosisTests
             output, "");
         Assert.Contains("error: failure", evidence);
         Assert.True(evidence.Length < 2400);
+    }
+
+    [Theory]
+    [InlineData("a_")]
+    [InlineData("token_")]
+    public void Long_key_like_output_preserves_error(string fragment)
+    {
+        var output = string.Concat(Enumerable.Repeat(fragment, 16 * 1024 / fragment.Length))
+                     + "\nerror: failed";
+        var evidence = ReviewCommandExitDiagnosis.Evidence("build", "base", "candidate", 0, 1, 1, output, "");
+        Assert.Contains("error: failed", evidence);
+        Assert.DoesNotContain("[output withheld]", evidence);
     }
 
     [Fact]

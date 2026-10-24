@@ -226,7 +226,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // removal confirmation, and a domain-suffix settings mutation.
         // AGT-3239 added the operator candidate verification record on PostStep:
         // it appends immutable integrated-verified evidence after a passed suite.
-        Assert.Equal(146, routes.Count);
+        // AGT-3274 added the authenticated deploy artifact route on Claim.
+        Assert.Equal(147, routes.Count);
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -270,6 +271,11 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             Assert.Equal(admissionPath, route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
             Assert.Contains("POST", route.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
         }
+        var artifactRoute = Assert.Single(routes, route =>
+            route.RoutePattern.RawText == "/api/deploy/jobs/{project}/{jobId}/artifact");
+        Assert.Equal(ExecutionAdmissionPath.Claim,
+            artifactRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+        Assert.Contains("GET", artifactRoute.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
         var receiptRoute = Assert.Single(routes, route =>
             route.RoutePattern.RawText == "/api/v1/orchestration/runs/{runId}/decision-receipt");
         Assert.Equal(ExecutionAdmissionPath.Continue,
@@ -303,7 +309,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         Assert.Equal(
             new Dictionary<ExecutionAdmissionPath, int>
             {
-                [ExecutionAdmissionPath.Claim] = 11,
+                [ExecutionAdmissionPath.Claim] = 12,
                 [ExecutionAdmissionPath.Start] = 31,
                 [ExecutionAdmissionPath.Continue] = 33,
                 [ExecutionAdmissionPath.Review] = 9,

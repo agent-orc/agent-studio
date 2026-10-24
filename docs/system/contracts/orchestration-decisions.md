@@ -32,6 +32,14 @@ claimable occurrences. An unaccepted preparation has no wait marker and, after
 a bounded grace period, receives a durable cancellation receipt. A later valid
 report can prepare the same idempotency key again.
 
+An applying occurrence records each failed application. A deterministic lane
+admission refusal settles it as `failed` immediately; other retryable errors
+settle after three attempts across restarts. Recovery never reapplies a failed
+occurrence. It clears the card's wait marker and posts one operator-feed alert
+with the refusal reason while leaving the card in its current lane. The
+`ReviewReport` `HumanReview` operator park is admitted from Auto Review even if
+integration is pending; ordinary delivery acceptance still requires integration.
+
 An operator lane move or accepted `/continue` supersedes open Engine-mode
 lane-decision occurrences for that card. Shadow occurrences remain available
 for comparing the monolith outcome. The card move and engine application serialize on
@@ -406,8 +414,9 @@ emergency gate when the queue refuses it. The occurrence keeps the lane its
 report found and the decision policy assumes Auto Review, so a card that the
 report found in another lane, a card that left Auto Review since, and a review
 that is no longer current complete the occurrence with an operator-feed reason;
-any other failed admission keeps the occurrence `applying` for recovery to
-retry. Until 17.10.2026 that branch returned before the admission. The recovery
+any other failed admission keeps the occurrence `applying` for bounded recovery
+retries, then records a failed application for the operator. Until 17.10.2026
+that branch returned before the admission. The recovery
 service therefore re-arms, at most four per pass, a completed non-shadow
 decision that is still its card's newest `ReviewReport` occurrence while the
 card waits in Auto Review on its current review, the batch queue has no entry

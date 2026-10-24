@@ -1,5 +1,6 @@
 using AgentStudio.Review;
 using AgentStudio.Pipeline;
+using AgentStudio.Tasks;
 using Microsoft.Extensions.Time.Testing;
 using System.Text.Json;
 using Xunit;
@@ -47,6 +48,26 @@ public sealed class ReviewObservationTests
     }
 
     [Fact]
+    public void Journal_reads_legacy_review_without_findings()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "review-observations-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var review = Review("legacy", "pass", Clock.GetUtcNow().UtcDateTime);
+            Assert.True(ReviewObservationStore.AppendReview(folder, review));
+            var path = TaskPaths.ReviewObservationsLog(folder);
+            var row = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+            row["review"]!["findings"] = null;
+            File.WriteAllText(path, row.ToJsonString() + "\n");
+            Assert.Equal(0, Assert.Single(ReviewObservationStore.Read(folder).Reviews).Findings.Total);
+        }
+        finally
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Pipeline_projection_records_tokens_duration_verdict_severity_and_sha()
     {
         var now = Clock.GetUtcNow().UtcDateTime;
@@ -79,6 +100,31 @@ public sealed class ReviewObservationTests
     }
 
     [Fact]
+    public void Pipeline_projection_ignores_failed_commands_and_observes_deep_review()
+    {
+        var now = Clock.GetUtcNow().UtcDateTime;
+        var failed = new PipelineStepExecution
+        {
+            StepId = "aspect-security", Kind = StepKind.Aspect,
+            Status = PipelineStepStatus.Failed, CompletedAt = now,
+            ReviewedResultSha = Sha, Verdict = "block", ReviewFindings = new(Blocker: 1),
+        };
+        var deep = failed with
+        {
+            StepId = "post-deep-review", Status = PipelineStepStatus.Passed,
+            Verdict = "pass", ReviewFindings = null,
+        };
+        var record = new PipelineExecutionRecord
+        {
+            Attempt = 1, Steps = [failed, deep], Project = "demo", JobId = "AGT-1",
+            StartedAt = now, CompletedAt = now,
+        };
+        var rows = new List<ReviewObservation>();
+        ReviewObservationStore.AddPipelineReviews(rows, "AGT-1", record, TokenTestServices.Pricing());
+        Assert.Equal("post-deep-review", Assert.Single(rows).Aspect);
+    }
+
+    [Fact]
     public void Miss_requires_approved_review_same_sha_later_time_and_citation()
     {
         var now = Clock.GetUtcNow().UtcDateTime;
@@ -97,9 +143,15 @@ public sealed class ReviewObservationTests
         var now = Clock.GetUtcNow().UtcDateTime;
         var first = Review("standard", "pass", now.AddHours(-3));
         var second = Review("grade", "B", now.AddHours(-2));
-        var block = Review("deep", "block", now.AddHours(-1), findings: new(Blocker: 1));
+        var block = Review("deep", "block", now.AddHours(-1), findings: new(Blocker: 1))
+            with { Aspect = "security" };
         var differentDelivery = Review("other-sha", "pass", now.AddHours(-4)) with { ResultSha = new string('b', 40) };
         var misses = ReviewObservationStore.InferLaterReviewMisses([first, second, block, differentDelivery]).ToArray();
+        Assert.Empty(misses);
+        first = first with { Aspect = "code" };
+        second = second with { Aspect = "code" };
+        block = block with { Aspect = "code" };
+        misses = ReviewObservationStore.InferLaterReviewMisses([first, second, block, differentDelivery]).ToArray();
         Assert.Equal(2, misses.Length);
         Assert.Contains(misses, item => item.ReviewId == first.Id && item.Source == "later-review");
         Assert.Contains(misses, item => item.ReviewId == second.Id && item.Source == "later-review");
@@ -139,13 +191,13 @@ public sealed class ReviewObservationTests
     public void Review_depth_requires_repeated_measured_misses()
     {
         var now = Clock.GetUtcNow().UtcDateTime;
-        var reviews = Enumerable.Range(0, 5)
+        var reviews = Enumerable.Range(0, 20)
             .Select(index => Review($"r{index}", "pass", now.AddHours(-6 + index)))
             .ToArray();
-        var evidence = reviews.Take(2).Select((row, index) => new ReviewLaterEvidence(
+        var evidence = reviews.Take(4).Select((row, index) => new ReviewLaterEvidence(
             $"e{index}", row.Id, Sha, now, "production", "rollback.md", "blocker", "Regression")).ToArray();
         Assert.True(ReviewObservationPolicy.RequireFullReview(ReviewObservationPolicy.Aggregate(reviews, evidence)));
-        Assert.False(ReviewObservationPolicy.RequireFullReview(ReviewObservationPolicy.Aggregate(reviews, evidence.Take(1).ToArray())));
+        Assert.False(ReviewObservationPolicy.RequireFullReview(ReviewObservationPolicy.Aggregate(reviews, evidence.Take(3).ToArray())));
     }
 
     [Fact]

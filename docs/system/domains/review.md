@@ -40,11 +40,13 @@ The run-completion timeline names the receipt, and report projection records a
 The engine policy in `orchestration-decisions/DeepReviewPolicy.cs` selects from
 the card's Token Economy correctness floor, changed paths and line count, prior
 blocks, gate failures, delivered rounds, and quota admission. It defaults to
-`gpt-6-sol` at `medium`; P0, critical correctness floors, and touched security,
-fencing, lease, migration, concurrency, or orchestration-decision code require
-`xhigh`. Available quota never raises the effort. A capped route can suppress
+`gpt-6-sol` at `medium`; P0, critical correctness floors, and touched security
+or auth feature code, attempt authority, transition decisions, or deep-review
+policy require `xhigh`. Unknown diff size is recorded in the receipt without
+selecting review. Available quota never raises the effort. A capped route can suppress
 discretionary review, but a critical review retains its floor and waits for
 quota. The plan refuses a quota fallback that would replace its frozen route.
+Quota-deferred attempts have a short claim cooldown so other queued reviews can run.
 The AGT-3068 rules editor accepts the `deep-review` trigger with numeric
 `review.changed-lines`, `review.previous-blocks`, `review.gate-failures`, and
 `review.delivered-rounds` facts. A matching `prepare` rule selects review;
@@ -1217,8 +1219,8 @@ historical price catalogue at the review date if the model is priced.
 `POST /api/tasks/{jobId}/review-observations/{reviewId}/later-evidence?project=...`
 links a later review, gate, operator finding or production incident to an earlier
 approved review of the same SHA. The later evidence must be dated after approval
-and cite an artifact. A later blocking review or product-class remote gate on the
-same SHA supplies the link automatically. Replayed journal IDs do not duplicate
+and cite an artifact. A later blocking review of the same aspect and SHA supplies
+the link automatically. Replayed journal IDs do not duplicate
 records.
 
 `POST /api/tasks/{jobId}/review-observations/{reviewId}/finding-outcomes?project=...`
@@ -1237,7 +1239,10 @@ Token Economy. `/export/{reviewId}` returns one importer-ready version-1
 review-run JSON document when that review has the required fields.
 Unpriced reviews retain null cost. Cost per real finding is null unless reported
 findings have an explicit confirmed count. When a model/reasoning cohort has at
-least five approvals and two cited misses with a miss rate of at least 20%, the
+least twenty approvals and four cited misses with a miss rate of at least 20%, the
 remote review plan runs every semantic aspect on a follow-up round instead of
-carrying previous verdicts over. This affects review depth only, not the task's
+carrying previous verdicts over. Failed commands do not count as reviewed defects;
+an automatic later-review miss applies only to an earlier approval of the same
+aspect and delivered SHA. The previous finding remains in the full-review prompt.
+This affects review depth only, not the task's
 acceptance or transition decision.

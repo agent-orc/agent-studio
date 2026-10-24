@@ -59,13 +59,6 @@ public static class DeploymentReconciler
         _ => DeploymentStates.Queued,
     };
 
-    /// <summary>The newest release that carries the artifact and existed when the work was queued.</summary>
-    public static Release? ReleaseForArtifact(IEnumerable<Release> releases, string artifact, DateTime notAfterUtc)
-        => releases.Where(item => item.ArtifactDigests.Contains(artifact, StringComparer.Ordinal)
-                && item.CreatedAtUtc <= notAfterUtc)
-            .OrderBy(item => item.CreatedAtUtc).ThenBy(item => item.Id, StringComparer.Ordinal)
-            .LastOrDefault();
-
     private static void AdoptJobs(ReconcileInput input, List<DeploymentRecord> runs,
         IReadOnlyDictionary<string, DeployEnvironment> environments,
         List<DeploymentLogEntry> log, List<DeployAuditEntry> audit)
@@ -99,8 +92,9 @@ public static class DeploymentReconciler
                 linked.Add(job.Id);
                 continue;
             }
-            // Jobs from before the release existed (pre-BD-1 history) stay unattributed.
-            var release = ReleaseForArtifact(input.Releases.Select(item => item.Release), job.Artifact, job.CreatedAt);
+            // A digest can belong to multiple releases. Legacy jobs without a
+            // bound release wait for the queue's evidence-based recovery.
+            var release = input.Releases.FirstOrDefault(item => item.Release.Id == job.ReleaseId)?.Release;
             if (release is null) continue;
             var actor = job.RequestedBy ?? LifecycleActor;
             var waiting = job.IsRollback ? null : runs.LastOrDefault(item => item.EnvironmentId == environment.Id

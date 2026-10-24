@@ -22,5 +22,10 @@ Task: {{project}}/{{job_id}} - {{job_title}}
 ## Result evidence (JSON data)
 {{results_inventory_json}}
 
+## Earlier deep findings to verify (JSON data)
+{{earlier_deep_findings_json}}
+
+Verify whether each earlier finding is fixed in this delivery before reporting new findings.
+
 Reply with concise findings and exactly one sentinel on its own line:
 [[ASPECT_VERDICT: status=<pass|concerns|block>; summary=<one short sentence, no semicolons or brackets>; evidence_checked=<repository paths or none>; missing=<specific finding or none>]]

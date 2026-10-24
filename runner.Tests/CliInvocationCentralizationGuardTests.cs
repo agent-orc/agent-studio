@@ -146,23 +146,18 @@ public class CliInvocationCentralizationGuardTests
 
         new("runner/DeviceLoginExecutor.cs",
             DocumentedException
-            + "AGT-3214 starts `codex login --device-auth` for an operator-initiated provider sign-in "
-            + "on the host. It holds the host provider login lock, is bounded to 15 minutes and never "
-            + "starts an agent run or reads a card. AGT-2373 keeps such bounded login processes outside "
-            + "the execution layer as a permanent non-run process boundary."),
+            + "AGT-3214 starts `codex login --device-auth` and, since AGT-3225 merged the AGT-3156 "
+            + "launcher into it, `claude setup-token` for an operator-initiated provider sign-in on the "
+            + "host. It is the only device-login launcher, holds the host provider login lock, is bounded "
+            + "to 15 minutes, logs no child output and never starts an agent run or reads a card. AGT-2373 "
+            + "keeps such bounded login processes outside the execution layer as a permanent non-run "
+            + "process boundary."),
 
         new("runner/RunnerCapabilityProbe.cs",
             DocumentedException
             + "AGT-2778 directly runs --version while building the host capability snapshot; this is "
             + "a bounded read-only installation probe, not an agent run. AGT-2373 keeps it as a "
             + "permanent non-run probe boundary."),
-
-        new("runner/RunnerProviderSetupLauncher.cs",
-            DocumentedException
-            + "AGT-3156 needs interactive device sign-in before CodingAgentRunner can run a card. "
-            + "CodingAgentRunner exposes sign-in instructions but no login execution API; this "
-            + "setup-only launcher accepts only codex login, claude setup-token, and their status "
-            + "checks, without a prompt or child-output logging. AGT-2373 card execution stays in CAR."),
 
         new("runner/Program.cs",
             DocumentedException
