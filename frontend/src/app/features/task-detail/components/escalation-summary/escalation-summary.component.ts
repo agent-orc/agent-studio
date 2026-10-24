@@ -23,6 +23,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { EscalationDetailsComponent } from '../escalation-details/escalation-details.component';
+import { GateQueueReleaseComponent } from '../gate-queue-release/gate-queue-release.component';
 import {
   laneActionsFor,
   type TriageActionPayload,
@@ -50,7 +51,13 @@ import {
   selector: 'app-escalation-summary',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, PendingButtonDirective, EscalationDetailsComponent, DisclosureMarkerComponent],
+  imports: [
+    TooltipDirective,
+    PendingButtonDirective,
+    EscalationDetailsComponent,
+    DisclosureMarkerComponent,
+    GateQueueReleaseComponent,
+  ],
   templateUrl: './escalation-summary.component.html',
   styleUrl: './escalation-summary.component.scss',
 })

@@ -12,6 +12,8 @@ namespace AgentStudio.Shared;
 /// </summary>
 public static class TimelineEventKinds
 {
+    /// <summary>An engine occurrence lost its source lane before its decision could apply.</summary>
+    public const string OrchestrationDecisionSuperseded = "orchestration_decision_superseded";
     public const string ReviewPriorityChanged = "review_priority_changed";
     /// <summary>Task prompt was created on disk.</summary>
     public const string PromptCreated = "prompt_created";
@@ -207,14 +209,6 @@ public static class TimelineEventKinds
     public const string TaskReleased = "task_released";
     /// <summary>The task's lane changed (any move).</summary>
     public const string LaneChanged = "lane_changed";
-    /// <summary>
-    /// An epic's planning/decomposition run (way 3) authored a sub-task list
-    /// and the runner created those sub-tasks under the epic. The "Epic
-    /// decomposition" step in the timeline/pipeline; <see cref="TimelineEvent.Summary"/>
-    /// carries the created count and <see cref="TimelineEvent.Details"/> the
-    /// target lane. Emitted by the runner, not the deterministic endpoint.
-    /// </summary>
-    public const string EpicDecomposed = "epic_decomposed";
     /// <summary>
     /// Another card was folded into this one via the consolidation API
     /// (sibling task). The merge endpoint mirrors the secondary's
@@ -512,6 +506,13 @@ public static class TimelineEventKinds
     /// <c>evidenceDigest</c>.
     /// </summary>
     public const string WatcherCaseLinked = "watcher_case_linked";
+
+    /// <summary>
+    /// AGT-3218: the monolith gate handler took a passed engine gate decision
+    /// and dispatched the aspect review. Details carry <c>orchestrationRunId</c>;
+    /// the applier canary reads it as the durable gate dispatch.
+    /// </summary>
+    public const string EngineGateDispatched = "engine_gate_dispatched";
 
     /// <summary>
     /// IP-14: an environment health incident or certificate warning that owns

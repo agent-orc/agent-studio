@@ -111,16 +111,27 @@ public sealed partial class BatchGatePilotServiceTests
 
         var applied = await DecideDeferToBatchAsync(orchestration, deferred);
 
-        Assert.Equal("completed", applied.Status);
+        Assert.Equal(cardMoved ? "cancelled" : "completed", applied.Status);
         AssertLane(deferred.Member.Key, cardMoved ? TaskStates.Escalated : TaskStates.AutoReview);
         Assert.Null(factory.Services.GetRequiredService<BatchGateStore>()
             .ReadPending(deferred.Member.ReviewAttemptId));
         Assert.Null(Ownership(deferred.Member.Key));
         Assert.Equal(0, _gate.FallbackRuns);
-        var reason = Assert.Single(factory.Services.GetRequiredService<OrchestratorLog>().Read(_watchPath),
-            entry => entry.Topic == "engine-batch-admission:" + applied.RunId);
-        Assert.Contains(cardMoved ? "left " + TaskStates.AutoReview : "no longer the card's current review",
-            reason.Reasoning);
+        if (cardMoved)
+        {
+            Assert.Contains($"observed={TaskStates.Escalated}",
+                orchestration.GetOccurrence(applied.RunId)!.CancellationReason);
+            Assert.Contains(factory.Services.GetRequiredService<TimelineLog>()
+                    .ReadAll(CardFolder(deferred.Member.Key)),
+                entry => entry.Kind == TimelineEventKinds.OrchestrationDecisionSuperseded
+                    && entry.Details?.GetValueOrDefault("orchestrationRunId") == applied.RunId);
+        }
+        else
+        {
+            var reason = Assert.Single(factory.Services.GetRequiredService<OrchestratorLog>().Read(_watchPath),
+                entry => entry.Topic == "engine-batch-admission:" + applied.RunId);
+            Assert.Contains("no longer the card's current review", reason.Reasoning);
+        }
     }
 
     [Theory]
@@ -460,7 +471,9 @@ public sealed partial class BatchGatePilotServiceTests
         else if (!claimable)
             journal.CancelUnactivated(run.RunId, "review-settlement-rejected");
         EngineDecisionWaitMarker.Write(folder, run.RunId);
-        factory.Services.GetRequiredService<TaskScannerService>().InvalidateCache();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        scanner.PublishCoreFromFolder(folder, _watchPath, ProjectName, TaskStates.AutoReview);
+        scanner.InvalidateCache();
         return new MarkedOccurrence(folder, run.RunId);
     }
 

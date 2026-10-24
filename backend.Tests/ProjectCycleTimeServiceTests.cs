@@ -282,27 +282,6 @@ public sealed class ProjectCycleTimeServiceTests : IDisposable
     }
 
     [Fact]
-    public void ArchivedWithoutCompletionEvent_InFlight_AndEpics_AreExcluded()
-    {
-        var archived = Task("archived", TaskStates.Archive, createdAt: T0, enteredLaneAt: T0.AddDays(1));
-        var archivedEvents = new List<TimelineEvent>
-        {
-            Created(T0, TaskStates.Ready),
-            Lane(T0.AddDays(1), TaskStates.HumanReview, TaskStates.Archive),
-        };
-        Assert.Equal(TaskCycleAnalysis.ExcludedNoCompletion,
-            TaskCycleTimeAnalyzer.Analyze(archived, archivedEvents, null).ExclusionReason);
-
-        var inFlight = Task("open", TaskStates.AutoReview, createdAt: T0, enteredLaneAt: T0.AddHours(1));
-        Assert.Equal(TaskCycleAnalysis.ExcludedNotCompleted,
-            TaskCycleTimeAnalyzer.Analyze(inFlight, [], null).ExclusionReason);
-
-        var epic = Task("epic", TaskStates.Completed, createdAt: T0, enteredLaneAt: T0.AddHours(1)) with { Kind = TaskKinds.Epic };
-        Assert.Equal(TaskCycleAnalysis.ExcludedEpic,
-            TaskCycleTimeAnalyzer.Analyze(epic, [Lane(T0.AddHours(1), TaskStates.HumanReview, TaskStates.Completed)], null).ExclusionReason);
-    }
-
-    [Fact]
     public void CreationAfterCompletion_IsClampedAndFlagged_AndReAcceptanceDoesNotMoveAnchor()
     {
         // task.json createdAt rewritten after completion (clock skew): lead time must not go negative.
@@ -520,7 +499,6 @@ public sealed class ProjectCycleTimeServiceTests : IDisposable
             new(ancient, null),
             new(null, TaskCycleAnalysis.ExcludedNotCompleted),
             new(null, TaskCycleAnalysis.ExcludedNoCompletion),
-            new(null, TaskCycleAnalysis.ExcludedEpic),
             new(null, TaskCycleAnalysis.ExcludedBeforeWindow),
         };
 
@@ -528,12 +506,11 @@ public sealed class ProjectCycleTimeServiceTests : IDisposable
             "Demo", "PROJ-001", "DEM", "7d", now, now.AddDays(-7), analyses);
 
         Assert.Equal(new[] { "recent", "older" }, response.Tasks.Select(t => t.TaskId));
-        Assert.Equal(7, response.Coverage.TasksInProject);
+        Assert.Equal(6, response.Coverage.TasksInProject);
         Assert.Equal(5, response.Coverage.TasksTerminal);
         Assert.Equal(2, response.Coverage.TasksInWindow);
         Assert.Equal(1, response.Coverage.ExcludedNoCompletionTimestamp);
         Assert.Equal(1, response.Coverage.ExcludedInFlight);
-        Assert.Equal(1, response.Coverage.ExcludedEpics);
 
         var lead = response.Aggregates.Single(a => a.Stage == CycleTimeStages.LeadTime);
         Assert.Equal("rollup", lead.Kind);

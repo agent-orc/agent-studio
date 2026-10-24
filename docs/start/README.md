@@ -183,6 +183,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Wiki hosting options and recommendation (full networked Studio vs read-only service vs static export; AGT-2276) | [concepts/wiki-hosting-options-2026-07.html](../concepts/wiki-hosting-options-2026-07.html) |
 | Deployment as a first-class citizen (Deployment page, scenario templates, prompt-defined dynamic UI over CLI tasks; DEP-1..5) | [concept](../concepts/deployment-first-class.md) · [interactive mockup](../concepts/mockups/deployment-first-class.html) |
 | Project environment declaration schema | [schemas/project-environment.schema.json](../app/schemas/project-environment.schema.json) |
+| Deploy host API: claim, step logs, reports, lease and secret resolution | [contracts/deploy-host-api.md](../system/contracts/deploy-host-api.md) |
 | Environment health checks from the control plane: declared and derived checks, uptime and latency, incidents as Activity entries and cards, 30-day raw and hourly retention (IP-14) | [operations/environment-health-checks.md](../operations/environment-health-checks.md) |
 | Release semantics (integration vs acceptance vs release vs stable freeze; transparent watering-can model) | [concept](../concepts/release-semantics.md) |
 | Project Overview operator dashboard (metrics, Visual Evidence Queue, Project URLs, deployment summary, Wiki entry) | [mockup contract](../concepts/project-overview-dashboard/README.md) · [interactive mockup](../concepts/project-overview-dashboard/ui.html) |
@@ -201,6 +202,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |
+| Application telemetry intake: OTLP metrics and logs per project environment, ingest tokens, retention, query API (IP-15) | [operations/setup/app-telemetry-intake.md](../operations/setup/app-telemetry-intake.md) |
 | Project definition v2 proposal (inactive; shared AGT/QS/Voice properties, quality applicability and rollout) | [plan](../operations/docker-ausfuehrungswelt-migration/project-definition-v2-plan.md) · [draft schema](../operations/docker-ausfuehrungswelt-migration/project-execution.v2.draft.schema.json) |
 | GitHub repository metadata recommendations | [repo-metadata.md](../repo-metadata.md) |
 | Setup | [operations/setup/README.md](../operations/setup/README.md) |
@@ -221,11 +223,12 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Private Hetzner Task Server with local Angular Studio (Phase A architecture, migration, security, and rollback) | [operations/remote-task-server-local-studio.md](../operations/remote-task-server-local-studio.md) |
 | Control plane on Docker (task-server-01): install, update, rollback, backup restore, firewall, WireGuard | [operations/setup/control-plane-docker.md](../operations/setup/control-plane-docker.md) |
 | Temporary Linux Docker placement for the existing monolith control plane, path relocation, and smoke | [operations/setup/monolith-control-plane-docker.md](../operations/setup/monolith-control-plane-docker.md) |
+| Move Studio from the workstation to the server (D15 option B): dry run, rehearsal, apply, delta transfer, rollback | [operations/setup/move-studio-to-server.md](../operations/setup/move-studio-to-server.md) |
 | Installation upgrade and rollback contract: installation manifest, one updater per placement, drain/backup/canary/resume and schema-safe rollback (I06) | [operations/setup/installation-upgrade-contract.md](../operations/setup/installation-upgrade-contract.md) |
 | Single-host Task Server rehearsal handoff: daily health, backup verification, update, rollback, and maintenance-window checklist | [operations/setup/single-host-task-server.md](../operations/setup/single-host-task-server.md) |
 | Windows Task Server fallback runbook (Phase B slice B4: install, warm standby, sub-15-minute switch drill both directions; AGT-2735) | [operations/setup/windows-fallback-runbook.md](../operations/setup/windows-fallback-runbook.md) |
 | Hosted Wiki publication (published revision, freshness SLO, credentials, atomic promotion, typed failures, rollback drill) | [operations/setup/hosted-wiki-publication.md](../operations/setup/hosted-wiki-publication.md) |
-| Secret provider: `secret://` references, scopes, versions, rotation, revocation, write without read, built-in envelope-encrypted store, key custody, audit and log scrubbing (IP-6) | [operations/security/secret-provider.md](../operations/security/secret-provider.md) |
+| Secret provider: `secret://` references, scopes, versions, rotation, revocation, write without read, built-in envelope-encrypted store, scoped Vault/OpenBao and 1Password Connect adapters, key custody, audit and log scrubbing (IP-6, IP-9) | [operations/security/secret-provider.md](../operations/security/secret-provider.md) |
 | Common problems | [common-problems/README.md](../operations/common-problems/README.md) |
 | Background polling leaves an open HTTP request at `verify()` | [system/common-problems/open-http-request-at-verify-from-chat-polling/](../system/common-problems/open-http-request-at-verify-from-chat-polling/) |
 | Background chat polling test measure | [system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md](../system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md) |
@@ -254,6 +257,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | MVP presentation capture runbook | [operations/setup/presentation-capture.md](../operations/setup/presentation-capture.md) |
 | MVP presentation storyboard and shot list | [product/mvp-presentation-storyboard.md](../concepts/mvp-presentation-storyboard.md) |
 | Quota snapshot events at run start/end (cap-forecast data collection) | [concepts/quota-snapshot-run-events.md](../concepts/quota-snapshot-run-events.md) |
+| Workspace and project limits for tokens, compute, and hosting; metering, admission, and owner overrides (AGT-3177) | [concepts/workspace-quotas.md](../concepts/workspace-quotas.md) |
 | Quota fallback operator help (caps, preference, catalogue routes, evidence) | [app/help/quota-fallback.md](../app/help/quota-fallback.md) |
 | Quota forecast: weekly curve, 3-hour burn rate, time of 100 %, armed fallback, and the `/api/cli/quota/history` series (AGT-3001) | [app/help/quota-forecast.md](../app/help/quota-forecast.md) |
 | Runtime prompt usage audit | [concepts/runtime-prompt-usage-audit.html](../concepts/runtime-prompt-usage-audit.html) |

@@ -244,7 +244,6 @@ export interface ProjectCycleTimeCoverage {
   tasksInWindow: number;
   excludedNoCompletionTimestamp: number;
   excludedInFlight: number;
-  excludedEpics: number;
   tasksWithoutLedger: number;
   tasksWithLaneEntryCompletion: number;
   /** Window tasks whose completion was reconstructed by the backfill sidecar; they enter the lead-time rollup only. */

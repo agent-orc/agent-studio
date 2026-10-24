@@ -157,8 +157,6 @@ async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[]
       || url.pathname === '/api/clients/'
     ) return json([]);
     if (url.pathname === '/api/v1/studio/orchestrator/sessions') return json({ sessions: [] });
-    if (url.pathname === '/api/epics') return json([]);
-    if (url.pathname === '/api/epics/completed/count') return json({ count: 0 });
     if (url.pathname === '/api/cli/quota') return json({ snapshots: [], ttlSeconds: 600 });
     if (/\/api\/cli\/[^/]+\/models$/.test(url.pathname)) return json({ models: [], source: 'feed-e2e' });
     if (url.pathname === '/api/runner/token-summary-aggregate') {

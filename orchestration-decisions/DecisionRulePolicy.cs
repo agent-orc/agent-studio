@@ -9,7 +9,8 @@ namespace AgentStudio.OrchestrationDecisions;
 public sealed record DecisionRuleV1(
     string Id, string Trigger, string FactId, string? WarningThreshold,
     IReadOnlyList<string> CandidateActions, string AutonomyClass,
-    string? Model, string MissingDataBehavior, int FreshnessMinutes = 60);
+    string? Model, string MissingDataBehavior, int FreshnessMinutes = 60,
+    string? ThinkingLevel = null);
 
 public sealed record DecisionRuleValidation(IReadOnlyList<string> Refusals)
 {
@@ -37,8 +38,9 @@ public static class DecisionRuleTriggers
     public const string StepTransition = "step-transition";
     public const string CodingCompletion = "CodingCompletion";
     public const string CapacityCheck = "capacity-check";
+    public const string DeepReview = "deep-review";
 
-    public static readonly IReadOnlyList<string> Card = [StepTransition, CodingCompletion];
+    public static readonly IReadOnlyList<string> Card = [StepTransition, CodingCompletion, DeepReview];
     public static readonly IReadOnlyList<string> Host = [CapacityCheck];
     public static readonly IReadOnlyList<string> All = [.. Card, .. Host];
 
@@ -61,6 +63,12 @@ public static class DecisionRuleTriggers
         "host.admission-verdicts", "host.allocation-changes",
     ];
 
+    public static readonly IReadOnlyList<string> DeepReviewFacts =
+    [
+        "review.changed-lines", "review.previous-blocks", "review.gate-failures",
+        "review.delivered-rounds",
+    ];
+
     public static bool IsCard(string? trigger) => trigger is not null && Card.Contains(trigger, StringComparer.Ordinal);
 
     public static bool IsHost(string? trigger) => trigger is not null && Host.Contains(trigger, StringComparer.Ordinal);
@@ -72,7 +80,8 @@ public static class DecisionRuleTriggers
     public static readonly IReadOnlyList<string> HistoricalFacts = ["review.last-outcome"];
 
     public static IReadOnlyList<string> KnownFacts(string? trigger)
-        => IsCard(trigger) ? CodingCompletionFacts : IsHost(trigger) ? CapacityCheckFacts : [];
+        => trigger == DeepReview ? DeepReviewFacts
+            : IsCard(trigger) ? CodingCompletionFacts : IsHost(trigger) ? CapacityCheckFacts : [];
 
     /// <summary>Facts an ask or hold rule may read: known facts observed at the occurrence.</summary>
     public static IReadOnlyList<string> EvidenceFacts(string? trigger)
@@ -209,6 +218,9 @@ public static class DecisionRulePolicy
             if (rule.CandidateActions.Count > 9 || rule.CandidateActions.Any(action =>
                     !DecisionActionKinds.All.Contains(action, StringComparer.Ordinal)))
                 refusals.Add($"Rule {rule.Id} has an action outside the closed union.");
+            if (rule.Trigger == DecisionRuleTriggers.DeepReview
+                && rule.CandidateActions.Any(action => action is not (DecisionActionKinds.Prepare or DecisionActionKinds.Observe)))
+                refusals.Add($"Rule {rule.Id} may only prepare or observe a deep review.");
             if (rule.AutonomyClass is not ("A0" or "A1" or "A2" or "A3"))
                 refusals.Add($"Rule {rule.Id} has an invalid autonomy class.");
             if (rule.MissingDataBehavior is not ("ask" or "hold" or "signal"))
@@ -230,6 +242,8 @@ public static class DecisionRulePolicy
                 refusals.Add($"Project rule {rule.Id} cannot govern host-wide actions.");
             if (rule.Model is { Length: > 0 } model && ModelRefusal(model, models) is { } modelRefusal)
                 refusals.Add($"Rule {rule.Id} {modelRefusal}");
+            if (rule.ThinkingLevel is not null and not ("medium" or "high" or "xhigh"))
+                refusals.Add($"Rule {rule.Id} has an invalid review reasoning level.");
         }
         // A project overlay is checked against its merged workspace rules by the caller.
         if (complete && !projectOverlay && CardAlternativeRefusal(rules) is { } cardRefusal)
@@ -246,7 +260,8 @@ public static class DecisionRulePolicy
     /// </summary>
     public static string? CardAlternativeRefusal(IReadOnlyList<DecisionRuleV1> rules)
     {
-        var card = rules.Where(rule => DecisionRuleTriggers.IsCard(rule.Trigger)).ToArray();
+        var card = rules.Where(rule => rule.Trigger is DecisionRuleTriggers.StepTransition
+            or DecisionRuleTriggers.CodingCompletion).ToArray();
         if (card.Length == 0) return null;
         var at = DateTime.UnixEpoch;
         var known = DecisionRuleTriggers.EvidenceFacts(DecisionRuleTriggers.CodingCompletion);
