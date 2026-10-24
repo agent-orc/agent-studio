@@ -47,13 +47,11 @@ export class ProjectOverviewDashboardComponent {
   readonly openRail = output<ProjectRailKey>();
   readonly openTask = output<{ jobId: string; watchPath: string }>();
   readonly openUrlPreview = output<{ id: string }>();
-
   private readonly tasks = inject(TaskService);
   private readonly docs = inject(ProjectDocsService);
   private readonly git = inject(ProjectGitService);
   private readonly wikiLiveRefresh = inject(WikiLiveRefreshService);
   private refreshGeneration = 0;
-
   readonly tokenUsage = signal<ProjectTokenUsageSummary | null>(null);
   readonly throughput = signal<ProjectThroughputSummary | null>(null);
   readonly deployment = signal<ProjectDeploymentSummary | null>(null);
