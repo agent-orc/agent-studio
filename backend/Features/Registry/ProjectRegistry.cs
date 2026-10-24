@@ -28,7 +28,7 @@ namespace AgentStudio.Registry;
 /// from the configured <c>WatchPaths</c>. Project creation via REST, rename,
 /// archive, and workspace reassignment land in F45b.</para>
 /// </summary>
-public sealed class ProjectRegistry
+public sealed partial class ProjectRegistry
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -501,6 +501,7 @@ public sealed class ProjectRegistry
             : update.ModelDefault.Trim();
 
         EnsureLoaded();
+        lock (UrlOperationGate(id))
         lock (_gate)
         {
             var idx = _state.Projects.FindIndex(p =>
@@ -551,6 +552,7 @@ public sealed class ProjectRegistry
         ArgumentNullException.ThrowIfNull(expected);
         ArgumentNullException.ThrowIfNull(previous);
         EnsureLoaded();
+        lock (UrlOperationGate(expected.Id))
         lock (_gate)
         {
             var idx = _state.Projects.FindIndex(project =>
@@ -579,6 +581,7 @@ public sealed class ProjectRegistry
     {
         ArgumentNullException.ThrowIfNull(expected);
         EnsureLoaded();
+        lock (UrlOperationGate(expected.Id))
         lock (_gate)
         {
             var idx = _state.Projects.FindIndex(project =>
@@ -895,33 +898,6 @@ public sealed class ProjectRegistry
         }, "url-updated", actor);
     }
 
-    /// <summary>Remove a URL by id. Throws when the project or url id is unknown.</summary>
-    public ProjectRecord RemoveUrl(string id, string urlId, StudioUser? actor = null)
-    {
-        return MutateLocked(id, p =>
-        {
-            var idx = IndexOfUrl(p.Urls, urlId);
-            return p with { Urls = [.. p.Urls.Where((_, i) => i != idx)] };
-        }, "url-removed", actor);
-    }
-
-    /// <summary>Keep URL lookup and process start ordered with URL removal.</summary>
-    public T UseUrl<T>(string projectId, string urlId, Func<ProjectRecord, ProjectUrlRecord, T> action)
-    {
-        ArgumentNullException.ThrowIfNull(action);
-        EnsureLoaded();
-        lock (_gate)
-        {
-            var project = _state.Projects.FirstOrDefault(p =>
-                string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase))
-                ?? throw new KeyNotFoundException($"Unknown projectId: {projectId}");
-            var url = project.Urls.FirstOrDefault(candidate =>
-                string.Equals(candidate.Id, urlId, StringComparison.Ordinal))
-                ?? throw new KeyNotFoundException($"Unknown url id: {urlId}");
-            return action(project, url);
-        }
-    }
-
     /// <summary>
     /// Reassign sort order from an explicit id sequence. Every existing url id
     /// must appear exactly once in <paramref name="orderedUrlIds"/>; the new
@@ -1016,6 +992,7 @@ public sealed class ProjectRegistry
     public ProjectRecord Delete(string id)
     {
         EnsureLoaded();
+        lock (UrlOperationGate(id))
         lock (_gate)
         {
             var idx = _state.Projects.FindIndex(p =>
@@ -1057,6 +1034,7 @@ public sealed class ProjectRegistry
         StudioUser? actor = null)
     {
         EnsureLoaded();
+        lock (UrlOperationGate(id))
         lock (_gate)
         {
             var idx = _state.Projects.FindIndex(p =>

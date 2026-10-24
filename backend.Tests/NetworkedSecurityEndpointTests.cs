@@ -216,6 +216,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         using var factory = BuildFactory("172.30.83.3");
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
         var response = await client.PostAsJsonAsync("/api/auth/login",
             new { username = "owner", password = "wrong" });
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
@@ -229,6 +230,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         using var factory = BuildFactory("203.0.113.15");
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();
         var owner = store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", null));
         var created = store.CreateUser(new CreateUserRequest("operator", "Operator", StudioRoles.Operator,

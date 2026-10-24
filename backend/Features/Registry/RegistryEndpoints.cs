@@ -626,20 +626,18 @@ public static class RegistryEndpoints
 
         app.MapDelete(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls/{urlId}",
             (string projId, string urlId, ProjectRegistry projects, IProjectUrlProcessStopper procs, ClientIdentityStore clients,
-                IConfiguration configuration, HttpContext context) =>
+                HttpContext context) =>
         {
             try
             {
                 var actor = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User;
-                var target = projects.UseUrl(projId, urlId, (record, url) => url);
-                if (SecurityProfiles.IsNetworked(configuration) && target.StartRule is not null
-                    && actor?.Role != StudioRoles.Owner)
-                    throw new UnauthorizedAccessException("owner-required");
-                var stopped = procs.Stop(projId, urlId);
-                if (stopped is not null && stopped.State is not
-                    (ProjectUrlProcessStates.Stopped or ProjectUrlProcessStates.Exited))
-                    throw new ProjectUrlStopException();
-                var updated = projects.RemoveUrl(projId, urlId, actor);
+                var updated = projects.RemoveUrl(projId, urlId, actor, () =>
+                {
+                    var stopped = procs.Stop(projId, urlId);
+                    if (stopped is not null && stopped.State is not
+                        (ProjectUrlProcessStates.Stopped or ProjectUrlProcessStates.Exited))
+                        throw new ProjectUrlStopException();
+                });
                 clients.InvalidateRunnerProjectPreflights(projId);
                 return Results.Ok(updated);
             }
