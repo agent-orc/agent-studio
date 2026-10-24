@@ -30,10 +30,11 @@ case "$domain" in *[!0-9A-Za-z.-]*|'') echo 'Invalid hostname' >&2; exit 2;; esa
 case "$data_dir" in /*) ;; *) echo 'Data directory must be absolute' >&2; exit 2;; esac
 case "$data_dir" in *[!0-9A-Za-z._/-]*) echo 'Data directory contains unsupported characters' >&2; exit 2;; esac
 if [ -e .env ]; then echo '.env already exists; keep its owner code and edit the version for an update.' >&2; exit 2; fi
-mkdir -p "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$data_dir/caddy-data" "$data_dir/caddy-config"
+mkdir -p "$data_dir/workspace" "$data_dir/projects" "$data_dir/home" "$data_dir/caddy-data" "$data_dir/caddy-config" "$data_dir/origin-pull"
 chmod 711 "$data_dir"
 chmod 700 "$data_dir/workspace" "$data_dir/projects" "$data_dir/home"
 chmod 755 "$data_dir/caddy-data" "$data_dir/caddy-config"
+chmod 755 "$data_dir/origin-pull"
 if [ ! -d "$data_dir/workspace/.git" ]; then
   git -C "$data_dir/workspace" init -q -b main
   git -C "$data_dir/workspace" -c user.name='Studio Installer' -c user.email='installer@studio.invalid' -c commit.gpgsign=false commit -qm 'Initialize Studio workspace' --allow-empty
@@ -57,5 +58,5 @@ EOF
 printf 'Installer owner code: %s\nStore it until the first owner signs in. It is accepted once.\n' "$code"
 if [ "$edge" = cloudflare ]; then
   echo 'Cloudflare mode: create an A record only (no AAAA) and set SSL/TLS mode Full (strict).'
-  echo 'AGT-3298 will add origin authentication and host firewall enforcement.'
+  echo 'Install the account-specific origin-pull CA and Docker firewall before starting the stack.'
 fi

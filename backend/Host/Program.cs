@@ -75,6 +75,7 @@ builder.Services.AddHostedService<OrchestrationEngineReadinessService>();
 builder.Services.AddSingleton<EngineApplierEffectProbe>();
 builder.Services.AddHostedService<EngineApplierCanaryService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
+builder.Services.AddSingleton<NetworkedLoginAddressHealth>();
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>

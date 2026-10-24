@@ -524,6 +524,68 @@ public class ProjectRegistryTests : IDisposable
     }
 
     [Fact]
+    public void Networked_start_rule_changes_require_owner_and_are_audited_atomically()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+            ["Security:Profile"] = SecurityProfiles.Networked,
+        }).Build();
+        var registry = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+        var project = registry.EnsureProjectForStorage(Path.Combine(_root, "projects", "rules"),
+            "Rules", DefaultWorkspace.Id);
+        var owner = new StudioUser { Id = "owner", Username = "owner", DisplayName = "Owner",
+            Role = StudioRoles.Owner, PasswordHash = "unused" };
+        var operatorUser = new StudioUser { Id = "operator", Username = "operator", DisplayName = "Operator",
+            Role = StudioRoles.Operator, PasswordHash = "unused" };
+        var rule = new ProjectUrlStartRule { Command = "echo ready", Port = 4200 };
+
+        Assert.Throws<UnauthorizedAccessException>(() => registry.AddUrl(project.Id,
+            "preview", "http://localhost:4200", rule, operatorUser));
+        Assert.Empty(registry.FindById(project.Id)!.Urls);
+        Assert.Empty(registry.StartRuleAudit());
+
+        var created = registry.AddUrl(project.Id, "preview", "http://localhost:4200", rule, owner);
+        var url = Assert.Single(created.Urls);
+        Assert.Throws<UnauthorizedAccessException>(() => registry.UpdateUrl(project.Id, url.Id,
+            "preview", url.Url, rule with { Command = "echo changed" }, operatorUser));
+        Assert.Single(registry.StartRuleAudit());
+        registry.UpdateUrl(project.Id, url.Id, "preview", url.Url,
+            rule with { Command = "echo changed" }, owner);
+        Assert.Equal(2, registry.StartRuleAudit().Count);
+        Assert.All(registry.StartRuleAudit(), entry => Assert.Equal(owner.Id, entry.ActorId));
+        Assert.Equal(JsonSerializer.Serialize(registry.StartRuleAudit()),
+            JsonSerializer.Serialize(new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance).StartRuleAudit()));
+    }
+
+    [Fact]
+    public void Networked_project_create_with_repository_url_requires_owner_and_audits_creation()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _root,
+            ["Security:Profile"] = SecurityProfiles.Networked,
+        }).Build();
+        var registry = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
+        var owner = new StudioUser { Id = "owner", Username = "owner", DisplayName = "Owner",
+            Role = StudioRoles.Owner, PasswordHash = "unused" };
+        var operatorUser = new StudioUser { Id = "operator", Username = "operator", DisplayName = "Operator",
+            Role = StudioRoles.Operator, PasswordHash = "unused" };
+        var project = new ProjectRecord
+        {
+            Id = "PROJ-001", DisplayName = "New project", ShortCode = "NEW",
+            WorkspaceId = DefaultWorkspace.Id, StorageLocation = Path.Combine(_root, "new"),
+            Urls = [new ProjectUrlRecord { Id = "repo", Label = "Repository", Url = "https://example.test/repo.git" }]
+        };
+        Assert.Throws<UnauthorizedAccessException>(() => registry.Append(project, operatorUser));
+        registry.Append(project, owner);
+        var audit = Assert.Single(registry.RepositoryAudit());
+        Assert.Null(audit.PreviousRepositoryUrl);
+        Assert.Equal(project.Urls[0].Url, audit.RepositoryUrl);
+        Assert.Equal(owner.Id, audit.ActorId);
+    }
+
+    [Fact]
     public void Update_RoundTripsAllBasics_WithoutChangingStableStorageOrIdentity()
     {
         var workspaces = new WorkspaceRegistry(_config, NullLogger<WorkspaceRegistry>.Instance);

@@ -7,6 +7,7 @@ using System.Text.Json;
 using AgentStudio.Security;
 using AgentStudio.Clients;
 using AgentStudio.Projects;
+using AgentStudio.Registry;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -207,6 +208,69 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         using var forwarded = new HttpRequestMessage(HttpMethod.Get, "/api/auth/status");
         forwarded.Headers.Add("X-Forwarded-Proto", "https");
         Assert.Equal(HttpStatusCode.OK, (await trustedClient.SendAsync(forwarded)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Login_from_trusted_proxy_address_marks_health_unhealthy()
+    {
+        using var factory = BuildFactory("172.30.83.3");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        var response = await client.PostAsJsonAsync("/api/auth/login",
+            new { username = "owner", password = "wrong" });
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.False(factory.Services.GetRequiredService<NetworkedLoginAddressHealth>().Healthy);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/healthz")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Networked_operator_cannot_create_or_start_rules_or_change_repository_identity()
+    {
+        using var factory = BuildFactory("203.0.113.15");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var owner = store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", null));
+        var created = store.CreateUser(new CreateUserRequest("operator", "Operator", StudioRoles.Operator,
+            ["*"], "temporary pass phrase!"));
+        var operatorLogin = store.Login("operator", created.TemporaryPassword, "203.0.113.15");
+        store.ChangePassword(store.AuthenticateSession(operatorLogin.SessionToken)!,
+            new ChangePasswordRequest(created.TemporaryPassword, "permanent pass phrase!"));
+        var projects = factory.Services.GetRequiredService<ProjectRegistry>();
+        var workspaces = factory.Services.GetRequiredService<WorkspaceRegistry>();
+        workspaces.EnsureDefaultWorkspace();
+        var project = projects.EnsureProjectForStorage(Path.Combine(_workspace, "project"),
+            "Existing", DefaultWorkspace.Id);
+        const string repo = "https://example.test/repo.git";
+        projects.Update(project.Id, new UpdateProjectRequest { RepositoryUrl = repo },
+            workspaces, owner.User);
+        var url = projects.AddUrl(project.Id, "Preview", "http://localhost:4200",
+            new ProjectUrlStartRule { Command = "echo ready", Port = 4200 }, owner.User).Urls.Last();
+
+        async Task<HttpStatusCode> Send(HttpMethod method, string path, object body)
+        {
+            using var request = new HttpRequestMessage(method, path) { Content = JsonContent.Create(body) };
+            request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={operatorLogin.SessionToken}");
+            request.Headers.Add("X-CSRF-Token", operatorLogin.CsrfToken);
+            using var response = await client.SendAsync(request);
+            return response.StatusCode;
+        }
+
+        Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Post, "/api/projects",
+            new { workspaceId = DefaultWorkspace.Id, displayName = "Injected", repositoryUrl = repo }));
+        Assert.Equal(HttpStatusCode.OK, await Send(HttpMethod.Put, $"/api/projects/{project.Id}",
+            new { repositoryUrl = repo }));
+        Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Put, $"/api/projects/{project.Id}",
+            new { repositoryUrl = "https://example.test/changed.git" }));
+        Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Put, $"/api/projects/{project.Id}",
+            new { repositoryPath = "/data/projects/unrelated" }));
+        Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Post, $"/api/projects/{project.Id}/urls",
+            new { label = "Other", url = "http://localhost:4201", startRule = new { command = "echo attack", port = 4201 } }));
+        Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Post,
+            $"/api/projects/{project.Id}/urls/{url.Id}/start", new { }));
+        Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Post,
+            $"/api/projects/{project.Id}/urls/test",
+            new { label = "Probe", url = "http://localhost:4202", startRule = new { command = "echo attack", port = 4202 } }));
     }
 
     [Fact]

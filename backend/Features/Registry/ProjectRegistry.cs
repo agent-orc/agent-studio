@@ -178,6 +178,12 @@ public sealed class ProjectRegistry
         lock (_gate) return _state.RepositoryAudit.ToArray();
     }
 
+    public IReadOnlyList<ProjectStartRuleAuditEvent> StartRuleAudit()
+    {
+        EnsureLoaded();
+        lock (_gate) return _state.StartRuleAudit.ToArray();
+    }
+
     /// <summary>
     /// Returns the project whose <see cref="ProjectRecord.StorageLocation"/>
     /// matches the supplied absolute path (case-insensitive, slash-normalised).
@@ -522,6 +528,10 @@ public sealed class ProjectRegistry
                 ModelDefault = updateModelDefault ? modelDefault : current.ModelDefault,
                 Archived = update.Archived ?? current.Archived,
             };
+            if (_networked && actor?.Role != StudioRoles.Owner
+                && (!string.Equals(current.RepositoryPath, updated.RepositoryPath, StringComparison.Ordinal)
+                    || !string.Equals(current.RootPath, updated.RootPath, StringComparison.Ordinal)))
+                throw new UnauthorizedAccessException("owner-required");
 
             var next = _state.Projects.ToList();
             next[idx] = updated;
@@ -809,19 +819,22 @@ public sealed class ProjectRegistry
         IReadOnlyList<ProjectUrlRecord> urls,
         string? repositoryUrl)
     {
+        var existing = urls.FirstOrDefault(url =>
+            string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase));
+        if (existing is not null && string.Equals(existing.Url, repositoryUrl, StringComparison.Ordinal))
+            return urls;
         var next = urls
             .Where(url => !string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase))
             .ToList();
         if (repositoryUrl == null) return next;
-
-        var existing = urls.FirstOrDefault(url =>
-            string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase));
         next.Add(new ProjectUrlRecord
         {
             Id = "repo",
             Label = "Repository",
             Url = repositoryUrl,
             SortOrder = existing?.SortOrder ?? (next.Count == 0 ? 0 : next.Max(url => url.SortOrder) + 1),
+            StartRule = string.Equals(existing?.Url, repositoryUrl, StringComparison.Ordinal)
+                ? existing?.StartRule : null,
         });
         return next.OrderBy(url => url.SortOrder).ToList();
     }
@@ -883,14 +896,13 @@ public sealed class ProjectRegistry
     }
 
     /// <summary>Remove a URL by id. Throws when the project or url id is unknown.</summary>
-    public ProjectRecord RemoveUrl(string id, string urlId, StudioUser? actor = null,
-        Action? beforePersist = null)
+    public ProjectRecord RemoveUrl(string id, string urlId, StudioUser? actor = null)
     {
         return MutateLocked(id, p =>
         {
             var idx = IndexOfUrl(p.Urls, urlId);
             return p with { Urls = [.. p.Urls.Where((_, i) => i != idx)] };
-        }, "url-removed", actor, beforePersist);
+        }, "url-removed", actor);
     }
 
     /// <summary>Keep URL lookup and process start ordered with URL removal.</summary>
@@ -1042,7 +1054,7 @@ public sealed class ProjectRegistry
     }
 
     private ProjectRecord MutateLocked(string id, Func<ProjectRecord, ProjectRecord> update, string op,
-        StudioUser? actor = null, Action? beforePersist = null)
+        StudioUser? actor = null)
     {
         EnsureLoaded();
         lock (_gate)
@@ -1054,25 +1066,39 @@ public sealed class ProjectRegistry
             var updated = update(current);
             var next = _state.Projects.ToList();
             next[idx] = updated;
-            ReplaceProjectAndAuditLocked(current, updated, next, actor, beforePersist);
+            ReplaceProjectAndAuditLocked(current, updated, next, actor);
             _logger.LogInformation("project-registry-{Op} id={Id}", op, id);
             return updated;
         }
     }
 
     private void ReplaceProjectAndAuditLocked(ProjectRecord previous, ProjectRecord updated,
-        List<ProjectRecord> projects, StudioUser? actor, Action? beforePersist = null)
+        List<ProjectRecord> projects, StudioUser? actor)
     {
         var candidatesBefore = RepositoryCandidates(previous);
         var candidatesAfter = RepositoryCandidates(updated);
+        var ruleChanges = previous.Urls.Concat(updated.Urls).Select(url => url.Id).Distinct(StringComparer.Ordinal)
+            .Select(urlId => new
+            {
+                UrlId = urlId,
+                Before = StartRuleDigest(previous.Urls.FirstOrDefault(url => url.Id == urlId)?.StartRule),
+                After = StartRuleDigest(updated.Urls.FirstOrDefault(url => url.Id == urlId)?.StartRule)
+            })
+            .Where(change => change.Before != change.After).ToArray();
+        if (_networked && ruleChanges.Length > 0 && actor?.Role != StudioRoles.Owner)
+            throw new UnauthorizedAccessException("owner-required");
+        var ruleAudit = _state.StartRuleAudit.ToList();
+        if (_networked)
+            ruleAudit.AddRange(ruleChanges.Select(change => new ProjectStartRuleAuditEvent(
+                _clock.GetUtcNow().UtcDateTime, previous.Id, actor!.Id, actor.Username,
+                change.UrlId, change.Before, change.After)));
         foreach (var candidate in candidatesAfter)
             ValidateRepositoryUrl(candidate.Url);
         var before = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(previous);
         var after = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(updated);
         if (candidatesBefore.SequenceEqual(candidatesAfter))
         {
-            beforePersist?.Invoke();
-            ReplaceStateAndPersistLocked(_state with { Projects = projects });
+            ReplaceStateAndPersistLocked(_state with { Projects = projects, StartRuleAudit = ruleAudit });
             return;
         }
 
@@ -1086,9 +1112,11 @@ public sealed class ProjectRegistry
                 CandidatesBefore = candidatesBefore,
                 CandidatesAfter = candidatesAfter,
             });
-        beforePersist?.Invoke();
-        ReplaceStateAndPersistLocked(_state with { Projects = projects, RepositoryAudit = audit });
+        ReplaceStateAndPersistLocked(_state with { Projects = projects, RepositoryAudit = audit, StartRuleAudit = ruleAudit });
     }
+
+    private static string? StartRuleDigest(ProjectUrlStartRule? rule) => rule is null ? null
+        : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(rule))));
 
     private static IReadOnlyList<ProjectRepositoryCandidateAudit> RepositoryCandidates(ProjectRecord project) =>
         project.Urls.Where(url =>
@@ -1101,7 +1129,7 @@ public sealed class ProjectRegistry
             .ToArray();
 
     /// <summary>F45b hook: append a fully-formed record (used by the CRUD endpoints).</summary>
-    internal ProjectRecord Append(ProjectRecord record)
+    internal ProjectRecord Append(ProjectRecord record, StudioUser? actor = null)
     {
         ArgumentNullException.ThrowIfNull(record);
         if (!ProjIdFormat.IsMatch(record.Id))
@@ -1115,7 +1143,18 @@ public sealed class ProjectRegistry
                 throw new InvalidOperationException($"displayName '{record.DisplayName}' is already used.");
             if (_state.Projects.Any(p => string.Equals(p.ShortCode, record.ShortCode, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException($"shortCode '{record.ShortCode}' is already used.");
-            ReplaceStateAndPersistLocked(_state with { Projects = [.. _state.Projects, record] });
+            var repositoryUrl = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(record);
+            if (_networked && actor?.Role != StudioRoles.Owner
+                && (repositoryUrl is not null || record.RepositoryPath is not null || record.RootPath is not null))
+                throw new UnauthorizedAccessException("owner-required");
+            var audit = _state.RepositoryAudit.ToList();
+            if (_networked && repositoryUrl is not null)
+                audit.Add(new ProjectRepositoryAuditEvent(_clock.GetUtcNow().UtcDateTime,
+                    record.Id, actor!.Id, actor.Username, null, repositoryUrl)
+                {
+                    CandidatesAfter = RepositoryCandidates(record)
+                });
+            ReplaceStateAndPersistLocked(_state with { Projects = [.. _state.Projects, record], RepositoryAudit = audit });
             return record;
         }
     }
@@ -1208,6 +1247,8 @@ public sealed class ProjectRegistry
             throw new JsonException("Projects must not be null.");
         if (state.RepositoryAudit == null)
             throw new JsonException("RepositoryAudit must not be null.");
+        if (state.StartRuleAudit == null)
+            throw new JsonException("StartRuleAudit must not be null.");
 
         for (var index = 0; index < state.Projects.Count; index++)
         {
