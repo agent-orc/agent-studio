@@ -1219,8 +1219,8 @@ historical price catalogue at the review date if the model is priced.
 `POST /api/tasks/{jobId}/review-observations/{reviewId}/later-evidence?project=...`
 links a later review, gate, operator finding or production incident to an earlier
 approved review of the same SHA. The later evidence must be dated after approval
-and cite an artifact. A later blocking review or product-class remote gate on the
-same SHA supplies the link automatically. Replayed journal IDs do not duplicate
+and cite an artifact. A later blocking review of the same aspect and SHA supplies
+the link automatically. Replayed journal IDs do not duplicate
 records.
 
 `POST /api/tasks/{jobId}/review-observations/{reviewId}/finding-outcomes?project=...`
@@ -1239,7 +1239,10 @@ Token Economy. `/export/{reviewId}` returns one importer-ready version-1
 review-run JSON document when that review has the required fields.
 Unpriced reviews retain null cost. Cost per real finding is null unless reported
 findings have an explicit confirmed count. When a model/reasoning cohort has at
-least five approvals and two cited misses with a miss rate of at least 20%, the
+least twenty approvals and four cited misses with a miss rate of at least 20%, the
 remote review plan runs every semantic aspect on a follow-up round instead of
-carrying previous verdicts over. This affects review depth only, not the task's
+carrying previous verdicts over. Failed commands do not count as reviewed defects;
+an automatic later-review miss applies only to an earlier approval of the same
+aspect and delivered SHA. The previous finding remains in the full-review prompt.
+This affects review depth only, not the task's
 acceptance or transition decision.

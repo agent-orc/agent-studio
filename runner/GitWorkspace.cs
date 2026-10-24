@@ -831,9 +831,17 @@ public sealed class GitWorkspace
                 Directory.CreateDirectory(results);
                 var content = await File.ReadAllBytesAsync(source, ct);
                 const int reportLimit = 16 * 1024;
-                var start = Math.Max(0, content.Length - reportLimit);
-                while (start < content.Length && (content[start] & 0xC0) == 0x80) start++;
-                await File.WriteAllBytesAsync(Path.Combine(results, artifactName), content[start..], ct);
+                byte[] preserved;
+                if (content.Length <= reportLimit) preserved = content;
+                else
+                {
+                    var firstEnd = reportLimit / 2;
+                    while (firstEnd > 0 && (content[firstEnd] & 0xC0) == 0x80) firstEnd--;
+                    var endStart = content.Length - reportLimit / 2;
+                    while (endStart < content.Length && (content[endStart] & 0xC0) == 0x80) endStart++;
+                    preserved = [.. content[..firstEnd], .. content[endStart..]];
+                }
+                await File.WriteAllBytesAsync(Path.Combine(results, artifactName), preserved, ct);
                 _log($"legacy-repository-report-preserved task={_safeTaskKey} artifact=results/{artifactName}");
             }
             catch (Exception ex)
