@@ -16,7 +16,8 @@ public static class ProjectOperatorDashboardEndpoints
         app.MapPost("/api/deploy/gate-releases", (GateArtifactRequest request,
             ProjectEnvironmentService environments, DeployService deploy) =>
             DeployEndpoints.QuotaRefusable(() => environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit)
-                ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate"),
+                ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate",
+                        request.VersionTag, request.Branch, request.Channel),
                     "Gate artifact or environment declarations are invalid.")
                 : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." })))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
@@ -41,7 +42,8 @@ public static class ProjectOperatorDashboardEndpoints
         app.MapPost("/api/projects/{projectName}/environments/releases", (HttpContext context, string projectName,
             ReleaseArtifactRequest request, DeployService deploy) =>
             DeployEndpoints.QuotaRefusable(() => ReleaseCreated(deploy.CreateRelease(projectName, request.Artifact, request.Commit,
-                DeployEndpoints.Actor(context, projectName).Id),
+                DeployEndpoints.Actor(context, projectName).Id, request.VersionTag, request.Branch,
+                request.Channel, DeployEndpoints.Actor(context, projectName).IsApprover),
                 "Artifact, commit, or stage and production declarations are invalid.")))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
@@ -216,7 +218,7 @@ public static class ProjectOperatorDashboardEndpoints
         { Kind: DeployOutcomeKind.Ok } => Results.Accepted(value: outcome.Value),
         { Kind: DeployOutcomeKind.Conflict, Reason: { } reason } => Results.Conflict(new { error = outcome.Error, reason }),
         { Kind: DeployOutcomeKind.Conflict } => Results.Conflict(new { error = outcome.Error }),
-        _ => Results.BadRequest(new { error = invalid }),
+        _ => Results.BadRequest(new { error = outcome.Error ?? invalid }),
     };
 
     private static IResult DecidePromotion(HttpContext context, string project, PromotionDecisionRequest request,

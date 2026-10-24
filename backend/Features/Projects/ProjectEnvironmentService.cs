@@ -83,9 +83,11 @@ public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string
 public sealed record DeployStepLogRequest(string LeaseToken, string Step, string Message);
 public sealed record DeployLeaseRequest(string LeaseToken);
 public sealed record DeployClaimRequest(string HostId);
-public sealed record ReleaseArtifactRequest(string Artifact, string Commit);
+public sealed record ReleaseArtifactRequest(string Artifact, string Commit, string? VersionTag = null,
+    string? Branch = null, string? Channel = null);
 public sealed record PromotionDecisionRequest(string Artifact);
-public sealed record GateArtifactRequest(string Project, string Artifact, string Commit);
+public sealed record GateArtifactRequest(string Project, string Artifact, string Commit, string? VersionTag = null,
+    string? Branch = null, string? Channel = null);
 
 /// <summary>A deploy action refused by workspace or project quota admission.</summary>
 public sealed class DeployQuotaRefusedException(string message) : InvalidOperationException(message);
@@ -176,9 +178,22 @@ public sealed partial class ProjectEnvironmentService
         var root = _git.ResolveRepoRootForProject(project);
         if (root is null) return null;
         var directory = Path.Combine(root, "docs", "deployments", "environments");
-        var parsed = ParseDeclarationFiles((Directory.Exists(directory)
-                ? Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly) : Enumerable.Empty<string>())
-            .Select(file => (Path.GetFileName(file), File.ReadAllText(file))));
+        var readable = new List<(string Name, string Json)>();
+        var failures = new List<EnvironmentDeclarationFile>();
+        foreach (var file in Directory.Exists(directory)
+                     ? Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
+                     : Enumerable.Empty<string>())
+        {
+            try
+            {
+                readable.Add((Path.GetFileName(file), File.ReadAllText(file)));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                failures.Add(new(Path.GetFileNameWithoutExtension(file), null, $"{Path.GetFileName(file)}: {ex.Message}"));
+            }
+        }
+        IReadOnlyList<EnvironmentDeclarationFile> parsed = [.. ParseDeclarationFiles(readable), .. failures];
         var yamlPath = Path.Combine(root, ProjectPreparationPaths.Definition);
         if (!File.Exists(yamlPath)) return parsed;
         try { return ApplyDefinition(parsed, File.ReadAllText(yamlPath)); }
@@ -345,7 +360,7 @@ public sealed partial class ProjectEnvironmentService
             }
             catch (JsonException ex)
             {
-                result.Add(new(Path.GetFileNameWithoutExtension(file), null, $"{file}: {ex.Message}"));
+                result.Add(new(BrokenDeclarationId(file, json), null, $"{file}: {ex.Message}"));
             }
         }
         var duplicates = result.Where(item => item.Declaration is not null).GroupBy(item => item.EnvironmentId, StringComparer.Ordinal)
@@ -354,6 +369,24 @@ public sealed partial class ProjectEnvironmentService
                 ? item with { Declaration = null, Error = "Environment ids must be unique within a project." } : item)
             .OrderBy(item => item.Declaration?.Kind switch { null => 3, "stage" => 0, "production" => 1, _ => 2 })
             .ThenBy(item => item.EnvironmentId, StringComparer.Ordinal).ToArray();
+    }
+
+    private static string BrokenDeclarationId(string file, string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("id", out var id)
+                && id.ValueKind == JsonValueKind.String
+                && id.GetString() is { } value && Identifier.IsMatch(value))
+                return value;
+        }
+        catch (JsonException)
+        {
+            return Path.GetFileNameWithoutExtension(file);
+        }
+        return Path.GetFileNameWithoutExtension(file);
     }
 
     /// <summary>

@@ -13,5 +13,5 @@ public sealed class ConnectorProfileFixture : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    public async Task DisposeAsync() => await Connector.DisposeAsync();
+    public async Task DisposeAsync() => await (Connector?.DisposeAsync() ?? ValueTask.CompletedTask);
 }

@@ -55,6 +55,7 @@ test('workspace deployment matrix filters and opens project deployment in both t
   await expect(dashboard.getByRole('columnheader')).toHaveCount(3);
   await expect(dashboard.getByRole('row')).toHaveCount(3);
   await expect(dashboard.getByText('Sample data until deployment API is available')).toBeVisible();
+  await expect(dashboard.getByText(/Release .* · default/).first()).toBeVisible();
   await expect(dashboard.getByTestId('delivery-card-WEB-1')).toBeVisible();
   await expect(dashboard.getByRole('button', { name: 'Delivery to Stage 0' })).toHaveCount(2);
   for (const width of [1440, 390]) {
