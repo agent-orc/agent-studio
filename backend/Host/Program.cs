@@ -43,6 +43,7 @@ var hostEntryTimestamp = TimeProvider.System.GetTimestamp();
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("System.Net.Http.HttpClient.environment-health-checks", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console()
     .CreateBootstrapLogger();
@@ -232,6 +233,7 @@ builder.Logging.AddProvider(new BackendFileLoggerProvider(fileLogSink));
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("System.Net.Http.HttpClient.environment-health-checks", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console(),
     preserveStaticLogger: underTestHost,

@@ -19,6 +19,7 @@ public enum HealthAddressClass
 /// </summary>
 public static class HealthCheckAddressPolicy
 {
+    private static readonly byte[] Nat64Prefix = [0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0];
     private static readonly IPAddress[] Metadata =
     [
         IPAddress.Parse("169.254.169.254"), // AWS, GCP, Azure, OCI (also link-local)
@@ -30,6 +31,14 @@ public static class HealthCheckAddressPolicy
     public static HealthAddressClass Classify(IPAddress address)
     {
         if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (address.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            var encoded = address.GetAddressBytes();
+            var nat64 = encoded.AsSpan(0, 12).SequenceEqual(Nat64Prefix);
+            var sixToFour = encoded[0] == 0x20 && encoded[1] == 0x02;
+            if (nat64) address = new IPAddress(encoded.AsSpan(12, 4));
+            else if (sixToFour) address = new IPAddress(encoded.AsSpan(2, 4));
+        }
         if (Metadata.Contains(address)) return HealthAddressClass.Blocked;
         if (address.AddressFamily == AddressFamily.InterNetwork)
         {
