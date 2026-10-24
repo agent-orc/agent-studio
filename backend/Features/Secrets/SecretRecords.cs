@@ -20,6 +20,8 @@ public sealed record SecretRecord
     public DateTime? LastUsedAt { get; init; }
     public string? LastUsedBy { get; init; }
     public string? LastUsedPurpose { get; init; }
+    /// <summary>The current item revision in an external store; metadata updates may advance it without adding a value version.</summary>
+    public int? StoreRevision { get; init; }
     public List<SecretVersionRecord> Versions { get; init; } = [];
 
     [JsonIgnore]

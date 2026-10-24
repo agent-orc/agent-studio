@@ -211,7 +211,7 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
                      .Select(pair => pair.Key).ToArray())
             changed |= state.Checks.Remove(key);
         foreach (var id in state.Environments.Where(pair => !declared.ContainsKey(pair.Key) && !broken.Contains(pair.Key)
-                     && pair.Value.OpenIncident is null && pair.Value.LastIncident is null or { RecoveryReported: true })
+                     && pair.Value.OpenIncident is null && pair.Value.LastIncident is null or { RecoveryReported: true, RecoveryCommentReported: not false })
                      .Select(pair => pair.Key).ToArray())
             changed |= state.Environments.Remove(id);
         if (changed) store.Save(project.Project, state);
@@ -283,7 +283,8 @@ public sealed class EnvironmentHealthService(TaskScannerService scanner, Project
                 item.State.LastIncident = item.State.LastIncident! with { RecoveryReported = true };
             changed = true;
         }
-        if (environmentState.LastIncident is { RecoveryReported: false } last)
+        if (environmentState.LastIncident is { } last
+            && (!last.RecoveryReported || last.RecoveryCommentReported == false))
         {
             environmentState.LastIncident = alerts.ReportRecovered(project, last, Ended(checks, last));
             changed = true;

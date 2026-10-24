@@ -1,3 +1,12 @@
+{
+    # Only the edge container may hand over the client address it resolved.
+    # The API in turn trusts only this container (Security__TrustedProxyAddresses).
+    servers {
+        trusted_proxies static 172.30.83.2/32
+        trusted_proxies_strict
+    }
+}
+
 :8080 {
     encode zstd gzip
 
@@ -8,10 +17,22 @@
     handle @api {
         reverse_proxy api:5031 {
             header_up X-Forwarded-Proto https
+            header_up X-Forwarded-For {client_ip}
         }
     }
 
     handle {
+        # Studio shell policy (StudioResponseHeaderPolicy.FrontendShellContentSecurityPolicy).
+        # Only the shell gets it: API responses carry StudioResponseHeaderPolicy's
+        # stricter policies, which allow no inline script.
+        header {
+            Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self'; frame-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
+            X-Frame-Options SAMEORIGIN
+            Cross-Origin-Opener-Policy same-origin
+            Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+            Referrer-Policy same-origin
+            X-Content-Type-Options nosniff
+        }
         root * /srv/studio
         try_files {path} /index.html
         file_server

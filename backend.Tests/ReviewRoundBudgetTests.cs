@@ -9,6 +9,19 @@ namespace AgentStudio.Tests;
 public sealed class ReviewRoundBudgetTests
 {
     [Fact]
+    public void Corrupt_sidecar_is_empty()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "review-budget-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, ReviewRoundBudgetStore.FileName), "{broken");
+            Assert.Empty(ReviewRoundBudgetStore.Read(folder).Rounds);
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
+    [Fact]
     public void Accepted_engine_review_updates_existing_ledger_once()
     {
         var folder = Path.Combine(Path.GetTempPath(), "engine-review-budget-" + Guid.NewGuid().ToString("N"));

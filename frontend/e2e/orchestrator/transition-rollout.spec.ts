@@ -11,14 +11,35 @@ test('transition profiles show comparison state and require an operator reason',
   await page.route('**/api/orchestration/rollout/profiles', async route => {
     if (route.request().method() === 'GET') {
       await route.fulfill({ json: [
-        { profile: 'CodingCompletion', state: 'shadow', streak: 12, threshold: 50,
-          mismatchCount: 0, lastMismatch: null },
+        { profile: 'CodingCompletion', state: 'canary', streak: 50, threshold: 50,
+          mismatchCount: 0, lastMismatch: null,
+          applierContract: { status: 'covered', actions: ['CreateReview', 'ReturnToReady', 'SalvageContinuation',
+            'Escalate', 'HumanReview', 'Continue'], uncovered: [] },
+          canary: { status: 'watching', required: 3, verified: 1, instanceId: 'studio/abc123',
+            passedOnThisInstance: false, awaitingRecoveryPass: true,
+            observations: [{ status: 'verified' }, { status: 'not-counted' }, { status: 'pending' }] },
+          lastEffectCheck: { occurrence: 'orch_coding', action: 'CreateReview', verified: false,
+            missing: ['DecisionReceipt'], evidence: 'The occurrence is applying.', checkedAt: '2026-10-19T08:00:00Z',
+            basis: 'row', completedAt: null, awaitingDownstream: false } },
         { profile: 'ReviewReport', state: 'ready', streak: 50, threshold: 50,
           mismatchCount: 1, lastMismatch: { monolith: {
             occurrence: 'review-one', inputsDigest: 'abc', action: 'FindingRound', reason: 'Fix finding.' },
-          engine: { occurrence: 'review-one', inputsDigest: 'abc', action: 'Escalate', reason: 'Test block.' } } },
+          engine: { occurrence: 'review-one', inputsDigest: 'abc', action: 'Escalate', reason: 'Test block.' } },
+          applierContract: { status: 'covered', actions: ['FindingRound', 'DeferToBatch'], uncovered: [] },
+          canary: { status: 'failed', required: 3, verified: 0, instanceId: 'studio/abc123',
+            passedOnThisInstance: false },
+          lastEffectCheck: { occurrence: 'orch_defer', action: 'DeferToBatch', verified: false,
+            missing: ['BatchAdmission'], evidence: 'DOC-1 is in 4-auto-review; missing BatchAdmission.',
+            checkedAt: '2026-10-16T09:12:00Z' } },
         { profile: 'GateResult', state: 'engine', streak: 50, threshold: 50,
-          mismatchCount: 0, lastMismatch: null },
+          mismatchCount: 0, lastMismatch: null,
+          applierContract: { status: 'covered', actions: ['Continue', 'ReturnToReady', 'Escalate'], uncovered: [] },
+          canary: { status: 'passed', required: 3, verified: 3, instanceId: 'studio/abc123',
+            passedOnThisInstance: true },
+          lastEffectCheck: { occurrence: 'orch_gate', action: 'Continue', verified: false,
+            missing: ['GateDispatch'], evidence: 'DOC-2 left 4-auto-review for 1-ready.',
+            checkedAt: '2026-10-20T07:00:00Z', basis: 'gate-superseded', completedAt: '2026-10-20T06:59:00Z',
+            awaitingDownstream: true, waitingOn: null } },
       ] });
     } else await route.continue();
   });
@@ -46,9 +67,34 @@ test('transition profiles show comparison state and require an operator reason',
   await expect(panel.getByTestId('decision-workspace-spend')).toContainText('no usage data');
   await expect(panel.getByTestId('transition-profile-ReviewReport')).toContainText('ready');
   await expect(panel.getByTestId('transition-profile-ReviewReport')).toContainText('50 / 50');
-  await expect(panel.getByRole('button', { name: 'Switch to engine' })).toBeDisabled();
+  // AGT-3218: Ready proves no applied effect, so the engine waits for an applier canary.
+  const review = panel.getByTestId('transition-profile-ReviewReport');
+  await expect(review.getByRole('button', { name: 'Switch to engine' })).toHaveCount(0);
+  await expect(review.getByRole('button', { name: 'Start applier canary' })).toBeDisabled();
+  await expect(panel.getByTestId('applier-canary-ReviewReport')).toContainText('failed · 0 / 3');
+  await expect(panel.getByTestId('effect-check-ReviewReport')).toContainText('missing BatchAdmission');
+  await expect(panel.getByTestId('applier-contract-CodingCompletion')).toContainText('covered · 6 actions');
+  await expect(panel.getByTestId('applier-canary-CodingCompletion')).toContainText('watching · 1 / 3');
+  await expect(panel.getByTestId('applier-canary-CodingCompletion')).toContainText('1 not counted');
+  await expect(panel.getByTestId('applier-canary-CodingCompletion')).toContainText('awaiting recovery pass');
+  // A long integration is not a missing effect while the applier still runs.
+  await expect(panel.getByTestId('effect-check-CodingCompletion')).toContainText('CreateReview · applier still running');
+  await expect(panel.getByTestId('applier-canary-GateResult')).toContainText('passed on this instance');
+  // A gate decision whose card moved on before the dispatch is a refusal by design, not a missing effect.
+  await expect(panel.getByTestId('effect-check-GateResult'))
+    .toContainText('Continue · not counted, card moved on before the gate dispatch');
+  await expect(panel.getByTestId('force-engine-GateResult')).toHaveCount(0);
   await panel.getByTestId('transition-rollout-reason').fill('Shadow receipts matched');
-  await expect(panel.getByRole('button', { name: 'Switch to engine' })).toBeEnabled();
+  await expect(review.getByRole('button', { name: 'Start applier canary' })).toBeEnabled();
+  // The emergency override is explicit: it asks for confirmation and sends its own target.
+  let switched: unknown = null;
+  await page.route('**/api/orchestration/rollout/profiles/ReviewReport/switch', async route => {
+    switched = route.request().postDataJSON();
+    await route.fulfill({ json: {} });
+  });
+  page.once('dialog', dialog => void dialog.accept());
+  await panel.getByTestId('force-engine-ReviewReport').click();
+  await expect.poll(() => switched).toEqual({ target: 'force-engine', reason: 'Shadow receipts matched' });
   const decision = panel.getByTestId(`shadow-decision-${receipt}`);
   await expect(decision).toContainText('AGT-4242');
   await expect(decision).toContainText('match');

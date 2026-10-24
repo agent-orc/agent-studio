@@ -62,7 +62,8 @@ describe('HeaderQuotaComponent (smoke)', () => {
 describe('HeaderQuotaComponent (networked)', () => {
   it('renders runner provider state without probing the web server CLI', async () => {
     const statuses = signal([{ id: 'runner-1:claude', provider: 'claude', providerLabel: 'Claude',
-      runnerId: 'runner-1', hostName: 'agent-host-1', state: 'ok' }] as ProviderAuthBadge[]);
+      runnerId: 'runner-1', hostName: 'agent-host-1', state: 'ok',
+      acceptedModels: ['claude-opus-5-5', 'claude-sonnet-5'] }] as unknown as ProviderAuthBadge[]);
     await TestBed.configureTestingModule({
       imports: [HeaderQuotaComponent],
       providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
@@ -76,6 +77,8 @@ describe('HeaderQuotaComponent (networked)', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('[data-testid="hquota-card-claude"]')
       .getAttribute('aria-label')).toContain('agent-host-1 ok');
+    expect(fixture.nativeElement.querySelector('[data-testid="hquota-claude-runner-1"]')
+      .textContent).toContain('claude-opus-5-5, claude-sonnet-5');
     TestBed.inject(HttpTestingController).expectNone('/api/cli/quota');
   });
 });

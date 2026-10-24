@@ -41,7 +41,11 @@ public static class ManagementEndpoints
 
     public static void MapManagementEndpoints(this WebApplication app)
     {
-        app.MapGet("/recovery", () => Results.Content(RecoveryConsole.Html, "text/html"));
+        app.MapGet("/recovery", (HttpContext context) =>
+        {
+            context.Response.Headers.ContentSecurityPolicy = RecoveryConsole.ContentSecurityPolicy;
+            return Results.Content(RecoveryConsole.Html, "text/html");
+        });
         var group = app.MapGroup("/api/v1/management");
         group.MapGet("/status", (HttpContext context, ManagementService service, IConfiguration configuration) =>
         {
@@ -425,6 +429,15 @@ public static class ManagementEndpoints
 
 internal static class RecoveryConsole
 {
+    /// <summary>
+    /// The console is one constant page with an inline script and inline
+    /// handlers, so it needs <c>'unsafe-inline'</c>. It may call only the
+    /// Studio API; no other content can load into it (AGT-3230).
+    /// </summary>
+    public const string ContentSecurityPolicy =
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; " +
+        "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+
     public const string Html = """
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Task Server recovery</title><style>

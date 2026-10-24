@@ -5,6 +5,7 @@ import type { Observable } from 'rxjs';
 import { AuthSessionState } from '../../../services/auth.service';
 import type { WatchPathEntry } from '../../../models/task.model';
 import { SecretsService, type SecretMetadata, type SecretScopeKey } from '../secrets.service';
+import { SecretBackendSettingsComponent } from '../secret-backend-settings/secret-backend-settings.component';
 
 /**
  * Secrets section of the Access area in Settings. People pick a scope
@@ -15,7 +16,7 @@ import { SecretsService, type SecretMetadata, type SecretScopeKey } from '../sec
 @Component({
   selector: 'app-secrets-panel',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, SecretBackendSettingsComponent],
   templateUrl: './secrets-panel.component.html',
   styleUrl: './secrets-panel.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

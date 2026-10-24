@@ -528,6 +528,17 @@ the dedicated `PUT /api/projects/{projectName}/execution-runner` contract.
 Project id, source type, storage location, creation time, and the task and
 document key counters are immutable and are never accepted as update fields.
 
+Deleting a project URL checks repository authority before stopping its owned
+preview process. If stopping fails, the URL and its repository audit state stay
+in the registry so the process remains reachable for another stop attempt.
+Every URL whose id or label can identify a repository is checked against the
+repository URL rules when project URLs change, even if another URL currently
+takes precedence. This prevents a later reorder or deletion from selecting an
+unchecked repository URL. In the networked profile, every candidate change
+requires the Owner and records both candidate lists in the same registry write.
+Process start holds the registry URL lock through launch, so removal cannot
+delete the record between lookup and launch.
+
 The project registry is fail-closed. If an existing
 `<TaskRepository>/.metadata/projects.json` is not deserializable, startup
 terminates with `ProjectRegistryLoadException` and
@@ -757,8 +768,9 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   the next read.
 - `integrated` means reachable from the published integration branch
   (`origin/<branch>`). A delivery that only a local branch or worktree ref can
-  see is `merged-locally` and cannot enter Human Review, be accepted, or be
-  archived. A repository without an origin mirror uses its local target ref.
+  see is `merged-locally` and cannot enter Human Review through a delivery
+  acceptance move, be accepted, or be archived. A repository without an origin
+  mirror uses its local target ref.
   The current immutable result SHA is checked first, followed by commits
   attributed to that delivery epoch. A rewritten commit is accepted only when
   its original-to-replacement mapping was persisted. The last merge attempt is
@@ -773,7 +785,10 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   with a category and recovery action. A pull-request project's approval stays
   on the pull request while the card waits in Auto Review; Human Review starts
   after the merge. The integration strategy is project configured, but these
-  lane meanings are global.
+  lane meanings are global. A `ReviewReport` decision of `HumanReview` is an
+  operator-decision park: it may move an unintegrated card from Auto Review to
+  Human Review so the operator can resolve an Inconclusive review. This exception
+  does not permit acceptance or archive without their own evidence.
 - Accept in Human Review confirms the already integrated result and records its
   delivery epoch, immutable result SHA, target branch, and target ref fingerprint.
   The target ref fingerprint is diagnostic evidence, not an acceptance boundary.
@@ -1059,6 +1074,55 @@ CLI run also returns `409`. A missing task or a file that is not editable
 returns `404`. Other I/O failures return `503 Service Unavailable` with
 retry guidance.
 
+## Product session task access (AGT-3182)
+
+A Product session is a signed-in human whose role is contributor (shown as
+Product). One predicate per plane makes that decision:
+`ContributorAccessPolicy.IsProductSession` in the backend and
+`StudioProductSession.IsProduct` in Task Server. AGT-3228 replaces the role
+check inside these predicates with role bindings; callers do not change.
+Operator, owner, viewer, and API token requests keep the unrestricted task
+contract described elsewhere in this document.
+
+Both planes enforce the same task rules for a Product session. The route
+middleware runs a first check, and each handler checks the bound request
+again, so a body the middleware reads differently cannot widen the rules.
+
+| Operation | Backend `/api/tasks` | Task Server `/api/v1/projects/{projectId}/tasks` | Product rule |
+|---|---|---|---|
+| Create | `POST /api/tasks` | `POST .../tasks` | Target lane absent, Backlog, or Ready. |
+| Edit fields | `PUT .../{id}/title`, `tags`, `references`, `waits-on`, `files/prompt.md` | `PUT .../{taskIdentity}`, `title`, `tags`, `references` | Card in Backlog or Ready, and the requested `state` keeps it there. A Task Server update with `mechanicalDelta` is denied. |
+| Move | `POST .../{id}/move`, `POST .../{id}/state` | `POST .../{taskIdentity}/move`, `PUT .../{taskIdentity}/state` | Backlog and Ready among each other, or Human Review to Completed. Backend `operatorOverride` and `archiveOverride` are denied. |
+| Read a result file | `GET .../{id}/results/{**path}` | `GET .../{taskIdentity}/results/{**path}` | Only `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.bmp`, `.html`, `.htm`, and `.md`. Both the requested path and the resolved artifact must match, so a folder-prefix match cannot return a log, TRX, JSONL, or other raw output. |
+| Release | `PUT .../{id}/release` | `PUT .../{taskIdentity}/release` | Requires the production approval grant for the project. |
+
+A backend Product create carries no run controls. The handler clears `model`,
+`cliType`, `thinkingLevel`, `modelExplicit`, `thinkingLevelExplicit`, `mode`,
+`allowWebAccess`, and `requiresIntegration`, sets `noBranchExpected` and
+`fixture` to `false`, and records the signed-in user ID as `createdBy`. Project
+defaults then choose the CLI, model, thinking level, mode, web access, and
+integration.
+
+Product sessions are also denied every task route segment that exposes run
+internals: `session-events`, `agent-work-detail`, `conversation`, `output`,
+`trace`, `logs`, and `raw-logs` in the backend, and `session-events`,
+`agent-work-detail`, `history`, `files`, `output`, `trace`, `logs`, and
+`raw-logs` in Task Server. Segment matching is case-insensitive.
+
+Task Server reads a Product request body as the binder does. It rejects
+duplicate JSON property names, including case variants, and denies a lane field
+that is not a string or `null`. A body that is not valid JSON is denied instead
+of passed through. For every caller, Task Server JSON binding now rejects a
+body with duplicate property names (`AllowDuplicateProperties = false`).
+
+The backend route middleware denies with `403` and
+`{ "error": "role-denied", "message": ... }`; a backend handler check denies
+with `403` and no body. Task Server denies with `403` and
+`{ "error": "contributor-role-denied" }`. Tests:
+`backend.Tests/ContributorAccessTests.cs` and
+`task-server.Tests/IdentityBootstrapTests.cs`. The role summary is in
+[security overview](../../operations/security/overview.md).
+
 ## Parked-card blocker and recall
 
 Every move into `5-human-review` or `5e-escalated` writes a machine-readable
@@ -1130,11 +1194,13 @@ card waiting on a person from one waiting on a fix.
 ## Result transition invariant
 
 `TaskTransitionService` is the single enforcement point for Result availability.
-Every successful move into `4-auto-review`, `5-human-review`, `5e-escalated`,
-or `6-completed` carries a non-empty `status.md`. When no generated protocol is
-available, the service writes a marked, evidence-only scaffold before the
-folder move and enriches its own scaffold after the move with the computed
-integration projection. It never replaces a real Result. Backend startup runs
+After the lane guard accepts a move into `4-auto-review`, `5-human-review`,
+`5e-escalated`, or `6-completed`, it ensures a marked, evidence-only scaffold
+before changing lanes if no generated Result is available. If that write fails,
+the card remains in its source lane. Admission refusals and no-op moves do not write
+`status.md`, `current-result.json`, or Result history. An engine decision
+refreshes its scaffold at most once during the accepted move. The service never
+replaces a real Result. Backend startup runs
 the same idempotent repair over missing Results in `5-human-review`,
 `6-completed`, and `7-archive`; repaired files are marked as operator
 backfills.
@@ -1691,8 +1757,8 @@ filesystem paths. The existing `task-op` Server-Timing duration and background
 `git-index-run` rollups retain their distinct boundaries. The capture and
 offline reducer protocol is in [measurement.md](../../task-switch-performance/measurement.md).
 
-The full-detail route resolves its card and dependency graph from published
-per-card facts. Other cards' mutations cannot make it wait for `EnsureFresh`;
+The full-detail route resolves its card and dependency targets from published
+resident core facts. Other cards' mutations cannot make it wait for `EnsureFresh`;
 a safety-TTL or watcher repair runs in the background. It emits
 `X-Task-Detail-Freshness: ready|stale|warming`; a cold, unindexed lookup returns
 `202` while the first snapshot or that card's publication is pending; a card
@@ -1740,8 +1806,9 @@ deletion; an unrelated dirty task does not force a core request to scan. The
 sidecar watcher refreshes changed heads outside HTTP requests.
 
 The legacy full-detail route reads the resident per-card facts without waiting
-for a workspace scan. A folder move swaps its old and new core locations under
-one publication lock. Background scans merge per folder, retaining cards
+for a workspace scan. A folder move starts a core publication before the disk move and swaps its old
+and new core locations under one publication lock. Cross-project moves remove
+the source card in that same swap. Background scans merge per folder, retaining cards
 published after the scan began and adopting unrelated scanned changes. A
 changed or missing task.json is repaired from that card's folder on read.
 During cold hydration the route returns a JSON 202 warming reply, which the
@@ -1749,7 +1816,9 @@ client retries with a bounded backoff before exposing a TaskDetail. Successful
 detail replies carry
 `X-Task-Detail-Freshness` and `X-Task-Token-Freshness`; token usage is served
 from a nonblocking card cache. The separate usage resource awaits one shared
-background project ledger load asynchronously and returns the completed summary.
+background project ledger load asynchronously. A request whose receipt or bus
+version changed after that load began awaits a follow-up load before returning
+its summary.
 The detail live-status overlay derives runner queue positions from the last
 published board generation, so it never enters the global freshness gate.
 
@@ -1930,9 +1999,10 @@ disk for runner state.
   through `/api/v1/studio/board`) and `GET /api/tasks/` take one published
   generation of the index (`TaskIndexCache.AcquireBoardReadAsync`) and pin it
   for the request (`TaskScannerService.PinBoardRead`). Every nested index read
-  of that request answers from it: the task list, the reference graph the body's
-  dependency lookups receive, the runner status that the validator and the
-  live-status strip read, and the `tasks` generation the validator folds. The
+  of that request answers from it for task cards and runner state. Dependency
+  targets are resolved against the resident core graph so release, completion,
+  and moves are visible before a board rescan. Its dependency generation is
+  part of the board response signature. The
   shared body build pins the same generation itself, so the tag always names the
   generation the body came from.
 - **A dirty index refreshes in the background.** A dirty or TTL-expired index

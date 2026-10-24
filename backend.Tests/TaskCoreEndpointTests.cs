@@ -50,6 +50,8 @@ public sealed class TaskCoreEndpointTests : IDisposable
         var index = factory.Services.GetRequiredService<TaskIndexCache>();
         var other = index.GetDetailFacts("AGT-other", Jobs).Info!;
         index.Invalidate();
+        // A real mutation writes task.json before it publishes; a rescan then adopts the same facts.
+        Assert.True(TaskJsonFile.UpdateField(other.FolderPath, "title", "Other changed", NullLogger.Instance));
         index.PublishCore(other with { Title = "Other changed" });
 
         using var detail = await client.GetAsync($"/api/tasks/AGT-target?project={project.Id}");
@@ -61,6 +63,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Assert.Equal("AGT-target", body.RootElement.GetProperty("info").GetProperty("id").GetString());
 
         var target = index.GetDetailFacts("AGT-target", Jobs).Info!;
+        Assert.True(TaskJsonFile.UpdateField(target.FolderPath, "title", "Target changed", NullLogger.Instance));
         index.PublishCore(target with { Title = "Target changed" });
         using var after = await client.GetAsync($"/api/tasks/AGT-target?project={project.Id}");
         after.EnsureSuccessStatusCode();
@@ -215,6 +218,10 @@ public sealed class TaskCoreEndpointTests : IDisposable
             move.EnsureSuccessStatusCode();
         using (var old = await client.GetAsync($"/api/tasks/AGT-transfer?project={source.Id}"))
             Assert.Equal(HttpStatusCode.NotFound, old.StatusCode);
+        using (var oldCore = await client.GetAsync($"/api/tasks/AGT-transfer/core?project={source.Id}"))
+            Assert.Equal(HttpStatusCode.NotFound, oldCore.StatusCode);
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        Assert.Single(index.GetAllResidentTasks(), task => task.Id == "AGT-transfer");
         using (var moved = await client.GetAsync($"/api/tasks/AGT-transfer?project={target.Id}"))
         {
             moved.EnsureSuccessStatusCode();
@@ -640,7 +647,16 @@ public sealed class TaskCoreEndpointTests : IDisposable
         using var current = JsonDocument.Parse(await after.Content.ReadAsByteArrayAsync());
         var blocking = current.RootElement.GetProperty("blocking");
         Assert.Equal("ready", blocking.GetProperty("dependencyState").GetString());
-        Assert.False(blocking.GetProperty("dependencyBlocked").GetBoolean());
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        using var targetJson = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(Jobs, TaskStates.Archive, "AGT-target", "task.json")));
+        var diskReleased = targetJson.RootElement.TryGetProperty("released", out var releasedField)
+            && releasedField.GetBoolean();
+        var targetFact = index.GetDetailFacts("AGT-target", Jobs).Info?.Released;
+        var graphReleased = index.GetCoreReferenceIndex().Resolve("AGT-target")?.Released;
+        Assert.False(blocking.GetProperty("dependencyBlocked").GetBoolean(),
+            $"diskReleased={diskReleased} targetFact={targetFact} graphReleased={graphReleased} "
+            + $"coreGeneration={index.CoreDependencyGeneration}");
         Assert.True(blocking.GetProperty("dependencies")[0].GetProperty("fulfilled").GetBoolean());
         Assert.NotEqual(before.Headers.ETag, after.Headers.ETag);
         Assert.Equal("0", after.Headers.GetValues("X-Task-Core-Workspace-Scans").Single());

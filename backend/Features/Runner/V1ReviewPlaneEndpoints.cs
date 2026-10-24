@@ -185,7 +185,8 @@ public static class V1ReviewPlaneEndpoints
             Contract.CapabilityAdvertisementRequest request,
             V1ReviewExecutorRegistry registry,
             AdaptiveReviewParallelismAdvisor reviewParallelism,
-            AgentStudio.Clients.ClientIdentityStore clients) =>
+            AgentStudio.Clients.ClientIdentityStore clients,
+            CliQuotaFallbackService quotaRoutes) =>
         {
             if (!RunnerMatches(context, runnerId))
                 return Results.Unauthorized();
@@ -195,7 +196,10 @@ public static class V1ReviewPlaneEndpoints
                     "Route and capability runner ids differ."));
             try
             {
-                var snapshot = registry.AdvertiseCapabilities(runnerId, request);
+                var snapshot = registry.AdvertiseCapabilities(runnerId, request) with
+                {
+                    ConfiguredModelRoutes = ConfiguredModelRoutes(quotaRoutes.GetAll().Values),
+                };
                 clients.RecordSeen(runnerId);
                 // AGT-2820: the review plane's parallelism recommendation used to
                 // be an unread number on a diagnostics endpoint - it answered
@@ -343,6 +347,7 @@ public static class V1ReviewPlaneEndpoints
             ILoggerFactory loggerFactory,
             QuotaAdmissionService quotaAdmission,
             QuotaAdmissionRecorder quotaAdmissionRecorder,
+            AgentStudio.Quota.WorkspaceQuotaService workspaceQuota,
             ReviewClaimUnclaimableLog unclaimableLog,
             CauseBreakerService causeBreakers,
             CancellationToken ct) =>
@@ -417,8 +422,13 @@ public static class V1ReviewPlaneEndpoints
             // AGT-3077: resolve visibility and repository URL before selection,
             // so a private attempt this host cannot clone is skipped, not
             // leased, even when its plan or URL is only built at hand-out.
-            var repositoryFacts = ClaimRepositoryFacts(
-                authority.ListOpenReviewTaskKeys(), scanner, projects, settings);
+            var openReviewTaskKeys = authority.ListOpenReviewTaskKeys();
+            var repositoryFacts = ClaimRepositoryFacts(openReviewTaskKeys, scanner, projects, settings);
+            // AGT-3177: workspace quota verdicts, one per project, before selection,
+            // so a blocked project's attempt is skipped instead of leased and deferred
+            // at the head of the queue in front of every other project's review.
+            var quotaBlocked = WorkspaceQuotaBlockedReviews(openReviewTaskKeys, scanner, workspaceQuota);
+            string? quotaWaitReason = null;
             var activeByRunner = authority.ListActiveReviewAttempts()
                 .Where(review => review.Lease is not null)
                 .GroupBy(review => review.Lease!.ExecutorId, StringComparer.Ordinal)
@@ -467,6 +477,15 @@ public static class V1ReviewPlaneEndpoints
                 };
                 return placement == Contract.ReviewHostPlacementDecision.Admit;
             }
+            bool Admit(ReviewAttemptDto candidate)
+            {
+                if (quotaBlocked.TryGetValue(candidate.TaskKey, out var refusal))
+                {
+                    quotaWaitReason ??= refusal;
+                    return false;
+                }
+                return AdmitHost(candidate);
+            }
             var claimed = reviewAttemptLifecycle.ClaimNextReview(
                 runnerId,
                 executor.HostId,
@@ -474,7 +493,7 @@ public static class V1ReviewPlaneEndpoints
                 request.RequestedTtlSeconds,
                 executor.Capabilities,
                 heldByCauseBreaker,
-                AdmitHost,
+                Admit,
                 repositoryFacts);
             if (claimed.Status == AttemptWriteStatus.NotFound)
             {
@@ -484,6 +503,10 @@ public static class V1ReviewPlaneEndpoints
                         hostWaitReason == Contract.ReviewClaimEmptyReasons.DifferentHostRequired
                             ? $"Review waits for an executor on a host other than coding host '{executor.HostId}' because this project requires host separation."
                             : $"Review is reserved for an idle eligible executor on a host other than coding host '{executor.HostId}'."));
+                if (quotaWaitReason is not null)
+                    return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
+                        Contract.ReviewClaimEmptyReasons.QuotaDeferred,
+                        quotaWaitReason));
                 // AGT-2987: an empty queue and a queue this executor cannot
                 // serve used to read the same. Name the unclaimable attempts
                 // and the capability keys they need instead.
@@ -556,23 +579,25 @@ public static class V1ReviewPlaneEndpoints
                 mutations,
                 timeline,
                 loggerFactory.CreateLogger(LoggerName));
-            // Legacy plans retain claim-time quota fallback. A versioned
-            // library plan is immutable after sealing; model changes require
-            // a pending replan or a new eligible attempt.
+            // Library plans remain immutable. Check their frozen deep-review
+            // route against live quota before handing out the lease.
             string? quotaDeferredReason;
-            if (subjectTask is not null
-                && !subject.Plan.Commands.Any(command => command.LibraryStep is not null))
+            if (subjectTask is not null)
                 subject = ApplyQuotaFallbackToAspects(
                     subject,
                     subjectTask,
                     quotaAdmission,
                     quotaAdmissionRecorder,
-                    out quotaDeferredReason);
+                    (provider, model) => registry.AcceptsModel(
+                        runnerId, request.InstanceId, provider, model),
+                    out quotaDeferredReason,
+                    immutablePlan: subject.Plan.Commands.Any(command => command.LibraryStep is not null));
             else
                 quotaDeferredReason = null;
             if (!string.IsNullOrWhiteSpace(quotaDeferredReason))
             {
-                if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId))
+                if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId,
+                    quotaDeferred: true))
                 {
                     return Results.Conflict(new Contract.ApiError(
                         "review-quota-defer-failed",
@@ -1075,6 +1100,7 @@ public static class V1ReviewPlaneEndpoints
             if (preparedTask is null)
                 return Results.Json(new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
+            request = request with { Verdicts = MonolithTransitionAdapter.MergeReviewVerdicts(request.Verdicts) };
             var originalVerdicts = request.Verdicts;
             var previousRounds = projections.Read(preparedTask).Attempts
                 .Where(round => round.AttemptId != attemptId).ToArray();
@@ -1111,7 +1137,8 @@ public static class V1ReviewPlaneEndpoints
                 or ReviewTerminalOutcome.IntegrationBranchDefect
                 ? new DeliveredReviewRound(
                     attemptId, blockingAspects, shouldDegrade ? roundBudget.DegradedAspects : [],
-                    SpentBy: roundBudget.SpentBy)
+                    SpentBy: roundBudget.SpentBy,
+                    BlockingFindingKeys: MonolithTransitionAdapter.BlockingReviewFindingKeys(originalVerdicts))
                 : null;
             RemoteReviewContinuation? continuation = null;
             if (!acceptedReplay && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
@@ -1381,7 +1408,10 @@ public static class V1ReviewPlaneEndpoints
                         logger.LogError(fallbackError,
                             "batch-gate-emergency-fallback-failed attempt={AttemptId}", attemptId);
                     }
-                    if (emergencyBatchState is not (TaskStates.HumanReview or TaskStates.Escalated))
+                    // AGT-3219: a queue overrun of the emergency gate admits the
+                    // review to the batch queue; the card stays in Auto Review.
+                    if (emergencyBatchState is not (TaskStates.HumanReview or TaskStates.Escalated)
+                        && !batchPilot.IsQueuedForBatch(settled.ReviewAttempt.AttemptId))
                         return Results.Json(new Contract.ApiError(
                             "batch-gate-evidence-missing",
                             "The settled review could not enter the durable batch queue or finish its per-task gate."),
@@ -2469,7 +2499,9 @@ public static class V1ReviewPlaneEndpoints
         TaskInfo task,
         QuotaAdmissionService quotaAdmission,
         QuotaAdmissionRecorder recorder,
-        out string? deferredReason)
+        Func<string, string?, bool> modelAccepted,
+        out string? deferredReason,
+        bool immutablePlan = false)
     {
         var switched = false;
         string? deferred = null;
@@ -2479,13 +2511,16 @@ public static class V1ReviewPlaneEndpoints
         var resolvedCommands = subject.Plan.Commands.Select(command =>
         {
             if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)) return command;
+            if (immutablePlan && !string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
+                return command;
             var plan = quotaAdmission.Plan(new QuotaAdmissionRequest(
                 command.CliType,
                 command.Model,
                 command.ThinkingLevel,
                 task.ProjectName,
                 OccupiedSlots: 0,
-                ExecutionPath: "remote-review-claim"));
+                ExecutionPath: "remote-review-claim",
+                ModelAccepted: modelAccepted));
             recorder.EmitAdmissionDecision(task, plan, source: "review-claim");
             if (!plan.ShouldLaunch)
             {
@@ -2493,6 +2528,14 @@ public static class V1ReviewPlaneEndpoints
                 return command;
             }
             if (!plan.IsFallback) return command;
+            if (string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
+            {
+                // This plan froze the deep-review correctness floor. A quota
+                // sibling may be useful for ordinary aspects, but accepting a
+                // lower route here would silently invalidate its receipt.
+                deferred ??= "Deep review requires its planned model and reasoning level; quota fallback is deferred.";
+                return command;
+            }
             switched = true;
             lastSwitch = plan;
             lastPrimaryCli = command.CliType;
@@ -2540,6 +2583,31 @@ public static class V1ReviewPlaneEndpoints
             source: "review-claim",
             modelFallback: lastSwitch.ModelFallback);
         return subject with { Plan = subject.Plan with { Commands = resolvedCommands } };
+    }
+
+    /// <summary>
+    /// AGT-3177: workspace quota refusals per open review task. Each project is
+    /// admitted once from the task index; without any quota limit nothing is read.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> WorkspaceQuotaBlockedReviews(
+        IReadOnlyList<string> taskKeys,
+        TaskScannerService scanner,
+        AgentStudio.Quota.WorkspaceQuotaService workspaceQuota)
+    {
+        var blocked = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (taskKeys.Count == 0 || !workspaceQuota.HasLimits()) return blocked;
+        var wanted = taskKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var verdicts = new Dictionary<string, AgentStudio.Quota.QuotaAdmission>(StringComparer.OrdinalIgnoreCase);
+        foreach (var task in scanner.ScanAllJobsWithArchive())
+        {
+            var key = new[] { task.TaskKey, task.Key, task.Id }
+                .FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate) && wanted.Contains(candidate));
+            if (key is null) continue;
+            if (!verdicts.TryGetValue(task.ProjectName, out var verdict))
+                verdicts[task.ProjectName] = verdict = workspaceQuota.Admit(task.ProjectName);
+            if (!verdict.Allowed) blocked.TryAdd(key, verdict.Message ?? "Workspace quota reached.");
+        }
+        return blocked;
     }
 
     /// <summary>
@@ -3258,6 +3326,21 @@ public static class V1ReviewPlaneEndpoints
         }
     }
 
+    /// <summary>Named primary and fallback models a host must probe before admission.</summary>
+    internal static IReadOnlyList<Contract.ConfiguredModelRouteDto> ConfiguredModelRoutes(
+        IEnumerable<CliModelRouteProfile> profiles)
+        => profiles
+            .SelectMany(profile => new[]
+            {
+                (Cli: profile.CliType, Model: profile.PrimaryModel),
+                (Cli: profile.FallbackCliType ?? profile.CliType, Model: profile.FallbackModel),
+            })
+            .Where(route => !string.IsNullOrWhiteSpace(route.Cli) && !string.IsNullOrWhiteSpace(route.Model))
+            .Select(route => new Contract.ConfiguredModelRouteDto(
+                route.Cli.Trim().ToLowerInvariant(), route.Model!.Trim()))
+            .Distinct()
+            .ToArray();
+
     private static bool RunnerMatches(HttpContext context, string runnerId)
         => context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
            || string.Equals(principal.RunnerId, runnerId, StringComparison.Ordinal);
@@ -3579,6 +3662,8 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                     capability.EvidenceId,
                     capability.EvidenceExcerpt,
                     capability.SupportedModels,
+                    CredentialGeneration: capability.CredentialGeneration,
+                    CredentialObservedAt: capability.CredentialObservedAt,
                     HealthOutcome: request.CredentialHealthVersion == 2 ? capability.HealthOutcome : null,
                     ServiceAvailability: request.CredentialHealthVersion == 2 ? capability.ServiceAvailability : null,
                     CredentialHealth: request.CredentialHealthVersion == 2 ? capability.CredentialHealth : null);
@@ -3655,6 +3740,29 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 Release = request.Release ?? registration.Release,
             };
             _registrations[runnerId] = registration;
+            capabilities = capabilities.Select(capability =>
+            {
+                if (!capability.Key.StartsWith("model-acceptance:", StringComparison.Ordinal))
+                    return capability;
+                var rejectedKey = $"{runnerId}|{capability.Key}";
+                if (!_rejectedModels.TryGetValue(rejectedKey, out var rejection))
+                    return capability;
+                var sequence = request.Capabilities.LastOrDefault(item => string.Equals(
+                    item.Key.Trim().ToLowerInvariant(), capability.Key, StringComparison.Ordinal))?.ProbeSequence;
+                var (cleared, acknowledged) = Contract.ModelAcceptanceRecovery.Evaluate(
+                    rejection, request.InstanceId, capability.AdvertisedStatus, sequence);
+                if (cleared)
+                {
+                    _rejectedModels.Remove(rejectedKey);
+                    return capability;
+                }
+                _rejectedModels[rejectedKey] = acknowledged;
+                return capability with
+                {
+                    AdvertisedStatus = "unavailable",
+                    Detail = "The provider refused this model for the host login.",
+                };
+            }).ToArray();
             _capabilityStates[runnerId] = new CapabilityState(
                 request.InstanceId,
                 request.Generation,
@@ -4267,6 +4375,58 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
             return capability is null
                 ? null
                 : new CliModelCapability(capability.Version, capability.SupportedModels);
+        }
+    }
+
+    /// <summary>Only a fresh, credentialed host probe admits a quota fallback model.</summary>
+    public bool AcceptsModel(string runnerId, string? instanceId, string cliType, string? model)
+    {
+        // The provider-auth real request already proves the CLI's implicit
+        // default route. Model acceptance applies to named model pins.
+        if (string.IsNullOrWhiteSpace(model)) return true;
+        var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
+        lock (_gate)
+        {
+            if (_rejectedModels.ContainsKey($"{runnerId}|{key}")) return false;
+            if (string.IsNullOrWhiteSpace(instanceId)
+                || !_registrations.TryGetValue(runnerId, out var registration)
+                || !string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal)
+                || !_capabilityStates.TryGetValue(runnerId, out var state)
+                || !string.Equals(state.InstanceId, instanceId, StringComparison.Ordinal))
+                return false;
+            return state.Capabilities.Any(item =>
+                string.Equals(item.Key, key, StringComparison.Ordinal)
+                && item.FreshUntil > _time.GetUtcNow().UtcDateTime
+                && string.Equals(item.AdvertisedStatus, "ready", StringComparison.Ordinal));
+        }
+    }
+
+    public string? CurrentInstanceId(string runnerId)
+    {
+        lock (_gate)
+            return _registrations.TryGetValue(runnerId, out var registration)
+                ? registration.InstanceId : null;
+    }
+
+    private readonly Dictionary<string, Contract.ModelRejectionAcknowledgement> _rejectedModels = new(StringComparer.Ordinal);
+
+    public void MarkModelRejected(string runnerId, string cliType, string model)
+    {
+        var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
+        lock (_gate)
+        {
+            _rejectedModels[$"{runnerId}|{key}"] = Contract.ModelRejectionAcknowledgement.None;
+            if (!_capabilityStates.TryGetValue(runnerId, out var state)) return;
+            _capabilityStates[runnerId] = state with
+            {
+                Capabilities = state.Capabilities.Select(item => item.Key == key
+                    ? item with
+                    {
+                        AdvertisedStatus = "unavailable",
+                        Detail = "The provider refused this model for the host login.",
+                    }
+                    : item).ToArray(),
+            };
         }
     }
 

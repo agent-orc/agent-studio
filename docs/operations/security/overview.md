@@ -59,17 +59,27 @@ that is already allowed to edit that project's checkout.
 - The first successful HTTPS bootstrap creates the sole initial owner and then
   closes permanently.
 - Human passwords are stored as versioned salted PBKDF2-SHA512 hashes with
-  600,000 iterations. Login failures are limited per client key (5 failures,
-  then a 15-minute lockout) and per existing username across client keys
-  (20 failures per 15 minutes). The client-key table holds at most 4,096 keys;
-  when full, a failed login from a new key returns 429 and still counts against
-  the existing username's budget. The settings are under
-  `Security:LoginThrottle`. Password resets create a temporary password,
-  revoke existing sessions, and force a change at the next login.
+  600,000 iterations. Login failures are limited per client (10 failures,
+  then a 15-minute lockout) and per username across clients (20 failures per
+  15 minutes, then a short per-client delay). Full tracking tables keep their
+  active budgets and fall back to fixed-size overflow counters. The settings
+  are under `Security:LoginThrottle`; the
+  [Studio website guide](../setup/studio-website.md#login-protection-behind-cloudflare)
+  describes them. Password resets create a temporary password, revoke existing
+  sessions, and force a change at the next login.
 - Human sessions use a random opaque token stored only as a SHA-256 hash on the
   server. The cookie is `Secure`, `HttpOnly`, `SameSite=Strict`, host-only, and
   has idle plus absolute expiry. Browser mutations require the matching CSRF
-  header. Studio exposes an explicit sign-out action; a logout or API 401 tears
+  header. Because SameSite does not separate sibling hosts of one site, every
+  unsafe request that carries a session cookie, and every sign-in, bootstrap,
+  or invitation acceptance, must also carry a matching `Origin` or
+  `Sec-Fetch-Site: same-origin`. Event streams (`/hubs/*` and every WebSocket
+  upgrade) that carry a session cookie are checked on every method: a present
+  `Origin` must match, a present `Sec-Fetch-Site` must be `same-origin`, and
+  `Origin: null` is refused. Requests without either header from non-browser
+  clients stay allowed. The networked profile accepts only the `__Host-`
+  session cookie and sends it with `Secure`, `Path=/`, and no `Domain` attribute.
+  Studio exposes an explicit sign-out action; a logout or API 401 tears
   down browser polling and SignalR before returning to the login gate.
 - Roles are intentionally small: owner manages identities and all projects,
   operator reads and mutates allowed projects, contributor (shown as Product)
@@ -77,6 +87,12 @@ that is already allowed to edit that project's checkout.
   cards, uses project and card chat, comments on previews, and accepts a
   Human Review delivery; viewer is read-only. A contributor cannot access
   credentials, hosts, settings, quotas, merges, promotions, or raw logs.
+  Product cards carry no run controls: project defaults choose the CLI, model,
+  and mode, and the card records the signed-in user as creator. Product
+  sessions read only screenshot, HTML, and Markdown result files and never run
+  conversations, session events, or agent work detail. The per-route task
+  contract is in
+  [Product session task access](../../system/domains/tasks.md#product-session-task-access-agt-3182).
   Production approval is a separate grant that an owner gives for one assigned
   project. Operator, contributor, and viewer are scoped roles. Their project membership list
   restricts project routes; an empty list grants no project, and only the
@@ -97,10 +113,18 @@ that is already allowed to edit that project's checkout.
 - A mapped route can declare a minimum role (`StudioRoleRequirement`), which
   the networked profile enforces for sessions and API tokens. Every local
   first-run route (`/api/first-run/...`: Git setup and repository probe, read
-  and write) requires the owner, matching the Task Server runner Git setup
-  routes; others get `403 owner-required`. `AccessSecurityRouteInventory`
-  lists the owner-only route families, and its test fails for any route there
-  without the declaration. The local loopback profile is unchanged.
+  and write) is mapped only in the local profile and requires the owner,
+  matching the Task Server runner Git setup routes; others get
+  `403 owner-required`. A networked checklist uses the Task Server plane. When
+  the monolith has no Task Server connection, the checklist reports that the
+  plane is unavailable. `AccessSecurityRouteInventory` lists the owner-only
+  route families, and its test fails for any mapped route there without the
+  declaration. The local loopback profile is unchanged.
+- In the networked profile, creating, updating, removing, or reordering a
+  repository-identifying project URL requires the owner, including candidates
+  that are not currently selected. The project, actor, selected URL before and
+  after, candidate lists before and after, and timestamp are written with the
+  project mutation in `<TaskRepository>/.metadata/projects.json`.
 - Owners mint short-lived one-time Runner enrollment codes. Enrollment reveals
   one service credential once. The server stores only credential hashes.
   Credentials carry explicit scopes, optional expiry, last-use time, and
@@ -136,10 +160,47 @@ for a claimed task is covered by `runner.claim`. Lease requests bind the wire
 ## Transport and exposed surfaces
 
 The networked profile refuses non-HTTPS application requests, except the
-minimal `/healthz` liveness endpoint. It trusts one forwarded-header hop from a
-known proxy. The reference Caddy deployment owns ACME renewal, redirects HTTP,
+minimal `/healthz` liveness endpoint. It trusts at most two forwarded-header
+hops from configured proxies. The reference Caddy deployment owns ACME renewal, redirects HTTP,
 sets HSTS, caps request bodies, forwards WebSocket upgrades, and serves Angular
 from the same origin as `/api` and `/hubs`.
+
+Every networked Studio response carries a Content-Security-Policy with
+`frame-ancestors 'self'`, `Cross-Origin-Opener-Policy: same-origin`, a minimal
+`Permissions-Policy`, `X-Content-Type-Options: nosniff`, and HSTS with
+`includeSubDomains`. Responses without a sandbox policy also carry
+`X-Frame-Options: SAMEORIGIN`. The API
+sets them in `StudioResponseHeaderPolicy`, registered directly after the
+forwarded-headers middleware so short-circuits, rejections, unmatched routes
+and exception-handler errors carry them too. API responses never get the shell
+policy:
+
+- Documents a browser can render (`text/html`, `application/xhtml+xml`,
+  `image/svg+xml`, `text/xml`, `application/xml`), such as agent-written task
+  files and wiki SVG assets, get
+  `sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'`.
+  Stored markup gets an opaque origin and runs no script.
+- Every other API response gets
+  `default-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'`.
+- The URL preview proxy and task result HTML keep their own sandbox policy and
+  get no `X-Frame-Options`, because Studio frames those opaque-origin documents
+  itself. The `/recovery` console has its own policy that allows only its
+  inline script and calls to the Studio API.
+
+The networked response middleware forces `Cache-Control: no-store` on all
+`/api/*` and `/hubs/*` responses and on responses with a session cookie.
+
+The website stack's frontend Caddy sends the shell policy
+(`FrontendShellContentSecurityPolicy`) for the static Angular shell only. It
+keeps `'unsafe-inline'` in `script-src`: sandboxed `srcdoc` frames inherit the
+shell policy and run the inline scripts of repository HTML on their opaque
+origin. Serving that HTML from a separate origin would allow a stricter shell
+script policy.
+
+The first-owner bootstrap skips the installer code only for a direct loopback
+connection. The decision uses the connection peer captured before forwarded
+headers apply, so a forwarded `127.0.0.1` (for example a `CF-Connecting-IP`
+value) never counts as loopback.
 
 Anonymous API reads, mutations, client registration, Runner registration, hub
 negotiation, and reconnects fail closed. Debug, internal probe, and filesystem
@@ -158,6 +219,9 @@ with owner-only permissions on Unix.
 Each authenticated API-token call appends its token id, creator, method, route,
 and response status to `<TaskRepository>/.security/api-token-audit.jsonl`.
 Token values and query strings are omitted from that audit.
+
+Networked project repository candidate changes are recorded in the registry's
+`RepositoryAudit` list in the same atomic write as the project URL records.
 
 Known credential shapes and named authorization, cookie, and password fields
 are redacted from Runner log ingestion. Production exceptions omit stack

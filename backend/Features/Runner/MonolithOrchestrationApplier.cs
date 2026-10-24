@@ -26,9 +26,35 @@ public sealed class MonolithOrchestrationApplier(
     TimeProvider time,
     IConfiguration configuration,
     IServiceProvider services,
-    OrchestratorLog operatorLog) : IMonolithOrchestrationApplier
+    OrchestratorLog operatorLog) : IMonolithOrchestrationApplier, IOrchestrationSupersessionAudit
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    public void RecordSuperseded(MonolithOrchestrationOccurrence occurrence, string? observedState)
+    {
+        var watchPath = scanner.GetWatchPaths().FirstOrDefault(item =>
+            item.Name == occurrence.Run.ProjectId)?.Path;
+        var task = watchPath is null ? null
+            : scanner.FindPublishedJob(occurrence.Run.TaskId, watchPath);
+        if (task is null) return;
+        EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
+        timeline.Append(task.FolderPath, new TimelineEvent
+        {
+            Ts = time.GetUtcNow().UtcDateTime,
+            Kind = TimelineEventKinds.OrchestrationDecisionSuperseded,
+            Actor = TimelineActors.System,
+            RunId = occurrence.Run.RunId,
+            Summary = $"Engine decision {occurrence.Run.RunId} was superseded in {observedState ?? "missing"}.",
+            Details = new Dictionary<string, string>
+            {
+                ["orchestrationRunId"] = occurrence.Run.RunId,
+                ["expectedSourceState"] = occurrence.ExpectedSourceState,
+                ["observedState"] = observedState ?? "missing",
+                ["reason"] = occurrence.CancellationReason ?? "superseded",
+            },
+        });
+        scanner.PublishCoreFromKnownFolder(task.FolderPath);
+    }
 
     public Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
         CompleteOrchestrationStageRequest completion, CancellationToken ct)
@@ -72,8 +98,11 @@ public sealed class MonolithOrchestrationApplier(
         }
         var task = scanner.ScanAllJobs().FirstOrDefault(candidate =>
             candidate.ProjectName == occurrence.Run.ProjectId
-            && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId));
-        if (task is null) throw new KeyNotFoundException("Orchestration task was not found.");
+            && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId))
+            ?? scanner.ScanAllJobsWithArchive().FirstOrDefault(candidate =>
+                candidate.ProjectName == occurrence.Run.ProjectId
+                && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId));
+        if (task is null) throw new OrchestrationSourceStateMismatchException(null);
         if (occurrence.Run.CurrentStage == OrchestrationStage.OperatorSweep)
         {
             await ApplySweepAsync(task, occurrence, completion, ct);
@@ -81,6 +110,26 @@ public sealed class MonolithOrchestrationApplier(
         }
         using var output = JsonDocument.Parse(completion.OutputJson);
         var root = output.RootElement;
+        TransitionDecision? decision = null;
+        if (root.TryGetProperty("transition", out var transition)
+            && transition.ValueKind == JsonValueKind.Object)
+            decision = transition.Deserialize<TransitionDecision>(Json);
+        var target = MonolithTransitionAdapter.TransitionDecisionPolicyTargetLane(decision?.Action,
+            TargetFromPayload(occurrence.Run.PayloadJson), completion.Action);
+        var key = $"engine-decision:{occurrence.Run.RunId}:{completion.IdempotencyKey}";
+        var priorEngineMove = target is not null && task.State == target
+            && timeline.ReadAll(task.FolderPath).Any(entry => entry.Kind == TimelineEventKinds.LaneChanged
+                && entry.Details?.GetValueOrDefault("idempotencyKey") == key);
+        // A retry after this review's integration started an agent round finds
+        // the card in Ready. That handoff is the decision's effect.
+        if (decision?.Action is TransitionAction.AcceptAndIntegrate or TransitionAction.DegradeWithFollowUp
+            && HandedToAgentRound(task, occurrence, firstPass: null))
+        {
+            SettleAgentRoundHandoff(task, occurrence);
+            return;
+        }
+        if (task.State != occurrence.ExpectedSourceState && !priorEngineMove)
+            throw new OrchestrationSourceStateMismatchException(task.State);
         DecisionChoiceV1? activeChoice = null;
         if (root.TryGetProperty("activeChoice", out _))
         {
@@ -110,18 +159,6 @@ public sealed class MonolithOrchestrationApplier(
             scanner.PublishCoreFromKnownFolder(task.FolderPath);
             return;
         }
-        TransitionDecision? decision = null;
-        if (root.TryGetProperty("transition", out var transition)
-            && transition.ValueKind == JsonValueKind.Object)
-            decision = transition.Deserialize<TransitionDecision>(Json);
-
-        var target = MonolithTransitionAdapter.TransitionDecisionPolicyTargetLane(decision?.Action,
-            TargetFromPayload(occurrence.Run.PayloadJson), completion.Action);
-        // A batch admission has no lane effect. A card outside Auto Review owes
-        // none, as in the report path; the admission records the skip.
-        if (task.State != occurrence.ExpectedSourceState && task.State != target
-            && decision?.Action != TransitionAction.DeferToBatch)
-            throw new InvalidOperationException("orchestration-source-state-mismatch");
         if (decision is null && occurrence.Run.CurrentStage == OrchestrationStage.GateDispatch)
             throw new InvalidDataException("The engine gate decision is missing its transition.");
         if (decision is null && HasPayloadProperty(occurrence.Run.PayloadJson, "reviewOutcome"))
@@ -174,7 +211,6 @@ public sealed class MonolithOrchestrationApplier(
             scanner.PublishCoreFromKnownFolder(task.FolderPath);
             return;
         }
-        var key = $"engine-decision:{occurrence.Run.RunId}:{completion.IdempotencyKey}";
         if (decision?.Action == TransitionAction.DegradeWithFollowUp)
             EnsureLinkedFollowUp(task, occurrence, decision);
         if (decision?.Action is TransitionAction.AcceptAndIntegrate
@@ -215,6 +251,10 @@ public sealed class MonolithOrchestrationApplier(
                 < RemoteDeliverySettlementStage.IntegrationSettled)
             {
                 var result = await integration.EnqueueAsync(request);
+                // The integration can move the card, an agent round to Ready,
+                // and its folder with it; read the card it left.
+                scanner.InvalidateCache();
+                task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
                 var reviewInputs = services.GetRequiredService<ReviewInputDecisionGateway>();
                 if (reviewInputs.EngineDecides
                     && result.AutomaticRecoveryBudgetUsed is { } used
@@ -245,6 +285,11 @@ public sealed class MonolithOrchestrationApplier(
                 RemoteDeliverySettlementStore.Advance(task.FolderPath,
                     RemoteDeliverySettlementStage.IntegrationSettled,
                     result.Outcome.ToString(), RemoteDeliveryParkReason.For(result));
+                if (HandedToAgentRound(task, occurrence, result))
+                {
+                    SettleAgentRoundHandoff(task, occurrence);
+                    return;
+                }
             }
         }
         if (EngineDecisionWaitMarker.Read(task.FolderPath) is { } waitingRunId
@@ -291,16 +336,24 @@ public sealed class MonolithOrchestrationApplier(
                 engineDecisionRequeue: activeChoice is { Action: DecisionActionKinds.Retry,
                     Target: "card:ready" } or { Action: DecisionActionKinds.Adapt,
                     Target: "salvage-handoff" },
-                engineContinuationBase: salvageBase);
+                engineContinuationBase: salvageBase,
+                operatorDecisionPark: occurrence.Profile == "ReviewReport"
+                    && decision?.Action == TransitionAction.HumanReview
+                    && HasPayloadProperty(occurrence.Run.PayloadJson, "reviewOutcome"));
             if (move.Status != MoveJobStatus.Success)
-                throw new InvalidOperationException($"Engine lane move failed: {move.Status} {move.Message}");
+            {
+                var reason = $"Engine lane move failed: {move.Status} {move.Message}";
+                if (move.Status == MoveJobStatus.IntegrationFailed)
+                    throw new OrchestrationApplicationRefusedException(reason);
+                throw new InvalidOperationException(reason);
+            }
             scanner.InvalidateCache();
             scanner.PublishCoreFromKnownFolder(task.FolderPath);
             task = scanner.FindJob(task.Id, task.WatchPath) ?? task with
             { FolderPath = move.NewFolderPath ?? task.FolderPath, State = target };
         }
         else if (task.State != target)
-            throw new InvalidOperationException("orchestration-source-state-mismatch");
+            throw new OrchestrationSourceStateMismatchException(task.State);
 
         if (target == TaskStates.HumanReview
             && HasPayloadProperty(occurrence.Run.PayloadJson, "reviewOutcome"))
@@ -379,6 +432,24 @@ public sealed class MonolithOrchestrationApplier(
                 });
         scanner.InvalidateCache();
         scanner.PublishCoreFromKnownFolder(task.FolderPath);
+    }
+
+    private bool HandedToAgentRound(AgentStudio.Shared.TaskInfo task, MonolithOrchestrationOccurrence occurrence,
+        AgentStudio.Git.MergeIntoIntegrationResult? firstPass)
+        => authority.GetReview(occurrence.AuthorityAttemptId) is { } review
+            && IntegrationAgentRoundHandoff.Find(timeline, task, occurrence.ExpectedSourceState, review.AttemptId,
+                review.Subject.ExpectedResultSha, firstPass) is not null;
+
+    /// <summary>
+    /// The agent round owns the card now: the delivery left Auto Review, so the
+    /// journal settles and the wait marker clears, as at a review-input handoff.
+    /// </summary>
+    private void SettleAgentRoundHandoff(AgentStudio.Shared.TaskInfo task,
+        MonolithOrchestrationOccurrence occurrence)
+    {
+        RemoteDeliverySettlementStore.Advance(task.FolderPath, RemoteDeliverySettlementStage.LaneSettled);
+        EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
+        scanner.InvalidateCache();
     }
 
     private void EnsureLinkedFollowUp(AgentStudio.Shared.TaskInfo task,
@@ -531,7 +602,10 @@ public sealed class MonolithOrchestrationApplier(
         var task = scanner.ScanAllJobs().FirstOrDefault(candidate =>
             candidate.ProjectName == occurrence.Run.ProjectId
             && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId))
-            ?? throw new KeyNotFoundException("Review decision card was not found.");
+            ?? scanner.ScanAllJobsWithArchive().FirstOrDefault(candidate =>
+                candidate.ProjectName == occurrence.Run.ProjectId
+                && (candidate.Id == occurrence.Run.TaskId || candidate.TaskKey == occurrence.Run.TaskId))
+            ?? throw new OrchestrationSourceStateMismatchException(null);
         using var output = JsonDocument.Parse(completion.OutputJson);
         var root = output.RootElement;
         var decisions = services.GetRequiredService<OrchestratorDecisionStore>();
@@ -568,14 +642,19 @@ public sealed class MonolithOrchestrationApplier(
         var target = choice.Action == DecisionActionKinds.Retry
             ? TaskStates.Ready : payload.Kind == "needs-input"
                 ? TaskStates.HumanReview : TaskStates.AutoReview;
+        var writeKey = $"engine-review:{occurrence.Run.RunId}:{completion.IdempotencyKey}";
         if (choice.Action is DecisionActionKinds.Retry or DecisionActionKinds.Continue
-            && task.State == target)
+            && task.State == target
+            && (task.State == occurrence.ExpectedSourceState
+                || occurrence.AuthorityFence > 0
+                    && timeline.ReadAll(task.FolderPath).Any(entry => entry.Kind == TimelineEventKinds.LaneChanged
+                        && entry.Details?.GetValueOrDefault("idempotencyKey") == writeKey)))
         {
             EngineDecisionWaitMarker.Clear(task.FolderPath, occurrence.Run.RunId);
             return;
         }
         if (task.State != occurrence.ExpectedSourceState)
-            throw new InvalidOperationException("review-decision-source-state-mismatch");
+            throw new OrchestrationSourceStateMismatchException(task.State);
         if (receipt.Call.Status == DecisionCallStatuses.Completed)
         {
             var parsed = MonolithTransitionAdapter.DecisionReceiptPolicyParse(receipt.ResponseContent, receipt.Grounds);
@@ -617,7 +696,6 @@ public sealed class MonolithOrchestrationApplier(
             if (saved is null)
                 throw new InvalidOperationException("review-decision-intent-not-saved");
         }
-        var writeKey = $"engine-review:{occurrence.Run.RunId}:{completion.IdempotencyKey}";
         var move = await transitions.MoveAsync(task.Id, target, task.WatchPath, ct,
             cause: "engine-review-decision", reason: receipt.Reasoning ?? choice.Action,
             authorityWrite: occurrence.AuthorityFence > 0

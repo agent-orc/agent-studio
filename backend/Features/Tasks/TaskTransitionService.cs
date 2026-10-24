@@ -43,6 +43,7 @@ public sealed class TaskTransitionService
     private readonly BranchReclaimTriggerService? _branchReclaim;
     private readonly AgentStudio.Pipeline.BatchGateStore? _batchGateStore;
     private readonly AgentStudio.Pipeline.FailureInterventionService? _failureInterventions;
+    private readonly IServiceProvider? _services;
     private readonly TimeProvider _time;
     private readonly bool _guardedDelivery;
     private long _resultScaffoldCreatedCount;
@@ -92,7 +93,8 @@ public sealed class TaskTransitionService
         TimeProvider? timeProvider = null,
         IConfiguration? configuration = null,
         AgentStudio.Pipeline.BatchGateStore? batchGateStore = null,
-        AgentStudio.Pipeline.FailureInterventionService? failureInterventions = null)
+        AgentStudio.Pipeline.FailureInterventionService? failureInterventions = null,
+        IServiceProvider? services = null)
     {
         _scanner = scanner;
         _states = states;
@@ -117,6 +119,7 @@ public sealed class TaskTransitionService
         _branchReclaim = branchReclaim;
         _batchGateStore = batchGateStore;
         _failureInterventions = failureInterventions;
+        _services = services;
         _time = timeProvider ?? TimeProvider.System;
         _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
@@ -153,7 +156,8 @@ public sealed class TaskTransitionService
         bool archiveOverride = false,
         bool acceptOlderBriefDelivery = false,
         bool engineDecisionRequeue = false,
-        AgentStudio.Runner.ContinuationBaseRecord? engineContinuationBase = null)
+        AgentStudio.Runner.ContinuationBaseRecord? engineContinuationBase = null,
+        bool operatorDecisionPark = false)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
@@ -226,25 +230,6 @@ public sealed class TaskTransitionService
 
         var settings = _settings.Get(info.ProjectName);
         var autoPushStrategy = AutoPushStrategies.Normalize(settings.AutoPushStrategy);
-
-        // Result is a transition invariant, not a runner or endpoint concern.
-        // Materialize the fallback before the folder move so it travels with the
-        // task atomically. If the task store is not writable, refuse the move:
-        // landing a review/terminal card without a Result is not a valid state.
-        if (ResultRequiredStates.Contains(targetState)
-            && !TryEnsureResultDocument(
-                info,
-                targetState,
-                operatorBackfill: false,
-                refreshOwnedScaffold: true,
-                DateTime.UtcNow,
-                integrationReferenceOverride: null,
-                out var resultError))
-        {
-            return new MoveJobOutcome(
-                MoveJobStatus.Failure,
-                $"Cannot move task to {targetState} because status.md could not be ensured: {resultError}");
-        }
 
         // Read-only modes (planning / research) skip every git side effect on the
         // transition: no auto-commit, no immediate push, no commit-attribution,
@@ -455,6 +440,17 @@ public sealed class TaskTransitionService
         ReleaseCliOutputResourcesBeforeMove(info);
         MoveJobOutcome MoveCore()
         {
+            MoveJobOutcome? EnsureResultAfterAdmission(TaskInfo admitted)
+            {
+                if (!ResultRequiredStates.Contains(targetState)) return null;
+                return TryEnsureResultDocument(admitted, targetState,
+                    operatorBackfill: false, refreshOwnedScaffold: true,
+                    atUtc: _time.GetUtcNow().UtcDateTime, integrationReferenceOverride: null,
+                    out var resultError)
+                    ? null
+                    : new MoveJobOutcome(MoveJobStatus.Failure,
+                        $"Cannot move task to {targetState} because status.md could not be ensured: {resultError}");
+            }
             var moved = _states.MoveJob(
                 jobId,
                 targetState,
@@ -465,7 +461,9 @@ public sealed class TaskTransitionService
                 reason,
                 transitionCause,
                 transitionDetail,
-                decisionReopenPermit, archiveOverride);
+                decisionReopenPermit, archiveOverride,
+                operatorDecisionPark: operatorDecisionPark,
+                beforeMove: EnsureResultAfterAdmission);
             if (!archiveOverride || moved.Status != MoveJobStatus.Success)
                 return moved;
 
@@ -550,10 +548,19 @@ public sealed class TaskTransitionService
             if (acceptanceWrite.Appended) _mutations.RemoveIntegrationRecordOnFolder(info.FolderPath, operatorAcceptance!.Id);
             return new MoveJobOutcome(MoveJobStatus.Failure, "The engine continuation base could not be staged.");
         }
-        var outcome = _reviewAttemptLifecycle is not null
-                      && targetState is TaskStates.Completed or TaskStates.Archive
-            ? _reviewAttemptLifecycle.ExecuteTerminalTransition(info, targetState, MoveCore)
-            : MoveCore();
+        MoveJobOutcome MoveWithTerminalLifecycle()
+            => _reviewAttemptLifecycle is not null
+                && targetState is TaskStates.Completed or TaskStates.Archive
+                ? _reviewAttemptLifecycle.ExecuteTerminalTransition(info, targetState, MoveCore)
+                : MoveCore();
+        var occurrenceStore = cause is "engine-decision" or "engine-review-decision"
+            ? null : _services?.GetService<AgentStudio.Runner.MonolithOrchestrationStore>();
+        if (occurrenceStore?.IsApplyingCard(projectName, info.Id) == true)
+            occurrenceStore = null;
+        var outcome = occurrenceStore is null || fromState == targetState
+            ? MoveWithTerminalLifecycle()
+            : await occurrenceStore.WithCardMoveAsync(projectName, info.Id, fromState, targetState,
+                () => Task.FromResult(MoveWithTerminalLifecycle()), ct);
         if (engineContinuationBase is not null && outcome.Status != MoveJobStatus.Success)
         {
             if (priorContinuationBase is null)
@@ -641,12 +648,12 @@ public sealed class TaskTransitionService
             }
         }
 
-        if (outcome.Status == MoveJobStatus.Success && ResultRequiredStates.Contains(targetState))
+        if (outcome.Status == MoveJobStatus.Success && cause != "engine-decision"
+            && info.State != targetState
+            && ResultRequiredStates.Contains(targetState))
         {
-            // Rebuild only an application-owned scaffold after the move. The
-            // target-lane TaskInfo lets the accepted-card integration projection
-            // contribute its computed status. A real generated status.md is
-            // never overwritten.
+            // A refused move never touches status.md or its version metadata.
+            // The landed card supplies the target-lane integration projection.
             var moved = _scanner.FindJob(jobId, watchPath);
             if (moved != null
                 && !TryEnsureResultDocument(
@@ -658,10 +665,10 @@ public sealed class TaskTransitionService
                     integrationReferenceOverride: null,
                     out var refreshError))
             {
-                // The pre-move scaffold already preserves the invariant. Keep the
-                // landed transition, but make the failed enrichment visible.
+                // The lane already landed. Keep it and report the missing result
+                // for operator repair instead of pretending the move was refused.
                 _logger.LogError(
-                    "result-scaffold-refresh-failed project={Project} job={JobId} state={State} error={Error}",
+                    "result-scaffold-write-failed-after-move project={Project} job={JobId} state={State} error={Error}",
                     moved.ProjectName,
                     moved.Id,
                     targetState,

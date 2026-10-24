@@ -38,6 +38,24 @@ public sealed class DeploymentReconcilerTests
     }
 
     [Fact]
+    public void Ssh_step_plan_records_partial_failure_and_skips_later_steps()
+    {
+        var run = new DeploymentRecord
+        {
+            Id = "job", ReleaseId = "r1", EnvironmentId = "stage", State = DeploymentStates.Failed,
+            Trigger = DeploymentTriggers.Deploy, DeployStep = DeployStepNames.PublishStatic,
+            CreatedAtUtc = T0, StartedAtUtc = T0.AddMinutes(1), FinishedAtUtc = T0.AddMinutes(2),
+            SshStepNames = ["deploy[0]:static-site", "deploy[1]:container", "deploy[2]:container"],
+            StepResults = [new("deploy[0]:static-site", true), new("deploy[1]:container", false)],
+        };
+
+        var steps = DeploymentStepPlan.Build(run);
+
+        Assert.Equal([DeploymentStates.Succeeded, DeploymentStates.Failed, DeploymentStepStates.Skipped,
+            DeploymentStepStates.Skipped], steps.Select(step => step.State));
+    }
+
+    [Fact]
     public void AdoptsQueueJob_ThenFollowsClaimAndReport_WithStepsLogAndAudit()
     {
         var queued = Job("job-1", "stage", "queued", T0);
@@ -157,7 +175,7 @@ public sealed class DeploymentReconcilerTests
     [Fact]
     public void JobsFromBeforeTheRelease_StayUnattributed()
     {
-        var result = Reconcile([], [Job("legacy", "stage", "healthy", T0.AddMinutes(-5))]);
+        var result = Reconcile([], [Job("legacy", "stage", "healthy", T0.AddMinutes(-5)) with { ReleaseId = null }]);
         Assert.Empty(result.Deployments);
         Assert.False(result.Changed);
     }
@@ -311,5 +329,5 @@ public sealed class DeploymentReconcilerTests
     private static DeployJob Job(string id, string environmentId, string status, DateTime createdAt)
         => new(id, "demo", environmentId, environmentId == "stage" ? "stage-host" : "prod-host", Artifact,
             "container", "8081", "https://stage.example/health", [], 8080, null, status, createdAt,
-            RequestedBy: "release-gate");
+            RequestedBy: "release-gate", ReleaseId: "r1");
 }

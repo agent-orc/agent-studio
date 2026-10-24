@@ -1,3 +1,5 @@
+import type { DeviceLoginStatusResponse } from '../../../remote-hosts/models/provider-auth.model';
+
 export interface Probe<T> { value: T | null; error: boolean }
 export interface ProofCard { id: string; projectId: string; watchPath?: string; installationId: string }
 export interface NetworkProof {
@@ -5,14 +7,11 @@ export interface NetworkProof {
   attempts: readonly { run: { resultSha?: string | null; finishedAt?: string | null } }[];
   integrations: readonly { reviewAttemptId?: string | null; status: string; integratedSha?: string | null }[];
 }
-export interface DeviceLogin {
-  id: string;
-  runnerId: string;
-  provider: string;
-  state: 'queued' | 'claimed' | 'pending' | 'completed' | 'failed' | 'expired';
-  verificationUrl: string | null;
-  userCode: string | null;
-  expiresAt: string;
+/** A session of the shared Task Server device sign-in service, labelled for this checklist. */
+export interface DeviceLogin extends DeviceLoginStatusResponse {
+  sessionKey: string;
+  hostName: string;
+  providerLabel: string;
 }
 export interface HostJoinToken { joinToken: string; runnerId: string; expiresAt: string }
 export interface GitSetup {
