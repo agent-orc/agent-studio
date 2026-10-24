@@ -119,4 +119,4 @@ public sealed record InterventionDecisionRequest(string Action, string? Reason =
 public sealed record DeploymentApprovalRequest(bool? GuidedFailure = null);
 
 /// <summary>Who asks, and whether they hold the Owner or Maintainer approval for the project.</summary>
-public sealed record DeployActor(string Id, bool IsApprover);
+public sealed record DeployActor(string Id, bool IsApprover, string? ApprovalRole = null);

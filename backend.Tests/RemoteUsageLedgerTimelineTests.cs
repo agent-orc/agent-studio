@@ -223,6 +223,8 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
         Assert.Equal("agent-runner-01", call.Host);
         Assert.Equal("codex", call.CliType);
         Assert.Equal(thinkingLevel, call.ThinkingLevel);
+        Assert.StartsWith("support:remote-review:", call.ParticipantId, StringComparison.Ordinal);
+        Assert.Contains($":step:{stepId}:usage:", call.ParticipantId, StringComparison.Ordinal);
         Assert.Equal(3_000, call.InputTokens);
         Assert.Equal(7_000, call.CacheReadTokens);
         Assert.Equal(started.AddMinutes(2), call.Ts);

@@ -118,6 +118,11 @@
     </ul>
 
     <p class="usage-detail__muted">Pricing {{ c.pricingVersion }}</p>
+    @defer (on viewport) {
+      <app-review-statistics [projects]="reviewProjects()" />
+    } @placeholder {
+      <p class="usage-detail__muted">Review economics</p>
+    }
     <p class="usage-detail__links">
       <a [href]="c.todayLedgerHref" data-testid="usage-detail-ledger-today">Open token ledger, today</a>
       <a [href]="c.weekLedgerHref" data-testid="usage-detail-ledger-week">Open token ledger, this week</a>

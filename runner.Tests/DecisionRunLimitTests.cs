@@ -30,7 +30,6 @@ public sealed class DecisionRunLimitTests
         Assert.Equal(expectedSeconds, mechanical.TimeoutSeconds);
     }
 
-
     private static RunnerOptions Options() => new()
     {
         ServerUrl = "http://localhost",

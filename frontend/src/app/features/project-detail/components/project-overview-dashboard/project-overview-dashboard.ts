@@ -23,6 +23,7 @@ import { ProjectVisualEvidenceQueueComponent } from '../project-visual-evidence-
 import type { ProjectRailKey } from '../project-shell/project-shell.config';
 import { WikiLiveRefreshService } from '../../services/wiki-live-refresh.service';
 import { mergeRecentWikiFeed } from './project-overview-wiki-feed';
+import { ReviewStatisticsComponent } from '../../../tokens/components/review-statistics/review-statistics';
 
 /** Operator-first Project Overview. Every block is a compact projection of an
  * existing detail truth; it owns no task, URL, deployment, or Wiki mutation. */
@@ -34,6 +35,7 @@ import { mergeRecentWikiFeed } from './project-overview-wiki-feed';
     ProjectPublishPanelComponent,
     ProjectOverviewUrlsComponent,
     ProjectVisualEvidenceQueueComponent,
+    ReviewStatisticsComponent,
   ],
   providers: [WikiLiveRefreshService],
   changeDetection: ChangeDetectionStrategy.OnPush,

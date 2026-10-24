@@ -86,6 +86,22 @@ public sealed class ProjectDeploymentDefinitionTests
         Assert.Contains(result.Issues, issue => issue.Code == code && !string.IsNullOrWhiteSpace(issue.Path));
     }
 
+    [Theory]
+    [InlineData("path: dist", "path: .", "artifact-path-invalid")]
+    [InlineData("dockerfile: Dockerfile", "dockerfile: .", "artifact-dockerfile-invalid")]
+    public void Repository_root_is_not_an_artifact_file_or_bundle(string before, string after, string code)
+    {
+        var result = ProjectDefinitionReader.Parse(Base + Deployment.Replace(before, after, StringComparison.Ordinal));
+        Assert.Contains(result.Issues, issue => issue.Code == code);
+    }
+
+    [Fact]
+    public void Repository_root_is_a_valid_container_build_context()
+    {
+        var yaml = Base + Deployment.Replace("dockerfile: Dockerfile", "dockerfile: Dockerfile\n    path: .", StringComparison.Ordinal);
+        Assert.True(ProjectDefinitionReader.Parse(yaml).IsValid);
+    }
+
     [Fact]
     public void Schema_two_can_add_pipeline_before_deployment_is_configured()
     {
@@ -179,6 +195,7 @@ public sealed class ProjectDeploymentDefinitionTests
             Assert.Equal("publish-static", step.Step);
             Assert.Equal("web-vm", step.Target);
             Assert.Equal("deploy/website", step.Branch);
+            Assert.Equal("dist", Assert.Single(ProjectDefinitionReader.ReadWorkspace(root).Definition!.Deployment!.Artifacts).Path);
         }
         finally
         {
