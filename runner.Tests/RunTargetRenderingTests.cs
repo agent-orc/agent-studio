@@ -132,6 +132,26 @@ public sealed class RunTargetRenderingTests
         Assert.Contains("not internal", result.Detail);
     }
 
+    [Theory]
+    [InlineData("exit 1", false)]
+    [InlineData("echo app-net", false)]
+    [InlineData("exit 0", true)]
+    public async Task NetworkRemoval_RequiresProofOfAbsenceWhenInspectFails(string listCommand, bool removed)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var workspace = new AgentStudio.TestSupport.TempWorkspace("run-target-network-removal");
+        var root = workspace.Directory("docker");
+        var command = Path.Combine(root, "docker-fake");
+        File.WriteAllText(command,
+            "#!/bin/sh\nif [ \"$1 $2\" = \"network inspect\" ]; then exit 1; fi\n"
+            + "if [ \"$1 $2\" = \"network ls\" ]; then " + listCommand + "; fi\nexit 1\n");
+        File.SetUnixFileMode(command, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        var result = await new DockerCliRunTarget(command).RemoveNetworkAsync("app-net", CancellationToken.None);
+
+        Assert.Equal(removed, result.Ok);
+    }
+
     [Fact]
     public void AppCompose_EscapesDollarInEveryFreeTextValue_SoComposeInterpolatesNothing()
     {

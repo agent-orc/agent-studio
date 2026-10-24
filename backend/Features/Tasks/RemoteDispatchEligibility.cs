@@ -41,6 +41,7 @@ public static class RemoteDispatchEligibility
 
         return ProjectExecutionPolicy.AllowsAutomaticPickup(project)
                && !TaskKinds.IsDecision(task.Kind)
+               && !RetiredContainerTask.IsRetired(task)
                && ProjectExecutionPolicy.IsAssignedRemote(project, runnerId, runnerName)
                && AgentTypes.IsAutoPickupEligible(task.Agent)
                && !TaskSlugs.IsHumanDecisionNeeded(task.Id)
@@ -48,9 +49,6 @@ public static class RemoteDispatchEligibility
                    || task.Phase == LifecyclePhases.IntakePassed)
                && !references.EvaluateWaitsOn(task).Blocked;
     }
-
-    public static bool IsReadOnlyRefused(TaskInfo task, bool runnerReadOnly) =>
-        runnerReadOnly && !TaskKinds.IsEpic(task.Kind);
 
     public static bool IsClaimableReady(
         TaskInfo task,
@@ -61,5 +59,5 @@ public static class RemoteDispatchEligibility
         TaskReferenceIndex references) =>
         task.State == TaskStates.Ready
         && IsAssignedAndRunnable(task, project, runnerId, runnerName, references)
-        && !IsReadOnlyRefused(task, runnerReadOnly);
+        && !runnerReadOnly;
 }

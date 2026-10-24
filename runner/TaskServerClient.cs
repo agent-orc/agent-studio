@@ -50,9 +50,13 @@ public sealed class TaskServerClient : IDisposable
     private int? _roleMaxParallelism;
     private long? _centralRuntimeCapacityVersion;
     private readonly RuntimeCapacityCache? _runtimeCapacityCache;
+    private readonly Action<string> _capacityWarning;
+    private bool _restoredCapacityFromCache;
+    private bool _capacityWarningWritten;
 
     public TaskServerClient(RunnerOptions options)
     {
+        _capacityWarning = message => Console.Error.WriteLine($"WARNING: {message}");
         _options = options;
         _deviceLoginRunnerId = options.RunnerId;
         _http = new HttpClient(CreateServiceHandler(options))
@@ -118,8 +122,10 @@ public sealed class TaskServerClient : IDisposable
         bool usesDurableTaskServer = false,
         RunnerOptions? options = null,
         string? runnerInstanceId = null,
-        bool supportsHostOrchestrator = false)
+        bool supportsHostOrchestrator = false,
+        Action<string>? capacityWarning = null)
     {
+        _capacityWarning = capacityWarning ?? (message => Console.Error.WriteLine($"WARNING: {message}"));
         _http = http;
         _options = options;
         _deviceLoginRunnerId = runnerId;
@@ -876,8 +882,15 @@ public sealed class TaskServerClient : IDisposable
         {
             return;
         }
-        if (_centralRuntimeCapacityVersion > capacity.Version) return;
-        if (_centralRuntimeCapacityVersion == capacity.Version
+        if (_options is not null && !string.Equals(capacity.HostId, _options.Hostname, StringComparison.OrdinalIgnoreCase))
+        {
+            WarnCapacityOnce("Discarding runtime capacity for a foreign host.");
+            return;
+        }
+        if (_restoredCapacityFromCache && _centralRuntimeCapacityVersion > capacity.Version)
+            WarnCapacityOnce("Discarding runtime capacity cache version not issued by this server for this host.");
+        if (!_restoredCapacityFromCache && _centralRuntimeCapacityVersion > capacity.Version) return;
+        if (!_restoredCapacityFromCache && _centralRuntimeCapacityVersion == capacity.Version
             && _centralHostMaxParallelism == capacity.MaxParallelism)
         {
             return;
@@ -887,7 +900,15 @@ public sealed class TaskServerClient : IDisposable
         _centralHostMaxParallelism = capacity.MaxParallelism;
         _centralHostMaxParallelismAppliedAt = adoptedAt;
         _centralRuntimeCapacityVersion = capacity.Version;
+        _restoredCapacityFromCache = false;
         _runtimeCapacityCache?.Save(capacity, adoptedAt);
+    }
+
+    private void WarnCapacityOnce(string message)
+    {
+        if (_capacityWarningWritten) return;
+        _capacityWarningWritten = true;
+        _capacityWarning(message);
     }
 
     /// <summary>
@@ -912,8 +933,9 @@ public sealed class TaskServerClient : IDisposable
     private void RestoreRuntimeCapacityCache()
     {
         if (_runtimeCapacityCache is null || _options is null) return;
-        var cached = _runtimeCapacityCache.Load(_options.Hostname);
+        var cached = _runtimeCapacityCache.Load(_options.Hostname, WarnCapacityOnce);
         if (cached is null) return;
+        _restoredCapacityFromCache = true;
         _centralHostMaxParallelism = cached.Capacity.MaxParallelism;
         _centralHostMaxParallelismAppliedAt = cached.AdoptedAt;
         _centralRuntimeCapacityVersion = cached.Capacity.Version;
@@ -1040,34 +1062,6 @@ public sealed class TaskServerClient : IDisposable
                $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/project-probes/{Uri.EscapeDataString(projectId)}",
                request, ct)
            ?? throw new TaskServerException(500, "Empty repository probe response.");
-
-    public async Task<Contract.RunnerDeviceLoginWork?> ClaimDeviceLoginAsync(
-        string runnerId, CancellationToken ct)
-    {
-        using var response = await _http.PostAsJsonAsync(
-            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/claim", new { }, ct);
-        if (response.StatusCode == HttpStatusCode.NoContent) return null;
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<Contract.RunnerDeviceLoginWork>(
-            TaskServerContractJson, ct);
-    }
-
-    public async Task ReportDeviceLoginInstructionsAsync(string runnerId, string id,
-        Contract.ReportRunnerDeviceInstructionsRequest request, CancellationToken ct)
-    {
-        using var response = await _http.PostAsJsonAsync(
-            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/{Uri.EscapeDataString(id)}/instructions",
-            request, ct);
-        response.EnsureSuccessStatusCode();
-    }
-
-    public async Task ReportDeviceLoginResultAsync(string runnerId, string id, bool verified, CancellationToken ct)
-    {
-        using var response = await _http.PostAsJsonAsync(
-            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/{Uri.EscapeDataString(id)}/result",
-            new Contract.ReportRunnerDeviceResultRequest(verified), ct);
-        response.EnsureSuccessStatusCode();
-    }
 
     public async Task<Contract.RunnerGitSetupWork?> ClaimGitSetupAsync(string runnerId, CancellationToken ct)
     {
@@ -1295,6 +1289,16 @@ public sealed class TaskServerClient : IDisposable
             $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/{Uri.EscapeDataString(handle)}/instructions",
             instructions, ct);
 
+    /// <summary>The session state only; null once the Task Server no longer knows the session.</summary>
+    public async Task<string?> DeviceLoginStateAsync(string handle, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/{Uri.EscapeDataString(handle)}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<Contract.DeviceLoginRunnerStateDto>(Json, ct))?.State;
+    }
+
     public async Task CompleteDeviceLoginAsync(string handle,
         Contract.DeviceLoginCompletionRequest completion, CancellationToken ct)
         => await PostJsonWithoutResponseAsync(
@@ -1389,6 +1393,8 @@ public sealed class TaskServerClient : IDisposable
             request,
             ct);
         AdoptRoleMaxParallelism(snapshot?.RoleMaxParallelism);
+        if (snapshot?.ConfiguredModelRoutes is { } configuredRoutes)
+            RunnerModelAcceptanceProbe.Shared.UseConfiguredModels(configuredRoutes);
     }
 
     /// <summary>
@@ -2103,11 +2109,6 @@ public sealed class TaskServerClient : IDisposable
                 DateTime.UtcNow),
             ct);
     }
-
-    public async Task<RemoteEpicPlanningPromptResponse?> GetEpicPlanningPromptAsync(
-        RemoteEpicPlanningPromptRequest req, CancellationToken ct)
-        => await PostJsonAsync<RemoteEpicPlanningPromptRequest, RemoteEpicPlanningPromptResponse>(
-            "/api/runner/epic-planning-prompt", req, ct);
 
     /// <summary>Fetch a text file from the task's job folder, e.g. prompt.md. Returns null on 404.</summary>
     public async Task<string?> ReadTaskFileAsync(string jobId, string relativePath, CancellationToken ct)

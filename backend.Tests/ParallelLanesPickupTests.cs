@@ -154,6 +154,20 @@ public sealed class ParallelLanesPickupTests : IDisposable
         Assert.Equal("resume-me", progressPick!.Id);
     }
 
+    [Fact]
+    public void HistoricalParentInLiveLane_IsVisibleButNeverPicked()
+    {
+        WriteJob(TaskStates.Ready, "old-ready", order: 1, kind: "epic");
+        WriteJob(TaskStates.Progress, "old-progress", kind: "epic");
+        WriteJob(TaskStates.Ready, "normal", order: 2);
+
+        var runner = BuildRunner();
+
+        Assert.Equal("epic", RetiredContainerTask.NormalizeForRead("epic"));
+        Assert.Equal("normal", runner.GetNextReadyJob()!.Id);
+        Assert.Null(InvokeProgressPicker(runner));
+    }
+
     // ===== Helpers =====
 
     private static TaskInfo? InvokeProgressPicker(ProjectRunner runner)
@@ -165,13 +179,13 @@ public sealed class ParallelLanesPickupTests : IDisposable
         return method!.Invoke(runner, null) as TaskInfo;
     }
 
-    private void WriteJob(string state, string slug, int order = 1)
+    private void WriteJob(string state, string slug, int order = 1, string? kind = null)
     {
         var dir = Path.Combine(_watchPath, state, slug);
         Directory.CreateDirectory(dir);
         File.WriteAllText(
             Path.Combine(dir, "task.json"),
-            $"{{\"id\":\"{slug}\",\"title\":\"{slug}\",\"state\":\"{state}\",\"order\":{order}," +
+            $"{{\"id\":\"{slug}\",\"title\":\"{slug}\",\"state\":\"{state}\",\"order\":{order},\"kind\":\"{kind ?? "task"}\"," +
             "\"agent\":\"copilot\",\"cliType\":\"copilot\",\"ownerClientId\":\"local-default\"}");
     }
 

@@ -13,9 +13,11 @@ internal sealed class FakeRunTargetDocker : IRunTargetDocker
     public HashSet<string> UnhealthyProjects { get; } = new(StringComparer.Ordinal);
     public bool EdgeFails { get; set; }
     public bool DownFails { get; set; }
+    public bool NetworkRemoveFails { get; set; }
 
     /// <summary>Compose projects whose <c>down</c> fails while the others succeed.</summary>
     public HashSet<string> DownFailsFor { get; } = new(StringComparer.Ordinal);
+    public HashSet<string> StopFailsFor { get; } = new(StringComparer.Ordinal);
     public string? FailUpWith { get; set; }
     public int Reloads { get; private set; }
 
@@ -40,7 +42,9 @@ internal sealed class FakeRunTargetDocker : IRunTargetDocker
     public Task<RunTargetDockerResult> RemoveNetworkAsync(string network, CancellationToken ct)
     {
         Calls.Add("network-rm " + network);
-        return Task.FromResult(RunTargetDockerResult.Success);
+        return Task.FromResult(NetworkRemoveFails
+            ? new RunTargetDockerResult(false, "network is still in use")
+            : RunTargetDockerResult.Success);
     }
 
     public Task<RunTargetDockerResult> ComposeUpAsync(string project, string composeFile, CancellationToken ct)
@@ -59,6 +63,7 @@ internal sealed class FakeRunTargetDocker : IRunTargetDocker
     public Task<RunTargetDockerResult> ComposeStopAsync(string project, string composeFile, CancellationToken ct)
     {
         Calls.Add("stop " + project);
+        if (StopFailsFor.Contains(project)) return Task.FromResult(new RunTargetDockerResult(false, "daemon not responding"));
         Containers[project] = new(RunTargetContainerState.Exited, 0);
         return Task.FromResult(RunTargetDockerResult.Success);
     }

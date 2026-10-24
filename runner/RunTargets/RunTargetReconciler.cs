@@ -56,6 +56,8 @@ public sealed class RunTargetReconciler(
         CancellationToken ct)
     {
         var state = store.Load();
+        await RetryPendingCleanupAsync(state, ct);
+        await RetryPendingStopsAsync(state, ct);
         var reports = new List<RunTargetJobReport>();
         var specs = new Dictionary<string, RunTargetEnvironmentSpec>(StringComparer.Ordinal);
         var refused = new HashSet<string>(StringComparer.Ordinal);
@@ -157,12 +159,18 @@ public sealed class RunTargetReconciler(
     private async Task<bool> RemoveAppAsync(string key, RunTargetAppState app, RunTargetHostState state, CancellationToken ct)
     {
         if (!await RemoveSlotAsync(app.Current, ct)) return false;
+        if (app.Current is { } current) state.PendingStops.RemoveAll(item => item.ComposeProject == current.ComposeProject);
         app.Current = null;
         store.Save(state);
         if (!await RemoveSlotAsync(app.Previous, ct)) return false;
+        if (app.Previous is { } previous) state.PendingStops.RemoveAll(item => item.ComposeProject == previous.ComposeProject);
         app.Previous = null;
         var network = await docker.RemoveNetworkAsync(RunTargetNames.AppNetwork(key), ct);
-        if (!network.Ok) log($"run-target: could not remove network {RunTargetNames.AppNetwork(key)}: {network.Detail}");
+        if (!network.Ok)
+        {
+            log($"run-target: could not remove network {RunTargetNames.AppNetwork(key)}: {network.Detail}");
+            return false;
+        }
         state.Apps.Remove(key);
         log($"run-target: removed {app.Project}/{app.EnvironmentId}; Studio took it off this host");
         return true;
@@ -223,6 +231,12 @@ public sealed class RunTargetReconciler(
         var candidate = restoring ? app.Previous! : new RunTargetSlot(revision, spec.Artifact, composeProject,
             Path.Combine(store.AppsDirectory, composeProject, "compose.yaml"), spec.ContainerPort, spec.HealthPath,
             spec.SecretRefs);
+        if (state.PendingCleanup.Any(item => item.ComposeProject == candidate.ComposeProject))
+        {
+            log($"run-target: {name} cannot start revision {revision} while its previous Docker cleanup is pending");
+            Fail(app, spec, reports, RunTargetEvidence.StepFailed, "deploy-step-failed");
+            return;
+        }
         if (await PrepareSecretsAsync(name, spec.Project, candidate, ct) is not { } resolved)
         {
             Fail(app, spec, reports, RunTargetEvidence.StepFailed, "deploy-step-failed");
@@ -243,7 +257,7 @@ public sealed class RunTargetReconciler(
         if (!started.Ok)
         {
             log($"run-target: {name} start failed: {resolved.Mask(started.Detail)}");
-            await DiscardCandidateAsync(candidate, restoring, ct);
+            await DiscardCandidateAsync(candidate, restoring, state, ct);
             Fail(app, spec, reports, RunTargetEvidence.StepFailed, "deploy-step-failed");
             return;
         }
@@ -251,7 +265,7 @@ public sealed class RunTargetReconciler(
         if (!await WaitHealthyAsync(candidate, settings.HealthAttempts, ct))
         {
             log($"run-target: {name} candidate {revision} failed its health check; the running revision keeps serving");
-            await DiscardCandidateAsync(candidate, restoring, ct);
+            await DiscardCandidateAsync(candidate, restoring, state, ct);
             Fail(app, spec, reports, RunTargetEvidence.HealthFailed, "health-failed");
             return;
         }
@@ -278,18 +292,28 @@ public sealed class RunTargetReconciler(
         if (!await PublishRoutesAsync(state, ct))
         {
             app.Current = replaced;
-            await DiscardCandidateAsync(candidate, restoring, ct);
+            await DiscardCandidateAsync(candidate, restoring, state, ct);
             return false;
         }
         if (replaced is not null)
         {
             var stopped = await docker.ComposeStopAsync(replaced.ComposeProject, replaced.ComposeFile, ct);
-            if (!stopped.Ok) log($"run-target: {name} could not stop replaced revision {replaced.Revision}: {stopped.Detail}");
-            else secretFiles.Remove(replaced.ComposeProject);
+            if (!stopped.Ok)
+            {
+                log($"run-target: {name} could not stop replaced revision {replaced.Revision}: {stopped.Detail}");
+                if (!state.PendingStops.Any(item => item.ComposeProject == replaced.ComposeProject))
+                    state.PendingStops.Add(replaced);
+            }
+            else
+            {
+                secretFiles.Remove(replaced.ComposeProject);
+                state.PendingStops.RemoveAll(item => item.ComposeProject == replaced.ComposeProject);
+            }
         }
-        if (app.Previous is { } older && older.Revision != candidate.Revision && older.Revision != replaced?.Revision)
-            await RemoveSlotAsync(older, ct);
+        var older = app.Previous is { } prior && prior.Revision != candidate.Revision
+            && prior.Revision != replaced?.Revision ? prior : null;
         app.Previous = replaced;
+        state.PendingStops.RemoveAll(item => item.ComposeProject == candidate.ComposeProject);
         if (app.CrashRollbackRevision is { } crashed && crashed != app.Current.Revision && crashed != app.Previous?.Revision)
             app.CrashRollbackRevision = null;
         app.Status = "running";
@@ -298,6 +322,8 @@ public sealed class RunTargetReconciler(
         app.DockerRestarts = 0;
         app.LastRestartAt = app.NextRestartAt = null;
         app.RecentRestarts.Clear();
+        store.Save(state);
+        if (older is not null) await RemoveOrQueueAsync(older, state, ct);
         return true;
     }
 
@@ -396,7 +422,7 @@ public sealed class RunTargetReconciler(
         {
             log($"run-target: {name} previous revision {previous.Revision} did not come up healthy; keeping the current one"
                 + (started.Ok ? "" : $": {resolved.Mask(started.Detail)}"));
-            await DiscardCandidateAsync(previous, restoring: true, ct);
+            await DiscardCandidateAsync(previous, restoring: true, state, ct);
             return false;
         }
         return await SwapAsync(name, app, previous, restoring: true, state, ct);
@@ -505,17 +531,69 @@ public sealed class RunTargetReconciler(
         return false;
     }
 
-    private async Task DiscardCandidateAsync(RunTargetSlot candidate, bool restoring, CancellationToken ct)
+    private async Task DiscardCandidateAsync(RunTargetSlot candidate, bool restoring, RunTargetHostState state,
+        CancellationToken ct)
     {
         // A restored previous revision stays available for the next rollback.
         if (!restoring)
         {
-            await RemoveSlotAsync(candidate, ct);
+            await RemoveOrQueueAsync(candidate, state, ct);
             return;
         }
         var stopped = await docker.ComposeStopAsync(candidate.ComposeProject, candidate.ComposeFile, ct);
-        if (stopped.Ok) secretFiles.Remove(candidate.ComposeProject);
-        else log($"run-target: could not stop revision {candidate.Revision}: {stopped.Detail}");
+        if (stopped.Ok)
+        {
+            secretFiles.Remove(candidate.ComposeProject);
+            state.PendingStops.RemoveAll(item => item.ComposeProject == candidate.ComposeProject);
+        }
+        else
+        {
+            log($"run-target: could not stop revision {candidate.Revision}: {stopped.Detail}");
+            if (!state.PendingStops.Any(item => item.ComposeProject == candidate.ComposeProject))
+                state.PendingStops.Add(candidate);
+        }
+        store.Save(state);
+    }
+
+    private async Task RemoveOrQueueAsync(RunTargetSlot slot, RunTargetHostState state, CancellationToken ct)
+    {
+        if (await RemoveSlotAsync(slot, ct)) return;
+        if (!state.PendingCleanup.Any(item => item.ComposeProject == slot.ComposeProject))
+            state.PendingCleanup.Add(slot);
+        store.Save(state);
+    }
+
+    private async Task RetryPendingCleanupAsync(RunTargetHostState state, CancellationToken ct)
+    {
+        foreach (var slot in state.PendingCleanup.ToArray())
+        {
+            if (!await RemoveSlotAsync(slot, ct)) continue;
+            state.PendingCleanup.Remove(slot);
+            state.PendingStops.RemoveAll(item => item.ComposeProject == slot.ComposeProject);
+            store.Save(state);
+        }
+    }
+
+    private async Task RetryPendingStopsAsync(RunTargetHostState state, CancellationToken ct)
+    {
+        foreach (var slot in state.PendingStops.ToArray())
+        {
+            if (state.Apps.Values.Any(app => app.Current?.ComposeProject == slot.ComposeProject))
+            {
+                state.PendingStops.Remove(slot);
+                store.Save(state);
+                continue;
+            }
+            var stopped = await docker.ComposeStopAsync(slot.ComposeProject, slot.ComposeFile, ct);
+            if (!stopped.Ok)
+            {
+                log($"run-target: could not stop replaced revision {slot.Revision}: {stopped.Detail}");
+                continue;
+            }
+            secretFiles.Remove(slot.ComposeProject);
+            state.PendingStops.Remove(slot);
+            store.Save(state);
+        }
     }
 
     private async Task<bool> RemoveSlotAsync(RunTargetSlot? slot, CancellationToken ct)

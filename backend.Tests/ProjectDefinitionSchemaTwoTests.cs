@@ -79,6 +79,60 @@ public sealed class ProjectDefinitionSchemaTwoTests
     private static string Valid => Head + Pipeline;
 
     [Fact]
+    public void Parses_channels_named_lifecycles_and_channel_scoped_variables()
+    {
+        var yaml = Head + """
+
+            lifecycles:
+              standard:
+                - phase: staging
+                  automatic: true
+                - phase: production
+                  approval: [Owner]
+                  requires: staging
+              hotfix:
+                - phase: staging
+                  automatic: true
+                - phase: production
+                  approval: [Owner]
+            channels:
+              - name: default
+                lifecycle: standard
+                default: true
+              - name: hotfix
+                lifecycle: hotfix
+                versionRules:
+                  branchPattern: refs/heads/hotfix/*
+            variables:
+              - name: LOG_LEVEL
+                value: info
+                channels: [hotfix]
+            """;
+
+        var result = ProjectDefinitionReader.Parse(yaml);
+        Assert.True(result.IsValid, Describe(result));
+        var deployment = result.Definition!.Deployment!;
+        Assert.Equal("hotfix", deployment.Channels[1].Name);
+        Assert.Equal("production", deployment.Lifecycles["hotfix"][1].Phase);
+        Assert.Equal("hotfix", deployment.Variables[0].Channels.Single());
+    }
+
+    [Fact]
+    public void Channels_require_one_default_and_declared_lifecycles()
+    {
+        var yaml = Head + """
+
+            channels:
+              - name: hotfix
+                lifecycle: missing
+                branchPattern: refs/heads/hotfix/*
+            """;
+        var issues = ProjectDefinitionReader.Parse(yaml).Issues;
+        Assert.Contains(issues, issue => issue.Code == "channel-default-required");
+        Assert.Contains(issues, issue => issue.Code == "channel-lifecycle-unknown");
+    }
+
+    [Fact]
     public void Parses_artifacts_protected_environments_ssh_steps_and_scoped_variables()
     {
         var result = ProjectDefinitionReader.Parse(Valid);
@@ -389,12 +443,22 @@ public sealed class ProjectDefinitionSchemaTwoTests
     [InlineData("    secret: DATABASE_URL\n", "    secret: \"postgres://db/app\"\n", "variable-secret-name-invalid")]
     [InlineData("    secret: DATABASE_URL\n", "    secret: DATABASE_URL\n    value: x\n", "variable-source-invalid")]
     [InlineData("    secret: DATABASE_URL\n    environments: [production]", "    secret: DATABASE_URL\n    environments: [preview]", "variable-environment-unknown")]
-    [InlineData("  - name: DATABASE_URL\n", "  - name: LOG_LEVEL\n", "variable-duplicate")]
     public void Variable_rules_name_the_offending_entry(string before, string after, string code)
     {
         var result = ProjectDefinitionReader.Parse(Replace(Valid, before, after));
 
         Assert.Contains(result.Issues, issue => issue.Code == code && issue.Path.StartsWith("variables[1]", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Equally_specific_overlapping_variable_scopes_are_refused()
+    {
+        var yaml = Replace(Replace(Valid, "  - name: LOG_LEVEL\n    value: info\n",
+            "  - name: LOG_LEVEL\n    value: info\n    environments: [production]\n"),
+            "  - name: DATABASE_URL\n", "  - name: LOG_LEVEL\n");
+
+        Assert.Contains(ProjectDefinitionReader.Parse(yaml).Issues,
+            issue => issue.Code == "variable-duplicate" && issue.Path == "variables[1].name");
     }
 
     [Theory]
@@ -491,6 +555,8 @@ public sealed class ProjectDefinitionSchemaTwoTests
                 .Select(item => item.GetProperty("properties").GetProperty("type").GetProperty("const").GetString()));
         Assert.Equal(ProjectDeploymentVocabulary.VariableKeys,
             properties.GetProperty("variables").GetProperty("items").GetProperty("properties").EnumerateObject().Select(item => item.Name));
+        Assert.Equal(ProjectDeploymentVocabulary.ChannelKeys,
+            properties.GetProperty("channels").GetProperty("items").GetProperty("properties").EnumerateObject().Select(item => item.Name));
     }
 
     [Fact]

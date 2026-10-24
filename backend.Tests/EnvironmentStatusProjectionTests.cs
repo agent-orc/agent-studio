@@ -73,6 +73,20 @@ public sealed class EnvironmentStatusProjectionTests
     }
 
     [Fact]
+    public void PendingInterventionRemainsVisibleAfterANewerRunStarts()
+    {
+        var waiting = Run("older", R1, Staging, DeploymentStates.WaitingForIntervention, 1) with
+        { FailedStep = DeployStepNames.Health, InterventionExpiresAtUtc = T0.AddHours(2) };
+        var newer = Run("newer", R2, Staging, DeploymentStates.Running, 2);
+        var status = EnvironmentStatusProjection.Project([Staging], [R1, R2], [waiting, newer],
+            new Dictionary<string, string>())[0];
+
+        Assert.Equal("newer", status.CurrentDeployment?.Id);
+        Assert.Equal(("older", DeployStepNames.Health, T0.AddHours(2)),
+            (status.Intervention?.DeploymentId, status.Intervention?.FailedStep, status.Intervention?.ExpiresAtUtc));
+    }
+
+    [Fact]
     public void PreviousRelease_IsTheLatestOlderReleaseThatSucceeded()
     {
         var releases = new[] { R1, R2, R3 }.ToDictionary(item => item.Id);
@@ -87,6 +101,29 @@ public sealed class EnvironmentStatusProjectionTests
         var afterRollback = history.Append(Run("d4", R1, Production, DeploymentStates.Succeeded, 4)).ToArray();
         Assert.Null(EnvironmentStatusProjection.PreviousRelease(afterRollback, releases));
         Assert.Null(EnvironmentStatusProjection.PreviousRelease([], releases));
+    }
+
+    [Fact]
+    public void SkippedHealth_KeepsNewReleaseCurrentAndPreviousReleaseAvailableForRollback()
+    {
+        var releases = new[] { R1, R2 }.ToDictionary(item => item.Id);
+        var previous = Run("d1", R1, Staging, DeploymentStates.Succeeded, 1);
+        var skippedHealth = Run("d2", R2, Staging, DeploymentStates.Succeeded, 2) with
+        { InterventionDecision = "skip", FailedStep = DeployStepNames.Health };
+        var runs = new[] { previous, skippedHealth };
+
+        var card = EnvironmentStatusProjection.Project([Staging], [R1, R2], runs,
+            new Dictionary<string, string> { [Staging.Id] = "failed" })[0];
+        Assert.Equal(R2.Id, card.CurrentRelease?.Id);
+        Assert.Equal(EnvironmentHealth.Unhealthy, card.Health);
+        Assert.Equal(skippedHealth.Id, card.Intervention?.DeploymentId);
+        Assert.Equal(R1.Id, EnvironmentStatusProjection.PreviousRelease(runs, releases)?.Id);
+        Assert.True(EnvironmentStatusProjection.SucceededIn(runs, R2.Id, Staging.Id));
+
+        var skippedDeploy = Run("d3", R2, Staging, DeploymentStates.Succeeded, 3) with
+        { InterventionDecision = "skip", FailedStep = DeployStepNames.StartContainer };
+        Assert.False(EnvironmentStatusProjection.SucceededIn([skippedDeploy], R2.Id, Staging.Id));
+        Assert.Null(EnvironmentStatusProjection.CurrentRelease([skippedDeploy], releases));
     }
 
     [Fact]

@@ -19,7 +19,9 @@ public sealed record TaskServerStatusDto(
     DateTime StartedAt,
     int OutboxBacklog = 0,
     long? OldestUnacknowledgedSequence = null,
-    IReadOnlyDictionary<string, int>? FinalHandoffStates = null);
+    IReadOnlyDictionary<string, int>? FinalHandoffStates = null,
+    // Workspace quota admission: "off" (no meter configured), "on" or "unreachable".
+    string? QuotaAdmission = null);
 
 public sealed record ChangeModeRequest(TaskServerMode Mode, string Reason);
 public sealed record PrepareShutdownRequest(string Reason);
@@ -79,7 +81,6 @@ public sealed record LegacyMigrationInventory(
     string InventorySha256 = "",
     DateTime? CreatedAt = null,
     IReadOnlyList<LegacyMigrationProjectCounts>? ProjectCounts = null,
-    int Epics = 0,
     int Dossiers = 0,
     int OrchestratorSessions = 0,
     int ContextChats = 0,
@@ -109,7 +110,6 @@ public sealed record LegacyMigrationProjectCounts(
     string Project,
     IReadOnlyDictionary<string, int> States,
     int Tasks,
-    int Epics,
     int Events,
     int Artifacts,
     int GitCommits,

@@ -7,20 +7,59 @@ Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
 
-## Host-owned Codex device login
+## Host-owned provider device login
 
-The Access and Execution Hosts sign-in actions create a 15-minute, one-at-a-time
-Codex login session for a registered host. Task Server holds the browser URL and
-one-time code only in memory. A random session key is returned solely to the
-initiating browser session and is required to read or cancel those instructions.
-The runner claims the command through its outbound Task Server channel, holds a
-local provider login lock, starts `codex login --device-auth` in its own service
-account, and reports the URL and
-code without logging them. A changed local `auth.json` and a successful real
-provider probe are required before completion. Terminal results are audited
-with actor, host, provider and outcome, without the code. Timeout and cancel
-clear the instructions. Each runner keeps its own native credential store;
-neither Task Server nor Studio distributes ChatGPT login files.
+One device-login service serves the first-run checklist and the Access and
+Execution Hosts sign-in actions (AGT-3225 merged the AGT-3214 and AGT-3156
+paths). Both surfaces call `/api/v1/management/device-logins`; runners poll
+`/api/v1/runners/{runnerId}/device-login`. `DeviceLoginRouteTests` fails if a
+second device-login route appears. Only an Owner may start, read or cancel a
+sign-in, because it authorizes the host's provider credentials. A start creates
+a 15-minute Codex or Claude login session for a registered host, one at a time
+per host and provider. The optional `targetRunnerId` pins it to one active
+runner of that host: the coding and the review identity of a host own separate
+CLI homes, so the first-run checklist and the Access and Execution Hosts actions
+pass the badge's runner, and only that runner can claim the session. Task
+Server holds the browser URL and one-time code only in memory. A random session
+key is returned solely to the initiating browser session and is required to
+read or cancel those instructions. Closing the dialog or leaving the first-run
+checklist cancels a queued or running session. A runner on that host claims the
+command through its outbound Task Server channel, holds a local provider login
+lock and starts `codex login --device-auth` or `claude setup-token` in its own
+service account through `DeviceLoginExecutor`, the only device-login launcher.
+The child gets a closed stdin pipe. The runner reports the URL and code without
+logging child output. While the CLI runs, the runner reads the session state
+every 2 seconds (`GET /api/v1/runners/{runnerId}/device-login/{handle}`, state
+only). A Studio cancel, a Task Server timeout or a failed instruction publish
+stops the process tree, accepts no credential and reports `failed`; on runner
+shutdown the completion is sent with its own short timeout. Completion requires
+a changed credential file and a successful real provider probe: Codex must
+rewrite its `auth.json`; for Claude only the probe child sees the new setup
+token. The Claude candidate probe makes a fresh real request without the shared
+advertisement cache or daily request budget. The runner checks the session state
+again before writing the token, and restores the previous file and process token
+if completion is rejected. The runner replaces its `provider-auth/claude-token`
+file and its process-wide `CLAUDE_CODE_OAUTH_TOKEN` only after the probe succeeds. At start
+that file wins over a `CLAUDE_CODE_OAUTH_TOKEN` from `runner.env`, because it is
+written only after a verified sign-in; delete it to return to the `runner.env`
+token. The runner logs which source is active, never the value. Terminal
+results are audited with actor, host, provider and outcome, without the code.
+Timeout and cancel clear the instructions. Each runner keeps its own native credential store; neither
+Task Server nor Studio distributes ChatGPT login files.
+
+The coding host also probes the small set of primary and fallback model ids
+with a real request in an isolated scratch context. It adds the valid model ids
+the server returns as operator-configured quota routes or ready-card models in
+the capability response. Each verdict is bound to
+the local credential generation and advertised as `model-acceptance:<provider>:<model>`.
+The quota view lists accepted models by host. A launch-time model refusal with
+no salvage marks that host model unavailable and puts the card back in Ready.
+Task Server claims and work-permit offers and acceptances require fresh
+acceptance of the effective named model; a blank model uses the CLI default.
+A refused model stays held until the same runner instance advertises it as not
+ready and then advertises a ready verdict with a larger runner-local probe
+sequence. Runner and server clock order never clears the hold. A refused
+fallback does not hold the card once quota admission can use its primary route.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable
@@ -209,7 +248,12 @@ placements recorded before kinds were kept are treated the same way. A
 declaration that comes back clears the pending removal. The host takes both
 revisions down, each slot cleared as soon as it is gone, so a retry continues
 where a failure stopped. It then removes the app network and confirms with an
-observation in state `removed`. Studio drops the placement and keeps the last
+observation in state `removed` only after Docker confirms network removal.
+Failed candidate and replaced-revision teardown stays in the host's durable
+`pendingCleanup` list; failed stops of replaced revisions stay in `pendingStops`.
+Every reconciliation pass retries them, including passes
+while Studio is unreachable. A revision awaiting teardown cannot be started
+again until cleanup succeeds. Studio drops the placement and keeps the last
 20 removals, with decision and actor, in `runTargetRemovals`. An app the
 desired state does not mention is kept as it is, with its route, its previous
 revision, and crash supervision. So is an app whose environment has no
@@ -363,8 +407,15 @@ unreported claim expires with its lease and is queued again.
   dependency trees, and build output, then uploads one manifest-bound file per
   request. The attempt-scoped host evidence copy survives a later task results
   reset. Deterministic skips are
-  written to `results/deliverables.md` before the manifest is created. A later
-  HTTP 413/507 never rewrites a manifested file; it is recorded as the
+  written to `results/deliverables.md` before the manifest is created. A legacy
+  repository-root `status.md` edited by a coding run is copied to the card's
+  `results/legacy-repository-status.md` only when the repository opts in with
+  `.agent-studio/legacy-status-reports`. This artifact keeps at most the final
+  16 KiB and is replaced on a later round. The runner excludes it from the salvage
+  commit and restores tracked reports or removes untracked reports before durable
+  handoff checks the worktree. New result reports belong in `JOB_RESULTS_DIR`, which is transferred
+  to the card. The generated card Result records the immutable handoff SHA.
+  A later HTTP 413/507 never rewrites a manifested file; it is recorded as the
   non-fatal `ArtifactTooLarge` / `artifacts: partial` board fact instead. The
   artifact routes return HTTP 413 as `application/problem+json` with the
   machine-readable `type: "artifact-request-too-large"`, the applicable
@@ -506,7 +557,7 @@ unreported claim expires with its lease and is queued again.
   `GuardFirstGatePlan.GuardFilter` on every dotnet `commands.test` project (a
   guard in one project polices the others), and run `commands.lint`; unfiltered
   `commands.test` entries and coverage runs stay with the gates. Concept,
-  planning, research, and Epic planning framing omit it. Failure continuation
+  planning and research framing omit it. Failure continuation
   briefs (`TaskFailureContinuationService`) carry the reason of the current
   attempt's failed `post-build-test-gate` step, bounded to 2 KB, even when a
   later escalation step is the selected failure, and
@@ -731,7 +782,10 @@ unreported claim expires with its lease and is queued again.
   only). The Coding daemon caches the last accepted version under
   `RUNNER_STATE_DIR/configuration/runtime-capacity.json`, reports the exact
   applied version on claim polls, and never treats registration delivery alone
-  as an acknowledgement. The Task Server audits the first exact value/version
+  as an acknowledgement. A cache entry for another host is discarded; the first
+  valid server response replaces a cached version even when that cached version
+  is higher. Runner startup defaults to `$RUNNER_WORKDIR/.runner-state`, and detached workers
+  do not inherit its environment variable. The Task Server audits the first exact value/version
   confirmation. It then uses fenced leases + heartbeat, per-task linked git
   worktrees, log/artifact upload, and fenced normal completion into auto-review.
   Host project access is also versioned in the Task Server, but is enforced
@@ -1571,16 +1625,7 @@ unreported claim expires with its lease and is queued again.
   result for that project. A failure remains visible on the Execution Hosts card
   and project execution card.
 
-- A fresh `2-ready` Epic is remotely claimable as an Epic planning run. It
-  occupies a normal host slot and holds the same fenced lease, heartbeat,
-  cancellation, drain, and telemetry contract as a coding task, but it is not a
-  coding work item. The server renders `epic-decomposition.md`, and the remote
-  host runs it in a detached disposable checkout. No task branch, salvage
-  commit, or push is created. Only the children produced by the plan enter the
-  coding pipeline. A valid plan completes the Epic into `5-human-review`, never
-  `4-auto-review`: the run carries no Result-SHA, so the code-review lane would
-  hold it against a ReviewAttempt that can never be minted.
-  An interrupted assigned card whose lease is free is requeued
+- An interrupted assigned card whose lease is free is requeued
   to Ready inside the next atomic claim before a higher fence is issued. Before
   any `3-progress` to `2-ready` requeue, `TaskTransitionService` queries attempt
   authority. If the current RunAttempt is Completed and its immutable
@@ -1729,7 +1774,7 @@ unreported claim expires with its lease and is queued again.
   not just parallel slots. The shared main checkout is read-only reference + the
   integration target; on a failed worktree prepare the run is deferred, never
   run in the main checkout, and a coding run that resolves to the main checkout
-  is refused + escalated. Read-only (planning / research) and epic-planning runs
+  is refused + escalated. Read-only (planning / research) runs
   run in-place. See
   [ADR-0057](../architecture/decisions/adr-archive.md#adr-0057---always-worktree-garantie-every-coding-run-is-worktree-isolated-including-single-slot-resumereissue-with-a-main-checkout-guard-2026-06-22).
 - A local run owns every process it starts, including detached preview servers.
@@ -1806,7 +1851,7 @@ unreported claim expires with its lease and is queued again.
   and returns the card to Ready. The durable failure counter survives the lane
   move and process restarts. A second consecutive failure reaches Escalated with
   category `unverified-delivery`. A valid envelope or a non-coding completion
-  resets the counter. Epic planning, report-only modes, and repository or
+  resets the counter. Report-only modes and repository or
   environment preparation failures are exempt because they produce no coding
   delivery. A failed salvage-fence push is not eligible for this retry: the
   runner retains the worktree and keeps the existing `worktree-blocked`
@@ -1884,10 +1929,6 @@ unreported claim expires with its lease and is queued again.
   attributed `commits[].branch`, fenced `runner/<runner-id>/<task-key>`, then the
   legacy local `task/<slug>` fallback. Remote sources remain fenced to the
   reviewed result SHA.
-- Epic planning is the deliberate exception: its detached checkout is checked
-  for mutations and discarded without salvage. Any mutation invalidates the
-  plan and returns the Epic to Backlog because planning is source-read-only
-  (AGT-2178).
 - Remote `agent-host` delivery admission is repository-scoped. The startup
   probe still checks the configured fallback fetch URL and Git `pushurl`, but
   publishes that result as diagnostics only: it never grants or denies another
@@ -2288,6 +2329,46 @@ no reported release identity has no comparable running-version fact and is
 not labelled as drift. The policy accepts a deployment start error when one is
 provided by a release source; the current collector does not yet receive
 compose errors or image digests for arbitrary containers.
+
+## Operator deploy targets (AGT-3263)
+
+The runner's DeployTargetExecutor is the call seam for the deploy executor
+(AGT-3233). Its input pairs one schema 2 ProjectDeployStep and an artifact
+from the immutable release snapshot with an operator-owned DeployTarget.
+The artifact must be present in the snapshot, bound to the step's artifact
+name by the release's name-to-digest mapping, and pinned by SHA-256. A local
+release package is hashed again before extraction. Archives have size, entry,
+and expanded-byte limits; extraction rejects paths outside its private root.
+Command output is bounded before it reaches the adapter. Target credentials are
+secret-provider references in operator inventory, not values in project.yml.
+The claimed deploy job must declare those secret names; the runner resolves
+them through /api/runner/secrets/resolve with the job lease and a
+deploy:<environment> purpose. The server enforces the claim, project,
+environment and declared-name scope.
+
+Adapters currently supplied by runner/DeployAdapters/:
+
+| Target kind | Required operator fields | Deployment |
+|---|---|---|
+| ssh-docker | host, user, SSH identity and known-hosts secret references | A schema 2 static-site step copies a verified tar bundle into a fresh /srv/.../.releases/<digest>-<unique> directory for each attempt and switches current; a container step requires an existing compose file whose selected service resolves to the release's pinned image, then pulls and starts it. |
+| kubernetes | namespace, kubeconfig secret, package artifact, manifest path and imageResource Deployment name | A schema 2 start-container step replaces __AGENT_STUDIO_IMAGE__ in every YAML file of the manifest path, including nested folders, refuses JSON manifests, parses the objects recursively the objects with a client dry run, and checks every container in the named Deployment uses the release image and every object targets the namespace before a recursive apply of the same files. A Helm target supplies helmRelease and imageResource; the chart is rendered once with helm template, the rendered objects receive the same validation, and kubectl applies exactly that verified file before the rollout check. Rendered Helm hooks are refused because they cannot be applied as verified objects. |
+| cloud-run | Google project, region, service, workload pool project number, pool, provider, impersonated service account and a short-lived OIDC subject-token secret | A schema 2 start-container step uses an isolated CLOUDSDK_CONFIG with Workload Identity Federation and deploys the pinned image without a stored cloud key. |
+
+SSH requires strict host-key checking. Temporary identity, known-hosts,
+kubeconfig, OIDC token and federation configuration files are private and
+removed after each attempt.
+The Kubernetes kubeconfig must be authorized only for its target namespace;
+the command's namespace flag chooses the default for objects that omit one.
+For Cloud Run the operator provides a fresh OIDC subject token through the
+secret provider and configures a Google workload identity pool that trusts its
+issuer. The adapter writes Google's external-account credential configuration
+for that one attempt. See [Google's deployment-pipeline federation guide](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines)
+for the pool and service-account grants.
+The adapters return an error on failure; the owning deploy executor records
+the run's evidence and performs its normal health/report sequence. The
+AGT-3176 local deploy-poll path remains a separate compatibility path until
+AGT-3233 supplies the operator target inventory and dispatches through this
+seam.
 
 ## Verification
 

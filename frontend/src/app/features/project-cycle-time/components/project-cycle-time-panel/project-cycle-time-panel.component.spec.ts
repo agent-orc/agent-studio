@@ -220,7 +220,6 @@ function response(): ProjectCycleTimeResponse {
       tasksInWindow: 2,
       excludedNoCompletionTimestamp: 1,
       excludedInFlight: 1,
-      excludedEpics: 0,
       tasksWithoutLedger: 0,
       tasksWithLaneEntryCompletion: 0,
       tasksBackfilled: 0,

@@ -154,6 +154,30 @@ public sealed class RunTargetReconcilerTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedStopOfReplacedRevision_IsRetriedAfterTheSwap()
+    {
+        var first = Spec(First);
+        var second = Spec(Second, jobId: "job-2");
+        await Converge(first);
+        _docker.StopFailsFor.Add(Slot(first));
+
+        var result = await Converge(second);
+
+        Assert.True(Assert.Single(result.JobReports).Healthy);
+        Assert.Equal(Slot(first), Assert.Single(_store.Load().PendingStops).ComposeProject);
+        Assert.True(Directory.Exists(SecretDirectory(first)));
+
+        _docker.StopFailsFor.Clear();
+        var calls = _docker.Calls.Count;
+        await Converge(second with { JobId = null, LeaseToken = null });
+
+        Assert.Contains("stop " + Slot(first), _docker.Calls.Skip(calls));
+        Assert.Empty(_store.Load().PendingStops);
+        Assert.False(Directory.Exists(SecretDirectory(first)));
+        Assert.Equal(Second, _store.Load().Apps[Key].Current?.Artifact);
+    }
+
+    [Fact]
     public async Task FailedHealthCheck_KeepsTheOldRevisionServing_AndRemovesTheCandidate()
     {
         var first = Spec(First);
@@ -174,6 +198,29 @@ public sealed class RunTargetReconcilerTests : IDisposable
         var observed = Assert.Single(result.Observations);
         Assert.Equal(("running", First), (observed.State, observed.RunningArtifact));
         Assert.Equal("health-failed", observed.Events[^1].Kind);
+    }
+
+    [Fact]
+    public async Task FailedCandidateCleanup_IsDurableAndBlocksReuseUntilTeardownSucceeds()
+    {
+        var first = Spec(First);
+        var second = Spec(Second, jobId: "job-2");
+        await Converge(first);
+        _docker.UnhealthyProjects.Add(Slot(second));
+        _docker.DownFailsFor.Add(Slot(second));
+
+        await Converge(second);
+        Assert.Equal(Slot(second), Assert.Single(_store.Load().PendingCleanup).ComposeProject);
+        var starts = _docker.Calls.Count(call => call == "up " + Slot(second));
+
+        await Converge(second);
+        Assert.Equal(starts, _docker.Calls.Count(call => call == "up " + Slot(second)));
+        Assert.Single(_store.Load().PendingCleanup);
+
+        _docker.DownFailsFor.Clear();
+        await Converge(first);
+        Assert.Empty(_store.Load().PendingCleanup);
+        Assert.Equal(First, _store.Load().Apps[Key].Current?.Artifact);
     }
 
     [Fact]
@@ -213,6 +260,30 @@ public sealed class RunTargetReconcilerTests : IDisposable
         Assert.Equal((Second, Third), (observed.RunningArtifact, observed.PreviousArtifact));
         Assert.Equal("rolled-back", observed.Events[^1].Kind);
         Assert.True(Assert.Single(result.JobReports).Healthy);
+    }
+
+    [Fact]
+    public async Task FailedOlderRevisionCleanup_RetriesAfterSwap()
+    {
+        var first = Spec(First);
+        var second = Spec(Second, jobId: "job-2");
+        var third = Spec(Third, jobId: "job-3");
+        await Converge(first);
+        await Converge(second);
+        _docker.DownFailsFor.Add(Slot(first));
+
+        var result = await Converge(third);
+
+        Assert.True(Assert.Single(result.JobReports).Healthy);
+        Assert.Equal(Slot(first), Assert.Single(_store.Load().PendingCleanup).ComposeProject);
+        Assert.Equal((Third, Second), (_store.Load().Apps[Key].Current?.Artifact,
+            _store.Load().Apps[Key].Previous?.Artifact));
+
+        _docker.DownFailsFor.Clear();
+        var calls = _docker.Calls.Count;
+        await Converge(third with { JobId = null, LeaseToken = null });
+        Assert.Contains("down " + Slot(first), _docker.Calls.Skip(calls));
+        Assert.Empty(_store.Load().PendingCleanup);
     }
 
     [Fact]
@@ -522,6 +593,30 @@ public sealed class RunTargetReconcilerTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedNetworkCleanup_DoesNotConfirmRemoval_AndRetriesTheNetwork()
+    {
+        var first = Spec(First);
+        await Converge(first);
+        _docker.NetworkRemoveFails = true;
+
+        var result = await Desired([], removals: [new RunTargetRemoval("demo", "stage")]);
+
+        Assert.Empty(result.Observations);
+        Assert.True(_store.Load().Apps.ContainsKey(Key));
+        Assert.Null(_store.Load().Apps[Key].Current);
+
+        _docker.NetworkRemoveFails = false;
+        var calls = _docker.Calls.Count;
+        result = await Desired([], removals: [new RunTargetRemoval("demo", "stage")]);
+
+        Assert.Equal("removed", Assert.Single(result.Observations).State);
+        Assert.Equal(["network-rm " + RunTargetNames.AppNetwork(Key)],
+            _docker.Calls.Skip(calls).Where(call => call.StartsWith("network-rm ")));
+        Assert.DoesNotContain(_docker.Calls.Skip(calls), call => call == "down " + Slot(first));
+        Assert.Empty(_store.Load().Apps);
+    }
+
+    [Fact]
     public async Task Removal_ThatFailsOnThePreviousRevision_RetriesOnlyWhatIsLeft()
     {
         var first = Spec(First);
@@ -669,6 +764,38 @@ public sealed class RunTargetReconcilerTests : IDisposable
 
         Assert.Equal(First, Assert.Single(result!.Observations).RunningArtifact);
         Assert.Equal(RunTargetNames.Revision(running), _store.Load().Apps[Key].CrashRollbackRevision);
+    }
+
+    [Fact]
+    public async Task FailedStopOfUnhealthyRestoredRevision_IsPersistedAndRetried()
+    {
+        var first = Spec(First, jobId: null);
+        await Converge(first);
+        await Converge(Spec(Second, jobId: "job-2"));
+        var running = Spec(Second, jobId: null);
+        var crashing = Slot(running);
+        _docker.UnhealthyProjects.Add(Slot(first));
+        _docker.StopFailsFor.Add(Slot(first));
+        _docker.Crash(crashing);
+        await Converge(running);
+        _clock.Advance(TimeSpan.FromSeconds(15));
+        _docker.Crash(crashing);
+
+        await Converge(running);
+
+        Assert.Equal(Slot(first), Assert.Single(_store.Load().PendingStops).ComposeProject);
+        Assert.True(Directory.Exists(SecretDirectory(first)));
+        Assert.Equal(Second, _store.Load().Apps[Key].Current?.Artifact);
+
+        // A later cycle retries the persisted stop even when Studio is unavailable.
+        _docker.StopFailsFor.Clear();
+        var calls = _docker.Calls.Count;
+        await _reconciler.SuperviseOnlyAsync("offline", CancellationToken.None);
+
+        Assert.Contains("stop " + Slot(first), _docker.Calls.Skip(calls));
+        Assert.Empty(_store.Load().PendingStops);
+        Assert.False(Directory.Exists(SecretDirectory(first)));
+        Assert.Equal(Second, _store.Load().Apps[Key].Current?.Artifact);
     }
 
     [Fact]

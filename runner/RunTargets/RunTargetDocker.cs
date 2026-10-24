@@ -67,7 +67,16 @@ public sealed class DockerCliRunTarget(string docker = "docker") : IRunTargetDoc
     {
         var members = await RunWithOutput(
             ["network", "inspect", network, "--format", "{{range .Containers}}{{.Name}} {{end}}"], ct);
-        if (!members.Ok) return RunTargetDockerResult.Success;
+        if (!members.Ok)
+        {
+            // Inspect also fails when Docker is unavailable or access is denied.
+            // Confirm absence with a successful list before acknowledging cleanup.
+            var listed = await RunWithOutput(["network", "ls", "--format", "{{.Name}}"], ct);
+            if (!listed.Ok) return listed;
+            return listed.Detail.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .Contains(network, StringComparer.Ordinal)
+                ? members : RunTargetDockerResult.Success;
+        }
         foreach (var container in members.Detail.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
             var disconnected = await Run(["network", "disconnect", "--force", network, container], ct);

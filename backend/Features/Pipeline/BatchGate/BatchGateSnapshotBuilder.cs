@@ -32,7 +32,7 @@ public sealed class BatchGateSnapshotBuilder
 
     public BatchPlanInput Build(string project, string branch,
         IReadOnlyList<BatchGatePendingRecord> waiting, BatchGateFormationOptions options,
-        DateTimeOffset now, bool closeNow = false, bool idleGateHost = false)
+        DateTimeOffset now, bool closeNow = false, bool idleGateHost = false, bool gateBacklog = false)
     {
         var redKeys = _store.ListManifests()
             .Where(manifest => manifest.Scope.Project == project
@@ -102,7 +102,7 @@ public sealed class BatchGateSnapshotBuilder
         return new BatchPlanInput(now, ready, reviews.Concat(coding).ToArray(),
             options.MinimumSize, options.MaximumSize, options.DeadlineMinutes,
             options.LookAheadMinutes, options.EffectiveUrgentTags, options.RiskPolicy,
-            options.Overlap, closeNow, idleGateHost);
+            options.Overlap, closeNow, idleGateHost, gateBacklog);
     }
 
     internal string? PendingExclusion(BatchGatePendingRecord pending)

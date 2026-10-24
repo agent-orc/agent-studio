@@ -2342,6 +2342,33 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
     }
 
     [Fact]
+    public void Quota_deferred_review_yields_queue_until_cooldown_expires()
+    {
+        var now = new DateTime(2026, 10, 22, 10, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        foreach (var key in new[] { "AGT-ONE", "AGT-TWO" })
+        {
+            var run = service.AcquireRun(key, "PROJ-1", null, "runner", "host", 60,
+                "run-" + key).RunAttempt!;
+            SettleRunWithEnvelope(service, run, new string(key == "AGT-ONE" ? 'a' : 'b', 40),
+                "complete-" + key);
+            service.CreateReviewAttempt(new CreateReviewAttemptRequest(key, "PROJ-1",
+                new string(key == "AGT-ONE" ? 'a' : 'b', 40), run.AttemptId,
+                "requirements", "policy", [], "review-" + key));
+            now = now.AddSeconds(1);
+        }
+        var first = service.ClaimNextReview("reviewer", "review-host", "instance", 60);
+        Assert.Equal("AGT-ONE", first.ReviewAttempt!.TaskKey);
+        Assert.True(service.DeferReviewClaim(first.ReviewAttempt.AttemptId,
+            "reviewer", "instance", quotaDeferred: true));
+        var second = service.ClaimNextReview("reviewer", "review-host", "instance", 60);
+        Assert.Equal("AGT-TWO", second.ReviewAttempt!.TaskKey);
+        now = now.AddMinutes(1);
+        var resumed = service.ClaimNextReview("reviewer", "review-host", "instance", 60);
+        Assert.Equal("AGT-ONE", resumed.ReviewAttempt!.TaskKey);
+    }
+
+    [Fact]
     public void Urgent_review_claims_before_older_normal_review_and_survives_restart()
     {
         var now = new DateTime(2026, 10, 11, 10, 0, 0, DateTimeKind.Utc);

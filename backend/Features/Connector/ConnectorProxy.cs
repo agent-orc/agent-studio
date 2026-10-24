@@ -20,7 +20,9 @@ public sealed class ConnectorProxy(
         StringComparer.OrdinalIgnoreCase);
 
     private static readonly HashSet<string> ForwardedRequestHeaders = new(
-        ["Accept", "Accept-Language", "Content-Language", "Content-Type", "Idempotency-Key", "If-Match", "If-None-Match", "Range", "X-Client-Id"],
+        ["Accept", "Accept-Language", "Content-Language", "Content-Type", "Idempotency-Key", "If-Match", "If-None-Match", "Range", "X-Client-Id",
+            // Binds a device sign-in status read or cancel to the browser session that started it.
+            "X-Device-Login-Session"],
         StringComparer.OrdinalIgnoreCase);
 
     public async Task ForwardHttpAsync(HttpContext context, ConnectorRouteOperation operation)

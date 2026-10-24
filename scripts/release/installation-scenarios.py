@@ -258,9 +258,6 @@ def main() -> int:
         steps.append(run("Windows service install and retained-data reinstall",
                          ["pwsh", "-NoProfile", "-File", str(ROOT / "scripts/release/installation-windows-probe.ps1"),
                           "-CandidateDir", str(candidate)], environment, 1200))
-        if steps[-1]["status"] == "passed":
-            steps.append(pending_step("windows-native-local-studio-runner", "Local Studio UI and coding runner",
-                                      "Windows native package currently installs services without the Studio UI or runner"))
     elif args.scenario == "windows-linux-host":
         if not args.server_url or not args.token_file or not args.token_file.is_file():
             steps.append({"step": "Remote authority inputs", "status": "skipped",

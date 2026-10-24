@@ -22,7 +22,6 @@ export { FiltersDropdownComponent, type TypeFilterOption } from './components/fi
 export { KanbanFilterSidesheetComponent } from './components/kanban-filter-sidesheet/kanban-filter-sidesheet.component';
 export { TaskCardComponent } from './components/task-card/task-card.component';
 export { TaskColumnComponent } from './components/task-column/task-column';
-export { EpicGroupBoardComponent } from './components/epic-group-board/epic-group-board.component';
 export { DossierGroupBoardComponent } from './components/dossier-group-board/dossier-group-board.component';
 export {
   ProjectTabsComponent,
@@ -54,4 +53,4 @@ export {
   type BoardLaneGroup,
 } from './components/board-lane-layout.util';
 export { groupReviewJobs } from './components/review-grouping.util';
-export { buildEpicGroups, flattenGrouped, excludeEpics, type EpicGroupView } from './components/epic-grouping.util';
+export { flattenGrouped } from './components/grouped-jobs.util';

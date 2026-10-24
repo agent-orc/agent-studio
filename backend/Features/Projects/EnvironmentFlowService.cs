@@ -41,8 +41,7 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
     private EnvironmentFlowSnapshot BuildCore(DateTime now)
     {
         var tasks = scanner.ScanAllAutomationJobsWithArchive()
-            .Where(task => !string.Equals(task.Kind, TaskKinds.Epic, StringComparison.OrdinalIgnoreCase))
-            .ToList();
+            .Where(task => !RetiredContainerTask.IsRetired(task)).ToList();
         var events = new Dictionary<string, IReadOnlyList<TimelineEvent>>(StringComparer.Ordinal);
         foreach (var task in tasks.Where(task => task.LastActivity >= now.AddHours(-24)
                      || task.EnteredLaneAt >= now.AddHours(-24) || task.CreatedAt >= now.Date))
@@ -69,6 +68,7 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
         IReadOnlyList<DateTimeOffset>? batchPending = null, IReadOnlyList<DateTime>? gateQueued = null,
         int? batchReleasedLast24h = null)
     {
+        tasks = tasks.Where(task => !RetiredContainerTask.IsRetired(task)).ToList();
         var now = nowUtc.ToUniversalTime();
         var since = now.AddHours(-24);
         var dayStart = now.Date;
@@ -83,8 +83,7 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
         var gateCompleted = 0;
         var readyToIntegration = new List<double>();
 
-        foreach (var task in tasks.Where(task => !string.Equals(task.Kind, TaskKinds.Epic,
-                     StringComparison.OrdinalIgnoreCase)))
+        foreach (var task in tasks)
         {
             var taskEvents = readTimeline(task);
             if (taskEvents.Any(e => e.Kind == TimelineEventKinds.PostStepFinished
@@ -148,7 +147,7 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
         }
 
         var live = tasks.Where(task => task.State != TaskStates.Archive
-            && task.State != TaskStates.Completed && task.Kind != TaskKinds.Epic).ToList();
+            && task.State != TaskStates.Completed).ToList();
         var queues = new[]
         {
             Queue("Coding", TaskStates.Ready, TaskStates.Progress),
@@ -168,8 +167,7 @@ public sealed class EnvironmentFlowService(TaskScannerService scanner, TimelineL
             .OrderByDescending(g => g.Count).ThenBy(g => g.Reason, StringComparer.Ordinal)
             .Take(6).ToList();
         return new EnvironmentFlowSnapshot(now,
-            new EnvironmentDailyFlow(tasks.Count(t => t.Kind != TaskKinds.Epic
-                && t.CreatedAt >= dayStart && t.CreatedAt <= now), delivered, reviewed,
+            new EnvironmentDailyFlow(tasks.Count(t => t.CreatedAt >= dayStart && t.CreatedAt <= now), delivered, reviewed,
                 integrated, null, completed, Median(readyToIntegration)),
             lanes.Select(lane => new EnvironmentLaneFlow(lane, entered[lane], left[lane],
                 Median(dwell[lane]))).ToList(), queues, reasons);
