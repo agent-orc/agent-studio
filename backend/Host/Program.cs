@@ -550,6 +550,7 @@ builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconcil
 builder.Services.AddHostedService<AgentStudio.Publishing.PublishEnvironmentReconciliationService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
