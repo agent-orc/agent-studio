@@ -1122,7 +1122,6 @@ public sealed class DeployService
     {
         var declaration = declarations.FirstOrDefault(item => item.Id == environment.Id);
         var template = declaration?.Template ?? "container";
-        var protectedEnvironment = declaration?.Protected ?? StandardLifecyclePolicy.RequiresApproval(environment);
         var run = new DeploymentRecord
         {
             Id = job?.Id ?? Guid.NewGuid().ToString("N"), ReleaseId = release.Id, EnvironmentId = environment.Id,

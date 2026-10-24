@@ -244,9 +244,6 @@ public static class DeploymentReconciler
             var updated = run.SshStepNames.SequenceEqual(names) && run.StepResults.SequenceEqual(job.StepResults)
                 ? run : run with { SshStepNames = names, StepResults = job.StepResults };
             if (job.RetryStep != run.RetryStep) updated = updated with { RetryStep = job.RetryStep };
-            var names = job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}").ToArray();
-            if (!run.SshStepNames.SequenceEqual(names) || !run.StepResults.SequenceEqual(job.StepResults))
-                updated = updated with { SshStepNames = names, StepResults = job.StepResults };
             if (state != DeploymentStates.Cancelled && run.StartedAtUtc is null && job.ClaimedAt is { } claimedAt)
             {
                 updated = updated with { StartedAtUtc = claimedAt, HostId = job.HostId, HostClaims = job.Claims };
