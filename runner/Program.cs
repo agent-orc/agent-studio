@@ -2,6 +2,9 @@ using AgentRunner;
 using AgentStudio.CliHosting;
 using System.Runtime.InteropServices;
 
+if (WindowsProviderBridge.IsBridgeProcess(Environment.ProcessPath, out var bridgeProvider))
+    return await WindowsProviderBridge.RunAsync(bridgeProvider, args);
+
 // Standalone agent host. With a task key it performs the RM-5 one-shot run;
 // without one (or with --poll) it continuously fills bounded host slots. See
 // docs/operations/setup/linux-runner-host.md.
