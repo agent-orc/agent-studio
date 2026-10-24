@@ -635,7 +635,7 @@ public sealed partial class ProjectEnvironmentService
                 "preview-" + spec.CardKey.ToLowerInvariant(), spec.HostId,
                 "source:" + spec.SourceCommit, spec.Template, spec.Destination, spec.Address,
                 spec.SecretRefs, spec.ContainerPort, null, "queued", _clock.GetUtcNow().UtcDateTime,
-                RequestedBy: "card-preview")
+                RequestedBy: "card-preview", EnvironmentKind: "preview")
             {
                 Kind = "preview", CardKey = spec.CardKey, SourceCommit = spec.SourceCommit,
                 SourceRepository = spec.SourceRepository, SourceRef = spec.SourceRef,
@@ -659,7 +659,7 @@ public sealed partial class ProjectEnvironmentService
                 "preview-" + spec.CardKey.ToLowerInvariant(), spec.HostId,
                 "source:" + spec.SourceCommit, spec.Template, spec.Destination, null,
                 [], spec.ContainerPort, null, "queued", _clock.GetUtcNow().UtcDateTime,
-                RequestedBy: "card-preview-cleanup")
+                RequestedBy: "card-preview-cleanup", EnvironmentKind: "preview")
             {
                 Kind = "preview-remove", CardKey = spec.CardKey,
                 SourceCommit = spec.SourceCommit, Address = spec.Address,
@@ -1360,6 +1360,7 @@ public sealed partial class ProjectEnvironmentService
     private static string SnapshotKind(DeployJob job, State state)
     {
         if (job.EnvironmentKind is not null) return job.EnvironmentKind;
+        if (job.Kind is "preview" or "preview-remove") return "preview";
         var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact);
         return promotion?.ProductionId == job.EnvironmentId ? "production"
             : promotion?.StageId == job.EnvironmentId ? "stage" : "production";

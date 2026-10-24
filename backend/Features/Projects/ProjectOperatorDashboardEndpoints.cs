@@ -254,7 +254,8 @@ public static class ProjectOperatorDashboardEndpoints
         try
         {
             sync(job.Project);
-            if (job.SecretRefs.Count == 0 || job.RetryStep == "health") return Results.Ok(job);
+            if (job.SecretRefs.Count == 0 || job.RetryStep == "health"
+                || job.Kind is "preview" or "preview-remove") return Results.Ok(job);
             var check = await bindings.CheckAsync(job.Project, job.EnvironmentId, job.SecretRefs,
                 job.EnvironmentKind ?? "production", ct);
             return Results.Ok(job with

@@ -227,6 +227,27 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Preview_claim_leaves_secret_delivery_to_the_preview_run_zone()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        var spec = new PreviewJobSpec("demo", "agt-3180", commit, "preview-host",
+            "https://agt-3180.demo.preview.internal", "static", "/srv/agent-studio/previews/demo/agt-3180",
+            ["npm run build"], ["TEST_DATA"], 8080)
+        { SourceRepository = repo, SourceRef = commit, ArtifactPath = "dist" };
+        service.QueuePreview(spec);
+        var claimed = service.Claim("preview-host")!;
+        var bindings = new ProjectSecretBindings(SecretConfig(), new FailingListingProvider(), service, _clock);
+
+        var result = await ProjectOperatorDashboardEndpoints.CompleteClaimAsync(
+            claimed, _ => { }, bindings, CancellationToken.None);
+        var returned = Assert.IsType<Ok<DeployJob>>(result).Value!;
+        Assert.Equal("preview", returned.EnvironmentKind);
+        Assert.Equal(["TEST_DATA"], returned.SecretRefs);
+        Assert.Null(returned.MissingSecretRefs);
+    }
+
+    [Fact]
     public void PreviewJobUsesTheNormalLeaseAndRequiresScreenshotAfterDeploy()
     {
         using var factory = QuotaFactory();
