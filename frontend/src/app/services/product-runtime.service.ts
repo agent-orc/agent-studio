@@ -18,6 +18,10 @@ import {
 export class ProductRuntimeService {
   private readonly http = inject(HttpClient);
 
+  getTaskDetailLatency(): Observable<TaskDetailLatency> {
+    return this.http.get<TaskDetailLatency>('/api/runtime/task-detail-latency');
+  }
+
   getEvents(project: string, refresh = false): Observable<RuntimeEventListResponse> {
     const url = `/api/runtime/${encodeURIComponent(project)}/events`;
     let params = new HttpParams();
@@ -31,6 +35,13 @@ export class ProductRuntimeService {
   private emptyResponse(project: string): RuntimeEventListResponse {
     return { project, events: [], warnings: [] };
   }
+}
+
+export interface TaskDetailLatency {
+  count: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  maxMs: number | null;
 }
 
 /**

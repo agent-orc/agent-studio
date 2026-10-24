@@ -296,6 +296,74 @@ public sealed class GateAuthorityTests
     private static TaskServerStore Store(string path, TimeProvider clock)
         => new(Options.Create(new TaskServerOptions { DataDirectory = path }), clock);
 
+    [Fact]
+    public async Task Quota_refusal_leaves_gate_queued_without_a_lease()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-25T12:00:00Z"));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        var subject = await seed.CreateGateSubjectAsync(await SeedRequestAsync(seed, clock), "engine", default);
+        await RegisterGateAsync(seed, clock, "gate-a", "instance-a", "host-a");
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new RejectQuota());
+        await guarded.InitializeAsync();
+        await guarded.StartWorkspaceQuotaRefreshesAsync("test");
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        var claim = await guarded.ClaimGateAsync(new GateClaimRequest("gate-a", "instance-a"), "gate-a", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        Assert.Equal("empty", claim.Status);
+        Assert.Contains("quota", claim.Message!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(GateStates.Queued, (await guarded.GetGateStatusAsync(subject.Subject.SubjectId, default))!.Phase);
+    }
+
+    private sealed class RejectQuota : IWorkspaceQuotaAdmission
+    {
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+            => Task.FromResult(new WorkspaceQuotaVerdict(false, "Workspace quota reached."));
+    }
+
+    [Fact]
+    public async Task Unreachable_meter_warns_on_gate_claim_and_keeps_gate_moving()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-25T12:00:00Z"));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        await seed.CreateGateSubjectAsync(await SeedRequestAsync(seed, clock), "engine", default);
+        await RegisterGateAsync(seed, clock, "gate-a", "instance-a", "host-a");
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new UnreachableQuota());
+        await guarded.InitializeAsync();
+        await guarded.StartWorkspaceQuotaRefreshesAsync("test");
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        var claim = await guarded.ClaimGateAsync(new GateClaimRequest("gate-a", "instance-a"), "gate-a", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        Assert.Equal("claimed", claim.Status);
+        Assert.Contains("unavailable", claim.Message!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(WorkspaceQuotaAdmissionStates.Unreachable, guarded.Status().QuotaAdmission);
+    }
+
+    [Fact]
+    public async Task Unconfigured_meter_claims_gate_without_quota_message()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-25T12:00:00Z"));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        await seed.CreateGateSubjectAsync(await SeedRequestAsync(seed, clock), "engine", default);
+        await RegisterGateAsync(seed, clock, "gate-a", "instance-a", "host-a");
+        var claim = await seed.ClaimGateAsync(new GateClaimRequest("gate-a", "instance-a"), "gate-a", default);
+        Assert.Equal("claimed", claim.Status);
+        Assert.Null(claim.Message);
+    }
+
+    private sealed class UnreachableQuota : IWorkspaceQuotaAdmission
+    {
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+            => Task.FromResult(new WorkspaceQuotaVerdict(true, "Quota admission is temporarily unavailable.", true));
+    }
+
     private static GateReport Report(string? failure)
         => new(failure is null ? GateStates.Passed
                 : failure == GateFailureClasses.ProductFailure ? GateStates.ProductFailed : GateStates.InfraFailed,

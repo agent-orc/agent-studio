@@ -75,13 +75,7 @@ public sealed partial class BatchGatePilotServiceTests
         var observations = new List<MonolithOrchestrationOccurrence>();
         foreach (var (key, lane, keyPrefix, action) in expected)
         {
-            if (outcome == "per-task-pass")
-            {
-                var current = factory.Services.GetRequiredService<TaskScannerService>()
-                    .FindJob(key, _watchPath)?.State;
-                Assert.Contains(current, new[] { TaskStates.AutoReview, TaskStates.HumanReview });
-            }
-            else AssertLane(key, lane);
+            AssertLane(key, lane);
             var observed = Assert.Single(GateResultOccurrences(orchestration, key));
             Assert.True(observed.Shadow, $"{key} was not observed in shadow mode.");
             Assert.StartsWith(keyPrefix, observed.IdempotencyKey, StringComparison.Ordinal);
@@ -100,6 +94,59 @@ public sealed partial class BatchGatePilotServiceTests
         }
         var profile = rollout.GetProfiles().Single(item => item.Profile == "GateResult");
         Assert.Equal((expected.Length, 0), (profile.Streak, profile.MismatchCount));
+    }
+
+    [Fact]
+    public async Task Passed_fallback_gate_waits_for_the_human_review_move_before_comparison()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var rollout = ShadowGateResult(factory);
+        var member = SeedMember(factory, "CODE-GR-PASS-BLOCKED", "src/gr-pass-blocked.cs",
+            settleReview: false);
+        var review = Settle(factory, member, ReviewTerminalOutcome.Pass);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var source = authority.GetRun(member.RunAttemptId)!;
+        _gate.Fallback = request => Green(request.ExpectedSha);
+        var blocker = Path.Combine(_watchPath, TaskStates.HumanReview, member.Key);
+        File.WriteAllText(blocker, "A file at the target lane path prevents the move.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+
+        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review, source,
+            _clock, CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.Equal(member.ResultSha, Ownership(member.Key)?.FallbackTestedSha);
+        var observed = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.Null(observed.MonolithReceipt);
+        Assert.Null(observed.MonolithIntent);
+        await DecideGateResultAsEngineAsync(factory, observed.Run.RunId);
+        Assert.Equal(0, rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
+
+        // The integration coordinator has merged locally. Publishing the
+        // branch makes the gate eligible for release; the target file now
+        // isolates the lane-move failure from the publication wait.
+        Git(_repo, "push", "-q", "origin", $"{member.ResultSha}:refs/heads/develop");
+        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+            authority.GetRun(member.RunAttemptId)!,
+            _clock, CancellationToken.None);
+        AssertLane(member.Key, TaskStates.AutoReview);
+        Assert.Null(orchestration.GetOccurrence(observed.Run.RunId)!.MonolithIntent);
+        Assert.Null(orchestration.GetOccurrence(observed.Run.RunId)!.MonolithReceipt);
+        Assert.Equal(0, rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
+
+        File.Delete(blocker);
+        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+            authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.HumanReview);
+        var compared = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.Equal(observed.Run.RunId, compared.Run.RunId);
+        Assert.Equal(nameof(TransitionAction.Continue), compared.MonolithReceipt?.Action);
+        Assert.Equal((1, 0), (rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak,
+            rollout.GetProfiles().Single(item => item.Profile == "GateResult").MismatchCount));
     }
 
     [Fact]
@@ -164,6 +211,155 @@ public sealed partial class BatchGatePilotServiceTests
         Assert.Equal(nameof(TransitionAction.Escalate), observed.MonolithReceipt?.Action);
     }
 
+    [Fact]
+    public async Task Engine_retry_after_shadow_gate_occurrence_creates_a_claimable_run()
+    {
+        using var factory = BuildFactory(new Dictionary<string, string?>
+        {
+            ["Orchestration:ShadowMatchThreshold"] = "1",
+        });
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var rollout = ShadowGateResult(factory);
+        var matched = await RunEmergencyFallbackAsync(factory, "CODE-GR-SWITCH-MATCH", red: true);
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        var matchedShadow = Assert.Single(GateResultOccurrences(orchestration, matched.Key));
+        await DecideGateResultAsEngineAsync(factory, matchedShadow.Run.RunId);
+        Assert.Equal("ready", rollout.GetProfiles().Single(item => item.Profile == "GateResult").State);
+
+        var member = SeedMember(factory, "CODE-GR-SWITCH-RETRY", "src/gr-switch-retry.cs",
+            settleReview: false);
+        var review = Settle(factory, member, ReviewTerminalOutcome.Pass);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        var blocker = Path.Combine(_watchPath, TaskStates.Escalated, member.Key);
+        File.WriteAllText(blocker, "A file at the target lane path prevents escalation.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+            authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
+        var shadow = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.True(shadow.Shadow);
+        Assert.Null(shadow.MonolithReceipt);
+        AssertLane(member.Key, TaskStates.AutoReview);
+
+        rollout.Switch("GateResult", "canary", "operator", "matched canary");
+        File.Delete(blocker);
+        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+            authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        var occurrences = GateResultOccurrences(orchestration, member.Key);
+        Assert.Equal(2, occurrences.Count);
+        var engine = Assert.Single(occurrences, item => !item.Shadow);
+        Assert.Equal(shadow.IdempotencyKey + ":engine", engine.IdempotencyKey);
+        Assert.Equal(engine.Run.RunId,
+            EngineDecisionWaitMarker.Read(Card(factory, member.Key).FolderPath));
+        Assert.Contains(orchestration.WaitingOccurrences(), item => item.Run.RunId == engine.Run.RunId);
+
+        await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+            authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
+        Assert.Equal(2, GateResultOccurrences(orchestration, member.Key).Count);
+        Assert.Equal(engine.Run.RunId,
+            EngineDecisionWaitMarker.Read(Card(factory, member.Key).FolderPath));
+    }
+
+    [Fact]
+    public async Task Contained_engine_member_keeps_its_first_occurrence_when_the_published_tip_advances()
+    {
+        using var factory = BuildFactory(new Dictionary<string, string?>
+        {
+            ["Orchestration:ShadowMatchThreshold"] = "1",
+        });
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var rollout = ShadowGateResult(factory);
+        var matched = await RunEmergencyFallbackAsync(factory, "CODE-GR-CONTAIN-MATCH", red: true);
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        await DecideGateResultAsEngineAsync(factory,
+            Assert.Single(GateResultOccurrences(orchestration, matched.Key)).Run.RunId);
+        rollout.Switch("GateResult", "canary", "operator", "matched canary");
+
+        var member = SeedMember(factory, "DOC-GR-CONTAIN-ENGINE", "docs/gr-contain-engine.md");
+        var firstTip = PublishPatchEquivalent(member.ResultSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        var first = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.False(first.Shadow);
+        Assert.Equal($"batch-fallback:{member.ReviewAttemptId}:{firstTip}", first.IdempotencyKey);
+        Assert.Equal(first.Run.RunId,
+            EngineDecisionWaitMarker.Read(Card(factory, member.Key).FolderPath));
+
+        AdvancePublishedTip(firstTip);
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        var retry = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.Equal((first.Run.RunId, first.IdempotencyKey, first.Run.PayloadJson),
+            (retry.Run.RunId, retry.IdempotencyKey, retry.Run.PayloadJson));
+        Assert.Equal(firstTip, Ownership(member.Key)?.ContainedInSha);
+        Assert.Equal(first.Run.RunId,
+            EngineDecisionWaitMarker.Read(Card(factory, member.Key).FolderPath));
+        Assert.Contains(orchestration.WaitingOccurrences(), item => item.Run.RunId == first.Run.RunId);
+    }
+
+    [Fact]
+    public async Task Contained_shadow_release_compares_once_after_tip_advances_during_a_failed_move()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var rollout = ShadowGateResult(factory);
+        var member = SeedMember(factory, "DOC-GR-CONTAIN-SHADOW", "docs/gr-contain-shadow.md");
+        var firstTip = PublishPatchEquivalent(member.ResultSha);
+        var blocker = Path.Combine(_watchPath, TaskStates.HumanReview, member.Key);
+        File.WriteAllText(blocker, "A file at the target lane path prevents the release.");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var orchestration = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.AutoReview);
+        var first = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.Equal($"batch-fallback:{member.ReviewAttemptId}:{firstTip}", first.IdempotencyKey);
+        Assert.Null(first.MonolithReceipt);
+        await DecideGateResultAsEngineAsync(factory, first.Run.RunId);
+        Assert.Equal(0, rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
+
+        AdvancePublishedTip(firstTip);
+        await pilot.TickAsync(CancellationToken.None);
+        AssertLane(member.Key, TaskStates.AutoReview);
+        var retry = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.Equal((first.Run.RunId, first.IdempotencyKey, first.Run.PayloadJson),
+            (retry.Run.RunId, retry.IdempotencyKey, retry.Run.PayloadJson));
+        Assert.Equal(firstTip, Ownership(member.Key)?.ContainedInSha);
+        Assert.Null(retry.MonolithReceipt);
+        Assert.Equal(0, rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak);
+
+        File.Delete(blocker);
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertLane(member.Key, TaskStates.HumanReview);
+        var compared = Assert.Single(GateResultOccurrences(orchestration, member.Key));
+        Assert.Equal(first.Run.RunId, compared.Run.RunId);
+        Assert.Equal(nameof(TransitionAction.Continue), compared.MonolithReceipt?.Action);
+        Assert.Equal(nameof(TransitionAction.Continue), compared.EngineReceipt?.Action);
+        Assert.Equal((1, 0), (rollout.GetProfiles().Single(item => item.Profile == "GateResult").Streak,
+            rollout.GetProfiles().Single(item => item.Profile == "GateResult").MismatchCount));
+    }
+
+    private string AdvancePublishedTip(string firstTip)
+    {
+        Git(_repo, "checkout", "-q", "--detach", firstTip);
+        File.WriteAllText(Path.Combine(_repo, "newer-publication.txt"), "newer published work\n");
+        Git(_repo, "add", "newer-publication.txt");
+        Git(_repo, "commit", "-qm", "newer publication");
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        var tip = RemoteTip();
+        Assert.NotEqual(firstTip, tip);
+        return tip;
+    }
+
     private static OrchestrationRolloutStore ShadowGateResult(WebApplicationFactory<Program> factory)
     {
         var rollout = factory.Services.GetRequiredService<OrchestrationRolloutStore>();
@@ -207,13 +403,18 @@ public sealed partial class BatchGatePilotServiceTests
             }
             case "per-task-pass":
             {
-                EnableBatchGate(factory, closeSize: 1);
-                var member = SeedMember(factory, "DOC-GR-PASS", "docs/gr-fallback-pass.md");
-                _gate.Batch = _ => Infrastructure();
+                EnableBatchGate(factory, closeSize: 4);
+                var member = SeedMember(factory, "CODE-GR-PASS", "src/gr-fallback-pass.cs",
+                    settleReview: false);
+                var review = Settle(factory, member, ReviewTerminalOutcome.Pass);
+                var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
                 _gate.Fallback = request => Green(request.ExpectedSha);
-                await pilot.TickAsync(CancellationToken.None);
-                await pilot.TickAsync(CancellationToken.None);
-                return [(member.Key, TaskStates.AutoReview, "batch-fallback:", release)];
+                await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+                    authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
+                Git(_repo, "push", "-q", "origin", $"{member.ResultSha}:refs/heads/develop");
+                await pilot.RunEmergencyFallbackAsync(Card(factory, member.Key), review,
+                    authority.GetRun(member.RunAttemptId)!, _clock, CancellationToken.None);
+                return [(member.Key, TaskStates.HumanReview, "batch-fallback:", release)];
             }
             case "per-task-red":
             {

@@ -17,10 +17,11 @@ namespace AgentStudio.Pipeline;
 /// integration worktree rather than in the registered project checkout
 /// (<see cref="IntegrationWorktreeProvider"/>, AGT-2832), and records the outcome
 /// into the job's <c>pipeline-execution.json</c> so the deferred step flips from
-/// pending to passed / failed / skipped in place. A merge conflict is recorded
-/// <see cref="PipelineStepStatus.Failed"/> with the conflicted files in the
-/// verdict summary - made visible, never silently resolved - while the working
-/// tree is left clean (the merge is aborted). Only a successful result lets the
+/// pending to passed / failed / skipped in place. A conflict confined to
+/// declared card-report paths keeps the integration version. Other unresolved
+/// conflicts are recorded as <see cref="PipelineStepStatus.Failed"/> with the
+/// conflicted files in the verdict summary; the merge is aborted and the working
+/// tree is left clean. Only a successful result lets the
 /// acceptance worker move the task to Completed. Immediate Remote failures remain
 /// visible in Human Review and do not claim integration.
 /// </para>
@@ -492,6 +493,15 @@ public sealed partial class MergeIntoDevelopRunner
                     () => _git.MergeBranchIntoIntegration(repoRoot, taskBranch, branch, ct)).ConfigureAwait(false);
             }
 
+            if (synchronized.Success)
+            {
+                var reportTarget = lineage?.Mode == ImmediateIntegrationLineageMode.DevelopThenMain
+                    ? "develop" : branch;
+                if (fenceAnchors.TryGetValue(reportTarget, out var reportBaseSha))
+                    PreserveDeliveryReports(repoRoot, jobFolderPath, reportBaseSha,
+                        delivery.ExpectedResultSha ?? delivery.Ref);
+            }
+
             if (result.Outcome == MergeIntoIntegrationOutcome.NoTaskBranch
                 && TryResolveDirectDelivery(
                     jobFolderPath,
@@ -513,6 +523,9 @@ public sealed partial class MergeIntoDevelopRunner
             // AGT-3103: when the published branch already carries it, the
             // integration is a no-op: no gate, no push, and the integration
             // reservation is released as soon as this call returns.
+            // Containment observed here is this attempt's own premise, not a
+            // later integration that would make its gate result stale.
+            var startedContained = result.Outcome.IsAlreadyContained();
             ContainedDeliveryVerification? verification = null;
             var noOpIntegration = false;
             if (result.Outcome.IsAlreadyContained())
@@ -628,17 +641,33 @@ public sealed partial class MergeIntoDevelopRunner
             }
             var returnedGate = preMainResult ?? preDevelopResult;
             CancellationSubject? staleGateSubject = null;
-            bool HasSupersededGateResult()
+            bool HasSupersededGateResult(bool useFetchedTrackingRef = false)
             {
                 if (returnedGate is null || supersededCancellation) return false;
                 var live = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null);
-                var published = _git.CheckPublishedDelivery(developerRoot, branch,
-                    delivery.ExpectedResultSha ?? "");
+                var checkPublished = publishedAtStart == PublishedDeliveryContainment.Missing
+                    && cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive);
+                var published = PublishedDeliveryContainment.Unavailable;
+                if (checkPublished)
+                {
+                    var expectedSha = delivery.ExpectedResultSha ?? "";
+                    if (useFetchedTrackingRef)
+                    {
+                        var publishedTip = _git.GetBranchTip(repoRoot, $"refs/remotes/origin/{branch}");
+                        if (publishedTip is not null && ReviewSubjectStore.IsValidResultSha(expectedSha))
+                            published = _git.IsDeliveryPublished(repoRoot, expectedSha, publishedTip)
+                                ? PublishedDeliveryContainment.Contained
+                                : PublishedDeliveryContainment.Missing;
+                    }
+                    else
+                    {
+                        published = _git.CheckPublishedDelivery(developerRoot, branch, expectedSha);
+                    }
+                }
                 if (live.Lane is TaskStates.Completed or TaskStates.Archive
-                    && cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
-                    || publishedAtStart == PublishedDeliveryContainment.Missing
-                        && cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
-                        && published == PublishedDeliveryContainment.Contained)
+                    && (cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
+                        || returnedGate.Verdict == BuildTestGateVerdict.Fail)
+                    || checkPublished && published == PublishedDeliveryContainment.Contained)
                 {
                     staleGateSubject = live;
                     return true;
@@ -656,7 +685,7 @@ public sealed partial class MergeIntoDevelopRunner
                 var admittedPushSha = approvedPushSha;
                 if (!publicationFence(() =>
                     {
-                        if (HasSupersededGateResult())
+                        if (HasSupersededGateResult(useFetchedTrackingRef: true))
                         {
                             staleGateResult = true;
                             return;
@@ -846,6 +875,50 @@ public sealed partial class MergeIntoDevelopRunner
             ' ',
             reason.Split(['\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         return collapsed.Length <= 300 ? collapsed : collapsed[..297] + "...";
+    }
+
+    private void PreserveDeliveryReports(
+        string repoRoot, string jobFolderPath, string integrationTip, string deliveryRef)
+    {
+        if (!DeliveryReportPathPolicy.IsEnabled(repoRoot)) return;
+        try
+        {
+            var changed = _git.ChangedPathsAgainstMergeBase(repoRoot, integrationTip, deliveryRef);
+            if (changed is null) return;
+            var deliverySha = _git.GetBranchTip(repoRoot, deliveryRef);
+            if (string.IsNullOrWhiteSpace(deliverySha)) return;
+            foreach (var path in changed.Where(DeliveryReportPathPolicy.IsReportPath))
+            {
+                var stem = path == "status.md" ? "legacy-repository-status" : "legacy-repository-results-status";
+                foreach (var oldSnapshot in Directory.EnumerateFiles(jobFolderPath, $"{stem}-*.md"))
+                    File.Delete(oldSnapshot);
+                var fallbackArtifact = Path.Combine(jobFolderPath, $"{stem}.md");
+                var runnerArtifact = Path.Combine(jobFolderPath, "results", $"{stem}.md");
+                if (File.Exists(runnerArtifact))
+                {
+                    if (File.Exists(fallbackArtifact)) File.Delete(fallbackArtifact);
+                    continue;
+                }
+                var content = _git.GetFileAtCommit(repoRoot, deliverySha, path);
+                if (content is null) continue;
+                const int reportLimit = 16 * 1024;
+                var bytes = System.Text.Encoding.UTF8.GetBytes(content);
+                if (bytes.Length <= reportLimit) File.WriteAllBytes(fallbackArtifact, bytes);
+                else
+                {
+                    var firstEnd = reportLimit / 2;
+                    while (firstEnd > 0 && (bytes[firstEnd] & 0xC0) == 0x80) firstEnd--;
+                    var endStart = bytes.Length - reportLimit / 2;
+                    while (endStart < bytes.Length && (bytes[endStart] & 0xC0) == 0x80) endStart++;
+                    File.WriteAllBytes(fallbackArtifact,
+                        [.. bytes[..firstEnd], .. bytes[endStart..]]);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not preserve legacy delivery report for {JobFolder}", jobFolderPath);
+        }
     }
 
     private async Task MaybeRaiseInterventionAsync(

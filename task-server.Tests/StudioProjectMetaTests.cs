@@ -12,7 +12,7 @@ using Xunit;
 namespace TaskServer.Tests;
 
 /// <summary>
-/// Covers the G2 "project meta" P1 bundle: epics, tags, project autonomy
+/// Covers the G2 "project meta" P1 bundle: tags, project autonomy
 /// and execution-runner settings, and the pipeline projections layered on
 /// the existing orchestration flow definition.
 ///
@@ -25,81 +25,6 @@ namespace TaskServer.Tests;
 /// </summary>
 public sealed class StudioProjectMetaTests
 {
-    [Fact]
-    public async Task Epic_list_detail_and_completed_count_reflect_project_and_status_filters()
-    {
-        await using var host = await ProjectMetaTestHost.CreateAsync();
-        var store = host.Store;
-        var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Epic WS"), "test", default);
-        var project = await store.CreateProjectAsync(
-            new CreateProjectRequest(workspace.WorkspaceId, "Epic Project", "EPC"), "test", default);
-        var otherProject = await store.CreateProjectAsync(
-            new CreateProjectRequest(workspace.WorkspaceId, "Other Epic Project", "OEP"), "test", default);
-
-        var openEpic = await store.CreateEpicAsync(project.ProjectId, new CreateEpicRequest("Open epic"), "test", default);
-        var doneEpic = await store.CreateEpicAsync(
-            project.ProjectId, new CreateEpicRequest("Done epic", State: EpicStates.Done), "test", default);
-        await store.CreateEpicAsync(
-            otherProject.ProjectId, new CreateEpicRequest("Other project epic", State: EpicStates.Done), "test", default);
-
-        var all = await host.Client.GetFromJsonAsync<EpicListResponse>("/api/v1/studio/epics");
-        Assert.Equal(3, all!.Epics.Count);
-
-        var scoped = await host.Client.GetFromJsonAsync<EpicListResponse>($"/api/v1/studio/epics?project={project.ProjectId}");
-        Assert.Equal(2, scoped!.Epics.Count);
-
-        var scopedAndStatus = await host.Client.GetFromJsonAsync<EpicListResponse>(
-            $"/api/v1/studio/epics?project={project.ProjectId}&status={EpicStates.Done}");
-        Assert.Equal(doneEpic.EpicId, Assert.Single(scopedAndStatus!.Epics).EpicId);
-
-        var unresolvableProject = await host.Client.GetFromJsonAsync<EpicListResponse>("/api/v1/studio/epics?project=does-not-exist");
-        Assert.Empty(unresolvableProject!.Epics);
-
-        var detail = await host.Client.GetFromJsonAsync<EpicDetailDto>($"/api/v1/studio/epics/{openEpic.EpicId}");
-        Assert.Equal(openEpic.EpicId, detail!.Epic.EpicId);
-        Assert.Equal(0, detail.TaskCount);
-
-        var missing = await host.Client.GetAsync("/api/v1/studio/epics/does-not-exist");
-        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
-
-        var completedAll = await host.Client.GetFromJsonAsync<EpicCompletedCountResponse>("/api/v1/studio/epics/completed/count");
-        Assert.Equal(2, completedAll!.Count);
-
-        var completedScoped = await host.Client.GetFromJsonAsync<EpicCompletedCountResponse>(
-            $"/api/v1/studio/epics/completed/count?project={project.ProjectId}&includeFixtures=true");
-        Assert.Equal(1, completedScoped!.Count);
-    }
-
-    [Fact]
-    public async Task Epic_sub_task_creation_creates_a_real_task_visible_through_the_epic_and_the_task_store()
-    {
-        await using var host = await ProjectMetaTestHost.CreateAsync();
-        var store = host.Store;
-        var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("SubTask WS"), "test", default);
-        var project = await store.CreateProjectAsync(
-            new CreateProjectRequest(workspace.WorkspaceId, "SubTask Project", "SUB"), "test", default);
-        var epic = await store.CreateEpicAsync(project.ProjectId, new CreateEpicRequest("Parent epic"), "test", default);
-
-        var response = await host.Client.PostAsJsonAsync(
-            $"/api/v1/studio/epics/{epic.EpicId}/sub-tasks", new CreateTaskRequest("Epic sub-task"));
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var payload = (await response.Content.ReadFromJsonAsync<EpicSubTaskResponse>())!;
-        Assert.Equal("Epic sub-task", payload.Task.Title);
-        Assert.Equal(project.ProjectId, payload.Task.ProjectId);
-
-        // The task is real and independently visible through the plain task store API.
-        var storedTask = await store.GetTaskAsync(project.ProjectId, payload.Task.TaskId, default);
-        Assert.NotNull(storedTask);
-        Assert.Equal("Epic sub-task", storedTask!.Title);
-
-        var detail = await host.Client.GetFromJsonAsync<EpicDetailDto>($"/api/v1/studio/epics/{epic.EpicId}");
-        Assert.Equal(1, detail!.TaskCount);
-        Assert.Contains(detail.Tasks, task => task.TaskId == payload.Task.TaskId);
-
-        var missingEpic = await host.Client.PostAsJsonAsync(
-            "/api/v1/studio/epics/does-not-exist/sub-tasks", new CreateTaskRequest("Orphan"));
-        Assert.Equal(HttpStatusCode.NotFound, missingEpic.StatusCode);
-    }
 
     [Fact]
     public async Task Tags_create_list_reject_duplicate_names_and_delete()

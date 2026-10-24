@@ -13,10 +13,11 @@ export function runnerQuotaCard(
   return {
     cliType, icon: cliTypeIcon(cliType), label,
     ariaLabel: badges.length
-      ? `${label} runner hosts: ${badges.map(badge => `${badge.hostName} ${badge.state}`).join(', ')}`
+      ? `${label} runner hosts: ${badges.map(badge => `${badge.hostName} ${badge.state}; accepted models: ${badge.acceptedModels?.join(', ') || 'none verified'}`).join(', ')}`
       : `${label} runner host state unknown`,
     chips: badges.map(badge => ({
-      windowKey: badge.runnerId, tag: badge.hostName, value: badge.state, barPct: 0,
+      windowKey: badge.runnerId, tag: badge.hostName,
+      value: `${badge.state} · ${badge.acceptedModels?.join(', ') || 'no models verified'}`, barPct: 0,
       tone: badge.state === 'ok' ? 'ok' : badge.state === 'limited' ? 'warn' : 'unknown',
     })),
     tone: state === 'idle' ? 'ok' : state === 'warn' ? 'warn' : 'unknown',

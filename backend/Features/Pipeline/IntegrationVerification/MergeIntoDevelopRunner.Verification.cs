@@ -210,7 +210,7 @@ public sealed partial class MergeIntoDevelopRunner
             ? $"refs/remotes/origin/{branch}"
             : $"refs/heads/{branch}");
         if (!ReviewSubjectStore.IsValidResultSha(published)) return null;
-        return deliveryShas.All(deliverySha => _git.IsAncestor(repoRoot, deliverySha, published!))
+        return deliveryShas.All(deliverySha => _git.IsDeliveryInPublished(repoRoot, deliverySha, published!))
             ? published
             : null;
     }
@@ -236,7 +236,7 @@ public sealed partial class MergeIntoDevelopRunner
         bool Carries(string? candidate)
             => ReviewSubjectStore.IsValidResultSha(candidate)
                && _git.IsAncestor(repoRoot, candidate!, tip)
-               && deliveryShas.All(deliverySha => _git.IsAncestor(repoRoot, deliverySha, candidate!));
+               && deliveryShas.All(deliverySha => _git.IsDeliveryInPublished(repoRoot, deliverySha, candidate!));
 
         var own = IntegrationVerificationStore.Read(jobFolderPath);
         if (own is { State: IntegrationVerificationStates.Verified }

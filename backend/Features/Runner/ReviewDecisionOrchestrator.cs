@@ -181,6 +181,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         = PostProcessingOutcomeTaxonomy.RetryBackoff;
     internal Func<Task>? GateFailureDecisionCheckpointAsync { get; set; }
     internal Func<Task>? GateInterventionApplyCheckpointAsync { get; set; }
+    internal Func<TaskInfo, bool>? GateDeliveryIntegratedProbe { get; set; }
 
     private readonly AgentStudio.AdHoc.AdHocUsageRecorder? _usage;
     private readonly AgentStudio.Cli.CliOneShotRegistry? _oneShotRegistry;
@@ -668,7 +669,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string? transitionCause = null,
         string? transitionDetail = null,
         string? reason = null,
-        bool postProcessingGateHeld = false)
+        bool postProcessingGateHeld = false,
+        string? expectedSourceState = null)
     {
         if (!postProcessingGateHeld) _postProcessingGitGate.Wait();
         try
@@ -684,6 +686,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     Reason = reason,
                     TransitionCause = transitionCause,
                     TransitionDetail = transitionDetail,
+                    ExpectedSourceState = expectedSourceState,
                 })
                 .GetAwaiter()
                 .GetResult();
@@ -1187,12 +1190,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             if (ct.IsCancellationRequested) return;
             if (job.State is TaskStates.Completed or TaskStates.Archive) continue;
             if (job.State != TaskStates.HumanReview) continue;
-            // An Epic planning completion is verdict-less by construction, not
-            // by legacy: it owns no Result-SHA, so no automated review can ever
-            // run for it and it will never gain a ReviewDecisionLog record.
-            // Escalating it would move the dead end one lane over instead of
-            // letting the operator accept or park the plan.
-            if (TaskKinds.IsEpic(job.Kind)) continue;
             if (HasLatestOperatorLaneVerdict(job)) continue;
             if (string.IsNullOrWhiteSpace(job.ProjectName)) continue;
             if (DateTime.UtcNow - job.CreatedAt < VerdictlessBackfillMinimumAge) continue;
@@ -2073,6 +2070,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var movedFolderPath = move.NewFolderPath ?? current.FolderPath;
         var moved = current with { FolderPath = movedFolderPath, State = TaskStates.Ready };
         _scanner.InvalidateCache();
+        _scanner.PublishCoreFromKnownFolder(movedFolderPath);
 
         var title = string.IsNullOrWhiteSpace(moved.Title) ? moved.Id : moved.Title;
         _chatLog.AppendSupervisor(moved, "requeued-unworked",
@@ -2242,7 +2240,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         using var pipelineAttempt = pipelineRecord == null
             ? null
             : _pipelineLog!.EnterAttempt(current.FolderPath, pipelineRecord.Attempt);
-
         var isResearch = TaskModes.Normalize(current.Mode) == TaskModes.Research;
         var primaryReport = Path.Combine(current.FolderPath, "results", "report.html");
         var hasPrimaryResult = isResearch
@@ -2383,6 +2380,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         using var pipelineAttempt = pipelineRecord == null
             ? null
             : _pipelineLog!.EnterAttempt(current.FolderPath, pipelineRecord.Attempt);
+        inputs = inputs with { ReviewAttemptId = pipelineRecord?.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture) };
 
         // Post-core completeness gate. Persist the exact requirement source,
         // machine evidence, blockers, and lifecycle states before review. Never
@@ -2438,6 +2436,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             EngineDecisionWaitMarker.Write(current.FolderPath, waitingGate.Run.RunId);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(current.FolderPath);
             return;
         }
         _statusSnapshot.SetCurrentStep(
@@ -2461,6 +2460,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
         var gateOccurrenceKey = buildGateResult is null ? null
             : $"gate-result:{current.Id}:{buildGateResult.GateRunId ?? _attemptAuthority?.GetTaskProjection(current.Key ?? current.TaskKey).CurrentRunAttempt?.AttemptId}:{buildGateResult.ExpectedSha}:{buildGateResult.Verdict}";
+        if (gateMode == OrchestrationExecutionMode.Engine && gateOccurrenceKey is not null
+            && _orchestration?.GetByIdempotencyKey(gateOccurrenceKey) is { } priorGate
+            && _orchestration.GetOccurrence(priorGate.RunId)?.Shadow == true)
+            gateOccurrenceKey += ":engine";
         if (buildGateResult is { Verdict: BuildTestGateVerdict.Ok or BuildTestGateVerdict.Warn
             or BuildTestGateVerdict.Fail }
             && gateMode is OrchestrationExecutionMode.Engine or OrchestrationExecutionMode.Shadow)
@@ -2495,10 +2498,14 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 source?.LastFence ?? 0, source?.AuthorityEpoch ?? 0,
                 profile: "GateResult", shadow: gateMode == OrchestrationExecutionMode.Shadow);
             if (gateMode == OrchestrationExecutionMode.Engine
+                && _orchestration.GetOccurrence(occurrence.RunId)?.Shadow == true)
+                throw new InvalidOperationException("The engine gate occurrence is shadow-only.");
+            if (gateMode == OrchestrationExecutionMode.Engine
                 && occurrence.Status is ("pending" or "leased" or "applying"))
             {
                 EngineDecisionWaitMarker.Write(current.FolderPath, occurrence.RunId);
                 _scanner.InvalidateCache();
+                _scanner.PublishCoreFromKnownFolder(current.FolderPath);
                 return;
             }
             if (gateMode == OrchestrationExecutionMode.Engine
@@ -2507,6 +2514,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             if (gateMode == OrchestrationExecutionMode.Engine
                 && buildGateResult.Verdict == BuildTestGateVerdict.Fail)
                 throw new InvalidDataException("A failed engine gate cannot continue through the monolith gate handler.");
+            // AGT-3218: the durable gate dispatch the applier canary checks.
+            if (gateMode == OrchestrationExecutionMode.Engine && _timeline is not null)
+                EngineGateDispatchReceipt.Record(_timeline, current.FolderPath, occurrence.RunId);
         }
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail)
         {
@@ -2648,6 +2658,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Aspects);
         var aspectSubject = ResolveBuildTestGateSubject(current, entry.Path);
+        inputs = inputs with
+        {
+            ReviewedResultSha = aspectSubject.Sha,
+            ReviewRoundId = aspectSubject.AttemptChainId ?? $"local-review-{pipelineRecord?.Attempt ?? 1}",
+        };
         var report = await _aspectRunner.RunAsync(inputs, enabledAspects, cliBinary, aspectModel, perAspectTimeout, ct,
             modelForAspect, thinkingLevelForAspect, promptForAspect, cliForAspect, modelSourceForAspect);
         if (ReviewResultWasSuperseded(current, entry, aspectSubject, report)) return;
@@ -4495,14 +4510,51 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string? SubjectRef,
         bool IsRemote);
 
+    private TaskInfo? FindLiveGateTask(string jobId, WatchPathEntry entry)
+    {
+        foreach (var state in TaskStates.All)
+        {
+            var folder = Path.Combine(entry.Path, state, jobId);
+            if (!File.Exists(Path.Combine(folder, "task.json"))) continue;
+            var scanned = _scanner.ScanJobFolder(folder, entry, state);
+            return scanned is null ? null : scanned with { State = state, FolderPath = folder };
+        }
+        var indexed = _scanner.FindJob(jobId, entry.Path);
+        if (indexed is null || !File.Exists(Path.Combine(indexed.FolderPath, "task.json")))
+            return indexed;
+        var live = _scanner.ScanJobFolder(indexed.FolderPath, entry, indexed.State) ?? indexed;
+        // An unreadable task.json falls back to the scanned lane.
+        return TaskJsonFile.TryReadStringField(indexed.FolderPath, "state", _logger, out var flatState)
+            && flatState is not null
+            ? live with { State = flatState }
+            : live;
+    }
+
+    private bool IsGateDeliveryIntegrated(TaskInfo? live)
+    {
+        if (live is not null && GateDeliveryIntegratedProbe is { } probe) return probe(live);
+        if (live is null || _integrationStatus is null) return false;
+        try
+        {
+            return _integrationStatus.BuildLookup([live]).GetValueOrDefault(live.TaskKey)?.Status
+                == IntegrationStatuses.Integrated;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not check integration before settling gate for {JobId}", live.Id);
+            return false;
+        }
+    }
+
     private bool GateResultWasSuperseded(TaskInfo reviewed, WatchPathEntry entry,
         BuildTestGateResult result)
     {
-        var live = _scanner.FindJob(reviewed.Id, entry.Path);
+        var live = FindLiveGateTask(reviewed.Id, entry);
         var liveSubject = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path);
         if (MonolithTransitionAdapter.GateCancellationOwnsResult(result.ExpectedSha, liveSubject?.Sha,
                 result.AttemptChainId, liveSubject?.AttemptChainId,
-                reviewed.State, live?.State, live?.PendingIntent is not null))
+                reviewed.State, live?.State, live?.PendingIntent is not null)
+            && (result.DeliveryIntegratedAtStart || !IsGateDeliveryIntegrated(live)))
             return false;
 
         // An intervention can invalidate the scanner index while the operator
@@ -4530,7 +4582,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private bool ReviewResultWasSuperseded(TaskInfo reviewed, WatchPathEntry entry,
         BuildTestGateSubject subject, AspectRunReport report)
     {
-        var live = _scanner.FindJob(reviewed.Id, entry.Path);
+        var live = FindLiveGateTask(reviewed.Id, entry);
         var liveSubject = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path);
         if (MonolithTransitionAdapter.GateCancellationOwnsResult(subject.Sha, liveSubject?.Sha,
                 subject.AttemptChainId, liveSubject?.AttemptChainId,
@@ -4651,6 +4703,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             timeoutSeconds + infrastructureTimeoutSeconds);
         var gateChanges = ResolveLatestRunChangedFileChanges(current, entry.Path);
         var changedFiles = gateChanges?.Select(change => change.Path).ToArray();
+        var deliveryIntegratedAtStart = IsGateDeliveryIntegrated(current);
 
         var request = new BuildTestGateRequest(
             repoPath,
@@ -4666,6 +4719,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             WatchPath = entry.Path,
             JobId = current.Id,
             Lane = current.State,
+            DeliveryIntegratedAtStart = deliveryIntegratedAtStart,
             TestExecution = settings?.TestExecution,
             ChangedFileStatuses = gateChanges?.ToDictionary(change => change.Path,
                 change => change.Status, StringComparer.OrdinalIgnoreCase),
@@ -4735,6 +4789,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 GateId = request.GateId,
                 Repository = result.Repository ?? repoPath,
                 ExpectedSha = result.ExpectedSha ?? subject.Sha,
+                DeliveryIntegratedAtStart = request.DeliveryIntegratedAtStart,
                 AttemptChainId = result.AttemptChainId ?? subject.AttemptChainId,
                 Executor = result.Executor ?? subject.Executor,
                 FailureKind = normalizedKind,
@@ -4745,14 +4800,15 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                             normalizedKind, result.Reason + "\n" + result.Output)),
             };
 
-            var liveSubjectTask = _scanner.FindJob(current.Id, entry.Path);
+            var liveSubjectTask = FindLiveGateTask(current.Id, entry);
             var liveSubject = liveSubjectTask is null
                 ? null : ResolveBuildTestGateSubject(liveSubjectTask, entry.Path);
             if (result.FailureKind != BuildTestGateFailureKind.Cancellation
-                && !MonolithTransitionAdapter.GateCancellationOwnsResult(subject.Sha, liveSubject?.Sha,
+                && (!MonolithTransitionAdapter.GateCancellationOwnsResult(subject.Sha, liveSubject?.Sha,
                     subject.AttemptChainId, liveSubject?.AttemptChainId,
                     current.State, liveSubjectTask?.State,
-                    liveSubjectTask?.PendingIntent is not null))
+                    liveSubjectTask?.PendingIntent is not null)
+                    || (!request.DeliveryIntegratedAtStart && IsGateDeliveryIntegrated(liveSubjectTask))))
             {
                 var folder = liveSubjectTask?.FolderPath ?? current.FolderPath;
                 WriteBuildTestGateLog(folder, result, changedFiles);
@@ -4778,11 +4834,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
             if (result.FailureKind == BuildTestGateFailureKind.Cancellation)
             {
-                var live = _scanner.FindJob(current.Id, entry.Path);
+                var live = FindLiveGateTask(current.Id, entry);
                 var liveSha = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path).Sha;
                 var cancellationReason = MonolithTransitionAdapter.GateCancellation(subject.Sha, liveSha,
                     current.State, live?.State, live?.PendingIntent is not null,
                     ct.IsCancellationRequested, result.CancellationReason);
+                if (!request.DeliveryIntegratedAtStart && IsGateDeliveryIntegrated(live))
+                    cancellationReason = GateCancellationReasons.Superseded;
                 result = GateCancellationResultProjector.Apply(result, cancellationReason);
                 var folder = live?.FolderPath ?? current.FolderPath;
                 var deferred = cancellationReason == GateCancellationReasons.Superseded;
@@ -4907,6 +4965,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             _wikiTaskCrossReferences.LinkAuto(root!, current,
                 ResolveLatestRunChangedFiles(current, entry.Path) ?? Array.Empty<string>());
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(current.FolderPath);
         }
         catch (Exception ex)
         {
@@ -5273,6 +5332,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 DeferGradeWrites = true,
                 Commit = commitLabel,
                 ThinkingLevel = thinkingLevel,
+                ReviewAttemptId = _pipelineLog?.Read(job.FolderPath)?.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ResultsInventory = ResultsInventory.Render(job.FolderPath),
                 CardMode = ReviewCardMode.Describe(job.Mode),
             };
@@ -5355,7 +5415,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                             DurationMs = report.DurationMs,
                             Model = report.Model,
                             ThinkingLevel = report.ThinkingLevel,
+                            ReviewedResultSha = ResolveBuildTestGateSubject(live, entry.Path).Sha,
                             Verdict = gradeToken,
+                            ReviewFindings = status == PipelineStepStatus.Failed
+                                ? new AgentStudio.Review.ReviewFindingCounts(Blocker: report.Findings?.Count ?? 0)
+                                : new AgentStudio.Review.ReviewFindingCounts(Major: report.Findings?.Count ?? 0),
+                            ReviewCli = request.CliType,
                             VerdictSummary = string.IsNullOrWhiteSpace(report.Summary) ? null : report.Summary,
                             EvidenceRef = report.FileName,
                         }));
@@ -6524,6 +6589,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         TaskInfo current,
         BuildTestGateResult result)
     {
+        if (GateResultWasSuperseded(current, entry, result)) return Task.CompletedTask;
         _pipelineLog?.Complete(current.FolderPath);
         var reason = result.UnmetRequirements.Count > 0
             ? BuildTestGateInfrastructureReasonPrefix
@@ -6537,7 +6603,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             + $"(fingerprint {result.FailureFingerprint ?? "missing"}); coding reissue budget was not consumed.";
         var move = GuardedMoveJob(
             current.Id, TaskStates.Escalated, entry.Path,
-            transitionCause: LaneChangeCauses.Escalated, transitionDetail: "build-test-gate-infrastructure");
+            transitionCause: LaneChangeCauses.Escalated, transitionDetail: "build-test-gate-infrastructure",
+            expectedSourceState: current.State);
+        if (move.Status != MoveJobStatus.Success && GateResultWasSuperseded(current, entry, result))
+            return Task.CompletedTask;
         if (move.Status == MoveJobStatus.Success)
         {
             var movedFolderPath = move.NewFolderPath ?? current.FolderPath;
@@ -6662,7 +6731,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             : GuardedMoveJob(current.Id, TaskStates.Escalated, entry.Path,
                 transitionCause: LaneChangeCauses.Escalated,
                 transitionDetail: HumanReviewEscalationCategories.FailureIntervention,
-                postProcessingGateHeld: postProcessingGateHeld);
+                postProcessingGateHeld: postProcessingGateHeld,
+                expectedSourceState: current.State);
         var movedFolder = move.NewFolderPath ?? current.FolderPath;
         RecordOrchestratorDecisionStep(movedFolder, PipelineStepStatus.Failed,
             DecisionVerdictEscalate,
@@ -6754,7 +6824,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             }
             var move = GuardedMoveJob(
                 current.Id, TaskStates.Escalated, entry.Path,
-                transitionCause: LaneChangeCauses.Escalated, transitionDetail: "build-test-gate-double-fail");
+                transitionCause: LaneChangeCauses.Escalated, transitionDetail: "build-test-gate-double-fail",
+                expectedSourceState: current.State);
+            if (move.Status != MoveJobStatus.Success && GateResultWasSuperseded(current, entry, result))
+                return;
             if (move.Status == MoveJobStatus.Success)
             {
                 var movedFolderPath = move.NewFolderPath ?? current.FolderPath;
@@ -7499,7 +7572,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             details["followUpPrompt"] = Truncate(followUpPrompt!.Trim(), 4000);
         }
-        // Epic ASS-776: when the steering context is known, also carry the
+        // ASS-776: when the steering context is known, also carry the
         // resume-vs-fresh mode, the resumed session, the considered commits, and
         // the prior re-issue counter so the FE renders a structured "Context"
         // block alongside the prompt. All optional and forward-compatible: an
@@ -8404,7 +8477,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var move = GuardedMoveJob(
             current.Id, TaskStates.Ready, entry.Path,
             transitionCause: ReopenLaneChangeCause(reopenCause),
-            transitionDetail: reopenCause);
+            transitionDetail: reopenCause,
+            expectedSourceState: current.State);
         if (move.Status != MoveJobStatus.Success)
         {
             _logger.LogWarning(
@@ -8431,6 +8505,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // would strip the colon from.
         ConcernTagWriter.MergeConcernTags(moved.FolderPath, new[] { ReissueTagId }, _logger);
         _scanner.InvalidateCache();
+        _scanner.PublishCoreFromKnownFolder(moved.FolderPath);
         return moved;
     }
 
@@ -8454,7 +8529,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var move = GuardedMoveJob(
             current.Id, TaskStates.Escalated, entry.Path,
             transitionCause: LaneChangeCauses.Escalated,
-            transitionDetail: "card-round-budget");
+            transitionDetail: "card-round-budget",
+            expectedSourceState: current.State);
         if (move.Status != MoveJobStatus.Success)
         {
             _logger.LogWarning(

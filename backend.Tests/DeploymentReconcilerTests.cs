@@ -14,6 +14,47 @@ public sealed class DeploymentReconcilerTests
     private static readonly Release R1 = new("r1", "demo", "2026.10.16.1", new string('1', 40), [Artifact],
         "process", "variables", ["AGT-1"], T0, ReleaseSnapshot.DefaultChannel);
 
+    [Theory]
+    [InlineData(true, "failed", DeploymentTriggers.Deploy, true)]
+    [InlineData(false, "failed", DeploymentTriggers.Deploy, false)]
+    [InlineData(true, "succeeded", DeploymentTriggers.Deploy, false)]
+    [InlineData(true, "failed", DeploymentTriggers.Rollback, true)]
+    [InlineData(true, "failed", DeploymentTriggers.AutomaticRollback, false)]
+    public void GuidedFailurePolicy_PausesFailedManualRunsButNotAutomaticRollback(
+        bool enabled, string state, string trigger, bool expected)
+        => Assert.Equal(expected, GuidedFailurePolicy.ShouldPause(enabled, state, trigger));
+
+    [Fact]
+    public void GuidedFailurePolicy_RequiresApproverAndSkipReason()
+    {
+        Assert.NotNull(GuidedFailurePolicy.RejectDecision(DeploymentStates.WaitingForIntervention,
+            "retry", approver: false, reason: null));
+        Assert.NotNull(GuidedFailurePolicy.RejectDecision(DeploymentStates.WaitingForIntervention,
+            "skip", approver: true, " "));
+        Assert.Null(GuidedFailurePolicy.RejectDecision(DeploymentStates.WaitingForIntervention,
+            "skip", approver: true, "Known optional check"));
+        Assert.Null(GuidedFailurePolicy.RejectDecision(DeploymentStates.WaitingForIntervention,
+            "abort", approver: true, null));
+    }
+
+    [Fact]
+    public void Ssh_step_plan_records_partial_failure_and_skips_later_steps()
+    {
+        var run = new DeploymentRecord
+        {
+            Id = "job", ReleaseId = "r1", EnvironmentId = "stage", State = DeploymentStates.Failed,
+            Trigger = DeploymentTriggers.Deploy, DeployStep = DeployStepNames.PublishStatic,
+            CreatedAtUtc = T0, StartedAtUtc = T0.AddMinutes(1), FinishedAtUtc = T0.AddMinutes(2),
+            SshStepNames = ["deploy[0]:static-site", "deploy[1]:container", "deploy[2]:container"],
+            StepResults = [new("deploy[0]:static-site", true), new("deploy[1]:container", false)],
+        };
+
+        var steps = DeploymentStepPlan.Build(run);
+
+        Assert.Equal([DeploymentStates.Succeeded, DeploymentStates.Failed, DeploymentStepStates.Skipped,
+            DeploymentStepStates.Skipped], steps.Select(step => step.State));
+    }
+
     [Fact]
     public void AdoptsQueueJob_ThenFollowsClaimAndReport_WithStepsLogAndAudit()
     {
@@ -74,6 +115,48 @@ public sealed class DeploymentReconcilerTests
     }
 
     [Fact]
+    public void HealthRetry_KeepsTheCompletedDeployStepAcrossRestartClaimAndReport()
+    {
+        var failed = Job("job-1", "stage", "failed", T0) with
+        {
+            GuidedFailure = true, ClaimedAt = T0.AddMinutes(1), FinishedAt = T0.AddMinutes(2),
+            Evidence = DeployEvidence.HealthFailed,
+        };
+        var waiting = Reconcile([], [failed]);
+        var original = Assert.Single(waiting.Deployments);
+        Assert.Equal(DeploymentStates.WaitingForIntervention, original.State);
+        Assert.Equal(DeploymentStates.Succeeded, original.Steps[0].State);
+
+        // The retry job has reached the store, but the run update has not.
+        var retry = Job("job-2", "stage", "queued", T0.AddMinutes(3)) with
+        {
+            RequestedBy = "owner", RetryOfJobId = failed.Id, RetryStep = DeployStepNames.Health,
+        };
+        var attached = Reconcile(waiting.Deployments, [failed, retry]);
+        var queued = Assert.Single(attached.Deployments);
+        Assert.Equal((original.Id, retry.Id, DeployStepNames.Health), (queued.Id, queued.JobId, queued.RetryStep));
+        Assert.Equal((DeploymentStates.Succeeded, DeploymentStepStates.Pending),
+            (queued.Steps[0].State, queued.Steps[1].State));
+        Assert.Equal(original.Steps[0].StartedAtUtc, queued.Steps[0].StartedAtUtc);
+
+        var claimed = retry with { Status = "claimed", ClaimedAt = T0.AddMinutes(4) };
+        var running = Assert.Single(Reconcile(attached.Deployments, [failed, claimed]).Deployments);
+        Assert.Equal((DeploymentStates.Succeeded, DeploymentStepStates.Pending),
+            (running.Steps[0].State, running.Steps[1].State));
+        Assert.Equal(original.Steps[0].StartedAtUtc, running.Steps[0].StartedAtUtc);
+
+        var healthy = claimed with
+        {
+            Status = "healthy", FinishedAt = T0.AddMinutes(5), Evidence = DeployEvidence.HealthOk,
+        };
+        var complete = Assert.Single(Reconcile([running], [failed, healthy]).Deployments);
+        Assert.Equal((DeploymentStates.Succeeded, DeploymentStates.Succeeded),
+            (complete.Steps[0].State, complete.Steps[1].State));
+        Assert.Equal(original.Steps[0].StartedAtUtc, complete.Steps[0].StartedAtUtc);
+        Assert.Equal(T0.AddMinutes(5), complete.Steps[1].FinishedAtUtc);
+    }
+
+    [Fact]
     public void SecondPassOverItsOwnOutput_ChangesNothing()
     {
         var job = Job("job-1", "stage", "healthy", T0) with
@@ -92,7 +175,7 @@ public sealed class DeploymentReconcilerTests
     [Fact]
     public void JobsFromBeforeTheRelease_StayUnattributed()
     {
-        var result = Reconcile([], [Job("legacy", "stage", "healthy", T0.AddMinutes(-5))]);
+        var result = Reconcile([], [Job("legacy", "stage", "healthy", T0.AddMinutes(-5)) with { ReleaseId = null }]);
         Assert.Empty(result.Deployments);
         Assert.False(result.Changed);
     }
@@ -169,6 +252,18 @@ public sealed class DeploymentReconcilerTests
     }
 
     [Fact]
+    public void AutomaticRollback_FailureDoesNotPauseEvenWhenItsJobCarriesGuidedFailure()
+    {
+        var rollback = Job("auto", "production", "failed", T0.AddMinutes(9)) with
+        {
+            IsRollback = true, RequestedBy = "automatic-rollback", GuidedFailure = true,
+            FinishedAt = T0.AddMinutes(10), Evidence = DeployEvidence.DeployFailed,
+        };
+        var run = Assert.Single(Reconcile([], [rollback]).Deployments);
+        Assert.Equal((DeploymentTriggers.AutomaticRollback, DeploymentStates.Failed), (run.Trigger, run.State));
+    }
+
+    [Fact]
     public void OperatorRollbackInProduction_RecordsTheApprover()
     {
         var rollback = Job("job-4", "production", "queued", T0.AddMinutes(9)) with
@@ -234,5 +329,5 @@ public sealed class DeploymentReconcilerTests
     private static DeployJob Job(string id, string environmentId, string status, DateTime createdAt)
         => new(id, "demo", environmentId, environmentId == "stage" ? "stage-host" : "prod-host", Artifact,
             "container", "8081", "https://stage.example/health", [], 8080, null, status, createdAt,
-            RequestedBy: "release-gate");
+            RequestedBy: "release-gate", ReleaseId: "r1");
 }

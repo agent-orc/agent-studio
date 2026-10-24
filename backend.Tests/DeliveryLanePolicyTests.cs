@@ -36,6 +36,19 @@ public sealed class DeliveryLanePolicyTests
     }
 
     [Fact]
+    public void Operator_decision_park_admits_pending_integration_only_into_human_review()
+    {
+        Assert.True(DeliveryLanePolicy.Decide(TaskStates.AutoReview, TaskStates.HumanReview,
+            true, IntegrationStatuses.Pending, operatorDecisionPark: true).Allowed);
+        Assert.False(DeliveryLanePolicy.Decide(TaskStates.AutoReview, TaskStates.Completed,
+            true, IntegrationStatuses.Pending, operatorDecisionPark: true).Allowed);
+        Assert.False(DeliveryLanePolicy.Decide(TaskStates.HumanReview, TaskStates.Completed,
+            true, IntegrationStatuses.Pending, operatorDecisionPark: true).Allowed);
+        Assert.False(DeliveryLanePolicy.Decide(TaskStates.AutoReview, TaskStates.HumanReview,
+            true, IntegrationStatuses.Pending).Allowed);
+    }
+
+    [Fact]
     public void IntegrationPhase_EscalatesTypedGateFailureEvenWhenStatusIsPending()
     {
         Assert.True(DeliveryLanePolicy.RequiresEscalation(new TaskIntegrationStatus

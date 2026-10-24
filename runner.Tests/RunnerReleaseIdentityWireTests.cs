@@ -28,6 +28,7 @@ public sealed class RunnerReleaseIdentityWireTests
             Hostname = "host",
             BackendName = "test",
             WorkDir = Path.GetTempPath(),
+            StateDir = Path.Combine(Path.GetTempPath(), $"release-wire-{Guid.NewGuid():N}"),
             BaseBranch = "main",
             ClaudeCliBin = "claude",
         };

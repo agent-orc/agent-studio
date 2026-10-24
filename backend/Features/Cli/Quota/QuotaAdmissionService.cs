@@ -13,7 +13,8 @@ public sealed record QuotaAdmissionRequest(
     string? ThinkingLevel,
     string? ProjectName,
     int OccupiedSlots,
-    string ExecutionPath);
+    string ExecutionPath,
+    Func<string, string?, bool>? ModelAccepted = null);
 
 /// <summary>
 /// Canonical application boundary around <see cref="QuotaAdmissionPlanner"/>.
@@ -67,7 +68,8 @@ public sealed class QuotaAdmissionService
             _timeProvider.GetUtcNow().UtcDateTime,
             request.OccupiedSlots,
             _waitPolicy.Resolve(project),
-            _preference?.Get(request.CliType ?? CliTypes.Claude));
+            _preference?.Get(request.CliType ?? CliTypes.Claude),
+            request.ModelAccepted);
         return plan with
         {
             BetterCandidates = _betterCandidates.FindRoute(

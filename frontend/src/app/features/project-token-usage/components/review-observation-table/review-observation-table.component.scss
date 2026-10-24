@@ -1,0 +1,22 @@
+@use '../../../../../styles/mixins' as m;
+
+.review-observations {
+  @include m.deck-panel;
+  color: var(--studio-fg);
+}
+.review-observations__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--studio-spacing-3);
+  flex-wrap: wrap;
+}
+h3 { margin: 0; color: var(--studio-fg-strong); font-size: 0.95rem; }
+p { margin: var(--studio-spacing-2) 0 0; font-size: 0.82rem; }
+a { color: var(--studio-accent-strong); font-size: 0.82rem; }
+.review-observations__scroll { overflow-x: auto; margin-top: var(--studio-spacing-4); }
+table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+th, td { padding: var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border); text-align: left; }
+td:nth-child(n + 3) { font-variant-numeric: tabular-nums; white-space: nowrap; }
+thead th { color: var(--studio-fg); font-weight: 600; }
+.review-observations__empty, .review-observations__note { color: var(--studio-fg); }

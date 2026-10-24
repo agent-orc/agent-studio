@@ -48,6 +48,26 @@ export interface SecretOverview {
   canWriteWorkspace: boolean;
   secrets: readonly SecretMetadata[];
   unreadable: readonly UnreadableSecret[];
+  backends: readonly SecretBackendBinding[];
+  backendHealth: readonly SecretBackendHealth[];
+}
+
+export interface SecretBackendBinding {
+  scope: string;
+  kind: 'builtin' | 'vault' | 'onepassword';
+  url: string;
+  mount: string | null;
+  vaultId: string | null;
+  credentialReference: string | null;
+  credentialEnvironmentVariable: string | null;
+  ttlSeconds: number;
+}
+
+export interface SecretBackendHealth {
+  scope: string;
+  kind: string;
+  state: 'healthy' | 'unavailable';
+  reason: string | null;
 }
 
 /** `workspace`, `<project>` or `<project>/<environment>`. */
@@ -116,6 +136,17 @@ export class SecretsService {
   revoke(scope: SecretScopeKey, name: string, version: number | null): Observable<SecretMetadata> {
     return this.mutate(this.http!.post<SecretMetadata>(
       `${secretScopeRoute(scope)}/${encodeURIComponent(name)}/revoke`, { version }));
+  }
+
+  selectBackend(binding: SecretBackendBinding): Observable<SecretBackendBinding> {
+    this.error.set(null);
+    return this.http!.put<SecretBackendBinding>('/api/secrets/backends', binding).pipe(
+      map(saved => { this.load(); return saved; }),
+      catchError((error: unknown) => {
+        this.error.set(messageOf(error));
+        throw error;
+      }),
+    );
   }
 
   private mutate(request: Observable<SecretMetadata>): Observable<SecretMetadata> {

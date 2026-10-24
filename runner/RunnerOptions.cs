@@ -117,7 +117,7 @@ public sealed class RunnerOptions
     public int ReviewNoCpuProgressSeconds { get; init; } = 900;
 
     /// <summary>Durable daemon slot records and detached-worker logs.</summary>
-    public string StateDir { get; init; } = Path.Combine(Path.GetTempPath(), "agent-runner-state");
+    public string StateDir { get; init; } = "";
 
     /// <summary>
     /// Host salvage directory owned by the coding daemon's retention sweep
@@ -484,6 +484,12 @@ public sealed class RunnerOptions
                 ? maxParallelismValue
                 : EnvInt("RUNNER_MAX_PARALLELISM", 2);
 
+        var stateDir = Val("state-dir", "RUNNER_STATE_DIR",
+            Path.Combine(Val("workdir", "RUNNER_WORKDIR", Path.Combine(Path.GetTempPath(), "agent-runner-work")), ".runner-state")).Trim();
+        RunnerStateRootGuard.Validate(stateDir, isImplicit: !overrides.ContainsKey("state-dir")
+            && string.IsNullOrWhiteSpace(Env("RUNNER_STATE_DIR")),
+            testRoot: InjectedEnvironment.Value is null ? null : Variable(RunnerStateRootGuard.TestRootVariable) ?? string.Empty);
+
         var options = new RunnerOptions
         {
             ServerUrl = Val("server", "RUNNER_SERVER_URL", "http://127.0.0.1:5030").TrimEnd('/'),
@@ -525,8 +531,7 @@ public sealed class RunnerOptions
                                          && noProgressValue >= 0
                 ? noProgressValue
                 : EnvIntAllowingZero("RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS", 900),
-            StateDir = Val("state-dir", "RUNNER_STATE_DIR",
-                Path.Combine(Val("workdir", "RUNNER_WORKDIR", Path.Combine(Path.GetTempPath(), "agent-runner-work")), ".runner-state")),
+            StateDir = stateDir,
             RequiredCapabilities = Val(
                     "required-capabilities",
                     "RUNNER_REQUIRED_CAPABILITIES")
@@ -626,8 +631,8 @@ public sealed class RunnerOptions
                 + "network (for example a container network such as http://orchestrator-api:5031).");
         if (!serverUri.IsLoopback && string.IsNullOrWhiteSpace(options.AuthToken))
             throw new ArgumentException("RUNNER_AUTH_TOKEN is required for a non-loopback Task Server.");
-        if (options.Role is not ("coding" or "review" or "gate" or "integration"))
-            throw new ArgumentException("RUNNER_ROLE must be 'coding', 'review', 'gate', or 'integration'.");
+        if (options.Role is not ("coding" or "review" or "gate" or "integration" or "run-target"))
+            throw new ArgumentException("RUNNER_ROLE must be 'coding', 'review', 'gate', 'integration', or 'run-target'.");
         if (options.Role is "review" or "gate"
             && string.Equals(
                 Path.GetFullPath(options.WorkDir),

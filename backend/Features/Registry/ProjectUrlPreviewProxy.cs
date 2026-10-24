@@ -67,7 +67,7 @@ public static class ProjectUrlPreviewProxy
         if (target is null) return Results.NotFound();
         // The response can also be opened as a top-level document. Keep its
         // origin opaque there, independently of the iframe's sandbox attribute.
-        context.Response.Headers.ContentSecurityPolicy = "sandbox allow-scripts; form-action 'none'";
+        context.Response.Headers.ContentSecurityPolicy = "sandbox allow-scripts; form-action 'none'; frame-ancestors 'self'";
         using var request = new HttpRequestMessage(HttpMethod.Get, target);
         request.Headers.TryAddWithoutValidation("Accept", context.Request.Headers.Accept.ToString());
         try

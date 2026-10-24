@@ -188,7 +188,7 @@ test('prompt overrides are explicit and filterable in both themes', async ({ pag
     boardButton.evaluate((el) => getComputedStyle(el).paddingLeft),
   ]);
   // AGT-2057: the Explorer hierarchy is workspace -> project -> destinations.
-  // A project's Board / Hub / Wiki / Epics rows nest ONE level below the
+  // A project's Board / Hub / Wiki / Dossiers rows nest ONE level below the
   // project row, so the destination inset is deeper than the project inset,
   // never flush with it. (This assertion previously demanded equality, which
   // is what let the AGT-2037 flat-layout regression ship.)

@@ -1,0 +1,6 @@
+:host { display: block; }
+.release-notes { margin-top: var(--studio-spacing-4); }
+.release-notes h4 { margin: 0 0 var(--studio-spacing-2); color: var(--studio-fg-strong); }
+.release-notes p { color: var(--studio-fg-muted); }
+.release-notes ul { margin: var(--studio-spacing-2) 0 0; padding-inline-start: var(--studio-spacing-5); }
+.release-notes li + li { margin-top: var(--studio-spacing-2); }
