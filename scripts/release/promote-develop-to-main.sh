@@ -652,7 +652,7 @@ if [[ "$release_rc" == 0 && -n "$project" && -n "$deploy_token_file" && ( -n "$r
     "$(json_escape "$project")" "$candidate_sha" "$(json_escape "$deploy_artifact")" "$deploy_digest" \
     > "$release_target/deploy-artifact.json"
   cp "$evidence_dir/promotion-record.json" "$release_target/promotion-record.json"
-  deploy_body=$(printf '{"project":"%s","artifact":"%s","commit":"%s"}' \
+  deploy_body=$(printf '{"project":"%s","artifact":"%s","commit":"%s","branch":"refs/heads/main"}' \
     "$(json_escape "$project")" "$deploy_artifact" "$candidate_sha")
   deploy_header_file="$(mktemp)"
   chmod 0600 "$deploy_header_file"

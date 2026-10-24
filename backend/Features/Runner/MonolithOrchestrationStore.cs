@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Tasks;
 
 namespace AgentStudio.Runner;
 
@@ -34,6 +35,17 @@ public interface IMonolithOrchestrationApplier
         CompleteOrchestrationStageRequest completion, CancellationToken ct);
 }
 
+public sealed class OrchestrationSourceStateMismatchException(string? observedState)
+    : InvalidOperationException("orchestration-source-state-mismatch")
+{
+    public string? ObservedState { get; } = observedState;
+}
+
+public interface IOrchestrationSupersessionAudit
+{
+    void RecordSuperseded(MonolithOrchestrationOccurrence occurrence, string? observedState);
+}
+
 /// <summary>
 /// Atomic file replacement makes every lease and stage receipt recoverable after a restart.
 /// The application effect is replayed with its authority write key before a run is marked done.
@@ -49,6 +61,147 @@ public sealed class MonolithOrchestrationStore
     private readonly Dictionary<string, MonolithOrchestrationOccurrence> _runs = new(StringComparer.Ordinal);
     private long _nextCreationSequence;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _completionGates = new(StringComparer.Ordinal);
+    private int _applyingRecoveryPasses;
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _cardGates = new(StringComparer.Ordinal);
+    private readonly AsyncLocal<(string ProjectId, string TaskId)?> _applyingCard = new();
+
+    public bool IsApplyingCard(string projectId, string taskId)
+        => _applyingCard.Value is { } card
+            && card.ProjectId == projectId && card.TaskId == taskId;
+
+    private SemaphoreSlim CardGate(string projectId, string taskId)
+        => _cardGates.GetOrAdd(projectId + "\0" + taskId, _ => new SemaphoreSlim(1, 1));
+
+    private static bool IsLaneDecision(MonolithOrchestrationOccurrence item)
+        => item.Run.CurrentStage is not (OrchestrationStage.BatchPlan
+            or OrchestrationStage.OperatorDecision or OrchestrationStage.OperatorSweep);
+
+    /// <summary>Run a recovery check only when the card gate is free; a busy card is revisited next pass.</summary>
+    internal bool TryWithCardGate(string projectId, string taskId, Action check)
+    {
+        var gate = CardGate(projectId, taskId);
+        if (!gate.Wait(0)) return false;
+        try
+        {
+            check();
+            return true;
+        }
+        finally { gate.Release(); }
+    }
+
+    /// <summary>Recheck a lane decision under the same gate used by card moves and completion.</summary>
+    internal void TrySupersedeStaleLaneDecision(string runId, Func<string?> observeState)
+    {
+        var occurrence = GetOccurrence(runId);
+        if (occurrence is null || !IsLaneDecision(occurrence)) return;
+        TryWithCardGate(occurrence.Run.ProjectId, occurrence.Run.TaskId, () =>
+        {
+            var current = GetOccurrence(runId);
+            if (current is null || !IsLaneDecision(current)
+                || current.Run.Status is not ("pending" or "leased")) return;
+            var observedState = observeState();
+            if (observedState != current.ExpectedSourceState)
+                Supersede(runId, observedState, includeApplying: false);
+        });
+    }
+
+    private static bool IsSuperseded(MonolithOrchestrationOccurrence item)
+        => item.Run.Status == "cancelled"
+            && item.CancellationReason?.StartsWith("superseded:", StringComparison.Ordinal) == true;
+
+    /// <summary>Serialize an external lane change with application of decisions for that card.</summary>
+    public async Task<MoveJobOutcome> WithCardMoveAsync(string projectId, string taskId,
+        string sourceState, string targetState, Func<Task<MoveJobOutcome>> move, CancellationToken ct)
+    {
+        var gate = CardGate(projectId, taskId);
+        await gate.WaitAsync(ct);
+        try
+        {
+            var result = await move();
+            if (result.Status == MoveJobStatus.Success && sourceState != targetState)
+                SupersedeCard(projectId, taskId, targetState);
+            return result;
+        }
+        finally { gate.Release(); }
+    }
+
+    /// <summary>Cancel decisions from the prior card round while holding its move gate.</summary>
+    public void SupersedeCard(string projectId, string taskId, string? observedState)
+    {
+        MonolithOrchestrationOccurrence[] open;
+        lock (_gate) open = _runs.Values.Where(item => item.Run.ProjectId == projectId
+            && item.Run.TaskId == taskId && IsLaneDecision(item) && !item.Shadow
+            && item.Run.Status is ("pending" or "leased" or "applying")).ToArray();
+        foreach (var item in open)
+            Supersede(item.Run.RunId, observedState, reason: "card-moved");
+    }
+
+    public IReadOnlyList<string> OpenLaneDecisionIds(string projectId, string taskId)
+    {
+        lock (_gate) return _runs.Values.Where(item => item.Run.ProjectId == projectId
+            && item.Run.TaskId == taskId && IsLaneDecision(item) && !item.Shadow
+            && item.Run.Status is ("pending" or "leased" or "applying"))
+            .Select(item => item.Run.RunId).ToArray();
+    }
+
+    public async Task SupersedeRunsAsync(string projectId, string taskId,
+        IReadOnlyList<string> runIds, string? observedState, string reason, CancellationToken ct)
+    {
+        var gate = CardGate(projectId, taskId);
+        await gate.WaitAsync(ct);
+        try
+        {
+            foreach (var runId in runIds)
+            {
+                var item = GetOccurrence(runId);
+                if (item?.Run.ProjectId == projectId && item.Run.TaskId == taskId)
+                    Supersede(runId, observedState, reason: reason);
+            }
+        }
+        finally { gate.Release(); }
+    }
+
+    public bool Supersede(string runId, string? observedState, bool includeApplying = true,
+        string reason = "source-state-mismatch")
+    {
+        MonolithOrchestrationOccurrence item;
+        lock (_gate)
+        {
+            item = Required(runId);
+            if (item.Run.Status is not ("pending" or "leased" or "applying")
+                || !includeApplying && item.Run.Status == "applying") return false;
+            var now = _time.GetUtcNow().UtcDateTime;
+            item = item with
+            {
+                CancellationReason = $"superseded: {reason}; expected={item.ExpectedSourceState}; observed={observedState ?? "missing"}",
+                Lease = item.Lease is null ? null : item.Lease with { Status = "cancelled" },
+                Run = item.Run with { Status = "cancelled", UpdatedAt = now, CompletedAt = now },
+            };
+            Save(item);
+            _runs[runId] = item;
+        }
+        if (_applier is IOrchestrationSupersessionAudit audit)
+            audit.RecordSuperseded(item, observedState);
+        return true;
+    }
+
+    private void SettleMalformed(string runId, Exception exception)
+    {
+        lock (_gate)
+        {
+            var item = Required(runId);
+            if (item.Run.Status != "applying") return;
+            var now = _time.GetUtcNow().UtcDateTime;
+            item = item with
+            {
+                CancellationReason = $"unrecoverable-application: {exception.GetType().Name}: {exception.Message}",
+                Lease = item.Lease is null ? null : item.Lease with { Status = "failed" },
+                Run = item.Run with { Status = "failed", UpdatedAt = now, CompletedAt = now },
+            };
+            Save(item);
+            _runs[runId] = item;
+        }
+    }
 
     public MonolithOrchestrationStore(IConfiguration configuration, TimeProvider time,
         IMonolithOrchestrationApplier applier, OrchestrationRolloutStore rollout)
@@ -101,6 +254,7 @@ public sealed class MonolithOrchestrationStore
                         || existing.AuthorityFence != authorityFence
                         || existing.AuthorityEpoch != authorityEpoch))
                     throw new InvalidOperationException("orchestration-idempotency-conflict");
+                if (IsSuperseded(existing)) return existing.Run;
                 if (existing.Run.Status == "cancelled")
                 {
                     var resumedAt = _time.GetUtcNow().UtcDateTime;
@@ -335,16 +489,19 @@ public sealed class MonolithOrchestrationStore
     }
 
     /// <summary>
-    /// Switches a rollout profile. The engine takes over only when every earlier
-    /// shadow occurrence of the profile is compared or resolved; a ready streak
-    /// does not account for an occurrence whose comparison is still open.
+    /// Switches a rollout profile. The engine takes over, as canary or engine,
+    /// only when every earlier shadow occurrence of the profile is compared or
+    /// resolved; a ready streak does not account for an occurrence whose
+    /// comparison is still open. The audited <c>force-engine</c> override
+    /// (AGT-3218) skips this check for an emergency.
     /// </summary>
     public OrchestrationProfileStatus SwitchProfile(string profile, string target, string actor, string reason)
     {
         var rollout = _rollout ?? throw new InvalidOperationException("orchestration-rollout-unavailable");
         lock (_gate)
         {
-            if (string.Equals(target, "engine", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(target, "engine", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(target, "canary", StringComparison.OrdinalIgnoreCase))
             {
                 foreach (var item in _runs.Values.Where(value => value.Shadow)
                              .OrderBy(value => value.CreationSequence).ThenBy(value => value.Run.CreatedAt)
@@ -385,10 +542,24 @@ public sealed class MonolithOrchestrationStore
             && item.Run.Status is ("pending" or "leased" or "applying")).ToArray();
     }
 
+    public bool CanBlockCard(string runId, string projectId, string taskId, string state)
+    {
+        lock (_gate)
+        {
+            if (!_runs.TryGetValue(runId, out var item)
+                || item.Run.ProjectId != projectId || item.Run.TaskId != taskId
+                || item.ExpectedSourceState != state || item.Shadow) return false;
+            if (item.Run.Status is "pending" or "leased" or "applying") return true;
+            // An applied active choice can still hold the card for an operator ask.
+            return item.Run.Status == "completed" && item.Completion?.OutputJson is { } output
+                && (item.Profile == "CodingCompletion" || output.Contains("activeChoice", StringComparison.Ordinal));
+        }
+    }
+
     public IReadOnlyList<MonolithOrchestrationOccurrence> AwaitingActivation()
     {
         lock (_gate) return _runs.Values.Where(item => !item.Claimable
-            && item.Run.Status is ("pending" or "cancelled")).ToArray();
+            && item.Run.Status is ("pending" or "cancelled") && !IsSuperseded(item)).ToArray();
     }
 
     /// <summary>
@@ -412,6 +583,8 @@ public sealed class MonolithOrchestrationStore
         {
             var item = Required(runId);
             if (item.Claimable) return;
+            if (IsSuperseded(item))
+                throw new InvalidOperationException("orchestration-occurrence-superseded");
             if (item.Run.Status is not ("pending" or "cancelled"))
                 throw new InvalidOperationException("orchestration-activation-state-mismatch");
             item = item with
@@ -526,7 +699,22 @@ public sealed class MonolithOrchestrationStore
     {
         var gate = _completionGates.GetOrAdd(runId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
-        try { return await CompleteCoreAsync(runId, request, ct); }
+        try
+        {
+            MonolithOrchestrationOccurrence item;
+            lock (_gate) item = Required(runId);
+            if (!IsLaneDecision(item)) return await CompleteCoreAsync(runId, request, ct);
+            var cardGate = CardGate(item.Run.ProjectId, item.Run.TaskId);
+            await cardGate.WaitAsync(ct);
+            var previous = _applyingCard.Value;
+            _applyingCard.Value = (item.Run.ProjectId, item.Run.TaskId);
+            try { return await CompleteCoreAsync(runId, request, ct); }
+            finally
+            {
+                _applyingCard.Value = previous;
+                cardGate.Release();
+            }
+        }
         finally { gate.Release(); }
     }
 
@@ -537,6 +725,8 @@ public sealed class MonolithOrchestrationStore
         lock (_gate)
         {
             item = Required(runId);
+            if (item.Run.Status == "cancelled")
+                throw new InvalidOperationException("orchestration-occurrence-cancelled");
             if (item.CompletionKey == request.IdempotencyKey)
             {
                 if (item.Completion is null || item.Completion.Stage != request.Stage
@@ -569,6 +759,10 @@ public sealed class MonolithOrchestrationStore
                     Run = item.Run with { Status = "applying", UpdatedAt = _time.GetUtcNow().UtcDateTime } };
                 Save(item);
                 _runs[runId] = item;
+                // AGT-3218: the applier canary watches the decision before it is
+                // applied, so a decision that never applies is watched too.
+                if (!item.Shadow && item.Profile is not null && request.EngineId != "engine_rollback")
+                    _rollout?.ObserveEngineDecision(item.Profile, runId, item.EngineReceipt!.Action);
             }
         }
         if (item.Shadow)
@@ -579,7 +773,15 @@ public sealed class MonolithOrchestrationStore
                 _rollout?.Compare(item.Profile, item.MonolithReceipt, item.EngineReceipt, item.Run.CreatedAt,
                     item.CreationSequence);
         }
-        else await _applier.ApplyAsync(item, request, ct);
+        else
+        {
+            try { await _applier.ApplyAsync(item, request, ct); }
+            catch (OrchestrationSourceStateMismatchException exception)
+            {
+                Supersede(runId, exception.ObservedState);
+                return Get(runId)!;
+            }
+        }
         lock (_gate)
         {
             item = Required(runId);
@@ -618,18 +820,52 @@ public sealed class MonolithOrchestrationStore
             item.Run.PayloadJson, action, reason, decider);
     }
 
-    public async Task RecoverApplyingAsync(CancellationToken ct)
+    /// <summary>
+    /// AGT-3218: recovery passes over applying occurrences that ran to their
+    /// end in this process. The applier canary judges nothing before the first
+    /// one, so a restart does not count as a missing effect.
+    /// </summary>
+    public int ApplyingRecoveryPasses => Volatile.Read(ref _applyingRecoveryPasses);
+
+    /// <summary>True while the applier of the occurrence runs in this process.</summary>
+    public bool IsApplying(string runId)
+        => _completionGates.TryGetValue(runId, out var gate) && gate.CurrentCount == 0;
+
+    public async Task RecoverApplyingAsync(CancellationToken ct,
+        Action<MonolithOrchestrationOccurrence, Exception>? onRetry = null,
+        Action<MonolithOrchestrationOccurrence>? onSuperseded = null,
+        Action<MonolithOrchestrationOccurrence, Exception>? onMalformed = null)
     {
         MonolithOrchestrationOccurrence[] pending;
+        var failures = new List<Exception>();
         lock (_gate) pending = _runs.Values.Where(item => item.Run.Status == "applying"
             && item.Completion is not null).ToArray();
-        var failures = new List<Exception>();
         foreach (var item in pending)
         {
-            try { await CompleteAsync(item.Run.RunId, item.Completion!, ct); }
+            if (Get(item.Run.RunId)?.Status == "cancelled") continue;
+            try
+            {
+                if ((await CompleteAsync(item.Run.RunId, item.Completion!, ct)).Status == "cancelled")
+                    onSuperseded?.Invoke(item);
+            }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception exception) { failures.Add(exception); }
+            catch (InvalidOperationException) when (Get(item.Run.RunId)?.Status == "cancelled")
+            {
+                onSuperseded?.Invoke(item);
+            }
+            catch (Exception exception) when (exception is InvalidDataException or JsonException
+                or FormatException or NotSupportedException or ArgumentException)
+            {
+                SettleMalformed(item.Run.RunId, exception);
+                onMalformed?.Invoke(item, exception);
+            }
+            catch (Exception exception)
+            {
+                if (onRetry is null) failures.Add(exception);
+                else onRetry(item, exception);
+            }
         }
+        Interlocked.Increment(ref _applyingRecoveryPasses);
         if (failures.Count > 0) throw new AggregateException(
             "One or more orchestration decisions still need application.", failures);
     }

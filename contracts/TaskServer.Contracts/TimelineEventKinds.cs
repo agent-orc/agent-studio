@@ -12,6 +12,8 @@ namespace AgentStudio.Shared;
 /// </summary>
 public static class TimelineEventKinds
 {
+    /// <summary>An engine occurrence lost its source lane before its decision could apply.</summary>
+    public const string OrchestrationDecisionSuperseded = "orchestration_decision_superseded";
     public const string ReviewPriorityChanged = "review_priority_changed";
     /// <summary>Task prompt was created on disk.</summary>
     public const string PromptCreated = "prompt_created";
@@ -504,6 +506,13 @@ public static class TimelineEventKinds
     /// <c>evidenceDigest</c>.
     /// </summary>
     public const string WatcherCaseLinked = "watcher_case_linked";
+
+    /// <summary>
+    /// AGT-3218: the monolith gate handler took a passed engine gate decision
+    /// and dispatched the aspect review. Details carry <c>orchestrationRunId</c>;
+    /// the applier canary reads it as the durable gate dispatch.
+    /// </summary>
+    public const string EngineGateDispatched = "engine_gate_dispatched";
 
     /// <summary>
     /// IP-14: an environment health incident or certificate warning that owns

@@ -32,18 +32,19 @@ public static class IntegrationVerificationProjection
 
         // A later verified integration record can settle a tree previously
         // recorded as unverified. Check it before the task-folder snapshot.
-        if (integrationRecords.Any(item =>
+        var exactRecord = integrationRecords.FirstOrDefault(item =>
                 string.Equals(item.Classification, IntegrationRecordClasses.IntegratedVerified, StringComparison.Ordinal)
                 && string.Equals(item.IntegrationSha, currentIntegrationSha, StringComparison.OrdinalIgnoreCase)
                 && SameBranch(item.IntegrationBranch, currentIntegrationBranch)
                 && (item.SourceSha is null || !string.IsNullOrWhiteSpace(currentDeliverySha)
-                    && item.SourceSha.StartsWith(currentDeliverySha.Trim(), StringComparison.OrdinalIgnoreCase))))
+                    && item.SourceSha.StartsWith(currentDeliverySha.Trim(), StringComparison.OrdinalIgnoreCase)));
+        if (exactRecord is not null)
             return new TaskIntegrationVerification
             {
                 State = IntegrationVerificationStates.Verified,
                 Sha = currentIntegrationSha,
                 Evidence = IntegrationVerificationEvidence.IntegrationRecord,
-                Reason = "An integrated-verified integration record names this exact tree.",
+                Reason = RecordReason(exactRecord),
             };
 
         var carriedRecord = integrationRecords.FirstOrDefault(item =>
@@ -60,7 +61,8 @@ public static class IntegrationVerificationProjection
                 State = IntegrationVerificationStates.Verified,
                 Sha = carriedRecord.IntegrationSha,
                 Evidence = IntegrationVerificationEvidence.IntegrationRecord,
-                Reason = $"The published branch still carries operator-verified tree {carriedRecord.IntegrationSha}.",
+                Reason = RecordReason(carriedRecord)
+                    + $" The published branch still carries that tree at {currentIntegrationSha}.",
             };
 
         if (record is not null
@@ -106,6 +108,13 @@ public static class IntegrationVerificationProjection
                                     StringComparison.Ordinal)
                                  && string.Equals(record.IntegrationSha, sha, StringComparison.OrdinalIgnoreCase)
                                  && SameBranch(record.IntegrationBranch, branch));
+
+    private static string RecordReason(TaskIntegrationRecord record)
+        => record.Id.StartsWith("operator-candidate-", StringComparison.Ordinal)
+            ? $"Verified by operator candidate {record.IntegrationSha}: {record.SuiteSummary} "
+              + $"on {record.VerificationHost} from {record.VerificationStartedAtUtc:O} "
+              + $"to {record.VerificationEndedAtUtc:O}. Log SHA-256 {record.LogHash}."
+            : "An integrated-verified integration record names this exact tree.";
 
     /// <summary>
     /// A verified record on a tree the branch still carries, written while

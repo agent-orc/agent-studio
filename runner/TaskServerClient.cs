@@ -50,31 +50,16 @@ public sealed class TaskServerClient : IDisposable
     private int? _roleMaxParallelism;
     private long? _centralRuntimeCapacityVersion;
     private readonly RuntimeCapacityCache? _runtimeCapacityCache;
+    private readonly Action<string> _capacityWarning;
+    private bool _restoredCapacityFromCache;
+    private bool _capacityWarningWritten;
 
     public TaskServerClient(RunnerOptions options)
     {
+        _capacityWarning = message => Console.Error.WriteLine($"WARNING: {message}");
         _options = options;
         _deviceLoginRunnerId = options.RunnerId;
-        HttpMessageHandler handler = new HttpClientHandler();
-        if (!string.IsNullOrWhiteSpace(options.TlsServerCertificateSha256))
-        {
-            var expectedFingerprint = options.TlsServerCertificateSha256;
-            handler = new HttpClientHandler
-            {
-                ServerCertificateCustomValidationCallback = (_, certificate, _, errors) =>
-                    certificate is not null
-                    && (errors & ~System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors) == 0
-                    && certificate.NotBefore.ToUniversalTime() <= DateTime.UtcNow
-                    && certificate.NotAfter.ToUniversalTime() >= DateTime.UtcNow
-                    && string.Equals(
-                        Convert.ToHexString(SHA256.HashData(certificate.RawData)),
-                        expectedFingerprint,
-                        StringComparison.OrdinalIgnoreCase),
-            };
-        }
-        if (!string.IsNullOrWhiteSpace(options.AuthTokenFile))
-            handler = new ReloadingPrincipalCredentialHandler(options.AuthTokenFile, handler);
-        _http = new HttpClient(handler)
+        _http = new HttpClient(CreateServiceHandler(options))
         {
             BaseAddress = new Uri(options.ServerUrl),
             Timeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds),
@@ -95,6 +80,34 @@ public sealed class TaskServerClient : IDisposable
     }
 
     /// <summary>
+    /// TLS pin and reloading service credential of a Runner principal. The
+    /// run-target role uses the same handler for its Studio calls.
+    /// </summary>
+    internal static HttpMessageHandler CreateServiceHandler(RunnerOptions options)
+    {
+        HttpMessageHandler handler = new HttpClientHandler();
+        if (!string.IsNullOrWhiteSpace(options.TlsServerCertificateSha256))
+        {
+            var expectedFingerprint = options.TlsServerCertificateSha256;
+            handler = new HttpClientHandler
+            {
+                ServerCertificateCustomValidationCallback = (_, certificate, _, errors) =>
+                    certificate is not null
+                    && (errors & ~System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors) == 0
+                    && certificate.NotBefore.ToUniversalTime() <= DateTime.UtcNow
+                    && certificate.NotAfter.ToUniversalTime() >= DateTime.UtcNow
+                    && string.Equals(
+                        Convert.ToHexString(SHA256.HashData(certificate.RawData)),
+                        expectedFingerprint,
+                        StringComparison.OrdinalIgnoreCase),
+            };
+        }
+        if (!string.IsNullOrWhiteSpace(options.AuthTokenFile))
+            handler = new ReloadingPrincipalCredentialHandler(options.AuthTokenFile, handler);
+        return handler;
+    }
+
+    /// <summary>
     /// Test seam: drive the client against an already-configured <see cref="HttpClient"/>
     /// such as one produced by the backend's in-memory WebApplicationFactory, so the
     /// runner's real HTTP + WireModels round-trip is exercised end-to-end against the
@@ -109,8 +122,10 @@ public sealed class TaskServerClient : IDisposable
         bool usesDurableTaskServer = false,
         RunnerOptions? options = null,
         string? runnerInstanceId = null,
-        bool supportsHostOrchestrator = false)
+        bool supportsHostOrchestrator = false,
+        Action<string>? capacityWarning = null)
     {
+        _capacityWarning = capacityWarning ?? (message => Console.Error.WriteLine($"WARNING: {message}"));
         _http = http;
         _options = options;
         _deviceLoginRunnerId = runnerId;
@@ -867,8 +882,15 @@ public sealed class TaskServerClient : IDisposable
         {
             return;
         }
-        if (_centralRuntimeCapacityVersion > capacity.Version) return;
-        if (_centralRuntimeCapacityVersion == capacity.Version
+        if (_options is not null && !string.Equals(capacity.HostId, _options.Hostname, StringComparison.OrdinalIgnoreCase))
+        {
+            WarnCapacityOnce("Discarding runtime capacity for a foreign host.");
+            return;
+        }
+        if (_restoredCapacityFromCache && _centralRuntimeCapacityVersion > capacity.Version)
+            WarnCapacityOnce("Discarding runtime capacity cache version not issued by this server for this host.");
+        if (!_restoredCapacityFromCache && _centralRuntimeCapacityVersion > capacity.Version) return;
+        if (!_restoredCapacityFromCache && _centralRuntimeCapacityVersion == capacity.Version
             && _centralHostMaxParallelism == capacity.MaxParallelism)
         {
             return;
@@ -878,7 +900,15 @@ public sealed class TaskServerClient : IDisposable
         _centralHostMaxParallelism = capacity.MaxParallelism;
         _centralHostMaxParallelismAppliedAt = adoptedAt;
         _centralRuntimeCapacityVersion = capacity.Version;
+        _restoredCapacityFromCache = false;
         _runtimeCapacityCache?.Save(capacity, adoptedAt);
+    }
+
+    private void WarnCapacityOnce(string message)
+    {
+        if (_capacityWarningWritten) return;
+        _capacityWarningWritten = true;
+        _capacityWarning(message);
     }
 
     /// <summary>
@@ -903,8 +933,9 @@ public sealed class TaskServerClient : IDisposable
     private void RestoreRuntimeCapacityCache()
     {
         if (_runtimeCapacityCache is null || _options is null) return;
-        var cached = _runtimeCapacityCache.Load(_options.Hostname);
+        var cached = _runtimeCapacityCache.Load(_options.Hostname, WarnCapacityOnce);
         if (cached is null) return;
+        _restoredCapacityFromCache = true;
         _centralHostMaxParallelism = cached.Capacity.MaxParallelism;
         _centralHostMaxParallelismAppliedAt = cached.AdoptedAt;
         _centralRuntimeCapacityVersion = cached.Capacity.Version;
@@ -1380,6 +1411,8 @@ public sealed class TaskServerClient : IDisposable
             request,
             ct);
         AdoptRoleMaxParallelism(snapshot?.RoleMaxParallelism);
+        if (snapshot?.ConfiguredModelRoutes is { } configuredRoutes)
+            RunnerModelAcceptanceProbe.Shared.UseConfiguredModels(configuredRoutes);
     }
 
     /// <summary>

@@ -42,6 +42,13 @@ public sealed class AiOperatorDecisionQueue(
     private readonly string? _directory = string.IsNullOrWhiteSpace(configuration["TaskRepository"])
         ? null : Path.Combine(configuration["TaskRepository"]!, ".orchestration-ai-asks");
 
+    /// <summary>True when the AI Operator holds an ask for the decision occurrence.</summary>
+    public static bool HasCustody(IConfiguration configuration, string occurrenceId)
+        => !string.IsNullOrWhiteSpace(configuration["TaskRepository"])
+            && Path.GetFileName(occurrenceId) == occurrenceId
+            && File.Exists(Path.Combine(configuration["TaskRepository"]!, ".orchestration-ai-asks",
+                occurrenceId + ".json"));
+
     public void Enqueue(TaskInfo task, string occurrenceId, DecisionChoiceV1 choice)
     {
         if (_directory is null)

@@ -234,6 +234,51 @@ ProviderAuthProbe.Shared.UseRealRequest(
     options.Hostname);
 ProviderAuthProbe.Shared.UseCanaryPermit(client.ReserveProviderCanaryAsync);
 
+// Environment credentials cannot change in this daemon process. When the
+// operator has not supplied a generation label, the process lifetime is the
+// safe cache boundary; a renewed environment login restarts the daemon.
+var environmentCredentialGeneration = $"daemon-session:{Guid.NewGuid():N}";
+string? ModelProbeCredentialGeneration(string provider)
+{
+    var credential = ProviderCredentialMonitor.Inspect(provider);
+    return credential.CredentialGeneration
+           ?? (credential.EffectiveSource == "environment-file" ? environmentCredentialGeneration : null);
+}
+RunnerModelAcceptanceProbe.Shared.Configure(
+    async (provider, model, ct) =>
+    {
+        var context = AuthProbeContext(provider);
+        if (context is null) return new ProcessResult(1, "", "probe isolation unavailable");
+        var selection = CliSelection.Resolve(options, new RunSpecDto(CliType: provider, Model: model));
+        var root = Path.Combine(context.HomePath, ".model-acceptance-probe");
+        return await ProviderRealRequestHostFlight.RunAsync(
+            Path.Combine(context.HomePath, ".provider-real-probe.lock"),
+            async deadline =>
+            {
+                var workspace = Path.Combine(root, "workspace");
+                var worker = Path.Combine(root, model, "worker");
+                Directory.CreateDirectory(workspace);
+                Directory.CreateDirectory(worker);
+                if (!Directory.Exists(Path.Combine(workspace, ".git")))
+                {
+                    var init = await ProcessRunner.RunAsync("git", ["init", "-q"],
+                        workingDirectory: workspace, ct: deadline);
+                    if (init.ExitCode != 0)
+                        return (new ProcessResult(1, "", "probe workspace unavailable"), false, false);
+                }
+                return await CarWorkerExecution.RunAsync(
+                    new DetachedJobSpec(
+                        selection.FileName, [], workspace, "Reply OK.", worker, 35,
+                        selection.CliType, model, selection.ThinkingLevel,
+                        CodingAgentRunner.Model.CliPermissionModes.ReadOnly,
+                        CodingAgentRunner.Model.CliContextModes.Clean,
+                        RunId: ProviderAuthProbe.CleanContextIdentity,
+                        CleanContextKey: ProviderAuthProbe.CleanContextIdentity),
+                    worker, (_, _) => { }, stopToken: deadline);
+            }, ct);
+    },
+    ModelProbeCredentialGeneration);
+
 if (help)
 {
     PrintUsage();
@@ -305,6 +350,25 @@ if (options.HealthCheckOnly)
 
 try
 {
+    // IP-1: a run target talks to Studio's deploy routes only, never to Task
+    // Server work queues, and opens no listener.
+    if (options.Role == "run-target")
+    {
+        if (!daemonMode)
+            throw new ArgumentException("Run target runs as a polling service and does not accept coding task keys.");
+        var runTarget = AgentRunner.RunTargets.RunTargetOptions.From(options, Environment.GetEnvironmentVariable);
+        using var studio = new HttpClient(TaskServerClient.CreateServiceHandler(options))
+        {
+            BaseAddress = new Uri(options.ServerUrl.TrimEnd('/') + "/"),
+            Timeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds),
+        };
+        studio.DefaultRequestHeaders.TryAddWithoutValidation("X-Principal-Consumer-Id", options.RunnerId);
+        if (!string.IsNullOrWhiteSpace(options.AuthToken) && string.IsNullOrWhiteSpace(options.AuthTokenFile))
+            studio.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", options.AuthToken);
+        await AgentRunner.RunTargets.RunTargetDaemon.Create(runTarget, studio, Log).RunAsync(shutdown.Token);
+        Log("run-target daemon stopped");
+        return 0;
+    }
     await client.EnsureCompatibleAsync(shutdown.Token);
     // The host polls for device-login commands independently of task slots.
     // Only coding and review service identities own provider CLI homes.
@@ -408,7 +472,8 @@ static void PrintUsage()
           --server <url>          Task Server base URL       (RUNNER_SERVER_URL)
           --runner-id <id>        Stable runner identity     (RUNNER_ID)
           --runner-name <name>    Board-facing runner name   (RUNNER_NAME)
-          --role <coding|review|gate>  Separate service role (RUNNER_ROLE)
+          --role <coding|review|gate|integration|run-target>
+                                  Separate service role (RUNNER_ROLE)
           --client-id <id>        Attribution label only     (RUNNER_CLIENT_ID)
           --git-remote <url>      Startup probe/one-shot URL  (RUNNER_GIT_REMOTE)
           --git-push-remote <url> Probe/one-shot push URL     (RUNNER_GIT_PUSH_REMOTE)

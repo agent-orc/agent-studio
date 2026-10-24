@@ -26,6 +26,9 @@ public record GitPushResult(bool Success, string Sha, string Status, string? Err
 public record GitDiffLookupResult(bool Success, string Diff, string? Error);
 public record GitWorkerCommitCleanupResult(bool Success, string Status, string? Error);
 
+/// <summary>BD-2: one commit of a revision range with its tree and full message.</summary>
+public sealed record RevisionDetail(string Sha, string Tree, string Message);
+
 public enum IntegrationBranchSyncOutcome
 {
     UpToDate,
@@ -4069,6 +4072,26 @@ public partial class GitService
             .ToArray();
     }
 
+    /// <summary>Exact added and removed text lines for a delivery against its merge base.</summary>
+    public int? ChangedLinesAgainstMergeBase(string repoRoot, string targetRef, string sourceRef)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot)
+            || !IsLikelyBranchName(targetRef) || !IsLikelyBranchName(sourceRef)) return null;
+        var (output, _, code) = RunGitArgs(
+            repoRoot, "diff", "--numstat", $"{targetRef}...{sourceRef}", RevisionsOnly);
+        if (code != 0) return null;
+        var total = 0L;
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = line.Split('\t');
+            if (parts.Length < 3) continue;
+            if (int.TryParse(parts[0], out var added)) total += added;
+            if (int.TryParse(parts[1], out var removed)) total += removed;
+            if (total > int.MaxValue) return int.MaxValue;
+        }
+        return (int)total;
+    }
+
     /// <summary>Path cap of one <see cref="ReadFilesAtRevision"/> call.</summary>
     internal const int MaxRevisionFileReadPaths = 512;
 
@@ -5958,8 +5981,31 @@ public partial class GitService
             "--no-ff",
             "--no-edit",
             sourceRef);
-        if (directMergeCode == 0)
+        IReadOnlyList<string> directConflicts = directMergeCode == 0 ? [] : ListUnmergedFiles(repoRoot);
+        var reportOnlyConflict = directMergeCode != 0
+            && DeliveryReportPathPolicy.IsEnabled(repoRoot)
+            && DeliveryReportPathPolicy.AreOnlyReportConflicts(directConflicts);
+        if (directMergeCode == 0 || reportOnlyConflict)
         {
+            if (reportOnlyConflict)
+            {
+                var restoreArgs = new[] { "restore", "--source=HEAD", "--staged", "--worktree", "--" }
+                    .Concat(directConflicts).ToArray();
+                var (_, restoreError, restoreCode) = RunGitArgs(repoRoot, restoreArgs);
+                if (restoreCode != 0)
+                {
+                    RunGitArgs(repoRoot, "merge", "--abort");
+                    return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
+                        error: $"Could not retain integration report paths: {restoreError.Trim()}");
+                }
+                var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit");
+                if (commitCode != 0)
+                {
+                    RunGitArgs(repoRoot, "merge", "--abort");
+                    return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
+                        error: $"Could not commit the delivery merge: {commitError.Trim()}");
+                }
+            }
             var directMergedSha = ReadHeadShaAt(repoRoot);
             _logger.LogInformation(
                 "Merge-into-develop: directly merged {Task} into {Integration} at {Path} ({Sha}); delivery SHAs preserved",
@@ -5969,10 +6015,10 @@ public partial class GitService
                 directMergedSha);
             return MergeIntoIntegrationResult.Of(
                 MergeIntoIntegrationOutcome.Merged,
-                mergedSha: directMergedSha);
+                mergedSha: directMergedSha) with
+                { ConflictsResolved = reportOnlyConflict };
         }
 
-        var directConflicts = ListUnmergedFiles(repoRoot);
         RunGitArgs(repoRoot, "merge", "--abort");
         if (directConflicts.Count == 0)
         {
@@ -6195,6 +6241,10 @@ public partial class GitService
         if (replay.Success)
             return new BatchReplayResult(true, replay.RebasedTip, replay.Replacements, [], null,
                 BatchReplayRoute.Rebase);
+        if (replay.FailureKind == MechanicalRebaseFailureKind.Conflict
+            && DeliveryReportPathPolicy.IsEnabled(repoRoot)
+            && DeliveryReportPathPolicy.AreOnlyReportConflicts(replay.ConflictedFiles))
+            return MergeBatchMember(repoRoot, immutableResultRef, expectedResultSha, batchTip);
         return replay.FailureKind switch
         {
             MechanicalRebaseFailureKind.Conflict => BatchReplayResult.Conflict(
@@ -6257,12 +6307,31 @@ public partial class GitService
         if (mergeCode != 0)
         {
             var conflicted = ListUnmergedFiles(worktreePath);
+            if (DeliveryReportPathPolicy.IsEnabled(worktreePath)
+                && DeliveryReportPathPolicy.AreOnlyReportConflicts(conflicted))
+            {
+                var restoreArgs = new[] { "restore", "--source=HEAD", "--staged", "--worktree", "--" }
+                    .Concat(conflicted).ToArray();
+                var (_, restoreError, restoreCode) = RunGitArgs(worktreePath, restoreArgs);
+                if (restoreCode == 0)
+                {
+                    var (_, commitError, commitCode) = RunGitArgs(worktreePath, "commit", "--no-edit");
+                    if (commitCode == 0) return VerifyBatchMergeParents(worktreePath, resultSha, batchTip);
+                    mergeError = commitError;
+                }
+                else mergeError = restoreError;
+            }
             RunGitArgs(worktreePath, "merge", "--abort");
             return conflicted.Count > 0
-                ? BatchReplayResult.Conflict(conflicted, "Batch merge conflicted and was aborted.",
+                ? BatchReplayResult.Conflict(conflicted, $"Batch merge conflicted and was aborted: {mergeError.Trim()}",
                     BatchReplayRoute.Merge)
                 : BatchReplayResult.Infrastructure($"Batch merge failed: {mergeError.Trim()}");
         }
+        return VerifyBatchMergeParents(worktreePath, resultSha, batchTip);
+    }
+
+    private BatchReplayResult VerifyBatchMergeParents(string worktreePath, string resultSha, string batchTip)
+    {
         var (parents, parentsError, parentsCode) = RunGitArgs(
             worktreePath, "rev-list", "--parents", "-n", "1", "HEAD", RevisionsOnly);
         if (parentsCode != 0)
@@ -8168,6 +8237,32 @@ public partial class GitService
         return code == 0
             ? output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             : [];
+    }
+
+    /// <summary>
+    /// BD-2: commit, tree and message of each commit reachable from
+    /// <paramref name="tip"/> but not from <paramref name="exclusiveBase"/>,
+    /// newest first. The tree identifies the same content after a rebase or
+    /// squash; the message keeps any card key the rewrite retained. Both
+    /// revisions may be a SHA or a branch such as <c>origin/develop</c>.
+    /// Empty when a revision is invalid or unknown.
+    /// </summary>
+    public IReadOnlyList<RevisionDetail> ListRevisionDetails(string repoRoot, string tip, string? exclusiveBase,
+        int maxCount, bool includeMessages = true)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot) || !IsLikelyBranchName(tip)
+            || exclusiveBase is not null && !IsLikelyBranchName(exclusiveBase)) return [];
+        var format = includeMessages ? "--format=%H%x1f%T%x1f%B%x1e" : "--format=%H%x1f%T%x1e";
+        var arguments = new List<string> { "log", $"--max-count={Math.Max(1, maxCount)}", format, tip };
+        if (exclusiveBase is not null) arguments.Add("^" + exclusiveBase);
+        arguments.Add(RevisionsOnly);
+        var (output, _, code) = RunGitArgs(repoRoot, [.. arguments]);
+        if (code != 0) return [];
+        return output.Split('\x1e', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(entry => entry.Split('\x1f', 3))
+            .Where(fields => fields.Length >= 2)
+            .Select(fields => new RevisionDetail(fields[0], fields[1], fields.Length > 2 ? fields[2] : ""))
+            .ToArray();
     }
 
     /// <summary>

@@ -37,6 +37,20 @@ branch still carries that tree and the card still names the same delivery.
 If the published branch loses the containing tree, verification is stale and
 normal acceptance recovery returns the card to Human Review.
 
+An operator candidate verification is an immutable, per-card
+`integrated-verified` record of a published candidate SHA, review attempt,
+verification host, suite totals, and log hash. The write route fetches origin
+and requires candidate ancestry in the refreshed branch. Patch-equivalent
+deliveries use the recorded review attempt and a containment check against
+the candidate tree for each current attributed commit. This keeps board
+status and integration reconciliation correct after late attribution. A later
+review attempt cannot inherit that mapping; a branch rewrite that removes
+the candidate invalidates it. Idempotency comparison and append share the
+task write lock, so concurrent posts with different evidence cannot both
+report success or replace the first record. An audit repair pass at startup
+fills a missing timeline event from each persisted receipt under the lane
+move mutex.
+
 Operators can attach an external suite result with
 `POST /api/projects/{project}/external-verifications`. The body supplies
 `candidateSha`, `verificationHost`, `suiteSummary`, and a SHA-256 `logHash`.
@@ -78,6 +92,16 @@ captured SHA, attempt chain and Auto Review lane with the live card, including
 any pending continuation. A superseded result keeps its gate log and a
 `gate-result-superseded` timeline receipt with the original verdict; it does
 not rewrite the newer attempt's pipeline step or move the card (AGT-3151).
+Acceptance cancels gates still running or waiting in the remote machine queue,
+and every gate that registers while the card stays Completed; any move out of
+Completed lets the next gate run. The delivery-chain sweep cancels only the
+gates already running when it finds the delivery on the integration branch.
+Such a cancellation reports `superseded`, never `shutdown`, so it schedules no
+infrastructure retry. A late merge-gate result for a card completed since that
+gate started, or a delivery published while it waited, records
+`gate-result-superseded` on the live card and cannot apply its failure step or
+move the card. With guarded delivery on, the acceptance worker leaves a
+completed card in place when an older gate failure arrives.
 Local aspect review also checks the captured subject after its asynchronous
 verdict and grade work. A superseded review records `review-result-superseded`
 with the original aspect statuses and leaves the newer round alone.
@@ -87,6 +111,36 @@ holds it. If admission still fails, the emergency per-task gate uses the host
 stopping token. A cancelled emergency gate while the host is running leaves the
 card in Auto Review and returns a retryable report error; only host shutdown
 is recorded as `Gate cancelled: shutdown`.
+
+### SSH remote gate worker recovery
+
+`RemoteGateTransport` writes a durable record for each dispatched SSH worker
+under local application data. The record includes the run id, host, remote
+root, start time, persistent installation id, and owning Studio process
+identity (PID and process start time). The id comes from `RemoteGate:InstallationId`,
+the configured connectivity manifest, or a generated id in a directory scoped
+to the Studio installation's stable working directory under local application
+data. `RemoteGate:InstallationRoot` can select that stable path explicitly.
+Versioned prebuilt release directories do not affect the scope. First-time id
+publication is atomic across Studio processes; contenders read the same
+persisted id. Registry IO failures are logged without stopping the gate host;
+recovery resumes when a later process can open the registry. Startup and the
+one-minute recovery sweep touch the worker's `cancel` marker only after the
+owning process is gone. Recovery is scoped to
+the installation id and recorded host/root; the primary and every configured
+SSH shard host are swept. A startup sweep failure is logged and does not stop
+the periodic sweep. A different Studio installation sharing a gate host
+is left alone. The record is removed after the remote run
+directory is removed under the worker lock and confirmed gone. A run that never
+started is removed by the same recovery path.
+
+The transport refreshes a per-run heartbeat every ten seconds. The worker
+cancels gate execution when that heartbeat is absent or older than five minutes,
+then releases its worker lock; recovery removes its remote directory after the
+lock becomes available. On session loss the worker removes its own directory.
+Cancelled workers report `REMOTE_GATE_SLOT <runId> release`, and recovery logs
+the typed `remote gate run orphaned and cancelled` event with the run id, host,
+and age. It also appends the event to the project's activity feed.
 
 ## Exact-SHA gate verdict cache
 
@@ -262,6 +316,9 @@ stall event has `episodeId`, `project`, `raisedAtUtc`, `queueDepth`,
 `episodeOpenedAtUtc`. Times are UTC; durations are milliseconds. An open
 episode survives a restart and a reminder increments `raise` without creating
 a new episode. `advisory` and `episodeOpenedAtUtc` can be null.
+Batch planning assesses the shared machine gate queue across projects and
+planning groups, including live requests waiting for a slot. Each project's
+stall report and release route remain scoped to that project.
 
 Release considers cards escalated for a machine gate queue overrun of their
 current passed review. It moves each eligible card to Auto Review and admits
@@ -2561,6 +2618,35 @@ new fact even when its operator-facing summary is unchanged.
 
 ## Project deployment definition (P1)
 
+### Card previews
+
+The preview environment kind is per card, outside the ordered Staging and
+Production release lifecycle. A matching passed Remote Review build for the
+card's current immutable delivery SHA queues a preview job. The job carries
+that commit, the project build commands, a static or container template, and
+an address under `Preview:BaseDomain` (default `preview.internal`).
+`Preview:HostId` defaults to `preview-host`. The same deploy host claim, lease,
+and report queue handles preview creation, updates, and removal. The run zone
+implements `IPreviewRunZone` to build, route, check health, and capture a PNG;
+the ordinary stage and production executor does not process preview source
+commits. A preview is ready only after a healthy host report with a PNG.
+
+A project may declare a `preview` environment under
+`docs/deployments/environments/` for its host, template, and preview-only
+secret references. Preview references must be disjoint from Staging and
+Production references. Preview jobs never inherit their secret references.
+The deploy queue rejects a preview host used by any project's current
+Production declaration. Host claims also refuse queued preview and removal
+jobs if that host later becomes a Production host.
+The card's `card-preview.json` sidecar records its delivery, job, address,
+screenshot, and seven-day idle expiry. Reconciliation queues removal after
+integration, archive rejection, or expiry. `Hosting:MaxEnvironments` is the
+shared capacity limit when configured; otherwise `Preview:MaxActive` defaults
+to 20. The run zone is responsible for removing the hosted route and files
+before reporting a removal job healthy.
+After removal, the sidecar keeps the removed delivery as a tombstone. A new
+green delivery can replace an expired preview; the same SHA cannot recreate it.
+
 `.agent-studio/project.yml` schema 1 remains valid for preparation and verification.
 Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,
 `environments`, `lifecycles.standard`, `deploy`, and `variables`. Existing
@@ -2576,7 +2662,7 @@ in
   registry `image` without tag or digest). Artifact paths are
   repository-relative. Their segments contain only letters, digits, `.`, `_`, and
   `-`; no segment is empty, `.`, or `..`, or starts with `-`. A lone `.` names
-  the repository root as a build context.
+  the repository root only for a container build context.
 - `environments` are ordered and exactly Staging, then Production. Production
   must be `protected`: every deploy, redeploy, or rollback into it needs an
   Owner or Maintainer approval. Staging deploys automatically after
@@ -2587,27 +2673,32 @@ in
   and the standard lifecycle.
 - `lifecycles.standard`: Staging is automatic after integration; Production
   requires successful Staging and approval by Owner or Maintainer.
-- `deploy` steps in P1 (AGT-3221) are configuration only. Nothing executes
-  them yet; the SSH executor follows in a later card. `static-site` describes
+- `deploy` steps in P1 (AGT-3221) run from the release's committed schema 2
+  snapshot. `static-site` describes
   copying a static artifact to a `directory` on an SSH `target`. `container`
   describes pulling and restarting the compose `service` of a `composeFile` on
   an SSH `target`. Both need `healthUrl` (http or https, no credentials) and
   `healthTimeoutSeconds` (1 to 900), and may narrow `environments`. Because
   the executor will pass `directory` and `composeFile` through the remote shell
-  and use the directory as an `rsync --delete` target, both must lie strictly
+  and use the directory as an `scp` target, both must lie strictly
   below `/srv/`. They follow the artifact path segment rule: only letters,
   digits, `.`, `_`, and `-`, and no segment that is empty, `.`, or `..`, or
   starts with `-`. `composeFile` also ends in `.yml` or `.yaml`. `target` and
   `service` are lower-case identifiers; credentials never appear in the file.
+  A static bundle `path` must name a directory below the repository root,
+  and `dockerfile` must name a file there; only a container build context may
+  be `.`.
   When the pipeline-definition API reads, validates, or migrates a file, it
-  checks each `target` against the hosts that the project's AGT-3176
-  declarations under `docs/deployments/environments/` register for every
-  environment the step deploys to. The deploy queue addresses jobs to those
-  hosts. A target missing from them is reported as
-  `deploy-target-unregistered`. Preparation reads only the checkout and checks
+  checks each `target` against the project's effective environment hosts for
+  every environment the step deploys to. Schema 2 steps supply those hosts
+  when no legacy JSON declaration exists. A target missing from an existing
+  registration is reported as `deploy-target-unregistered`. An unreadable
+  declaration set produces one `declarations-unreadable` issue instead of
+  target registration errors. Preparation reads only the checkout and checks
   just the target's shape. The AGT-3198 steps `publish-static`,
   `start-container` (configuration placeholder), `run`, `health`, and
-  `approval` stay valid.
+  `approval` stay valid for the pipeline diagram, but a release with these
+  step kinds is refused until they have an executor.
 - `variables` hold either a plain `value` or a `secret` name for the secret
   provider, optionally scoped to `environments`. A plain value is refused as
   `secret-value-inline` in two cases. The first is a sensitive name: its last
@@ -2630,6 +2721,19 @@ The editor contract is
 variable keys, and its remote path, compose suffix, artifact path, identifier,
 and secret name patterns equal to `ProjectDeploymentVocabulary`.
 
+Release card attribution first matches archived integration-verification SHAs
+against the commits added since the previous release. A retained card key in
+an added commit message also matches after a rebase or squash. When the
+rewrite keeps neither, an added commit whose tree equals an integration-branch
+commit carries the verified cards behind that commit. Neither fallback repeats
+a card already included in an earlier release. The release
+stores that card-key delta immutably. Environment card badges project that
+delta through successful deployments and mark cards withdrawn by rollback.
+Release notes use the included cards' titles captured at release creation;
+a failed Production deployment
+creates an idempotent backlog bug card naming the release, deployment and
+included card keys.
+
 `/api/projects/{projectName}/pipeline-definition` serves the parsed diagram
 (gate, artifacts, environments with their steps and variables) with the issues.
 `POST .../validate` validates edited text without writing. For a valid schema 1
@@ -2638,6 +2742,26 @@ text stays as it is apart from the `schemaVersion` line, the new sections are
 appended with the file's own line ending, Staging and Production deploy steps
 come from the AGT-3176 declarations under `docs/deployments/environments/`, and
 every default the proposal had to choose is listed as a note.
+Static destinations outside `/srv/` stay quoted in the proposal and receive
+an explicit note that they must be changed before confirmation.
+The migration proposal is the one-time conversion of legacy declarations into
+schema 2. After migration, existing JSON declarations are checked for
+divergence; a project may run from schema 2 without JSON. project.yml owns
+hosts, protection, lifecycle, variables and
+SSH steps. Release creation compares the committed JSON declaration's host,
+template, health URL, static directory and secret names with project.yml and
+refuses divergence. The effective schema 2 definition is stored in the release
+snapshot and copied to each host job. The host checks SSH host keys strictly,
+copies static bundles to a version directory before switching `current`, or
+pins one compose service to the release artifact digest before pulling and
+starting it. It resolves secret names under the claimed job lease, sends step
+log messages to the deployment log, and records each step
+result. A failed deployment queues the previous healthy artifact for rollback.
+The deploy host needs OpenSSH and access to the artifact store; its SSH target
+needs Python 3, and container targets also need Docker Compose. The
+[deploy host API contract](../contracts/deploy-host-api.md) defines the claim,
+lease-bound step log and report payloads, failure responses, and secret
+resolution request.
 `POST .../migration` writes only through `ManagedRepositoryMutationService` as
 one path-scoped commit. The current file digest and the regenerated proposal
 digest must both still equal the dry run. That comparison is the mutation's
@@ -2713,6 +2837,8 @@ To import legacy `docs/deployments/**/deployment.json` descriptors once, run
 from the Studio checkout. The command converts executable legacy commands to
 Production `run` steps and Caddy site templates to `publish-static` steps, validates the result, and writes `project.yml` while
 preserving its line endings. Legacy descriptors remain in place for review.
+The imported static artifact uses `dist` as a safe placeholder; set it to the
+actual bundle directory before enabling a static publish.
 When a deployment section already exists, the import is a no-op. Unsupported descriptors
 yield a clear error and leave the repository unchanged.
 Review the generated process before committing it; imported commands retain

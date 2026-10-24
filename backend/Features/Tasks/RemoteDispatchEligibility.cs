@@ -50,8 +50,6 @@ public static class RemoteDispatchEligibility
                && !references.EvaluateWaitsOn(task).Blocked;
     }
 
-    public static bool IsReadOnlyRefused(TaskInfo task, bool runnerReadOnly) => runnerReadOnly;
-
     public static bool IsClaimableReady(
         TaskInfo task,
         ProjectSettings project,
@@ -61,5 +59,5 @@ public static class RemoteDispatchEligibility
         TaskReferenceIndex references) =>
         task.State == TaskStates.Ready
         && IsAssignedAndRunnable(task, project, runnerId, runnerName, references)
-        && !IsReadOnlyRefused(task, runnerReadOnly);
+        && !runnerReadOnly;
 }

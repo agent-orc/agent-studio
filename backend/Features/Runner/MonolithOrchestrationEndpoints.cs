@@ -115,6 +115,7 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
     IAiOperatorDecisionQueue aiOperator,
     OrchestratorLog operatorLog,
     EngineBatchAdmission batchAdmission,
+    OrchestrationEngineReadiness readiness,
     TimeProvider time,
     ILogger<MonolithOrchestrationRecoveryService> logger) : BackgroundService
 {
@@ -143,9 +144,27 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                aiOperator.RecoverPending();
-                RecoverOnce();
-                try { await store.RecoverApplyingAsync(stoppingToken); }
+                // Each recovery step fails alone so a pending activation cannot
+                // prevent the canary's applying recovery pass from running.
+                try { aiOperator.RecoverPending(); }
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "orchestration-operator-recovery-pending");
+                }
+                try { RecoverOnce(); }
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "orchestration-activation-recovery-pending");
+                }
+                try { await store.RecoverApplyingAsync(stoppingToken, (item, exception) =>
+                    logger.LogWarning(exception,
+                        "orchestration-application-retry-pending run={RunId} task={TaskId}",
+                        item.Run.RunId, item.Run.TaskId), item =>
+                    logger.LogInformation("orchestration-application-superseded run={RunId} task={TaskId}",
+                        item.Run.RunId, item.Run.TaskId), (item, exception) =>
+                    logger.LogError(exception,
+                        "orchestration-application-malformed run={RunId} task={TaskId}",
+                        item.Run.RunId, item.Run.TaskId)); }
                 catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
                 {
                     logger.LogWarning(exception, "orchestration-application-retry-pending");
@@ -385,6 +404,24 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 Reasoning = "The occurrence remains uncompleted and will resume after an engine instance claims or reclaims it.",
             });
         }
+        if (readiness.State != OrchestrationEngineReadiness.Ready) return;
+        foreach (var occurrence in store.WaitingOccurrences().Where(item =>
+            ShouldAlertHealthyLongWait(item, now)))
+        {
+            var card = scanner.ScanAllJobs().FirstOrDefault(item =>
+                item.Id == occurrence.Run.TaskId && item.ProjectName == occurrence.Run.ProjectId);
+            if (card is null || card.State != occurrence.ExpectedSourceState) continue;
+            var topic = "engine-decision-long-wait:" + occurrence.Run.RunId;
+            if (operatorLog.Read(card.WatchPath).Any(item => item.Topic == topic)) continue;
+            operatorLog.Append(card.WatchPath, new OrchestratorLogEntry
+            {
+                Kind = OrchestratorLogKinds.Alert,
+                Topic = topic,
+                JobId = card.Id,
+                Summary = $"{card.Key ?? card.Id} has waited over 15 minutes for an engine decision while the engine is live.",
+                Reasoning = $"Occurrence {occurrence.Run.RunId} remains {occurrence.Run.Status}.",
+            });
+        }
     }
 
     internal static bool ShouldAlert(MonolithOrchestrationOccurrence occurrence, DateTime now)
@@ -392,6 +429,11 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             && now - occurrence.Run.CreatedAt > TimeSpan.FromMinutes(1)
             || occurrence.Run.Status == "leased"
                 && occurrence.Lease is { ExpiresAt: var expiry } && expiry <= now;
+
+    internal static bool ShouldAlertHealthyLongWait(MonolithOrchestrationOccurrence occurrence,
+        DateTime now)
+        => occurrence.Run.Status is ("pending" or "leased" or "applying")
+            && now - occurrence.Run.CreatedAt >= TimeSpan.FromMinutes(15);
 
     /// <summary>
     /// A process can stop after the monolith applied a shadow transition but
@@ -413,9 +455,14 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         }
     }
 
-    internal void RecoverOnce()
+    internal void RecoverOnce() => RecoverOnceCore(null);
+
+    internal void RecoverOnceForTest(Action afterTaskSnapshot) => RecoverOnceCore(afterTaskSnapshot);
+
+    private void RecoverOnceCore(Action? afterTaskSnapshot)
     {
         var tasks = scanner.ScanAllJobs();
+        afterTaskSnapshot?.Invoke();
         // Of the card state this pass writes, the scanner projects only the wait
         // marker. A pass that wrote or removed none must not invalidate the task
         // index: a mutation invalidation makes the next freshness reader, task
@@ -427,52 +474,79 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
             if (changed) changedFolders.Add(folder);
             return changed;
         }
-        foreach (var occurrence in store.AwaitingActivation())
+        foreach (var occurrence in store.WaitingOccurrences().Where(item =>
+            item.Run.Status is "pending" or "leased"))
         {
-            var card = tasks.FirstOrDefault(item => item.Id == occurrence.Run.TaskId
-                && item.ProjectName == occurrence.Run.ProjectId);
             try
             {
-                if (occurrence.Run.CurrentStage == OrchestrationStage.ReviewInputDecision)
+                store.TrySupersedeStaleLaneDecision(occurrence.Run.RunId, () =>
                 {
-                    if (decisionInputs.GetInputs(occurrence.Run.RunId) is not null)
+                    var watchPath = scanner.GetWatchPaths().FirstOrDefault(item =>
+                        item.Name == occurrence.Run.ProjectId)?.Path;
+                    var card = watchPath is null ? null
+                        : scanner.FindPublishedJob(occurrence.Run.TaskId, watchPath);
+                    return card?.State;
+                });
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "orchestration-supersession-pending run={RunId}",
+                    occurrence.Run.RunId);
+            }
+        }
+        foreach (var occurrence in store.AwaitingActivation())
+        {
+            try
+            {
+                store.TryWithCardGate(occurrence.Run.ProjectId, occurrence.Run.TaskId, () =>
+                {
+                    var current = store.GetOccurrence(occurrence.Run.RunId);
+                    if (current is null || current.Claimable) return;
+                    var watchPath = scanner.GetWatchPaths().FirstOrDefault(item =>
+                        item.Name == occurrence.Run.ProjectId)?.Path;
+                    var card = watchPath is null ? null
+                        : scanner.FindPublishedJob(occurrence.Run.TaskId, watchPath);
+                    if (card is null || card.State != occurrence.ExpectedSourceState)
                     {
+                        store.Supersede(occurrence.Run.RunId, card?.State, includeApplying: false);
+                        return;
+                    }
+                    if (occurrence.Run.CurrentStage == OrchestrationStage.ReviewInputDecision)
+                    {
+                        if (decisionInputs.GetInputs(occurrence.Run.RunId) is not null)
+                        {
+                            store.Activate(occurrence.Run.RunId);
+                            markersChanged |= RecordMarker(card.FolderPath,
+                                MarkWaiting(card.FolderPath, occurrence.Run.RunId));
+                        }
+                        else if (time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt >= PreparationGrace)
+                            store.CancelUnactivated(occurrence.Run.RunId, "review-input-grounds-not-frozen");
+                        return;
+                    }
+                    markersChanged |= RecordMarker(card.FolderPath,
+                        EngineDecisionWaitMarker.Clear(card.FolderPath, occurrence.Run.RunId));
+                    var accepted = authority.GetReview(occurrence.AuthorityAttemptId)?.Reports.Any(report =>
+                        report.AuthorityStatus == AttemptWriteStatus.Accepted
+                        && occurrence.IdempotencyKey ==
+                            $"review-report:{occurrence.AuthorityAttemptId}:{report.IdempotencyKey}") == true;
+                    if (accepted)
+                    {
+                        if (occurrence.Run.CurrentStage == OrchestrationStage.ReviewDecision
+                            && !occurrence.Shadow)
+                        {
+                            var payload = JsonSerializer.Deserialize<StagePayload>(occurrence.Run.PayloadJson,
+                                new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                                ?? throw new InvalidDataException("The prepared review decision is missing its payload.");
+                            ReviewRoundBudgetStore.RecordAcceptedEngineReview(card.FolderPath, payload);
+                        }
                         store.Activate(occurrence.Run.RunId);
-                        if (card is not null && card.State == occurrence.ExpectedSourceState)
+                        if (!occurrence.Shadow)
                             markersChanged |= RecordMarker(card.FolderPath,
                                 MarkWaiting(card.FolderPath, occurrence.Run.RunId));
                     }
                     else if (time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt >= PreparationGrace)
-                        store.CancelUnactivated(occurrence.Run.RunId, "review-input-grounds-not-frozen");
-                    continue;
-                }
-                if (card is not null)
-                    markersChanged |= RecordMarker(card.FolderPath,
-                        EngineDecisionWaitMarker.Clear(card.FolderPath, occurrence.Run.RunId));
-                var accepted = authority.GetReview(occurrence.AuthorityAttemptId)?.Reports.Any(report =>
-                    report.AuthorityStatus == AttemptWriteStatus.Accepted
-                    && occurrence.IdempotencyKey ==
-                        $"review-report:{occurrence.AuthorityAttemptId}:{report.IdempotencyKey}") == true;
-                if (accepted)
-                {
-                    if (card is not null && occurrence.Run.CurrentStage == OrchestrationStage.ReviewDecision
-                        && !occurrence.Shadow)
-                    {
-                        var payload = JsonSerializer.Deserialize<StagePayload>(occurrence.Run.PayloadJson,
-                            new JsonSerializerOptions(JsonSerializerDefaults.Web))
-                            ?? throw new InvalidDataException("The prepared review decision is missing its payload.");
-                        ReviewRoundBudgetStore.RecordAcceptedEngineReview(card.FolderPath, payload);
-                    }
-                    store.Activate(occurrence.Run.RunId);
-                    if (!occurrence.Shadow && card is not null && card.State == occurrence.ExpectedSourceState)
-                        markersChanged |= RecordMarker(card.FolderPath,
-                            MarkWaiting(card.FolderPath, occurrence.Run.RunId));
-                }
-                else
-                {
-                    if (time.GetUtcNow().UtcDateTime - occurrence.Run.UpdatedAt >= PreparationGrace)
                         store.CancelUnactivated(occurrence.Run.RunId, "review-settlement-not-accepted");
-                }
+                });
             }
             catch (Exception exception)
             {
@@ -494,18 +568,22 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         // A marker that names a cancelled occurrence, or a completed one that
         // did not hold its card, waits for nothing; the card would show an
         // engine wait until it leaves the lane.
-        foreach (var card in tasks.Where(item => item.WaitingForEngineDecision))
+        foreach (var card in tasks.Where(item => EngineDecisionWaitMarker.Read(item.FolderPath) is not null))
         {
-            // RecoverOnce runs outside the loop's per-step catches, so a lane move
-            // or a concurrent clear that races this read must not end the loop.
             try
             {
-                if (EngineDecisionWaitMarker.Read(card.FolderPath) is { } runId
-                    && store.GetOccurrence(runId) is { } named
-                    && (named.Run.Status == "cancelled"
-                        || named.Run.Status == "completed" && !MayHoldCard(named)))
-                    markersChanged |= RecordMarker(card.FolderPath,
-                        EngineDecisionWaitMarker.Clear(card.FolderPath, runId));
+                store.TryWithCardGate(card.ProjectName, card.Id, () =>
+                {
+                    var current = scanner.FindPublishedJob(card.Id, card.WatchPath);
+                    if (current is null) return;
+                    if (EngineDecisionWaitMarker.Read(current.FolderPath) is { } runId
+                        && store.GetOccurrence(runId) is { } named
+                        && (named.ExpectedSourceState != current.State
+                            || named.Run.Status is ("cancelled" or "failed")
+                            || named.Run.Status == "completed" && !MayHoldCard(named)))
+                        markersChanged |= RecordMarker(current.FolderPath,
+                            EngineDecisionWaitMarker.Clear(current.FolderPath, runId));
+                });
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
                 or JsonException)

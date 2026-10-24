@@ -15,10 +15,13 @@ lifecycleHistory:
 
 ## Stage and production host deployments
 
-Projects declare each environment in `docs/deployments/environments/<id>.json`,
-using the [environment schema](../app/schemas/project-environment.schema.json).
-The declaration names its kind, host, address, container or static template,
-destination, health URL, promotion rule, and host-held secret references.
+Projects define deployment environments, lifecycle, variables, and executable
+steps in `.agent-studio/project.yml` schema 2. The existing
+`docs/deployments/environments/<id>.json` declarations remain for legacy
+compatibility; schema 2 supplies hosts when they are absent, and release
+creation refuses divergence where they exist.
+See the [schema 2 contract](../system/domains/pipeline.md#project-deployment-definition-p1)
+and [deploy host API contract](../system/contracts/deploy-host-api.md).
 For a container, `destination` is the local port behind the existing reverse
 proxy. For a static site, it is the served release directory; the proxy serves
 its `current` symlink. Static artifacts are tar or tar.gz files in the deploy
@@ -36,9 +39,11 @@ script copies the archive there under its digest. Set
 `DEPLOY_RELEASE_TOKEN_FILE` and pass `--project` so successful gates queue
 stage automatically. A deploy-role credential claims work through
 `/api/deploy/jobs/claim`.
-`agent-host deploy-loop` runs the container or static template on the declared
-host, resolves secret names from its local secret store, checks health, and
-reports a bounded result code. The Studio shows history and pending promotion.
+`agent-host deploy-loop` executes the release snapshot's ordered SSH steps,
+resolves schema 2 secret variables through the secret provider under its job
+lease, checks health, and reports ordered step results with a bounded evidence
+code. Legacy template jobs still use the host-local secret store. Studio shows
+step logs, history, and pending promotion.
 Every production release needs a person in Studio (BD-1). The declaration value
 `approval: stage-healthy-10m` is still accepted but no longer promotes
 production on its own. An approval expires after 24 hours.
@@ -65,6 +70,8 @@ reason, or `abort` to
 Retry queues the failed deploy step again under the same run. A failed health
 step retries only the health check, without redeploying the artifact. Abort and timeout
 use the existing automatic rollback rule, including its host-lost exception.
+An aborted run with a failed step leaves the same linked Production failure
+card as a run that fails without intervention.
 Manual rollback runs can pause and retry as rollbacks; automatic rollbacks never
 pause. Retry jobs retain their parent job id so reconciliation restores the
 same run if the control plane restarts after queuing but before saving the run.
@@ -84,18 +91,34 @@ stays the only executor; releases and runs describe and steer it.
 - **Release.** A green gate release (`POST /api/deploy/gate-releases`, or the
   operator route `POST /api/projects/{project}/environments/releases`) records an
   immutable release: version `yyyy.MM.dd.N`, commit, artifact digests, a process
-  version (hash of the project.yml schema 2 artifacts, standard lifecycle and
+  version (hash of the project.yml schema 2 artifacts, lifecycles, channels and
   deploy steps at the release commit plus the environment declarations), a
   variables version (hash of the project.yml schema 2 `variables` section at the
-  release commit, where a secret counts only by name, and of the secret
-  reference names per environment), the
-  cards it adds, and channel `default`. Each release is one write-once file under
+  release commit, where a secret counts only by name, environment protection,
+  and secret reference names per environment), the
+  cards it adds, and exactly one channel. Schema 2 `channels` select a named
+  lifecycle using `versionRules.prereleaseTag` and/or
+  `versionRules.branchPattern`; exactly one
+  channel has `default: true` as the fallback. The release request may supply
+  `versionTag`, `branch`, and `channel`; Owner or Maintainer can override rule
+  matching. Rule refusals name the rule. Variables may add `channels` alongside
+  `environments`; both scopes must match and the most specific scope wins.
+  A named lifecycle's approval list is checked against the caller's resolved
+  Owner or Maintainer role.
+  Each release is one write-once file under
   `<TaskRepository>/deployments/projects/<project>/releases/`, written as a
   flushed temporary file and moved into place without overwrite. The same
-  project, commit and artifacts always resolve to the same release. Cards are
-  those whose integration verification names a commit reachable from the release
-  commit and not from the previous release (at most 200 commits for the first
-  release).
+  project, commit and artifacts always resolve to the same release. Card
+  attribution reads verified integration records. A matching commit or card
+  key in the release delta is used when present. When a rebase or squash
+  rewrites both the SHA and commit message, the verified integration-branch
+  commit still maps the card: the release adds the cards behind the newest
+  integration-branch commit whose tree a release delta commit carries
+  unchanged, down to the commit the previous release carried. A release
+  without that tree, such as a hotfix branch, claims no card by time alone.
+  Cards already included by an ancestor release are excluded from the new
+  release's added cards. A failed Production run is checked for its failure
+  card once per process.
 - **Release order.** Releases never move back in history. A commit that is a
   strict ancestor of the newest release's commit is refused with 409 and
   `"reason":"superseded"`, so a gate
@@ -112,17 +135,20 @@ stays the only executor; releases and runs describe and steer it.
   including every other 409, stops it with exit code 9. A
   declaration snapshot that git cannot read completely also answers 409;
   invalid input, including a malformed committed declaration, answers 400.
-- **Declaration snapshot.** The release file also stores the environment
-  declarations (`docs/deployments/environments/*.json`) as committed at the
-  release commit. Every deploy job of the release, redeploy and rollback
-  included, uses that snapshot, so a later change in the working tree or a later
-  commit cannot change what an existing release deploys. The snapshot decides
-  what is deployed (template, destination, health URL, container port, secret
-  references); the current declaration decides where (`targetHostId`). After an
-  environment moves to another host, a rollback or a late approval of an older
-  release goes to the new host, and the run log names the host change. The
-  environment must still be declared; a release without a snapshot for an
-  environment cannot be deployed there. Automatic and history rollbacks of the
+- **Declaration snapshot.** The release file stores the effective schema 2
+  definition and environment declarations as committed at the release commit.
+  Every deploy job of the release, redeploy and rollback included, uses that
+  snapshot, so a later change in the working tree or a later commit cannot
+  change what an existing release deploys. The snapshot decides what is
+  deployed (SSH steps, variables, template, destination, health URL, container
+  port and secret references); the current declaration decides where
+  (`targetHostId`). After an environment moves to another host, a rollback or a
+  late approval of an older release is queued for the new host and the run log
+  names the host change. A schema 2 SSH step still pins its original `target`,
+  so the host rejects that old step; create a new release with the new target
+  before deploying there. The environment must still be declared; a release
+  without a snapshot for an environment cannot be deployed there. Automatic
+  and history rollbacks of the
   host queue repeat the declaration the artifact last deployed healthy with, on
   the currently declared host. A job queued before the host moved stays with the
   old host; cancel it and deploy again.
@@ -147,12 +173,14 @@ stays the only executor; releases and runs describe and steer it.
   promotion and rollback routes answer through the same rules.
 - **Deploy run.** Each run of a release in an environment has the state
   `queued`, `running`, `succeeded`, `failed`, `cancelled` or `awaiting-approval`,
-  and the steps `approval` (production only), `publish-static` or
-  `start-container`, and `health`. The host reports one bounded result code, so
-  the health step has one observed instant. Step log lines are written by the
-  Studio, never copied from host output. Runs follow the queue: jobs started by
-  the gate, the older promotion and rollback routes, and automatic rollback are
-  adopted into runs, and pending promotions become runs that await approval. A
+  and the steps `approval` (when protected), the ordered schema 2
+  `deploy[index]:kind` steps (or the legacy `publish-static` or
+  `start-container` step), and `health`. The host streams bounded step messages
+  into the run log and reports ordered per-step results plus a bounded evidence
+  code. The health step has one observed instant, at the report. Runs follow
+  the queue: jobs started by the gate, the older promotion and rollback routes,
+  and automatic rollback are adopted into runs. Pending promotions become runs
+  that await approval. A
   failed deploy gets no automatic rollback when a newer job already waits for
   the environment, so the rollback cannot replace that newer release.
 - **Redeploy and rollback.** Redeploy runs the environment's current release
@@ -183,21 +211,53 @@ stays the only executor; releases and runs describe and steer it.
 
 Routes, under `/api/projects/{project}/deploy`: `GET environments`, `status`
 (one EnvironmentStatus per environment), `releases`, `releases/{id}`,
-`deployments[?environmentId=]`, `deployments/{id}`, `deployments/{id}/log[?step=]`
-and `audit`; `POST releases/{id}/deployments` (`{environmentId, approve}`),
+`releases/{id}/notes`, `cards`, `deployments[?environmentId=]`,
+`deployments/{id}`, `deployments/{id}/log[?step=]` and `audit`;
+`POST releases/{id}/deployments` (`{environmentId, approve}`),
 `deployments/{id}/approve`, `deployments/{id}/reject`, `deployments/{id}/cancel`,
 `environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve}`).
 `GET /api/deploy/matrix` returns the workspace dashboard rows, filtered to the
-caller's projects.
+caller's projects. `GET /api/deploy/cards` returns card environment badges across
+the caller's projects. The project-scoped `cards` route returns the same badges
+for one project. Each card has `projectId`, `cardKey` and `environments`; each
+badge has `environmentId`, `environmentName`, `kind`, `state`, `releaseId`,
+`releaseVersion` and `atUtc`. Badge `state` is `not-deployed`, `queued`,
+`running`, `succeeded`, `failed`, `cancelled`, `awaiting-approval` or
+`rolled-back`. Card presence follows the ancestry of the deployed release,
+including divergent release histories. `rolled-back` marks a card withdrawn by
+a successful rollback and stays visible through later queued or failed attempts;
+`not-deployed` means the card has no deployment in that environment. The
+release notes response has `releaseId`, `version`, `preview` and `notes` entries
+with `cardKey` and product-facing `text` captured from the included cards.
+Deployment `state` uses `queued`, `running`, `succeeded`, `failed`, `cancelled`
+and `awaiting-approval`. Step `state` also permits `pending` and `skipped`.
+EnvironmentStatus `health` is `healthy`, `unhealthy` or `unknown`.
 
 The deploy host uses a credential with only `runner.deploy`; its service
 identity must match `targetHostId`. In the managed host record, the deploy
-principal and host id are the same enrolled `runner_<id>` value. Its secret
-store is a local directory of
-files named by the declared `secretRefs`. Secret values never enter the API,
-job state, or audit history. The claim response carries names only.
+principal and host id are the same enrolled `runner_<id>` value. Schema 2
+secret variables resolve through the secret provider under the claimed job's
+lease. Legacy template `secretRefs` use a local directory of host-held files.
+Secret values do not enter job state or audit history. The claim response
+carries names only; the secret resolution response returns a value to the
+authorized host for execution.
 The managed `remote-runner-onboard.sh --role deploy` path installs the separate
 `agent-runner-deploy.service` and generated `deploy.env` for the host.
+
+A container environment with `"destination": "edge"` is hosted by the
+run-target role instead (IP-1, `RUNNER_ROLE=run-target`). It declares
+`domains`, `edge` (`acme` or `cloudflare`), `healthPath`, plain `variables`, and
+`resources`. The run host polls its desired state, starts each new revision
+next to the running one behind an edge Caddy, and switches traffic only after
+the health check passes. It keeps the previous revision for rollback,
+restarts crashed apps with backoff, and rolls a crash-looping revision back.
+It removes an app only on Studio's explicit removal signal. For production
+and stage, Studio sends that signal only after an operator confirms the
+pending removal or the repository holds a tombstone (`"removed": true`).
+Domains must fall under the project's operator-owned suffixes. Secrets reach the
+app as files on tmpfs, named by `<NAME>_FILE`. The same deploy jobs,
+promotions, and automatic rollback apply. See the
+[runner domain map](../system/domains/runner.md#run-target-host-app-hosting-ip-1).
 
 Status: concept and initial workflow implemented, 2026-07-11. The shared
 Deployment contract now includes DEP-1 history and DEP-2 repository-derived

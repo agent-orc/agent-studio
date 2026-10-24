@@ -1671,6 +1671,40 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Interrupted_ejected_fallback_keeps_eject_until_terminal_retry()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var ejected = SeedMember(factory, "DOC-EJECT-RETRY", "docs/eject-retry.md");
+        _ = SeedMember(factory, "DOC-EJECT-KEEP", "docs/eject-keep.md");
+        _gate.Batch = request => Red(request.ExpectedSha);
+        _gate.Base = request => Red(request.ExpectedSha);
+        _gate.Fallback = request => new BuildTestGateResult(BuildTestGateVerdict.Fail, null, 0,
+            "", "Gate cancelled: shutdown.", false, false)
+        {
+            FailureKind = BuildTestGateFailureKind.Cancellation,
+            CancellationReason = GateCancellationReasons.Shutdown,
+        };
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.True(pilot.RequestEject(ProjectName, ejected.Key));
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.True(store.HasEject(ProjectName, ejected.Key));
+        AssertLane(ejected.Key, TaskStates.AutoReview);
+        Assert.Equal(1, _gate.FallbackRuns);
+
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        await pilot.TickAsync(CancellationToken.None);
+        Assert.False(store.HasEject(ProjectName, ejected.Key));
+        AssertLane(ejected.Key, TaskStates.Escalated);
+        Assert.Equal(2, _gate.FallbackRuns);
+    }
+
+    [Fact]
     public async Task Superseded_push_marker_uses_current_card_folder_and_does_not_hold_batch()
     {
         using var factory = BuildFactory();
@@ -3182,7 +3216,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
     }
 
     private WebApplicationFactory<Program> BuildFactory(
-        IReadOnlyDictionary<string, string?>? configuration = null)
+        IReadOnlyDictionary<string, string?>? configuration = null, Action<IServiceCollection>? testServices = null)
     {
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -3223,10 +3257,17 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
                 // Keep only the queue consumer needed by report requests; the
                 // periodic host loops can otherwise resume a seeded review or
                 // move its lane between the tick and the assertion.
-                services.RemoveAll<IHostedService>();
+                for (var index = services.Count - 1; index >= 0; index--)
+                {
+                    var descriptor = services[index];
+                    if (descriptor.ServiceType == typeof(IHostedService)
+                        && descriptor.ImplementationType?.Namespace?.StartsWith("AgentStudio.", StringComparison.Ordinal) == true)
+                        services.RemoveAt(index);
+                }
                 services.AddHostedService<RemoteReviewEvidenceProjectionWorker>();
                 services.AddSingleton<MonolithOrchestrationRecoveryService>();
             });
+            if (testServices is not null) builder.ConfigureTestServices(testServices);
         });
         factory.Services.GetRequiredService<BatchGatePilotService>().WaitForFlightsInTick = true;
         return factory;

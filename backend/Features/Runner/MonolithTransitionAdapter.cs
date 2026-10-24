@@ -10,6 +10,23 @@ public static class MonolithTransitionAdapter
 {
     public static TransitionDecision Decide(TransitionFacts facts) => TransitionDecisionPolicy.Decide(facts);
     public static ReviewBudgetDecision ReviewBudget(ReviewBudgetFacts facts) => ReviewBudgetPolicy.Decide(facts);
+    public static DeepReviewDecision DeepReview(DeepReviewGrounds facts, string mode,
+        string? ruleVersionId = null, bool? ruleSelection = null, string? ruleModel = null,
+        string? ruleThinkingLevel = null)
+        => DeepReviewPolicy.Decide(facts, mode, ruleVersionId, ruleSelection,
+            ruleModel, ruleThinkingLevel);
+
+    public static IReadOnlyList<ReviewFollowUpFinding> MergeReviewFindings(
+        IEnumerable<ReviewFollowUpFinding> findings)
+        => ReviewFindingMergePolicy.Merge(findings);
+    public static IReadOnlyList<string> BlockingReviewFindingKeys(
+        IEnumerable<ReviewFollowUpFinding> findings)
+        => ReviewFindingMergePolicy.BlockingFingerprints(findings);
+    public static IReadOnlyList<string> BlockingReviewFindingKeys(
+        IEnumerable<ReviewVerdictDto> verdicts)
+        => BlockingReviewFindingKeys(verdicts.Select(item => new ReviewFollowUpFinding(
+            item.Aspect, item.Status, item.Summary, item.EvidenceChecked,
+            item.Missing, item.Classification)));
     public static OperatorSweepDecision Sweep(string sweep, OperatorSweepTrigger? trigger, OperatorSweepGuardFacts facts)
         => OperatorSweepPolicy.Decide(sweep, trigger, facts);
 
@@ -60,6 +77,31 @@ public static class MonolithTransitionAdapter
 
     public static BatchPlanStep BatchPlan(BatchPlanFacts facts)
         => BatchPlanDecisionPolicy.Decide(facts);
+
+    public static GateQueueOverrunAction GateQueueOverrun(string? budgetName, string? budgetPhase,
+        string? lane, bool currentGeneration, TimeSpan totalQueueWait = default, TimeSpan? queueWaitCap = null)
+        => GateQueueStallPolicy.Decide(budgetName, budgetPhase, lane, currentGeneration,
+            totalQueueWait, queueWaitCap);
+
+    public static TimeSpan GateQueueWaitCap(TimeSpan queueBudget) => GateQueueStallPolicy.QueueWaitCap(queueBudget);
+
+    public static bool IsGateQueueOverrun(string? budgetName, string? budgetPhase)
+        => GateQueueStallPolicy.IsQueueOverrun(budgetName, budgetPhase);
+
+    public static bool GateQueueStallReminds(DateTimeOffset lastRaisedAtUtc, DateTimeOffset nowUtc)
+        => GateQueueStallPolicy.RemindsStall(lastRaisedAtUtc, nowUtc);
+
+    public static bool BatchBacklogAgedOut(DateTimeOffset readyAtUtc, DateTimeOffset nowUtc, int deadlineMinutes)
+        => BatchGateLookAheadPlanner.AgedOut(readyAtUtc, nowUtc, deadlineMinutes);
+
+    public static GateQueueAssessment GateQueue(GateQueueFacts facts) => GateQueueStallPolicy.Assess(facts);
+
+    public static bool GateQueueStallRaisesEvent(bool episodeOpen) => GateQueueStallPolicy.RaisesStallEvent(episodeOpen);
+
+    public static bool GateQueueEpisodeDrained(int queueDepth) => GateQueueStallPolicy.EpisodeDrained(queueDepth);
+
+    public static GateQueueReleaseRefusal? GateQueueStallReleaseRefusal(GateQueueReleaseFacts facts)
+        => GateQueueStallPolicy.ReleaseRefusal(facts);
 
     public static RemoteReviewContinuationStep ContinuationReplay(IEnumerable<RoundTimelineFact> ledger,
         string attemptId, string cause, string moveKey, string currentState)

@@ -231,6 +231,7 @@ public sealed class TaskAccessService : ITaskAccess, ITaskAccessHost
             ct,
             cause: request.Cause,
             reason: request.Reason,
+            expectedSourceState: request.ExpectedSourceState,
             transitionCause: request.TransitionCause,
             transitionDetail: request.TransitionDetail);
         if (outcome.Status == MoveJobStatus.NotFound)
