@@ -45,4 +45,13 @@ test('environment page shows production runbook approval and log', async ({ page
     await setTheme(page, theme);
     await page.screenshot({ path: path.join(results, `runbook-environment-${theme}.png`) });
   }
+
+  await page.goto(`/#/projects/${slug}/deploy`);
+  const runbooksTab = page.getByTestId('deploy-tab-runbooks');
+  await expect(runbooksTab).toBeEnabled();
+  await runbooksTab.click();
+  await expect(runbooksTab).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId('deploy-tab-overview')).not.toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId('project-deploy-area').getByTestId('environment-runbooks').first()).toContainText('restart');
+  await page.screenshot({ path: path.join(results, 'runbook-deploy-tab-dark.png') });
 });

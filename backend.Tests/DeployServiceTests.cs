@@ -52,7 +52,7 @@ public sealed class DeployServiceTests : IDisposable
         _clock.Advance(TimeSpan.FromMinutes(6));
         Assert.Null(environments.Claim("stage-host"));
         Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok",
-            [new(0, true), new(1, true)])));
+            RunbookResults: [new(0, true), new(1, true)])));
         runbooks.SyncAfterHostCall("demo");
 
         var result = runbooks.Run("demo", requested.Value.Id)!;
@@ -87,7 +87,7 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal("prod-host", job.HostId);
         Assert.Contains("DATABASE_URL", job.SecretRefs);
         Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, false, "deploy-step-failed",
-            [new(0, false)])));
+            RunbookResults: [new(0, false)])));
         runbooks.SyncAfterHostCall("demo");
         Assert.Equal(DeploymentStates.Failed, runbooks.Run("demo", waiting.Id)!.State);
         Assert.Contains(store.ReadAudit("demo", 20), entry => entry.Action == "runbook-approved"
@@ -185,7 +185,7 @@ public sealed class DeployServiceTests : IDisposable
         var claimed = (await claim.Content.ReadFromJsonAsync<DeployJob>())!;
         Assert.Equal(requested.Id, claimed.RunbookRunId);
         using var report = await client.PostAsJsonAsync($"/api/deploy/jobs/demo/{claimed.Id}/report",
-            new DeployReportRequest(claimed.LeaseToken!, true, "health-ok", [new(0, true)]));
+            new DeployReportRequest(claimed.LeaseToken!, true, "health-ok", RunbookResults: [new(0, true)]));
         Assert.Equal(HttpStatusCode.OK, report.StatusCode);
         Assert.Equal("healthy", environments.Read("demo")!.Jobs.Single().Status);
 

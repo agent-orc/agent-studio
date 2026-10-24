@@ -1,7 +1,7 @@
 <section class="project-environments" data-testid="project-operations-environments">
   <header class="project-environments__head">
-    <h1>Operations</h1>
-    <p>Application health by environment and project activity.</p>
+    <h1>{{ heading() }}</h1>
+    <p>{{ heading() === 'Runbooks' ? 'Runbooks and their history by environment.' : 'Application health by environment and project activity.' }}</p>
   </header>
   @if (loading()) {
     <p role="status">Loading environments…</p>

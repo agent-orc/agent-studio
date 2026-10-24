@@ -10,6 +10,7 @@
     <button type="button" data-testid="deploy-tab-history" [attr.aria-current]="view() === 'history' ? 'page' : null" (click)="show('history')">History</button>
     <button type="button" data-testid="deploy-tab-steps" [attr.aria-current]="view() === 'steps' ? 'page' : null" (click)="show('steps')">Run steps</button>
     <button type="button" disabled title="Planned for P2">Variables · P2</button>
+    <button type="button" data-testid="deploy-tab-runbooks" [attr.aria-current]="view() === 'runbooks' ? 'page' : null" (click)="show('runbooks')">Runbooks</button>
     <button type="button" data-testid="deploy-tab-operations" [attr.aria-current]="view() === 'operations' ? 'page' : null" (click)="show('operations')">Operations</button>
   </nav>
   @if (notices().length) {
@@ -34,6 +35,7 @@
           [total]="releaseTotal()" [offset]="releaseOffset()" (pageChange)="changeReleasePage($event)" /> }
         @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading pipeline…</p> } }
         @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" /> }
+        @case ('runbooks') { @defer { <app-project-environment-overview [projectName]="projectName()" heading="Runbooks" (openDeploy)="show('overview')" /> } @placeholder { <p>Loading runbooks…</p> } }
         @case ('operations') { <app-environment-health-panel [projectName]="projectName()" /> }
         @case ('history') {
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"

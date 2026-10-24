@@ -897,7 +897,7 @@ public sealed partial class ProjectEnvironmentService
                     (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseFor(item)));
                 if (job is null) continue;
                 var reserved = false;
-                if (!job.IsStop && job.Kind != "preview-remove"
+                if (!job.IsStop && job.Kind != "preview-remove" && job.RunbookName is null
                     && !TryAdmitClaim(project, job, out reserved)) continue;
                 var claimed = job with
                 {
@@ -906,7 +906,8 @@ public sealed partial class ProjectEnvironmentService
                 };
                 state.Jobs[state.Jobs.IndexOf(job)] = claimed;
                 Save(project, state);
-                _quota?.RecordDeployStart(project, claimed.Id, claimed.EnvironmentId);
+                if (claimed.RunbookName is null)
+                    _quota?.RecordDeployStart(project, claimed.Id, claimed.EnvironmentId);
                 return claimed;
             }
             return null;

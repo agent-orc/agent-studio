@@ -17,6 +17,7 @@ type EnvironmentStatus = ProjectEnvironments['environments'][number];
 export class ProjectEnvironmentOverviewComponent {
   private readonly tasks = inject(TaskService);
   readonly projectName = input.required<string>();
+  readonly heading = input('Operations');
   readonly openDeploy = output<void>();
   readonly environments = signal<readonly EnvironmentStatus[]>([]);
   readonly loading = signal(true);
