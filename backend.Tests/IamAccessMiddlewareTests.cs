@@ -109,6 +109,18 @@ public sealed class IamAccessMiddlewareTests : IDisposable
     }
 
     [Fact]
+    public async Task A_mapped_filesystem_snapshot_requires_the_owner_workspace_permission()
+    {
+        var viewer = Invite("snapshot.viewer", new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha")));
+        var denied = await Invoke("GET", "/api/filesystem-layer/snapshot", "/api/filesystem-layer/snapshot", viewer);
+        Assert.Equal((403, false), (denied.Status, denied.Called));
+
+        var owner = Login("first.owner", Password);
+        var allowed = await Invoke("GET", "/api/filesystem-layer/snapshot", "/api/filesystem-layer/snapshot", owner);
+        Assert.True(allowed.Called);
+    }
+
+    [Fact]
     public async Task Service_accounts_act_through_their_own_bindings_without_csrf()
     {
         var account = _store.CreateServiceAccount(new CreateServiceAccountRequest("docs-bot", null,

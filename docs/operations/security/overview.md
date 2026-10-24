@@ -205,7 +205,15 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   bindings for `project.read`. The unscoped live-event group requires a
   workspace binding. Reading one `/api/v1/reviews/attempts/{id}` result also
   checks `project.read` against the attempt's card project and returns 404
-  outside that scope.
+  outside that scope. A workspace binding can read the attempt even after its
+  card folder is removed. The older `/api/attempts/tasks/{key}`,
+  `/api/attempts/runs/{id}`, and `/api/attempts/reviews/{id}` reads require
+  `workspace.operate`, because their handlers do not resolve a project.
+- Filesystem-layer snapshots accept a host folder path and can refresh a
+  snapshot in that folder. Their routes require the Owner's
+  `workspace.administer` permission. Managing installation secret backends
+  also requires `workspace.administer`; deploy-job artifact reads require a
+  Runner service credential.
 - Environment scopes name the environment kind of the project's declarations
   (`docs/deployments/environments/*.json`): `stage`, `production`, or
   `other`, never an environment id. Releases address `stage`, promotions and

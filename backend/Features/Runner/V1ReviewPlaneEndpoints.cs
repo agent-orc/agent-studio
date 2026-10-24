@@ -626,7 +626,8 @@ public static class V1ReviewPlaneEndpoints
             var review = authority.GetReview(attemptId);
             if (review is null)
                 return Results.NotFound(new Contract.ApiError("not-found", "ReviewAttempt was not found."));
-            if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess)
+            if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access
+                && !access.Allows(IamPermissions.ProjectRead, PermissionTarget.WorkspaceWide))
             {
                 var task = FindTask(scanner, review.TaskKey);
                 if (task is null || !ProjectAccessAuthorization.AllowsTasks(

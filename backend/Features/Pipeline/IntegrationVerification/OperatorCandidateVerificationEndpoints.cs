@@ -184,6 +184,6 @@ public static class OperatorCandidateVerificationPolicy
            && context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is null;
 
     public static bool HasWorkspaceScope(HttpContext context)
-        => context.Items[AccessSecurityMiddleware.RequestAccessItem] is not RequestAccess access
-           || access.Allows(IamPermissions.WorkspaceOperate, PermissionTarget.WorkspaceWide);
+        => context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access
+           && access.Allows(IamPermissions.WorkspaceOperate, PermissionTarget.WorkspaceWide);
 }

@@ -59,7 +59,7 @@ public sealed class OperatorCandidateVerificationTests
     public void WorkspaceOperationRequiresAWorkspaceBinding()
     {
         var context = new DefaultHttpContext();
-        Assert.True(OperatorCandidateVerificationPolicy.HasWorkspaceScope(context));
+        Assert.False(OperatorCandidateVerificationPolicy.HasWorkspaceScope(context));
         context.Items[AccessSecurityMiddleware.RequestAccessItem] = Access(IamPrincipalKind.User, IamScope.ForProject("alpha"));
         Assert.False(OperatorCandidateVerificationPolicy.HasWorkspaceScope(context));
         context.Items[AccessSecurityMiddleware.RequestAccessItem] = Access(IamPrincipalKind.User, IamScope.Workspace);

@@ -203,6 +203,7 @@ public static class RoutePermissionCatalog
             "/api/runner/orchestrator-decisions/**", "/api/runner/project-chat/claim", "/api/runner/project-chat/renew",
             "/api/runner/project-chat/complete", "/api/runner/replay/events",
             "/api/clients/{}/runner-git-capability", "/api/deploy/jobs/**", "/api/deploy/gate-releases");
+        Add("GET", IamPermissions.RunnerService, "/api/deploy/jobs/{}/{}/artifact");
         // The proxy to a standalone Task Server declares its own split
         // (TaskServerPlaneProxy.MapTaskServerPlaneProxy).
         Add("*", IamPermissions.WorkspaceOperate, "/api/v1/management/**");
@@ -259,6 +260,7 @@ public static class RoutePermissionCatalog
         // --- Secrets: write without read; no human route returns a value ----
         // Only a Runner credential bound to a live lease resolves a value.
         Add("POST", IamPermissions.RunnerService, "/api/runner/secrets/resolve");
+        Add("PUT", IamPermissions.WorkspaceAdminister, "/api/secrets/backends");
         Add("R", IamPermissions.SecretsRead,
             "/api/secrets", "/api/secrets/audit", "/api/secrets/workspace/**", "/api/projects/{}/secrets/**");
         Add("W", IamPermissions.SecretsWrite, "/api/secrets/workspace/**", "/api/projects/{}/secrets/**");
@@ -283,6 +285,11 @@ public static class RoutePermissionCatalog
             "/api/clients/{}/defaults", "/api/clients/{}/runner-capacity", "/api/git/branch-sweep/settings",
             "/api/orchestration/rollout/**");
         Add("POST", IamPermissions.WorkspaceRead, "/api/token-pricing/calculate", "/api/component-routing/resolve");
+        // These reads accept host paths or authority ids rather than a project
+        // address. They must not inherit project-scoped workspace.read.
+        Add("R", IamPermissions.WorkspaceAdminister, "/api/filesystem-layer/**");
+        Add("R", IamPermissions.WorkspaceOperate,
+            "/api/attempts/tasks/{}", "/api/attempts/runs/{}", "/api/attempts/reviews/{}");
         Add("W", IamPermissions.WorkspaceOperate,
             "/api/cli/quota/refresh/**", "/api/cli/{}/session", "/api/cli/{}/working-memory", "/api/clients/**",
             "/api/crash-recovery/**", "/api/git/branch-sweep/**", "/api/git/cleanup/**", "/api/git/branch-reclaim/**",
@@ -292,7 +299,7 @@ public static class RoutePermissionCatalog
             "/api/system/**", "/api/environment/**", "/api/cli/**", "/api/clients/**", "/api/watch-paths/**",
             "/api/workspaces/**", "/api/workspace/**", "/api/tags/**", "/api/search/**", "/api/usage/**",
             "/api/token-pricing/**", "/api/admin/**", "/api/agent-rules", "/api/adhoc-usage/**", "/api/diagnostics/**",
-            "/api/devtools/**", "/api/filesystem-layer/**", "/api/orchestration/rollout/**", "/api/cause-breakers/**",
+            "/api/devtools/**", "/api/orchestration/rollout/**", "/api/cause-breakers/**",
             "/api/gate-economics", "/api/watcher/**", "/api/crash-recovery/**", "/api/git/branch-sweep/**",
             "/api/git/cleanup/**", "/api/auto-review/**", "/api/runner/status", "/api/runner/orchestrator-feed",
             "/api/runner/token-summary-aggregate/**", "/api/runner/queue-starvation", "/api/runner/auto-review-queue",
@@ -359,7 +366,7 @@ public static class RoutePermissionCatalog
             "/api/projects/**", "/api/tasks/**", "/api/runner/{}/**", "/api/runner/project:{}/**",
             "/api/runner/task:{}/**", "/api/runner/workbench:{}/**", "/api/runner/integration-lease/**",
             "/api/orchestrator/**", "/api/analysis/**", "/api/drift/**", "/api/bus/**", "/api/runtime/**",
-            "/api/supervisor/**", "/api/git/**", "/api/attempts/**", "/api/audits/**",
+            "/api/supervisor/**", "/api/git/**", "/api/audits/**",
             "/api/workbenches/**", "/api/orchestration/**");
         Add("POST", IamPermissions.ProjectRead, "/api/projects/{}/deployment/compile");
         return rules;

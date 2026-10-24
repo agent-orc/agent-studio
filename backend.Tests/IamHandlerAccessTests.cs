@@ -149,6 +149,59 @@ public sealed class IamHandlerAccessTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, ownerRead.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, alphaRead.StatusCode);
         Assert.Equal(HttpStatusCode.OK, betaRead.StatusCode);
+
+        // The authority can retain an attempt whose task folder is gone.
+        // Workspace bindings read it without a task scan; project bindings
+        // still need a resolvable project from the task.
+        var goneRun = Assert.IsType<RunAttemptDto>(authority.AcquireRun(
+            "gone-card", "beta", null, "runner", "host", 60, "iam-gone-run").RunAttempt);
+        authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(goneRun.AttemptId, goneRun.LastFence, goneRun.AuthorityEpoch, "iam-gone-settle"),
+            Outcome = "done", ResultSha = sha,
+        });
+        var goneReview = Assert.IsType<ReviewAttemptDto>(authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            "gone-card", "beta", sha, goneRun.AttemptId, "req", "policy", [], "iam-gone-review")).ReviewAttempt);
+        using var ownerAfterRemoval = await owner.GetAsync("/api/v1/reviews/attempts/" + goneReview.AttemptId);
+        using var betaAfterRemoval = await beta.GetAsync("/api/v1/reviews/attempts/" + goneReview.AttemptId);
+        Assert.Equal(HttpStatusCode.OK, ownerAfterRemoval.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, betaAfterRemoval.StatusCode);
+    }
+
+    [Fact]
+    public async Task Project_bindings_cannot_read_unaddressed_attempts_or_arbitrary_host_folders()
+    {
+        using var factory = BuildFactory();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var run = Assert.IsType<RunAttemptDto>(authority.AcquireRun(
+            "beta-card", "beta", null, "runner", "host", 60, "iam-attempt-run").RunAttempt);
+        authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, "iam-attempt-settle"),
+            Outcome = "done", ResultSha = new string('a', 40),
+        });
+        var review = Assert.IsType<ReviewAttemptDto>(authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            "beta-card", "beta", new string('a', 40), run.AttemptId, "req", "policy", [], "iam-attempt-review")).ReviewAttempt);
+        using var viewer = Client(factory, Invite(factory, "snapshot.viewer",
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
+        using var developer = Client(factory, Invite(factory, "attempt.developer",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+
+        var path = "/api/filesystem-layer/snapshot?rootPath=" + Uri.EscapeDataString(ProjectPath("beta")) + "&refresh=true";
+        using var snapshot = await viewer.GetAsync(path);
+        // This endpoint is currently local-profile only. Keep it unavailable
+        // in the networked host as well as guarded if it is ever mapped there.
+        Assert.Equal(HttpStatusCode.NotFound, snapshot.StatusCode);
+        foreach (var route in new[]
+                 {
+                     "/api/attempts/tasks/beta-card",
+                     "/api/attempts/runs/" + run.AttemptId,
+                     "/api/attempts/reviews/" + review.AttemptId,
+                 })
+        {
+            using var response = await developer.GetAsync(route);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
     }
 
     [Fact]
