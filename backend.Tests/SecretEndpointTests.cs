@@ -45,6 +45,7 @@ public sealed class SecretEndpointTests : IDisposable
     [
         "GET /api/secrets",
         "GET /api/secrets/audit",
+        "PUT /api/secrets/backends",
         .. ScopeRoutes("/api/secrets/workspace"),
         .. ScopeRoutes("/api/projects/{project}/secrets"),
         .. ScopeRoutes("/api/projects/{project}/environments/{environment}/secrets"),
@@ -101,6 +102,10 @@ public sealed class SecretEndpointTests : IDisposable
         }
         await Expect(HttpStatusCode.OK, "GET", "/api/secrets", "/api/secrets");
         await Expect(HttpStatusCode.OK, "GET", "/api/secrets/audit", "/api/secrets/audit");
+        await Expect(HttpStatusCode.OK, "PUT", "/api/secrets/backends", "/api/secrets/backends",
+            new { scope = "workspace", kind = "builtin", url = "", mount = (string?)null,
+                vaultId = (string?)null, credentialReference = (string?)null,
+                credentialEnvironmentVariable = (string?)null, ttlSeconds = 30 });
 
         var resolve = await Send(client, "POST", SecretEndpoints.ResolvePath, Resolve($"secret://{Project}/MAIL_KEY"), owner);
         Assert.Equal(HttpStatusCode.Unauthorized, resolve.Status);
@@ -229,6 +234,12 @@ public sealed class SecretEndpointTests : IDisposable
             new { name = "DATABASE_URL", value = NewValue() }, operatorSession)).Status);
         var workspaceWrite = await Send(client, "POST", "/api/secrets/workspace", new { name = "OWN", value = NewValue() }, operatorSession);
         Assert.Equal(HttpStatusCode.Forbidden, workspaceWrite.Status);
+        var backendWrite = await Send(client, "PUT", "/api/secrets/backends", new
+        {
+            scope = Project, kind = "vault", url = "https://vault.example.test", mount = "secret", vaultId = (string?)null,
+            credentialReference = "secret://workspace/VAULT_TOKEN", credentialEnvironmentVariable = (string?)null, ttlSeconds = 30
+        }, operatorSession);
+        Assert.Equal(HttpStatusCode.Forbidden, backendWrite.Status);
         Assert.Contains("project-scope-denied", workspaceWrite.Body, StringComparison.Ordinal);
 
         var overview = await Send(client, "GET", "/api/secrets", null, operatorSession);

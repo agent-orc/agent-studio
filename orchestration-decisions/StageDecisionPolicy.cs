@@ -26,7 +26,8 @@ public static class StageDecisionPolicy
     public static TransitionFacts Facts(string taskId, int reissues, StagePayload payload)
     {
         var reissuesUsed = payload.ReissuesUsed ?? reissues;
-        var findings = (payload.Verdicts ?? []).Where(verdict =>
+        var verdicts = ReviewFindingMergePolicy.MergeVerdicts(payload.Verdicts ?? []);
+        var findings = verdicts.Where(verdict =>
             !ReviewRoundBudgetPolicy.IsUncitedBlock(verdict.Classification)).Select(verdict => new ReviewFollowUpFinding(
             verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
             verdict.Missing, verdict.Classification)).Concat((payload.ReviewFindings ?? []).Select(item =>
@@ -38,7 +39,7 @@ public static class StageDecisionPolicy
                 !string.IsNullOrWhiteSpace(payload.ResultSha),
                 payload.ResultRef is { Length: > 0 } resultRef && payload.ResultSha is { Length: > 0 } sha
                     ? new(resultRef, sha, payload.ReviewAttemptId ?? string.Empty) : null),
-            new(payload.ReviewOutcome ?? ReviewOutcomeKinds.Pass, findings, payload.ReviewPlan, payload.Verdicts,
+            new(payload.ReviewOutcome ?? ReviewOutcomeKinds.Pass, findings, payload.ReviewPlan, verdicts,
                 payload.FailureClassification),
             new(payload.MaximumCardRounds, payload.MaximumConcernRounds,
                 payload.MaximumDeliveredRounds, MaximumReissues: payload.MaximumReissues),

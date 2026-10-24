@@ -60,7 +60,6 @@ builder.Services.AddSingleton<IResultFinalizationSummaryGenerator, ApplicationRe
 builder.Services.AddSingleton<TaskServerStore>();
 builder.Services.AddSingleton<DeviceLoginSessions>();
 builder.Services.AddHostedService<DeviceLoginAuditSweep>();
-builder.Services.AddSingleton<RunnerDeviceLoginStore>();
 builder.Services.AddSingleton<RunnerGitSetupStore>();
 builder.Services.AddSingleton<RuntimeCapacitySettingsService>();
 builder.Services.AddSingleton<HostProjectPolicyService>();
@@ -284,7 +283,6 @@ app.MapStudioP2Endpoints();
 // reads a table a P0-P2 bundle already owns.
 app.MapStudioP3AdministrationEndpoints();
 app.MapIdentityBootstrapEndpoints();
-app.MapRunnerDeviceLoginEndpoints();
 app.MapRunnerGitSetupEndpoints();
 app.MapHostJoinTokenEndpoints();
 app.MapHub<TaskServerEventsHub>("/hubs/events")
@@ -308,9 +306,11 @@ static async Task BootstrapPrincipalAsync(
         configuredCredential,
         runnerId,
         cancellationToken);
-    if (issued is not null)
+    if (issued is not null && configuredCredential is null)
         Console.WriteLine(
             $"INITIAL {kind.ToUpperInvariant()} CREDENTIAL (shown once): {issued.Credential}");
+    else if (issued is not null)
+        Console.WriteLine($"Initial {kind} principal created with the configured credential file.");
 }
 
 await app.RunAsync();

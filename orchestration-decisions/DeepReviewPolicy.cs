@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Text.Json;
 
 namespace AgentStudio.OrchestrationDecisions;
@@ -69,14 +68,14 @@ public static class DeepReviewPolicy
             grounds.Add("deep-round-limit");
         if (facts.QuotaState is "capped" or "unavailable") grounds.Add("quota-limited");
 
-        var selected = critical || facts.ChangedLines is < 0 or >= 500 || facts.PreviousBlocks > 0
+        var selected = critical || facts.ChangedLines >= 500 || facts.PreviousBlocks > 0
             || facts.GateFailures > 0;
         if (ruleSelection is { } configured && !critical)
         {
             selected = configured;
             grounds.Add(configured ? "rule-selected" : "rule-declined");
         }
-        if (!critical && facts.QuotaState is ("capped" or "unavailable")) selected = false;
+        if (!critical && facts.QuotaState is "capped" or "unavailable") selected = false;
         if (facts.DeliveredRounds >= Math.Min(MaximumDeepRounds, Math.Max(1, facts.MaximumRounds)))
             selected = false;
         var selectedMode = mode == Active ? Active : Shadow;
@@ -84,7 +83,7 @@ public static class DeepReviewPolicy
             string.Join('\n', JsonSerializer.Serialize(facts), selectedMode, ruleVersionId ?? "",
                 ruleSelection?.ToString() ?? "", ruleModel ?? "", ruleThinkingLevel ?? ""))));
         var model = critical || string.IsNullOrWhiteSpace(ruleModel) ? Model : ruleModel;
-        var thinking = critical ? "xhigh" : ruleThinkingLevel is "medium" or "high"
+        var thinking = critical ? "xhigh" : ruleThinkingLevel is "medium" or "high" or "xhigh"
             ? ruleThinkingLevel : "medium";
         return new("deep-review-" + digest[..24], selectedMode, selected,
             selected && selectedMode == Active, model, thinking,
@@ -94,11 +93,10 @@ public static class DeepReviewPolicy
     private static bool CriticalPath(string path)
     {
         var normalized = path.Replace('\\', '/').ToLowerInvariant();
-        return normalized.Contains("security", StringComparison.Ordinal)
-            || normalized.Contains("fencing", StringComparison.Ordinal)
-            || normalized.Contains("migration", StringComparison.Ordinal)
-            || normalized.Contains("concurrency", StringComparison.Ordinal)
-            || Regex.IsMatch(normalized, @"(?<!re)lease", RegexOptions.CultureInvariant)
-            || normalized.Contains("orchestration-decisions/", StringComparison.Ordinal);
+        return normalized.StartsWith("backend/features/security/", StringComparison.Ordinal)
+            || normalized.StartsWith("backend/features/auth/", StringComparison.Ordinal)
+            || normalized.StartsWith("backend/features/runner/attemptauthority", StringComparison.Ordinal)
+            || normalized.StartsWith("orchestration-decisions/transitiondecision", StringComparison.Ordinal)
+            || normalized.StartsWith("orchestration-decisions/deepreviewpolicy", StringComparison.Ordinal);
     }
 }

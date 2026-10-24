@@ -51,7 +51,7 @@ public static class ReviewRoundBudgetPolicy
     /// </summary>
     public static IReadOnlyList<string> CountedBlockingAspects(
         IEnumerable<AgentStudio.TaskServer.Contracts.ReviewFollowUpFinding> findings)
-        => findings.Where(item => !IsUncitedBlock(item.Classification)
+        => ReviewFindingMergePolicy.Merge(findings).Where(item => !IsUncitedBlock(item.Classification)
                 && AgentStudio.TaskServer.Contracts.ReviewGradingPolicy.IsBlockingToken(item.Status))
             .Select(item => item.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 

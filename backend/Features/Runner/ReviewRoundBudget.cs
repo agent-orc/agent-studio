@@ -17,8 +17,18 @@ public static class ReviewRoundBudgetStore
     {
         var path = Path.Combine(folder, FileName);
         if (File.Exists(path))
-            return JsonSerializer.Deserialize<ReviewRoundBudgetLedger>(File.ReadAllText(path), Json)
-                   ?? throw new InvalidDataException($"Invalid review round budget at {path}.");
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<ReviewRoundBudgetLedger>(File.ReadAllText(path), Json)
+                       ?? throw new JsonException("Review round budget was empty.");
+            }
+            catch (JsonException ex)
+            {
+                System.Diagnostics.Trace.TraceWarning("Invalid review round budget at {0}: {1}", path, ex.Message);
+                return ReviewRoundBudgetLedger.Empty;
+            }
+        }
         // Existing cards already have delivered rounds. Seed from their review
         // artifacts so deploying this policy does not grant a fresh budget.
         return new ReviewRoundBudgetLedger((legacyAttempts ?? [])

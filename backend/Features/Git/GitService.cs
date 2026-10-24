@@ -5998,7 +5998,7 @@ public partial class GitService
                     return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error,
                         error: $"Could not retain integration report paths: {restoreError.Trim()}");
                 }
-                var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit");
+                var (_, commitError, commitCode) = RunGitArgs(repoRoot, "commit", "--no-edit", "--no-verify");
                 if (commitCode != 0)
                 {
                     RunGitArgs(repoRoot, "merge", "--abort");
