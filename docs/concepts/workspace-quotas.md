@@ -73,7 +73,9 @@ slot, a failed first deploy returns it.
 and queues a stop job for the environment's host; the environment stays
 running and keeps its slot until that host claims the job and reports the stop
 done. A failed or lost stop leaves the environment running and counted. The
-minute reconciliation frees the slot of a removed declaration and the slot of
+stop request settles any deploy claim abandoned for fifteen minutes as
+`host-lost` before it queues the stop, so that claim cannot block the host.
+The minute reconciliation frees the slot of a removed declaration and the slot of
 an unsettled claim (lease expired without a report, host lost, or aborted); a
 later claim of that job reserves it again. A settled healthy deploy is never
 released by the reconciliation. Reading the environments changes no slot. A timed promotion
