@@ -2672,6 +2672,21 @@
              Run history names the refusal and continuation, and Execution Hosts counts refusals per model per UTC day.
            </td>
          </tr>
+        <tr id="case-agt-3244-host-model-refusal">
+          <td>2026-10-20</td>
+          <td><code>AGT-3244</code><br><span class="small">quota fallback chose a model refused by the host login</span></td>
+          <td>At 05:33 UTC, quota admission switched a Claude card to Codex Sol before launch. The
+            ChatGPT login on agent-runner-01 refused Sol with HTTP 400. The declared sibling was
+            below the card's correctness floor, and the card escalated.</td>
+          <td>CLI model discovery was treated as account acceptance. The fallback router had no
+            claiming-host acceptance fact, and the provider-refusal continuation treated a
+            launch-time model refusal as a card failure.</td>
+          <td>The runner now probes candidate models against the current credential generation and
+            advertises acceptance per host. Remote quota admission waits when no accepted fallback
+            exists. A model refusal without salvage marks the host capability and returns the card
+            to Ready with an Activity reason. Observed terminal: escalated. Corrected terminal:
+            Ready on a host capability hold until accepted model evidence or quota reset.</td>
+        </tr>
         <tr id="case-agt-2884-oversized-result-artifact">
           <td>2026-09-18</td>
           <td><code>AGT-2884</code><br><span class="small">oversized Playwright trace blocked code delivery</span></td>
@@ -3028,6 +3043,13 @@
           <td>No CLI crashed. After the <code>ReviewReport</code> profile switched to Engine on 16.10. at 16:46Z, about 40 engine <code>DeferToBatch</code> decisions completed, and 26 cards sat in <span class="lane">4-auto-review</span> with a passed review, no batch-gate ownership and no pending batch record. Shadow mode had matched every receipt, because it never runs the applier.</td>
           <td>The applier maps <code>DeferToBatch</code> to no target lane and returned in that branch before its only batch admission, which was unreachable. A completed occurrence is final, so nothing drove the cards on.</td>
           <td>The observed terminal was Auto Review without an owner. The applier now admits the settled review at its report time in that branch and runs the per-task emergency gate when the queue refuses it. As in the monolith, only a card in <span class="lane">4-auto-review</span> is admitted: a card the report found in another lane, a card that left Auto Review since, or a review that is no longer current completes with an operator-feed reason, and any other failed admission stays <code>applying</code> for retry. The recovery loop re-arms a completed newest decision whose card still waits in Auto Review without a pending record or ownership that records a batch, a passed per-task gate or a containment, at most four per pass; a bare marker or an interrupted per-task gate marker is admitted again, so the gate resumes within its start budget. It also clears wait markers that name a finished occurrence.</td>
+        </tr>
+        <tr id="case-gate-queue-overrun-escalation">
+          <td>2026-10-18</td>
+          <td><code>AGT-3219</code><br><span class="small">gate-queue-overrun-escalation</span></td>
+          <td>No CLI crashed. After the batch-gate fix of 17.10. the re-armed batch members fell back to per-task gates. With 2 gate slots and 25-45 minute suites, 16 cards with a passed review (for example AGT-3213, 3214, 3215, 3217, 3186, 3209, 3206, 3203) hit <code>machine-gate-queue budget (limit=9327000ms, consumed=9327018ms, phase=queue)</code>.</td>
+          <td>The per-task fallback escalated every non-green gate result. A budget spent waiting for a slot was treated like a red suite, although the gate never ran.</td>
+          <td>The observed terminal was <span class="lane">5e-escalated</span> with blocker <code>operator-decision</code>. A queue-phase overrun now keeps the card in <span class="lane">4-auto-review</span> and returns its request to the batch queue; one stall event is raised per queue episode, and a backlogged queue makes the planners prefer batches. An execution-phase overrun still escalates. Parked cards return to the queue by one release action in the escalation summary. Follow-up of 20.10.: the summed queue wait of a review generation is capped at four queue budgets, after which the card reaches <span class="lane">5e-escalated</span> with blocker <code>gate-capacity</code>; the stall episode is durable and re-raised every four hours while it stays open; cards deferred behind a backlog age out to a per-task gate after two batch deadlines. Follow-up of 20.10. (19./20.10. incident): a gate result that returned after a person moved the card, a follow-up was queued or a newer review generation started had parked the card in <span class="lane">5e-escalated</span> from <span class="lane">2-ready</span>, <span class="lane">3-progress</span> or <span class="lane">5-human-review</span>, because the escalation named no source lane. Such a result, of any verdict, now resolves as superseded and the card keeps its lane; the escalation requires <span class="lane">4-auto-review</span> as its source, and the release refuses cards parked from another lane or with a pending follow-up. A batch gate queue overrun requeues its members for the next batch instead of a same-candidate retry and a GateInfra pause.</td>
         </tr>
       </tbody>
     </table>

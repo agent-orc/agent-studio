@@ -231,6 +231,7 @@ public sealed class TaskAccessService : ITaskAccess, ITaskAccessHost
             ct,
             cause: request.Cause,
             reason: request.Reason,
+            expectedSourceState: request.ExpectedSourceState,
             transitionCause: request.TransitionCause,
             transitionDetail: request.TransitionDetail);
         if (outcome.Status == MoveJobStatus.NotFound)
@@ -833,6 +834,7 @@ public sealed class TaskAccessService : ITaskAccess, ITaskAccessHost
         try
         {
             Directory.Delete(folder, recursive: true);
+            _scanner.RemoveCoreByFolder(folder);
             _scanner.InvalidateCache();
         }
         catch (IOException ioex)

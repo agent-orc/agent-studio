@@ -89,6 +89,26 @@ describe('DeployRunDrawerComponent', () => {
     expect(host().querySelector('.run-drawer__actions')).toBeNull();
   });
 
+  it('shows the failed step and deadline and requires a reason before skipping', async () => {
+    await render({ ...run('run-b-stage'), state: 'waiting-for-intervention', failedStep: 'health',
+      interventionExpiresAt: '2026-10-19T13:00:00Z' });
+    const chosen: string[] = [];
+    fixture.componentInstance.act.subscribe(action => chosen.push(action));
+    fixture.componentInstance.skip.subscribe(reason => chosen.push(reason));
+    expect(text('deploy-run-outcome')).toBe('Waiting for intervention');
+    expect(text('deploy-run-intervention')).toContain('Health check failed');
+    expect((byTestId('deploy-run-skip') as HTMLButtonElement).disabled).toBe(true);
+    byTestId('deploy-run-retry')!.click();
+    const reason = byTestId('deploy-run-skip-reason') as HTMLTextAreaElement;
+    reason.value = 'Known transient health check';
+    reason.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    byTestId('deploy-run-skip')!.click();
+    expect(chosen).toEqual(['retry', 'Known transient health check']);
+    await render({ ...run('run-b-stage'), id: 'another-run', state: 'waiting-for-intervention' });
+    expect((byTestId('deploy-run-skip') as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('disables the actions while one runs and shows a refusal from the server', async () => {
     await render(run('run-c-production'), logOf('run-c-production'), { busy: 'approve', error: null });
     expect(text('deploy-run-approve')).toBe('Approve…');

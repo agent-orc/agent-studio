@@ -18,7 +18,7 @@ export class DeploymentStatusService {
       id: `${projectId}-release-${revision}`, projectId, version: version(revision),
       commitSha: `${(seed + 1).toString(16).padStart(7, '0')}${revision}`,
       artifactDigests: [], processVersion: '1', variablesVersion: '1',
-      cardKeys: [], createdAtUtc: at(hoursAgo), channel: 'standard',
+      cardKeys: [], createdAtUtc: at(hoursAgo), channel: 'default',
     });
     const latest = release(3, 2 + seed);
     const previous = release(2, 27 + seed);

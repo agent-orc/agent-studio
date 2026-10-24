@@ -432,12 +432,13 @@ FAKE_DOTNET_LOG="$auto_root/dotnet.log" FAKE_DEPLOY_LOG="$auto_root/deploy-call.
   --release-dir "$auto_root/releases" --deploy-artifact-store "$auto_store" \
   --deploy-token-file "$auto_token" --project Demo >/dev/null
 auto_digest=$(cat "$auto_root/releases/$auto_sha/release.sha256")
-test "$(sha256sum "$auto_store/$auto_digest" | cut -d ' ' -f1)" = "$auto_digest"
+test ! -e "$auto_store/$auto_digest"
 grep -Fq "\"artifact\":\"release-package@sha256:$auto_digest\",\"commit\":\"$auto_sha\"" \
   "$auto_root/deploy-call.json"
 grep -Fq "\"artifact\":\"release-package@sha256:$auto_digest\",\"sourceSha256\":\"$auto_digest\"" \
   "$auto_root/releases/$auto_sha/deploy-artifact.json"
 grep -Fq '"gate":"passed"' "$auto_root/releases/$auto_sha/promotion-record.json"
+grep -Fq '"gateRunId":"release/test-package-auto"' "$auto_root/releases/$auto_sha/promotion-record.json"
 printf '%s\n' 'gate-built artifact queued to stage passed'
 
 # A 409 for a superseded release comes after main is pushed: the driver logs

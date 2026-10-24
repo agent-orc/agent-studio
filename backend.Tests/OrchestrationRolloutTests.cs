@@ -74,7 +74,7 @@ public sealed class OrchestrationRolloutTests
         Assert.NotNull(fixture.Store.GetOccurrence(shadow.RunId)!.EngineReceipt);
         Assert.Equal("ready", fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult").State);
 
-        fixture.Rollout.Switch("GateResult", "engine", "operator", "matched comparison");
+        fixture.Rollout.Switch("GateResult", "canary", "operator", "matched comparison");
         var pending = fixture.Store.Create("project", "card", OrchestrationStage.GateDispatch,
             "{}", "gate:pending", TaskStates.AutoReview, "attempt", 1, 1,
             profile: "GateResult");
@@ -277,9 +277,206 @@ public sealed class OrchestrationRolloutTests
         var recovered = fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult");
         Assert.Equal("ready", recovered.State);
         Assert.Equal(1, recovered.Streak);
-        Assert.Equal("engine", fixture.Store.SwitchProfile("GateResult", "engine", "operator",
+        Assert.Equal("canary", fixture.Store.SwitchProfile("GateResult", "canary", "operator",
             "matched comparison").State);
     }
+
+    [Fact]
+    public async Task Engine_switch_needs_an_applier_canary_that_passed_on_this_instance()
+    {
+        using var fixture = new Fixture(threshold: 1);
+        await ReadyGateProfile(fixture, "gate:first-streak");
+
+        // Ready proves matching receipts, not applied effects.
+        var refused = Assert.Throws<InvalidOperationException>(() =>
+            fixture.Store.SwitchProfile("GateResult", "engine", "operator", "matched comparison"));
+        Assert.Equal("orchestration-profile-applier-canary-required", refused.Message);
+        var canary = fixture.Store.SwitchProfile("GateResult", "canary", "operator", "matched comparison");
+        Assert.Equal(("canary", "watching", 3, 0), (canary.State, canary.Canary!.Status,
+            canary.Canary.Required, canary.Canary.Verified));
+        Assert.Equal(OrchestrationExecutionMode.Engine, MonolithTransitionSwitch.For(fixture.Configuration, "GateResult"));
+        Assert.Equal("covered", canary.ApplierContract!.Status);
+
+        // The canary watches the first three engine decisions; the monolith's rollback decisions do not count.
+        var decided = new List<OrchestrationRunDto>();
+        for (var index = 0; index < 4; index++)
+            decided.Add(await CompletedGateDecision(fixture, $"gate:engine-{index}", TransitionAction.Continue));
+        var watched = fixture.Rollout.PendingCanaryObservations();
+        Assert.Equal(decided.Take(3).Select(run => run.RunId), watched.Select(item => item.Observation.Occurrence));
+        Assert.All(watched, item => Assert.Equal("Continue", item.Observation.Action));
+
+        foreach (var run in decided.Take(2))
+            fixture.Rollout.RecordEffectCheck("GateResult", Applied(fixture, run.RunId));
+        Assert.Equal("canary", Profile(fixture).State);
+        // A verified check of an occurrence that has not completed never counts, not even as a forced verdict.
+        var uncompleted = Applied(fixture, decided[2].RunId) with { CompletedAt = null };
+        fixture.Rollout.RecordEffectCheck("GateResult", uncompleted);
+        fixture.Rollout.RecordEffectCheck("GateResult", uncompleted, ApplierCanaryVerdict.Verified);
+        Assert.Equal(("canary", "watching", 2), (Profile(fixture).State, Profile(fixture).Canary!.Status,
+            Profile(fixture).Canary!.Verified));
+        var passed = fixture.Rollout.RecordEffectCheck("GateResult", Applied(fixture, decided[2].RunId));
+        Assert.Equal(("engine", "passed", 3), (passed.State, passed.Canary!.Status, passed.Canary.Verified));
+        Assert.True(passed.Canary.PassedOnThisInstance);
+        Assert.True(passed.LastEffectCheck!.Verified);
+        var promotion = fixture.Rollout.SwitchReceipts().Last();
+        Assert.Equal((OrchestrationRolloutStore.CanaryActor, "canary", "engine"),
+            (promotion.Actor, promotion.From, promotion.To));
+        Assert.Empty(fixture.Rollout.PendingCanaryObservations());
+
+        // After a rollback and a new streak, this instance may switch straight to
+        // engine; the first decisions are watched again.
+        fixture.Store.SwitchProfile("GateResult", "rollback", "operator", "maintenance");
+        await ReadyGateProfile(fixture, "gate:second-streak");
+        var direct = fixture.Store.SwitchProfile("GateResult", "engine", "operator", "matched again");
+        Assert.Equal(("engine", "watching"), (direct.State, direct.Canary!.Status));
+
+        // Another build or host has not run the applier canary.
+        var otherInstance = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = fixture.Configuration["TaskRepository"],
+            ["Orchestration:ShadowMatchThreshold"] = "1",
+            ["Orchestration:InstanceId"] = "other-host/other-build",
+        }).Build();
+        var other = new OrchestrationRolloutStore(otherInstance, fixture.Time);
+        other.Switch("GateResult", "rollback", "operator", "maintenance");
+        other.Switch("GateResult", "shadow", "operator", "compare again");
+        other.Compare("GateResult", Matching("gate:other-instance"), Matching("gate:other-instance"));
+        Assert.False(other.GetProfiles().Single(item => item.Profile == "GateResult").Canary!.PassedOnThisInstance);
+        Assert.Equal("orchestration-profile-applier-canary-required", Assert.Throws<InvalidOperationException>(() =>
+            other.Switch("GateResult", "engine", "operator", "matched comparison")).Message);
+    }
+
+    [Fact]
+    public async Task Missing_effect_fails_the_canary_and_rolls_the_profile_back()
+    {
+        using var fixture = new Fixture(threshold: 1);
+        await ReadyGateProfile(fixture, "gate:streak");
+        fixture.Store.SwitchProfile("GateResult", "canary", "operator", "matched comparison");
+        var run = await CompletedGateDecision(fixture, "gate:unapplied", TransitionAction.Continue);
+        var missing = new EngineEffectCheck(run.RunId, "Continue", false, ["GateDispatch"],
+            "The card left Auto Review without a Continue stage result.", fixture.Time.GetUtcNow().UtcDateTime);
+
+        Assert.NotNull(fixture.Rollout.FailCanary("GateResult", missing));
+        Assert.Null(fixture.Rollout.FailCanary("GateResult", missing));
+
+        var profile = Profile(fixture);
+        Assert.Equal(("rolled-back", "failed"), (profile.State, profile.Canary!.Status));
+        Assert.Equal("missing", Assert.Single(profile.Canary.Observations).Status);
+        Assert.Equal(OrchestrationExecutionMode.Monolith, MonolithTransitionSwitch.For(fixture.Configuration, "GateResult"));
+        var receipt = fixture.Rollout.SwitchReceipts().Last();
+        Assert.Equal(OrchestrationRolloutStore.CanaryActor, receipt.Actor);
+        Assert.Contains("GateDispatch", receipt.Reason);
+        // A rolled-back profile leaves pending occurrences to the monolith.
+        var pending = fixture.Store.Create("project", "card", OrchestrationStage.GateDispatch,
+            "{}", "gate:after-rollback", TaskStates.AutoReview, "attempt", 1, 1, profile: "GateResult");
+        Assert.Equal("empty", fixture.Store.Claim(new("engine", "next", [OrchestrationStage.GateDispatch])).Status);
+        Assert.Equal(pending.RunId, fixture.Store.ClaimRolledBack(pending.RunId).Run!.RunId);
+        Assert.Empty(fixture.Rollout.PendingCanaryObservations());
+    }
+
+    [Fact]
+    public async Task Not_counted_decisions_leave_their_place_to_the_next_engine_decision()
+    {
+        using var fixture = new Fixture(threshold: 1);
+        await ReadyGateProfile(fixture, "gate:streak");
+        fixture.Store.SwitchProfile("GateResult", "canary", "operator", "matched comparison");
+        var decided = new List<OrchestrationRunDto>();
+        for (var index = 0; index < 4; index++)
+            decided.Add(await CompletedGateDecision(fixture, $"gate:engine-{index}", TransitionAction.Continue));
+        Assert.Equal(3, fixture.Rollout.PendingCanaryObservations().Count);
+
+        var ask = Applied(fixture, decided[0].RunId) with { Action = "ask", Basis = EngineEffectBasis.Ask };
+        fixture.Rollout.RecordEffectCheck("GateResult", ask, ApplierCanaryVerdict.NotCounted);
+        Assert.Equal(0, Profile(fixture).Canary!.Verified);
+        // The canary takes the next engine decision instead.
+        var next = await CompletedGateDecision(fixture, "gate:engine-next", TransitionAction.Continue);
+        Assert.Equal([decided[1].RunId, decided[2].RunId, next.RunId],
+            fixture.Rollout.PendingCanaryObservations().Select(item => item.Observation.Occurrence));
+        foreach (var run in new[] { decided[1], decided[2] })
+            fixture.Rollout.RecordEffectCheck("GateResult", Applied(fixture, run.RunId));
+        Assert.Equal("canary", Profile(fixture).State);
+        Assert.Equal(("engine", "passed"), (fixture.Rollout.RecordEffectCheck("GateResult",
+            Applied(fixture, next.RunId)).State, Profile(fixture).Canary!.Status));
+    }
+
+    [Fact]
+    public async Task Failed_canary_clears_this_instance_pass()
+    {
+        using var fixture = new Fixture(threshold: 1);
+        await ReadyGateProfile(fixture, "gate:first-streak");
+        fixture.Store.SwitchProfile("GateResult", "canary", "operator", "matched comparison");
+        foreach (var index in Enumerable.Range(0, 3))
+            fixture.Rollout.RecordEffectCheck("GateResult", Applied(fixture,
+                (await CompletedGateDecision(fixture, $"gate:first-{index}", TransitionAction.Continue)).RunId));
+        Assert.True(Profile(fixture).Canary!.PassedOnThisInstance);
+
+        // A later direct switch fails its canary: the earlier pass no longer counts.
+        fixture.Store.SwitchProfile("GateResult", "rollback", "operator", "maintenance");
+        await ReadyGateProfile(fixture, "gate:second-streak");
+        fixture.Store.SwitchProfile("GateResult", "engine", "operator", "matched again");
+        var run = await CompletedGateDecision(fixture, "gate:second", TransitionAction.Continue);
+        var failed = fixture.Rollout.FailCanary("GateResult", new EngineEffectCheck(run.RunId, "Continue", false,
+            ["GateDispatch"], "No dispatch.", fixture.Time.GetUtcNow().UtcDateTime))!;
+        Assert.Equal(("rolled-back", false), (failed.State, failed.Canary!.PassedOnThisInstance));
+
+        await ReadyGateProfile(fixture, "gate:third-streak");
+        Assert.Equal("orchestration-profile-applier-canary-required", Assert.Throws<InvalidOperationException>(() =>
+            fixture.Store.SwitchProfile("GateResult", "engine", "operator", "matched a third time")).Message);
+    }
+
+    [Fact]
+    public async Task Operator_override_forces_the_engine_audited_and_keeps_it_on_a_failed_canary()
+    {
+        using var fixture = new Fixture(threshold: 1);
+        Assert.Equal("orchestration-profile-switch-not-allowed", Assert.Throws<InvalidOperationException>(() =>
+            fixture.Store.SwitchProfile("GateResult", "engine", "owner", "monolith gate handler broken")).Message);
+
+        var forced = fixture.Store.SwitchProfile("GateResult", "force-engine", "owner", "monolith gate handler broken");
+        Assert.Equal(("engine", "watching", true), (forced.State, forced.Canary!.Status, forced.Canary.Override));
+        Assert.Equal(OrchestrationExecutionMode.Engine, MonolithTransitionSwitch.For(fixture.Configuration, "GateResult"));
+        var receipt = fixture.Rollout.SwitchReceipts().Last();
+        Assert.Equal(("monolith", "engine", "owner", "monolith gate handler broken", true),
+            (receipt.From, receipt.To, receipt.Actor, receipt.Reason, receipt.Override));
+
+        var run = await CompletedGateDecision(fixture, "gate:forced", TransitionAction.Continue);
+        var failed = fixture.Rollout.FailCanary("GateResult", new EngineEffectCheck(run.RunId, "Continue", false,
+            ["GateDispatch"], "No dispatch.", fixture.Time.GetUtcNow().UtcDateTime))!;
+        Assert.Equal(("engine", "failed"), (failed.State, failed.Canary!.Status));
+        Assert.Equal("orchestration-profile-switch-not-allowed", Assert.Throws<InvalidOperationException>(() =>
+            fixture.Store.SwitchProfile("GateResult", "force-engine", "owner", "again")).Message);
+    }
+
+    private static async Task ReadyGateProfile(Fixture fixture, string key)
+    {
+        fixture.Rollout.Switch("GateResult", "shadow", "operator", "compare gate outcomes");
+        var shadow = await CompletedGateShadow(fixture, key, TransitionAction.Continue);
+        fixture.Store.RecordMonolithDecision(shadow.RunId, TransitionAction.Continue.ToString(), "passed");
+        Assert.Equal("ready", Profile(fixture).State);
+    }
+
+    private static async Task<OrchestrationRunDto> CompletedGateDecision(Fixture fixture, string key,
+        TransitionAction engineAction)
+    {
+        var run = fixture.Store.Create("project", "card", OrchestrationStage.GateDispatch,
+            "{\"monolithGateResult\":true}", key, TaskStates.AutoReview, "attempt", 1, 1, profile: "GateResult");
+        var claim = fixture.Store.Claim(new("engine", "first", [OrchestrationStage.GateDispatch]));
+        Assert.Equal(run.RunId, claim.Run!.RunId);
+        var output = JsonSerializer.Serialize(new { transition = TransitionDecisionPolicy.Create(
+            engineAction, "Engine decision.", "card", "attempt", 0, 4) });
+        return await fixture.Store.CompleteAsync(run.RunId,
+            new("engine", "first", claim.Lease!.LeaseId, claim.Lease.Fence, OrchestrationStage.GateDispatch,
+                StageDecisionPolicy.ToStageAction(engineAction), output, "complete:" + key), default);
+    }
+
+    private static EngineEffectCheck Applied(Fixture fixture, string runId)
+        => new(runId, "Continue", true, [], "The gate continued.", fixture.Time.GetUtcNow().UtcDateTime,
+            CompletedAt: fixture.Time.GetUtcNow().UtcDateTime);
+
+    private static OrchestrationDecisionReceipt Matching(string occurrence)
+        => OrchestrationRolloutStore.Receipt(occurrence, "gate-result", "{}", "Continue", "passed", "monolith");
+
+    private static OrchestrationProfileStatus Profile(Fixture fixture)
+        => fixture.Rollout.GetProfiles().Single(item => item.Profile == "GateResult");
 
     [Fact]
     public void Recovery_wait_list_excludes_unactivated_review_occurrences()
@@ -356,7 +553,7 @@ public sealed class OrchestrationRolloutTests
                 ["TaskRepository"] = _directory,
                 ["Orchestration:ShadowMatchThreshold"] = threshold.ToString(),
             }).Build();
-            Rollout = new(Configuration);
+            Rollout = new(Configuration, Time);
             Store = new(OccurrenceDirectory, Time, Applier, Rollout);
         }
 

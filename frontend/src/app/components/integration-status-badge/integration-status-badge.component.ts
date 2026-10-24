@@ -105,7 +105,10 @@ export class IntegrationStatusBadgeComponent {
   readonly label = computed(() => {
     const base = this.statusLabel();
     switch (this.verificationState()) {
-      case 'integrated-verified': return `${base} · verified`;
+      case 'integrated-verified':
+        return this.integration()?.verification?.reason?.startsWith('Verified by operator candidate ')
+          ? `${base} · verified by operator candidate ${this.integration()?.verification?.sha?.slice(0, 7) ?? ''}`
+          : `${base} · verified`;
       case 'integrated-unverified': return `${base} · unverified`;
       default: return base;
     }
@@ -202,6 +205,8 @@ export class IntegrationStatusBadgeComponent {
     if (!verification || !state) return null;
     const tree = verification.sha ? ` ${verification.sha.slice(0, 7)}` : '';
     const reason = verification.reason ? ` ${verification.reason}` : '';
+    if (state === 'integrated-verified' && verification.reason?.startsWith('Verified by operator candidate '))
+      return verification.reason;
     return state === 'integrated-verified'
       ? `Integrated-verified: a gate passed on the merged tree${tree}.${reason}`
       : `Integrated-unverified: no gate passed on the merged tree${tree}.${reason}`;
@@ -220,7 +225,10 @@ export class IntegrationStatusBadgeComponent {
   readonly ariaLabel = computed(() => {
     const base = this.statusAriaLabel();
     switch (this.verificationState()) {
-      case 'integrated-verified': return `${base}, verified by a gate`;
+      case 'integrated-verified':
+        return this.integration()?.verification?.reason?.startsWith('Verified by operator candidate ')
+          ? `${base}, verified by operator candidate ${this.integration()?.verification?.sha?.slice(0, 7) ?? ''}`
+          : `${base}, verified by a gate`;
       case 'integrated-unverified': return `${base}, not verified by any gate`;
       default: return base;
     }

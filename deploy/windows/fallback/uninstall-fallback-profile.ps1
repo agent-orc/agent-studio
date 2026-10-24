@@ -6,6 +6,8 @@ param(
         'AgentOrchestrator-TaskServer',
         'AgentOrchestrator-Engine',
         'AgentOrchestrator-StudioConnector',
+        'AgentOrchestrator-StudioBackend',
+        'AgentOrchestrator-Runner',
         'AgentOrchestrator-WarmStandby'
     ),
 
@@ -35,7 +37,7 @@ foreach ($taskName in $TaskNames) {
 
 if ($PSCmdlet.ShouldProcess($InstallBase, 'Stop service executables still running from the release tree')) {
     $installPrefix = [IO.Path]::GetFullPath($InstallBase).TrimEnd('\') + '\'
-    Get-Process -Name 'task-server', 'orchestrator-engine', 'agent-studio-bff' -ErrorAction SilentlyContinue |
+    Get-Process -Name 'task-server', 'orchestrator-engine', 'agent-studio-bff', 'OrchestratorApi', 'agent-host' -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($installPrefix, [StringComparison]::OrdinalIgnoreCase) } |
         Stop-Process -Force
 }

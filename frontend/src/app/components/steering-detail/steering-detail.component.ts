@@ -4,7 +4,7 @@ import type { SteeringInfo } from './steering-detail.model';
 
 /**
  * The single canonical renderer for one orchestrator steering step
- * (Epic ASS-776). Takes a typed {@link SteeringInfo} and renders a structured,
+ * (ASS-776). Takes a typed {@link SteeringInfo} and renders a structured,
  * collapsible block so the operator can reconstruct WHAT the orchestrator
  * decided (verdict + short reason), WHICH steer prompt the agent received, and
  * WHICH context it was given (open items, prior commits, resume info,

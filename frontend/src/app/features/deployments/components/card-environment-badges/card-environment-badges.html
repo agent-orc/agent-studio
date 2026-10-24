@@ -1,0 +1,13 @@
+@if (badges().length) {
+  <div class="card-environments" aria-label="Card deployment environments" data-testid="card-environments">
+    @for (badge of badges(); track badge.environmentId) {
+      <span class="card-environment" [attr.data-state]="badge.state" [attr.data-kind]="badge.kind"
+            [attr.title]="badge.releaseVersion ? 'Release ' + badge.releaseVersion + (badge.atUtc ? ' · ' + badge.atUtc : '') : null"
+            [attr.data-testid]="'card-environment-' + badge.kind">
+        {{ label(badge.environmentName, badge.kind, badge.state) }}
+        @if (badge.releaseVersion) { · {{ badge.releaseVersion }} }
+        @if (badge.atUtc) { · <time [attr.datetime]="badge.atUtc">{{ badge.atUtc.slice(0, 10) }}</time> }
+      </span>
+    }
+  </div>
+}

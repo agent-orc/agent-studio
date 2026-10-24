@@ -14,6 +14,7 @@ internal static class TaskPaths
     public const string RunContextDirName = "run-context";
     public const string ResultsDirName = "results";
     public const string ReviewEvidenceFileName = "review-evidence.jsonl";
+    public const string ReviewObservationsFileName = "review-observations.jsonl";
     public const string ResultsHistoryDirName = "history";
 
     public static string LogsDir(string jobFolder) => Path.Combine(jobFolder, LogsDirName);
@@ -24,6 +25,7 @@ internal static class TaskPaths
     public static string TimelineLog(string jobFolder) => Path.Combine(jobFolder, LogsDirName, TimelineLogFileName);
     public static string ResultsDir(string jobFolder) => Path.Combine(jobFolder, ResultsDirName);
     public static string ReviewEvidenceLog(string jobFolder) => Path.Combine(jobFolder, ResultsDirName, ReviewEvidenceFileName);
+    public static string ReviewObservationsLog(string jobFolder) => Path.Combine(jobFolder, ResultsDirName, ReviewObservationsFileName);
 
     /// <summary>
     /// The files under <c>results/</c> that the card produced. <c>results/history/</c>

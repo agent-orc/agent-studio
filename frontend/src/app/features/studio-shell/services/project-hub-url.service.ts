@@ -8,7 +8,7 @@ import {
   type ProjectHubRouteProject,
   resolveProjectSection,
   withProjectHubRoute,
-} from '../../project-detail';
+} from '../../project-detail/route';
 import { WorkspaceManagerService } from '../../shell';
 import { FeatureFlagsService } from '../../../services/feature-flags.service';
 import { TaskService } from '../../../services/task.service';
