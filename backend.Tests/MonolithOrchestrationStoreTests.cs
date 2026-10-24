@@ -236,6 +236,49 @@ public sealed class MonolithOrchestrationStoreTests
     }
 
     [Fact]
+    public async Task Deterministic_refusal_settles_once_and_recovery_does_not_reapply()
+    {
+        using var fixture = new Fixture(_time);
+        var run = fixture.Create();
+        var claimed = fixture.Store.Claim(Claim("engine_one"));
+        fixture.Applier.Refusal = "IntegrationFailed integration-pending";
+
+        var refused = await fixture.Store.CompleteAsync(run.RunId, Complete(claimed), default);
+        await fixture.Store.RecoverApplyingAsync(default);
+        await fixture.Store.RecoverApplyingAsync(default);
+
+        Assert.Equal("failed", refused.Status);
+        Assert.Equal(1, fixture.Applier.Calls);
+        var persisted = fixture.Restart().GetOccurrence(run.RunId)!;
+        Assert.Equal(1, persisted.ApplicationAttempts);
+        Assert.Equal(fixture.Applier.Refusal, persisted.ApplicationFailure);
+        Assert.Empty(fixture.Store.WaitingOccurrences());
+    }
+
+    [Fact]
+    public async Task Transient_application_failure_has_three_attempt_limit()
+    {
+        using var fixture = new Fixture(_time);
+        var run = fixture.Create();
+        var claimed = fixture.Store.Claim(Claim("engine_one"));
+        fixture.Applier.AlwaysFail = true;
+
+        await Assert.ThrowsAsync<IOException>(() =>
+            fixture.Store.CompleteAsync(run.RunId, Complete(claimed), default));
+        var retries = new List<string>();
+        await fixture.Store.RecoverApplyingAsync(default,
+            onRetry: (item, _) => retries.Add(item.Run.RunId));
+        await fixture.Store.RecoverApplyingAsync(default);
+        await fixture.Store.RecoverApplyingAsync(default);
+
+        Assert.Equal("failed", fixture.Store.Get(run.RunId)!.Status);
+        Assert.Equal(run.RunId, Assert.Single(retries));
+        Assert.Equal(MonolithOrchestrationStore.MaximumApplicationAttempts, fixture.Applier.Calls);
+        Assert.Equal(MonolithOrchestrationStore.MaximumApplicationAttempts,
+            fixture.Restart().GetOccurrence(run.RunId)!.ApplicationAttempts);
+    }
+
+    [Fact]
     public void Idempotent_occurrence_creation_does_not_duplicate_pending_work()
     {
         using var fixture = new Fixture(_time);
@@ -395,15 +438,23 @@ public sealed class MonolithOrchestrationStoreTests
     private sealed class FakeApplier : IMonolithOrchestrationApplier, IOrchestrationSupersessionAudit
     {
         public int Count { get; private set; }
+        public int Calls { get; private set; }
         public bool ThrowNext { get; set; }
         public bool ThrowMalformed { get; set; }
         public string CurrentState { get; set; } = TaskStates.AutoReview;
         public List<string?> SupersededStates { get; } = [];
         public void RecordSuperseded(MonolithOrchestrationOccurrence occurrence, string? observedState)
             => SupersededStates.Add(observedState);
+        public bool AlwaysFail { get; set; }
+        public string? Refusal { get; set; }
         public Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
             CompleteOrchestrationStageRequest completion, CancellationToken ct)
         {
+            Calls++;
+            if (Refusal is not null)
+                throw new OrchestrationApplicationRefusedException(Refusal);
+            if (AlwaysFail)
+                throw new IOException("Simulated persistent storage error.");
             if (ThrowNext)
             {
                 ThrowNext = false;

@@ -768,8 +768,9 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   the next read.
 - `integrated` means reachable from the published integration branch
   (`origin/<branch>`). A delivery that only a local branch or worktree ref can
-  see is `merged-locally` and cannot enter Human Review, be accepted, or be
-  archived. A repository without an origin mirror uses its local target ref.
+  see is `merged-locally` and cannot enter Human Review through a delivery
+  acceptance move, be accepted, or be archived. A repository without an origin
+  mirror uses its local target ref.
   The current immutable result SHA is checked first, followed by commits
   attributed to that delivery epoch. A rewritten commit is accepted only when
   its original-to-replacement mapping was persisted. The last merge attempt is
@@ -784,7 +785,10 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   with a category and recovery action. A pull-request project's approval stays
   on the pull request while the card waits in Auto Review; Human Review starts
   after the merge. The integration strategy is project configured, but these
-  lane meanings are global.
+  lane meanings are global. A `ReviewReport` decision of `HumanReview` is an
+  operator-decision park: it may move an unintegrated card from Auto Review to
+  Human Review so the operator can resolve an Inconclusive review. This exception
+  does not permit acceptance or archive without their own evidence.
 - Accept in Human Review confirms the already integrated result and records its
   delivery epoch, immutable result SHA, target branch, and target ref fingerprint.
   The target ref fingerprint is diagnostic evidence, not an acceptance boundary.
@@ -1141,11 +1145,13 @@ card waiting on a person from one waiting on a fix.
 ## Result transition invariant
 
 `TaskTransitionService` is the single enforcement point for Result availability.
-Every successful move into `4-auto-review`, `5-human-review`, `5e-escalated`,
-or `6-completed` carries a non-empty `status.md`. When no generated protocol is
-available, the service writes a marked, evidence-only scaffold before the
-folder move and enriches its own scaffold after the move with the computed
-integration projection. It never replaces a real Result. Backend startup runs
+After the lane guard accepts a move into `4-auto-review`, `5-human-review`,
+`5e-escalated`, or `6-completed`, it ensures a marked, evidence-only scaffold
+before changing lanes if no generated Result is available. If that write fails,
+the card remains in its source lane. Admission refusals and no-op moves do not write
+`status.md`, `current-result.json`, or Result history. An engine decision
+refreshes its scaffold at most once during the accepted move. The service never
+replaces a real Result. Backend startup runs
 the same idempotent repair over missing Results in `5-human-review`,
 `6-completed`, and `7-archive`; repaired files are marked as operator
 backfills.
