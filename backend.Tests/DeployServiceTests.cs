@@ -35,7 +35,12 @@ public sealed class DeployServiceTests : IDisposable
     public void Runbook_executes_on_environment_without_creating_or_changing_a_release()
     {
         var (deploy, environments, store) = Build();
-        WriteProjectYml("runbooks:\n  - name: restart\n    steps: [restart-container, health]\nvariables:\n  - name: LOG_LEVEL\n    value: info\n");
+        WriteProjectYml("runbooks:\n  - name: restart\n    steps: [restart-container, health]\n");
+        var definitionPath = Path.Combine(_repo, ".agent-studio", "project.yml");
+        File.WriteAllText(definitionPath, File.ReadAllText(definitionPath).Replace(
+            "variables:\n  - name: DATABASE_URL",
+            "variables:\n  - name: LOG_LEVEL\n    value: info\n  - name: DATABASE_URL",
+            StringComparison.Ordinal));
         Commit("runbook-definition");
         var runbooks = Runbooks(environments, store);
 
