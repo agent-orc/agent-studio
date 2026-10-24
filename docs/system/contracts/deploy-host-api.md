@@ -42,6 +42,8 @@ instead of running its local Docker or static template. Deploy the backend
 before installing the new agent-host binary on deploy hosts. Then switch
 projects to schema 2. The backend supports the old host's `/renew` 404
 compatibility path during this rollout.
+Artifact provenance still names the underlying `container` or `static` kind.
+All SSH steps in one release must use the same artifact kind.
 
 One host receives one job at a time. A claim is live for five minutes; the host
 renews it every minute while executing. A `409` renewal means the lease was

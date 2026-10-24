@@ -130,6 +130,9 @@ public sealed class DeployService
         if (staging is null || !environments.Any(StandardLifecyclePolicy.RequiresApproval))
             return DeployOutcome<Release>.Invalid(
                 $"Staging and production declarations are required at commit {ShortSha(commit)}.");
+        if (declarations.Any(item => (item.Kind is "stage" or "production")
+                && !_environments.HasVerifiedArtifact(project, artifact, commit, item)))
+            return DeployOutcome<Release>.Invalid("Artifact provenance does not match the release template.");
         var id = ReleaseSnapshot.Id(project, commit, [artifact]);
         var repo = _git.ResolveRepoRootForProject(project);
         var existing = _store.ReadReleaseRecords(project);
@@ -174,7 +177,7 @@ public sealed class DeployService
             if (created)
                 audit.Add(new(now, actor, "release-created", release.Id, null, null,
                     $"Release {release.Version} for commit {ShortSha(commit)} with {release.CardKeys.Count} card(s)."));
-            var job = _environments.QueueReleaseJob(project, artifact, commit, record.Environments);
+            var job = _environments.QueueReleaseJob(project, artifact, commit, record.Environments, release.Id);
             if (job is null)
             {
                 Persist(project, _store.ReadDeployments(project), [], audit);
@@ -970,11 +973,11 @@ public sealed class DeployService
         if (trigger == DeploymentTriggers.Deploy && snapshot.View.Promotions.Any(item => item.Artifact == artifact
                 && item.ProductionId == target.Id && item.Status == "pending"))
         {
-            var (decided, job) = _environments.DecidePromotion(project, artifact, true, actor, target);
+            var (decided, job) = _environments.DecidePromotion(project, artifact, true, actor, target, release.Id);
             if (decided) return job;
         }
         return _environments.QueueDeployment(project, target, artifact, actor,
-            rollback: trigger == DeploymentTriggers.Rollback);
+            rollback: trigger == DeploymentTriggers.Rollback, releaseId: release.Id);
     }
 
     private DeployOutcome<Deployment>? FindRun(string project, string deploymentId, out Snapshot? snapshot,
