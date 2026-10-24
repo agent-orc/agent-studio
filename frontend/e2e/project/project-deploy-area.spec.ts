@@ -164,6 +164,25 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('opens the Runbooks tab with current-page semantics', async ({ page }) => {
+    await openDeploy(page, fullMocks());
+    await page.route(`**${DEPLOY}/runbooks`, route => route.fulfill(json([
+      { name: 'restart', steps: ['restart-container'], environments: [] },
+    ])));
+    await page.route(`**${DEPLOY}/runbooks/runs?*`, route => route.fulfill(json([])));
+
+    const tab = page.getByTestId('deploy-tab-runbooks');
+    await expect(tab).toBeEnabled();
+    await tab.click();
+    await expect(tab).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByTestId('deploy-tab-overview')).not.toHaveAttribute('aria-current', 'page');
+    await expect(page.getByTestId('project-deploy-area').getByTestId('environment-runbooks').first()).toContainText('restart');
+    await setTheme(page, 'light');
+    await capture(page, 'runbooks-tab-light');
+    await setTheme(page, 'dark');
+    await capture(page, 'runbooks-tab-dark');
+  });
+
   test('shows guided failure on the environment card and sends a reasoned skip', async ({ page }) => {
     const deployments = deployDeploymentsFixture().map(item => item.id === 'run-b-stage' ? {
       ...item, state: 'waiting-for-intervention', createdAtUtc: new Date(DEPLOY_FIXTURE_NOW).toISOString(),
