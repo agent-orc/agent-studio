@@ -265,11 +265,14 @@ public sealed class MonolithOrchestrationStoreTests
 
         await Assert.ThrowsAsync<IOException>(() =>
             fixture.Store.CompleteAsync(run.RunId, Complete(claimed), default));
-        await fixture.Store.RecoverApplyingAsync(default);
+        var retries = new List<string>();
+        await fixture.Store.RecoverApplyingAsync(default,
+            onRetry: (item, _) => retries.Add(item.Run.RunId));
         await fixture.Store.RecoverApplyingAsync(default);
         await fixture.Store.RecoverApplyingAsync(default);
 
         Assert.Equal("failed", fixture.Store.Get(run.RunId)!.Status);
+        Assert.Equal(run.RunId, Assert.Single(retries));
         Assert.Equal(MonolithOrchestrationStore.MaximumApplicationAttempts, fixture.Applier.Calls);
         Assert.Equal(MonolithOrchestrationStore.MaximumApplicationAttempts,
             fixture.Restart().GetOccurrence(run.RunId)!.ApplicationAttempts);

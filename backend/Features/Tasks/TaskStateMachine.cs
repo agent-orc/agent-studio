@@ -132,7 +132,8 @@ public class TaskStateMachine
         bool archiveOverride = false,
         bool archiveOverrideRollback = false,
         bool historicalAcceptanceRepair = false,
-        bool operatorDecisionPark = false)
+        bool operatorDecisionPark = false,
+        Func<TaskInfo, MoveJobOutcome?>? beforeMove = null)
     {
         if (!TaskStates.All.Contains(targetState))
             return new MoveJobOutcome(MoveJobStatus.Failure, $"Invalid state: {targetState}");
@@ -208,6 +209,13 @@ public class TaskStateMachine
                 archiveOverride, authorizedPark);
             if (!admission.Allowed && !historicalAcceptanceRepair)
             {
+                if (recheck.State == TaskStates.AutoReview && targetState == TaskStates.HumanReview
+                    && recheck.Phase != LifecyclePhases.Integrating)
+                {
+                    TaskJsonFile.UpdateField(recheck.FolderPath, "phase", LifecyclePhases.Integrating, _logger);
+                    _scanner.InvalidateCache();
+                    _scanner.PublishCoreFromKnownFolder(recheck.FolderPath);
+                }
                 return new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
                     $"{admission.Category}: {admission.RecoveryAction} Current status: {status?.Status ?? "unknown"}.");
             }
@@ -223,6 +231,11 @@ public class TaskStateMachine
                 return new MoveJobOutcome(MoveJobStatus.Failure,
                     "Archive override requires a human actor and a written reason for this card.");
         }
+
+        // The admission guard has accepted the move. Keep the result write
+        // inside the lane lock so a failed write leaves the source lane intact.
+        if (beforeMove?.Invoke(recheck) is { } resultFailure)
+            return resultFailure;
 
         // BP-03: Ready opens a reissue generation and Progress opens an
         // execution generation. A folder-scoped remote review subject belongs

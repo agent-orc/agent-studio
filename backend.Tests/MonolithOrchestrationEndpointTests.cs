@@ -373,6 +373,8 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
             Assert.False(Directory.Exists(Path.Combine(guardedFolder, "results", "history")));
             Assert.Equal(TaskStates.AutoReview, factory.Services.GetRequiredService<TaskScannerService>()
                 .FindJob(card, projectPath)!.State);
+            Assert.Equal(LifecyclePhases.Integrating, factory.Services.GetRequiredService<TaskScannerService>()
+                .FindJob(card, projectPath)!.Phase);
         }
         Assert.Equal("completed", (await fakeEngine.Complete(reviewStage,
             acceptReview ? OrchestrationAction.Continue : OrchestrationAction.Reissue,

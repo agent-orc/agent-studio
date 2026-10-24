@@ -440,6 +440,17 @@ public sealed class TaskTransitionService
         ReleaseCliOutputResourcesBeforeMove(info);
         MoveJobOutcome MoveCore()
         {
+            MoveJobOutcome? EnsureResultAfterAdmission(TaskInfo admitted)
+            {
+                if (!ResultRequiredStates.Contains(targetState)) return null;
+                return TryEnsureResultDocument(admitted, targetState,
+                    operatorBackfill: false, refreshOwnedScaffold: true,
+                    atUtc: _time.GetUtcNow().UtcDateTime, integrationReferenceOverride: null,
+                    out var resultError)
+                    ? null
+                    : new MoveJobOutcome(MoveJobStatus.Failure,
+                        $"Cannot move task to {targetState} because status.md could not be ensured: {resultError}");
+            }
             var moved = _states.MoveJob(
                 jobId,
                 targetState,
@@ -451,7 +462,8 @@ public sealed class TaskTransitionService
                 transitionCause,
                 transitionDetail,
                 decisionReopenPermit, archiveOverride,
-                operatorDecisionPark: operatorDecisionPark);
+                operatorDecisionPark: operatorDecisionPark,
+                beforeMove: EnsureResultAfterAdmission);
             if (!archiveOverride || moved.Status != MoveJobStatus.Success)
                 return moved;
 
@@ -636,7 +648,8 @@ public sealed class TaskTransitionService
             }
         }
 
-        if (outcome.Status == MoveJobStatus.Success && info.State != targetState
+        if (outcome.Status == MoveJobStatus.Success && cause != "engine-decision"
+            && info.State != targetState
             && ResultRequiredStates.Contains(targetState))
         {
             // A refused move never touches status.md or its version metadata.

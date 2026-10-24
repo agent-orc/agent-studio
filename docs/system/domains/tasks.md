@@ -1145,11 +1145,12 @@ card waiting on a person from one waiting on a fix.
 ## Result transition invariant
 
 `TaskTransitionService` is the single enforcement point for Result availability.
-After an accepted move into `4-auto-review`, `5-human-review`, `5e-escalated`,
-or `6-completed`, it writes or refreshes a marked, evidence-only scaffold if no
-generated Result is available. Refused and no-op moves do not write `status.md`,
-`current-result.json`, or Result history. A failed post-move scaffold write is
-logged for repair; it does not reverse the landed lane. The service never
+After the lane guard accepts a move into `4-auto-review`, `5-human-review`,
+`5e-escalated`, or `6-completed`, it ensures a marked, evidence-only scaffold
+before changing lanes if no generated Result is available. If that write fails,
+the card remains in its source lane. Admission refusals and no-op moves do not write
+`status.md`, `current-result.json`, or Result history. An engine decision
+refreshes its scaffold at most once during the accepted move. The service never
 replaces a real Result. Backend startup runs
 the same idempotent repair over missing Results in `5-human-review`,
 `6-completed`, and `7-archive`; repaired files are marked as operator
