@@ -10,6 +10,13 @@ The fixed receipts and bus fixture in [`TokenUsageCharacterizationTests`](../../
 
 `ProjectTokenLedger.LoadSnapshot` merges project bus history, durable `task.json.tokenSummary` calls, and chat fallback receipts. `ProjectTokenReceiptReader` reads both legacy lane folders and bucketed task folders, including archived tasks. `TokenLedgerMerge` removes bus/receipt overlap; `TokenLedgerDuplicates` collapses duplicate calls within a source. Receipt calls are authoritative for a task's coding run. A task without a coding receipt keeps its historical `pipeline-execution.json` cost record. A failed source is represented in `ProjectTokenDataFreshness` as partial or unavailable instead of silently becoming a zero.
 
+The separate task usage resource reads this merged ledger after the core card
+has painted. One single-flight priced fold per project supplies per-card
+summaries. A change to that card's receipt bytes or a matching token bus append
+invalidates its summary; heartbeat-only core publications leave it cached.
+The full-detail response returns a cached summary when available and starts a
+background warm when it is missing. It never folds the ledger on the request.
+
 The writers are `ProjectRunner.MirrorAgentTurnUsageToBus` for local coding calls, `RemoteTokenReceiptService` for remote coding completion, `RemotePipelineReviewEvidenceProjector` for remote review, and `OrchestratorChatService.RecordChatUsageAsync` for chat. Chat fallback receipts are written when the bus append fails. The merged ledger retains participant, host, CLI, model, timestamp, and token dimensions.
 
 `TokenAggregationService.WorkspaceTimeline` filters to the requested UTC window before pricing entries. The fold applies the same half-open interval `[start, end)` and builds project, model, host, and bucket rows from the selected entries. `WorkspaceTimelineRange` reads bus rows for its exact calendar interval. Both preserve the recorded timestamp for historical pricing.
@@ -27,6 +34,14 @@ The project pipeline cost view uses receipt calls when they contain the coding r
 The one-time `OpenAiUsageHistoryRepair` completed on Stable on 2026-09-25: `.metadata/migrations/openai-usage-input-v1.json` reports 605 repaired rows and 0 failures. The one-time `TokenLedgerDuplicateRepair` completed on Stable on 2026-10-10: `.metadata/migrations/token-ledger-duplicates-v1.json` reports 0 failures. AGT-3037 removed both startup services and their dedicated tests after those completion reports were verified. The reports remain historical operator evidence. Immutable bus files still need read time normalization and duplicate collapse; those read policies remain in `StoredUsageNormalization` and `TokenLedgerDuplicates`.
 
 ## Current files
+
+The project Token Usage panel also reads
+`/api/projects/{projectName}/token-usage/review-observations`. Its review table
+shows cost per review, blocker rate, missed approvals, and cost per confirmed
+finding by model and reasoning level. The corresponding `/export` response is
+dated Studio observation evidence for Token Economy, separate from published
+model facts. See the [review domain](review.md#review-observations-and-later-evidence-agt-3269)
+for recording and attribution rules.
 
 | Stage | Files |
 |---|---|

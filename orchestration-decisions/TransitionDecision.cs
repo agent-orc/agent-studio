@@ -45,8 +45,8 @@ public static class TransitionDecisionPolicy
     {
         // An uncited block is not an actionable finding. The former Council loop
         // skipped it before deciding whether to reissue the reviewed delivery.
-        var findings = facts.Review.Findings.Where(item =>
-            !ReviewRoundBudgetPolicy.IsUncitedBlock(item.Classification)).ToArray();
+        var findings = ReviewFindingMergePolicy.Merge(facts.Review.Findings.Where(item =>
+            !ReviewRoundBudgetPolicy.IsUncitedBlock(item.Classification)));
         var verdicts = (facts.Review.Verdicts ?? []).Where(item =>
             !ReviewRoundBudgetPolicy.IsUncitedBlock(item.Classification)).ToArray();
         var review = ReviewBudgetPolicy.Decide(new ReviewBudgetFacts(
@@ -79,7 +79,7 @@ public static class TransitionDecisionPolicy
         else if (review.Escalate)
         {
             action = TransitionAction.Escalate;
-            reason = "The card round budget is spent with an open test block.";
+            reason = "The review requires operator attention for a repeated finding or an open test block.";
         }
         else if (review.ShouldDegrade)
         {
@@ -184,8 +184,8 @@ public static class TransitionDecisionPolicy
             _ => string.Empty,
         };
 
-    public static bool CreateReview(bool epicPlanning, string outcome, bool verifiedDelivery, bool reportOnly)
-        => !epicPlanning && outcome is CompletionOutcomeKinds.Done or CompletionOutcomeKinds.NoOp && verifiedDelivery && !reportOnly;
+    public static bool CreateReview(string outcome, bool verifiedDelivery, bool reportOnly)
+        => outcome is CompletionOutcomeKinds.Done or CompletionOutcomeKinds.NoOp && verifiedDelivery && !reportOnly;
 
     public static TransitionAction Salvage(string? outcome, bool hasCommit, int roundsUsed)
         => !string.Equals(outcome?.Trim(), CompletionOutcomeKinds.Unknown, StringComparison.OrdinalIgnoreCase)

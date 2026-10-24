@@ -8,7 +8,7 @@ internal sealed record TaskQueryRequest
 {
     private static readonly HashSet<string> AnalysisKeys = new(StringComparer.OrdinalIgnoreCase)
     {
-        "state", "kind", "cliType", "model", "epicId", "mode", "phase", "tag", "area",
+        "state", "kind", "cliType", "model", "mode", "phase", "tag", "area",
         "verdict", "issueKind", "hasIssue", "minCommits", "maxCommits",
         "activitySince", "activityBefore", "createdSince", "createdBefore",
         "durationMin", "durationMax", "sortBy", "order", "limit", "offset", "fields",
@@ -21,7 +21,6 @@ internal sealed record TaskQueryRequest
     public string[] Kind { get; init; } = [];
     public string[] CliType { get; init; } = [];
     public string[] Model { get; init; } = [];
-    public string[] EpicId { get; init; } = [];
     public string[] Mode { get; init; } = [];
     public string[] Phase { get; init; } = [];
     public string[] Tag { get; init; } = [];
@@ -63,7 +62,6 @@ internal sealed record TaskQueryRequest
             Kind = Csv(query, "kind"),
             CliType = Csv(query, "cliType"),
             Model = Csv(query, "model"),
-            EpicId = Csv(query, "epicId"),
             Mode = Csv(query, "mode"),
             Phase = Csv(query, "phase"),
             Tag = Csv(query, "tag"),
@@ -210,7 +208,6 @@ internal static partial class TaskQueryEngine
                && In(q.Kind, j.Kind)
                && In(q.CliType, j.CliType)
                && In(q.Model, j.Model)
-               && In(q.EpicId, j.EpicId)
                && In(q.Mode, j.Mode)
                && In(q.Phase, j.Phase)
                && (q.Tag.Length == 0 || q.Tag.Any(t => j.Tags.Any(x => Eq(x, t))))
@@ -270,7 +267,6 @@ internal static partial class TaskQueryEngine
         "kind" => row.Job.Kind,
         "clitype" => row.Job.CliType,
         "model" => row.Job.Model,
-        "epicid" => row.Job.EpicId,
         "mode" => row.Job.Mode,
         "phase" => row.Job.Phase,
         "tags" => row.Job.Tags,

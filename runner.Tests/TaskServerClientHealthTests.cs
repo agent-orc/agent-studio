@@ -159,6 +159,7 @@ public class TaskServerClientHealthTests
             Hostname = "host",
             BackendName = "test",
             WorkDir = Path.GetTempPath(),
+            StateDir = Path.Combine(Path.GetTempPath(), $"monolith-client-{Guid.NewGuid():N}"),
             BaseBranch = "main",
             ClaudeCliBin = "claude",
         };
@@ -274,7 +275,7 @@ public class TaskServerClientHealthTests
     public async Task Probe_reports_a_reason_when_the_server_is_unreachable()
     {
         // Port 1 is reserved and never listening: connect fails fast (refused).
-        var (options, _, _, _) = RunnerOptions.Parse(["--health-check", "--server", "http://127.0.0.1:1"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--health-check", "--server", "http://127.0.0.1:1"]);
         using var client = new TaskServerClient(options);
 
         var reason = await client.ProbeHealthAsync(CancellationToken.None);
@@ -285,7 +286,7 @@ public class TaskServerClientHealthTests
     [Fact]
     public async Task Probe_propagates_a_real_shutdown_rather_than_masking_it_as_a_health_failure()
     {
-        var (options, _, _, _) = RunnerOptions.Parse(["--health-check", "--server", "http://127.0.0.1:1"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(["--health-check", "--server", "http://127.0.0.1:1"]);
         using var client = new TaskServerClient(options);
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync();
@@ -342,8 +343,8 @@ public class TaskServerClientHealthTests
                 """),
         });
         using var http = new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1") };
-        var (options, _, _, _) = RunnerOptions.Parse(
-            ["--poll", "--server", "http://127.0.0.1", "--runner-id", "runner-v1", "--max-parallelism", "2"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(
+            ["--poll", "--server", "http://127.0.0.1", "--runner-id", "runner-v1", "--hostname", "host-a", "--max-parallelism", "2", "--state-dir", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))]);
         using var client = new TaskServerClient(
             http,
             "runner-v1",
@@ -379,8 +380,8 @@ public class TaskServerClientHealthTests
                 """),
         });
         using var http = new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1") };
-        var (options, _, _, _) = RunnerOptions.Parse(
-            ["--poll", "--server", "http://127.0.0.1", "--runner-id", "runner-v1", "--max-parallelism", "2"]);
+        var (options, _, _, _) = RunnerTestOptions.Parse(
+            ["--poll", "--server", "http://127.0.0.1", "--runner-id", "runner-v1", "--hostname", "host-a", "--max-parallelism", "2", "--state-dir", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))]);
         using var client = new TaskServerClient(
             http,
             "runner-v1",
@@ -468,6 +469,53 @@ public class TaskServerClientHealthTests
         }
     }
 
+    [Theory]
+    [InlineData("host-b", 1)]
+    [InlineData("host-a", 99)]
+    public async Task Server_capacity_replaces_foreign_or_unissued_cached_capacity(
+        string cachedHost, long cachedVersion)
+    {
+        var state = Directory.CreateTempSubdirectory("runner-capacity-poison-");
+        try
+        {
+            var at = DateTime.UnixEpoch;
+            var cache = new RuntimeCapacityCache(state.FullName);
+            cache.Save(new RuntimeCapacitySettingsDto(
+                cachedHost, 5, 85, "conservative", cachedVersion, at), at);
+            var warnings = new List<string>();
+            if (cachedHost == "host-b")
+                Assert.Null(cache.Load("host-a", warnings.Add));
+            else
+                Assert.NotNull(cache.Load("host-a", warnings.Add));
+            Assert.True(File.Exists(Path.Combine(state.FullName, "configuration", "runtime-capacity.json")));
+            Assert.Equal(cachedHost == "host-b" ? 1 : 0, warnings.Count);
+            warnings.Clear();
+            var handler = new RecordingHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                    {"status":"empty","runtimeCapacity":{"hostId":"host-a","maxParallelism":12,
+                    "targetLoadPercent":90,"rampStrategy":"balanced","version":3,
+                    "updatedAt":"2026-10-21T00:00:00Z"}}
+                    """),
+            });
+            using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+            using var client = new TaskServerClient(http, "runner-v1", usesDurableTaskServer: true,
+                options: CapacityOptions(state.FullName), capacityWarning: warnings.Add);
+
+            await client.ClaimAsync(new RunnerClaimRequest(
+                "runner-v1", "Runner v1", "host-a", 1, "remote"), CancellationToken.None);
+
+            Assert.Equal(12, client.HostMaxParallelism);
+            Assert.Equal(3, client.RuntimeCapacityVersion);
+            Assert.Equal(3, cache.Load("host-a")?.Capacity.Version);
+            Assert.Single(warnings);
+        }
+        finally
+        {
+            state.Delete(recursive: true);
+        }
+    }
+
     [Fact]
     public async Task Durable_task_server_claim_without_repository_registration_uses_runner_git_fallback()
     {
@@ -540,6 +588,7 @@ public class TaskServerClientHealthTests
             IsWorkstation = true,
             GitRemote = "/tmp/fallback-origin.git",
             WorkDir = "/tmp/runner-v1",
+            StateDir = Path.Combine(Path.GetTempPath(), $"durable-client-{Guid.NewGuid():N}"),
             BaseBranch = "main",
             ClaudeCliBin = "/bin/sh",
             TtlSeconds = 120,

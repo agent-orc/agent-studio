@@ -104,7 +104,7 @@ public sealed record PhaseBudget(
         // any other hang, so the seat is freed and the existing reissue/
         // recovery policy applies. Operators can re-tune per CLI via
         // Watchdog:Phase:{TurnCompleted,TurnFailed}:{Suspicious,Hung}Seconds.
-        // Epic ASS-776.
+        // ASS-776.
         RunPhase.TurnCompleted        => new PhaseBudget(SuspiciousSeconds: 120, HungSeconds: 600),
         RunPhase.TurnFailed           => new PhaseBudget(SuspiciousSeconds: 120, HungSeconds: 600),
         // Genuinely-waiting / already-dead states keep the watchdog's hand

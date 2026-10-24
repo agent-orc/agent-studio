@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Options;
 
@@ -314,7 +315,8 @@ public static class TaskServerEndpoints
             HttpContext context, string projectId, CreateTaskRequest request, TaskServerStore store, CancellationToken ct)
             => StudioProductSession.IsProduct(context) && !StudioProductSession.AllowsCreate(request.State)
                 ? StudioProductSession.Denied()
-                : await InvokeAsync(() => store.CreateTaskAsync(projectId, request, Actor(context), ct), StatusCodes.Status201Created))
+                : await CreateTaskAsync(context, request.CompatibilityFields,
+                    () => store.CreateTaskAsync(projectId, request, Actor(context), ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         api.MapPut("/projects/{projectId}/tasks/{taskIdentity}", async (
             HttpContext context, string projectId, string taskIdentity, UpdateTaskRequest request, TaskServerStore store, CancellationToken ct)
@@ -1157,6 +1159,18 @@ public static class TaskServerEndpoints
         fullBackups.MapPost("/{backupId}/restore", async (
             HttpContext context, string backupId, FullBackupManagementService fullBackup, CancellationToken ct)
             => await InvokeAsync(() => fullBackup.RestoreAsync(backupId, Actor(context), ct)));
+    }
+
+    internal static Task<IResult> CreateTaskAsync<T>(
+        HttpContext context, Dictionary<string, JsonElement>? compatibilityFields, Func<Task<T>> create)
+    {
+        if (compatibilityFields?.Keys.Any(key =>
+            string.Equals(key, "epicId", StringComparison.OrdinalIgnoreCase)) == true)
+        {
+            context.Response.Headers["Deprecation"] = "true";
+            context.Response.Headers.Warning = "299 - \"epicId is deprecated and ignored\"";
+        }
+        return InvokeAsync(create, StatusCodes.Status201Created);
     }
 
     internal static string Actor(HttpContext context)

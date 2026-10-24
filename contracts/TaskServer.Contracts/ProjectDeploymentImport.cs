@@ -74,7 +74,7 @@ public static class ProjectDeploymentImport
         builder.Append(ending).Append("artifacts:").Append(ending)
             .Append("  - name: legacy-static").Append(ending)
             .Append("    type: static").Append(ending)
-            .Append("    path: .").Append(ending)
+            .Append("    path: dist").Append(ending)
             .Append("environments: [staging, production]").Append(ending)
             .Append("lifecycles:").Append(ending)
             .Append("  standard:").Append(ending)

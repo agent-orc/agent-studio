@@ -165,20 +165,6 @@ public class TaskMutationService
         return Updated(info);
     }
 
-    /// <summary>
-    /// Epics assignment way 2 (post-hoc): attach this task to a parent epic, or
-    /// detach it (<paramref name="epicId"/> null/empty clears the link). Writes
-    /// the <c>epicId</c> field on task.json via the mutation layer (API-only
-    /// job-folder rule, ADR-0024). Returns false when the task is not found.
-    /// </summary>
-    public bool SetJobEpic(string jobId, string? epicId, string? watchPath = null)
-    {
-        var info = _scanner.FindJob(jobId, watchPath);
-        if (info == null) return false;
-        TaskJsonFile.UpdateField(info.FolderPath, "epicId", epicId ?? "", _logger);
-        return Updated(info);
-    }
-
     public bool SetJobCliType(string jobId, string cliType, string? watchPath = null)
     {
         var info = _scanner.FindJob(jobId, watchPath);
@@ -502,10 +488,13 @@ public class TaskMutationService
 
             var isRemoteAttempt = participantId.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
                 StringComparison.Ordinal);
+            var isReviewAttempt = participantId.StartsWith("support:remote-review:", StringComparison.Ordinal);
             var retained = (persisted?.Entries ?? [])
                 .Where(entry => !string.Equals(entry.ParticipantId, participantId, StringComparison.Ordinal)
                     && !(isRemoteAttempt &&
-                        (entry.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false)))
+                        (entry.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false))
+                    && !(isReviewAttempt &&
+                        (entry.ParticipantId?.StartsWith(participantId + ":step:", StringComparison.Ordinal) ?? false)))
                 .ToList();
             var recorded = retained
                 .Where(entry => TokenLedgerDuplicates.UsageIdentity(entry) is not null)
@@ -522,8 +511,10 @@ public class TaskMutationService
             {
                 var entry = source with
                 {
-                    ParticipantId = isRemoteAttempt &&
-                        (source.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false)
+                    ParticipantId = ((isRemoteAttempt &&
+                        (source.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false))
+                        || (isReviewAttempt &&
+                        (source.ParticipantId?.StartsWith(participantId + ":step:", StringComparison.Ordinal) ?? false)))
                         ? source.ParticipantId : participantId,
                 };
                 var identity = isRemoteAttempt ? TokenLedgerDuplicates.UsageIdentity(entry) : null;
@@ -883,6 +874,14 @@ public class TaskMutationService
         string folderPath,
         TaskIntegrationRecord record)
     {
+        if (string.IsNullOrWhiteSpace(folderPath)) return new IntegrationRecordWriteResult(false, false);
+        lock (TaskJsonFile.SyncRoot(folderPath))
+            return AppendIntegrationRecordLocked(folderPath, record);
+    }
+
+    private IntegrationRecordWriteResult AppendIntegrationRecordLocked(
+        string folderPath, TaskIntegrationRecord record)
+    {
         if (!Directory.Exists(folderPath)
             || string.IsNullOrWhiteSpace(record.Id)
             || !IntegrationRecordClasses.All.Contains(record.Classification, StringComparer.Ordinal))
@@ -910,18 +909,28 @@ public class TaskMutationService
                 }
             }
 
-            if (records.Any(existing => string.Equals(
-                    existing.Id,
-                    record.Id,
-                    StringComparison.OrdinalIgnoreCase)))
+            if (record.Id.StartsWith("operator-candidate-", StringComparison.Ordinal))
             {
-                return new IntegrationRecordWriteResult(true, false);
+                var subject = ReviewSubjectStore.Read(folderPath);
+                if (!string.Equals(subject?.ResultSha, record.SourceSha, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(subject?.RunAttemptId, record.DeliveryEpoch, StringComparison.Ordinal))
+                    return new IntegrationRecordWriteResult(false, false, true);
+            }
+
+            var existing = records.FirstOrDefault(item => string.Equals(
+                item.Id, record.Id, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+            {
+                if (record.Id.StartsWith("operator-candidate-", StringComparison.Ordinal)
+                    && !OperatorCandidateEvidenceMatches(existing, record))
+                    return new IntegrationRecordWriteResult(false, false, true);
+                return new IntegrationRecordWriteResult(true, false, PersistedRecord: existing);
             }
 
             records.Add(record);
             TaskJsonFile.UpdateFieldOrThrow(folderPath, "integrationRecords", records);
             Updated(folderPath);
-            return new IntegrationRecordWriteResult(true, true);
+            return new IntegrationRecordWriteResult(true, true, PersistedRecord: record);
         }
         catch (Exception ex)
         {
@@ -930,9 +939,33 @@ public class TaskMutationService
         }
     }
 
+    private static bool OperatorCandidateEvidenceMatches(TaskIntegrationRecord existing, TaskIntegrationRecord proposed)
+        => existing.Classification == proposed.Classification
+           && existing.Version == proposed.Version
+           && existing.IntegrationBranch == proposed.IntegrationBranch
+           && existing.IntegrationSha == proposed.IntegrationSha
+           && existing.SourceSha == proposed.SourceSha
+           && existing.DeliveryEpoch == proposed.DeliveryEpoch
+           && existing.VerificationHost == proposed.VerificationHost
+           && existing.SuiteSummary == proposed.SuiteSummary
+           && existing.LogHash == proposed.LogHash
+           && existing.VerificationStartedAtUtc == proposed.VerificationStartedAtUtc
+           && existing.VerificationEndedAtUtc == proposed.VerificationEndedAtUtc
+           && existing.Evidence == proposed.Evidence
+           && existing.VerificationSuites.SequenceEqual(proposed.VerificationSuites);
+
     /// <summary>Removes evidence staged for an operator move that was refused.</summary>
     public bool RemoveIntegrationRecordOnFolder(string folderPath, string recordId)
     {
+        lock (TaskJsonFile.SyncRoot(folderPath))
+            return RemoveIntegrationRecordLocked(folderPath, recordId);
+    }
+
+    private bool RemoveIntegrationRecordLocked(string folderPath, string recordId)
+    {
+        // Operator candidate receipts are final evidence, never staged move
+        // evidence. The rollback path must not erase them.
+        if (recordId.StartsWith("operator-candidate-", StringComparison.Ordinal)) return false;
         var path = Path.Combine(folderPath, "task.json");
         if (!File.Exists(path)) return false;
         try
@@ -1257,7 +1290,8 @@ public class TaskMutationService
             return (true, null);
         try
         {
-            new AtomicJsonFileWriter().ReplaceExisting(jsonPath, originalJson);
+            TaskJsonFile.RestoreFieldsFromSnapshot(info.FolderPath, originalJson,
+                "kind", "decision", "noBranchExpected", "requiresIntegration");
             _scanner.InvalidateCache();
             _scanner.PublishCoreFromFolder(info.FolderPath, info.WatchPath, info.ProjectName, info.State);
             return (false, $"Decision migration failed; the original lane and card were restored: {moved.Message ?? moved.Status.ToString()}.");
@@ -1435,7 +1469,8 @@ public class TaskMutationService
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
-        TaskJsonFile.UpdateField(info.FolderPath, "released", released, _logger);
+        if (!TaskJsonFile.UpdateField(info.FolderPath, "released", released, _logger))
+            return false;
         var dependents = ReleaseGatedDependentKeys(info);
         _timeline?.Append(
             info.FolderPath,
@@ -1467,7 +1502,7 @@ public class TaskMutationService
         if (string.IsNullOrWhiteSpace(info.Key)) return [];
         try
         {
-            return _scanner.GetReferenceIndex()
+            return _scanner.GetCoreReferenceIndex()
                 .Dependents(info.Key, TaskReferenceKinds.DependsOn)
                 .Where(link => link.ReleaseGate && !string.IsNullOrWhiteSpace(link.SourceKey))
                 .Select(link => link.SourceKey!)
@@ -1984,11 +2019,8 @@ public class TaskMutationService
         jobJson["thinkingLevelExplicit"] = req.ThinkingLevelExplicit ?? !string.IsNullOrWhiteSpace(req.ThinkingLevel);
         if (!string.IsNullOrWhiteSpace(effectiveCliType))
             jobJson["cliType"] = effectiveCliType;
-        // Epics: card kind (task|epic) + optional parent epic (assignment way 1,
-        // at create time). kind is always written so a fresh task.json is explicit.
+        // Keep the normalized card kind explicit in new task metadata.
         jobJson["kind"] = TaskKinds.Normalize(req.Kind);
-        if (!string.IsNullOrWhiteSpace(req.EpicId))
-            jobJson["epicId"] = req.EpicId;
         if (req.Dossier is { Path.Length: > 0 })
             jobJson["dossier"] = req.Dossier;
         // Execution mode (coding|planning|research) + web-access. mode is always
@@ -2435,6 +2467,7 @@ public class TaskMutationService
 
             File.Delete(stash);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
             return PendingIntentAcknowledgeResult.Consumed;
         }
         catch (Exception ex)
@@ -2477,6 +2510,7 @@ public class TaskMutationService
             if (File.Exists(canonical)) File.Delete(canonical);
             if (File.Exists(stash)) File.Delete(stash);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
             return true;
         }
         catch (Exception ex)
@@ -2560,7 +2594,11 @@ public class TaskMutationService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info is null || info.ModelExplicit || info.ThinkingLevelExplicit) return false;
         var written = TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevel", level, _logger);
-        if (written) _scanner.InvalidateCache();
+        if (written)
+        {
+            _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(info.FolderPath);
+        }
         return written;
     }
 
@@ -2671,6 +2709,7 @@ public class TaskMutationService
                 TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevel", thinkingLevel, _logger);
 
             count++;
+            _scanner.PublishCoreFromKnownFolder(job.FolderPath);
             _logger.LogInformation(
                 "backfill-agent-defaults jobId={JobId} owner={Owner} agent={Agent} cliType={CliType} model={Model} thinkingLevel={ThinkingLevel}",
                 job.Id, ownerId, cliType ?? job.Agent, cliType, model, thinkingLevel);
@@ -2712,6 +2751,7 @@ public class TaskMutationService
                 TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevel", resolved, _logger);
                 TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevelExplicit", false, _logger);
                 touched++;
+                _scanner.PublishCoreFromKnownFolder(job.FolderPath);
             }
         }
         if (touched > 0) _scanner.InvalidateCache();
@@ -2822,6 +2862,7 @@ public class TaskMutationService
             // must never do is report a backfill that did not happen.
             if (!TaskJsonFile.UpdateField(job.FolderPath, "key", key, _logger, _keyFileWriter)) continue;
             stamped++;
+            _scanner.PublishCoreFromKnownFolder(job.FolderPath);
         }
 
         if (stamped > 0) _scanner.InvalidateCache();
@@ -2901,6 +2942,7 @@ public class TaskMutationService
                     continue;
                 }
                 rekeyed++;
+                _scanner.PublishCoreFromKnownFolder(ordered[i].FolderPath);
                 _logger.LogInformation(
                     "task-key-dedup project={ProjectId} oldKey={OldKey} newKey={NewKey} jobId={JobId} keeper={KeeperId}",
                     projectId, oldKey, newKey, ordered[i].Id, keeper.Id);
@@ -2937,7 +2979,8 @@ public enum PendingIntentAcknowledgeResult
     HistoryWriteFailed,
 }
 
-public sealed record IntegrationRecordWriteResult(bool Succeeded, bool Appended);
+public sealed record IntegrationRecordWriteResult(
+    bool Succeeded, bool Appended, bool Conflict = false, TaskIntegrationRecord? PersistedRecord = null);
 
 public sealed record CommitSupersessionWriteResult(bool Succeeded, int MarkedCommits);
 
