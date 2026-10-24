@@ -54,6 +54,8 @@ public sealed class WorkerBuildServerHygieneTests
         {
             ["RUNNER_AUTH_TOKEN"] = "runner-secret",
             ["RUNNER_AUTH_TOKEN_FILE"] = "runner-secret-path",
+            ["RUNNER_STATE_DIR"] = "service-state",
+            ["AGENT_HOST_STATE_DIR"] = "service-state-alias",
             ["STUDIO_COOKIE"] = "browser-cookie",
             ["STUDIO_CSRF"] = "browser-csrf",
             ["CONNECTOR_SESSION_SECRET"] = "connector-secret",
@@ -65,7 +67,8 @@ public sealed class WorkerBuildServerHygieneTests
 
         Assert.Equal("tool-path", environment["PATH"]);
         Assert.DoesNotContain(environment.Keys, key => key is "RUNNER_AUTH_TOKEN"
-            or "RUNNER_AUTH_TOKEN_FILE" or "STUDIO_COOKIE" or "STUDIO_CSRF"
+            or "RUNNER_AUTH_TOKEN_FILE" or "RUNNER_STATE_DIR" or "AGENT_HOST_STATE_DIR"
+            or "STUDIO_COOKIE" or "STUDIO_CSRF"
             or "CONNECTOR_SESSION_SECRET");
     }
 

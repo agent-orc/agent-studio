@@ -58,7 +58,6 @@ function buildInfo(state: string, emptyContext = false) {
     folderPath: `${WATCH_PATH}/.orchestrator/jobs/${state}/${JOB_ID}`,
     execution: null,
     kind: 'task',
-    epicId: null,
     commit: null,
     commits: emptyContext ? [] : [
       { sha: 'b2ed3f47', shortSha: 'b2ed3f47', message: 'first slice', filesChanged: 3, files: ['a.ts', 'b.ts', 'c.ts'], at: '2026-07-09T18:00:00Z' },
@@ -261,7 +260,8 @@ const TIMELINE = [
   },
 ];
 
-async function installRoutes(page: Page, state: string, emptyContext = false, recentAttempt = false): Promise<void> {
+async function installRoutes(page: Page, state: string, emptyContext = false, recentAttempt = false,
+  parkedReason = 'Push protection rejected the branch.'): Promise<void> {
   const info = {
     ...buildInfo(state, emptyContext),
     ...(recentAttempt ? {
@@ -269,7 +269,7 @@ async function installRoutes(page: Page, state: string, emptyContext = false, re
         blockerType: 'operator-decision', conditionKind: 'manual',
         conditionDescription: 'Waiting for an operator decision.',
         lane: state, parkedAt: '2026-10-06T04:22:54Z', parkedForSeconds: 59,
-        reason: 'Push protection rejected the branch.', recallStatus: 'blocked',
+        reason: parkedReason, recallStatus: 'blocked',
         lastEvaluatedAt: null, detail: '', decision: null, needsInputFile: null,
         evaluationAgeSeconds: null, evaluationStale: false, requiresDecisionCard: true,
       },
@@ -401,9 +401,11 @@ async function setTheme(page: Page, theme: 'dark' | 'light'): Promise<void> {
   }, theme);
 }
 
-async function openDetail(page: Page, state: string, emptyContext = false, recentAttempt = false): Promise<void> {
+async function openDetail(page: Page, state: string, emptyContext = false, recentAttempt = false,
+  parkedReason?: string, beforeOpen?: () => Promise<void>): Promise<void> {
   await page.setViewportSize({ width: 1440, height: 960 });
-  await installRoutes(page, state, emptyContext, recentAttempt);
+  await installRoutes(page, state, emptyContext, recentAttempt, parkedReason);
+  await beforeOpen?.();
   await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
   await page.addStyleTag({ content: '[data-testid="studio-overlay-root"], [role="alert"] { display: none !important; }' });
   await expect(page.getByTestId('escalation-summary')).toBeVisible({ timeout: 20_000 });
@@ -437,6 +439,34 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
       'Latest attempt ended 2026-10-06 04:22 UTC: Push protection rejected the branch.',
     );
     await shootBothThemes(page, testInfo, 'escalation-latest-attempt');
+  });
+
+  test('releases cards parked by a gate queue overrun with one action (AGT-3219)', async ({ page }, testInfo) => {
+    const queueReason = 'machine build/test gate queue wait violated machine-gate-queue budget '
+      + '(limit=9327000ms, consumed=9327018ms, phase=queue)';
+    let releasable = [JOB_ID, 'AGT-3214', 'AGT-3215'];
+    let releases = 0;
+    await openDetail(page, '5e-escalated', true, true, queueReason, async () => {
+      await page.route(`**/api/projects/${PROJECT}/batch-gate/queue-stalls`, (route) =>
+        route.fulfill({ status: 200, contentType: 'application/json',
+          body: JSON.stringify({ project: PROJECT, releasable, openEpisode: null, recentEvents: [] }) }));
+      await page.route(`**/api/projects/${PROJECT}/batch-gate/queue-stalls/release`, (route) => {
+        releases++;
+        const released = releasable;
+        releasable = [];
+        return route.fulfill({ status: 200, contentType: 'application/json',
+          body: JSON.stringify({ released, refused: [] }) });
+      });
+    });
+
+    const panel = page.getByTestId('gate-queue-release');
+    await expect(panel).toContainText('3 cards of fixture-escalation are parked for this reason.');
+    await shootBothThemes(page, testInfo, 'escalation-gate-queue-release');
+    await page.getByTestId('gate-queue-release-action').click();
+    await expect(page.getByTestId('gate-queue-release-outcome')).toHaveText('Released 3 cards to the gate queue.');
+    await expect(page.getByTestId('gate-queue-release-action')).toHaveCount(0);
+    expect(releases).toBe(1);
+    await shootBothThemes(page, testInfo, 'escalation-gate-queue-released');
   });
 
   test('keeps the MKT-20 three-round essence bounded and every artifact readable', async ({ page }, testInfo) => {

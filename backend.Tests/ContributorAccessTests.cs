@@ -88,6 +88,7 @@ public sealed class ContributorAccessTests : IDisposable
         context.Request.Path = "/api/tasks";
         context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={accepted.SessionToken}");
         context.Request.Headers["X-CSRF-Token"] = accepted.CsrfToken;
+        context.Request.Headers["Sec-Fetch-Site"] = "same-origin";
         context.Request.Headers["X-Client-Id"] = "forged-operator";
         await middleware.InvokeAsync(context);
         Assert.True(called);

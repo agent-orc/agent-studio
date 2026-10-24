@@ -2,7 +2,9 @@
 using AgentStudio.Deploy;
 using AgentStudio.Search;
 using AgentStudio.Proposals;
+using AgentStudio.Quota;
 using AgentStudio.Telemetry;
+using AgentStudio.Review;
 
 namespace AgentStudio.Host;
 
@@ -35,6 +37,7 @@ public static class EndpointMapping
         tasks.MapTaskGitEndpoints();
         tasks.MapTaskClaudeEndpoints();
         tasks.MapTaskReviewEvidenceEndpoints();
+        tasks.MapTaskReviewObservationEndpoints();
         tasks.MapTaskExternalCompletionEndpoints();
         tasks.MapTaskCodeReviewEndpoints();
         tasks.MapReviewProjectionEndpoints();
@@ -43,12 +46,12 @@ public static class EndpointMapping
         tasks.MapTaskMergeEndpoints();
         tasks.MapTaskIntegrationRecordEndpoints();
         app.MapExternalPublishedVerificationEndpoints();
+        app.MapOperatorCandidateVerificationEndpoints();
         tasks.MapTaskDeliveryClaimEndpoint();
         tasks.MapTaskIntegrationRecoveryEndpoints();
         tasks.MapTaskIntegrationRetryEndpoints();
         tasks.MapTaskFailureContinuationEndpoints();
 
-        app.MapEpicEndpoints();
         app.MapCompletedLaneAuditEndpoints();
         app.MapDeliveryClaimEndpoints();
         app.MapParkedCardEndpoints();
@@ -82,13 +85,14 @@ public static class EndpointMapping
         app.MapDemoReplayEndpoints();
         app.MapArtifactIngestionEndpoints();
         app.MapRegistryEndpoints();
-        if (mapsLocalV1)
+        if (SecurityProfiles.IsLocal(app.Configuration))
         {
             app.MapLocalFirstRunRepositoryEndpoints();
             app.MapLocalFirstRunGitSetupEndpoints();
         }
         app.MapWorkspaceEndpoints();
         app.MapWorkspaceSettingsEndpoints();
+        app.MapWorkspaceQuotaEndpoints();
         app.MapProjectSettingsEndpoints();
         app.MapProjectCheckoutEndpoints();
         app.MapCrashRecoveryEndpoints();
@@ -102,6 +106,8 @@ public static class EndpointMapping
         app.MapSecurityReviewEndpoints();
         app.MapDesignSurfaceEndpoints();
         app.MapProjectTokenUsageEndpoints();
+        app.MapReviewStatisticsEndpoints();
+        app.MapReviewObservationEndpoints();
         app.MapUsageCockpitEndpoints();
         app.MapTokenAnalysisEndpoints();
         app.MapPipelineHealthEndpoints();

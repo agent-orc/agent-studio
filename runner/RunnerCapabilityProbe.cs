@@ -37,6 +37,42 @@ internal static class RunnerCapabilityProbe
             log($"provider auth probe completed provider={provider} outcome={status.Outcome}");
         }
     }
+
+    internal static IReadOnlyList<(string Provider, string Model)> ModelCandidates(
+        RunnerOptions options,
+        IReadOnlyList<(string Provider, string Model)>? configured = null)
+    {
+        // Operator-configured primary and fallback routes are probed even when
+        // they are newer than the built-in list or the CLI's own catalogue.
+        var providers = CodingCliBinaries(options).Select(item => item.CliType).ToHashSet(StringComparer.Ordinal);
+        return BuiltInModelCandidates(options)
+            .Concat((configured ?? RunnerModelAcceptanceProbe.Shared.ConfiguredModels)
+                .Where(route => providers.Contains(route.Provider)
+                    && RunnerModelAcceptanceProbe.IsProbeableModelId(route.Model)))
+            .Distinct()
+            .ToArray();
+    }
+
+    private static IReadOnlyList<(string Provider, string Model)> BuiltInModelCandidates(RunnerOptions options)
+        => CodingCliBinaries(options).SelectMany(item =>
+        {
+            if (item.CliType == CliSelection.CodexCli)
+            {
+                var installation = InspectCli(item.Binary);
+                string[] routes = ["gpt-6-sol", "gpt-6.1-sol", "gpt-5.6-sol",
+                    "gpt-5.5", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-luna",
+                    "gpt-6-astra"];
+                var offered = installation is null ? null : CodexModels(installation);
+                return routes.Where(model => offered is null
+                        || offered.Contains(model, StringComparer.OrdinalIgnoreCase))
+                    .Select(model => (item.CliType, model));
+            }
+            return new[] { "claude-opus-5", "claude-sonnet-5", "claude-opus-5-5",
+                    "claude-sonnet-5-5", "claude-fable-5-1", "claude-sonnet-4-6",
+                    "claude-sonnet-4-5", "claude-opus-4-8", "claude-opus-4-7",
+                    "claude-opus-4-6", "claude-opus-4-5", "claude-haiku-4-5" }
+                .Select(model => (item.CliType, model));
+        }).Distinct().ToArray();
     public static IReadOnlyList<AdvertisedCapabilityDto> Advertise(
         RunnerOptions options,
         bool gitPushReady,
@@ -509,6 +545,11 @@ internal static class RunnerCapabilityProbe
                     ProviderProbeOutcome.CredentialInvalid => "invalid",
                     _ => "unknown",
                 }));
+            foreach (var modelCapability in RunnerModelAcceptanceProbe.Shared.Snapshot(
+                         cliType, ModelCandidates(options)
+                             .Where(candidate => candidate.Provider == cliType)
+                             .Select(candidate => candidate.Model).ToArray()))
+                capabilities.Add(modelCapability);
         }
     }
 
@@ -870,6 +911,30 @@ public sealed class ProviderAuthProbe
     public void UseRealRequest(ProviderAuthLauncher launcher, ProviderStatusIncidentAdapter incidentAdapter)
     {
         lock (_sync) { _realLauncher = launcher; _incidentAdapter = incidentAdapter; }
+    }
+
+    /// <summary>
+    /// Verifies a newly issued credential with one real request. This deliberately bypasses
+    /// advertisement state, the daily budget and the healthy-result ceiling: none of those
+    /// describe the candidate credential. The caller scopes it to the probe child environment.
+    /// No result from this request is written to the shared advertisement cache.
+    /// </summary>
+    public async Task<bool> VerifyCandidateAsync(string cliBinary, CancellationToken ct)
+    {
+        ProviderAuthLauncher? launcher;
+        lock (_sync) launcher = _realLauncher;
+        if (launcher is null) return false;
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        bounded.CancelAfter(_timeout);
+        try
+        {
+            var result = await launcher(cliBinary, [], bounded.Token);
+            return result.ExitCode == 0;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            return false;
+        }
     }
 
     public void UseRealRequest(

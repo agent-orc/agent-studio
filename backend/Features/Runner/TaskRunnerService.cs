@@ -32,6 +32,7 @@ public class TaskRunnerService : BackgroundService
     private readonly ProviderLimitRegistry _providerLimits;
     private readonly CliQuotaFallbackService? _quotaFallback;
     private readonly QuotaAdmissionService? _quotaAdmission;
+    private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
     private readonly OrchestratorChatLog _chatLog;
     private readonly OrchestratorLog _orchestratorLog;
     private readonly OrchestratorRunner _orchestratorRunner;
@@ -178,6 +179,7 @@ public class TaskRunnerService : BackgroundService
         AttemptAuthorityService? attemptAuthority = null,
         TimeProvider? time = null,
         ReviewInputDecisionGateway? reviewInputDecisions = null,
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
         RemoteRunStopRequestStore? runStops = null)
     {
         _config = config;
@@ -196,6 +198,7 @@ public class TaskRunnerService : BackgroundService
         _quotaCaps = quotaCaps;
         _quotaFallback = quotaFallback;
         _quotaAdmission = quotaAdmission;
+        _workspaceQuota = workspaceQuota;
         _loadThrottle = loadThrottle;
         _chatLog = chatLog;
         _orchestratorLog = orchestratorLog;
@@ -450,7 +453,8 @@ public class TaskRunnerService : BackgroundService
                 projectUrlPortInspector: _projectUrlPortInspector,
                 dispatchRejections: _dispatchRejections,
                 localCodingAdmission: _localCodingAdmission,
-                reviewInputDecisions: _reviewInputDecisions);
+                reviewInputDecisions: _reviewInputDecisions,
+                workspaceQuota: _workspaceQuota);
             runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
@@ -616,11 +620,17 @@ public class TaskRunnerService : BackgroundService
     }
 
     public RunnerStatus GetStatus()
+        => GetStatus(publishedOnly: false);
+
+    public RunnerStatus GetPublishedStatus()
+        => GetStatus(publishedOnly: true);
+
+    private RunnerStatus GetStatus(bool publishedOnly)
     {
         var projects = new Dictionary<string, ProjectRunnerStatus>();
         foreach (var (name, runner) in _runners)
         {
-            projects[name] = runner.GetStatus();
+            projects[name] = publishedOnly ? runner.GetPublishedStatus() : runner.GetStatus();
         }
         return new RunnerStatus { Projects = projects };
     }
@@ -695,8 +705,7 @@ public class TaskRunnerService : BackgroundService
 
         if (ProjectExecutionPolicy.IsLocalExecution(_projectSettings.Get(info.ProjectName))
             && !AllowsLocalCoding
-            && WorktreeRunPolicy.RequiresWorktree(info.Mode,
-                EpicRunPolicy.IsPlanningRun(info.Kind, RunIntent.ManualStart)))
+            && WorktreeRunPolicy.RequiresWorktree(info.Mode))
             throw new TaskOperationException(
                 RemoteExecutionRequirement.Code + ": " + RemoteExecutionRequirement.Message, 400);
 
@@ -1825,7 +1834,8 @@ public class TaskRunnerService : BackgroundService
             projectUrlPortInspector: _projectUrlPortInspector,
             dispatchRejections: _dispatchRejections,
             localCodingAdmission: _localCodingAdmission,
-            reviewInputDecisions: _reviewInputDecisions);
+            reviewInputDecisions: _reviewInputDecisions,
+            workspaceQuota: _workspaceQuota);
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));

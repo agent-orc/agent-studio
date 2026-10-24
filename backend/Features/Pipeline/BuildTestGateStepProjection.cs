@@ -14,6 +14,7 @@ public static class BuildTestGateStepProjection
             result?.VerdictSource == GateVerdictSource.CacheHit ? 0 : durationMs),
         CompletedAt = nowUtc,
         DurationMs = result?.VerdictSource == GateVerdictSource.CacheHit ? 0 : durationMs,
+        GrantedCores = result?.GrantedCores,
         Verdict = result?.VerdictSource == GateVerdictSource.CacheHit
             ? $"cached-{verdictToken}" : verdictToken,
         Reason = string.IsNullOrWhiteSpace(reason) ? null : reason,

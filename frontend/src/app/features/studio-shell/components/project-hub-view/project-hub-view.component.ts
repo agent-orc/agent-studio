@@ -1,9 +1,7 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
 import {
   ProjectShellComponent,
-  ProjectDetailComponent,
   ProjectOverviewDashboardComponent,
-  ProjectDeployAreaComponent,
   ProjectEnvironmentOverviewComponent,
   ProjectSettingsPanelComponent,
   SecurityPanelComponent,
@@ -20,6 +18,7 @@ import {
   ProjectTestRunsPanelComponent,
   OwnershipMappingPanelComponent,
 } from '../../../project-detail';
+import { ProjectDetailComponent } from '../../../project-detail/lazy';
 import { ProjectTokenUsagePanelComponent } from '../../../project-token-usage';
 import { TokenAnalysisViewComponent } from '../../../token-analysis';
 import { ProjectCycleTimePanelComponent } from '../../../project-cycle-time';
@@ -31,7 +30,8 @@ import {
   ProjectRailKey,
   resolveProjectSection,
 } from '../../../project-detail/components/project-shell/project-shell.config';
-import type { DeployView } from '../../../project-detail/components/project-deploy-area/project-deploy-area';
+// Imported directly, not through the barrel, so the @defer block keeps the Deploy area out of the initial bundle.
+import { ProjectDeployAreaComponent, type DeployView } from '../../../project-detail/components/project-deploy-area/project-deploy-area';
 import { ProjectOverlaysService } from '../../../project-detail/state/project-overlays.service';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
 import type { WikiTabNavigationRequest, WikiTabTarget } from '../../studio-shell.types';

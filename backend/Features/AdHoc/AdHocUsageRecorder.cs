@@ -115,13 +115,16 @@ public sealed class AdHocUsageRecorder
                     CacheReadTokens = (int)record.CacheReadTokens,
                     CacheCreationTokens = (int)record.CacheCreationTokens,
                     InputIncludesCached = record.InputIncludesCached,
+                    ThinkingLevel = record.ThinkingLevel,
                 };
-                // Chat turns need project attribution in the token ledger. Other
-                // ad-hoc calls retain their workspace-wide historical scope.
+                var reviewUsage = record.Source.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
+                    || record.Source is "post-code-review-grade" or AdHocUsageSources.ReviewDecision;
                 _ = _bus.EmitTokenUsageAsync(
-                    project: record.Source == AdHocUsageSources.ChatTurn ? record.Project : null,
+                    project: record.Source == AdHocUsageSources.ChatTurn || reviewUsage ? record.Project : null,
                     jobId: string.IsNullOrWhiteSpace(record.JobId) ? null : record.JobId,
-                    participantId: "support:adhoc",
+                    participantId: reviewUsage
+                        ? record.ParticipantId ?? "support:" + record.Source
+                        : "support:adhoc",
                     topic: string.IsNullOrWhiteSpace(record.Source) ? AdHocUsageSources.Unknown : record.Source,
                     usage: usage,
                     createdAt: record.Ts == default ? null : DateTime.SpecifyKind(record.Ts, DateTimeKind.Utc),

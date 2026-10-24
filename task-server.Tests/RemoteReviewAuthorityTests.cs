@@ -24,6 +24,79 @@ public sealed partial class RemoteReviewAuthorityTests
     private const string RepositoryUrl = "https://example.invalid/product.git";
     private const string ReviewHttpToken = "review-http-token-000000000000000000000000000001";
 
+    [Fact]
+    public async Task Quota_refusal_keeps_review_attempt_queued()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        var subject = await SeedReviewSubjectAsync(seed);
+        await RegisterReviewerAsync(seed, "review-a", "instance-a", "host-a");
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new RejectReviewQuota());
+        await guarded.InitializeAsync();
+        await guarded.StartWorkspaceQuotaRefreshesAsync("test");
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        var claim = await guarded.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        Assert.Equal("empty", claim.Status);
+        Assert.Contains("quota", claim.Message!, StringComparison.OrdinalIgnoreCase);
+        var resumed = Store(temp.Path, clock);
+        await resumed.InitializeAsync();
+        Assert.Equal(subject.SubjectId, (await resumed.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default)).Subject!.SubjectId);
+    }
+
+    private sealed class RejectReviewQuota : IWorkspaceQuotaAdmission
+    {
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+            => Task.FromResult(new WorkspaceQuotaVerdict(false, "Workspace quota reached."));
+    }
+
+    [Fact]
+    public async Task Unreachable_meter_warns_on_review_claim_and_keeps_review_moving()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        await SeedReviewSubjectAsync(seed);
+        await RegisterReviewerAsync(seed, "review-a", "instance-a", "host-a");
+        var guarded = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            clock, new ApplicationResultFinalizationSummaryGenerator(), null, null, new UnreachableReviewQuota());
+        await guarded.InitializeAsync();
+        await guarded.StartWorkspaceQuotaRefreshesAsync("test");
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        var claim = await guarded.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        await guarded.WorkspaceQuotaRefreshesIdle();
+        Assert.Equal("claimed", claim.Status);
+        Assert.Contains("unavailable", claim.Message!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Unconfigured_meter_claims_review_without_quota_message()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 27, 12, 0, 0, TimeSpan.Zero));
+        var seed = Store(temp.Path, clock);
+        await seed.InitializeAsync();
+        await SeedReviewSubjectAsync(seed);
+        await RegisterReviewerAsync(seed, "review-a", "instance-a", "host-a");
+        var claim = await seed.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        Assert.Equal("claimed", claim.Status);
+        Assert.Null(claim.Message);
+    }
+
+    private sealed class UnreachableReviewQuota : IWorkspaceQuotaAdmission
+    {
+        public Task<WorkspaceQuotaVerdict> AdmitAsync(string projectId, CancellationToken ct)
+            => Task.FromResult(new WorkspaceQuotaVerdict(true, "Quota admission is temporarily unavailable.", true));
+    }
+
     [Theory]
     [InlineData("host-a", "host-b", false, true, ReviewHostPlacementDecision.Admit)]
     [InlineData("host-a", "host-a", false, false, ReviewHostPlacementDecision.Admit)]

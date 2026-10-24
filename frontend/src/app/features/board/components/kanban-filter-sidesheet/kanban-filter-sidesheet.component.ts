@@ -13,7 +13,7 @@ import {
 import { NgTemplateOutlet } from '@angular/common';
 import { ClientSummary, TagRegistryEntry } from '../../../../models/task.model';
 import { ModalStackService } from '../../../../services/modal-stack.service';
-import { BoardFiltersService } from '../../state/board-filters.service';
+import { BoardFiltersService, type EnvironmentCardFilter } from '../../state/board-filters.service';
 import { TypeFilterOption } from '../filters-dropdown/filters-dropdown.component';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
@@ -85,6 +85,7 @@ export class KanbanFilterSidesheetComponent {
   private readonly boardFilters = inject(BoardFiltersService);
   /** AGT-2709 dependency facet; see the class comment for why it bypasses App. */
   readonly waitingForRelease = this.boardFilters.waitingForReleaseOnly;
+  readonly environmentFilter = this.boardFilters.environmentFilter;
 
   private readonly modalStack = inject(ModalStackService);
   private readonly destroyRef = inject(DestroyRef);
@@ -147,6 +148,10 @@ export class KanbanFilterSidesheetComponent {
 
   onToggleWaitingForRelease(): void {
     this.boardFilters.toggleWaitingForReleaseOnly();
+  }
+
+  onEnvironmentFilter(event: Event): void {
+    this.boardFilters.setEnvironmentFilter((event.target as HTMLSelectElement).value as EnvironmentCardFilter);
   }
 
   onClearAll(): void {
