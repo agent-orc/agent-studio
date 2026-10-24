@@ -1074,6 +1074,55 @@ CLI run also returns `409`. A missing task or a file that is not editable
 returns `404`. Other I/O failures return `503 Service Unavailable` with
 retry guidance.
 
+## Product session task access (AGT-3182)
+
+A Product session is a signed-in human whose role is contributor (shown as
+Product). One predicate per plane makes that decision:
+`ContributorAccessPolicy.IsProductSession` in the backend and
+`StudioProductSession.IsProduct` in Task Server. AGT-3228 replaces the role
+check inside these predicates with role bindings; callers do not change.
+Operator, owner, viewer, and API token requests keep the unrestricted task
+contract described elsewhere in this document.
+
+Both planes enforce the same task rules for a Product session. The route
+middleware runs a first check, and each handler checks the bound request
+again, so a body the middleware reads differently cannot widen the rules.
+
+| Operation | Backend `/api/tasks` | Task Server `/api/v1/projects/{projectId}/tasks` | Product rule |
+|---|---|---|---|
+| Create | `POST /api/tasks` | `POST .../tasks` | Target lane absent, Backlog, or Ready. |
+| Edit fields | `PUT .../{id}/title`, `tags`, `references`, `waits-on`, `files/prompt.md` | `PUT .../{taskIdentity}`, `title`, `tags`, `references` | Card in Backlog or Ready, and the requested `state` keeps it there. A Task Server update with `mechanicalDelta` is denied. |
+| Move | `POST .../{id}/move`, `POST .../{id}/state` | `POST .../{taskIdentity}/move`, `PUT .../{taskIdentity}/state` | Backlog and Ready among each other, or Human Review to Completed. Backend `operatorOverride` and `archiveOverride` are denied. |
+| Read a result file | `GET .../{id}/results/{**path}` | `GET .../{taskIdentity}/results/{**path}` | Only `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.bmp`, `.html`, `.htm`, and `.md`. Both the requested path and the resolved artifact must match, so a folder-prefix match cannot return a log, TRX, JSONL, or other raw output. |
+| Release | `PUT .../{id}/release` | `PUT .../{taskIdentity}/release` | Requires the production approval grant for the project. |
+
+A backend Product create carries no run controls. The handler clears `model`,
+`cliType`, `thinkingLevel`, `modelExplicit`, `thinkingLevelExplicit`, `mode`,
+`allowWebAccess`, and `requiresIntegration`, sets `noBranchExpected` and
+`fixture` to `false`, and records the signed-in user ID as `createdBy`. Project
+defaults then choose the CLI, model, thinking level, mode, web access, and
+integration.
+
+Product sessions are also denied every task route segment that exposes run
+internals: `session-events`, `agent-work-detail`, `conversation`, `output`,
+`trace`, `logs`, and `raw-logs` in the backend, and `session-events`,
+`agent-work-detail`, `history`, `files`, `output`, `trace`, `logs`, and
+`raw-logs` in Task Server. Segment matching is case-insensitive.
+
+Task Server reads a Product request body as the binder does. It rejects
+duplicate JSON property names, including case variants, and denies a lane field
+that is not a string or `null`. A body that is not valid JSON is denied instead
+of passed through. For every caller, Task Server JSON binding now rejects a
+body with duplicate property names (`AllowDuplicateProperties = false`).
+
+The backend route middleware denies with `403` and
+`{ "error": "role-denied", "message": ... }`; a backend handler check denies
+with `403` and no body. Task Server denies with `403` and
+`{ "error": "contributor-role-denied" }`. Tests:
+`backend.Tests/ContributorAccessTests.cs` and
+`task-server.Tests/IdentityBootstrapTests.cs`. The role summary is in
+[security overview](../../operations/security/overview.md).
+
 ## Parked-card blocker and recall
 
 Every move into `5-human-review` or `5e-escalated` writes a machine-readable
