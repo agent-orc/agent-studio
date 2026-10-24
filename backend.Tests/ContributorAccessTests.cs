@@ -244,6 +244,7 @@ public sealed class ContributorAccessTests : IDisposable
         {
             var request = new HttpRequestMessage(method, path);
             request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={session}");
+            request.Headers.Add("Sec-Fetch-Site", "same-origin");
             if (csrf is not null) request.Headers.Add("X-CSRF-Token", csrf);
             if (body is not null) request.Content = JsonContent.Create(body);
             return http.SendAsync(request);
