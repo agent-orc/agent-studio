@@ -14,6 +14,9 @@ namespace AgentStudio.Runner;
 /// </summary>
 public sealed class RemotePipelineReviewEvidenceProjector
 {
+    private static readonly AspectDefinition DeepReviewDefinition = new(
+        "deep-review", "quality", "", "Deep review",
+        "Review authority, security, data loss, resource bounds, concurrency, and state transitions.");
     private readonly ITokenPricing _pricing;
     private readonly PipelineExecutionLog _pipeline;
     private readonly TimelineLog _timeline;
@@ -61,6 +64,21 @@ public sealed class RemotePipelineReviewEvidenceProjector
             report.Commands.Select(command => command.StartedAt).DefaultIfEmpty(receivedAt).Min());
         using var attempt = _pipeline.EnterAttempt(task.FolderPath, execution.Attempt);
 
+        if (review.Subject.Plan?.DeepReviewDecision is { } deepDecision)
+            _pipeline.RecordStep(task.FolderPath, new PipelineStepExecution
+            {
+                StepId = "post-deep-review-decision",
+                Kind = StepKind.Orchestrator,
+                Attempt = execution.Attempt,
+                Status = deepDecision.Dispatched ? PipelineStepStatus.Passed : PipelineStepStatus.Skipped,
+                StartedAt = review.CreatedAt,
+                CompletedAt = review.CreatedAt,
+                Verdict = deepDecision.Dispatched ? "selected" : "observed",
+                VerdictSummary = $"{deepDecision.Mode} decision {deepDecision.ReceiptId}",
+                Reason = string.Join(", ", deepDecision.Grounds),
+                EvidenceRef = "review-subject:" + review.Subject.SubjectId,
+            });
+
         foreach (var command in report.Commands.Where(command => command.Phase == "verification"))
         {
             if (Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
@@ -71,7 +89,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
         {
             ProjectCarriedAspect(task, review, verdict, receivedAt, execution.Attempt);
         }
-        ProjectToolGate(task, review, report, execution.Attempt);
+        ProjectToolGate(task, review, report, evidenceFile, receivedAt, execution.Attempt);
         ProjectTimeline(task, review, report, evidenceFile, receivedAt);
         RecordReviewUsage(task, review, report);
     }
@@ -105,9 +123,11 @@ public sealed class RemotePipelineReviewEvidenceProjector
     {
         var host = review.Lease?.HostId ?? report.Environment.HostId;
         var calls = new List<TaskTokenCall>();
+        var commandIndex = 0;
         foreach (var command in report.Commands.Where(command =>
                      Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)))
         {
+            var usageIndex = commandIndex++;
             var total = command.InputTokens + command.OutputTokens
                         + command.CacheReadTokens + command.CacheCreationTokens;
             if (total <= 0) continue;
@@ -123,6 +143,8 @@ public sealed class RemotePipelineReviewEvidenceProjector
                 ThinkingLevel = string.IsNullOrWhiteSpace(command.ThinkingLevel) ? null : command.ThinkingLevel.Trim(),
                 CliType = CliFromExecutable(command.FileName),
                 Host = string.IsNullOrWhiteSpace(command.HostId) ? host : command.HostId,
+                ParticipantId = ReviewParticipantPrefix + review.AttemptId + ":step:" + command.StepId
+                    + ":usage:" + review.AttemptId + ":" + usageIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 InputTokens = command.InputTokens,
                 OutputTokens = command.OutputTokens,
                 CacheReadTokens = command.CacheReadTokens,
@@ -184,7 +206,10 @@ public sealed class RemotePipelineReviewEvidenceProjector
             ? command.StepId["aspect-".Length..]
             : command.Aspect;
         if (!AspectRunnerService.Catalogue.TryGetValue(aspectId, out var definition))
-            return;
+        {
+            if (!string.Equals(aspectId, "deep-review", StringComparison.OrdinalIgnoreCase)) return;
+            definition = DeepReviewDefinition;
+        }
         var remoteVerdict = report.Verdicts.LastOrDefault(verdict =>
             string.Equals(verdict.Aspect, command.Aspect, StringComparison.OrdinalIgnoreCase));
         var status = remoteVerdict?.Status.ToLowerInvariant() switch
@@ -247,6 +272,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
             Attempt = pipelineAttempt,
             Model = command.Model,
             ThinkingLevel = command.ThinkingLevel,
+            ReviewedResultSha = command.ExpectedResultSha,
             StartedAt = command.StartedAt,
             CompletedAt = command.FinishedAt,
             DurationMs = duration,
@@ -256,6 +282,14 @@ public sealed class RemotePipelineReviewEvidenceProjector
             CacheCreationTokens = command.CacheCreationTokens,
             InputIncludesCached = command.InputIncludesCached,
             Verdict = AspectVerdictParsing.StatusToken(status),
+            ReviewFindings = status switch
+            {
+                AspectStatus.Block => new AgentStudio.Review.ReviewFindingCounts(Blocker: 1),
+                AspectStatus.Concerns => new AgentStudio.Review.ReviewFindingCounts(Major: 1),
+                _ => new AgentStudio.Review.ReviewFindingCounts(),
+            },
+            ReviewCli = CliFromExecutable(command.FileName),
+            ReviewedFileCount = report.Workspace.ChangedPaths?.Count,
             VerdictSummary = summary,
             EvidenceRef = markdownName,
             // Semantic concerns and blocks are successful aspect executions.
@@ -283,6 +317,8 @@ public sealed class RemotePipelineReviewEvidenceProjector
         TaskInfo task,
         ReviewAttemptDto review,
         Contract.ReviewReportRequest report,
+        string evidenceFile,
+        DateTime receivedAt,
         int pipelineAttempt)
     {
         var tools = report.Commands
@@ -291,6 +327,9 @@ public sealed class RemotePipelineReviewEvidenceProjector
             .ToArray();
         if (tools.Length == 0) return;
         var passed = tools.All(command => command.ExitCode == 0 && command.Signal is null);
+        var citedProductFailure = tools.Any(command => command.Diagnosis?.ChargesCard == true
+            || command.NewFailures is { Count: > 0 }
+            || command.BaselineExitCode == 0 && command.ExitCode is > 0);
         var first = tools.MinBy(command => command.StartedAt)!;
         var last = tools.MaxBy(command => command.FinishedAt)!;
         _pipeline.RecordStep(task.FolderPath, new PipelineStepExecution
@@ -298,13 +337,20 @@ public sealed class RemotePipelineReviewEvidenceProjector
             StepId = PipelineCatalogue.BuildTestGateStepId,
             Kind = StepKind.Tool,
             Attempt = pipelineAttempt,
+            ReviewedResultSha = first.ExpectedResultSha,
             Status = passed ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
             StartedAt = first.StartedAt,
-            CompletedAt = last.FinishedAt,
+            CompletedAt = receivedAt,
             DurationMs = Math.Max(0, (long)(last.FinishedAt - first.StartedAt).TotalMilliseconds),
             Reason = passed
                 ? $"{tools.Length} remote tool gate command(s) passed at the immutable Result-SHA."
                 : "A remote tool gate command failed at the immutable Result-SHA.",
+            Verdict = passed ? "pass" : "block",
+            ReviewFindings = !passed && citedProductFailure
+                && string.Equals(report.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase)
+                ? new AgentStudio.Review.ReviewFindingCounts(Blocker: 1)
+                : new AgentStudio.Review.ReviewFindingCounts(),
+            EvidenceRef = evidenceFile,
             ExecutionLocation = "remote",
             ExecutionHostId = review.Lease?.HostId ?? report.Environment.HostId,
             ExecutionExecutorId = review.Lease?.ExecutorId ?? report.ExecutorId,

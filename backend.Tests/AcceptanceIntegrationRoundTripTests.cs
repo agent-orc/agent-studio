@@ -71,7 +71,6 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         RunGit(_repo, "branch", "-D", "develop");
     }
 
-
     [Fact]
     public async Task AcceptRemoteDelivery_DoesNotMergePendingDelivery()
     {

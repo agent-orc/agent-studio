@@ -54,7 +54,12 @@ public static class EnvironmentHealth
     public const string Unknown = "unknown";
 }
 
-public sealed record DeployEnvironment(string Id, string ProjectId, string Name, int Order, string Kind);
+public sealed record DeployEnvironment(string Id, string ProjectId, string Name, int Order, string Kind)
+{
+    public bool? Protected { get; init; }
+    public bool? Automatic { get; init; }
+    public string? Requires { get; init; }
+}
 
 /// <summary>
 /// Immutable snapshot of what was built. Written once by
@@ -114,4 +119,4 @@ public sealed record InterventionDecisionRequest(string Action, string? Reason =
 public sealed record DeploymentApprovalRequest(bool? GuidedFailure = null);
 
 /// <summary>Who asks, and whether they hold the Owner or Maintainer approval for the project.</summary>
-public sealed record DeployActor(string Id, bool IsApprover);
+public sealed record DeployActor(string Id, bool IsApprover, string? ApprovalRole = null);

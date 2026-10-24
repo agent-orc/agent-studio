@@ -13,7 +13,7 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
  */
 export type StudioIconName =
   | 'folder' | 'file' | 'code' | 'list' | 'filter' | 'search' | 'cli'
-  | 'activity' | 'runbook' | 'settings' | 'plus' | 'close' | 'dot'
+  | 'activity' | 'message' | 'runbook' | 'settings' | 'plus' | 'close' | 'dot'
   | 'check' | 'expand' | 'collapse' | 'play' | 'pause' | 'branch'
   | 'refresh' | 'more' | 'bell' | 'warn' | 'diff' | 'book' | 'eye'
   | 'panelLeft' | 'panelRight' | 'layout' | 'sliders' | 'bot'

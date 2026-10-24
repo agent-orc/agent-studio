@@ -7,6 +7,25 @@ Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
 
+## Initial bundle ratchet
+
+The production `initial` budget in `frontend/angular.json` is a delivery
+ratchet. A frontend change must fit the current `maximumError`; it must not
+raise that value merely to pass review. Measure the production build with
+`npm --prefix frontend run build -- --stats-json` and inspect
+`frontend/dist/frontend/stats.json` before changing startup imports. The
+reported initial total includes every synchronously imported JavaScript and
+stylesheet. Prefer a deferred component or dynamic import at the feature entry
+point, and check that its code has no second eager path through a feature
+barrel. Verify the view loads in Playwright after splitting it.
+
+Only the release operator may approve a temporary increase to
+`maximumError` to unblock a deployment. That increase needs the measured old
+and new totals, the reason for the emergency, and a follow-up card to restore
+the ratchet. A delivery that reduces the bundle should lower `maximumError`
+to its measured initial size plus a small build-variance margin; preserve the
+`anyComponentStyle` budgets and component-size baselines.
+
 ## Environment flow
 
 The Studio header opens a full-width Environment view. It refreshes every 15
@@ -45,10 +64,28 @@ The workspace shell opens a Deployment dashboard at `#/workspace/deployments`.
 It lists projects against Staging and Production, with release version, deploy
 age and state, health, pending approval, and newer release. Project group and
 environment filters apply to the matrix; selecting a cell opens that project's
-Deployment rail. The dashboard currently reads a typed fixture service and
-labels its values as sample data. BD-1 will replace the fixture producer with
-the deployment API; the `Environment`, `Release`, `Deployment`, and
+Deployment rail. The workspace dashboard currently reads a typed fixture service
+and labels its values as sample data. The `Environment`, `Release`, `Deployment`, and
 `EnvironmentStatus` contracts live under `frontend/src/app/features/deployments/`.
+
+The project Deploy area reads `/api/projects/{projectName}/deploy/status`,
+`/releases`, and `/deployments` when configured. Its Pipeline view reads the
+parsed project.yml diagram from `/api/projects/{projectName}/pipeline-definition`.
+The release view loads
+`/releases/{releaseId}/notes` from the included cards. The board and task detail
+share environment badges from `/api/deploy/cards`; the board can filter cards
+that are in Staging only, in Production, not yet in Production, or rolled back.
+Projects without deployment declarations show an empty environment state.
+
+The board's Delivery lanes mode and workspace dashboard show read-only delivery lanes per project.
+`GET /api/projects/{projectName}/deploy/delivery-lanes` accumulates card keys in
+release snapshots and assigns each integrated card to the furthest environment
+whose current successful release contains it. The current release follows the
+latest successful deploy run, including rollback. Cards absent from every current
+release appear under Waiting for release. The projection is cached by release,
+deploy-run and integration-verification changes; board reads do not walk git.
+Lane headers open the project's Deploy area, and board search and filters narrow
+the delivery cards.
 
 The project execution assignment card warns when automatic pickup is placed
 at `local` and the settings projection reports `localCodingAdmitted: false`.
@@ -381,9 +418,11 @@ occur. It is not a claim about tunnel transfer time.
   `offset` and `limit`; responses contain `items`, `offset`, `limit`, and the
   filtered `total`. The server caps each page at 50 items, and the UI requests
   25. Run pages also accept `environmentId`, `state`, and `sinceUtc`, so history
-  filters apply before paging. The unpaged routes remain for existing clients.
-  Status-card run actions resolve the current deployment from environment
-  status, including when that run falls outside the loaded history pages.
+  filters apply before paging. Release pages also accept `artifact` (digest
+  match, registry prefix ignored) and `notAfterUtc`; a card whose host artifact
+  is not the status `currentRelease` resolves its release with one `limit=1`
+  read. Runs named by `/status` open without being on a loaded page; any other
+  run is read from `/deployments/<id>`. The unpaged routes remain for existing clients.
   Each source has its own loading or error state, so a failed deploy route
   leaves declared environment cards visible. A route 404 without an error body
   means the route is unavailable; a 404 with `{ error }` is shown as a server

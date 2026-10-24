@@ -2240,7 +2240,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         using var pipelineAttempt = pipelineRecord == null
             ? null
             : _pipelineLog!.EnterAttempt(current.FolderPath, pipelineRecord.Attempt);
-
         var isResearch = TaskModes.Normalize(current.Mode) == TaskModes.Research;
         var primaryReport = Path.Combine(current.FolderPath, "results", "report.html");
         var hasPrimaryResult = isResearch
@@ -2381,6 +2380,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         using var pipelineAttempt = pipelineRecord == null
             ? null
             : _pipelineLog!.EnterAttempt(current.FolderPath, pipelineRecord.Attempt);
+        inputs = inputs with { ReviewAttemptId = pipelineRecord?.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture) };
 
         // Post-core completeness gate. Persist the exact requirement source,
         // machine evidence, blockers, and lifecycle states before review. Never
@@ -2514,6 +2514,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             if (gateMode == OrchestrationExecutionMode.Engine
                 && buildGateResult.Verdict == BuildTestGateVerdict.Fail)
                 throw new InvalidDataException("A failed engine gate cannot continue through the monolith gate handler.");
+            // AGT-3218: the durable gate dispatch the applier canary checks.
+            if (gateMode == OrchestrationExecutionMode.Engine && _timeline is not null)
+                EngineGateDispatchReceipt.Record(_timeline, current.FolderPath, occurrence.RunId);
         }
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail)
         {
@@ -2655,6 +2658,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Aspects);
         var aspectSubject = ResolveBuildTestGateSubject(current, entry.Path);
+        inputs = inputs with
+        {
+            ReviewedResultSha = aspectSubject.Sha,
+            ReviewRoundId = aspectSubject.AttemptChainId ?? $"local-review-{pipelineRecord?.Attempt ?? 1}",
+        };
         var report = await _aspectRunner.RunAsync(inputs, enabledAspects, cliBinary, aspectModel, perAspectTimeout, ct,
             modelForAspect, thinkingLevelForAspect, promptForAspect, cliForAspect, modelSourceForAspect);
         if (ReviewResultWasSuperseded(current, entry, aspectSubject, report)) return;
@@ -5324,6 +5332,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 DeferGradeWrites = true,
                 Commit = commitLabel,
                 ThinkingLevel = thinkingLevel,
+                ReviewAttemptId = _pipelineLog?.Read(job.FolderPath)?.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ResultsInventory = ResultsInventory.Render(job.FolderPath),
                 CardMode = ReviewCardMode.Describe(job.Mode),
             };
@@ -5406,7 +5415,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                             DurationMs = report.DurationMs,
                             Model = report.Model,
                             ThinkingLevel = report.ThinkingLevel,
+                            ReviewedResultSha = ResolveBuildTestGateSubject(live, entry.Path).Sha,
                             Verdict = gradeToken,
+                            ReviewFindings = status == PipelineStepStatus.Failed
+                                ? new AgentStudio.Review.ReviewFindingCounts(Blocker: report.Findings?.Count ?? 0)
+                                : new AgentStudio.Review.ReviewFindingCounts(Major: report.Findings?.Count ?? 0),
+                            ReviewCli = request.CliType,
                             VerdictSummary = string.IsNullOrWhiteSpace(report.Summary) ? null : report.Summary,
                             EvidenceRef = report.FileName,
                         }));

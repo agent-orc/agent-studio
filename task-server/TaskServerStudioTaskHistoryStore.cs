@@ -1,5 +1,6 @@
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.Data.Sqlite;
+using System.Text.Json;
 
 namespace AgentStudio.TaskServer;
 
@@ -92,7 +93,7 @@ public sealed partial class TaskServerStore
             entries.Add(new StudioTaskTimelineEntryDto(
                 StudioTaskTimelineEntryKinds.Event,
                 evt.OccurredAt,
-                evt.Kind,
+                TimelineEventSummary(evt),
                 RunId: evt.RunId,
                 EventKind: evt.Kind));
         foreach (var artifact in history.Artifacts)
@@ -120,6 +121,18 @@ public sealed partial class TaskServerStore
 
         return new StudioTaskTimelineResponse(
             entries.OrderBy(entry => entry.OccurredAt).ToList());
+    }
+
+    private static string TimelineEventSummary(EventDto evt)
+    {
+        if (evt.Kind != "quota.meter-unavailable") return evt.Kind;
+        try
+        {
+            using var payload = JsonDocument.Parse(evt.PayloadJson);
+            return payload.RootElement.TryGetProperty("message", out var message)
+                ? message.GetString() ?? evt.Kind : evt.Kind;
+        }
+        catch (JsonException) { return evt.Kind; }
     }
 
     public async Task<IReadOnlyList<EventDto>> GetSessionEventsAsync(

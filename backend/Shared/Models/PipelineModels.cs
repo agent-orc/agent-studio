@@ -239,6 +239,8 @@ public sealed record PipelineStepExecution
     /// when the runtime fell back to the project / client default.
     /// </summary>
     public string? Model { get; init; }
+    /// <summary>Exact delivered SHA reviewed by this execution when known.</summary>
+    public string? ReviewedResultSha { get; init; }
     /// <summary>Reasoning level selected for this step or recommendation.</summary>
     public string? ThinkingLevel { get; init; }
     /// <summary>Model recommended by a qualification step before overrides.</summary>
@@ -262,6 +264,8 @@ public sealed record PipelineStepExecution
     public DateTime? StartedAt { get; init; }
     public DateTime? CompletedAt { get; init; }
     public long DurationMs { get; init; }
+    /// <summary>Cores granted to this execution; legacy records use one core for metering.</summary>
+    public int? GrantedCores { get; init; }
     public long InputTokens { get; init; }
     public long OutputTokens { get; init; }
     public long CacheReadTokens { get; init; }
@@ -339,6 +343,10 @@ public sealed record PipelineStepExecution
     /// render the right pill without re-reading the aspect MD.
     /// </summary>
     public string? Verdict { get; init; }
+    /// <summary>Named findings grouped by severity; null for legacy rows without counts.</summary>
+    public AgentStudio.Review.ReviewFindingCounts? ReviewFindings { get; init; }
+    public string? ReviewCli { get; init; }
+    public int? ReviewedFileCount { get; init; }
     /// <summary>
     /// Optional human-readable detail behind the verdict; for aspect
     /// steps with a non-pass verdict, the concern summary lifted from the
@@ -369,7 +377,10 @@ public sealed record PipelineStepRunSummary
     public DateTime? StartedAt { get; init; }
     public DateTime? CompletedAt { get; init; }
     public long DurationMs { get; init; }
+    public int? GrantedCores { get; init; }
     public string? Model { get; init; }
+    public string? ReviewedResultSha { get; init; }
+    public string? ExecutionAttemptId { get; init; }
     public string? ThinkingLevel { get; init; }
     public string? ModelSource { get; init; }
     public long InputTokens { get; init; }
@@ -380,6 +391,9 @@ public sealed record PipelineStepRunSummary
     public decimal? EstimatedCostUsd { get; init; }
     public bool? ModelPriced { get; init; }
     public string? Verdict { get; init; }
+    public AgentStudio.Review.ReviewFindingCounts? ReviewFindings { get; init; }
+    public string? ReviewCli { get; init; }
+    public int? ReviewedFileCount { get; init; }
     public string? Reason { get; init; }
     public string? EvidenceRef { get; init; }
 }

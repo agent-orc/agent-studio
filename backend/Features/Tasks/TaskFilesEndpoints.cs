@@ -181,7 +181,7 @@ public static class TaskFilesEndpoints
                 response.Headers.ContentDisposition = "inline";
                 response.Headers.ContentSecurityPolicy =
                     "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; " +
-                    "style-src 'unsafe-inline'; img-src data: blob:; font-src data:";
+                    "style-src 'unsafe-inline'; img-src data: blob:; font-src data:; frame-ancestors 'self'";
                 response.Headers.XContentTypeOptions = "nosniff";
             }
             return Results.File(resolved, contentType, enableRangeProcessing: true);

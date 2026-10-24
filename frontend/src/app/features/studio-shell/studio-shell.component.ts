@@ -30,11 +30,11 @@ import { ClientService } from '../../services/client.service';
 import { FeatureFlagsService } from '../../services/feature-flags.service';
 import { projectIdentity } from '../../services/project-identity.util';
 import { TaskSelectionService } from '../task-detail/runtime';
-import { ProjectDetailComponent } from '../project-detail';
+import { ProjectDetailComponent } from '../project-detail/lazy';
 import {
   PROJECT_RAIL_ITEMS,
   DEFAULT_PROJECT_RAIL_KEY,
-  isProjectRailKey,
+  resolveProjectSection,
   type ProjectRailItem,
 } from '../project-detail/components/project-shell/project-shell.config';
 import type { StudioIconName } from '../../components/studio-icon/studio-icon.component';
@@ -582,9 +582,8 @@ export class StudioShellComponent {
     if (!tab) return null;
     if (tab.kind === 'board') return tab.projectName === '__all__' ? null : 'board';
     if (tab.kind === 'hub') {
-      if (tab.section === 'wiki') return 'wiki';
-      if (tab.section === 'deploy' || tab.section === 'deployment' || tab.section === 'pipeline') return 'deploy';
-      if (tab.section === 'operations' || tab.section === 'observability') return 'operations';
+      const rail = resolveProjectSection(tab.section).rail;
+      if (rail === 'wiki' || rail === 'deploy' || rail === 'operations') return rail;
       return 'hub';
     }
     if (tab.kind === 'workbenches') return tab.projectName === null ? null : 'workbenches';
@@ -658,6 +657,12 @@ export class StudioShellComponent {
 
   openProjectDeployment(projectName: string): void {
     this.tabState.open({ kind: 'hub', projectName, section: 'deployment' });
+  }
+
+  openDeliveryCard(key: string): void {
+    const card = this.jobService.jobs().find(job =>
+      (job.displayKey ?? job.taskKey).toLowerCase() === key.toLowerCase());
+    if (card) this.openTask(card);
   }
 
   openFeed(): void {
@@ -1102,7 +1107,7 @@ export class StudioShellComponent {
   /** Resolve a hub tab's `section` to its rail item (label, icon). A missing
    *  or unknown section falls back to the default rail (`overview`). */
   private railItemForSection(section: string | undefined): ProjectRailItem {
-    const key = isProjectRailKey(section) ? section : DEFAULT_PROJECT_RAIL_KEY;
+    const key = resolveProjectSection(section).rail;
     return (
       PROJECT_RAIL_ITEMS.find(i => i.key === key) ??
       PROJECT_RAIL_ITEMS.find(i => i.key === DEFAULT_PROJECT_RAIL_KEY)!
@@ -1110,8 +1115,9 @@ export class StudioShellComponent {
   }
 
   private projectAreaLabel(section: string | undefined): string | null {
-    if (section === 'deploy' || section === 'deployment' || section === 'pipeline') return 'Deploy';
-    if (section === 'operations' || section === 'observability') return 'Operations';
+    const rail = resolveProjectSection(section).rail;
+    if (rail === 'deploy') return 'Deploy';
+    if (rail === 'operations') return 'Operations';
     return null;
   }
 
