@@ -2,6 +2,7 @@ namespace AgentStudio.Review;
 
 public sealed record ReviewFindingCounts(int Blocker = 0, int Major = 0, int Minor = 0)
 {
+    [System.Text.Json.Serialization.JsonIgnore]
     public int Total => Blocker + Major + Minor;
 }
 

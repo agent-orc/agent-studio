@@ -447,6 +447,33 @@ container target, pass `--deploy-image-ref <registry tag>` and
 from the gated checkout and records the returned registry digest. A prebuilt
 image with a matching revision label does not qualify.
 
+### Release evidence and registry handoff
+
+The backend reads five files from
+`<Deploy:ReleaseEvidenceRoot>/<candidate sha>/` when the build job calls
+`POST /api/deploy/gate-releases`. They must describe the same candidate:
+
+| File | Required evidence |
+|---|---|
+| `release.tar.gz` and `release.sha256` | The archive hashes to the 64-character lowercase SHA-256 in the digest file. |
+| `full-gate.log` | Contains the exact line `PROMOTION_FULL_GATE=passed`. |
+| `promotion-record.json` | `status=promoted`, `gate=passed`, `candidateSha=<candidate sha>`, `atomicPush=true`, and `releasePackage.status=written` with `releasePackage.sha256` equal to `release.sha256`. Its `gateRunId` is the release tag recorded as provenance. |
+| `deploy-artifact.json` | `project`, `commit`, `artifact`, and `sourceSha256` match the request and package digest. For a static package, `artifact` is `release-package@sha256:<package digest>`; for a container it is the pushed image reference with its registry digest. |
+
+The train writes `deploy-artifact.json` and copies the final promotion record
+after packaging. It then sends JSON `{ "project": "...", "artifact": "...",
+"commit": "<candidate sha>" }` with its `runner.release` service credential.
+The backend also requires that commit on the project's integration branch.
+Only this credential can push into the release registry. The backend takes
+`builderIdentity` from the authenticated runner ID, not from the JSON body.
+A successful request returns `202` with the release and queues Staging;
+invalid or unverified evidence returns `400`. A release superseded by a newer
+commit returns `409`
+with `"reason":"superseded"`; the train logs that one response and treats
+other refusals as failures. The operator release route can select only a
+previously registered digest for the exact commit, so it cannot supply missing
+build evidence. See the [registry and leased transfer contract](../concepts/deployment-first-class.md#release-artifact-registry-ip-d3-a).
+
 ## Branch reclaim after promotion
 
 AGT-2793: `develop`/`main` promotion is the last point at which a task's
