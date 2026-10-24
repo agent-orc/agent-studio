@@ -525,7 +525,6 @@ public sealed partial class MergeIntoDevelopRunner
             // reservation is released as soon as this call returns.
             // Containment observed here is this attempt's own premise, not a
             // later integration that would make its gate result stale.
-            var startedContained = result.Outcome.IsAlreadyContained();
             ContainedDeliveryVerification? verification = null;
             var noOpIntegration = false;
             if (result.Outcome.IsAlreadyContained())
