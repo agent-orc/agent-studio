@@ -108,27 +108,7 @@
         @if (policySuggestion(); as suggestion) { <app-model-routing-suggestion [suggestion]="suggestion" [explicit]="modelSelectionExplicit()" (usePolicy)="policySelectionRequest.emit()" /> }
       </div>
     </div>
-    <div class="field">
-      <span class="field__label">Kind</span>
-      <div class="create-type-picker" data-testid="create-kind">
-        <button type="button"
-                class="create-type-picker__btn"
-                [class.create-type-picker__btn--active]="!isEpic()"
-                data-testid="create-kind-task"
-                (click)="setKind('task')">Task</button>
-        <button type="button"
-                class="create-type-picker__btn"
-                [class.create-type-picker__btn--active]="isEpic()"
-                data-testid="create-kind-epic"
-                [cacTooltip]="'An epic is a container for sub-tasks. The prompt is the overarching goal.'"
-                (click)="setKind('epic')">Epic</button>
-      </div>
-    </div>
     <app-create-mode-picker [(mode)]="newMode" [(allowWebAccess)]="newAllowWebAccess" />
-    <app-create-epic-picker
-      [watchPath]="newWatchPath()"
-      [show]="!isEpic()"
-      [(parentEpicId)]="newEpicId" />
     @if (availableTags().length > 0) {
       <div class="field">
         <span class="field__label">Tags</span>

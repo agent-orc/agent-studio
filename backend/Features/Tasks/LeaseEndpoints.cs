@@ -899,9 +899,20 @@ public static class LeaseEndpoints
                         task.ThinkingLevel,
                         task.ProjectName,
                         hostActiveRuns,
-                        "remote-coding-claim"));
+                        "remote-coding-claim",
+                        (provider, model) => capabilityRegistry.AcceptsModel(
+                            req.RunnerId.Trim(), req.CapabilityInstanceId, provider, model)));
                     if (quotaPlan.IsDeferred)
                     {
+                        if (quotaPlan.Outcome == QuotaAdmissionOutcome.Wait)
+                            QuotaWaitMarker.Write(task.FolderPath, new QuotaWaitRecord
+                            {
+                                CliType = task.CliType ?? "claude",
+                                StartedAt = now,
+                                ResetAt = quotaPlan.NextResetAt ?? now.AddMinutes(10),
+                                Reason = quotaPlan.Reason,
+                                Scope = "quota",
+                            });
                         quotaAdmissionRecorder.EmitAdmissionDecision(task, quotaPlan, source: "remote-claim");
                         RecordRejection(task, "quota-admission", quotaPlan.Reason);
                         logger.LogInformation(
@@ -911,6 +922,33 @@ public static class LeaseEndpoints
                             quotaPlan.Outcome,
                             quotaPlan.Reason);
                         continue;
+                    }
+                    if (quotaPlan.IsFallback)
+                    {
+                        var promptPath = Path.Combine(task.FolderPath, "prompt.md");
+                        var promptText = File.Exists(promptPath)
+                            ? File.ReadAllText(promptPath) : string.Empty;
+                        var floor = modelRouting.CorrectnessFloor(task.TaskType, task.Title, promptText);
+                        if (!modelRouting.RouteMeetsFloor(quotaPlan.Model ?? string.Empty, quotaPlan.ThinkingLevel, floor))
+                        {
+                            var held = quotaPlan with
+                            {
+                                Outcome = QuotaAdmissionOutcome.Wait,
+                                IsFallback = false,
+                                Reason = $"waiting: no host-accepted fallback clears this card's correctness floor; next reset {quotaPlan.NextResetAt:O}",
+                            };
+                            QuotaWaitMarker.Write(task.FolderPath, new QuotaWaitRecord
+                            {
+                                CliType = task.CliType ?? "claude",
+                                StartedAt = now,
+                                ResetAt = held.NextResetAt ?? now.AddMinutes(10),
+                                Reason = held.Reason,
+                                Scope = "quota",
+                            });
+                            quotaAdmissionRecorder.EmitAdmissionDecision(task, held, source: "remote-claim");
+                            RecordRejection(task, "quota-admission", held.Reason);
+                            continue;
+                        }
                     }
                     var cliType = quotaPlan.CliType;
                     var modelCapability = capabilityRegistry.CliModelCapabilityFor(
@@ -1157,17 +1195,12 @@ public static class LeaseEndpoints
                 PromptEnrichmentPreparation? enrichmentPreparation = null;
                 try
                 {
-                    // Epics use the separately rendered decomposition prompt,
-                    // not the authored coding prompt consumed by this step.
-                    if (!string.Equals(candidate.Kind, TaskKinds.Epic, StringComparison.OrdinalIgnoreCase))
-                    {
-                        var promptPath = Path.Combine(candidate.FolderPath, "prompt.md");
-                        var authoredPrompt = File.Exists(promptPath)
-                            ? await File.ReadAllTextAsync(promptPath, ct)
-                            : string.Empty;
-                        enrichmentPreparation =
-                            promptEnrichment.Prepare(candidate, authoredPrompt, runSpec.Model);
-                    }
+                    var promptPath = Path.Combine(candidate.FolderPath, "prompt.md");
+                    var authoredPrompt = File.Exists(promptPath)
+                        ? await File.ReadAllTextAsync(promptPath, ct)
+                        : string.Empty;
+                    enrichmentPreparation =
+                        promptEnrichment.Prepare(candidate, authoredPrompt, runSpec.Model);
                 }
                 catch (Exception ex)
                 {
@@ -1267,6 +1300,7 @@ public static class LeaseEndpoints
                 // Publish the new lane synchronously instead of waiting for
                 // the filesystem watcher's debounce window.
                 scanner.InvalidateCache();
+                scanner.PublishCoreFromKnownFolder(candidate.FolderPath);
                 logger.LogInformation(
                     "remote-runner-task-claimed project={Project} projectId={ProjectId} task={TaskKey} runner={Runner} lease={LeaseId} token={FencingToken} repositorySource={RepositorySource} defaultBranch={DefaultBranch}",
                     candidate.ProjectName, repository.ProjectId, taskKey, req.RunnerName, acquire.Lease.LeaseId,
@@ -1282,6 +1316,7 @@ public static class LeaseEndpoints
                 {
                     var claimedInfo = candidate with { FolderPath = claimedFolderPath };
                     quotaAdmissionRecorder.EmitAdmissionDecision(claimedInfo, candidateQuotaPlan, source: "remote-claim");
+                    QuotaWaitMarker.Clear(claimedInfo.FolderPath);
                     if (candidateQuotaPlan.IsFallback)
                     {
                         QuotaFallbackMarker.Write(claimedFolderPath, new QuotaFallbackRecord
@@ -1430,45 +1465,6 @@ public static class LeaseEndpoints
             }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
-        app.MapPost("/api/runner/epic-planning-prompt", (
-            RemoteEpicPlanningPromptRequest req,
-            TaskScannerService scanner,
-            RunLeaseService leases,
-            RuntimePromptService prompts,
-            AgentStudio.Projects.ProjectSettingsService settings) =>
-        {
-            if (!leases.IsCurrent(req.TaskKey, req.LeaseId, req.FencingToken, req.RunnerId))
-                return Results.Conflict(new { error = "Lease id, fencing token, or runner id does not match the current holder." });
-            var epic = scanner.ScanAllJobs().FirstOrDefault(t =>
-                string.Equals(t.TaskKey, req.TaskKey, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(t.Id, req.TaskKey, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(t.Key, req.TaskKey, StringComparison.OrdinalIgnoreCase));
-            if (epic is null) return Results.NotFound();
-            if (!TaskKinds.IsEpic(epic.Kind))
-                return Results.BadRequest(new { error = "The claimed task is not an Epic planning run." });
-
-            var goal = File.Exists(Path.Combine(epic.FolderPath, "prompt.md"))
-                ? File.ReadAllText(Path.Combine(epic.FolderPath, "prompt.md"))
-                : string.Empty;
-            var rendered = prompts.Render(RuntimePromptService.EpicDecomposition, new Dictionary<string, string?>
-            {
-                ["title"] = string.IsNullOrWhiteSpace(epic.Title) ? "(untitled)" : epic.Title,
-                ["prompt_text"] = goal,
-                ["working_directory"] = req.WorkingDirectory,
-                ["repository_path"] = req.WorkingDirectory,
-                ["job_folder"] = "server-managed task folder",
-                ["prompt_path"] = "prompt.md via the runner API",
-                ["attachments_list"] = "",
-                ["mode_framing"] = prompts.RenderModeFraming(TaskModes.Planning, epic.AllowWebAccess),
-            });
-            var project = settings.Get(epic.ProjectName);
-            return Results.Ok(new RemoteEpicPlanningPromptResponse(
-                rendered,
-                epic.CliType,
-                project.EpicPlanningModel ?? epic.Model,
-                project.EpicPlanningThinkingLevel ?? epic.ThinkingLevel));
-        });
-
         app.MapPost("/api/runner/completion", async (
             RemoteRunCompletionRequest req,
             HttpContext context,
@@ -1494,6 +1490,8 @@ public static class LeaseEndpoints
             RemoteRunStopRequestStore stops,
             ProviderRejectionContinuationService providerRejectionContinuations,
             ModelRoutingPolicyRegistry modelRouting,
+            V1ReviewExecutorRegistry capabilityRegistry,
+            QuotaAdmissionService quotaAdmission,
             MonolithOrchestrationStore orchestration,
             DecisionGroundsCollector decisionGrounds,
             AiOperatorDecisionGateway aiOperator,
@@ -1522,7 +1520,6 @@ public static class LeaseEndpoints
                     req.TaskKey, reportedOutcome, TaskStates.Progress, $"No task '{req.TaskKey}'."));
 
             var outcome = reportedOutcome.Trim().ToLowerInvariant();
-            var isEpicPlanning = TaskKinds.IsEpic(task.Kind);
             var providerRejection = req.OutcomeDecision?.Outcome
                                     == AgentStudio.TaskServer.Contracts.ExecutionOutcomeKind.ProviderRejectedRequest
                 ? req.OutcomeDecision.ProviderRejection
@@ -1534,12 +1531,7 @@ public static class LeaseEndpoints
                     req.TaskKey, reportedOutcome, TaskStates.Progress,
                     "Outcome must be Done, NoOp, Blocked, NeedsInput, Unknown, EnvironmentFailure, Stopped, or MechanicalFallback."));
 
-            // AGT-2178: Epic planning is source-read-only - it produces no commit
-            // and therefore no fenced ResultSha. The 2177 ResultSha gate only
-            // applies to coding completions; epic planning is finalized through
-            // the isEpicPlanning branch below (which needs no ResultSha).
             if (targetState == TaskStates.AutoReview
-                && !isEpicPlanning
                 && (!ReviewSubjectStore.IsValidResultSha(req.ResultSha)
                     || string.IsNullOrWhiteSpace(req.AttemptChainId)
                     || !string.Equals(req.AttemptChainId, req.LeaseId, StringComparison.Ordinal)))
@@ -1622,8 +1614,7 @@ public static class LeaseEndpoints
                 && activeDecisionStop.AttemptId == attemptId
                 && activeDecisionStop.FencingToken == req.FencingToken;
             var envelopeDecision = RemoteCompletionEnvelopePolicy.Decide(
-                requiresEnvelope: !isEpicPlanning
-                                  && !TaskModes.IsReportOnly(task.Mode)
+                requiresEnvelope: !TaskModes.IsReportOnly(task.Mode)
                                   && !worktreeBlocked
                                   && !decisionStopRequested,
                 outcome,
@@ -1668,7 +1659,7 @@ public static class LeaseEndpoints
                 ExecutorId = req.RunnerId,
                 LeaseId = req.LeaseId,
                 ExpectedTaskKey = req.TaskKey,
-                RequireResultSha = !isEpicPlanning && outcome is ("done" or "noop"),
+                RequireResultSha = outcome is ("done" or "noop"),
                 ResultEnvelope = resultEnvelope,
                 ResultEnvelopeDigest = resultEnvelopeDigest,
             });
@@ -1778,6 +1769,7 @@ public static class LeaseEndpoints
                         ["currentBriefVersion"] = currentBriefVersion,
                     });
                 scanner.InvalidateCache();
+                scanner.PublishCoreFromKnownFolder(offerFolder);
                 return Results.Ok(new RemoteRunCompletionResponse(
                     req.TaskKey, reportedOutcome, TaskStates.Escalated,
                     "Delivered against an older brief; operator decision required.",
@@ -1839,7 +1831,7 @@ public static class LeaseEndpoints
             // Set when the completion cannot produce a verified, materializable
             // coding subject: either its immutable envelope is absent or the
             // target repository actively contradicts the claimed delivery.
-            if (!isEpicPlanning && outcome is ("done" or "noop"))
+            if (outcome is ("done" or "noop"))
             {
                 var reportedIntegrationBranch =
                     TaskIntegrationBranch.NormalizeRef(req.IntegrationBranch);
@@ -1961,7 +1953,7 @@ public static class LeaseEndpoints
             // disproved delivery. There is nothing materializable to review,
             // and minting one is how the AGT-2220 incident acquired a subject
             // pinned to a SHA that was never on its recorded ref.
-            if (MonolithTransitionAdapter.TransitionDecisionPolicyCreateReview(isEpicPlanning, outcome,
+            if (MonolithTransitionAdapter.TransitionDecisionPolicyCreateReview(outcome,
                 unverifiedDelivery is null, TaskModes.IsReportOnly(task.Mode)))
             {
                 var requirementsPath = Path.Combine(task.FolderPath, "prompt.md");
@@ -1999,8 +1991,7 @@ public static class LeaseEndpoints
                         deliveryBranch));
             }
 
-            if (!isEpicPlanning
-                && settled.Status == AttemptWriteStatus.Duplicate
+            if (settled.Status == AttemptWriteStatus.Duplicate
                 && string.Equals(task.State, targetState, StringComparison.OrdinalIgnoreCase))
             {
                 var existingReview = authority
@@ -2077,6 +2068,15 @@ public static class LeaseEndpoints
                     _ => $"TASK_{outcome.ToUpperInvariant()}",
                 },
             };
+            if (reviewAttemptRequest?.Plan?.DeepReviewDecision is { } deepReview)
+            {
+                details["deepReviewReceiptId"] = deepReview.ReceiptId;
+                details["deepReviewMode"] = deepReview.Mode;
+                details["deepReviewSelected"] = deepReview.Selected ? "true" : "false";
+                details["deepReviewModel"] = deepReview.Model;
+                details["deepReviewThinkingLevel"] = deepReview.ThinkingLevel;
+                details["deepReviewGrounds"] = string.Join(",", deepReview.Grounds);
+            }
             if (!string.IsNullOrWhiteSpace(salvageBranch))
                 details["salvageBranch"] = salvageBranch;
             if (!string.IsNullOrWhiteSpace(salvageCommitSha))
@@ -2401,78 +2401,6 @@ public static class LeaseEndpoints
 
             remoteClaimFailures.Reset(task);
 
-            if (isEpicPlanning)
-            {
-                // Epic planning is source-read-only and owns no ReviewSubject.
-                // It still uses the canonical RunAttempt for its lane write and
-                // completion evidence, then delegates child creation to the
-                // shared idempotent decomposition lifecycle.
-                //
-                // The lane is the one a valid plan earns: never 4-auto-review,
-                // which would park a run with no Result-SHA in a canonical
-                // attempt wait that can never be satisfied (see
-                // EpicRunPolicy.PlanningCompletionLane). The move stays ahead of
-                // Finalize so spawn evidence is written on the post-move folder;
-                // an invalid plan is recovered from there to 0-backlog below.
-                var planningLane = EpicRunPolicy.PlanningCompletionLane(decompositionValid: true);
-                if (!string.Equals(task.State, planningLane, StringComparison.OrdinalIgnoreCase))
-                {
-                    var planningMove = await transitions.MoveAsync(
-                        task.Id,
-                        planningLane,
-                        task.WatchPath,
-                        ct,
-                        cause: $"remote-epic-planning-completion:{source}",
-                        authorityWrite: laneWrite,
-                        suppressProductExecution: true,
-                        transitionCause: LaneChangeCauses.Delivered,
-                        transitionDetail: "epic-planning");
-                    if (planningMove.Status != MoveJobStatus.Success)
-                        return Results.Conflict(new RemoteRunCompletionResponse(
-                            req.TaskKey, reportedOutcome, task.State,
-                            $"Epic planning lane move refused: {planningMove.Status} {planningMove.Message}",
-                            RunAttemptId: attemptId));
-                }
-
-                task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
-                var invalidationReason = req.SourceMutated
-                    ? "Epic planning mutated the read-only product checkout"
-                    : outcome is not ("done" or "noop")
-                        ? $"Epic planning ended with non-success outcome '{outcome}'"
-                        : null;
-                var finalized = EpicDecompositionLifecycle.Finalize(
-                    task, req.OutputLines, req.LeaseId, projectSettings, mutations, scanner,
-                    states, timeline, chatLog,
-                    loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteEpicPlanning"),
-                    invalidationReason);
-                if (!finalized.Valid)
-                {
-                    loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerCompletion").LogWarning(
-                        "remote-epic-planning-invalid task={TaskKey} runner={Runner} sourceMutated={SourceMutated} reason={Reason}",
-                        req.TaskKey, source, req.SourceMutated, finalized.Error);
-                    return Results.Ok(new RemoteRunCompletionResponse(
-                        req.TaskKey, reportedOutcome,
-                        EpicRunPolicy.PlanningCompletionLane(decompositionValid: false),
-                        req.SourceMutated
-                            ? "Epic planning attempted to mutate the read-only checkout; no children were created."
-                            : finalized.Error,
-                        RunAttemptId: attemptId));
-                }
-                loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerCompletion").LogInformation(
-                    "remote-epic-planning-completion project={Project} task={TaskKey} runner={Runner} children={Children} token={FencingToken}",
-                    task.ProjectName, req.TaskKey, source, finalized.CreatedTaskIds.Count, req.FencingToken);
-                if (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is RunnerPrincipal epicPrincipal)
-                {
-                    accessSecurity.AppendRunAudit(new RunSecurityAuditEvent(
-                        DateTime.UtcNow, "completion", req.TaskKey, task.ProjectName,
-                        InitiatingPrincipal(task.OwnerClientId), epicPrincipal.RunnerId, epicPrincipal.CredentialId,
-                        req.FencingToken, outcome));
-                }
-                return Results.Ok(new RemoteRunCompletionResponse(
-                    req.TaskKey, reportedOutcome, planningLane,
-                    RunAttemptId: attemptId));
-            }
-
             if (decisionStop)
             {
                 var hold = await transitions.MoveAsync(
@@ -2504,6 +2432,57 @@ public static class LeaseEndpoints
 
             if (targetState == TaskStates.Escalated)
             {
+                if (ProviderModelCapabilityRecoveryPolicy.ShouldHold(
+                        providerRejection, providerRejectionModel,
+                        providerRejectionSalvage is not null,
+                        unverifiedDelivery is not null,
+                        decisionStop))
+                {
+                    capabilityRegistry.MarkModelRejected(
+                        req.RunnerId.Trim(),
+                        req.OutcomeDecision?.RawFacts.EffectiveCliType ?? task.CliType ?? "codex",
+                        providerRejectionModel!);
+                    var holdPlan = quotaAdmission.Plan(new QuotaAdmissionRequest(
+                        task.CliType, task.Model, task.ThinkingLevel, task.ProjectName, 0,
+                        "remote-model-rejection",
+                        (provider, model) => capabilityRegistry.AcceptsModel(
+                            req.RunnerId.Trim(),
+                            capabilityRegistry.CurrentInstanceId(req.RunnerId.Trim()), provider, model)));
+                    var holdReason = $"Host {req.RunnerId} refused {providerRejectionModel}: {providerRejection.Message}. {holdPlan.Reason}";
+                    var requeued = await transitions.MoveAsync(
+                        task.Id, TaskStates.Ready, task.WatchPath, ct,
+                        cause: $"remote-model-capability:{source}", authorityWrite: laneWrite,
+                        suppressProductExecution: true,
+                        transitionCause: LaneChangeCauses.RunnerRequeue,
+                        transitionDetail: "model-capability-hold");
+                    if (requeued.Status != MoveJobStatus.Success)
+                        return Results.Conflict(new RemoteRunCompletionResponse(
+                            req.TaskKey, responseOutcome, task.State,
+                            $"Model capability hold lane move refused: {requeued.Status} {requeued.Message}",
+                            RunAttemptId: attemptId));
+                    var holdFolder = requeued.NewFolderPath ?? task.FolderPath;
+                    QuotaWaitMarker.Write(holdFolder, new QuotaWaitRecord
+                    {
+                        CliType = task.CliType ?? "claude",
+                        StartedAt = DateTime.UtcNow,
+                        ResetAt = holdPlan.NextResetAt ?? DateTime.UtcNow.AddMinutes(10),
+                        Reason = holdReason,
+                        Scope = "model-capability",
+                    });
+                    scanner.InvalidateCache();
+                    timeline.Append(holdFolder, TimelineEventKinds.QuotaAdmissionDecision,
+                        TimelineActors.System, holdReason, runId: attemptId,
+                        details: new Dictionary<string, string>
+                        {
+                            ["outcome"] = "Wait",
+                            ["reason"] = "host-model-unavailable",
+                            ["host"] = req.RunnerId,
+                            ["model"] = providerRejectionModel!,
+                        });
+                    return Results.Ok(new RemoteRunCompletionResponse(
+                        req.TaskKey, responseOutcome, TaskStates.Ready, holdReason,
+                        RunAttemptId: attemptId));
+                }
                 if (providerRejection is not null && providerRejectionPlan is not null)
                 {
                     if (providerRejectionPlan.Action == ProviderRejectionContinuationAction.StartContinuation
@@ -2632,6 +2611,7 @@ public static class LeaseEndpoints
                             req.FencingToken, epoch, timeoutSignal));
                         EngineDecisionWaitMarker.Write(task.FolderPath, occurrence.RunId);
                         scanner.InvalidateCache();
+                        scanner.PublishCoreFromKnownFolder(task.FolderPath);
                         return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
                             task.State, "Waiting for engine decision.", RunAttemptId: attemptId));
                     }
@@ -2645,6 +2625,7 @@ public static class LeaseEndpoints
                     if (submission.WaitsForEngine)
                     {
                         scanner.InvalidateCache();
+                        scanner.PublishCoreFromKnownFolder(task.FolderPath);
                         return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
                             task.State, "Waiting for engine decision.", RunAttemptId: attemptId));
                     }
@@ -2830,6 +2811,7 @@ public static class LeaseEndpoints
                 if (occurrenceIsEngine)
                 {
                     scanner.InvalidateCache();
+                    scanner.PublishCoreFromKnownFolder(task.FolderPath);
                     return Results.Ok(new RemoteRunCompletionResponse(req.TaskKey, responseOutcome,
                         task.State, "Waiting for engine decision.", RunAttemptId: attemptId,
                         ReviewAttemptId: reviewAttempt?.AttemptId,
@@ -3112,10 +3094,7 @@ public static class LeaseEndpoints
     /// <list type="bullet">
     ///   <item>CLI: <c>task.cliType</c>, normalized exactly as <c>CliRouter.Get</c>
     ///     resolves it (unknown / unset ⇒ claude, the project default).</item>
-    ///   <item>Model / thinking level: the card's pins, with the project's Epic
-    ///     planning overrides applied for an Epic — mirroring
-    ///     <c>ProjectRunner</c>'s epic branch and the
-    ///     <c>/api/runner/epic-planning-prompt</c> endpoint.</item>
+    ///   <item>Model / thinking level: the card's pins.</item>
     ///   <item>Permission / context mode: <c>ProjectSettingsService.ResolveCliMode</c>
     ///     and <c>ResolveContextMode</c> — the identical live lookups the local
     ///     spawn performs, so a project toggle takes effect on the next claim.</item>
@@ -3152,15 +3131,9 @@ public static class LeaseEndpoints
     {
         var cliType = CliTypes.Normalize(admissionPlan?.CliType ?? task.CliType);
         var projectSettings = settings.Get(task.ProjectName);
-        var isEpicPlanning = TaskKinds.IsEpic(task.Kind);
-
         var pendingFallback = task.PendingIntent?.ModelFallback;
-        var model = isEpicPlanning && !string.IsNullOrWhiteSpace(projectSettings.EpicPlanningModel)
-            ? projectSettings.EpicPlanningModel
-            : pendingFallback?.To ?? admissionPlan?.Model ?? task.Model;
-        var thinkingLevel = isEpicPlanning && projectSettings.EpicPlanningThinkingLevel is not null
-            ? projectSettings.EpicPlanningThinkingLevel
-            : pendingFallback?.ThinkingLevel ?? admissionPlan?.ThinkingLevel ?? task.ThinkingLevel;
+        var model = pendingFallback?.To ?? admissionPlan?.Model ?? task.Model;
+        var thinkingLevel = pendingFallback?.ThinkingLevel ?? admissionPlan?.ThinkingLevel ?? task.ThinkingLevel;
 
         if (!string.IsNullOrWhiteSpace(pendingFallback?.CliType))
             cliType = CliTypes.Normalize(pendingFallback.CliType);
@@ -3263,7 +3236,6 @@ public static class LeaseEndpoints
 
     private static RunSpecDto AddPersistedPromptEnrichment(RunSpecDto runSpec, TaskInfo task)
     {
-        if (TaskKinds.IsEpic(task.Kind)) return runSpec;
         try
         {
             var report = PromptEnrichmentService.ReadReport(task.FolderPath);

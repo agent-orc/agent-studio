@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Projects;
@@ -173,7 +174,9 @@ public static partial class PipelineMigrationPolicy
         line($"    target: {declaration.TargetHostId}");
         if (declaration.Template == "static")
         {
-            line($"    directory: {declaration.Destination}");
+            line($"    directory: {JsonSerializer.Serialize(declaration.Destination)}");
+            if (!declaration.Destination.StartsWith("/srv/", StringComparison.Ordinal))
+                notes.Add($"'{declaration.Id}' deploys to '{declaration.Destination}' outside /srv; change the destination to a path below /srv before confirming.");
         }
         else
         {

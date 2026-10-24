@@ -1392,7 +1392,7 @@ test.describe('Execution Hosts settings section', () => {
     await expect(dialog.getByTestId('codex-sign-in-url')).toHaveAttribute('href', 'https://auth.openai.com/codex/device');
     await expect(dialog.getByTestId('codex-sign-in-code')).toContainText(code);
     await expect.poll(() => requestedBody).not.toBeNull();
-    expect(requestedBody).toEqual({ hostId: 'agent-runner-01', provider: 'codex' });
+    expect(requestedBody).toEqual({ hostId: 'agent-runner-01', provider: 'codex', targetRunnerId: 'agent-runner-01' });
 
     await setTheme(page, 'dark');
     await dialog.screenshot({ path: join(evidenceDir, 'codex-device-sign-in-dark--mocked.png') });

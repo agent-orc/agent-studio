@@ -26,6 +26,7 @@ public sealed class RemoteTaskRunnerClaimGuardTests : IDisposable
             GitRemote = Path.Combine(_workDir, "fallback-fetch.git"),
             GitPushRemote = "git@github.com-agentstudio:agent-orc/agent-studio.git",
             WorkDir = _workDir,
+            StateDir = Path.Combine(_workDir, "state"),
             BaseBranch = "main",
             ClaudeCliBin = "test",
         }, client, logs.Add);
@@ -66,6 +67,7 @@ public sealed class RemoteTaskRunnerClaimGuardTests : IDisposable
             IsWorkstation = true,
             WorkstationRepositoryRoots = [new WorkstationRepositoryRoot("local", allowed)],
             WorkDir = Path.Combine(_workDir, "work"),
+            StateDir = Path.Combine(_workDir, "state"),
             BaseBranch = "main",
             ClaudeCliBin = "test",
         }, client, logs.Add);
@@ -100,6 +102,7 @@ public sealed class RemoteTaskRunnerClaimGuardTests : IDisposable
             IsWorkstation = true,
             WorkstationRequiredTools = ["absent-workstation-tool-2940"],
             WorkDir = Path.Combine(_workDir, "work"),
+            StateDir = Path.Combine(_workDir, "state"),
             BaseBranch = "main",
             ClaudeCliBin = "test",
         }, client, logs.Add);

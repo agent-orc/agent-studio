@@ -16,7 +16,7 @@ public static partial class ReviewFollowUpPolicy
         int concernRoundsUsed,
         int maxConcernRounds)
     {
-        var all = findings?.ToArray() ?? [];
+        var all = ReviewFindingMergePolicy.Merge(findings ?? []);
         var grade = ReviewGradingPolicy.Grade(all.Select(item => item.Status));
         var aspectRetry = all.Where(IsAspectInfrastructureResult).ToArray();
         if (aspectRetry.Length > 0)

@@ -3,13 +3,12 @@ import { ModalStackService } from '../../../../services/modal-stack.service';
 import { forkJoin, of } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
 import { FormsModule } from '@angular/forms';
-import { TaskState, type CliType, type ComponentRoutingResolution, type TagRegistryEntry, type TaskKind, type TaskMode, type WatchPathEntry } from '../../../../models/task.model';
+import { TaskState, type CliType, type ComponentRoutingResolution, type TagRegistryEntry, type TaskMode, type WatchPathEntry } from '../../../../models/task.model';
 import type { CliModelInfo } from '../../../../features/cli';
 import { TaskService } from '../../../../services/task.service';
 import { TagRegistryStore } from '../../../../services/tag-registry.store';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { CliModelSelectorComponent } from '../../../../components/cli-model-selector';
-import { CreateEpicPickerComponent } from '../create-epic-picker/create-epic-picker.component';
 import { CreateModePickerComponent } from '../create-mode-picker/create-mode-picker.component';
 import { RoutingPreviewComponent } from '../routing-preview/routing-preview.component';
 import type { ModelRoutingRecommendation } from '../../../quota';
@@ -57,7 +56,7 @@ const PENDING_PREFIX = 'pending-attachment-';
   selector: 'app-create-job-dialog',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, TooltipDirective, CliModelSelectorComponent, CreateEpicPickerComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent],
+  imports: [FormsModule, TooltipDirective, CliModelSelectorComponent, CreateModePickerComponent, RoutingPreviewComponent, ModelRoutingSuggestionComponent],
   templateUrl: './create-task-dialog.component.html',
   styleUrl: './create-task-dialog.component.scss'
 })
@@ -79,15 +78,8 @@ export class CreateTaskDialogComponent implements AfterViewInit {
   readonly newTags = model<string[]>([]);
   /** Lane the new task lands in. One of the entries in CREATE_LANE_OPTIONS. */
   readonly newTargetState = model<string>(TaskState.Preparation);
-  /** Card kind: `task` (default) or `epic` (a sub-task container). */
-  readonly newKind = model<TaskKind>('task');
-  readonly isEpic = computed(() => this.newKind() === 'epic');
-  /** Way 1: parent epic id for a `kind=task`. Hidden when kind=epic. */
-  readonly newEpicId = model<string>('');
   readonly newMode = model<TaskMode>('coding');
   readonly newAllowWebAccess = model<boolean>(false);
-
-  setKind(kind: TaskKind): void { this.newKind.set(kind); }
 
   readonly tagRegistryStore = inject(TagRegistryStore);
   readonly availableTags = computed(() => this.tagRegistryStore.tags());

@@ -316,11 +316,16 @@ public sealed class DemoReplayScopeCompromiseTests : IDisposable
     }
 
     private static HttpClient NewClient(WebApplicationFactory<Program> factory, bool cookies = false)
-        => factory.CreateClient(new WebApplicationFactoryClientOptions
+    {
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://studio.test"),
             HandleCookies = cookies,
         });
+        // A cookie client plays the Studio page, which sends its Origin (AGT-3230).
+        if (cookies) client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
+        return client;
+    }
 
     private WebApplicationFactory<Program> BuildFactory()
         => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>

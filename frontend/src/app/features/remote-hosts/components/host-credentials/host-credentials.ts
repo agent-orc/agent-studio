@@ -99,7 +99,7 @@ export class HostCredentialsComponent {
       .find(badge => badge.provider === row.provider)?.advertisedAt ?? null;
     const target = {
       hostId: row.hostId,
-      runnerId: host.id,
+      runnerId: host.clientId || host.id,
       hostName: host.name,
       aliases: [host.id, host.clientId, host.capacityHostId ?? '', host.name].filter(Boolean),
       sshTarget: host.address,

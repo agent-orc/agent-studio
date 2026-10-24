@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { getClaudeQuota } from '../helpers/quota';
 import { createJob, startJob, waitForJob, getJobOutput } from '../helpers/jobs';
+import { api } from '../helpers/api';
 
 /**
  * Full-loop smoke test:
@@ -19,8 +20,6 @@ import { createJob, startJob, waitForJob, getJobOutput } from '../helpers/jobs';
  * show by reading the same backend endpoints the frontend uses.
  */
 
-const WATCH_PATH = 'C:\\Projects\\agent-taskboard-workspace\\projects\\agent-taskboard';
-
 test.describe('Claude Code — hello world @billable', () => {
   test.skip(process.env.SKIP_BILLABLE === '1', 'Skipped via SKIP_BILLABLE=1');
   // The CLI run itself can take 1–2 minutes on first cold start.
@@ -32,12 +31,17 @@ test.describe('Claude Code — hello world @billable', () => {
     expect(q.available, 'Claude must be available').toBe(true);
     expect(q.hasHeadroom, `Claude near quota cap: worst=${q.worstUsedPct}%`).toBe(true);
 
+    const paths = await api<Array<{ name: string; path: string }>>('/api/watch-paths');
+    const watchPath = paths.find(project => project.name === 'agent-studio-worktree')?.path
+      ?? paths[0]?.path;
+    if (!watchPath) throw new Error('An active project watch path is required.');
+
     // 2. Create. Use a unique title so re-runs don't collide.
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const title = `e2e Hello World ${stamp}`;
     const created = await createJob({
       title,
-      watchPath: WATCH_PATH,
+      watchPath,
       agent: 'claude',
       cliType: 'claude',
       model: 'claude-haiku-4-5',
@@ -48,7 +52,7 @@ test.describe('Claude Code — hello world @billable', () => {
     expect(created.id).toBeTruthy();
 
     // 3. Start.
-    const exec = await startJob(created.id, WATCH_PATH, {
+    const exec = await startJob(created.id, watchPath, {
       cliType: 'claude',
       model: 'claude-haiku-4-5'
     });
@@ -58,7 +62,7 @@ test.describe('Claude Code — hello world @billable', () => {
     // 4. Wait until done. Hello World should finish in well under 2min.
     const finished = await waitForJob(
       created.id,
-      WATCH_PATH,
+      watchPath,
       j => j.execution !== null && j.execution.status !== 'running',
       { timeoutMs: 180_000, intervalMs: 2_000 }
     );
@@ -79,7 +83,7 @@ test.describe('Claude Code — hello world @billable', () => {
     // exit on Windows.
 
     // Output endpoint should return something non-empty.
-    const out = await getJobOutput(created.id, WATCH_PATH);
+    const out = await getJobOutput(created.id, watchPath);
     expect(out, 'Output endpoint should return data').toBeTruthy();
     const text = JSON.stringify(out);
     expect(text.toLowerCase()).toContain('hello');

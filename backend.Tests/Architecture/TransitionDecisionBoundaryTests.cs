@@ -29,6 +29,8 @@ public sealed class TransitionDecisionBoundaryTests
         "DeliveryChainPolicy", "CauseBreakerClosePolicy", "IntakeRoutingPolicy", "AcceptanceRailDecisionPolicy",
         // AGT-3207: interventions on operational stall events.
         "StallInterventionPolicy",
+        // AGT-3219: queue overrun, backlog and release rule of the batch gate.
+        "GateQueueStallPolicy",
     ];
 
     [Fact]

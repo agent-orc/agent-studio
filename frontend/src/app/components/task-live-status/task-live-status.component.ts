@@ -90,7 +90,7 @@ export class TaskLiveStatusComponent {
       };
     }
 
-    // AGT-2818: every other pickup hold (a refused dispatch, an epic container,
+    // AGT-2818: every other pickup hold (a refused dispatch,
     // a crash cooldown, a pickup-policy refusal) used to fall through to the
     // idle branch and render as "Between steps" while the card was in fact
     // being skipped on every tick. The hold block below carries the specifics.
@@ -229,7 +229,6 @@ function dependencyWaitHeadline(task: TaskInfo): string | null {
 function holdHeadline(mechanism: string): string {
   switch (mechanism) {
     case 'dispatch-rejection': return 'Queued, but the runner refused it';
-    case 'epic-container': return 'Epic container: never executed';
     case 'crash-backoff': return 'Crash cooldown before the next attempt';
     default: return 'Queued, but not pickable';
   }

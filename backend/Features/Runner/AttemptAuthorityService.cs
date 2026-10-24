@@ -196,6 +196,7 @@ public sealed partial class AttemptAuthorityService
     /// out-of-order deferrals of concurrent claims exact (AGT-2987).
     /// </summary>
     private readonly Dictionary<(string AttemptId, long Fence), DateTime> _deferrableReviewClaims = new();
+    private readonly Dictionary<string, DateTime> _quotaDeferredReviews = new(StringComparer.Ordinal);
     /// <summary>Sets the priority of this card and its current or future review attempt.</summary>
     public bool SetReviewPriority(string taskKey, string priority, Func<bool>? isInAutoReview = null)
     {
@@ -1262,6 +1263,8 @@ public sealed partial class AttemptAuthorityService
                 var candidate = _state.ReviewAttempts
                     .Where(review => IsCurrentReview(review) && !Terminal(review.State))
                     .Where(review => review.Lease is null || review.Lease.ExpiresAt <= now)
+                    .Where(review => !_quotaDeferredReviews.TryGetValue(review.AttemptId, out var until)
+                        || until <= now)
                     // A subject whose source run carries no Result-Envelope cannot be
                     // materialized by any executor. Inside the terminalization grace it
                     // is not yet evidence of a pre-plane completion either (the
@@ -1496,7 +1499,8 @@ public sealed partial class AttemptAuthorityService
     /// The fence remains consumed, while the undelivered claim key is removed
     /// so the same executor instance can claim the attempt after recovery.
     /// </summary>
-    public bool DeferReviewClaim(string attemptId, string executorId, string instanceId)
+    public bool DeferReviewClaim(string attemptId, string executorId, string instanceId,
+        bool quotaDeferred = false)
     {
         lock (_gate)
         {
@@ -1516,6 +1520,8 @@ public sealed partial class AttemptAuthorityService
             review.CurrentClaimDeliveryKey = null;
             review.Lease = null;
             review.State = AttemptLifecycleState.Pending;
+            if (quotaDeferred)
+                _quotaDeferredReviews[review.AttemptId] = _utcNow().AddMinutes(1);
             PersistLocked();
             return true;
         }
