@@ -40,11 +40,13 @@ The run-completion timeline names the receipt, and report projection records a
 The engine policy in `orchestration-decisions/DeepReviewPolicy.cs` selects from
 the card's Token Economy correctness floor, changed paths and line count, prior
 blocks, gate failures, delivered rounds, and quota admission. It defaults to
-`gpt-6-sol` at `medium`; P0, critical correctness floors, and touched security,
-fencing, lease, migration, concurrency, or orchestration-decision code require
-`xhigh`. Available quota never raises the effort. A capped route can suppress
+`gpt-6-sol` at `medium`; P0, critical correctness floors, and touched security
+or auth feature code, attempt authority, transition decisions, or deep-review
+policy require `xhigh`. Unknown diff size is recorded in the receipt without
+selecting review. Available quota never raises the effort. A capped route can suppress
 discretionary review, but a critical review retains its floor and waits for
 quota. The plan refuses a quota fallback that would replace its frozen route.
+Quota-deferred attempts have a short claim cooldown so other queued reviews can run.
 The AGT-3068 rules editor accepts the `deep-review` trigger with numeric
 `review.changed-lines`, `review.previous-blocks`, `review.gate-failures`, and
 `review.delivered-rounds` facts. A matching `prepare` rule selects review;

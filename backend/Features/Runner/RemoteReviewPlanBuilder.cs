@@ -335,8 +335,8 @@ public sealed class RemoteReviewPlanBuilder
 
         var deepDecision = isConcept ? null : DecideDeepReview(task, inputs.TaskBody, projectSettings, changedPaths,
             noChange ? 0 : _git is null || string.IsNullOrWhiteSpace(repositoryPath)
-                || string.IsNullOrWhiteSpace(integrationRef) || string.IsNullOrWhiteSpace(resultRef)
-                    ? -1 : _git.ChangedLinesAgainstMergeBase(repositoryPath, integrationRef, resultRef) ?? -1,
+                || string.IsNullOrWhiteSpace(integrationRef) || !ReviewSubjectStore.IsValidResultSha(resultSha)
+                    ? -1 : _git.ChangedLinesAgainstMergeBase(repositoryPath, integrationRef, resultSha!) ?? -1,
             resultSha ?? string.Empty);
         if (deepDecision is { Dispatched: true })
         {
@@ -348,6 +348,13 @@ public sealed class RemoteReviewPlanBuilder
                     ["acceptance_scope_json"] = JsonSerializer.Serialize(inputs.AcceptanceScope),
                     ["task_body_json"] = JsonSerializer.Serialize(inputs.TaskBody),
                     ["results_inventory_json"] = JsonSerializer.Serialize(inputs.ResultsInventory),
+                    ["earlier_deep_findings_json"] = JsonSerializer.Serialize(
+                        AgentStudio.Review.ReviewProjectionReader.Read(task, [], null).Attempts
+                            .SelectMany(attempt => attempt.Aspects
+                                .Where(aspect => string.Equals(aspect.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase)
+                                    && Contract.ReviewGradingPolicy.IsBlockingToken(aspect.Status))
+                                .Select(aspect => new { attempt.AttemptId, aspect.Status, aspect.Summary }))
+                            .Take(2).ToArray()),
                 });
             var reviewCli = deepDecision.Model.StartsWith("claude-", StringComparison.OrdinalIgnoreCase)
                 ? "claude" : "codex";
@@ -361,7 +368,7 @@ public sealed class RemoteReviewPlanBuilder
                 Prompt: prompt, CliType: reviewCli, Model: deepDecision.Model,
                 ThinkingLevel: deepDecision.ThinkingLevel));
         }
-        else if (deepDecision is not null)
+        else if (deepDecision is { Mode: DeepReviewPolicy.Active })
             skipped.Add(new("deep-review", $"{deepDecision.Mode} decision {deepDecision.ReceiptId}: "
                 + string.Join(", ", deepDecision.Grounds)));
 
