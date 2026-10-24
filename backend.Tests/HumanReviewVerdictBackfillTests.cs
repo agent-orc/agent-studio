@@ -337,7 +337,6 @@ public sealed class HumanReviewVerdictBackfillTests : IDisposable
         Assert.Empty(_timeline.ReadAll(card.FolderPath));
     }
 
-
     private void WriteJob(
         string state,
         string slug,

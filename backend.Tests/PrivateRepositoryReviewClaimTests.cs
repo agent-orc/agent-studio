@@ -27,6 +27,7 @@ namespace AgentStudio.Tests;
 public sealed class PrivateRepositoryReviewClaimTests : IDisposable
 {
     private const string ProjectName = "agent-runner-01";
+    private const string OtherProject = "agent-runner-02";
     private const string RunnerId = "review-runner-private";
     private const string Instance = "review-host:8485";
     private const string Website = "https://github.com/RobertMischke/agent-studio-for-software-website.git";
@@ -266,6 +267,73 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
     }
 
     [Fact]
+    public async Task Workspace_quota_defers_the_review_claim_without_consuming_the_attempt()
+    {
+        SeedTask("AGT-1");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        await RegisterAsync(http, Registration(credentialsFile: null));
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>().EnsureDefaultWorkspace();
+        var projects = services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        var project = projects.FindByIdOrDisplayName(ProjectName)
+            ?? projects.EnsureProjectForStorage(_watchPath, ProjectName, workspace.Id);
+        var quota = services.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>();
+        quota.SetLimits(project.WorkspaceId, null, new AgentStudio.Quota.QuotaLimits(0, null, null));
+        var authority = services.GetRequiredService<AttemptAuthorityService>();
+        CreatePendingReviewAttempt(authority, "AGT-1", new string('1', 40), Plan(privateRepository: false));
+
+        var deferred = await ClaimAsync(http);
+        quota.SetLimits(project.WorkspaceId, null, null);
+        var claimed = await ClaimAsync(http);
+
+        Assert.Equal("empty", deferred.Status);
+        Assert.Equal(Contract.ReviewClaimEmptyReasons.QuotaDeferred, deferred.Reason);
+        Assert.Contains("Weekly quota reached", deferred.Message!, StringComparison.Ordinal);
+        Assert.Equal("claimed", claimed.Status);
+        Assert.Equal("AGT-1", claimed.Attempt!.TaskId);
+    }
+
+    [Fact]
+    public async Task Workspace_quota_skips_a_blocked_project_and_claims_a_younger_review_of_another_project()
+    {
+        var otherWatch = Path.Combine(_workspace, "projects", OtherProject);
+        foreach (var state in TaskStates.All) Directory.CreateDirectory(Path.Combine(otherWatch, state));
+        SeedTask("AGT-1");
+        SeedTask("OTH-1", otherWatch);
+        using var factory = BuildFactory(otherWatch);
+        using var http = factory.CreateClient();
+        await RegisterAsync(http, Registration(credentialsFile: null));
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>().EnsureDefaultWorkspace();
+        var projects = services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        var blocked = projects.FindByIdOrDisplayName(ProjectName)
+            ?? projects.EnsureProjectForStorage(_watchPath, ProjectName, workspace.Id);
+        if (projects.FindByIdOrDisplayName(OtherProject) is null)
+            projects.EnsureProjectForStorage(otherWatch, OtherProject, workspace.Id);
+        services.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>()
+            .SetLimits(blocked.WorkspaceId, blocked.Id, new AgentStudio.Quota.QuotaLimits(0, null, null));
+        var authority = services.GetRequiredService<AttemptAuthorityService>();
+        var older = CreatePendingReviewAttempt(authority, "AGT-1", new string('1', 40), Plan(privateRepository: false));
+        CreatePendingReviewAttempt(authority, "OTH-1", new string('2', 40), Plan(privateRepository: false),
+            project: OtherProject);
+
+        var first = await ClaimAsync(http);
+        var second = await ClaimAsync(http);
+
+        // The older attempt of the blocked project is skipped, not leased and
+        // deferred: the other project's review is handed out on the same poll.
+        Assert.Equal("claimed", first.Status);
+        Assert.Equal("OTH-1", first.Attempt!.TaskId);
+        Assert.Equal("empty", second.Status);
+        Assert.Equal(Contract.ReviewClaimEmptyReasons.QuotaDeferred, second.Reason);
+        Assert.Contains("Weekly quota reached", second.Message!, StringComparison.Ordinal);
+        var skipped = authority.GetReview(older)!;
+        Assert.Equal(AttemptLifecycleState.Pending, skipped.State);
+        Assert.Equal(0, skipped.LastFence);
+    }
+
+    [Fact]
     public async Task Repository_visibility_change_replans_queued_review_attempts()
     {
         SeedTask("WEB-23");
@@ -435,10 +503,10 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
 
     private static string CreatePendingReviewAttempt(
         AttemptAuthorityService authority, string taskKey, string sha, Contract.ReviewPlanDto? plan,
-        string? repositoryUrl = Website)
+        string? repositoryUrl = Website, string project = ProjectName)
     {
         var run = authority.AcquireRun(
-            taskKey, ProjectName, null, "coding-runner", "coding-host", 60, "acquire-" + taskKey).RunAttempt!;
+            taskKey, project, null, "coding-runner", "coding-host", 60, "acquire-" + taskKey).RunAttempt!;
         var envelope = new Contract.ImmutableResultEnvelope(
             run.RepositoryId, run.AttemptId, new string('0', 40), sha,
             "refs/agent-studio/results/" + run.AttemptId, null, new string('1', 64));
@@ -451,15 +519,15 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
             ResultEnvelopeDigest = Contract.ResultEnvelopeDigest.Compute(envelope),
         });
         var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
-            taskKey, ProjectName, sha, run.AttemptId, "requirements-hash", "policy-hash", [],
+            taskKey, project, sha, run.AttemptId, "requirements-hash", "policy-hash", [],
             "review-create-" + taskKey, RepositoryUrl: repositoryUrl, Plan: plan));
         Assert.True(created.Accepted, created.Message);
         return created.ReviewAttempt!.AttemptId;
     }
 
-    private void SeedTask(string taskKey)
+    private void SeedTask(string taskKey, string? watchPath = null)
     {
-        var taskFolder = Path.Combine(_watchPath, TaskStates.AutoReview, taskKey);
+        var taskFolder = Path.Combine(watchPath ?? _watchPath, TaskStates.AutoReview, taskKey);
         Directory.CreateDirectory(taskFolder);
         File.WriteAllText(
             Path.Combine(taskFolder, "task.json"),
@@ -477,20 +545,27 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
         File.WriteAllText(Path.Combine(taskFolder, "status.md"), "Result: pending.");
     }
 
-    private WebApplicationFactory<Program> BuildFactory() =>
+    private WebApplicationFactory<Program> BuildFactory(string? otherWatchPath = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
-                builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
-                    new Dictionary<string, string?>
-                    {
-                        ["TaskRepository"] = _workspace,
-                        ["WatchPaths:0:Name"] = ProjectName,
-                        ["WatchPaths:0:Path"] = _watchPath,
-                        ["WatchPaths:0:RootPath"] = _watchPath,
-                        ["WatchPaths:0:RepositoryPath"] = _watchPath,
-                        ["ReviewDecisionOrchestrator:Enabled"] = "false",
-                    }));
+                var settings = new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["WatchPaths:0:Name"] = ProjectName,
+                    ["WatchPaths:0:Path"] = _watchPath,
+                    ["WatchPaths:0:RootPath"] = _watchPath,
+                    ["WatchPaths:0:RepositoryPath"] = _watchPath,
+                    ["ReviewDecisionOrchestrator:Enabled"] = "false",
+                };
+                if (otherWatchPath is not null)
+                {
+                    settings["WatchPaths:1:Name"] = OtherProject;
+                    settings["WatchPaths:1:Path"] = otherWatchPath;
+                    settings["WatchPaths:1:RootPath"] = otherWatchPath;
+                    settings["WatchPaths:1:RepositoryPath"] = otherWatchPath;
+                }
+                builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(settings));
             });
 }

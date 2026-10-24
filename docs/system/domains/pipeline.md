@@ -42,14 +42,16 @@ An operator candidate verification is an immutable, per-card
 verification host, suite totals, and log hash. The write route fetches origin
 and requires candidate ancestry in the refreshed branch. Patch-equivalent
 deliveries use the recorded review attempt and a containment check against
-the candidate tree for each current attributed commit. This keeps board
-status and integration reconciliation correct after late attribution. A later
+the candidate tree for each attributed commit at verification time. The write
+records covered commit SHAs so status projection does not invoke git. A commit
+attributed only after verification remains pending until it receives explicit
+mapping evidence. A later
 review attempt cannot inherit that mapping; a branch rewrite that removes
 the candidate invalidates it. Idempotency comparison and append share the
 task write lock, so concurrent posts with different evidence cannot both
-report success or replace the first record. An audit repair pass at startup
+report success or replace the first record. An audit repair pass after startup
 fills a missing timeline event from each persisted receipt under the lane
-move mutex.
+move mutex using one task snapshot.
 
 Operators can attach an external suite result with
 `POST /api/projects/{project}/external-verifications`. The body supplies
@@ -2662,7 +2664,7 @@ in
   registry `image` without tag or digest). Artifact paths are
   repository-relative. Their segments contain only letters, digits, `.`, `_`, and
   `-`; no segment is empty, `.`, or `..`, or starts with `-`. A lone `.` names
-  the repository root as a build context.
+  the repository root only for a container build context.
 - `environments` are ordered and exactly Staging, then Production. Production
   must be `protected`: every deploy, redeploy, or rollback into it needs an
   Owner or Maintainer approval. Staging deploys automatically after
@@ -2685,12 +2687,17 @@ in
   digits, `.`, `_`, and `-`, and no segment that is empty, `.`, or `..`, or
   starts with `-`. `composeFile` also ends in `.yml` or `.yaml`. `target` and
   `service` are lower-case identifiers; credentials never appear in the file.
+  A static bundle `path` must name a directory below the repository root,
+  and `dockerfile` must name a file there; only a container build context may
+  be `.`.
   When the pipeline-definition API reads, validates, or migrates a file, it
   checks each `target` against the project's effective environment hosts for
   every environment the step deploys to. Schema 2 steps supply those hosts
   when no legacy JSON declaration exists. A target missing from an existing
-  registration is reported as `deploy-target-unregistered`. Preparation reads
-  only the checkout and checks just the target's shape. The AGT-3198 steps `publish-static`,
+  registration is reported as `deploy-target-unregistered`. An unreadable
+  declaration set produces one `declarations-unreadable` issue instead of
+  target registration errors. Preparation reads only the checkout and checks
+  just the target's shape. The AGT-3198 steps `publish-static`,
   `start-container` (configuration placeholder), `run`, `health`, and
   `approval` stay valid for the pipeline diagram, but a release with these
   step kinds is refused until they have an executor.
@@ -2716,6 +2723,19 @@ The editor contract is
 variable keys, and its remote path, compose suffix, artifact path, identifier,
 and secret name patterns equal to `ProjectDeploymentVocabulary`.
 
+Release card attribution first matches archived integration-verification SHAs
+against the commits added since the previous release. A retained card key in
+an added commit message also matches after a rebase or squash. When the
+rewrite keeps neither, an added commit whose tree equals an integration-branch
+commit carries the verified cards behind that commit. Neither fallback repeats
+a card already included in an earlier release. The release
+stores that card-key delta immutably. Environment card badges project that
+delta through successful deployments and mark cards withdrawn by rollback.
+Release notes use the included cards' titles captured at release creation;
+a failed Production deployment
+creates an idempotent backlog bug card naming the release, deployment and
+included card keys.
+
 `/api/projects/{projectName}/pipeline-definition` serves the parsed diagram
 (gate, artifacts, environments with their steps and variables) with the issues.
 `POST .../validate` validates edited text without writing. For a valid schema 1
@@ -2724,6 +2744,8 @@ text stays as it is apart from the `schemaVersion` line, the new sections are
 appended with the file's own line ending, Staging and Production deploy steps
 come from the AGT-3176 declarations under `docs/deployments/environments/`, and
 every default the proposal had to choose is listed as a note.
+Static destinations outside `/srv/` stay quoted in the proposal and receive
+an explicit note that they must be changed before confirmation.
 The migration proposal is the one-time conversion of legacy declarations into
 schema 2. After migration, existing JSON declarations are checked for
 divergence; a project may run from schema 2 without JSON. project.yml owns
@@ -2817,6 +2839,8 @@ To import legacy `docs/deployments/**/deployment.json` descriptors once, run
 from the Studio checkout. The command converts executable legacy commands to
 Production `run` steps and Caddy site templates to `publish-static` steps, validates the result, and writes `project.yml` while
 preserving its line endings. Legacy descriptors remain in place for review.
+The imported static artifact uses `dist` as a safe placeholder; set it to the
+actual bundle directory before enabling a static publish.
 When a deployment section already exists, the import is a no-op. Unsupported descriptors
 yield a clear error and leave the repository unchanged.
 Review the generated process before committing it; imported commands retain

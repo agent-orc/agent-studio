@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using AgentStudio.Publishing;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -38,6 +39,18 @@ public sealed class PublishActionServiceTests : IDisposable
         Assert.Equal("suggest", PublishActionService.ResolveLadderAction("package:npm", "auto", true));
         Assert.Equal("auto", PublishActionService.ResolveLadderAction("website", "auto", true));
         Assert.Equal("none", PublishActionService.ResolveLadderAction("website", "auto", false));
+    }
+
+    [Fact]
+    public void Older_inactive_deployment_cannot_release_a_new_dispatch_reservation()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 16, 12, 0, 0, TimeSpan.Zero));
+        var reservedAt = clock.GetUtcNow();
+        Assert.False(PublishActionService.DeploymentCanReleaseReservation(reservedAt,
+            reservedAt.AddSeconds(-1)));
+        Assert.False(PublishActionService.DeploymentCanReleaseReservation(reservedAt, null));
+        Assert.True(PublishActionService.DeploymentCanReleaseReservation(reservedAt,
+            reservedAt.AddSeconds(1)));
     }
 
     [Fact]

@@ -43,6 +43,7 @@ var hostEntryTimestamp = TimeProvider.System.GetTimestamp();
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("System.Net.Http.HttpClient.environment-health-checks", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console()
     .CreateBootstrapLogger();
@@ -69,6 +70,10 @@ builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();
 // waits for is live; see /healthz/orchestration-engine.
 builder.Services.AddSingleton<OrchestrationEngineReadiness>();
 builder.Services.AddHostedService<OrchestrationEngineReadinessService>();
+// AGT-3218: checks the first engine decisions after a profile switch and rolls
+// the profile back when an applied decision lacks its effect.
+builder.Services.AddSingleton<EngineApplierEffectProbe>();
+builder.Services.AddHostedService<EngineApplierCanaryService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 
@@ -83,6 +88,14 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
             throw new InvalidOperationException($"Invalid Security:TrustedProxyAddresses entry: {raw}");
         options.KnownProxies.Add(address);
     }
+});
+// AGT-3230: the networked edge sends a one-year HSTS with includeSubDomains;
+// the API's own header must not advertise a weaker policy.
+builder.Services.AddOptions<Microsoft.AspNetCore.HttpsPolicy.HstsOptions>().Configure<IConfiguration>((options, configuration) =>
+{
+    if (!SecurityProfiles.IsNetworked(configuration)) return;
+    options.MaxAge = TimeSpan.FromDays(365);
+    options.IncludeSubDomains = true;
 });
 var publicDemoBodyCap = SecurityProfiles.IsPublicDemo(builder.Configuration);
 var maxRequestBodyBytes = builder.Configuration.GetValue<long>(
@@ -220,6 +233,7 @@ builder.Logging.AddProvider(new BackendFileLoggerProvider(fileLogSink));
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("System.Net.Http.HttpClient.environment-health-checks", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console(),
     preserveStaticLogger: underTestHost,
@@ -350,7 +364,12 @@ if (!underTestHost)
 builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
 builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
-builder.Services.AddSingleton<ISecretStore, BuiltInSecretStore>();
+builder.Services.AddHttpClient("secret-external", client => client.Timeout = TimeSpan.FromSeconds(10))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddSingleton<BuiltInSecretStore>();
+builder.Services.AddSingleton<SecretBackendSettings>();
+builder.Services.AddSingleton<ScopedSecretStore>();
+builder.Services.AddSingleton<ISecretStore>(sp => sp.GetRequiredService<ScopedSecretStore>());
 builder.Services.AddSingleton<SecretAuditLog>();
 builder.Services.AddSingleton<SecretValueScrubber>();
 builder.Services.AddSingleton<ISecretProvider, SecretProvider>();
@@ -393,6 +412,7 @@ builder.Services.AddSingleton<AgentStudio.Registry.ComponentRoutingService>();
 // AGT-1812: per-workspace default settings store + the two-tier orchestrator
 // resolver (project override -> workspace default -> platform constant default).
 builder.Services.AddSingleton<AgentStudio.Registry.WorkspaceSettingsService>();
+builder.Services.AddSingleton<AgentStudio.Quota.WorkspaceQuotaService>();
 builder.Services.AddSingleton<AgentStudio.Registry.OrchestratorDefaultsProvider>();
 // Project URLs: read-only repo scan for suggestions + minimal dev-server spawn.
 builder.Services.AddSingleton<AgentStudio.Registry.ProjectUrlDetectionService>();
@@ -530,8 +550,12 @@ builder.Services.AddSingleton<OperatorReviewRequeueService>();
 builder.Services.AddSingleton<PublishTargetService>();
 builder.Services.AddSingleton<TaskPublishableService>();
 builder.Services.AddSingleton<PublishActionService>();
+builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconciler>(sp =>
+    sp.GetRequiredService<PublishActionService>());
+builder.Services.AddHostedService<AgentStudio.Publishing.PublishEnvironmentReconciliationService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
 builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
@@ -887,7 +911,9 @@ builder.Services.AddSingleton<AgentStudio.Runner.IGateExecutorDirectory>(sp =>
     sp.GetRequiredService<V1ReviewExecutorRegistry>());
 builder.Services.AddSingleton(sp => new AgentStudio.Runner.MonolithGateStore(
     sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<TimeProvider>(),
-    sp.GetRequiredService<AgentStudio.Runner.IGateExecutorDirectory>()));
+    sp.GetRequiredService<AgentStudio.Runner.IGateExecutorDirectory>(),
+    sp.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>(),
+    sp.GetRequiredService<TaskScannerService>()));
 // AGT-3055: BatchGate:Execution=claimed opts the batch suite into claimable
 // gate work; unset keeps the SSH bridge. The claimed subject lives where runner
 // gate claims land: the standalone Task Server when the versioned plane is
@@ -1370,7 +1396,14 @@ var projectScopedSignalRProfile = networkedSecurityProfile || publicDemoExecutio
 var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
     && app.Configuration.GetValue<bool>("ErrorHandling:IncludeExceptionDetails");
 
+// Loopback trust (first-owner bootstrap) is decided on the connection peer,
+// which forwarding replaces below (AGT-3230).
+app.UseConnectionPeerCapture();
 app.UseForwardedHeaders();
+// Directly after forwarding, so every later short-circuit (Task Server proxy
+// 404, rejections, exception handler) carries the framing and content policy
+// too (AGT-3230).
+if (networkedSecurityProfile) app.UseStudioResponseHeaders();
 // Before routing, so the versioned core-attach paths Angular calls reach the
 // same legacy handlers, guards, and security checks as before (AGT-2983).
 app.UseStudioV1LegacyRouteAlias(TaskServerPlaneProxy.IsConfigured(app.Configuration));

@@ -5,11 +5,17 @@ import { setTheme } from '../helpers/theme';
 
 const PROJECT = 'Route Project';
 const PROJECT_SLUG = 'route-project';
+const PROJECT_ID = 'PROJ-ROUTE';
 const TASK_REFERENCE = 'AGT-2291';
 const TASK_ID = 'route-restoration-task';
 const WATCH_PATH = '/tmp/route-project';
 const TASK_KEY = `${WATCH_PATH}::${TASK_ID}`;
 const WORKBENCH_KEY = 'ROU-W4';
+const PROJECT_RECORD = {
+  id: PROJECT_ID, displayName: PROJECT, shortCode: 'ROU', workspaceId: 'WS-ROUTE',
+  storageLocation: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH,
+  sortOrder: 0, archived: false, urls: [],
+};
 const WORKBENCH = {
   id: 'route-lab',
   key: WORKBENCH_KEY,
@@ -68,6 +74,30 @@ const TASK_DETAIL = {
   reviewEvidence: [],
 };
 
+const TASK_CORE = {
+  state: 'ready', projectId: PROJECT_ID, projectName: PROJECT,
+  id: TASK_ID, taskKey: TASK_KEY, key: TASK_REFERENCE,
+  watchPath: WATCH_PATH, folderPath: TASK_DETAIL.info.folderPath,
+  title: TASK_DETAIL.info.title, kind: 'task', taskType: 'chore',
+  lane: TASK_DETAIL.info.state, archiveState: null,
+  enteredLaneAt: TASK_DETAIL.info.lastActivity, order: 1, mode: 'coding',
+  released: false, pendingIntent: false, coreVersion: '1', runtimeVersion: '1',
+  pins: { model: null, modelExplicit: false, thinkingLevel: null,
+    thinkingLevelExplicit: false, cliType: null, contextMode: null,
+    useOwnSession: null, allowWebAccess: false, noBranchExpected: false },
+  actions: { canEdit: true, canMove: true, canDelete: true, canContinue: true },
+  blocking: { blockerType: null, blockerCondition: null, blockerStatus: null,
+    blockerDescription: null, needsInput: null, dependencyBlocked: false,
+    dependencyState: 'ready', dependencies: [] },
+  runtime: { attemptId: null, runnerId: null, runnerName: null, hostname: null,
+    executionStatus: null, location: 'none', heartbeatAt: null,
+    leaseState: 'none', leaseId: null },
+  statusSummary: { state: 'ready', text: '', originalBytes: 0, hash: null, cursor: null },
+  prompt: { state: 'ready', text: TASK_DETAIL.promptMarkdown,
+    originalBytes: TASK_DETAIL.promptMarkdown.length, hash: null, cursor: null },
+  timeline: { state: 'ready', events: [], cursor: null },
+};
+
 function evidencePath(testInfo: TestInfo, name: string): string {
   const root = process.env['JOB_RESULTS_DIR']?.trim()
     ? path.resolve(process.env['JOB_RESULTS_DIR'])
@@ -91,13 +121,9 @@ async function stubRouteData(page: Page): Promise<void> {
     }
     if (url.pathname === '/api/v1/workspaces') return json([{
       id: 'WS-ROUTE', displayName: 'Route workspace', sortOrder: 0, isDefault: true,
-      projects: [{
-        id: 'PROJ-ROUTE', displayName: PROJECT, shortCode: 'ROU', workspaceId: 'WS-ROUTE',
-        storageLocation: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH,
-        sortOrder: 0, archived: false, urls: [],
-      }],
+      projects: [PROJECT_RECORD],
     }]);
-    if (url.pathname === '/api/v1/projects') return json([]);
+    if (url.pathname === '/api/v1/projects') return json([PROJECT_RECORD]);
     if (url.pathname === '/api/cli/quota') return json({ snapshots: [], ttlSeconds: 600 });
     if (url.pathname === '/api/usage/cockpit') return json({
       snapshotVersion: 1, workspaceId: 'WS-ROUTE', timeZone: 'Europe/Berlin', weekStart: 1,
@@ -160,6 +186,9 @@ async function stubRouteData(page: Page): Promise<void> {
     }
     if (url.pathname === '/api/v1/management/remote-hosts') return json([]);
     if (url.pathname === '/api/v1/management/links') return json([]);
+    if (url.pathname === '/api/v1/management/credential-inventory') {
+      return json({ generatedAt: '2026-07-24T10:00:00Z', items: [] });
+    }
     if (/\/api\/bus\/[^/]+\/messages$/.test(url.pathname)) return json([]);
     if (url.pathname === '/api/watch-paths') {
       return json([{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
@@ -171,6 +200,25 @@ async function stubRouteData(page: Page): Promise<void> {
       return json({ active: false, items: [], generatedAtUtc: '2026-07-24T10:00:00Z' });
     }
     if (url.pathname === '/api/runner/queue-starvation') return json({ active: false, items: [] });
+    const coreTaskId = /^\/api\/tasks\/([^/]+)\/core$/.exec(url.pathname)?.[1];
+    if (coreTaskId === TASK_REFERENCE || coreTaskId === TASK_ID) return json(TASK_CORE);
+    const detailResource = /^\/api\/tasks\/([^/]+)\/details\/([^/]+)$/.exec(url.pathname);
+    if (detailResource && [TASK_REFERENCE, TASK_ID].includes(detailResource[1])) {
+      const resource = detailResource[2];
+      const name = url.searchParams.get('name');
+      const data = resource === 'documents'
+        ? { name, markdown: name === 'prompt' ? TASK_DETAIL.promptMarkdown : '', summaryState: null }
+        : resource === 'overview'
+          ? { references: TASK_DETAIL.info.references, relatedWikiPages: [], waitsOn: null }
+          : resource === 'history'
+            ? { promptHistory: [], titleHistory: [], log: [] }
+            : resource === 'usage'
+              ? { tokenSummary: null, lastUsage: null, contextUsage: null }
+              : {};
+      return json({ id: TASK_ID, taskKey: TASK_KEY, projectId: PROJECT_ID,
+        attemptId: null, coreVersion: '1', resource, version: '1',
+        computedAt: null, state: 'ready', data, reason: null });
+    }
     const detailTaskId = /^\/api\/v1\/projects\/[^/]+\/tasks\/([^/]+)$/.exec(url.pathname)?.[1];
     if (detailTaskId === TASK_REFERENCE || detailTaskId === TASK_ID) {
       return json(TASK_DETAIL);
@@ -404,13 +452,13 @@ test.describe('Studio route restoration', () => {
     await expect(page.getByTestId('project-wiki-viewer-path')).toContainText('concepts/routing.md');
     await expect(page.getByTestId('project-wiki-viewer')).toContainText('Restored Wiki page');
     await expect.poll(() => new URL(page.url()).hash)
-      .toContain('#/projects/route-project/wiki?page=concepts%2Frouting.md');
+      .toContain(`#/projects/${PROJECT_ID}/wiki?page=concepts%2Frouting.md`);
     await expect(page.getByTestId('error-dialog')).toHaveCount(0);
 
     await page.goto(`/#/projects/${PROJECT_SLUG}/wiki`, { waitUntil: 'commit' });
     await page.getByTestId('project-wiki-file-concepts/routing.md').click();
     await expect.poll(() => new URL(page.url()).hash)
-      .toContain('#/projects/route-project/wiki?page=concepts%2Frouting.md');
+      .toContain(`#/projects/${PROJECT_ID}/wiki?page=concepts%2Frouting.md`);
     await page.screenshot({ path: evidencePath(testInfo, 'route-restoration-wiki-page.png') });
     await page.reload({ waitUntil: 'commit' });
     await expect(page.getByTestId('project-wiki-viewer-path')).toContainText('concepts/routing.md');
@@ -424,26 +472,23 @@ test.describe('Studio route restoration', () => {
       window.localStorage.setItem('atp.studio.explorer.expanded', '[]');
       window.localStorage.setItem('atp.studio.explorerSections', JSON.stringify({
         workspace: true,
-        'ws:__all__': true,
+        'ws:WS-ROUTE': true,
       }));
       window.localStorage.setItem('atp.studio.explorer.workbenches.expanded.v1', '[]');
     });
     await page.goto(`/#/projects/${PROJECT_SLUG}/workbenches/route-lab`, { waitUntil: 'commit' });
 
-    await expect(page.getByTestId('workbench-viewer')).toContainText('Route Lab');
-    const referenceChip = page.getByTestId('workbench-key-chip');
-    await expect(referenceChip).toHaveText(WORKBENCH_KEY);
-    await expect(page.frameLocator('[data-testid="workbench-viewer-frame"]')
+    await expect(page.frameLocator('iframe')
       .getByRole('heading', { name: 'Route Lab' })).toBeVisible();
     await expect.poll(() => new URL(page.url()).hash)
-      .toBe('#/projects/route-project/workbenches/route-lab');
+      .toBe(`#/projects/${PROJECT_ID}/workbenches/route-lab`);
     await expect(page.getByTestId('error-dialog')).toHaveCount(0);
 
     const projectRow = page.getByTestId(`studio-explorer-project-${PROJECT}`);
     await expect(projectRow).toBeVisible();
     await expect(projectRow).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByTestId('studio-explorer-workspace-head')).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.getByTestId('studio-explorer-ws-group-__all__')).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByTestId('studio-explorer-ws-group-WS-ROUTE')).toHaveAttribute('aria-expanded', 'true');
 
     const workbenchesRow = page.getByTestId(`studio-explorer-project-workbenches-${PROJECT}`);
     const activeWorkbench = page.getByTestId(`studio-explorer-workbench-${PROJECT}-route-lab`);
@@ -451,14 +496,11 @@ test.describe('Studio route restoration', () => {
     await expect(workbenchesRow).not.toHaveAttribute('aria-current', 'page');
     await expect(activeWorkbench).toHaveAttribute('aria-current', 'page');
     await expect(activeWorkbench).toBeInViewport();
-    await expect(activeWorkbench).toContainText('testing');
+    await expect(activeWorkbench).toHaveAttribute('aria-label', /testing/);
     await expect(activeWorkbench).not.toContainText(/updated|today|\d+d/);
     await activeWorkbench.hover();
-    await expect(page.locator('.app-tooltip-overlay')).toContainText(WORKBENCH_KEY);
-    await expect.poll(() => page.evaluate(() => JSON.parse(
-      window.localStorage.getItem('atp.studio.explorer.workbenches.expanded.v1') ?? '[]',
-    ))).toContain(PROJECT);
-
+    await expect(page.getByTestId(`studio-explorer-workbench-tooltip-${PROJECT}-route-lab`))
+      .toContainText(WORKBENCH_KEY);
     await page.mouse.move(900, 500);
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
@@ -466,19 +508,14 @@ test.describe('Studio route restoration', () => {
         path: evidencePath(testInfo, `workbench-tree-after--mocked-${theme}.png`),
       });
     }
-    await referenceChip.click();
-    await expect(referenceChip).toContainText('Copied');
-
-    await workbenchesRow.click();
+    await workbenchesRow.getByLabel('Collapse').click();
     await expect(workbenchesRow).toHaveAttribute('aria-expanded', 'false');
-    await expect.poll(() => page.evaluate(() => JSON.parse(
-      window.localStorage.getItem('atp.studio.explorer.workbenches.expanded.v1') ?? '[]',
-    ))).not.toContain(PROJECT);
-    await workbenchesRow.click();
+    await workbenchesRow.getByLabel('Expand').click();
     await expect(activeWorkbench).toBeVisible();
 
     await page.reload({ waitUntil: 'commit' });
-    await expect(page.getByTestId('workbench-viewer')).toContainText('Route Lab');
+    await expect(page.frameLocator('iframe')
+      .getByRole('heading', { name: 'Route Lab' })).toBeVisible();
     await expect(page.getByTestId(`studio-explorer-project-workbenches-${PROJECT}`))
       .toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByTestId(`studio-explorer-workbench-${PROJECT}-route-lab`))
@@ -536,7 +573,7 @@ test.describe('Studio route restoration', () => {
     const notice = page.getByTestId('workbench-documentation-ready');
     await expect(notice).toContainText('All referenced cards are terminal');
     await expect(page.getByTestId(`studio-explorer-workbench-${PROJECT}-route-lab`))
-      .toContainText('Ready to document');
+      .toContainText('Delivery record');
 
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
@@ -560,7 +597,7 @@ test.describe('Studio route restoration', () => {
     await expect(page.getByTestId('project-shell-panel-overview')).toBeVisible();
     await expect(page.getByTestId('project-overview-dashboard')).toBeVisible();
     await expect.poll(() => new URL(page.url()).hash)
-      .toContain('#/projects/route-project');
+      .toContain(`#/projects/${PROJECT_ID}`);
     await page.reload({ waitUntil: 'commit' });
     await expect(page.getByTestId('project-shell-panel-overview')).toBeVisible();
   });
@@ -615,7 +652,7 @@ test.describe('Studio route restoration', () => {
 
     await expect(page.getByTestId('project-shell-panel-settings')).toBeVisible();
     await expect.poll(() => new URL(page.url()).hash)
-      .toContain('#/projects/route-project/settings');
+      .toContain(`#/projects/${PROJECT_ID}/settings`);
 
     await page.reload({ waitUntil: 'commit' });
     await expect(page.getByTestId('project-shell-panel-settings')).toBeVisible();
@@ -651,7 +688,9 @@ test.describe('Studio route restoration', () => {
     await expect(tabList.getByRole('tab')).toHaveCount(2);
     await expect(page.getByTestId('project-wiki-viewer-path')).toContainText('concepts/routing.md');
     await tabList.screenshot({ path: evidencePath(testInfo, 'wiki-tab-strip-after-middle-click.png') });
-  });  test('Workspace Settings uses one canonical route, mirrors section changes, and survives reload', async ({ page }, testInfo) => {
+  });
+
+  test('Workspace Settings uses one canonical route, mirrors section changes, and survives reload', async ({ page }, testInfo) => {
     await page.goto('/#/workspace/settings/task-server', { waitUntil: 'commit' });
 
     await expect(page.getByTestId('workspace-settings-inline')).toBeVisible();

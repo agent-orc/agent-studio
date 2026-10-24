@@ -123,9 +123,11 @@ public sealed class RemotePipelineReviewEvidenceProjector
     {
         var host = review.Lease?.HostId ?? report.Environment.HostId;
         var calls = new List<TaskTokenCall>();
+        var commandIndex = 0;
         foreach (var command in report.Commands.Where(command =>
                      Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)))
         {
+            var usageIndex = commandIndex++;
             var total = command.InputTokens + command.OutputTokens
                         + command.CacheReadTokens + command.CacheCreationTokens;
             if (total <= 0) continue;
@@ -141,6 +143,8 @@ public sealed class RemotePipelineReviewEvidenceProjector
                 ThinkingLevel = string.IsNullOrWhiteSpace(command.ThinkingLevel) ? null : command.ThinkingLevel.Trim(),
                 CliType = CliFromExecutable(command.FileName),
                 Host = string.IsNullOrWhiteSpace(command.HostId) ? host : command.HostId,
+                ParticipantId = ReviewParticipantPrefix + review.AttemptId + ":step:" + command.StepId
+                    + ":usage:" + review.AttemptId + ":" + usageIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 InputTokens = command.InputTokens,
                 OutputTokens = command.OutputTokens,
                 CacheReadTokens = command.CacheReadTokens,
@@ -278,11 +282,11 @@ public sealed class RemotePipelineReviewEvidenceProjector
             CacheCreationTokens = command.CacheCreationTokens,
             InputIncludesCached = command.InputIncludesCached,
             Verdict = AspectVerdictParsing.StatusToken(status),
-            ReviewFindings = status switch
+            ReviewFindings = AspectStepStatus(command) == PipelineStepStatus.Failed ? null : status switch
             {
                 AspectStatus.Block => new AgentStudio.Review.ReviewFindingCounts(Blocker: 1),
                 AspectStatus.Concerns => new AgentStudio.Review.ReviewFindingCounts(Major: 1),
-                _ => new AgentStudio.Review.ReviewFindingCounts(),
+                _ => null,
             },
             ReviewCli = CliFromExecutable(command.FileName),
             ReviewedFileCount = report.Workspace.ChangedPaths?.Count,
@@ -345,7 +349,7 @@ public sealed class RemotePipelineReviewEvidenceProjector
             ReviewFindings = !passed && citedProductFailure
                 && string.Equals(report.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase)
                 ? new AgentStudio.Review.ReviewFindingCounts(Blocker: 1)
-                : new AgentStudio.Review.ReviewFindingCounts(),
+                : null,
             EvidenceRef = evidenceFile,
             ExecutionLocation = "remote",
             ExecutionHostId = review.Lease?.HostId ?? report.Environment.HostId,

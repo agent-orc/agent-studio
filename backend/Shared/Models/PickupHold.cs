@@ -14,7 +14,6 @@ public static class PickupHoldMechanisms
     /// <summary>A remote runner refused the offered card and recorded why.</summary>
     public const string DispatchRejection = "dispatch-rejection";
 
-
     /// <summary>The card crashed fast and is serving its exponential cooldown.</summary>
     public const string CrashBackoff = "crash-backoff";
 
@@ -56,7 +55,6 @@ public static class PickupHoldResolutionKinds
 
     /// <summary>Re-offer the card so a healthy runner can claim it.</summary>
     public const string RetryDispatch = "retry-dispatch";
-
 
     /// <summary>Wait out the cooldown, or start the run by hand.</summary>
     public const string WaitOutBackoff = "wait-out-backoff";

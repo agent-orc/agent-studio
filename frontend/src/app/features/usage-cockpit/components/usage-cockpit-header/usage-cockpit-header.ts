@@ -14,6 +14,7 @@ import {
 
 import { MenuComponent } from '../../../../components/menu/menu.component';
 import type { MenuItem, MenuItemClickEvent } from '../../../../components/menu/menu.types';
+import { WorkspaceQuotaBannerComponent } from '../../../quota';
 import type { UsageCockpitResponse } from '../../models/usage-cockpit.model';
 import { cliDisplayName } from '../../usage-chip.util';
 import { UsageAlarmStateService } from '../../state/usage-alarm-state.service';
@@ -69,7 +70,7 @@ const FITS: readonly UsageChipFit[] = ['full', 'compact', 'abbreviated', 'bare']
 @Component({
   selector: 'app-usage-cockpit-header',
   standalone: true,
-  imports: [MenuComponent, UsageAlarmStatusComponent, UsageCliChipComponent, UsageCostChipComponent],
+  imports: [MenuComponent, UsageAlarmStatusComponent, UsageCliChipComponent, UsageCostChipComponent, WorkspaceQuotaBannerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './usage-cockpit-header.html',
   styleUrl: './usage-cockpit-header.scss',

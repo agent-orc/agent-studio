@@ -85,10 +85,18 @@ The workspace shell opens a Deployment dashboard at `#/workspace/deployments`.
 It lists projects against Staging and Production, with release version, deploy
 age and state, health, pending approval, and newer release. Project group and
 environment filters apply to the matrix; selecting a cell opens that project's
-Deployment rail. The dashboard currently reads a typed fixture service and
-labels its values as sample data. BD-1 will replace the fixture producer with
-the deployment API; the `Environment`, `Release`, `Deployment`, and
+Deployment rail. The workspace dashboard currently reads a typed fixture service
+and labels its values as sample data. The `Environment`, `Release`, `Deployment`, and
 `EnvironmentStatus` contracts live under `frontend/src/app/features/deployments/`.
+
+The project Deploy area reads `/api/projects/{projectName}/deploy/status`,
+`/releases`, and `/deployments` when configured. Its Pipeline view reads the
+parsed project.yml diagram from `/api/projects/{projectName}/pipeline-definition`.
+The release view loads
+`/releases/{releaseId}/notes` from the included cards. The board and task detail
+share environment badges from `/api/deploy/cards`; the board can filter cards
+that are in Staging only, in Production, not yet in Production, or rolled back.
+Projects without deployment declarations show an empty environment state.
 
 The board's Delivery lanes mode and workspace dashboard show read-only delivery lanes per project.
 `GET /api/projects/{projectName}/deploy/delivery-lanes` accumulates card keys in

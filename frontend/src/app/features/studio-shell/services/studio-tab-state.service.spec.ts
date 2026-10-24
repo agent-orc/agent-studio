@@ -434,7 +434,9 @@ describe('StudioTabStateService', () => {
     svc.closeAll();
     expect(svc.tabs()).toHaveLength(0);
     expect(svc.activeKey()).toBeNull();
-  });  describe('move (drag-reorder)', () => {
+  });
+
+  describe('move (drag-reorder)', () => {
     function seed(): void {
       svc.open({ kind: 'board', projectName: 'demo' });
       svc.open({ kind: 'task', taskKey: 'a' });

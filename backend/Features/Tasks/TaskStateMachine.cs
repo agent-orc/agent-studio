@@ -131,7 +131,9 @@ public class TaskStateMachine
         DecisionReopenPermit? decisionReopenPermit = null,
         bool archiveOverride = false,
         bool archiveOverrideRollback = false,
-        bool historicalAcceptanceRepair = false)
+        bool historicalAcceptanceRepair = false,
+        bool operatorDecisionPark = false,
+        Func<TaskInfo, MoveJobOutcome?>? beforeMove = null)
     {
         if (!TaskStates.All.Contains(targetState))
             return new MoveJobOutcome(MoveJobStatus.Failure, $"Invalid state: {targetState}");
@@ -199,11 +201,16 @@ public class TaskStateMachine
             var status = targetState == TaskStates.Completed
                 ? _integrationStatus.BuildForCompletion(recheck)
                 : _integrationStatus.BuildLookup([recheck]).GetValueOrDefault(recheck.TaskKey);
+            var authorizedPark = operatorDecisionPark && cause == "engine-decision"
+                && authorityWrite is not null && expectedSourceState == TaskStates.AutoReview
+                && recheck.State == TaskStates.AutoReview && targetState == TaskStates.HumanReview;
             var admission = DeliveryLanePolicy.Decide(recheck.State, targetState,
-                AcceptanceIntegrationPolicy.IsIntegrationRequired(recheck), status?.Status, archiveOverride);
+                AcceptanceIntegrationPolicy.IsIntegrationRequired(recheck), status?.Status,
+                archiveOverride, authorizedPark);
             if (!admission.Allowed && !historicalAcceptanceRepair)
             {
-                if (recheck.State == TaskStates.AutoReview && targetState == TaskStates.HumanReview)
+                if (recheck.State == TaskStates.AutoReview && targetState == TaskStates.HumanReview
+                    && recheck.Phase != LifecyclePhases.Integrating)
                 {
                     TaskJsonFile.UpdateField(recheck.FolderPath, "phase", LifecyclePhases.Integrating, _logger);
                     _scanner.InvalidateCache();
@@ -224,6 +231,11 @@ public class TaskStateMachine
                 return new MoveJobOutcome(MoveJobStatus.Failure,
                     "Archive override requires a human actor and a written reason for this card.");
         }
+
+        // The admission guard has accepted the move. Keep the result write
+        // inside the lane lock so a failed write leaves the source lane intact.
+        if (beforeMove?.Invoke(recheck) is { } resultFailure)
+            return resultFailure;
 
         // BP-03: Ready opens a reissue generation and Progress opens an
         // execution generation. A folder-scoped remote review subject belongs
