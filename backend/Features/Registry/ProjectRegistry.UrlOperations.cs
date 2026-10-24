@@ -1,15 +1,16 @@
-using System.Collections.Concurrent;
 using AgentStudio.Security;
 
 namespace AgentStudio.Registry;
 
 public sealed partial class ProjectRegistry
 {
-    private readonly ConcurrentDictionary<string, object> _urlOperationGates =
-        new(StringComparer.OrdinalIgnoreCase);
+    // Invalid project IDs must not allocate permanent coordination state.
+    private readonly object[] _urlOperationGates =
+        Enumerable.Range(0, 256).Select(static _ => new object()).ToArray();
 
     private object UrlOperationGate(string projectId)
-        => _urlOperationGates.GetOrAdd(projectId, static _ => new object());
+        => _urlOperationGates[(int)((uint)StringComparer.OrdinalIgnoreCase.GetHashCode(projectId)
+            % (uint)_urlOperationGates.Length)];
 
     /// <summary>Authorize removal before stopping a process, then commit only after stop succeeds.</summary>
     public ProjectRecord RemoveUrl(string id, string urlId, StudioUser? actor = null,
