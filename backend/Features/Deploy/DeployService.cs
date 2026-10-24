@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Tasks;
 
 namespace AgentStudio.Deploy;
 
@@ -36,9 +37,24 @@ public sealed class DeployService
     private readonly TaskScannerService _scanner;
     private readonly TimeProvider _clock;
     private readonly ILogger<DeployService> _logger;
+    private readonly TaskMutationService? _mutations;
+
+    /// <summary>
+    /// Ancestry answers between release commits. Commits are immutable, so a
+    /// definite answer never changes; card badge polls then ask git only about
+    /// a release pair they have not seen.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(string Repo, string Ancestor, string Descendant), bool>
+        _ancestry = new();
+
+    /// <summary>Failed Production runs whose failure card exists or was attempted in this process.</summary>
+    private readonly HashSet<string> _failureCardsHandled = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string Signature, DeliveryLaneResponse Value)> _deliveryLaneCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public DeployService(ProjectEnvironmentService environments, DeployStore store, GitService git,
-        TaskScannerService scanner, TimeProvider clock, ILogger<DeployService> logger)
+        TaskScannerService scanner, TimeProvider clock, ILogger<DeployService> logger,
+        TaskMutationService? mutations)
     {
         _environments = environments;
         _store = store;
@@ -46,17 +62,27 @@ public sealed class DeployService
         _scanner = scanner;
         _clock = clock;
         _logger = logger;
+        _mutations = mutations;
     }
 
     public static IReadOnlyList<DeployEnvironment> MapEnvironments(string project,
         IEnumerable<EnvironmentDeclaration> declarations)
         => declarations.Where(item => item.Kind is "stage" or "production")
             .Select((item, index) => new DeployEnvironment(item.Id, project, item.Name, index,
-                item.Kind == "stage" ? EnvironmentKinds.Staging : EnvironmentKinds.Production))
+                item.Kind == "stage" ? EnvironmentKinds.Staging : EnvironmentKinds.Production)
+            { Protected = item.Protected, Automatic = item.Automatic, Requires = item.Requires })
             .ToArray();
 
     public IReadOnlyList<DeployEnvironment>? Environments(string project)
-        => _environments.Declarations(project) is { } declarations ? MapEnvironments(project, declarations) : null;
+        => _environments.Declarations(project) is { } declarations
+            ? MapEnvironments(project, declarations).Concat(PreviewEnvironments(project)).ToArray() : null;
+
+    private IReadOnlyList<DeployEnvironment> PreviewEnvironments(string project)
+        => _scanner.ScanAllJobs().Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)
+                && task.Preview is { Status: not "removing" })
+            .Select(task => new DeployEnvironment("preview-" + CardPreviewPolicy.Slug(task.Key ?? task.TaskKey),
+                project, $"Preview · {task.Key ?? task.TaskKey}", -1, EnvironmentKinds.Preview))
+            .ToArray();
 
     /// <summary>
     /// The integration branch built green: record the immutable release for
@@ -70,10 +96,19 @@ public sealed class DeployService
     /// ancestry check repeats under the lock only when another release was
     /// created meanwhile.
     /// </summary>
-    public DeployOutcome<Release> CreateRelease(string project, string artifact, string commit, string actor)
+    public DeployOutcome<Release> CreateRelease(string project, string artifact, string commit, string actor,
+        string? versionTag = null, string? branch = null, string? requestedChannel = null, bool mayOverride = false)
     {
         const string invalid = "Artifact, commit, or stage and production declarations are invalid.";
-        if (_environments.Declarations(project) is null) return DeployOutcome<Release>.NotFound($"Unknown project '{project}'.");
+        try
+        {
+            if (_environments.Declarations(project) is null)
+                return DeployOutcome<Release>.NotFound($"Unknown project '{project}'.");
+        }
+        catch (JsonException ex)
+        {
+            return DeployOutcome<Release>.Invalid($"The current environment declaration diverges from project.yml: {ex.Message}");
+        }
         if (!_environments.CanQueueRelease(project, artifact, commit)) return DeployOutcome<Release>.Invalid(invalid);
         IReadOnlyList<EnvironmentDeclaration>? declarations;
         try
@@ -104,7 +139,24 @@ public sealed class DeployService
         if (OrderRejection(repo, newestSeen, id, commit, known) is { } orderRejection)
             return DeployOutcome<Release>.Conflict(orderRejection.Error, orderRejection.Reason);
         var integrated = known || repo is null ? [] : IntegratedCards(project);
-        var definition = known || repo is null ? null : ReadDefinition(repo, commit);
+        var definitionYaml = known || repo is null ? null
+            : _git.GetFileAtCommit(repo, commit, ProjectPreparationPaths.Definition);
+        var parsedDefinition = definitionYaml is null ? null : ProjectDefinitionReader.Parse(definitionYaml);
+        if (parsedDefinition is { IsValid: false })
+            return DeployOutcome<Release>.Invalid($"project.yml at commit {ShortSha(commit)} is invalid: "
+                + parsedDefinition.Issues[0].Message);
+        var definition = parsedDefinition?.Definition?.Deployment;
+        var knownRecord = existing.FirstOrDefault(item => item.Release.Id == id);
+        var (channel, channelError) = knownRecord is null
+            ? ReleaseChannelPolicy.Select(definition, versionTag, branch, requestedChannel, mayOverride)
+            : (null, requestedChannel is not null && requestedChannel != knownRecord.Release.Channel
+                ? $"Release already belongs to channel '{knownRecord.Release.Channel}'." : null);
+        if (channelError is not null) return DeployOutcome<Release>.Invalid(channelError);
+        var lifecycle = knownRecord is { Lifecycle.Count: > 0 }
+            ? knownRecord.Lifecycle : ReleaseChannelPolicy.Lifecycle(definition, channel);
+        var firstPhase = lifecycle.FirstOrDefault();
+        if (firstPhase is null || firstPhase.Phase != staging.Kind || !firstPhase.Automatic)
+            return DeployOutcome<Release>.Invalid($"Channel '{channel?.Name ?? ReleaseSnapshot.DefaultChannel}' lifecycle must start with automatic staging.");
 
         lock (_gate)
         {
@@ -115,8 +167,10 @@ public sealed class DeployService
                 return DeployOutcome<Release>.Conflict(raced.Error, raced.Reason);
             var now = _clock.GetUtcNow().UtcDateTime;
             var (record, created) = FindOrCreateRelease(project, id, commit, [artifact], declarations, definition,
-                repo, integrated, now);
+                channel?.Name ?? ReleaseSnapshot.DefaultChannel, lifecycle, repo, integrated, now);
             var release = record.Release;
+            if (!created && requestedChannel is not null && release.Channel != requestedChannel)
+                return DeployOutcome<Release>.Conflict($"Release already belongs to channel '{release.Channel}'.");
             var audit = new List<DeployAuditEntry>();
             if (created)
                 audit.Add(new(now, actor, "release-created", release.Id, null, null,
@@ -129,7 +183,7 @@ public sealed class DeployService
             }
             var runs = _store.ReadDeployments(project).ToList();
             var run = NewRun(release, staging, record.Environments, DeploymentStates.Queued, DeploymentTriggers.Deploy,
-                actor, null, job, now);
+                actor, null, job, now, record.Lifecycle);
             runs.Add(run);
             var log = new List<DeploymentLogEntry>
             {
@@ -181,14 +235,30 @@ public sealed class DeployService
         }
     }
 
-    public DeployPage<Release>? ReleasePage(string project, int offset, int limit)
+    /// <param name="artifact">
+    /// Only releases that carry this artifact's digest (registry prefix ignored),
+    /// so a host artifact maps to its release without reading the whole history.
+    /// </param>
+    /// <param name="notAfterUtc">Only releases created at or before this time, such as the host deploy time.</param>
+    public DeployPage<Release>? ReleasePage(string project, int offset, int limit,
+        string? artifact = null, DateTime? notAfterUtc = null)
     {
         lock (_gate)
         {
-            var releases = SyncLocked(project)?.Releases.OrderByDescending(item => item.CreatedAtUtc)
+            var digest = artifact is null ? null : DigestOf(artifact);
+            var releases = SyncLocked(project)?.Releases
+                .Where(item => digest is null || item.ArtifactDigests.Any(value => DigestOf(value) == digest))
+                .Where(item => notAfterUtc is null || item.CreatedAtUtc <= notAfterUtc)
+                .OrderByDescending(item => item.CreatedAtUtc)
                 .ThenByDescending(item => item.Id, StringComparer.Ordinal).ToArray();
             return releases is null ? null : Page(releases, offset, limit);
         }
+    }
+
+    private static string DigestOf(string artifact)
+    {
+        var at = artifact.LastIndexOf('@');
+        return at >= 0 ? artifact[(at + 1)..] : artifact;
     }
 
     public ReleaseDetailResponse? ReleaseDetail(string project, string releaseId)
@@ -256,6 +326,22 @@ public sealed class DeployService
         }
     }
 
+    public bool AppendHostStepLog(string project, string jobId, DeployStepLogRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.LeaseToken) || string.IsNullOrWhiteSpace(request.Message)
+            || request.Message.Length > 512 || request.Message.Any(char.IsControl)
+            || string.IsNullOrWhiteSpace(request.Step) || request.Step.Length > 80) return false;
+        lock (_gate)
+        {
+            var job = _environments.FindClaimedJob(project, jobId, request.LeaseToken);
+            if (job is null || !job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}")
+                    .Contains(request.Step, StringComparer.Ordinal)) return false;
+            var runId = _store.ReadDeployments(project).FirstOrDefault(item => item.JobId == jobId)?.Id ?? jobId;
+            _store.AppendLog(project, [new(runId, request.Step, _clock.GetUtcNow().UtcDateTime, request.Message)]);
+            return true;
+        }
+    }
+
     public IReadOnlyList<DeployAuditEntry>? Audit(string project)
     {
         lock (_gate)
@@ -269,11 +355,121 @@ public sealed class DeployService
         lock (_gate)
         {
             var snapshot = SyncLocked(project);
-            if (snapshot is null) return null;
+            var previews = _scanner.ScanAllJobs().Where(task =>
+                    string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase)
+                    && task.Preview is { Status: not ("removing" or "expired" or "removed") })
+                .Select(task => new EnvironmentStatus(
+                    new DeployEnvironment("preview-" + CardPreviewPolicy.Slug(task.Key ?? task.TaskKey), project,
+                        $"Preview · {task.Key ?? task.TaskKey}", -1, EnvironmentKinds.Preview),
+                    null, null, null, [], task.Preview!.Status == "ready" ? EnvironmentHealth.Healthy
+                        : task.Preview.Status == "failed" ? EnvironmentHealth.Unhealthy : EnvironmentHealth.Unknown));
+            if (snapshot is null)
+            {
+                var previewOnly = previews.ToArray();
+                return previewOnly.Length == 0 ? null : previewOnly;
+            }
             var hostHealth = snapshot.View.Environments.ToDictionary(item => item.Declaration.Id, item => item.Health,
                 StringComparer.Ordinal);
-            return EnvironmentStatusProjection.Project(snapshot.Environments, snapshot.Releases,
+            var current = EnvironmentStatusProjection.Project(snapshot.Environments, snapshot.Releases,
                 snapshot.Deployments(project), hostHealth);
+            return current.Concat(previews).ToArray();
+        }
+    }
+
+    public IReadOnlyList<CardDeploymentView>? Cards(string project)
+        => Cards(project, _scanner.ScanAllJobsWithArchive()
+            .Where(item => string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase))
+            .Select(item => string.IsNullOrWhiteSpace(item.Key) ? item.Id : item.Key!));
+
+    private IReadOnlyList<CardDeploymentView>? Cards(string project, IEnumerable<string> cardKeys)
+    {
+        lock (_gate)
+        {
+            var snapshot = SyncLocked(project);
+            if (snapshot is null) return null;
+            var repo = _git.ResolveRepoRootForProject(project);
+            return CardDeploymentProjection.Project(project, snapshot.Environments,
+                snapshot.Releases, snapshot.Deployments(project), cardKeys,
+                (origin, target) => repo is not null && Contains(repo, origin.CommitSha, target.CommitSha));
+        }
+    }
+
+    public IReadOnlyList<CardDeploymentView> CardMatrix()
+    {
+        var cards = new List<CardDeploymentView>();
+        var byProject = _scanner.ScanAllJobsWithArchive()
+            .ToLookup(item => item.ProjectName, StringComparer.OrdinalIgnoreCase);
+        foreach (var project in _scanner.GetWatchPaths().Select(item => item.Name)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (_environments.Declarations(project) is not { Count: > 0 }) continue;
+                if (Cards(project, byProject[project].Select(item => string.IsNullOrWhiteSpace(item.Key)
+                        ? item.Id : item.Key!)) is { } projected) cards.AddRange(projected);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Deploy card matrix skipped project {Project}: invalid deployment state", project);
+            }
+        }
+        return cards;
+    }
+
+    public ReleaseNotesResponse? Notes(string project, string releaseId)
+    {
+        lock (_gate)
+        {
+            var snapshot = SyncLocked(project);
+            var record = snapshot?.Records.GetValueOrDefault(releaseId);
+            var release = record?.Release;
+            if (release is null) return null;
+            var currentTitles = _scanner.ScanAllJobsWithArchive()
+                .Where(item => string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase))
+                .Where(item => !string.IsNullOrWhiteSpace(item.Key))
+                .GroupBy(item => item.Key!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.OrdinalIgnoreCase);
+            var cards = record!.CardTitles is { } captured
+                ? captured.Concat(currentTitles.Where(item => !captured.ContainsKey(item.Key)))
+                    .ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase)
+                : currentTitles;
+            var production = snapshot!.Environments.Where(item => item.Kind == EnvironmentKinds.Production)
+                .Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+            var preview = !snapshot.Deployments(project).Any(item => item.ReleaseId == releaseId
+                && production.Contains(item.EnvironmentId) && item.State == DeploymentStates.Succeeded);
+            return ReleaseNotesProjection.Project(release, cards, preview);
+        }
+    }
+
+    /// <summary>Read-only release placement; the cache changes with releases, deploy runs and integration evidence.</summary>
+    public DeliveryLaneResponse? DeliveryLanes(string project)
+    {
+        lock (_gate)
+        {
+            var snapshot = SyncLocked(project);
+            if (snapshot is null) return null;
+            var tasks = _scanner.ScanAllJobsWithArchive()
+                .Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase))
+                .Select(task => (Task: task, Stamp: File.Exists(Path.Combine(task.FolderPath,
+                    IntegrationVerificationStore.FileName))
+                    ? File.GetLastWriteTimeUtc(Path.Combine(task.FolderPath, IntegrationVerificationStore.FileName)).Ticks : 0L))
+                .ToArray();
+            var runs = snapshot.Deployments(project);
+            var signature = string.Join('|', snapshot.Environments.Select(item =>
+                    item.Id + ':' + item.Name + ':' + item.Order))
+                + "|" + string.Join('|', snapshot.Releases.Select(item => item.Id + ':' + item.CardKeys.Count))
+                + "|" + string.Join('|', runs.Select(item => item.Id + ':' + item.State + ':' + item.FinishedAtUtc?.Ticks))
+                + "|" + string.Join('|', tasks.Select(item => item.Task.Id + ':' + item.Task.Title + ':' + item.Stamp));
+            if (_deliveryLaneCache.TryGetValue(project, out var cached) && cached.Signature == signature)
+                return cached.Value;
+            var integrated = tasks.Where(item => item.Stamp != 0)
+                .Select(item => (item.Task, Verification: IntegrationVerificationStore.Read(item.Task.FolderPath)))
+                .Where(item => item.Verification?.State == IntegrationVerificationStates.Verified)
+                .ToDictionary(item => string.IsNullOrWhiteSpace(item.Task.Key) ? item.Task.Id : item.Task.Key!,
+                    item => item.Task.Title, StringComparer.OrdinalIgnoreCase);
+            var value = DeliveryLaneProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, integrated);
+            _deliveryLaneCache[project] = (signature, value);
+            return value;
         }
     }
 
@@ -288,8 +484,9 @@ public sealed class DeployService
                 // Reading the queue persists its state, so skip projects
                 // without environment declarations.
                 if (_environments.Declarations(project) is not { Count: > 0 }) continue;
-                var statuses = Status(project);
-                if (statuses is { Count: > 0 }) rows.Add(new(project, statuses, null));
+                var statuses = Status(project)?.Where(item => item.Environment.Kind is
+                    EnvironmentKinds.Staging or EnvironmentKinds.Production).ToArray();
+                if (statuses is { Length: > 0 }) rows.Add(new(project, statuses, null));
             }
             catch (JsonException ex)
             {
@@ -332,15 +529,18 @@ public sealed class DeployService
             var environment = snapshot.Environments.FirstOrDefault(item => item.Id == request.EnvironmentId);
             if (environment is null)
                 return DeployOutcome<Deployment>.NotFound($"Unknown environment '{request.EnvironmentId}'.");
-            return Start(project, snapshot, record, environment, DeployIntent.Deploy, request.Approve, actor);
+            return Start(project, snapshot, record, environment, DeployIntent.Deploy, request.Approve, actor,
+                request.GuidedFailure);
         }
     }
 
-    public DeployOutcome<Deployment> Redeploy(string project, string environmentId, bool approve, DeployActor actor)
-        => StartForEnvironment(project, environmentId, DeployIntent.Redeploy, approve, actor);
+    public DeployOutcome<Deployment> Redeploy(string project, string environmentId, bool approve, DeployActor actor,
+        bool? guidedFailure = null)
+        => StartForEnvironment(project, environmentId, DeployIntent.Redeploy, approve, actor, guidedFailure);
 
-    public DeployOutcome<Deployment> Rollback(string project, string environmentId, bool approve, DeployActor actor)
-        => StartForEnvironment(project, environmentId, DeployIntent.Rollback, approve, actor);
+    public DeployOutcome<Deployment> Rollback(string project, string environmentId, bool approve, DeployActor actor,
+        bool? guidedFailure = null)
+        => StartForEnvironment(project, environmentId, DeployIntent.Rollback, approve, actor, guidedFailure);
 
     /// <summary>
     /// Approves a waiting run. The lifecycle decides again, because another
@@ -349,7 +549,8 @@ public sealed class DeployService
     /// is no longer newer than the current release needs a rollback instead.
     /// Queuing the run closes the waiting runs it makes invalid.
     /// </summary>
-    public DeployOutcome<Deployment> Approve(string project, string deploymentId, DeployActor actor)
+    public DeployOutcome<Deployment> Approve(string project, string deploymentId, DeployActor actor,
+        bool? guidedFailure = null)
     {
         lock (_gate)
         {
@@ -369,11 +570,13 @@ public sealed class DeployService
             if (decision.Outcome == LifecycleOutcome.Reject) return Rejected(decision);
 
             var now = _clock.GetUtcNow().UtcDateTime;
-            var job = QueueJob(project, snapshot, run.Trigger, target, release, actor.Id);
+            var guided = guidedFailure ?? run.GuidedFailure;
+            var job = QueueJob(project, snapshot, run.Trigger, target with { GuidedFailure = guided }, release, actor.Id);
             if (job is null) return DeployOutcome<Deployment>.Conflict("The deploy job could not be queued.");
             var approved = run with
             {
                 State = DeploymentStates.Queued, ApprovedBy = actor.Id, ApprovedAtUtc = now, JobId = job.Id,
+                GuidedFailure = guided,
             };
             var runs = snapshot.Runs.Select(item => item.Id == run.Id ? approved : item).ToList();
             var log = new List<DeploymentLogEntry>
@@ -416,6 +619,8 @@ public sealed class DeployService
         {
             var found = FindRun(project, deploymentId, out var snapshot, out var run, out var record);
             if (found is not null) return found;
+            if (run!.State == DeploymentStates.WaitingForIntervention)
+                return DecideIntervention(project, deploymentId, new InterventionDecisionRequest("abort"), actor);
             var environment = snapshot!.Environments.FirstOrDefault(item => item.Id == run!.EnvironmentId)
                 ?? MapEnvironments(project, record!.Environments).FirstOrDefault(item => item.Id == run!.EnvironmentId);
             if (environment is null)
@@ -426,6 +631,63 @@ public sealed class DeployService
                 return DeploymentStates.IsFinished(run.State)
                     ? DeployOutcome<Deployment>.Conflict(rejection) : DeployOutcome<Deployment>.Forbidden(rejection);
             return Close(project, run, actor, rejected: false, closesPromotion);
+        }
+    }
+
+    /// <summary>Resolve one failed step while the host job is no longer active.</summary>
+    public DeployOutcome<Deployment> DecideIntervention(string project, string deploymentId,
+        InterventionDecisionRequest request, DeployActor actor)
+    {
+        lock (_gate)
+        {
+            var found = FindRun(project, deploymentId, out var snapshot, out var run, out var release);
+            if (found is not null) return found;
+            var rejection = GuidedFailurePolicy.RejectDecision(run!.State, request.Action, actor.IsApprover,
+                request.Reason);
+            if (rejection is not null) return run.State != DeploymentStates.WaitingForIntervention
+                ? DeployOutcome<Deployment>.Conflict(rejection)
+                : !actor.IsApprover ? DeployOutcome<Deployment>.Forbidden(rejection)
+                : DeployOutcome<Deployment>.Invalid(rejection);
+            var now = _clock.GetUtcNow().UtcDateTime;
+            if (run.InterventionExpiresAtUtc is { } expires && now >= expires)
+            {
+                SyncLocked(project);
+                return DeployOutcome<Deployment>.Conflict("The intervention window has expired.");
+            }
+            var updated = run with { InterventionDecidedBy = actor.Id, InterventionDecision = request.Action,
+                InterventionExpiresAtUtc = null };
+            if (request.Action == "retry")
+            {
+                var target = release!.Environments.FirstOrDefault(item => item.Id == run.EnvironmentId);
+                if (target is null) return DeployOutcome<Deployment>.Conflict("The release has no environment snapshot.");
+                var job = _environments.QueueRetry(project, target with { GuidedFailure = run.GuidedFailure },
+                    release.Release.ArtifactDigests[0], actor.Id, run.JobId!,
+                    retryStep: run.FailedStep == DeployStepNames.Health && run.SshStepNames.Count == 0
+                        ? DeployStepNames.Health : null);
+                if (job is null) return DeployOutcome<Deployment>.Conflict(
+                    "The failed step cannot be retried after another job entered this environment.");
+                updated = updated with { State = DeploymentStates.Queued, JobId = job.Id,
+                    PriorJobIds = [.. run.PriorJobIds, run.JobId!], FailedStep = null, Evidence = null,
+                    RetryStep = job.RetryStep,
+                    StartedAtUtc = null, FinishedAtUtc = null, HostId = null, HostClaims = 0 };
+            }
+            else if (request.Action == "skip")
+                updated = updated with { State = DeploymentStates.Succeeded, FinishedAtUtc = now };
+            else
+                updated = updated with { State = DeploymentStates.Cancelled, FinishedAtUtc = now,
+                    CancelledBy = actor.Id };
+            updated = updated with { Steps = DeploymentStepPlan.Build(updated) };
+            var step = run.FailedStep ?? run.DeployStep;
+            var detail = request.Action == "skip" ? $"Skipped {step} by {actor.Id}: {request.Reason!.Trim()}"
+                : request.Action == "retry" ? $"Retry of {step} queued by {actor.Id}."
+                : $"Aborted after {step} failed by {actor.Id}.";
+            var runs = snapshot!.Runs.Select(item => item.Id == run.Id ? updated : item).ToArray();
+            Persist(project, runs, [new(run.Id, step, now, detail)],
+                [new(now, actor.Id, "intervention-" + request.Action, run.ReleaseId, run.Id,
+                    run.EnvironmentId, detail)]);
+            if (request.Action is ("abort" or "skip") && run.JobId is not null)
+                _environments.RollbackFailedJob(project, run.JobId, rollback: request.Action == "abort");
+            return DeployOutcome<Deployment>.Ok(SyncLocked(project)!.Deployments(project).First(item => item.Id == run.Id));
         }
     }
 
@@ -505,7 +767,7 @@ public sealed class DeployService
     }
 
     private DeployOutcome<Deployment> StartForEnvironment(string project, string environmentId, DeployIntent intent,
-        bool approve, DeployActor actor)
+        bool approve, DeployActor actor, bool? guidedFailure = null)
     {
         lock (_gate)
         {
@@ -521,12 +783,14 @@ public sealed class DeployService
                 return DeployOutcome<Deployment>.Conflict(intent == DeployIntent.Rollback
                     ? $"{environment.Name} has no previous release to roll back to."
                     : $"{environment.Name} has no successfully deployed release.");
-            return Start(project, snapshot, snapshot.Records[release.Id], environment, intent, approve, actor);
+            return Start(project, snapshot, snapshot.Records[release.Id], environment, intent, approve, actor,
+                guidedFailure);
         }
     }
 
     private DeployOutcome<Deployment> Start(string project, Snapshot snapshot, ReleaseRecord record,
-        DeployEnvironment environment, DeployIntent intent, bool approve, DeployActor actor)
+        DeployEnvironment environment, DeployIntent intent, bool approve, DeployActor actor,
+        bool? guidedFailure = null)
     {
         var release = record.Release;
         var target = record.Environments.FirstOrDefault(item => item.Id == environment.Id);
@@ -545,12 +809,13 @@ public sealed class DeployService
         DeployJob? job = null;
         if (decision.Outcome == LifecycleOutcome.Queue)
         {
-            job = QueueJob(project, snapshot, trigger, target, release, decision.ApprovedBy ?? actor.Id);
+            job = QueueJob(project, snapshot, trigger, target with { GuidedFailure = guidedFailure ?? target.GuidedFailure },
+                release, decision.ApprovedBy ?? actor.Id);
             if (job is null) return DeployOutcome<Deployment>.Conflict("The deploy job could not be queued.");
         }
         var run = NewRun(release, environment, record.Environments,
             job is null ? DeploymentStates.AwaitingApproval : DeploymentStates.Queued, trigger, actor.Id,
-            decision.ApprovedBy, job, now);
+            decision.ApprovedBy, job, now, record.Lifecycle, guidedFailure);
         var log = new List<DeploymentLogEntry>();
         if (job is null)
             log.Add(new(run.Id, DeployStepNames.Approval, now,
@@ -583,16 +848,25 @@ public sealed class DeployService
     private static LifecycleRequest Facts(string project, Snapshot snapshot, Release release, DeployEnvironment environment,
         DeployIntent intent, bool approve, DeployActor actor, string? excludeRunId)
     {
+        if (snapshot.Records.TryGetValue(release.Id, out var record))
+            environment = MapEnvironments(project, record.Environments)
+                .FirstOrDefault(item => item.Id == environment.Id) ?? environment;
         var deployments = snapshot.Deployments(project).Where(item => item.Id != excludeRunId).ToArray();
         var here = deployments.Where(item => item.EnvironmentId == environment.Id).ToArray();
-        var previous = snapshot.Environments.Where(item => item.Order < environment.Order)
+        var releaseEnvironments = snapshot.Records.TryGetValue(release.Id, out var previousRecord)
+            ? MapEnvironments(project, previousRecord.Environments) : snapshot.Environments;
+        var previous = releaseEnvironments.Where(item => item.Order < environment.Order)
             .OrderBy(item => item.Order).LastOrDefault();
+        var phases = snapshot.Records.TryGetValue(release.Id, out var lifecycleRecord) ? lifecycleRecord.Lifecycle : [];
+        var required = phases.FirstOrDefault(item => item.Phase == environment.Kind)?.Requires;
+        var prerequisite = phases.Count == 0 ? previous
+            : required is null ? null : releaseEnvironments.FirstOrDefault(item => item.Kind == required);
         return new(intent, environment, actor, approve,
-            previous is null || EnvironmentStatusProjection.SucceededIn(deployments, release.Id, previous.Id),
+            prerequisite is null || EnvironmentStatusProjection.SucceededIn(deployments, release.Id, prerequisite.Id),
             EnvironmentStatusProjection.Position(release, EnvironmentStatusProjection.CurrentRelease(here, snapshot.ReleaseById)),
             EnvironmentStatusProjection.PreviousRelease(here, snapshot.ReleaseById)?.Id == release.Id,
             here.Any(item => item.ReleaseId == release.Id && DeploymentStates.IsActive(item.State)),
-            here.Any(item => item.State is DeploymentStates.Queued or DeploymentStates.Running));
+            here.Any(item => item.State is DeploymentStates.Queued or DeploymentStates.Running)) { Phases = phases };
     }
 
     /// <summary>
@@ -719,65 +993,128 @@ public sealed class DeployService
 
     private (ReleaseRecord Release, bool Created) FindOrCreateRelease(string project, string id, string commit,
         IReadOnlyList<string> artifacts, IReadOnlyList<EnvironmentDeclaration> declarations,
-        ProjectDeploymentDefinition? definition, string? repo, IReadOnlyList<IntegratedCard> integrated, DateTime now)
+        ProjectDeploymentDefinition? definition, string channel, IReadOnlyList<ProjectLifecyclePhase> lifecycle,
+        string? repo, IReadOnlyList<IntegratedCard> integrated, DateTime now)
     {
         var existing = _store.ReadReleaseRecords(project);
         if (existing.FirstOrDefault(item => item.Release.Id == id) is { } known) return (known, false);
         var previous = existing.LastOrDefault()?.Release;
+        var priorKeys = existing.Where(item => repo is not null &&
+                Contains(repo, item.Release.CommitSha, commit))
+            .SelectMany(item => item.Release.CardKeys)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var cardKeys = repo is null ? [] : CardKeys(repo, commit, previous?.CommitSha, integrated, priorKeys);
         var release = new Release(id, project, ReleaseSnapshot.NextVersion(existing.Select(item => item.Release), now),
             commit, artifacts, ReleaseSnapshot.ProcessVersion(definition, declarations),
             ReleaseSnapshot.VariablesVersion(definition, declarations),
-            repo is null ? [] : CardKeys(repo, commit, previous?.CommitSha, integrated), now, ReleaseSnapshot.DefaultChannel);
-        return _store.AppendRelease(project, new(release, declarations));
+            cardKeys, now, channel);
+        var titles = integrated.Where(card => cardKeys.Contains(card.Key, StringComparer.OrdinalIgnoreCase))
+            .GroupBy(card => card.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.OrdinalIgnoreCase);
+        return _store.AppendRelease(project, new(release, declarations, titles) { Lifecycle = lifecycle });
     }
 
     private ProjectDeploymentDefinition? ReadDefinition(string repo, string commit)
         => _git.GetFileAtCommit(repo, commit, ProjectPreparationPaths.Definition) is { } yaml
             ? ProjectDefinitionReader.Parse(yaml).Definition?.Deployment : null;
 
-    private sealed record IntegratedCard(string Key, IReadOnlyList<string> Shas);
+    private sealed record IntegratedCard(string Key, string Title, IReadOnlyList<string> Shas,
+        string IntegrationBranch);
 
     /// <summary>Cards of the project with an integration verification and the commits it names.</summary>
     private IReadOnlyList<IntegratedCard> IntegratedCards(string project)
         => _scanner.ScanAllJobsWithArchive()
             .Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase))
             .Select(task => (Task: task, Record: IntegrationVerificationStore.Read(task.FolderPath)))
-            .Where(item => item.Record is not null)
+            .Where(item => item.Record is { State: IntegrationVerificationStates.Verified })
             .Select(item => new IntegratedCard(
                 string.IsNullOrWhiteSpace(item.Task.Key) ? item.Task.Id : item.Task.Key,
-                [.. item.Record!.Sha is { } sha ? [sha] : Array.Empty<string>(), .. item.Record.DeliveryShas]))
+                item.Task.Title,
+                [.. item.Record!.Sha is { } sha ? [sha] : Array.Empty<string>(), .. item.Record.DeliveryShas],
+                item.Record.IntegrationBranch))
             .ToArray();
 
     /// <summary>
-    /// Cards whose integration verification names a commit this release adds:
-    /// reachable from the release commit and not from the previous release.
+    /// The integration verification is the durable card mapping. A card joins
+    /// the release that adds a commit its verification names, or a commit whose
+    /// message keeps its key. A rewritten merge, rebase or squash may keep
+    /// neither, so the release also adds the cards behind an integration-branch
+    /// commit whose tree the release delta carries unchanged. Cards of an
+    /// ancestor release never join again.
     /// </summary>
     private IReadOnlyList<string> CardKeys(string repo, string commit, string? previousCommit,
-        IReadOnlyList<IntegratedCard> integrated)
+        IReadOnlyList<IntegratedCard> integrated, IReadOnlySet<string> priorKeys)
     {
-        var revisions = _git.ListRevisions(repo, commit, previousCommit,
-                previousCommit is null ? FirstReleaseCommitWindow : ReleaseCommitWindow)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (revisions.Count == 0) return [];
-        return integrated.Where(card => card.Shas.Any(revisions.Contains))
+        var window = previousCommit is null ? FirstReleaseCommitWindow : ReleaseCommitWindow;
+        var delta = _git.ListRevisionDetails(repo, commit, previousCommit, window);
+        if (delta.Count == 0) return [];
+        var revisions = delta.Select(item => item.Sha).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var mentioned = ReleaseCardAttribution.FindKeys(delta.Select(item => item.Message));
+        var candidates = integrated.Where(card => !priorKeys.Contains(card.Key)).ToArray();
+        var direct = candidates.Where(card => card.Shas.Any(revisions.Contains) || mentioned.Contains(card.Key))
             .Select(card => card.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var rewritten = candidates.Where(card => !direct.Contains(card.Key))
+            .GroupBy(card => card.IntegrationBranch, StringComparer.Ordinal)
+            .SelectMany(group =>
+            {
+                var carried = RewrittenIntegration(repo, group.Key, delta, previousCommit, window);
+                return group.Where(card => card.Shas.Any(carried.Contains)).Select(card => card.Key);
+            });
+        return direct.Concat(rewritten)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.Ordinal)
             .ToArray();
     }
 
+    /// <summary>
+    /// Integration-branch commits the release carries as rewritten content: the
+    /// history of the newest branch commit whose tree equals a delta commit's
+    /// tree, down to the branch commit the previous release carried the same way.
+    /// </summary>
+    private IReadOnlySet<string> RewrittenIntegration(string repo, string branch,
+        IReadOnlyList<RevisionDetail> delta, string? previousCommit, int window)
+    {
+        if (string.IsNullOrWhiteSpace(branch)) return new HashSet<string>();
+        var history = _git.ListRevisionDetails(repo, "origin/" + branch, null, ReleaseCommitWindow, includeMessages: false);
+        if (history.Count == 0)
+            history = _git.ListRevisionDetails(repo, branch, null, ReleaseCommitWindow, includeMessages: false);
+        var trees = delta.Select(item => item.Tree).ToHashSet(StringComparer.Ordinal);
+        if (history.FirstOrDefault(item => trees.Contains(item.Tree)) is not { } carried)
+            return new HashSet<string>();
+        var previousTree = previousCommit is null ? null
+            : _git.ListRevisionDetails(repo, previousCommit, null, 1, includeMessages: false).FirstOrDefault()?.Tree;
+        var boundary = history.FirstOrDefault(item => item.Tree == previousTree)?.Sha ?? previousCommit;
+        return _git.ListRevisions(repo, carried.Sha, boundary, window).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private bool Contains(string repo, string ancestor, string descendant)
+    {
+        if (string.Equals(ancestor, descendant, StringComparison.OrdinalIgnoreCase)) return true;
+        if (_ancestry.TryGetValue((repo, ancestor, descendant), out var known)) return known;
+        var answer = _git.TryIsAncestor(repo, ancestor, descendant);
+        if (answer is { } definite) _ancestry[(repo, ancestor, descendant)] = definite;
+        return answer == true;
+    }
+
     private static DeploymentRecord NewRun(Release release, DeployEnvironment environment,
         IEnumerable<EnvironmentDeclaration> declarations, string state, string trigger, string requestedBy,
-        string? approvedBy, DeployJob? job, DateTime now)
+        string? approvedBy, DeployJob? job, DateTime now, IReadOnlyList<ProjectLifecyclePhase>? phases = null,
+        bool? guidedFailure = null)
     {
-        var template = declarations.FirstOrDefault(item => item.Id == environment.Id)?.Template ?? "container";
+        var declaration = declarations.FirstOrDefault(item => item.Id == environment.Id);
+        var template = declaration?.Template ?? "container";
         var run = new DeploymentRecord
         {
             Id = job?.Id ?? Guid.NewGuid().ToString("N"), ReleaseId = release.Id, EnvironmentId = environment.Id,
             State = state, Trigger = trigger, DeployStep = DeployStepNames.ForTemplate(template),
-            NeedsApproval = StandardLifecyclePolicy.RequiresApproval(environment),
+            NeedsApproval = phases is { Count: > 0 }
+                ? phases.FirstOrDefault(item => item.Phase == environment.Kind)?.Approval.Count > 0
+                : declaration?.Protected ?? StandardLifecyclePolicy.RequiresApproval(environment),
             RequestedBy = requestedBy, ApprovedBy = approvedBy, ApprovedAtUtc = approvedBy is null ? null : now,
             JobId = job?.Id, CreatedAtUtc = now,
+            GuidedFailure = guidedFailure ?? declaration?.GuidedFailure ?? false,
+            InterventionTimeoutMinutes = declaration?.InterventionTimeoutMinutes ?? 60,
         };
         return run with { Steps = DeploymentStepPlan.Build(run) };
     }
@@ -789,10 +1126,100 @@ public sealed class DeployService
         var environments = MapEnvironments(project, view.Environments.Select(item => item.Declaration));
         var records = _store.ReadReleaseRecords(project);
         var result = DeploymentReconciler.Reconcile(new(environments, records, _store.ReadDeployments(project),
-            view.Jobs, view.Promotions));
+            view.Jobs, view.Promotions, _clock.GetUtcNow().UtcDateTime));
         if (result.Changed) Persist(project, result.Deployments, result.Log, result.Audit);
-        return new(environments, records, result.Deployments, view);
+        CreateProductionFailureCards(project, environments, records, result.Deployments);
+        var snapshot = new Snapshot(environments, records, result.Deployments, view);
+        foreach (var run in result.Deployments.Where(item => item.InterventionDecision is "abort" or "skip" or "timeout"
+                     && DeploymentStates.IsFinished(item.State) && item.JobId is not null))
+            if (view.Jobs.FirstOrDefault(item => item.Id == run.JobId) is { GuidedResolved: false })
+                _environments.RollbackFailedJob(project, run.JobId!, rollback: run.InterventionDecision != "skip");
+        foreach (var record in records.Where(item => item.Lifecycle.Count > 1))
+        {
+            foreach (var phase in record.Lifecycle.Skip(1).Where(item => item.Automatic && item.Approval.Count == 0))
+            {
+                var environment = environments.FirstOrDefault(item => item.Kind == phase.Phase);
+                if (environment is null || result.Deployments.Any(item => item.ReleaseId == record.Release.Id
+                        && item.EnvironmentId == environment.Id)) continue;
+                if (phase.Requires is { } required && !environments.Any(item => item.Kind == required
+                        && EnvironmentStatusProjection.SucceededIn(snapshot.Deployments(project), record.Release.Id, item.Id)))
+                    continue;
+                if (Start(project, snapshot, record, environment, DeployIntent.Deploy, false,
+                        new DeployActor("lifecycle", true)).Kind == DeployOutcomeKind.Ok)
+                    return SyncLocked(project);
+            }
+        }
+        return snapshot;
     }
+
+    /// <summary>
+    /// Creates one backlog bug card per failed Production run. Each run is
+    /// handled once per process: storage is read only when a run first fails,
+    /// and the stable card id keeps a restart from creating a duplicate.
+    /// </summary>
+    private void CreateProductionFailureCards(string project, IReadOnlyList<DeployEnvironment> environments,
+        IReadOnlyList<ReleaseRecord> records, IReadOnlyList<DeploymentRecord> runs)
+    {
+        var production = environments.Where(item => item.Kind == EnvironmentKinds.Production)
+            .Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        var pending = runs.Where(item => (item.State == DeploymentStates.Failed
+                    || (item.State == DeploymentStates.Cancelled && item.InterventionDecision == "abort"
+                        && item.FailedStep is not null))
+                && production.Contains(item.EnvironmentId)
+                && !_failureCardsHandled.Contains(project + "/" + item.Id))
+            .ToArray();
+        if (pending.Length == 0) return;
+        foreach (var run in pending) _failureCardsHandled.Add(project + "/" + run.Id);
+        var watchPath = _scanner.GetWatchPaths()
+            .FirstOrDefault(item => string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase))?.Path;
+        if (_mutations is null || watchPath is null)
+        {
+            _logger.LogWarning("Cannot create Production failure cards for {Project} deployments {DeploymentIds}: "
+                + "task mutations or the project watch path are unavailable", project,
+                string.Join(", ", pending.Select(item => item.Id)));
+            return;
+        }
+        // The published task index can lag a new card. Read storage once so a
+        // restart cannot mint a duplicate for a run that already has its card.
+        var existing = _scanner.ScanAllJobsRaw()
+            .Where(item => WatchPathComparison.PathsEqual(item.WatchPath, watchPath))
+            .Select(item => item.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var run in pending.Where(item => !existing.Contains(FailureCardId(item.Id))))
+        {
+            var release = records.FirstOrDefault(item => item.Release.Id == run.ReleaseId)?.Release;
+            if (release is null) continue;
+            var cards = string.Join(", ", release.CardKeys);
+            var excerpt = string.Join("\n", _store.ReadLog(project, run.Id).TakeLast(5)
+                .Select(item => $"- {item.Step}: {item.Message}"));
+            try
+            {
+                var cardId = _mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+                {
+                    Id = FailureCardId(run.Id),
+                    Title = $"Investigate Production deployment of release {release.Version}",
+                    PromptMarkdown = $"# Production deployment failed\n\nRelease: {release.Version} (`{release.Id}`)"
+                        + $"\nDeployment: `{run.Id}`\nIncluded cards: {cards}\n\nRecent deployment log:\n{excerpt}\n",
+                    WatchPath = watchPath,
+                    TargetState = TaskStates.Backlog,
+                    TaskType = TaskTypes.Bug,
+                    Tags = ["production-deployment"],
+                    CreationSource = "deployment",
+                    CreatedBy = "system",
+                });
+                if (cardId is null)
+                    _logger.LogWarning("Could not create Production failure card for deployment {DeploymentId}", run.Id);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                // A transient storage failure retries on the next reconciliation.
+                _failureCardsHandled.Remove(project + "/" + run.Id);
+                _logger.LogWarning(ex, "Could not create Production failure card for deployment {DeploymentId}", run.Id);
+            }
+        }
+    }
+
+    private static string FailureCardId(string deploymentId) => "production-deploy-failed-" + deploymentId;
 
     private void Persist(string project, IReadOnlyList<DeploymentRecord> runs,
         IReadOnlyList<DeploymentLogEntry> log, IReadOnlyList<DeployAuditEntry> audit)
@@ -825,5 +1252,6 @@ public sealed class DeployService
         => new(run.Id, run.ReleaseId, run.EnvironmentId, run.State, run.StartedAtUtc, run.FinishedAtUtc, run.ApprovedBy,
             run.Steps.Select(step => new DeploymentStep(step.Name, step.State, step.StartedAtUtc, step.FinishedAtUtc,
                 $"/api/projects/{Uri.EscapeDataString(project)}/deploy/deployments/{run.Id}/log?step={step.Name}")).ToArray(),
-            run.Trigger, run.RequestedBy, run.CreatedAtUtc);
+            run.Trigger, run.RequestedBy, run.CreatedAtUtc, run.InterventionExpiresAtUtc, run.FailedStep,
+            run.InterventionDecidedBy, run.InterventionDecision);
 }

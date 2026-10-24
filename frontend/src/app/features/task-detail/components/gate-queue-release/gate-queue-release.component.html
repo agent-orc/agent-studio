@@ -1,0 +1,31 @@
+@if (applies() && (releasable().length > 0 || outcome())) {
+  <section class="queue-release" data-testid="gate-queue-release" aria-label="Gate queue overrun">
+    <p class="queue-release__copy">
+      The per-task gate waited for a free gate slot past its queue budget, so this code was never tested.
+      @if (releasable().length > 0) {
+        <span data-testid="gate-queue-release-count">
+          {{ releasable().length }} card{{ releasable().length === 1 ? '' : 's' }} of {{ info().projectName }}
+          {{ releasable().length === 1 ? 'is' : 'are' }} parked for this reason.
+        </span>
+      }
+    </p>
+    @if (releasable().length > 0) {
+      <button
+        type="button"
+        class="queue-release__action"
+        data-testid="gate-queue-release-action"
+        [disabled]="releasing()"
+        [appPendingButton]="releasing()"
+        pendingLabel="Releasing…"
+        (click)="release()">
+        Release {{ releasable().length }} to the gate queue
+      </button>
+    }
+    @if (outcome(); as text) {
+      <p class="queue-release__status" role="status" data-testid="gate-queue-release-outcome">{{ text }}</p>
+    }
+    @if (error(); as text) {
+      <p class="queue-release__error" role="alert">{{ text }}</p>
+    }
+  </section>
+}

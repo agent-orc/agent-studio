@@ -1,0 +1,28 @@
+.card-environments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-1);
+}
+
+.card-environment {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--studio-card-muted-border);
+  border-radius: 999px;
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  color: var(--studio-fg-dim);
+  background: var(--studio-card-muted-bg);
+  font-size: var(--studio-card-meta-size);
+  font-variant-numeric: tabular-nums;
+}
+
+.card-environment[data-state='succeeded'] {
+  color: var(--studio-fg);
+  background: color-mix(in srgb, var(--studio-success) 13%, var(--studio-bg-elevated));
+}
+
+.card-environment[data-state='failed'],
+.card-environment[data-state='rolled-back'] {
+  color: var(--studio-fg);
+  background: color-mix(in srgb, var(--studio-warn) 13%, var(--studio-bg-elevated));
+}

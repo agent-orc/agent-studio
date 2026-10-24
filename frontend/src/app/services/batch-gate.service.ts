@@ -1,7 +1,13 @@
 import { DestroyRef, Injectable, inject, signal, type Signal } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { firstValueFrom, map, type Observable } from 'rxjs';
-import type { BatchGateConfiguration, BatchGateSettings, BatchGateState } from '../models/batch-gate.model';
+import type {
+  BatchGateConfiguration,
+  BatchGateSettings,
+  BatchGateState,
+  GateQueueStallRelease,
+  GateQueueStallReport,
+} from '../models/batch-gate.model';
 
 interface ProjectFeed {
   state: ReturnType<typeof signal<BatchGateState | null>>;
@@ -119,6 +125,12 @@ export class BatchGateService {
   }
   eject(project: string, taskKey: string): Observable<unknown> {
     return this.http.post(`${this.url(project)}/members/${encodeURIComponent(taskKey)}/eject`, {});
+  }
+  queueStalls(project: string): Observable<GateQueueStallReport> {
+    return this.http.get<GateQueueStallReport>(`${this.url(project)}/queue-stalls`);
+  }
+  releaseQueueStalled(project: string): Observable<GateQueueStallRelease> {
+    return this.http.post<GateQueueStallRelease>(`${this.url(project)}/queue-stalls/release`, {});
   }
 }
 

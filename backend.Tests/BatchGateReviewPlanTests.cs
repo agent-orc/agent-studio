@@ -14,6 +14,34 @@ public sealed class BatchGateReviewPlanTests
     private static readonly DateTimeOffset Now = DateTimeOffset.UnixEpoch.AddDays(20_000);
 
     [Fact]
+    public void Deep_review_size_uses_the_merge_base_diff_line_count()
+    {
+        var fixture = CreateFixture();
+        try
+        {
+            Git(fixture.Repo, "switch", "-qc", "agent-studio/results/deep-size");
+            File.WriteAllText(Path.Combine(fixture.Repo, "change.txt"), "one\ntwo\nthree\n");
+            Git(fixture.Repo, "add", ".");
+            Git(fixture.Repo, "commit", "-qm", "delivery");
+            var resultSha = Git(fixture.Repo, "rev-parse", "HEAD").Trim();
+
+            Git(fixture.Repo, "switch", "develop");
+            Git(fixture.Repo, "update-ref", "refs/remotes/origin/agent-studio/results/deep-size", resultSha);
+            Git(fixture.Repo, "update-ref", "-d", "refs/heads/agent-studio/results/deep-size");
+            Assert.Null(fixture.Git.ChangedLinesAgainstMergeBase(
+                fixture.Repo, "develop", "refs/heads/agent-studio/results/deep-size"));
+            Assert.Equal(3, fixture.Git.ChangedLinesAgainstMergeBase(
+                fixture.Repo, "develop", resultSha));
+            var plan = fixture.Builder.Build(fixture.Task, fixture.Repo, new ProjectSettings(),
+                "develop", resultSha, ["change.txt"], "refs/heads/agent-studio/results/deep-size");
+            Assert.NotNull(plan.DeepReviewDecision);
+            Assert.False(plan.DeepReviewDecision.Selected);
+            Assert.DoesNotContain("diff-size-unavailable", plan.DeepReviewDecision.Grounds);
+        }
+        finally { DeleteDirectory(fixture.Root); }
+    }
+
+    [Fact]
     public void DocumentationOnlyResultDefersBuildTestsButKeepsModelReview()
     {
         var fixture = CreateFixture();

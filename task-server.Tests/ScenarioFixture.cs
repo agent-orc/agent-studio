@@ -13,7 +13,7 @@ public sealed record ScenarioFixtureProject(string WorkspaceName, string Project
 
 public sealed record ScenarioFixtureTask(string Title, string Body, string InitialState);
 
-/// <summary>Deserializes `testsupport/scenario/fixture.json`. Only the sections typed scenario steps actually read are modeled here; the file also carries forward-looking notes (epic/dossier) for future growth.</summary>
+/// <summary>Deserializes `testsupport/scenario/fixture.json`. Only the sections typed scenario steps actually read are modeled here; the file also carries forward-looking notes (dossier) for future growth.</summary>
 public sealed record ScenarioFixture(
     string Description,
     ScenarioFixtureRepository Repository,

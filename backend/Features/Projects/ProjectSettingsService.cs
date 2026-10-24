@@ -192,6 +192,20 @@ public class ProjectSettingsService
         }
     }
 
+    /// <summary>IP-1: replaces the project's allowed run-target domain suffixes; the caller normalizes them.</summary>
+    public void SetRunTargetDomainSuffixes(string projectName, IReadOnlyList<string> suffixes)
+    {
+        ArgumentNullException.ThrowIfNull(suffixes);
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { RunTargetDomainSuffixes = suffixes.Count == 0 ? null : suffixes.ToArray() };
+            Persist();
+        }
+    }
+
     public void SetBatchGate(string projectName, AgentStudio.Pipeline.BatchGateFormationOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -916,39 +930,6 @@ public class ProjectSettingsService
             _cache[key] = current with { ChatMetadataEnabled = enabled };
             Persist();
         }
-    }
-
-    /// <summary>
-    /// Tunes the epic decomposition (planning) run for a project. A null
-    /// argument leaves that knob untouched, so the caller can set the model
-    /// and the backlog/ready target independently. An empty model string
-    /// clears the override (revert to the epic card's own model).
-    /// </summary>
-    public void SetEpicPlanning(string projectName, string? model, string? thinkingLevel, bool? subTasksToReady)
-    {
-        EnsureLoaded();
-        lock (_lock)
-        {
-            var key = ResolveAliasLocked(projectName);
-            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
-            var normalizedModel = model is null
-                ? current.EpicPlanningModel
-                : (string.IsNullOrWhiteSpace(model) ? null : model.Trim());
-            _cache[key] = current with
-            {
-                EpicPlanningModel = normalizedModel,
-                EpicPlanningThinkingLevel = thinkingLevel is null
-                    ? current.EpicPlanningThinkingLevel
-                    : (string.IsNullOrWhiteSpace(thinkingLevel)
-                        ? null
-                        : ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Claude, normalizedModel, thinkingLevel)),
-                EpicSubTasksToReady = subTasksToReady ?? current.EpicSubTasksToReady,
-            };
-            Persist();
-        }
-        _logger.LogInformation(
-            "Epic planning settings updated for project {Project} (model={Model}, subTasksToReady={ToReady})",
-            projectName, model, subTasksToReady);
     }
 
     /// <summary>

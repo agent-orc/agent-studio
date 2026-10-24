@@ -4,8 +4,8 @@ import { Observable, Subject, of } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NotificationService } from '../../../../services/notification.service';
 import type {
-  CodexSignInStartResponse,
-  CodexSignInStatusResponse,
+  DeviceLoginStartResponse,
+  DeviceLoginStatusResponse,
   CodexSignInTarget,
   ProviderAuthBadge,
 } from '../../models/provider-auth.model';
@@ -23,7 +23,7 @@ const TARGET: CodexSignInTarget = {
 };
 const CODE = `${'A'.repeat(4)}-${'B'.repeat(4)}`;
 
-const STARTED: CodexSignInStartResponse = {
+const STARTED: DeviceLoginStartResponse = {
   handle: 'codex_session_1',
   state: 'queued',
   verificationUrl: null,
@@ -40,12 +40,12 @@ class FakeDialogStore {
 
 class FakeProviderAuth {
   readonly statuses = signal<readonly ProviderAuthBadge[]>([]);
-  readonly status = new Subject<CodexSignInStatusResponse>();
+  readonly status = new Subject<DeviceLoginStatusResponse>();
   probeResult: Observable<ProviderAuthBadge> = of(readyBadge());
 
-  startCodexSignIn = vi.fn(() => of(STARTED));
-  codexSignInStatus = vi.fn(() => this.status.asObservable());
-  cancelCodexSignIn = vi.fn(() => of(undefined));
+  startDeviceLogin = vi.fn(() => of(STARTED));
+  deviceLoginStatus = vi.fn(() => this.status.asObservable());
+  cancelDeviceLogin = vi.fn(() => of(undefined));
   waitForFreshProbe = vi.fn(() => this.probeResult);
 }
 
@@ -86,7 +86,7 @@ describe('CodexSignInDialogComponent', () => {
     fixture.detectChanges();
 
     const dialog = document.querySelector('[data-testid="codex-sign-in-dialog"]') as HTMLElement;
-    expect(providerAuth.startCodexSignIn).toHaveBeenCalledWith('host-01');
+    expect(providerAuth.startDeviceLogin).toHaveBeenCalledWith('host-01', 'codex', 'runner-01');
     expect(dialog.querySelector('[data-testid="codex-sign-in-pending"]')).toBeTruthy();
     expect(dialog.querySelector<HTMLAnchorElement>('[data-testid="codex-sign-in-url"]')?.href)
       .toBe('https://auth.openai.com/codex/device');
@@ -99,7 +99,7 @@ describe('CodexSignInDialogComponent', () => {
     store.request.set(TARGET);
     await fixture.whenStable();
     fixture.componentInstance.close();
-    expect(providerAuth.cancelCodexSignIn).toHaveBeenCalledWith(STARTED.handle, STARTED.sessionKey);
+    expect(providerAuth.cancelDeviceLogin).toHaveBeenCalledWith(STARTED.handle, STARTED.sessionKey);
   });
 
   it('renders the failed state reported by the remote process', async () => {
@@ -108,7 +108,7 @@ describe('CodexSignInDialogComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
     await vi.advanceTimersByTimeAsync(500);
-    expect(providerAuth.codexSignInStatus).toHaveBeenCalledWith(STARTED.handle, STARTED.sessionKey);
+    expect(providerAuth.deviceLoginStatus).toHaveBeenCalledWith(STARTED.handle, STARTED.sessionKey);
     providerAuth.status.next({
       handle: STARTED.handle,
       state: 'failed',

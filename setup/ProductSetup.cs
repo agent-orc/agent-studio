@@ -31,7 +31,9 @@ internal static class ProductSetup
         string? GitTokenFile = null,
         string? GitSshKeyFile = null,
         string? Role = null,
-        int? MaxParallelism = null);
+        int? MaxParallelism = null,
+        string? ProviderCli = null,
+        string? RunnerPasswordFile = null);
 
     internal sealed record InstalledState(string Mode, string Target, string Version,
         string? PreviousVersion, int UiPort, string? ServerUrl = null);
@@ -88,7 +90,7 @@ internal static class ProductSetup
         // unless the operator names a profile explicitly.
         var explicitMode = Get("--mode", answers.Mode);
         var explicitTarget = Get("--target", answers.Target);
-        if (command == "install" && !unattended && explicitMode is null
+        if (OperatingSystem.IsLinux() && command == "install" && !unattended && explicitMode is null
             && explicitTarget is null && !values.ContainsKey("--join-token-file"))
         {
             Console.WriteLine("Choose an installation:");
@@ -105,6 +107,22 @@ internal static class ProductSetup
             };
         }
         var installDirectory = Get("--install-dir", answers.InstallDirectory);
+        if (OperatingSystem.IsWindows() && command == "install" && !unattended
+            && (explicitMode is null or "studio")
+            && (Get("--target", answers.Target) is null or "native")
+            && File.Exists(Path.Combine(Path.GetFullPath(installDirectory
+                ?? DefaultInstallRoot(ProductProfile.StudioWindowsServices)), "install-state.json")))
+        {
+            var existingChoice = prompter.Ask("Existing Studio installation: repair or update", "repair")
+                .Trim().ToLowerInvariant();
+            if (existingChoice is not ("repair" or "update"))
+                throw new ArgumentException("Choose repair or update for the existing installation.");
+            if (existingChoice == "update")
+            {
+                command = "update";
+                parsed = parsed with { Verb = "update" };
+            }
+        }
         var serverUrl = Get("--server-url", answers.ServerUrl);
         var joinTokenFile = Get("--join-token-file", answers.JoinTokenFile);
         var tokenFile = Get("--token-file", answers.TokenFile);
@@ -180,7 +198,9 @@ internal static class ProductSetup
         var join = mode == "agent-host" ? ReadJoinToken(joinTokenFile) : null;
         var authorityUrl = ResolveAuthorityUrl(mode, relocation, serverUrl, join);
         var secretFile = joinTokenFile ?? tokenFile;
-        var probeRoot = installDirectory ?? DefaultInstallRoot(ProductProfile.StudioDocker);
+        var probeRoot = installDirectory ?? DefaultInstallRoot(resolvedPlan?.Profile
+            ?? (OperatingSystem.IsWindows() && target == "native"
+                ? ProductProfile.StudioWindowsServices : ProductProfile.StudioDocker));
         if (command == "preflight" || command == "install")
         {
             var preflightUser = parsed.Passthrough.SkipWhile(value => value != "--execution-user")
@@ -318,7 +338,12 @@ internal static class ProductSetup
                 Get("--release-version", answers.ReleaseVersion),
                 Get("--release-dir", answers.ReleaseDirectory),
                 serverUrl,
-                tokenFile);
+                tokenFile,
+                answers.ProviderCli,
+                answers.GitAccess,
+                answers.GitTokenFile,
+                answers.GitRemote,
+                answers.RunnerPasswordFile);
         await CheckDockerAsync();
 
         if (command == "uninstall")
@@ -487,7 +512,9 @@ internal static class ProductSetup
     private static async Task<int> RunWindowsServicesAsync(ProductCommand parsed, ProductPlan plan,
         string root, string statePath, InstalledState? state, PendingManifest? pendingManifest,
         ProcessRunner process, ConsolePrompter prompter,
-        string? releaseVersion, string? releaseDirectory, string? serverUrl, string? tokenFile)
+        string? releaseVersion, string? releaseDirectory, string? serverUrl, string? tokenFile,
+        string? providerAnswer, string? gitAnswer, string? gitTokenFile, string? gitRemote,
+        string? runnerPasswordFile)
     {
         var command = parsed.Verb;
         var manifest = pendingManifest?.Manifest;
@@ -496,6 +523,28 @@ internal static class ProductSetup
         var layout = WindowsServiceLayout.ForHost(root);
         var services = new WindowsServiceSetup(process, layout, dryRun);
         var profile = plan.Profile;
+        var decisions = profile == ProductProfile.StudioWindowsServices && command == "install"
+            && (state is null || providerAnswer is not null || gitAnswer is not null)
+            ? WindowsNativeDecisions.Resolve(prompter, providerAnswer, gitAnswer, gitTokenFile, gitRemote)
+            : null;
+        if (decisions is not null && !dryRun)
+            await decisions.PrepareProviderAsync(prompter, parsed.Unattended);
+        string? runnerPassword = null;
+        if (decisions is { RequiresRunnerPassword: true } && !dryRun)
+        {
+            if (runnerPasswordFile is not null)
+            {
+                SetupSecrets.RequireProtected(Path.GetFullPath(runnerPasswordFile), "Runner account password file");
+                runnerPassword = (await File.ReadAllTextAsync(runnerPasswordFile)).TrimEnd('\r', '\n');
+            }
+            else if (!parsed.Unattended)
+                runnerPassword = prompter.Secret("Windows password for the Runner account (stored by Task Scheduler)");
+            else
+                throw new InvalidOperationException(
+                    "Unattended provider or GitHub access requires RunnerPasswordFile in the answer file, with an owner-only ACL.");
+            if (string.IsNullOrEmpty(runnerPassword) || runnerPassword.Contains('\n') || runnerPassword.Contains('\r'))
+                throw new ArgumentException("Runner account password must be one nonempty line.");
+        }
 
         if (command == "uninstall")
         {
@@ -555,10 +604,13 @@ internal static class ProductSetup
             var package = dryRun
                 ? Path.Combine(Path.GetTempPath(), $"agent-orchestrator-{version}-win-x64")
                 : await artifacts.ExtractWindowsPackageAsync(default);
+            if (!dryRun && profile == ProductProfile.StudioWindowsServices)
+                WindowsPackageInventory.RequireFullStudio(package);
             manifest = await CommitManifestAsync(pendingManifest);
             try
             {
-                await services.ApplyAsync(profile, package, upstream, tokenFile);
+                await services.ApplyAsync(profile, package, upstream, tokenFile, decisions, runnerPassword,
+                    parsed.Unattended);
             }
             catch when (state is not null && !dryRun)
             {
@@ -569,6 +621,20 @@ internal static class ProductSetup
                 }
                 throw;
             }
+        }
+
+        if (decisions is { GitAccess: "deploy-key", GitRemote: not null } && !dryRun)
+        {
+            if (parsed.Unattended)
+                Console.WriteLine($"Add the displayed deploy key to {decisions.GitRemote}, then rerun guided setup with the same answer file to verify GitHub access.");
+            else
+                await decisions.VerifyDeployKeyAsync(prompter, layout.ConfigRoot, async environment =>
+                {
+                    var result = await process.RunAsync("git.exe",
+                        ["ls-remote", decisions.GitRemote, "HEAD"], environment,
+                        printOutput: false);
+                    return result.ExitCode == 0;
+                });
         }
 
         if (!dryRun)
@@ -587,7 +653,25 @@ internal static class ProductSetup
                     ? $"Preflight reached {upstream}; the connector health check passed."
                     : null,
                 releaseVerifiedThisRun: command != "rollback");
+        if (decisions is not null && !dryRun && await ManifestStore.ReadAsync(root) is { } saved)
+            await ManifestStore.WriteAsync(root, saved with { Decisions = decisions.ToRecord(layout.ConfigRoot) });
         services.PrintSummary(profile, upstream ?? state?.ServerUrl);
+        if (profile == ProductProfile.StudioWindowsServices && command == "install"
+            && state is null && !parsed.Unattended && !dryRun)
+        {
+            try
+            {
+                using var browser = Process.Start(new ProcessStartInfo(WindowsServiceLayout.StudioUrl)
+                {
+                    UseShellExecute = true,
+                    CreateNoWindow = true,
+                });
+            }
+            catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException)
+            {
+                Console.WriteLine($"Open {WindowsServiceLayout.StudioUrl} in your browser to create the owner: {error.Message}");
+            }
+        }
         return 0;
     }
 

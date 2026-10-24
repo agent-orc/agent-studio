@@ -81,13 +81,41 @@ async function stub(page: Page, unreadable: readonly object[] = []) {
     { declaration: { id: 'stage' } }, { declaration: { id: 'production' } },
   ], promotions: [], jobs: [], failureCards: [] }));
   const fake = fakeSecrets();
+  let backend = { scope: 'workspace', kind: 'builtin', url: '', mount: null, vaultId: null,
+    credentialReference: null, credentialEnvironmentVariable: null, ttlSeconds: 30 };
   await page.route('**/api/secrets', route => json({ store: 'builtin', keySource: 'key-file', canWriteWorkspace: true,
-    secrets: fake.secrets.map(fake.view), unreadable })(route));
+    secrets: fake.secrets.map(fake.view), unreadable, backends: backend.kind === 'builtin' ? [] : [backend],
+    backendHealth: backend.kind === 'builtin' ? [] : [{ scope: backend.scope, kind: backend.kind, state: 'healthy', reason: null }] })(route));
+  await page.route('**/api/secrets/backends', async route => {
+    backend = route.request().postDataJSON() as typeof backend;
+    await json(backend)(route);
+  });
   await page.route('**/api/secrets/workspace**', fake.handle);
   await page.route('**/api/projects/memowikis/**/secrets**', fake.handle);
   await page.route('**/api/projects/memowikis/secrets**', fake.handle);
   return fake;
 }
+
+test('Secrets section selects a backend per scope and shows health', async ({ page }) => {
+  mkdirSync(shots, { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await stub(page);
+  await page.goto('/#/workspace/settings/secrets', { waitUntil: 'domcontentloaded' });
+  await page.getByTestId('secret-backend-kind').selectOption('vault');
+  const settings = page.getByTestId('secret-backend-settings');
+  await settings.getByLabel('Server URL').fill('https://vault.example.test');
+  await settings.getByLabel('KV v2 mount').fill('secret');
+  await settings.getByLabel('Or environment variable').fill('VAULT_TOKEN');
+  await settings.getByRole('button', { name: 'Save storage selection' }).click();
+  await expect(page.getByTestId('secret-backend-health')).toContainText('healthy');
+  for (const theme of ['dark', 'light'] as const) {
+    await setTheme(page, theme);
+    await page.screenshot({ path: join(shots, `secrets-backend-${theme}--mocked.png`), fullPage: true });
+  }
+  await page.getByTestId('secrets-scope-project').selectOption('memowikis');
+  await expect(settings).toContainText('Built-in store');
+  await expect(settings).not.toContainText('Backend selection saved.');
+});
 
 test('Secrets section adds, rotates and revokes without ever showing a value', async ({ page }) => {
   mkdirSync(shots, { recursive: true });

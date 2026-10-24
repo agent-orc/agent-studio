@@ -39,6 +39,26 @@ public sealed class ApiTokenAccessTests : IDisposable
     }
 
     [Fact]
+    public async Task Api_token_cannot_use_the_quota_admission_route_and_overrides_name_the_token()
+    {
+        var (store, configuration) = NewStore();
+        var owner = store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", "Owner")).User;
+        var token = store.CreateApiToken(new CreateApiTokenRequest("automation", StudioRoles.Operator,
+            [ProjectAccessAuthorization.AllProjectsGrant], _clock.GetUtcNow().UtcDateTime.AddDays(1)), owner.Id);
+        var called = 0;
+        var middleware = new AccessSecurityMiddleware(context => { called++; context.Response.StatusCode = 204; return Task.CompletedTask; },
+            configuration, store);
+
+        var admission = await Invoke(middleware, "GET", "/api/quota/admission/mine", token.Secret);
+
+        Assert.Equal(403, admission.Response.StatusCode);
+        Assert.Equal(0, called);
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        context.Items[AccessSecurityMiddleware.ApiTokenPrincipalItem] = store.AuthenticateApiToken(token.Secret);
+        Assert.Equal("api:" + token.Token.Id, AgentStudio.Quota.WorkspaceQuotaEndpoints.Actor(context));
+    }
+
+    [Fact]
     public async Task Bearer_scope_role_and_audit_are_enforced_per_call()
     {
         var (store, configuration) = NewStore();
