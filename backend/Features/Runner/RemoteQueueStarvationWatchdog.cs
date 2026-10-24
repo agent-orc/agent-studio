@@ -75,7 +75,7 @@ public static class RemoteQueueStarvationPolicy
                 var settings = projectSettings(task.ProjectName);
                 var location = ProjectExecutionPolicy.ResolveExecutionLocation(settings);
                 return (location != ExecutionLocations.Local
-                        || (!allowsLocalCoding && WorktreeRunPolicy.RequiresWorktree(task.Mode, false)))
+                        || (!allowsLocalCoding && WorktreeRunPolicy.RequiresWorktree(task.Mode)))
                        && ProjectExecutionPolicy.AllowsAutomaticPickup(settings)
                        && AgentTypes.IsAutoPickupEligible(task.Agent)
                        && !TaskSlugs.IsHumanDecisionNeeded(task.Id)
@@ -98,7 +98,7 @@ public static class RemoteQueueStarvationPolicy
                 projectSettings(task.ProjectName).BuildProfile),
                 LocalPlacementBlocked: ProjectExecutionPolicy.ResolveExecutionLocation(projectSettings(task.ProjectName))
                     == ExecutionLocations.Local && !allowsLocalCoding
-                    && WorktreeRunPolicy.RequiresWorktree(task.Mode, false)))
+                    && WorktreeRunPolicy.RequiresWorktree(task.Mode)))
             .Where(candidate => !candidate.Gate.AllowsPickup
                            || candidate.LocalPlacementBlocked
                            || candidate.Task.RemoteDispatchRejection is not null

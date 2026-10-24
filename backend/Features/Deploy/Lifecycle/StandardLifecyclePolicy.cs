@@ -20,7 +20,10 @@ public sealed record LifecycleRequest(
     ReleasePosition Position,
     bool IsRollbackTarget,
     bool OtherActiveRunForRelease,
-    bool OtherRunOnHost);
+    bool OtherRunOnHost)
+{
+    public IReadOnlyList<AgentStudio.TaskServer.Contracts.ProjectLifecyclePhase> Phases { get; init; } = [];
+}
 
 /// <param name="Forbidden">The rejection is about the actor's approval role, not the environment's state.</param>
 public sealed record LifecycleDecision(LifecycleOutcome Outcome, string? ApprovedBy, string? Reason, bool Forbidden = false)
@@ -41,10 +44,10 @@ public static class StandardLifecyclePolicy
     public const string ApprovalRoles = "Owner or Maintainer";
 
     public static bool IsAutomatic(DeployEnvironment environment)
-        => environment.Kind == EnvironmentKinds.Staging;
+        => environment.Automatic ?? environment.Kind == EnvironmentKinds.Staging;
 
     public static bool RequiresApproval(DeployEnvironment environment)
-        => environment.Kind == EnvironmentKinds.Production;
+        => environment.Protected ?? environment.Kind == EnvironmentKinds.Production;
 
     public static DeployIntent IntentFor(string trigger) => trigger switch
     {
@@ -60,6 +63,10 @@ public static class StandardLifecyclePolicy
     public static LifecycleDecision Decide(LifecycleRequest request)
     {
         var environment = request.Environment;
+        var phase = request.Phases.Count == 0 ? null
+            : request.Phases.FirstOrDefault(item => item.Phase == environment.Kind);
+        if (request.Phases.Count > 0 && phase is null)
+            return LifecycleDecision.Reject($"Channel lifecycle has no phase for {environment.Name}.");
         if (request.OtherActiveRunForRelease)
             return LifecycleDecision.Reject(
                 $"This release is already queued, running or awaiting approval in {environment.Name}.");
@@ -72,8 +79,9 @@ public static class StandardLifecyclePolicy
             {
                 ReleasePosition.Current => $"The release is already current in {environment.Name}. Use redeploy.",
                 ReleasePosition.Older => $"The release is older than the current release in {environment.Name}. Use rollback.",
-                _ => environment.Order > 0 && !request.ReleaseSucceededInPreviousEnvironment
-                    ? $"{environment.Name} requires a successful deployment of this release to the previous environment."
+                _ => (phase?.Requires is not null || phase is null && environment.Order > 0)
+                    && !request.ReleaseSucceededInPreviousEnvironment
+                    ? $"{environment.Name} requires a successful deployment of this release to {phase?.Requires ?? "the previous environment"}."
                     : null,
             },
             DeployIntent.Redeploy => request.Position == ReleasePosition.Current
@@ -83,13 +91,17 @@ public static class StandardLifecyclePolicy
         };
         if (rejection is not null) return LifecycleDecision.Reject(rejection);
 
-        if (!RequiresApproval(environment))
+        if (!(phase?.Approval.Count > 0 || phase is null && RequiresApproval(environment)))
             return new(LifecycleOutcome.Queue, null, null);
         if (!request.ApproveNow)
             return new(LifecycleOutcome.AwaitApproval, null, null);
-        return request.Actor.IsApprover
+        var permitted = request.Actor.IsApprover
+            && (phase is null || request.Actor.ApprovalRole is null
+                || phase.Approval.Contains(request.Actor.ApprovalRole, StringComparer.Ordinal));
+        return permitted
             ? new(LifecycleOutcome.Queue, request.Actor.Id, null)
-            : new(LifecycleOutcome.Reject, null, $"{environment.Name} approval requires the {ApprovalRoles} role.", true);
+            : new(LifecycleOutcome.Reject, null,
+                $"{environment.Name} approval requires {string.Join(" or ", phase?.Approval ?? ["Owner", "Maintainer"])}.", true);
     }
 
     /// <summary>Approve or reject a deployment that waits for approval.</summary>

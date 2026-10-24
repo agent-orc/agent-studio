@@ -157,7 +157,6 @@ async function stubApis(page: Page): Promise<void> {
       byModel: [], byProject: [], fetchedAt: '2026-09-13T08:00:00Z', disclaimer: '',
     });
     if (url.pathname === '/api/tasks/archive') return json({ items: [], total: 0 });
-    if (url.pathname === '/api/epics') return json([]);
     if (url.pathname.startsWith('/api/bus/')) return json([]);
     if (url.pathname === '/api/tags' || url.pathname === '/api/clients'
         || url.pathname === '/api/v1/projects') return json([]);

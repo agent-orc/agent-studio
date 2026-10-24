@@ -42,10 +42,10 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   private gitPoll: ReturnType<typeof setInterval> | null = null;
   private reloadQueued = false;
   readonly openProjectSettings = output<string>();
-
   readonly loading = signal(false);
   readonly nowMs = signal(Date.now());
   readonly identity = signal<Probe<InstallationIdentity>>({ value: null, error: false });
+  readonly taskServerUnavailable = computed(() => !this.localProfile() && this.identity().error);
   readonly projects = signal<Probe<readonly ProjectRegistryEntry[]>>({ value: null, error: false });
   readonly repository = signal<Probe<RepositoryStatus>>({ value: null, error: false });
   readonly proof = signal<ProofCard | null>(this.savedProof());
@@ -144,6 +144,7 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
     if (this.poll) clearInterval(this.poll);
     if (this.loginPoll) clearInterval(this.loginPoll);
     if (this.gitPoll) clearInterval(this.gitPoll);
+    this.providers.cancelActiveDeviceLogin(this.deviceLogin());
   }
 
   reload(): void {
@@ -321,34 +322,33 @@ export class FirstRunChecklistComponent implements OnInit, OnDestroy {
   }
 
   signIn(badge: ProviderAuthBadge): void {
+    if (badge.provider !== 'codex' && badge.provider !== 'claude') return;
     if (!this.localProfile()) {
       this.deviceLoginError.set(null);
-      this.http.post<DeviceLogin>('/api/v1/management/runner-device-logins', {
-        runnerId: badge.runnerId, provider: badge.provider,
-      }).subscribe({
-        next: login => {
-          this.deviceLogin.set(login);
+      this.providers.startDeviceLogin(signInTarget(badge).hostId, badge.provider, badge.runnerId).subscribe({
+        next: session => {
+          this.deviceLogin.set({ ...session, detail: null, hostName: badge.hostName, providerLabel: badge.providerLabel });
           this.codeCopyLabel.set('Copy code');
           if (this.loginPoll) clearInterval(this.loginPoll);
           this.loginPoll = setInterval(() => this.refreshDeviceLogin(), 1_000);
         },
-        error: () => this.deviceLoginError.set('Device sign-in could not start on this runner.'),
+        error: () => this.deviceLoginError.set('Device sign-in could not start on this host.'),
       });
       return;
     }
     if (badge.provider === 'codex') this.codexSignIn.open(signInTarget(badge));
-    if (badge.provider === 'claude') this.claudeSignIn.open(claudeSignInTarget(badge));
+    else this.claudeSignIn.open(claudeSignInTarget(badge));
   }
 
   refreshDeviceLogin(): void {
     const login = this.deviceLogin();
     if (!login) return;
-    this.http.get<DeviceLogin>(`/api/v1/management/runner-device-logins/${encodeURIComponent(login.id)}`)
+    this.providers.deviceLoginStatus(login.handle, login.sessionKey)
       .subscribe({
         next: update => {
-          this.deviceLogin.set(update);
+          this.deviceLogin.set({ ...login, ...update, sessionKey: login.sessionKey });
           if (update.state === 'completed') { this.providers.refresh(); this.reload(); }
-          if (['completed', 'failed', 'expired'].includes(update.state) && this.loginPoll) {
+          if (['completed', 'failed'].includes(update.state) && this.loginPoll) {
             clearInterval(this.loginPoll);
             this.loginPoll = null;
           }

@@ -31,13 +31,6 @@ internal static class StudioTaskMetadataEndpoints
                 () => store.SetTaskCliTypeAsync(projectId, taskIdentity, request, TaskServerEndpoints.Actor(context), ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
-        tasks.MapPut("/epic", async (
-            string projectId, string taskIdentity, HttpContext context, SetTaskEpicRequest request,
-            TaskServerStore store, CancellationToken ct)
-            => await TaskServerEndpoints.InvokeAsync(
-                () => store.SetTaskEpicAsync(projectId, taskIdentity, request, TaskServerEndpoints.Actor(context), ct)))
-            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
-
         tasks.MapPut("/model", async (
             string projectId, string taskIdentity, HttpContext context, SetTaskModelRequest request,
             TaskServerStore store, CancellationToken ct)

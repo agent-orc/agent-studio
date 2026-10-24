@@ -1,6 +1,8 @@
 import { DestroyRef, computed, effect, inject, signal, untracked, type OutputEmitterRef, type Signal, type WritableSignal } from '@angular/core';
 
 import type { RegistryWorkspaceListItem } from '../../models/task.model';
+import { clearVisibleInterval, setVisibleInterval } from '../../utils/visible-interval';
+import { WorkspaceQuotaBoardState } from '../quota';
 import {
   UsageCockpitHeaderComponent,
   UsageCockpitService,
@@ -14,6 +16,8 @@ export { UsageCockpitHeaderComponent };
 
 /** Status-bar storage key of the saved default CLI. */
 const STORAGE_DEFAULT_CLI = 'defaultCliType';
+/** Quota admission changes with metered work, not per keystroke; one read a minute keeps the board current. */
+const QUOTA_POLL_MS = 60_000;
 
 /**
  * Destinations of the header More menu. The inline controls with the same
@@ -55,6 +59,13 @@ export class StudioHeaderCockpit {
   private currentWorkspaceId: string | null | undefined;
   readonly usage = inject(UsageCockpitService);
   readonly alarms = inject(UsageAlarmStateService);
+  private readonly quotaBoard = inject(WorkspaceQuotaBoardState);
+  /** Workspace whose quota the board shows: the selected one, else the default (all-projects view). */
+  private readonly quotaWorkspaceId = computed<string | null>(() => {
+    const workspaces = this.host.registryWorkspaces();
+    const name = this.host.activeWorkspaceName();
+    return (workspaces.find(ws => ws.displayName === name) ?? workspaces.find(ws => ws.isDefault) ?? workspaces[0])?.id ?? null;
+  });
   readonly navItems = STUDIO_HEADER_NAV_ITEMS;
   /** The CLI the operator last opened from the strip leads the primary order. */
   readonly selectedCli = signal<string | null>(null);
@@ -70,7 +81,14 @@ export class StudioHeaderCockpit {
   readonly pickerAnchor = signal<HTMLElement | null>(null);
 
   constructor(private readonly host: StudioHeaderHost) {
-    this.usage.connect(inject(DestroyRef));
+    const destroyRef = inject(DestroyRef);
+    this.usage.connect(destroyRef);
+    effect(() => {
+      const workspaceId = this.quotaWorkspaceId();
+      untracked(() => this.loadQuota(workspaceId));
+    });
+    const quotaPoll = setVisibleInterval(() => this.loadQuota(this.quotaWorkspaceId()), QUOTA_POLL_MS);
+    destroyRef.onDestroy(() => clearVisibleInterval(quotaPoll));
     effect(() => {
       const name = host.activeWorkspaceName();
       const workspaceId = host.registryWorkspaces().find(ws => ws.displayName === name)?.id ?? null;
@@ -118,6 +136,11 @@ export class StudioHeaderCockpit {
     this.detailFocus.set(request.section === 'cli' && request.cliId
       ? { kind: 'cli', cliId: request.cliId }
       : { kind: 'cost' });
+  }
+
+  private loadQuota(workspaceId: string | null): void {
+    if (workspaceId) this.quotaBoard.load(workspaceId);
+    else this.quotaBoard.reset();
   }
 
   closeDetail(): void {

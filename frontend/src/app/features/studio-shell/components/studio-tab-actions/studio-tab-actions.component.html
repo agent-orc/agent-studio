@@ -17,13 +17,13 @@
   <div class="studio-board-actions" data-testid="studio-board-actions">
     <button type="button"
             class="studio-tab-action studio-tab-action--toggle"
-            [class.studio-tab-action--active]="groupByEpic()"
-            [attr.aria-pressed]="groupByEpic()"
+            [class.studio-tab-action--active]="groupByDossier()"
+            [attr.aria-pressed]="groupByDossier()"
             data-testid="studio-board-dossier-toggle"
-            [cacTooltip]="groupByEpic() ? 'Show lane columns' : 'Group tasks by Dossier'"
-            (click)="toggleGroupByEpic.emit()">
-      <app-studio-icon [name]="groupByEpic() ? 'epic' : 'grid'" [size]="14"></app-studio-icon>
-      <span>{{ groupByEpic() ? 'Dossiers' : 'Lanes' }}</span>
+            [cacTooltip]="groupByDossier() ? 'Show lane columns' : 'Group tasks by Dossier'"
+            (click)="toggleGroupByDossier.emit()">
+      <app-studio-icon [name]="groupByDossier() ? 'book' : 'grid'" [size]="14"></app-studio-icon>
+      <span>{{ groupByDossier() ? 'Dossiers' : 'Lanes' }}</span>
     </button>
     <span class="studio-tab-actions-sep" aria-hidden="true"></span>
     <button type="button"

@@ -35,12 +35,16 @@ async function gotoStudio(page: Page): Promise<void> {
   await page.goto('/');
   await page.waitForLoadState('domcontentloaded');
   await page.evaluate(() => {
-    try { localStorage.removeItem('atp.studio.explorerSections'); } catch { /* ignore */ }
-    try { localStorage.removeItem('atp.studio.explorer.expanded'); } catch { /* ignore */ }
+    try {
+      localStorage.removeItem('atp.studio.explorerSections');
+      localStorage.removeItem('atp.studio.explorer.expanded');
+    } catch (error) {
+      if (!(error instanceof DOMException)) throw error;
+    }
   });
   await page.reload();
   await page.waitForLoadState('domcontentloaded');
-  await expect(page.getByTestId('studio-sidebar')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('studio-sidebar')).toBeVisible({ timeout: 30_000 });
 }
 
 async function proxyBackend(page: Page, baseUrl: string): Promise<void> {
@@ -74,7 +78,7 @@ async function proxyBackend(page: Page, baseUrl: string): Promise<void> {
 /** Expand the first project row and return its locator + name. */
 async function expandFirstProject(page: Page): Promise<{ row: ReturnType<Page['locator']>; name: string } | null> {
   const row = page.locator('[data-testid^="studio-explorer-project-row-"]').first();
-  if (!await row.isVisible({ timeout: 10_000 }).catch(() => false)) return null;
+  if (!await row.waitFor({ state: 'visible', timeout: 20_000 }).then(() => true).catch(() => false)) return null;
   const name = (await row.getAttribute('data-project-name')) ?? '';
   const label = row.locator('button.tree-row').first();
   const children = row.locator('.studio-tree-children');
@@ -185,6 +189,7 @@ test.describe('Explorer · project destinations', () => {
         });
       }
     } finally {
+      await page.unrouteAll({ behavior: 'ignoreErrors' });
       await fetch(`${devBackend.baseUrl}/api/projects/${createdProject.id}`, {
         method: 'DELETE',
         headers: { 'X-Client-Id': client.id },
@@ -219,7 +224,6 @@ test.describe('Explorer · project destinations', () => {
     await expect(page.getByTestId(`studio-explorer-project-workbenches-${name}`)).toBeVisible();
     await expect(page.getByTestId(`studio-explorer-project-deploy-${name}`)).toBeVisible();
     await expect(page.getByTestId(`studio-explorer-project-operations-${name}`)).toBeVisible();
-    await expect(page.getByTestId(`studio-explorer-project-epics-${name}`)).toHaveCount(0);
 
     // The retired per-lane labels must not appear under the project node.
     const childText = (await children.innerText()).toLowerCase();
@@ -229,7 +233,6 @@ test.describe('Explorer · project destinations', () => {
     expect(childText).toContain('board');
     expect(childText).toContain('deck');
     expect(childText).not.toContain('backlog');
-    expect(childText).not.toContain('epics');
   });
 
   test('Deploy and Operations open outside the Deck in both themes', async ({ page, devBackend }) => {

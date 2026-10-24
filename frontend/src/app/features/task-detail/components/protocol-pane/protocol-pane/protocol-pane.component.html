@@ -476,6 +476,7 @@
                 }
               }
               <div class="chat-compose" data-testid="activity-chat-compose">
+                @defer (when !!detail().info.preview) { <app-task-preview [preview]="detail().info.preview" variant="chat" /> }
                 <div class="chat-compose__row">
                   <textarea class="chat-compose__input"
                             data-testid="activity-chat-input"

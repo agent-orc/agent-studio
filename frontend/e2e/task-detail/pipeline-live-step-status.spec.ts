@@ -4,7 +4,7 @@ import * as path from 'path';
 /**
  * Live step status: the currently RUNNING pipeline step is unmistakable.
  *
- * Acceptance (Sub-Task von [EPIC] Pipeline-Tabelle): "laufender Step ist in
+ * Acceptance (Pipeline step): "laufender Step ist in
  * der Tabelle eindeutig als aktiv erkennbar, aktualisiert sich live." The
  * backend records a step as `running` in `pipeline-execution.json` at spawn
  * (ProjectRunner / AspectRunnerService / DriftPostStepRunner) and the

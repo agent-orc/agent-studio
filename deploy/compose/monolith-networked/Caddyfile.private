@@ -2,8 +2,12 @@
     tls internal
     encode zstd gzip
     header {
-        X-Content-Type-Options nosniff
-        Referrer-Policy same-origin
+        >Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        >X-Content-Type-Options nosniff
+        >Referrer-Policy same-origin
+        -Server
     }
-    reverse_proxy frontend:8080
+    reverse_proxy frontend:8080 {
+        header_up X-Forwarded-For {client_ip}
+    }
 }

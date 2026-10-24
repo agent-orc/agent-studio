@@ -1,0 +1,18 @@
+:host {
+  display: flex;
+  min-width: 0;
+}
+
+.workspace-quota-banner {
+  flex: 1 1 auto;
+  padding: var(--studio-spacing-1) var(--studio-spacing-4);
+  border-top: 1px solid color-mix(in srgb, var(--studio-warn) 45%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-warn) 12%, var(--studio-bg-elevated));
+  color: var(--studio-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-quota-banner[data-status='blocked'] {
+  border-top-color: color-mix(in srgb, var(--studio-error) 46%, var(--studio-border));
+  background: color-mix(in srgb, var(--studio-error) 14%, var(--studio-bg-elevated));
+}

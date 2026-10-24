@@ -4,10 +4,10 @@
  * Several independent surfaces persist state in `window.location.hash`:
  *
  *   - route overlays own a single route segment starting with `/`
- *     (`/workspace/settings`, `/projects/<slug>/wiki?page=x`, `/epics`,
+ *     (`/workspace/settings`, `/projects/<slug>/wiki?page=x`,
  *     `/project/<slug>/feed`);
  *   - the board filter bar owns the `filters=<encoded>` key-value segment;
- *   - legacy segments (`diff`, `epics:<name>`) ride along untouched.
+ *   - legacy segments (`diff`) ride along untouched.
  *
  * Segments are joined with `&`: `#/workspace/settings&filters=...`. Before this
  * util existed every writer hand-rolled its own string handling; the filter
@@ -47,7 +47,7 @@ export function hashSegments(hash: string): string[] {
     .filter(s => s.length > 0);
 }
 
-/** True when the segment is a route segment (`/workspace/...`, `/epics`, ...). */
+/** True when the segment is a route segment (`/workspace/...`, ...). */
 export function isRouteSegment(segment: string): boolean {
   return segment.startsWith('/');
 }
