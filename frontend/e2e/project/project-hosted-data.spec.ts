@@ -49,8 +49,13 @@ test('Operations shows database binding, volume schedule, restore confirmation a
         backupId: 'a'.repeat(32), outcome: 'succeeded' }],
     } });
   });
-  const slug = projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  await page.goto(`/#/projects/${slug}/deploy`);
+  await page.addInitScript(({ project }) => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
+    v: 1,
+    tabs: [{ kind: 'board', projectName: '__all__' }, { kind: 'hub', projectName: project, section: 'deploy' }],
+    activeKey: `hub:${project}`,
+  })), { project: projectName });
+  await page.goto('/');
+  await expect(page.getByTestId('project-deploy-area')).toBeVisible({ timeout: 60_000 });
   await page.getByTestId('deploy-tab-operations').click();
   const panel = page.getByTestId('hosted-data-panel');
   await expect(panel).toContainText('secret://demo/stage/DATABASE_URL');
