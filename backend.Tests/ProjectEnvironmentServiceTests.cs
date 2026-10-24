@@ -616,6 +616,38 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public void Stop_settles_an_abandoned_redeploy_before_the_host_claims_the_stop()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var first = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", first.Id, new(first.LeaseToken!, true, "health-ok")));
+
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        Assert.NotNull(service.QueueDeployment("demo", stage, _artifact, "operator", rollback: false));
+        var redeploy = service.Claim("stage-host")!;
+        _clock.Advance(ProjectEnvironmentService.HostLostAfter + TimeSpan.FromSeconds(1));
+
+        Assert.True(service.Stop("demo", "stage", "operator"));
+        var lost = service.Read("demo")!.Jobs.Single(job => job.Id == redeploy.Id);
+        Assert.Equal("failed", lost.Status);
+        Assert.Equal("host-lost", lost.Evidence);
+        Assert.False(service.Report("demo", redeploy.Id, new(redeploy.LeaseToken!, true, "health-ok")));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+
+        var stop = service.Claim("stage-host")!;
+        Assert.True(stop.IsStop);
+        Assert.True(service.Report("demo", stop.Id, new(stop.LeaseToken!, true, "stop-ok")));
+        Assert.Equal("stopped", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    [Fact]
     public void Expired_unreported_deploy_claim_gives_its_slot_back_and_reading_changes_no_slot()
     {
         using var factory = QuotaFactory();

@@ -1019,10 +1019,21 @@ public sealed partial class ProjectEnvironmentService
             var declaration = Declarations(project)?.FirstOrDefault(item => item.Id == environmentId);
             if (declaration is null) return false;
             var state = Load(project);
+            // Settle abandoned deploy claims before queuing the stop. Otherwise an
+            // expired claim can keep the host from ever claiming the stop job.
+            var advanced = AdvanceQueue(state);
             var current = state.History.LastOrDefault(row => row.EnvironmentId == environmentId)?.Item;
-            if (current is null || current.Status == "stopped") return false;
+            if (current is null || current.Status == "stopped")
+            {
+                if (advanced) Save(project, state);
+                return false;
+            }
             if (state.Jobs.Any(job => job.IsStop && job.EnvironmentId == environmentId
-                    && job.Status is "queued" or "claimed")) return false;
+                    && job.Status is "queued" or "claimed"))
+            {
+                if (advanced) Save(project, state);
+                return false;
+            }
             var job = Queue(project, declaration, current.Artifact, state, actor: actor);
             state.Jobs[state.Jobs.IndexOf(job)] = job with { IsStop = true };
             Save(project, state);
