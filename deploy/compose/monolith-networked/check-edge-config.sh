@@ -25,6 +25,8 @@ if ! grep -Fq 'Security__TrustedProxyAddresses: 172.30.83.3,172.30.83.2' "$stack
   || ! grep -Fq 'handle @health {' "$stack_dir/Caddyfile.frontend" \
   || grep -Fq 'respond @health 200' "$stack_dir/Caddyfile.frontend" \
   || ! grep -Fq 'reverse_proxy api:5031' "$stack_dir/Caddyfile.frontend" \
+  || ! grep -Fq 'client_ip_headers CF-Connecting-IP' "$stack_dir/Caddyfile.public" \
+  || grep -Fq 'client_ip_headers X-Forwarded-For' "$stack_dir/Caddyfile.public" \
   || ! grep -Fq 'header_up X-Forwarded-For {client_ip}' "$stack_dir/Caddyfile.public"; then
   echo 'The edge, frontend, and API proxy chain do not match' >&2
   exit 1
@@ -36,23 +38,49 @@ fi
 
 if [ -f "$stack_dir/.env" ]; then
   data_dir="$(sed -n 's/^STUDIO_DATA_DIR=//p' "$stack_dir/.env" | tail -n 1)"
+  public_edge="$(sed -n 's/^STUDIO_PUBLIC_CLOUDFLARE_EDGE=//p' "$stack_dir/.env" | tail -n 1)"
+  case "$public_edge" in
+    true|false) ;;
+    *) echo 'STUDIO_PUBLIC_CLOUDFLARE_EDGE must be exactly true or false' >&2; exit 1 ;;
+  esac
+  if [ "${STUDIO_PUBLIC_CLOUDFLARE_EDGE+x}" = x ]; then
+    case "$STUDIO_PUBLIC_CLOUDFLARE_EDGE" in
+      true|false) ;;
+      *) echo 'STUDIO_PUBLIC_CLOUDFLARE_EDGE must be exactly true or false' >&2; exit 1 ;;
+    esac
+    if [ "$STUDIO_PUBLIC_CLOUDFLARE_EDGE" != "$public_edge" ]; then
+      echo 'STUDIO_PUBLIC_CLOUDFLARE_EDGE conflicts with .env' >&2
+      exit 1
+    fi
+  fi
   case "$(sed -n 's/^STUDIO_CADDYFILE=//p' "$stack_dir/.env" | tail -n 1)" in
     ./Caddyfile.public|./Caddyfile.cloudflare) ;;
     *) echo 'Networked cutover requires a verified public or Cloudflare Caddyfile' >&2; exit 1 ;;
   esac
-  if [ "$(sed -n 's/^STUDIO_PUBLIC_CLOUDFLARE_EDGE=//p' "$stack_dir/.env" | tail -n 1)" != true ]; then
+  if [ "$public_edge" != true ]; then
     echo 'Public Cloudflare edge requires STUDIO_PUBLIC_CLOUDFLARE_EDGE=true' >&2
     exit 1
   fi
+  case "$(sed -n 's/^STUDIO_RESTART_POLICY=//p' "$stack_dir/.env" | tail -n 1)" in
+    ''|on-failure) ;;
+    *) echo 'Public cutover requires STUDIO_RESTART_POLICY=on-failure so the firewall starts first' >&2; exit 1 ;;
+  esac
   if [ -z "$data_dir" ] || [ ! -s "$data_dir/origin-pull/ca.pem" ]; then
     echo 'Missing account-specific origin-pull CA certificate' >&2
     exit 1
   fi
-  subject="$(openssl x509 -in "$data_dir/origin-pull/ca.pem" -noout -subject -nameopt RFC2253)" || {
+  ca_file="$data_dir/origin-pull/ca.pem"
+  if [ "$(grep -c -- '-----BEGIN CERTIFICATE-----' "$ca_file" || true)" -ne 1 ] \
+    || [ "$(grep -c -- '-----END CERTIFICATE-----' "$ca_file" || true)" -ne 1 ]; then
+    echo 'Origin-pull ca.pem must contain exactly one certificate' >&2
+    exit 1
+  fi
+  identity="$(openssl x509 -in "$ca_file" -noout -subject -issuer -nameopt RFC2253)" || {
     echo 'Invalid origin-pull CA certificate' >&2
     exit 1
   }
-  if grep -Eiq '(^|[=,])CN=origin-pull\.cloudflare\.net(,|$)' <<< "$subject"; then
+  if grep -Eiq '(^|[=,])CN=origin-pull\.cloudflare\.net(,|$)' <<< "$identity" \
+    || grep -Eiq '(^|[=,])O=Cloudflare' <<< "$identity"; then
     echo 'Cloudflare shared origin-pull CA is not account-specific' >&2
     exit 1
   fi

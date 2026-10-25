@@ -18,6 +18,18 @@ public static class SecurityProfiles
     public static bool IsLocal(IConfiguration configuration)
         => !IsNetworked(configuration) && !IsPublicDemo(configuration);
 
+    public static bool PublicCloudflareEdgeEnabled(IConfiguration configuration)
+    {
+        var value = configuration["Security:PublicCloudflareEdge"];
+        return value switch
+        {
+            null or "false" => false,
+            "true" => true,
+            _ => throw new InvalidOperationException(
+                "Security:PublicCloudflareEdge must be exactly 'true' or 'false'.")
+        };
+    }
+
     public static string ActiveProfile(IConfiguration configuration)
     {
         var configured = configuration["Security:Profile"]?.Trim();

@@ -23,6 +23,23 @@ if [ "$allow_direct" = true ] && [ "$edge" != cloudflare ]; then
   echo '--allow-direct-origin applies only with --cloudflare' >&2
   exit 2
 fi
+if [ "$edge" = private ]; then
+  public_edge=false
+  restart_policy=unless-stopped
+else
+  public_edge=true
+  restart_policy=on-failure
+fi
+if [ "${STUDIO_PUBLIC_CLOUDFLARE_EDGE+x}" = x ]; then
+  case "$STUDIO_PUBLIC_CLOUDFLARE_EDGE" in
+    true|false) ;;
+    *) echo 'STUDIO_PUBLIC_CLOUDFLARE_EDGE must be exactly true or false' >&2; exit 2 ;;
+  esac
+  if [ "$STUDIO_PUBLIC_CLOUDFLARE_EDGE" != "$public_edge" ]; then
+    echo 'STUDIO_PUBLIC_CLOUDFLARE_EDGE conflicts with the selected setup mode' >&2
+    exit 2
+  fi
+fi
 version="$1"
 domain="$2"
 data_dir="$3"
@@ -55,7 +72,8 @@ STUDIO_DATA_DIR=$data_dir
 STUDIO_BOOTSTRAP_CODE=$code
 STUDIO_CADDYFILE=./Caddyfile.$edge
 STUDIO_CLOUDFLARE_ALLOW_DIRECT=$allow_direct
-STUDIO_PUBLIC_CLOUDFLARE_EDGE=$([ "$edge" = private ] && echo false || echo true)
+STUDIO_PUBLIC_CLOUDFLARE_EDGE=$public_edge
+STUDIO_RESTART_POLICY=$restart_policy
 EOF
 printf 'Installer owner code: %s\nStore it until the first owner signs in. It is accepted once.\n' "$code"
 if [ "$edge" = cloudflare ]; then

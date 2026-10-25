@@ -2,11 +2,13 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AgentStudio.Runtime;
 using AgentStudio.Security;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -29,6 +31,23 @@ public sealed class PublicDemoReadOnlyEdgeTests(PublicDemoHostFixture shared) : 
     private readonly string _secondWorkspace = Path.Combine(
         Path.GetTempPath(),
         "studio-public-demo-edge-second-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task Anonymous_public_demo_api_response_omits_commit_header()
+    {
+        using var factory = PublicDemoHostFixture.CreateFactory(_workspace)
+            .WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+                services.AddSingleton(new PublishedArtifactSha("0123456789abcdef0123456789abcdef01234567"))));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://demo.test"),
+        });
+
+        using var response = await client.GetAsync("/api/environment");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.False(response.Headers.Contains("X-Agent-Studio-Commit"));
+    }
 
     [Theory]
     [InlineData("local", "GET", true, true)]
