@@ -41,6 +41,7 @@ public class TaskMutationService
     private readonly LaneMutexRegistry _laneMutex;
     private readonly ConcurrentDictionary<string, HashSet<string>> _reservedJobIds =
         new(FileSystemPathComparer.Instance);
+    private readonly Lock _createIdentityLock = new();
 
     /// <summary>
     /// Atomic-write boundary for task-key sweeps and decision-content writes.
@@ -1917,28 +1918,51 @@ public class TaskMutationService
             : req.Id;
         if (string.IsNullOrEmpty(baseSlug)) return null;
 
-        var taskKey = MintTaskKey(entry.Path);
-        var storageId = taskKey ?? baseSlug;
-        TaskStorageLayout.TryParseKeyNumber(storageId, out var storageNumber);
-
-        // Root-cause fix for duplicate-slug folders: the external id must be
-        // unique across the project even though it is no longer the physical
-        // folder name. Reserve the resolved id + create the jobs/<bucket>/<key>
-        // folder under the lane mutex so concurrent creates cannot pick the
-        // same external id or storage id.
+        string? taskKey;
+        string storageId;
+        int storageNumber;
         string jobId;
         string jobDir;
-        using (_laneMutex.Acquire(entry.Path))
+        // An id or key is accepted by the same unscoped task routes. Reserve
+        // all aliases across projects before creating a folder, so one project
+        // cannot shadow another project's card during authorization.
+        lock (_createIdentityLock)
         {
-            jobId = EnsureUniqueJobId(entry.Path, baseSlug);
-            jobDir = TaskStorageLayout.JobDir(entry.Path, storageNumber, storageId);
-            for (var suffix = 2; Directory.Exists(jobDir); suffix++)
+            using (_laneMutex.Acquire(entry.Path))
             {
-                storageId = $"{taskKey ?? baseSlug}-{suffix}";
+                taskKey = MintTaskKey(entry.Path);
+                var jobs = _scanner.ScanAllJobsWithArchive();
+                var used = jobs
+                    .SelectMany(job => new[] { job.Id, job.Key, job.TaskKey })
+                    .Where(identity => !string.IsNullOrWhiteSpace(identity))
+                    .Select(identity => identity!)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var foreign = jobs
+                    .Where(job => !WatchPathComparison.PathsEqual(job.WatchPath, entry.Path))
+                    .SelectMany(job => new[] { job.Id, job.Key, job.TaskKey })
+                    .Where(identity => !string.IsNullOrWhiteSpace(identity))
+                    .Select(identity => identity!)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var reserved in _reservedJobIds.Values)
+                    used.UnionWith(reserved);
+                if (!string.IsNullOrWhiteSpace(req.Id) && foreign.Contains(baseSlug)) return null;
+                if (taskKey is not null && used.Contains(taskKey)) return null;
+
+                jobId = EnsureUniqueJobId(entry.Path, baseSlug, used);
+                if (taskKey is not null)
+                    _reservedJobIds.GetOrAdd(entry.Path, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase))
+                        .Add(taskKey);
+                storageId = taskKey ?? baseSlug;
                 TaskStorageLayout.TryParseKeyNumber(storageId, out storageNumber);
                 jobDir = TaskStorageLayout.JobDir(entry.Path, storageNumber, storageId);
+                for (var suffix = 2; Directory.Exists(jobDir); suffix++)
+                {
+                    storageId = $"{taskKey ?? baseSlug}-{suffix}";
+                    TaskStorageLayout.TryParseKeyNumber(storageId, out storageNumber);
+                    jobDir = TaskStorageLayout.JobDir(entry.Path, storageNumber, storageId);
+                }
+                Directory.CreateDirectory(jobDir);
             }
-            Directory.CreateDirectory(jobDir);
         }
         if (!string.Equals(jobId, baseSlug, StringComparison.Ordinal))
         {
@@ -2189,14 +2213,10 @@ public class TaskMutationService
         return true;
     }
 
-    private string EnsureUniqueJobId(string watchPath, string baseSlug)
+    private string EnsureUniqueJobId(string watchPath, string baseSlug, HashSet<string> used)
     {
-        var used = _scanner.ScanAllJobsWithArchive()
-            .Where(j => WatchPathComparison.PathsEqual(j.WatchPath, watchPath))
-            .Select(j => j.Id)
-            .ToHashSet(StringComparer.Ordinal);
-        var reserved = _reservedJobIds.GetOrAdd(watchPath, _ => new HashSet<string>(StringComparer.Ordinal));
-        used.UnionWith(reserved);
+        var reserved = _reservedJobIds.GetOrAdd(watchPath,
+            _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
         if (!used.Contains(baseSlug))
         {
             reserved.Add(baseSlug);
@@ -2205,11 +2225,9 @@ public class TaskMutationService
         for (var suffix = 2; ; suffix++)
         {
             var candidate = $"{baseSlug}-{suffix}";
-            if (!used.Contains(candidate))
-            {
-                reserved.Add(candidate);
-                return candidate;
-            }
+            if (used.Contains(candidate)) continue;
+            reserved.Add(candidate);
+            return candidate;
         }
     }
 

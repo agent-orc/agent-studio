@@ -344,6 +344,15 @@ public class TaskStateMachine
                 $"A non-folder path named '{targetSlug}' already exists in {targetState}.");
         }
 
+        if (!string.Equals(targetSlug, jobFolderName, StringComparison.Ordinal)
+            && _scanner.ScanAllJobsWithArchive().Any(other =>
+                !WatchPathComparison.PathsEqual(other.FolderPath, recheck.FolderPath)
+                && (string.Equals(other.Id, targetSlug, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(other.Key, targetSlug, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(other.TaskKey, targetSlug, StringComparison.OrdinalIgnoreCase))))
+            return new MoveJobOutcome(MoveJobStatus.TargetFolderExists,
+                $"Task identity '{targetSlug}' already exists in another project.");
+
         var endCoreMove = _scanner.BeginCoreMove(recheck);
         try
         {
@@ -1056,6 +1065,11 @@ public class TaskStateMachine
         // fresh destination key before touching the source. The monotonic
         // counter may advance on a failed attempt, which is intentional: keys
         // are never re-used.
+        var existingAliases = _scanner.ScanAllJobsWithArchive()
+            .Where(task => !WatchPathComparison.PathsEqual(task.FolderPath, recheck.FolderPath))
+            .SelectMany(task => new[] { task.Id, task.Key, task.TaskKey })
+            .Where(identity => !string.IsNullOrWhiteSpace(identity))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         string destinationKey;
         int destinationNumber;
         string targetDir;
@@ -1065,7 +1079,7 @@ public class TaskStateMachine
             destinationKey = $"{destinationProject.ShortCode}-{destinationSeq}";
             TaskStorageLayout.TryParseKeyNumber(destinationKey, out destinationNumber);
             targetDir = TaskStorageLayout.JobDir(canonicalTarget, destinationNumber, destinationKey);
-        } while (Directory.Exists(targetDir));
+        } while (Directory.Exists(targetDir) || existingAliases.Contains(destinationKey));
 
         var operationId = Guid.NewGuid().ToString("N");
         var sourceParent = Path.GetDirectoryName(recheck.FolderPath)!;

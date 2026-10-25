@@ -19,7 +19,7 @@ public sealed class AccessSecurityMiddleware
     public const string RequestAccessItem = "AccessSecurity.RequestAccess";
     public const string AttributionClientIdItem = "AccessSecurity.AttributionClientId";
     private const string TaskResolutionItem = "AccessSecurity.TaskResolution";
-    private const string TaskPublicationItem = "AccessSecurity.TaskPublication";
+    private const string SkipTaskResolutionItem = "AccessSecurity.SkipTaskResolution";
 
     private readonly RequestDelegate _next;
     private readonly IConfiguration _configuration;
@@ -414,6 +414,7 @@ public sealed class AccessSecurityMiddleware
         }
 
         var (subject, bindings) = _store.PrincipalBindings(IamPrincipalKind.User, human.User.Id);
+        context.Items[SkipTaskResolutionItem] = WorkspaceBindingsDecide(subject, bindings);
         var target = await TargetAsync(context, path, required, safeMethod);
         var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
         var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
@@ -584,6 +585,8 @@ public sealed class AccessSecurityMiddleware
         }
         var safeMethod = IsSafe(context.Request.Method, path);
         var (subject, bindings) = _store.PrincipalBindings(IamPrincipalKind.ServiceAccount, account.AccountId);
+        context.Items[SkipTaskResolutionItem] = (safeMethod || account.Origin != ServiceAccountOrigins.ApiToken)
+            && WorkspaceBindingsDecide(subject, bindings);
         var target = await TargetAsync(context, path, required, safeMethod);
         var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
         var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
@@ -1066,7 +1069,9 @@ public sealed class AccessSecurityMiddleware
             // scoped account may act only on a task whose project it belongs to. If
             // that project cannot be resolved (unknown id or unavailable
             // scanner), only a workspace binding can reach the handler's 404.
-            return ProjectRouteAddress.Addressed(await ResolveTaskProjectsAsync(Uri.UnescapeDataString(taskId), context));
+            if (context.Items[SkipTaskResolutionItem] is true)
+                return ProjectRouteAddress.WorkspaceWide;
+            return ProjectRouteAddress.Addressed(ResolveTaskProjects(Uri.UnescapeDataString(taskId)));
         }
         return ProjectRouteAddress.Unaddressed;
     }
@@ -1093,30 +1098,25 @@ public sealed class AccessSecurityMiddleware
     }
 
     /// <summary>
-    /// Every project a single-task handler could act on: the unscoped lookup
-    /// plus the lookups scoped by <c>?project=</c> and <c>?watchPath=</c>, the
-    /// way task handlers resolve their scope. A query value therefore cannot
-    /// steer authorization towards a member project while the handler acts on
-    /// a foreign task.
+    /// Every project a single-task handler could act on, including collisions
+    /// between ids and keys. A query value cannot select one permitted match
+    /// while the handler resolves another project's card.
     /// </summary>
-    private async Task<string?[]> ResolveTaskProjectsAsync(string taskId, HttpContext context)
+    private string?[] ResolveTaskProjects(string taskId)
     {
-        var request = context.Request;
-        var task = await FindTaskAsync(context, taskId);
-        if (task is null) return [null];
-        var projects = new List<string?> { task.ProjectName };
-        var watchPath = request.Query["watchPath"].FirstOrDefault();
-        var scopes = new[]
-        {
-            watchPath,
-            _projects is null ? null : AgentStudio.Tasks.TaskEndpointHelpers.ResolveWatchPath(_projects, request.Query["project"].FirstOrDefault(), watchPath),
-        };
-        foreach (var scope in scopes.Where(scope => !string.IsNullOrWhiteSpace(scope)).Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            var scoped = await FindTaskAsync(context, taskId, scope);
-            if (scoped is not null) projects.Add(scoped.ProjectName);
-        }
-        return [.. projects];
+        // Route handlers may resolve a colliding id by a different ordering or
+        // by an explicit watch path. Every matching project must authorize it.
+        var matches = _taskIndex?.GetMatchingCoreFacts(taskId);
+        if (matches is null) return [null];
+        return matches.Count == 0 ? new string?[] { null }
+            : matches.Select(task => (string?)task.ProjectName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static bool WorkspaceBindingsDecide(IamSubject subject, IReadOnlyList<RoleBinding> bindings)
+    {
+        var own = bindings.Where(binding => PermissionEvaluator.AppliesTo(binding, subject)).ToArray();
+        return own.Any(binding => binding.Role == IamRoles.Owner && binding.Scope.Kind == IamScopeKind.Workspace)
+            || own.Length > 0 && own.All(binding => binding.Scope.Kind == IamScopeKind.Workspace);
     }
 
     private async ValueTask<TaskInfo?> FindTaskAsync(HttpContext context, string taskId, string? watchPath = null)
@@ -1126,17 +1126,9 @@ public sealed class AccessSecurityMiddleware
             context.Items[TaskResolutionItem] = resolved = [];
         var key = (taskId, watchPath);
         if (resolved.TryGetValue(key, out var task)) return task;
-        if (_taskIndex is null)
-            task = _scanner.FindPublishedJob(taskId, watchPath);
-        else
-        {
-            if (context.Items[TaskPublicationItem] is not TaskIndexPublication publication)
-            {
-                publication = await _taskIndex.AcquireAuthorizationReadAsync(context.RequestAborted);
-                context.Items[TaskPublicationItem] = publication;
-            }
-            task = TaskScannerService.FindInPublication(publication, taskId, watchPath);
-        }
+        task = _taskIndex is null
+            ? _scanner.FindPublishedJob(taskId, watchPath)
+            : _taskIndex.GetDetailFacts(taskId, watchPath).Info;
         resolved[key] = task;
         return task;
     }

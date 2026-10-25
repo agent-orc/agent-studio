@@ -212,7 +212,13 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   source and destination. A Product binding in the destination cannot perform
   the move. A workspace binding still admits an unresolved card address so
   the handler can return 404; a project-only binding does not gain access to
-  an unresolved address.
+  an unresolved address. Task ids and keys are resolved from resident card
+  facts without waiting for a workspace scan. A scoped request must have the
+  required permission in every project whose card matches the supplied id or
+  key, including when a query names one project. Workspace-only bindings can
+  be decided without a task lookup. New ids and keys are reserved across the
+  workspace, and a move that would rename a card to a conflicting identity is
+  refused.
 - Hub project groups and conversation subscriptions use the current role
   bindings for `project.read`. The unscoped live-event group requires a
   workspace binding. Reading one `/api/v1/reviews/attempts/{id}` result also
@@ -238,7 +244,8 @@ through its groups. Code: `backend/Features/Security/Iam/`.
 - Project quota snapshots under `/api/workspaces/{workspace}/projects/{project}/quota`
   and the global auto-review status require `workspace.operate`, because their
   responses are not project-filtered. Host execution infrastructure, agent-rule
-  paths, ad-hoc usage, and admin configuration are workspace operator reads.
+  paths, ad-hoc usage, admin configuration, acceptance-rail counts, and
+  integration-bounce metrics are workspace operator reads.
   Wiki search and steering-doc reads skip links in every path segment so a
   repository link cannot disclose a file outside that repository. Streamed
   global search visits only repositories the caller can read.

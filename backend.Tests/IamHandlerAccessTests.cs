@@ -20,6 +20,7 @@ namespace AgentStudio.Tests;
 /// the role bindings, and handler role checks see the role that covers the
 /// addressed project, not the strongest role the user holds anywhere.
 /// </summary>
+[Collection("IamAuthorizationBurst")]
 public sealed class IamHandlerAccessTests : IDisposable
 {
     private const string Password = "correct horse battery staple!";
@@ -41,18 +42,71 @@ public sealed class IamHandlerAccessTests : IDisposable
         factory.Services.GetRequiredService<TaskIndexCache>()
             .Invalidate(TaskIndexCache.InvalidationSource.External);
 
-        var requests = Enumerable.Range(0, 12).SelectMany(_ => new[]
+        using var traced = new HttpRequestMessage(HttpMethod.Get, "/api/tasks/alpha-card");
+        traced.Headers.Add("X-Task-Switch-Trace", "1");
+        var detailTimer = System.Diagnostics.Stopwatch.StartNew();
+        using (var detail = await owner.SendAsync(traced))
         {
-            (Client: owner, Path: "/api/tasks/alpha-card", Expected: HttpStatusCode.OK),
-            (Client: developer, Path: "/api/tasks/alpha-card", Expected: HttpStatusCode.OK),
-            (Client: developer, Path: "/api/tasks/beta-card", Expected: HttpStatusCode.Forbidden),
-            (Client: owner, Path: "/api/tasks/beta-card", Expected: HttpStatusCode.OK),
-        }).Select(async item =>
+            detailTimer.Stop();
+            Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
+            Assert.Equal("0", detail.Headers.GetValues("X-Task-Detail-Workspace-Scans").Single());
+        }
+        Assert.True(detailTimer.Elapsed < TimeSpan.FromSeconds(5),
+            $"Card detail waited {detailTimer.Elapsed.TotalMilliseconds:0} ms after invalidation.");
+
+        ThreadPool.GetMinThreads(out var minimumWorkers, out var minimumIo);
+        ThreadPool.GetMaxThreads(out var maximumWorkers, out var maximumIo);
+        try
         {
-            using var response = await item.Client.GetAsync(item.Path);
-            Assert.Equal(item.Expected, response.StatusCode);
-        });
-        await Task.WhenAll(requests).WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.True(ThreadPool.SetMinThreads(4, minimumIo));
+            Assert.True(ThreadPool.SetMaxThreads(16, maximumIo));
+            var requests = Enumerable.Range(0, 12).SelectMany(_ => new[]
+            {
+                (Client: owner, Path: "/api/tasks/alpha-card", Expected: HttpStatusCode.OK),
+                (Client: developer, Path: "/api/tasks/alpha-card", Expected: HttpStatusCode.OK),
+                (Client: developer, Path: "/api/tasks/beta-card", Expected: HttpStatusCode.Forbidden),
+                (Client: owner, Path: "/api/tasks/beta-card", Expected: HttpStatusCode.OK),
+            }).Select(async item =>
+            {
+                using var response = await item.Client.GetAsync(item.Path);
+                Assert.Equal(item.Expected, response.StatusCode);
+            });
+            var mutation = developer.PutAsJsonAsync("/api/tasks/alpha-card/title",
+                new { title = "Changed during authorization burst" });
+            await Task.WhenAll(requests).WaitAsync(TimeSpan.FromSeconds(15));
+            using var mutationResponse = await mutation.WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.Equal(HttpStatusCode.OK, mutationResponse.StatusCode);
+        }
+        finally
+        {
+            ThreadPool.SetMaxThreads(maximumWorkers, maximumIo);
+            ThreadPool.SetMinThreads(minimumWorkers, minimumIo);
+        }
+    }
+
+    [Fact]
+    public async Task Colliding_task_id_denies_scoped_reads_and_explicit_creation()
+    {
+        var folder = Path.Combine(ProjectPath("alpha"), TaskStates.Backlog, "beta-card");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = "beta-card", title = "shadow", state = TaskStates.Backlog, kind = "task", order = 2,
+        }));
+        using var factory = BuildFactory();
+        using var owner = Client(factory, Login(factory, "first.owner"));
+        using var alpha = Client(factory, Invite(factory, "collision.alpha",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+
+        using var warm = await owner.GetAsync("/api/tasks/beta-card");
+        Assert.Equal(HttpStatusCode.OK, warm.StatusCode);
+        using var unscoped = await alpha.GetAsync("/api/tasks/beta-card");
+        using var scoped = await alpha.GetAsync("/api/tasks/beta-card?project=alpha");
+        Assert.Equal(HttpStatusCode.Forbidden, unscoped.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, scoped.StatusCode);
+        using var create = await alpha.PostAsJsonAsync("/api/tasks",
+            new { id = "beta-card", title = "another shadow", watchPath = ProjectPath("alpha") });
+        Assert.Equal(HttpStatusCode.Conflict, create.StatusCode);
     }
 
     [Fact]
@@ -102,6 +156,7 @@ public sealed class IamHandlerAccessTests : IDisposable
         foreach (var path in new[]
         {
             "/api/workspaces/main/projects/beta/quota", "/api/auto-review/status",
+            "/api/pipeline/acceptance-rail", "/api/pipeline/integration-bounce/metrics",
             "/api/system/execution-infrastructure", "/api/agent-rules", "/api/adhoc-usage",
             "/api/admin/config/orchestrator"
         })

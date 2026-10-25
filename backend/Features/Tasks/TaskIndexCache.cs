@@ -79,6 +79,7 @@ public sealed class TaskIndexCache
     private Dictionary<string, TaskCoreRecord> _core = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, TaskInfo> _coreFactsByFolder = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private Dictionary<string, TaskInfo[]> _coreFactsByIdentity = new(StringComparer.OrdinalIgnoreCase);
     private TaskReferenceIndex _coreReferences = TaskReferenceIndex.Build([]);
     private readonly Dictionary<string, long> _coreRevisionByKey = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, long> _coreRevisionVersions = new(StringComparer.OrdinalIgnoreCase);
@@ -417,14 +418,9 @@ public sealed class TaskIndexCache
             if (!string.IsNullOrWhiteSpace(watchPath)
                 && _core.TryGetValue(CoreKey(watchPath, identity), out var record))
                 _coreFactsByFolder.TryGetValue(record.FolderPath, out info);
-            if (info is null && string.IsNullOrWhiteSpace(watchPath))
-                info = _coreFactsByFolder.Values
-                    .Where(task => string.Equals(task.Id, identity, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(task.Key, identity, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(task.TaskKey, identity, StringComparison.OrdinalIgnoreCase))
-                    .OrderBy(task => Array.IndexOf(TaskStates.All, task.State))
-                    .ThenBy(task => task.FolderPath, StringComparer.Ordinal)
-                    .FirstOrDefault();
+            if (info is null && _coreFactsByIdentity.TryGetValue(identity, out var matches))
+                info = matches.FirstOrDefault(task => string.IsNullOrWhiteSpace(watchPath)
+                    || WatchPathComparison.PathsEqual(task.WatchPath, watchPath));
 
             var expired = _time.GetUtcNow() - _snapshotAt >= _safetyTtl;
             if (expired || _dirty || (!_hasSnapshot && info is null)) QueueCoreHydration();
@@ -462,6 +458,24 @@ public sealed class TaskIndexCache
     public IReadOnlyList<TaskInfo> GetAllResidentTasks()
     {
         lock (_lock) return _coreFactsByFolder.Values.ToArray();
+    }
+
+    /// <summary>All resident cards named by an id or key, without waiting for a workspace scan.</summary>
+    public IReadOnlyList<TaskInfo> GetMatchingCoreFacts(string identity, string? watchPath = null)
+    {
+        lock (_lock)
+        {
+            if (_dirty || _time.GetUtcNow() - _snapshotAt >= _safetyTtl)
+                QueueCoreHydration();
+            if (!_coreFactsByIdentity.TryGetValue(identity, out var matches))
+            {
+                if (!_hasSnapshot) QueueCoreHydration();
+                return [];
+            }
+            return string.IsNullOrWhiteSpace(watchPath)
+                ? matches
+                : matches.Where(task => WatchPathComparison.PathsEqual(task.WatchPath, watchPath)).ToArray();
+        }
     }
 
     /// <summary>Version of one card's durable publication, independent of board scans.</summary>
@@ -722,6 +736,20 @@ public sealed class TaskIndexCache
     private void PublishCoreFacts(Dictionary<string, TaskInfo> facts,
         Dictionary<string, TaskCoreRecord> records, TaskReferenceIndex references)
     {
+        var identities = new Dictionary<string, List<TaskInfo>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var task in facts.Values)
+            foreach (var identity in new[] { task.Id, task.Key, task.TaskKey }
+                .Where(identity => !string.IsNullOrWhiteSpace(identity))
+                .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!identities.TryGetValue(identity!, out var matches))
+                    identities[identity!] = matches = [];
+                matches.Add(task);
+            }
+        var byIdentity = identities.ToDictionary(pair => pair.Key,
+            pair => pair.Value.OrderBy(task => Array.IndexOf(TaskStates.All, task.State))
+                .ThenBy(task => task.FolderPath, StringComparer.Ordinal).ToArray(),
+            StringComparer.OrdinalIgnoreCase);
         var byFolder = new Dictionary<string, TaskCoreRecord>(records.Comparer);
         var aliases = new Dictionary<string, TaskCoreRecord>(StringComparer.OrdinalIgnoreCase);
         foreach (var (folder, task) in facts
@@ -740,6 +768,7 @@ public sealed class TaskIndexCache
             if (DependencyFactsChanged(_coreFactsByFolder, facts))
                 _coreDependencyGeneration++;
             _coreFactsByFolder = facts;
+            _coreFactsByIdentity = byIdentity;
             _coreByFolder = byFolder;
             _core = aliases;
             _coreReferences = references;
