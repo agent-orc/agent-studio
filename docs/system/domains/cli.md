@@ -71,6 +71,14 @@ CLI execution tests.
   because the adapter can still hand a bad shape to the live CLI.
 - Sandbox and permission behavior must be explicit per CLI. Do not hide a
   permission block behind a generic failure.
+- Studio host Claude one-shots run from an empty temporary directory with
+  `--tools ""`, `--strict-mcp-config`, and an empty MCP config. The host argument
+  builder rejects tool overrides. In the networked profile, the process spawn
+  boundary refuses provider starts unless they are isolated Claude one-shots
+  with these controls; it also refuses host Claude session resume and host
+  Codex one-shots. Interactive model and quota PTY probes are refused in the
+  networked profile; the diagnostic CLI probe route is mapped only in local mode.
+  Tool-dependent work needs a runner.
 - A CLI's model catalog is the known-model registry union live discovery. A
   model the registry knows for that CLI's vendor but the installed CLI does not
   offer stays in the catalog as unavailable with an attributable note, and the

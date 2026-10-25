@@ -1,5 +1,6 @@
 using AgentStudio.Deploy;
 using AgentStudio.Security;
+using AgentStudio.Secrets;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Projects;
@@ -13,12 +14,20 @@ public static class ProjectOperatorDashboardEndpoints
 
         // BD-1: a green integration build becomes an immutable release and
         // starts the automatic Staging phase of the standard lifecycle.
-        app.MapPost("/api/deploy/gate-releases", (GateArtifactRequest request,
-            ProjectEnvironmentService environments, DeployService deploy) =>
-            DeployEndpoints.QuotaRefusable(() => environments.RegisterGateArtifact(request.Project, request.Artifact, request.Commit)
-                ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate"),
+        app.MapPost("/api/deploy/gate-releases", (HttpContext context, GateArtifactRequest request,
+            ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration,
+            AccessSecurityStore security) =>
+        {
+            var builder = RunnerCredential(context, configuration, security);
+            if (builder is null || !builder.Scopes.Contains(RunnerScopes.Release))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return DeployEndpoints.QuotaRefusable(() => environments.RegisterGateArtifact(
+                request.Project, request.Artifact, request.Commit, builder.RunnerId)
+                ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate",
+                        request.VersionTag, request.Branch, request.Channel),
                     "Gate artifact or environment declarations are invalid.")
-                : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." })))
+                : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." }));
+        })
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapGet("/api/projects/{projectName}/environments", (string projectName,
@@ -41,7 +50,8 @@ public static class ProjectOperatorDashboardEndpoints
         app.MapPost("/api/projects/{projectName}/environments/releases", (HttpContext context, string projectName,
             ReleaseArtifactRequest request, DeployService deploy) =>
             DeployEndpoints.QuotaRefusable(() => ReleaseCreated(deploy.CreateRelease(projectName, request.Artifact, request.Commit,
-                DeployEndpoints.Actor(context, projectName).Id),
+                DeployEndpoints.Actor(context, projectName).Id, request.VersionTag, request.Branch,
+                request.Channel, DeployEndpoints.Actor(context, projectName).IsApprover),
                 "Artifact, commit, or stage and production declarations are invalid.")))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
@@ -77,29 +87,111 @@ public static class ProjectOperatorDashboardEndpoints
 
         app.MapPost("/api/projects/{projectName}/environments/{environmentId}/stop", (
             HttpContext context, string projectName, string environmentId, ProjectEnvironmentService environments) =>
+            // The host stops the environment; it stays running and counted until the host acknowledges.
             environments.Stop(projectName, environmentId, DeployEndpoints.Actor(context, projectName).Id)
-                ? Results.Ok() : Results.Conflict(new { error = "The environment is not deployed, is already stopped, or has a deploy in progress." }))
+                ? Results.Accepted() : Results.Conflict(new { error = "The environment is not deployed, is already stopped or has a stop pending." }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
-        app.MapPost("/api/deploy/jobs/claim", (HttpContext context, DeployClaimRequest request,
-            ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration) =>
+        // IP-1: a production or stage environment that is no longer placed on
+        // its run target waits here for the operator's decision.
+        app.MapPost("/api/projects/{projectName}/environments/{environmentId}/run-target-removal/confirm", (
+            HttpContext context, string projectName, string environmentId, RunTargetRemovalConfirmRequest? request,
+            ProjectEnvironmentService environments) =>
+            environments.ConfirmRunTargetRemoval(projectName, environmentId, request?.HostId,
+                context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                    ? human.User.Id : "local-operator")
+                ? Results.Accepted() : Results.Conflict(new { error = "No removal is pending for this environment." }))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
+        app.MapPut("/api/projects/{projectName}/run-target-domain-suffixes", (string projectName,
+            RunTargetDomainSuffixesRequest request, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(item => string.Equals(item.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (RunTargetDesiredStatePolicy.NormalizeDomainSuffixes(request.Suffixes) is not { } suffixes)
+                return Results.BadRequest(new { error = "Every suffix must be a domain such as example.com." });
+            settings.SetRunTargetDomainSuffixes(projectName, suffixes);
+            return Results.Ok(new { suffixes });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
+        app.MapPost("/api/deploy/jobs/claim", async (HttpContext context, DeployClaimRequest request,
+            ProjectEnvironmentService environments, DeployService deploy, RunbookService runbooks,
+            ProjectSecretBindings bindings,
+            IConfiguration configuration, CancellationToken ct) =>
         {
             if (SecurityProfiles.IsNetworked(configuration) &&
                 (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
                  || principal.RunnerId != request.HostId))
                 return Results.Forbid();
-            var job = environments.Claim(request.HostId);
-            if (job is not null) deploy.SyncAfterHostCall(job.Project);
-            return Results.Ok(job);
+            var job = environments.Claim(request.HostId, requireVerifiedRelease: true);
+            return await CompleteClaimAsync(job, project =>
+            {
+                deploy.SyncAfterHostCall(project);
+                runbooks.SyncAfterHostCall(project);
+            }, bindings, ct);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         app.MapPost("/api/deploy/jobs/{project}/{jobId}/report", (string project, string jobId,
-            DeployReportRequest request, ProjectEnvironmentService environments, DeployService deploy) =>
+            DeployReportRequest request, ProjectEnvironmentService environments, DeployService deploy,
+            RunbookService runbooks) =>
         {
-            if (!environments.Report(project, jobId, request)) return Results.Conflict();
+            if (!environments.Report(project, jobId, request, requireVerifiedRelease: true)) return Results.Conflict();
             deploy.SyncAfterHostCall(project);
+            runbooks.SyncAfterHostCall(project);
             return Results.Ok();
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+
+        app.MapGet("/api/deploy/jobs/{project}/{jobId}/artifact", (HttpContext context, string project, string jobId,
+            ProjectEnvironmentService environments, DeployStore releases, ReleaseArtifactRegistry registry,
+            IConfiguration configuration, AccessSecurityStore security) =>
+        {
+            var principal = RunnerCredential(context, configuration, security);
+            if (principal is null || !principal.Scopes.Contains(RunnerScopes.Deploy))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            var lease = context.Request.Headers["X-Deploy-Lease"].ToString();
+            var claim = environments.FindClaimedJobVerification(project, jobId, lease, requireVerifiedRelease: true);
+            if (claim.Retryable) return RegistryUnavailable();
+            var job = claim.Job;
+            if (job is null || SecurityProfiles.IsNetworked(configuration) && principal.RunnerId != job.HostId)
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            try
+            {
+                var record = releases.ReadReleaseRecords(project).SingleOrDefault(item =>
+                    item.Release.Id == job.ReleaseId
+                    && item.Release.ArtifactDigests.Contains(job.Artifact, StringComparer.Ordinal)
+                    && item.Environments.Any(environment => environment.Id == job.EnvironmentId
+                        && environment.Template == job.Template));
+                if (record is null) return Results.Conflict(new { error = "The deploy job has no release." });
+                var template = ProjectEnvironmentService.ArtifactTemplate(job.Template, job.SshSteps);
+                var provenance = template is null ? null : registry.VerifiedForDeployment(project,
+                    record.Release.CommitSha, job.Artifact, template);
+                if (provenance is null) return Results.Conflict(new { error = "Artifact provenance is unverified." });
+                if (context.Request.Query.ContainsKey("content"))
+                {
+                    var path = registry.VerifiedBlob(provenance);
+                    return path is null ? Results.Conflict(new { error = "Artifact content is unavailable." })
+                        : Results.File(path, "application/octet-stream");
+                }
+                return Results.Ok(provenance);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return RegistryUnavailable();
+            }
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+
+        // IP-1 run-target role: the host polls; Studio never dials in.
+        app.MapGet("/api/deploy/run-targets/{hostId}/desired-state", (HttpContext context, string hostId,
+            ProjectEnvironmentService environments, IConfiguration configuration) =>
+            RunTargetCallerDenied(context, hostId, configuration)
+                ? RunTargetForbidden() : Results.Ok(environments.DesiredState(hostId)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
+
+        app.MapPost("/api/deploy/run-targets/{hostId}/observed-state", (HttpContext context, string hostId,
+            RunTargetObservedReport report, ProjectEnvironmentService environments, IConfiguration configuration) =>
+            RunTargetCallerDenied(context, hostId, configuration)
+                ? RunTargetForbidden() : Results.Ok(new { accepted = environments.RecordObserved(hostId, report) }))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
         app.MapPost("/api/deploy/jobs/{project}/{jobId}/log", (string project, string jobId,
             DeployStepLogRequest request, DeployService deploy) =>
@@ -163,6 +255,47 @@ public static class ProjectOperatorDashboardEndpoints
         });
     }
 
+    internal static async Task<IResult> CompleteClaimAsync(DeployJob? job, Action<string> sync,
+        ProjectSecretBindings bindings, CancellationToken ct)
+    {
+        if (job is null) return Results.Ok(job);
+        try
+        {
+            sync(job.Project);
+            if (job.SecretRefs.Count == 0 || job.RetryStep == "health" || job.RunbookName is not null
+                || job.Kind is "preview" or "preview-remove") return Results.Ok(job);
+            var check = await bindings.CheckAsync(job.Project, job.EnvironmentId, job.SecretRefs,
+                job.EnvironmentKind ?? "production", ct);
+            return Results.Ok(job with
+            {
+                SecretBindings = check.Bindings.ToDictionary(item => item.Name, item => item.Reference, StringComparer.Ordinal),
+                MissingSecretRefs = check.Missing,
+            });
+        }
+        catch (Exception)
+        {
+            // The lease is already claimed. Return a reportable, unusable job
+            // without exposing provider or storage exception text to the host.
+            var names = job.SecretRefs.Count == 0 ? ["deploy-preflight"] : job.SecretRefs;
+            return Results.Ok(job with
+            {
+                SecretBindings = null,
+                MissingSecretRefs = names.Select(name => new MissingSecretReference(name,
+                    "secret://" + job.Project + "/" + job.EnvironmentId + "/" + name,
+                    job.Project + "/" + job.EnvironmentId, "preflight-unavailable")).ToArray(),
+            });
+        }
+    }
+
+    // Results.Forbid() needs an authentication scheme; Runner credentials are
+    // checked by AccessSecurityMiddleware, so answer 403 directly.
+    private static IResult RunTargetForbidden() => Results.Json(
+        new { error = "A run target may access only its enrolled host identity." }, statusCode: StatusCodes.Status403Forbidden);
+
+    private static bool RunTargetCallerDenied(HttpContext context, string hostId, IConfiguration configuration)
+        => SecurityProfiles.IsNetworked(configuration)
+            && (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
+                || principal.RunnerId != hostId);
     /// <summary>
     /// 202 with the release; 409 when the stored releases refuse it (an older
     /// commit than the newest release, with <c>"reason":"superseded"</c>, or an
@@ -173,7 +306,7 @@ public static class ProjectOperatorDashboardEndpoints
         { Kind: DeployOutcomeKind.Ok } => Results.Accepted(value: outcome.Value),
         { Kind: DeployOutcomeKind.Conflict, Reason: { } reason } => Results.Conflict(new { error = outcome.Error, reason }),
         { Kind: DeployOutcomeKind.Conflict } => Results.Conflict(new { error = outcome.Error }),
-        _ => Results.BadRequest(new { error = invalid }),
+        _ => Results.BadRequest(new { error = outcome.Error ?? invalid }),
     };
 
     private static IResult DecidePromotion(HttpContext context, string project, PromotionDecisionRequest request,
@@ -194,4 +327,18 @@ public static class ProjectOperatorDashboardEndpoints
     private static IResult ApprovalRequired() => Results.Json(
         new { error = $"Production approval requires the {StandardLifecyclePolicy.ApprovalRoles} role." },
         statusCode: StatusCodes.Status403Forbidden);
+
+    private static IResult RegistryUnavailable() => Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+
+    private static RunnerPrincipal? RunnerCredential(HttpContext context, IConfiguration configuration,
+        AccessSecurityStore security)
+    {
+        if (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is RunnerPrincipal principal)
+            return principal;
+        if (SecurityProfiles.IsNetworked(configuration)) return null;
+        var authorization = context.Request.Headers.Authorization;
+        if (authorization.Count != 1 || authorization[0] is not { } bearer
+            || !bearer.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return null;
+        return security.AuthenticateRunner(bearer["Bearer ".Length..].Trim());
+    }
 }

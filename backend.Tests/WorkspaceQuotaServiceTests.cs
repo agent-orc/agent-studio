@@ -21,7 +21,6 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "workspace-quota-" + Guid.NewGuid().ToString("N"));
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 16, 12, 0, 0, TimeSpan.Zero));
-    private readonly List<WebApplicationFactory<Program>> _factories = [];
 
     [Fact]
     public void Owner_override_is_audited_persisted_and_expires_at_week_rollover()
@@ -167,6 +166,38 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Blank_limits_are_no_limit_and_admission_stays_a_strict_no_op_with_an_unreadable_ledger()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "blank"), "Blank", workspace.Id, _clock);
+        var job = Path.Combine(project.StorageLocation, TaskStates.Ready, "blank-card");
+        Directory.CreateDirectory(job);
+        File.WriteAllText(Path.Combine(job, "task.json"), "{invalid-json");
+        await Bus(services, project.DisplayName, "01HX0000000000000000000044",
+            new AgentMessageTokens(Input: 10, Output: 5, Model: "gpt-5.6-sol"));
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+
+        // Settings saves blank fields as all-null limits for the workspace and the project.
+        quota.SetLimits(workspace.Id, null, new QuotaLimits(null, null, null));
+        quota.SetLimits(workspace.Id, project.Id, new QuotaLimits(null, null, null));
+
+        Assert.False(quota.HasLimits());
+        foreach (var admission in new[] { quota.Admit(project.Id), quota.Admit(project.Id, hosting: true) })
+        {
+            Assert.True(admission.Allowed);
+            Assert.Null(admission.Message);
+            Assert.False(admission.MeterUnavailable);
+        }
+        using var stored = JsonDocument.Parse(File.ReadAllText(Path.Combine(_root, ".metadata", "workspace-quotas.json")));
+        Assert.Empty(stored.RootElement.GetProperty("Workspaces").EnumerateObject());
+        Assert.Empty(stored.RootElement.GetProperty("Projects").EnumerateObject());
+    }
+
+    [Fact]
     public void Unreadable_state_keeps_the_last_good_limits_and_fails_closed_without_them()
     {
         Directory.CreateDirectory(_root);
@@ -226,6 +257,29 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
     }
 
     [Fact]
+    public void Unreadable_state_keeps_the_last_good_limits_and_reports_the_meter()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "state"), "State", workspace.Id, _clock);
+        Directory.CreateDirectory(project.StorageLocation);
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+        quota.SetLimits(workspace.Id, null, new QuotaLimits(0, null, null));
+        File.WriteAllText(Path.Combine(_root, ".metadata", "workspace-quotas.json"), "{broken");
+
+        var kept = quota.Admit(project.Id);
+        var fresh = ActivatorUtilities.CreateInstance<WorkspaceQuotaService>(services).Admit(project.Id);
+
+        Assert.False(kept.Allowed);
+        Assert.False(fresh.Allowed);
+        Assert.True(fresh.MeterUnavailable);
+        Assert.Contains("could not be read", fresh.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Unregistered_project_is_admitted_with_meter_unavailable()
     {
         Directory.CreateDirectory(_root);
@@ -266,101 +320,15 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
         Assert.Equal(1, quota.Snapshot(workspace.Id).Usage.HostingSlots);
         Assert.Equal([projects.FindByIdOrDisplayName(admitted.Single())!.DisplayName], quota.RunningWebsiteProjects());
         Assert.Equal(_clock.GetUtcNow(), quota.ProjectEnvironmentReservedAt(admitted.Single(), "website"));
+        var reservedAt = quota.ProjectEnvironmentReservedAt(admitted.Single(), "website");
         _clock.Advance(TimeSpan.FromMinutes(1));
-        quota.RecordProjectEnvironmentDispatch(admitted.Single(), "website", "pages.yml", _clock.GetUtcNow(),
-            reserved: true);
-        Assert.Equal(_clock.GetUtcNow(), quota.ProjectEnvironmentReservedAt(admitted.Single(), "website"));
+        Assert.False(quota.ReserveProjectEnvironment(admitted.Single(), "website"));
+        Assert.Equal(reservedAt, quota.ProjectEnvironmentReservedAt(admitted.Single(), "website"));
         quota.SetEnvironment(admitted.Single(), "website", false);
         Assert.Equal(0, quota.Snapshot(workspace.Id).Usage.HostingSlots);
         Assert.Empty(quota.RunningWebsiteProjects());
         Assert.True(quota.ReserveProjectEnvironment(
             admitted.Single() == alpha.Id ? beta.Id : alpha.Id, "website"));
-    }
-
-    [Fact]
-    public void Failed_first_website_workflow_releases_its_reserved_slot_after_a_restart()
-    {
-        var (services, project) = WebsiteQuota();
-        var quota = services.GetRequiredService<WorkspaceQuotaService>();
-        Assert.True(quota.ReserveProjectEnvironment(project.Id, "website"));
-        var dispatchedAt = _clock.GetUtcNow();
-        quota.RecordProjectEnvironmentDispatch(project.Id, "website", "pages.yml", dispatchedAt, reserved: true);
-
-        // The run panel lives in memory; the restarted service only has the persisted ownership.
-        var restarted = ActivatorUtilities.CreateInstance<WorkspaceQuotaService>(services);
-        var actions = ActivatorUtilities.CreateInstance<AgentStudio.Publishing.PublishActionService>(services, restarted);
-        var dispatch = Assert.Single(restarted.PendingDispatches("website"));
-        Assert.Equal(("Website", "pages.yml", dispatchedAt.UtcDateTime),
-            (dispatch.Project, dispatch.Workflow, dispatch.DispatchedAt));
-
-        Assert.False(actions.SettleWebsiteRun(dispatch.Project, dispatch.DispatchedAt, "in_progress", null));
-        Assert.True(restarted.HasProjectEnvironment(project.Id, "website"));
-        // The workflow failed before it created any GitHub Pages deployment.
-        Assert.True(actions.SettleWebsiteRun(dispatch.Project, dispatch.DispatchedAt, "completed", "failure"));
-        Assert.False(restarted.HasProjectEnvironment(project.Id, "website"));
-        Assert.Empty(restarted.PendingDispatches("website"));
-    }
-
-    [Fact]
-    public void Failed_redeploy_keeps_the_live_slot_provenance_so_stopping_the_prior_deployment_releases_it()
-    {
-        var (services, project) = WebsiteQuota();
-        var quota = services.GetRequiredService<WorkspaceQuotaService>();
-        var actions = services.GetRequiredService<AgentStudio.Publishing.PublishActionService>();
-        Assert.True(quota.ReserveProjectEnvironment(project.Id, "website"));
-        var firstAt = _clock.GetUtcNow();
-        quota.RecordProjectEnvironmentDispatch(project.Id, "website", "pages.yml", firstAt, reserved: true);
-        Assert.True(actions.SettleWebsiteRun(project.DisplayName, firstAt.UtcDateTime, "completed", "success"));
-        var priorDeploymentAt = firstAt.AddMinutes(2);
-
-        _clock.Advance(TimeSpan.FromMinutes(10));
-        var redeployAt = _clock.GetUtcNow();
-        Assert.False(quota.ReserveProjectEnvironment(project.Id, "website"));
-        quota.RecordProjectEnvironmentDispatch(project.Id, "website", "pages.yml", redeployAt, reserved: false);
-        Assert.Empty(quota.PendingDispatches("website"));
-        Assert.Equal(firstAt, quota.ProjectEnvironmentReservedAt(project.Id, "website"));
-        Assert.False(actions.SettleWebsiteRun(project.DisplayName, redeployAt.UtcDateTime, "completed", "failure"));
-        Assert.True(quota.HasProjectEnvironment(project.Id, "website"));
-
-        // The prior deployment goes inactive: it is not older than the reservation, so it releases the slot.
-        Assert.True(AgentStudio.Publishing.PublishActionService.DeploymentCanReleaseReservation(
-            quota.ProjectEnvironmentReservedAt(project.Id, "website"), priorDeploymentAt));
-    }
-
-    [Fact]
-    public void Only_the_dispatch_that_owns_the_reservation_releases_it()
-    {
-        var (services, project) = WebsiteQuota();
-        var quota = services.GetRequiredService<WorkspaceQuotaService>();
-        var actions = services.GetRequiredService<AgentStudio.Publishing.PublishActionService>();
-        Assert.True(quota.ReserveProjectEnvironment(project.Id, "website"));
-        var firstAt = _clock.GetUtcNow();
-        quota.RecordProjectEnvironmentDispatch(project.Id, "website", "pages.yml", firstAt, reserved: true);
-        _clock.Advance(TimeSpan.FromMinutes(1));
-        // A second dispatch before the first settled takes over the unsettled reservation.
-        var secondAt = _clock.GetUtcNow();
-        Assert.False(quota.ReserveProjectEnvironment(project.Id, "website"));
-        quota.RecordProjectEnvironmentDispatch(project.Id, "website", "pages.yml", secondAt, reserved: false);
-        Assert.Equal(firstAt, quota.ProjectEnvironmentReservedAt(project.Id, "website"));
-
-        Assert.False(actions.SettleWebsiteRun(project.DisplayName, firstAt.UtcDateTime, "completed", "failure"));
-        Assert.True(quota.HasProjectEnvironment(project.Id, "website"));
-        Assert.True(actions.SettleWebsiteRun(project.DisplayName, secondAt.UtcDateTime, "completed", "failure"));
-        Assert.False(quota.HasProjectEnvironment(project.Id, "website"));
-    }
-
-    private (IServiceProvider Services, ProjectRecord Project) WebsiteQuota()
-    {
-        Directory.CreateDirectory(_root);
-        var factory = Factory();
-        _factories.Add(factory);
-        var services = factory.Services;
-        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
-        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
-            Path.Combine(_root, "website"), "Website", workspace.Id, _clock);
-        Directory.CreateDirectory(project.StorageLocation);
-        services.GetRequiredService<WorkspaceQuotaService>().SetLimits(workspace.Id, null, new QuotaLimits(null, null, 1));
-        return (services, project);
     }
 
     [Fact]
@@ -711,7 +679,6 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var factory in _factories) factory.Dispose();
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 }

@@ -43,6 +43,7 @@ var hostEntryTimestamp = TimeProvider.System.GetTimestamp();
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("System.Net.Http.HttpClient.environment-health-checks", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console()
     .CreateBootstrapLogger();
@@ -69,7 +70,12 @@ builder.Services.AddHostedService<MonolithOrchestrationRecoveryService>();
 // waits for is live; see /healthz/orchestration-engine.
 builder.Services.AddSingleton<OrchestrationEngineReadiness>();
 builder.Services.AddHostedService<OrchestrationEngineReadinessService>();
+// AGT-3218: checks the first engine decisions after a profile switch and rolls
+// the profile back when an applied decision lacks its effect.
+builder.Services.AddSingleton<EngineApplierEffectProbe>();
+builder.Services.AddHostedService<EngineApplierCanaryService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
+builder.Services.AddSingleton<NetworkedLoginAddressHealth>();
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -83,6 +89,14 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
             throw new InvalidOperationException($"Invalid Security:TrustedProxyAddresses entry: {raw}");
         options.KnownProxies.Add(address);
     }
+});
+// AGT-3230: the networked edge sends a one-year HSTS with includeSubDomains;
+// the API's own header must not advertise a weaker policy.
+builder.Services.AddOptions<Microsoft.AspNetCore.HttpsPolicy.HstsOptions>().Configure<IConfiguration>((options, configuration) =>
+{
+    if (!SecurityProfiles.IsNetworked(configuration)) return;
+    options.MaxAge = TimeSpan.FromDays(365);
+    options.IncludeSubDomains = true;
 });
 var publicDemoBodyCap = SecurityProfiles.IsPublicDemo(builder.Configuration);
 var maxRequestBodyBytes = builder.Configuration.GetValue<long>(
@@ -220,6 +234,7 @@ builder.Logging.AddProvider(new BackendFileLoggerProvider(fileLogSink));
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("System.Net.Http.HttpClient.environment-health-checks", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console(),
     preserveStaticLogger: underTestHost,
@@ -350,10 +365,16 @@ if (!underTestHost)
 builder.Services.AddSingleton<ClientIdentityStore>();
 builder.Services.AddSingleton<AccessSecurityStore>();
 builder.Services.AddSingleton<IKeyEncryptionKeySource, ConfiguredKeyEncryptionKeySource>();
-builder.Services.AddSingleton<ISecretStore, BuiltInSecretStore>();
+builder.Services.AddHttpClient("secret-external", client => client.Timeout = TimeSpan.FromSeconds(10))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddSingleton<BuiltInSecretStore>();
+builder.Services.AddSingleton<SecretBackendSettings>();
+builder.Services.AddSingleton<ScopedSecretStore>();
+builder.Services.AddSingleton<ISecretStore>(sp => sp.GetRequiredService<ScopedSecretStore>());
 builder.Services.AddSingleton<SecretAuditLog>();
 builder.Services.AddSingleton<SecretValueScrubber>();
 builder.Services.AddSingleton<ISecretProvider, SecretProvider>();
+builder.Services.AddSingleton<ProjectSecretBindings>();
 builder.Services.AddSingleton<ISecretWorkloadLeases, SecretWorkloadLeases>();
 builder.Services.AddSingleton<ManagementService>();
 builder.Services.AddSingleton<IProviderAuthProvisioner, SshProviderAuthProvisioner>();
@@ -536,8 +557,23 @@ builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconcil
 builder.Services.AddHostedService<AgentStudio.Publishing.PublishEnvironmentReconciliationService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
+builder.Services.AddSingleton<IHostedVolumeBackupEngine>(sp =>
+    sp.GetRequiredService<IConfiguration>()["HostedData:LocalVolumeRoot"] is { Length: > 0 } root
+        ? new LocalHostedVolumeBackupEngine(root, Path.Combine(
+            sp.GetRequiredService<IConfiguration>()["TaskRepository"] ?? throw new InvalidOperationException("TaskRepository is required."),
+            "hosted-volume-archives"), sp.GetRequiredService<ILogger<LocalHostedVolumeBackupEngine>>(),
+            sp.GetRequiredService<TimeProvider>())
+        : new UnboundHostedVolumeBackupEngine());
+builder.Services.AddSingleton<HostedVolumeBackupService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<HostedVolumeBackupWorker>();
+builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
+builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
+    AgentStudio.Projects.UnavailableOperationsTelemetryReader>();
+builder.Services.AddSingleton<AgentStudio.Projects.ProjectOperationsService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<AgentStudio.Deploy.CardPreviewSweep>();
@@ -915,6 +951,7 @@ builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchIntegrationRes
         1, 24 * 60))));
 builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();
+builder.Services.AddSingleton<AgentStudio.Tokens.TokenAnalysisService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,
     AgentStudio.Pipeline.RemoteRequiredLintScssRunner>();
 builder.Services.AddHttpClient<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
@@ -1336,6 +1373,9 @@ if (connectorProfile)
 
 hostTimeline.Checkpoint("entryToBuild");
 var app = builder.Build();
+// Test-host overrides and deployment configuration are final only after Build().
+// Reject a mistyped public-edge setting before the host accepts requests.
+_ = SecurityProfiles.PublicCloudflareEdgeEnabled(app.Configuration);
 hostTimeline.Checkpoint("build");
 hostTimeline.Attach(app.Services);
 // Capture the secrets key-encryption key now, before any hosted service starts
@@ -1373,7 +1413,14 @@ var projectScopedSignalRProfile = networkedSecurityProfile || publicDemoExecutio
 var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
     && app.Configuration.GetValue<bool>("ErrorHandling:IncludeExceptionDetails");
 
+// Loopback trust (first-owner bootstrap) is decided on the connection peer,
+// which forwarding replaces below (AGT-3230).
+app.UseConnectionPeerCapture();
 app.UseForwardedHeaders();
+// Directly after forwarding, so every later short-circuit (Task Server proxy
+// 404, rejections, exception handler) carries the framing and content policy
+// too (AGT-3230).
+if (networkedSecurityProfile) app.UseStudioResponseHeaders();
 // Before routing, so the versioned core-attach paths Angular calls reach the
 // same legacy handlers, guards, and security checks as before (AGT-2983).
 app.UseStudioV1LegacyRouteAlias(TaskServerPlaneProxy.IsConfigured(app.Configuration));
@@ -1385,7 +1432,15 @@ var publishedArtifactSha = app.Services.GetRequiredService<PublishedArtifactSha>
 app.Use(async (context, next) =>
 {
     if (publishedArtifactSha is not null && context.Request.Path.StartsWithSegments("/api"))
-        context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
+        context.Response.OnStarting(() =>
+        {
+            if ((!networkedSecurityProfile && !publicDemoExecutionProfile)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.HumanPrincipalItem)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.RunnerPrincipalItem)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.ApiTokenPrincipalItem))
+                context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
+            return Task.CompletedTask;
+        });
     await next(context);
 });
 // An explicitly selected standalone Task Server owns task data. Legacy task

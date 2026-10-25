@@ -24,6 +24,7 @@ public sealed class GitWorkspace
     private readonly long? _fencingToken;
     private readonly string? _continuationBaseRef;
     private readonly string? _continuationBaseSha;
+    private readonly string? _continuationBaseReason;
     private readonly bool _continuationBaseRequired;
     private string? _preparedIntegrationBranch;
     private string? _startedHead;
@@ -75,9 +76,8 @@ public sealed class GitWorkspace
             ? null
             : sourceRunAttemptId.Trim();
         _fencingToken = fencingToken;
-        // A continuation round is only continuing something when it knows both
-        // halves of the pair; half a reference would silently start the round on
-        // the integration branch and lose the rescued work again.
+        // A continuation round must have both halves of its base. A missing or
+        // moved salvage cannot silently become a new run on the integration branch.
         var continuationBranch = string.IsNullOrWhiteSpace(continuationBaseRef)
             ? null
             : ToBranchName(continuationBaseRef);
@@ -85,12 +85,11 @@ public sealed class GitWorkspace
             ? null
             : continuationBaseSha.Trim();
         var continuationComplete = continuationBranch is not null && continuationSha is not null;
-        // AGT-3056: a review fix round exists to continue the graded delivery.
-        // Its base is never swapped for the integration branch, and a half
-        // reference keeps its known half for the typed failure.
-        _continuationBaseRequired = ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
-        _continuationBaseRef = continuationComplete || _continuationBaseRequired ? continuationBranch : null;
+        _continuationBaseRequired = continuationBranch is not null || continuationSha is not null
+            || ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
+        _continuationBaseRef = _continuationBaseRequired ? continuationBranch : null;
         _continuationBaseSha = continuationComplete ? continuationSha : null;
+        _continuationBaseReason = continuationBaseReason;
     }
 
     public string ProjectCachePath => CachePathForProject(_options.WorkDir, _projectId);
@@ -291,7 +290,7 @@ public sealed class GitWorkspace
             // AGT-2870: a continuation round starts on the salvage its previous
             // round left behind, so the rescued work is in the checkout before
             // the agent reads its finishing instruction. The integration branch
-            // resolved above stays the rebase target.
+            // resolved above is merged without rewriting the salvage commit.
             var continuation = await ResolveContinuationBaseAsync(ct);
             if (continuation is not null) branch = continuation.Branch;
             var authoritativeBase = continuation?.CommitSha
@@ -301,6 +300,34 @@ public sealed class GitWorkspace
             _log($"worktree-authoritative-base branch=refs/heads/{branch} sha={authoritativeBase} path={RepoPath}");
             _log($"git worktree add {RepoPath} on {_workBranch} from refs/heads/{branch} at {ShortSha(authoritativeBase)}");
             await Git(["worktree", "add", "-B", _workBranch, RepoPath, authoritativeBase], SharedRepoPath, ct);
+
+            if (continuation is not null
+                && !ContinuationBaseReasons.IsReviewFixRound(_continuationBaseReason))
+            {
+                var integrationHead = await FetchRemoteBranchHeadAsync(requestedBase, ct)
+                    ?? throw new InvalidOperationException($"Integration branch 'origin/{requestedBase}' disappeared during preparation.");
+                if (!await IsAncestorAsync(integrationHead, authoritativeBase, ct))
+                {
+                    var merged = await ProjectGitAsync([
+                        "-c", "user.name=Agent Studio Runner",
+                        "-c", "user.email=runner@agent-studio.invalid",
+                        "merge", "--no-ff", "--no-edit", $"origin/{requestedBase}"
+                    ], RepoPath, ct);
+                    if (merged.Success)
+                    {
+                        _log($"worktree-continuation-merged salvageSha={continuation.CommitSha} integrationSha={integrationHead} path={RepoPath}");
+                    }
+                    else
+                    {
+                        var abort = await ProjectGitAsync(["merge", "--abort"], RepoPath, ct);
+                        if (!abort.Success)
+                            throw new InvalidOperationException(
+                                $"Continuation merge failed and could not be aborted: {abort.StdErr.Trim()}");
+                        _log($"worktree-continuation-merge-deferred salvageSha={continuation.CommitSha} " +
+                            $"integrationSha={integrationHead} error={OneLine(merged.StdErr)}; agent must resolve the merge");
+                    }
+                }
+            }
 
             _startedFromSalvage = continuation is not null
                 || string.Equals(branch, _workBranch, StringComparison.Ordinal);
@@ -317,12 +344,9 @@ public sealed class GitWorkspace
 
     /// <summary>
     /// The continuation base this claim was given, resolved against origin, or
-    /// null when the claim named none. A ref that disappeared or moved is
-    /// reported and skipped rather than failing the round: the card's prompt
-    /// still names the salvage, and a round on the integration branch is a
-    /// worse outcome than no round at all only if it is silent. A review fix
-    /// round's base is required instead: any of those cases throws
-    /// <see cref="ContinuationBaseUnavailableException"/> (AGT-3056).
+    /// null when the claim named none. A supplied base is required: a missing
+    /// or moved ref fails preparation before an agent can start from unrelated
+    /// integration history.
     /// </summary>
     private async Task<SalvageContinuationBase?> ResolveContinuationBaseAsync(CancellationToken ct)
     {
@@ -831,9 +855,17 @@ public sealed class GitWorkspace
                 Directory.CreateDirectory(results);
                 var content = await File.ReadAllBytesAsync(source, ct);
                 const int reportLimit = 16 * 1024;
-                var start = Math.Max(0, content.Length - reportLimit);
-                while (start < content.Length && (content[start] & 0xC0) == 0x80) start++;
-                await File.WriteAllBytesAsync(Path.Combine(results, artifactName), content[start..], ct);
+                byte[] preserved;
+                if (content.Length <= reportLimit) preserved = content;
+                else
+                {
+                    var firstEnd = reportLimit / 2;
+                    while (firstEnd > 0 && (content[firstEnd] & 0xC0) == 0x80) firstEnd--;
+                    var endStart = content.Length - reportLimit / 2;
+                    while (endStart < content.Length && (content[endStart] & 0xC0) == 0x80) endStart++;
+                    preserved = [.. content[..firstEnd], .. content[endStart..]];
+                }
+                await File.WriteAllBytesAsync(Path.Combine(results, artifactName), preserved, ct);
                 _log($"legacy-repository-report-preserved task={_safeTaskKey} artifact=results/{artifactName}");
             }
             catch (Exception ex)

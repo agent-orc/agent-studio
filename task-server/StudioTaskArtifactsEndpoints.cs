@@ -60,8 +60,10 @@ internal static class StudioTaskArtifactsEndpoints
             => await TaskServerEndpoints.InvokeAsync(() => store.GetTaskOutputAsync(projectId, taskIdentity, ct)));
 
         tasks.MapGet("/results/{**path}", async (
-            string projectId, string taskIdentity, string path, TaskServerStore store, CancellationToken ct) =>
+            string projectId, string taskIdentity, string path, HttpContext context, TaskServerStore store, CancellationToken ct) =>
         {
+            var product = StudioProductSession.IsProduct(context);
+            if (product && !StudioProductSession.AllowsResult(path)) return StudioProductSession.Denied();
             try
             {
                 // Runner-emitted results artifacts are named with the "results/"
@@ -69,8 +71,10 @@ internal static class StudioTaskArtifactsEndpoints
                 // but the route template already consumes that literal segment, so
                 // it has to be added back before matching against artifact names.
                 var content = await store.GetTaskResultContentAsync(projectId, taskIdentity, "results/" + path, ct);
-                return content is null
-                    ? Results.NotFound(new ApiError("not-found", "Result artifact was not found."))
+                if (content is null) return Results.NotFound(new ApiError("not-found", "Result artifact was not found."));
+                // A folder-prefix match can resolve to a nested artifact with another type.
+                return product && !StudioProductSession.AllowsResult(content.Name)
+                    ? StudioProductSession.Denied()
                     : Results.Bytes(Convert.FromBase64String(content.ContentBase64), content.MediaType);
             }
             catch (Exception exception)

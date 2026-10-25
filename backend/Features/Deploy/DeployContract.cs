@@ -83,12 +83,18 @@ public sealed record Deployment(
     DateTime? StartedAtUtc, DateTime? FinishedAtUtc, string? ApprovedBy,
     IReadOnlyList<DeploymentStep> Steps, string Trigger, string? RequestedBy, DateTime CreatedAtUtc,
     DateTime? InterventionExpiresAtUtc = null, string? FailedStep = null, string? InterventionDecidedBy = null,
-    string? InterventionDecision = null);
+    string? InterventionDecision = null)
+{
+    public string? Tenant { get; init; }
+}
 
 public sealed record EnvironmentStatus(
     DeployEnvironment Environment, Release? CurrentRelease, Deployment? CurrentDeployment,
     Release? NewerRelease, IReadOnlyList<string> CardsSinceLastDeploy, string Health,
-    InterventionSummary? Intervention = null);
+    InterventionSummary? Intervention = null)
+{
+    public string? Tenant { get; init; }
+}
 
 public sealed record InterventionSummary(string DeploymentId, string FailedStep, DateTime? ExpiresAtUtc,
     string? Decision, string? DecidedBy);
@@ -97,7 +103,10 @@ public sealed record ReleaseDetailResponse(Release Release, IReadOnlyList<Deploy
 
 public sealed record DeploymentLogLine(string Step, DateTime AtUtc, string Message);
 
-public sealed record DeploymentLogResponse(string DeploymentId, IReadOnlyList<DeploymentLogLine> Lines);
+public sealed record DeploymentLogResponse(string DeploymentId, IReadOnlyList<DeploymentLogLine> Lines)
+{
+    public string? Tenant { get; init; }
+}
 
 /// <summary>A bounded, newest-first slice. Offset and total refer to the filtered set.</summary>
 public sealed record DeployPage<T>(IReadOnlyList<T> Items, int Offset, int Limit, int Total);
@@ -105,18 +114,27 @@ public sealed record DeployPage<T>(IReadOnlyList<T> Items, int Offset, int Limit
 public sealed record DeployAuditEntry(DateTime AtUtc, string Actor, string Action, string? ReleaseId,
     string? DeploymentId, string? EnvironmentId, string Detail);
 
-public sealed record DeployMatrixRow(string ProjectId, IReadOnlyList<EnvironmentStatus> Statuses, string? Error);
+public sealed record DeployMatrixRow(string ProjectId, IReadOnlyList<EnvironmentStatus> Statuses, string? Error)
+{
+    public IReadOnlyList<EnvironmentStatus> TenantStatuses { get; init; } = [];
+}
 
 /// <summary>Workspace dashboard: projects as rows, environment kinds as columns.</summary>
 public sealed record DeployMatrixResponse(IReadOnlyList<string> EnvironmentKinds, IReadOnlyList<DeployMatrixRow> Projects);
 
-public sealed record DeploymentRequest(string EnvironmentId, bool Approve = false, bool? GuidedFailure = null);
+public sealed record DeploymentRequest(string EnvironmentId, bool Approve = false, bool? GuidedFailure = null)
+{
+    public string? Tenant { get; init; }
+}
 
-public sealed record EnvironmentActionRequest(bool Approve = false, bool? GuidedFailure = null);
+public sealed record EnvironmentActionRequest(bool Approve = false, bool? GuidedFailure = null)
+{
+    public string? Tenant { get; init; }
+}
 
 public sealed record InterventionDecisionRequest(string Action, string? Reason = null);
 
 public sealed record DeploymentApprovalRequest(bool? GuidedFailure = null);
 
 /// <summary>Who asks, and whether they hold the Owner or Maintainer approval for the project.</summary>
-public sealed record DeployActor(string Id, bool IsApprover);
+public sealed record DeployActor(string Id, bool IsApprover, string? ApprovalRole = null);

@@ -1,0 +1,53 @@
+<section class="hosted-data" aria-labelledby="hosted-data-title" data-testid="hosted-data-panel">
+  <header><div><h2 id="hosted-data-title">Persistent data</h2><p>Database binding and retained app volumes by environment.</p></div>
+    <button type="button" (click)="load(projectName())">Refresh data</button></header>
+  @if (error(); as message) { <p role="alert">{{ message }}</p> }
+  @if (notice(); as message) { <p role="status">{{ message }}</p> }
+  @if (loading()) { <p role="status">Loading hosted data…</p> }
+  @for (environment of environments(); track environment.id) {
+    <article [attr.data-testid]="'hosted-data-' + environment.id">
+      <h3>{{ environment.name }}</h3>
+      @if (environment.database; as database) {
+        <p>Operator database: <code>{{ database.environmentVariable }}</code> from <code>{{ database.secretRef }}</code></p>
+      } @else { <p>No database binding declared.</p> }
+      @if (!environment.adapterReady && environment.volumes.length) {
+        <p class="hosted-data__note">This installation has no volume host backup adapter. Schedules are saved; backups and restores require a connected host.</p>
+      }
+      @for (volume of environment.volumes; track volume.name) {
+        <div class="hosted-data__volume" [attr.data-testid]="'hosted-volume-' + environment.id + '-' + volume.name">
+          <div><strong>{{ volume.name }}</strong><span>{{ volume.mountPath }}</span></div>
+          <label>Daily backup (UTC)
+            <select [value]="schedule(environment.id, volume.name)?.hourUtc ?? ''"
+              [disabled]="busy()" (change)="setSchedule(environment.id, volume.name, $event)">
+              <option value="">Off</option>
+              @for (hour of hours; track hour) { <option [value]="hour">{{ hour < 10 ? '0' : '' }}{{ hour }}:00</option> }
+            </select>
+          </label>
+          <button type="button" [disabled]="busy() || !environment.adapterReady" (click)="backup(environment.id, volume.name)">Back up now</button>
+          @if (schedule(environment.id, volume.name); as current) {
+            @if (current.lastAttemptAt) { <small>Last attempt {{ current.lastAttemptAt | date:'medium':'UTC' }} UTC</small> }
+            @if (current.lastError) { <small role="alert">{{ current.lastError }}</small> }
+            @for (backup of current.backups; track backup.id) {
+              <div class="hosted-data__backup"><span>Backup {{ backup.createdAt | date:'medium':'UTC' }} UTC · {{ backup.bytes }} bytes · SHA-256 {{ backup.sha256.slice(0, 12) }}</span>
+                <button type="button" [disabled]="busy() || !environment.adapterReady"
+                  (click)="restore(environment.id, volume.name, backup.id)">
+                  {{ restoreLabel(environment.id, volume.name, backup.id) }}
+                </button>
+                @if (pendingRestore() === environment.id + '/' + volume.name + '/' + backup.id) {
+                  <small>Restore replaces the current volume contents.</small>
+                  <button type="button" (click)="cancelRestore()">Cancel</button>
+                }
+              </div>
+            }
+          }
+        </div>
+      } @empty { <p>No persistent volumes declared.</p> }
+      @if (environment.audit.length) {
+        <h4>Data audit</h4>
+        <ul>@for (entry of environment.audit; track entry.id) {
+          <li>{{ entry.at | date:'medium':'UTC' }} UTC · {{ entry.actor }} · {{ entry.action }} {{ entry.volume }} · {{ entry.outcome }}</li>
+        }</ul>
+      }
+    </article>
+  } @empty { @if (!loading()) { <p>No environments are declared.</p> } }
+</section>

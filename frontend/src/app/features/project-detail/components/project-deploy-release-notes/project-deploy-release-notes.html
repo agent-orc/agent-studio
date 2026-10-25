@@ -1,0 +1,18 @@
+<section class="release-notes" data-testid="deploy-release-notes" aria-label="Release notes">
+  <h4>Release notes</h4>
+  @switch (panel().status) {
+    @case ('loading') { <p>Loading release notes…</p> }
+    @case ('error') { <p role="status">Release notes could not be loaded.</p> }
+    @case ('unavailable') { <p>Release notes are not available on this server.</p> }
+    @case ('ready') {
+      @if (notes(); as notes) {
+        <p>{{ notes.preview ? 'Staging preview' : 'Production release' }}</p>
+        @if (notes.notes.length) {
+          <ul>@for (note of notes.notes; track note.cardKey) {
+            <li><strong>{{ note.cardKey }}</strong> · {{ note.text }}</li>
+          }</ul>
+        } @else { <p>No linked card changes.</p> }
+      }
+    }
+  }
+</section>

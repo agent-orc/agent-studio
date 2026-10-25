@@ -19,7 +19,21 @@ public sealed class RemoteQueueStarvationPolicyTests
         Assert.True(snapshot.Active);
         Assert.Equal(1, snapshot.WaitingTaskCount);
         Assert.Equal(RemoteExecutionRequirement.Code, Assert.Single(snapshot.Items).BlockReasonCode);
-        Assert.Contains("local coding is disabled", snapshot.Items[0].BlockReason);
+        Assert.Contains("local agent execution is disabled", snapshot.Items[0].BlockReason);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public void ReadOnlyLocalPlacement_IsBlockedOnlyInNetworkedProfile(bool networked, bool blocked)
+    {
+        var task = ReadyTask(1) with { Mode = TaskModes.Research };
+        var settings = RemoteSettings() with { ExecutionLocation = ExecutionLocations.Local };
+        var snapshot = RemoteQueueStarvationPolicy.Evaluate(
+            Now, TimeSpan.FromMinutes(30), [task], _ => settings,
+            TaskReferenceIndex.Build([task]), [], denyAllLocalRuns: networked);
+
+        Assert.Equal(blocked, snapshot.Items.Any(item => item.BlockReasonCode == RemoteExecutionRequirement.Code));
     }
 
     [Theory]

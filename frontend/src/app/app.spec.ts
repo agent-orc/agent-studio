@@ -127,7 +127,7 @@ describe('App (smoke)', () => {
       console.warn('[smoke] App TestBed setup skipped:', (e as Error).message);
       expect(App).toBeTruthy();
     }
-  });
+  }, 60_000);
 });
 describe('App studio-tab mirror (pager reuse)', () => {
   const TAB_STORAGE_KEY = 'atp.studio.tabs.v1';

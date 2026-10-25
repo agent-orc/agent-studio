@@ -175,7 +175,7 @@ public sealed class DeploymentReconcilerTests
     [Fact]
     public void JobsFromBeforeTheRelease_StayUnattributed()
     {
-        var result = Reconcile([], [Job("legacy", "stage", "healthy", T0.AddMinutes(-5))]);
+        var result = Reconcile([], [Job("legacy", "stage", "healthy", T0.AddMinutes(-5)) with { ReleaseId = null }]);
         Assert.Empty(result.Deployments);
         Assert.False(result.Changed);
     }
@@ -329,5 +329,5 @@ public sealed class DeploymentReconcilerTests
     private static DeployJob Job(string id, string environmentId, string status, DateTime createdAt)
         => new(id, "demo", environmentId, environmentId == "stage" ? "stage-host" : "prod-host", Artifact,
             "container", "8081", "https://stage.example/health", [], 8080, null, status, createdAt,
-            RequestedBy: "release-gate");
+            RequestedBy: "release-gate", ReleaseId: "r1");
 }

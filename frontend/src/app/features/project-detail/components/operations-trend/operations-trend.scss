@@ -1,0 +1,8 @@
+.trend { margin: 0; min-width: 0; color: var(--studio-text-secondary); }
+.trend figcaption { font-size: .8rem; }
+.trend svg { display: block; width: 100%; height: 80px; background: var(--studio-bg-hover); }
+.trend__line { fill: none; stroke: var(--studio-accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.trend__marker { stroke: var(--studio-text-secondary); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.trend__marker-link { cursor: pointer; }
+.trend__marker-link:focus-visible { outline: 2px solid var(--studio-accent); }
+.trend__marker-hit { stroke: transparent; stroke-width: 12; vector-effect: non-scaling-stroke; }

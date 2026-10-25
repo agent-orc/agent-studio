@@ -36,12 +36,16 @@
             <app-project-deploy-area
               [projectName]="projShell"
               [initialView]="section().deployView"
+              [releaseTarget]="selectedRelease()"
+              (openTask)="openTaskFromProjectShell($event)"
               (openPrompts)="setProjectShellRail('prompts')" />
           }
         }
         @defer (when section().rail === 'operations') {
           @if (section().rail === 'operations') {
-            <app-project-environment-overview [projectName]="projShell" (openDeploy)="setProjectShellRail('deploy')" />
+            <app-project-environment-overview [projectName]="projShell" (openDeploy)="setProjectShellRail('deploy')"
+              (openRelease)="openOperationsRelease(projShell, $event)"
+              (openTask)="openTaskFromProjectShell($event)" />
             <app-project-product-runtime-panel [projectName]="projShell" />
           }
         }
@@ -99,6 +103,7 @@
         @defer (when overlays.projectShellRail() === 'token-usage') {
           @if (overlays.projectShellRail() === 'token-usage') {
             <app-project-token-usage-panel [projectName]="projShell" />
+            <app-token-analysis-view [fixedProject]="projShell" />
           }
         }
         @defer (when overlays.projectShellRail() === 'agent-activity') {

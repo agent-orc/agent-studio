@@ -192,6 +192,20 @@ public class ProjectSettingsService
         }
     }
 
+    /// <summary>IP-1: replaces the project's allowed run-target domain suffixes; the caller normalizes them.</summary>
+    public void SetRunTargetDomainSuffixes(string projectName, IReadOnlyList<string> suffixes)
+    {
+        ArgumentNullException.ThrowIfNull(suffixes);
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { RunTargetDomainSuffixes = suffixes.Count == 0 ? null : suffixes.ToArray() };
+            Persist();
+        }
+    }
+
     public void SetBatchGate(string projectName, AgentStudio.Pipeline.BatchGateFormationOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);

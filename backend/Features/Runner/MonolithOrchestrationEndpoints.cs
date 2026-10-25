@@ -144,8 +144,18 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                aiOperator.RecoverPending();
-                RecoverOnce();
+                // Each recovery step fails alone so a pending activation cannot
+                // prevent the canary's applying recovery pass from running.
+                try { aiOperator.RecoverPending(); }
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "orchestration-operator-recovery-pending");
+                }
+                try { RecoverOnce(); }
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "orchestration-activation-recovery-pending");
+                }
                 try { await store.RecoverApplyingAsync(stoppingToken, (item, exception) =>
                     logger.LogWarning(exception,
                         "orchestration-application-retry-pending run={RunId} task={TaskId}",
@@ -158,6 +168,11 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
                 {
                     logger.LogWarning(exception, "orchestration-application-retry-pending");
+                }
+                try { AlertFailedApplications(); }
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "orchestration-application-alert-pending");
                 }
                 try
                 {
@@ -411,6 +426,36 @@ public sealed class MonolithOrchestrationRecoveryService(MonolithOrchestrationSt
                 Summary = $"{card.Key ?? card.Id} has waited over 15 minutes for an engine decision while the engine is live.",
                 Reasoning = $"Occurrence {occurrence.Run.RunId} remains {occurrence.Run.Status}.",
             });
+        }
+    }
+
+    internal void AlertFailedApplications()
+    {
+        var failed = store.List(null, "failed");
+        if (failed.Count == 0) return;
+        var cards = scanner.ScanAllJobs();
+        foreach (var run in failed)
+        {
+            var occurrence = store.GetOccurrence(run.RunId);
+            var card = cards.FirstOrDefault(item => item.Id == run.TaskId
+                && item.ProjectName == run.ProjectId);
+            if (occurrence?.ApplicationFailure is null || card is null) continue;
+            var topic = "engine-decision-application-refused:" + run.RunId;
+            if (!operatorLog.Read(card.WatchPath).Any(item => item.Topic == topic))
+                operatorLog.Append(card.WatchPath, new OrchestratorLogEntry
+                {
+                    Kind = OrchestratorLogKinds.Alert,
+                    Topic = topic,
+                    JobId = card.Id,
+                    Summary = $"{card.Key ?? card.Id} needs operator attention after an engine decision could not be applied.",
+                    Reasoning = $"The card remains in {card.State}. {occurrence.ApplicationFailure} "
+                        + "Resolve the lane refusal and decide the next card action.",
+                });
+            if (EngineDecisionWaitMarker.Clear(card.FolderPath, run.RunId))
+            {
+                scanner.InvalidateCache();
+                scanner.PublishCoreFromKnownFolder(card.FolderPath);
+            }
         }
     }
 

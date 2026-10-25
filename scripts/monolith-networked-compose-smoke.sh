@@ -25,16 +25,17 @@ finish() {
 }
 trap finish EXIT
 
-if [ "${WEBSITE_REUSE_MONOLITH_IMAGE:-0}" = 1 ] && docker image inspect agent-studio-monolith-smoke:local >/dev/null 2>&1; then
-  docker tag agent-studio-monolith-smoke:local "$api_image"
-else
-  docker build -f "$repo_root/backend/Dockerfile" --build-arg VERSION="$version" -t "$api_image" "$repo_root"
+if [ "${WEBSITE_REUSE_WEBSITE_IMAGES:-0}" != 1 ]; then
+  if [ "${WEBSITE_REUSE_MONOLITH_IMAGE:-0}" = 1 ] && docker image inspect agent-studio-monolith-smoke:local >/dev/null 2>&1; then
+    docker tag agent-studio-monolith-smoke:local "$api_image"
+  else
+    docker build -f "$repo_root/backend/Dockerfile" --build-arg VERSION="$version" -t "$api_image" "$repo_root"
+  fi
+  docker build -f "$repo_root/frontend/Dockerfile" --build-arg VERSION="$version" -t "$web_image" "$repo_root"
 fi
-docker build -f "$repo_root/frontend/Dockerfile" --build-arg VERSION="$version" -t "$web_image" "$repo_root"
 
 cd "$stack"
-bash setup.sh "$version" studio.test "$smoke_root/data" >/dev/null
-sed -i 's|STUDIO_CADDYFILE=./Caddyfile.public|STUDIO_CADDYFILE=./Caddyfile.private|' .env
+bash setup.sh --private "$version" studio.test "$smoke_root/data" >/dev/null
 code="$(sed -n 's/^STUDIO_BOOTSTRAP_CODE=//p' .env)"
 docker compose up -d --no-build
 url=https://studio.test

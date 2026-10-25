@@ -161,6 +161,8 @@ public sealed class WorkspaceQuotaService
             throw new ArgumentException("Quota limits must be nonnegative.");
         if (projectId is not null && !_projects.List().Any(p => p.Id == projectId && p.WorkspaceId == workspaceId))
             throw new KeyNotFoundException("Project does not belong to workspace.");
+        // Blank fields in Settings save as all-null limits; that is no limit, not an empty one.
+        if (IsEmpty(limits)) limits = null;
         lock (_gate)
         {
             Reload();
@@ -204,6 +206,9 @@ public sealed class WorkspaceQuotaService
         }
     }
 
+    private static bool IsEmpty(QuotaLimits? limits)
+        => limits is null or { ModelTokensPerWeek: null, ComputeCoreHoursPerWeek: null, HostingSlots: null };
+
     /// <summary>
     /// True when any workspace or project limit exists, or when the settings
     /// file cannot be read (limits are then unknown). Admission paths skip all
@@ -214,7 +219,8 @@ public sealed class WorkspaceQuotaService
         lock (_gate)
         {
             Reload();
-            return _state.Workspaces.Count > 0 || _state.Projects.Count > 0 || _stateReadError is not null;
+            return _state.Workspaces.Values.Any(limits => !IsEmpty(limits))
+                || _state.Projects.Values.Any(limits => !IsEmpty(limits)) || _stateReadError is not null;
         }
     }
 

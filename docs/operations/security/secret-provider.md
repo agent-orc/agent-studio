@@ -4,14 +4,75 @@ The secret provider implements Dossier
 [integrierte-plattform](../integrierte-plattform/index.html) §9, sections 7.2
 to 7.4, as card IP-6 (AGT-3222). Every part of the platform uses one interface,
 `ISecretProvider` (`backend/Features/Secrets/`). A storage adapter,
-`ISecretStore`, sits behind it. This card ships the built-in store. Adapters
-for Vault or OpenBao, cloud secret managers and 1Password implement
-`ISecretStore` in IP-9, without changes to callers.
+`ISecretStore`, sits behind it. The built-in store is the default. IP-9
+(AGT-3249) adds scope-specific Vault/OpenBao KV v2 and 1Password Connect
+adapters without changing callers. Cloud secret managers remain future work.
 
 Recorded options: IP-D7 A (built-in store plus adapters) and IP-D8 A (write
 without read). The operator had not recorded a decision, so the Dossier
 recommendation applies. This card has no reveal operation. A later card may add
 reveal with its own permission, a reason and an audit entry.
+
+IP-9 implements the same IP-D7 option A: one provider interface, with the
+built-in encrypted store as the default and external stores selected for an
+individual workspace, project, or environment scope. OIDC sign-in belongs to
+AGT-3228 and its follow-up, not IP-9 storage adapters.
+
+## External stores and selection
+
+Settings > Access > Secrets chooses storage for the currently selected scope.
+Only a person with workspace-wide secret write rights may change backend
+selection because the selected URL receives installation-held credentials.
+The selection is an owner-only installation file at
+`<TaskRepository>/.security/secrets/backends.json`; it is not project or
+repository configuration. The backend URL, KV mount or 1Password vault ID,
+credential source name, and cache TTL are saved there. Credential **values**
+come from an environment variable or a `secret://workspace/NAME` reference in
+the built-in encrypted store. A referenced credential is always fetched from
+the built-in store so routing cannot recurse. Use a separate least-privilege
+credential for each backend. The settings page shows each selected backend's
+health and reachability, with no credential value in the response.
+
+Vault and OpenBao use the KV v2 HTTP API. Secrets live under the selected
+mount at `<scope>/<name>`. The backend's KV version is the `@version` suffix.
+The adapter uses compare-and-set writes and KV metadata for native version state.
+Each value write also stores its Studio version record in the same KV v2 data
+version. A separate `__studio_metadata__` KV path holds later metadata changes
+such as last use (KV custom metadata is limited to 512 bytes). If that sidecar
+save fails after a value write, the adapter can still read and manage the
+written version using the record stored with it. KV delete revokes versions.
+A put revokes earlier versions; rotate preserves
+them. The adapter requires read, create, update, list and delete rights under
+the selected path, including its KV metadata path, plus read access to
+`<mount>/config` to verify the KV v2 mount. An absent or incompatible mount
+fails closed before an empty scope can be reported. Its token is sent only in
+the `X-Vault-Token` header.
+
+The 1Password HTTP adapter uses the documented [Connect API](https://developer.1password.com/docs/connect/connect-api-reference/), one Secure Note
+item per secret in the selected vault. It requires a Connect token with access
+to that vault, stored in the built-in store or an
+environment variable. A direct `OP_SERVICE_ACCOUNT_TOKEN` cannot authenticate
+to the Connect HTTP API; direct service account access uses 1Password's SDK
+or CLI and is not this transport. Connect exposes the
+current item, so put replaces its value and delete removes it. Historical
+version reads, rotate and version-specific revoke return a clear unsupported
+error. The item title carries `agent-studio/<scope>/<name>` and its notes
+carry Studio metadata. A JSON Patch to `notesPlain` persists last-use metadata
+without sending the concealed value again. The item revision advances for
+this metadata-only change. Value versions therefore follow the Connect item
+revision when a value is written and may have gaps; the separate stored item
+revision checks for changes outside Studio. Do not edit these managed fields
+outside Studio.
+
+External value reads are cached for the selected 1-300 second TTL. A local
+write, revoke or delete invalidates its cached values. Backend errors are
+reported without response bodies, values or credentials. One unavailable
+backend appears as an unreadable item for its scope; other scopes keep
+listing. Value operations in that scope fail closed rather than reading the
+built-in store. Switching a scope does not migrate existing secrets: copy
+them explicitly before changing the selection, and verify the new backend's
+health and contents. Audit entries for external operations use the same
+append-only audit log as the built-in store, including failures.
 
 ## References and scopes
 
@@ -24,8 +85,10 @@ deploy declarations, audit entries and logs carry references, never values.
 | Project | `secret://<project>/<name>` | `secret://memowikis/STRIPE_KEY` |
 | Project environment | `secret://<project>/<environment>/<name>` | `secret://memowikis/prod/DATABASE_URL@3` |
 
-`workspace` is reserved and cannot be a project name. Names start with a
-letter and use letters, digits, `.`, `_` or `-`, up to 64 characters.
+`workspace` is reserved and cannot be a project name. Secret names start with a
+letter and use letters, digits, `.`, `_` or `-`, up to 64 characters. Project
+names also allow internal spaces so existing watched projects can use their
+display names as scope keys.
 Deeper scopes inherit and may override. A reference to
 `secret://memowikis/stage/MAIL_KEY` resolves the environment secret, then the
 project secret, then the workspace secret. The first secret that exists
@@ -61,13 +124,56 @@ saving.
 In the `local` profile, the local operator acts as owner and is recorded as
 `human:local-operator`.
 
-## Routes
+## HTTP contracts
 
-People: `GET /api/secrets` (overview), `GET /api/secrets/audit?scope=`, and per
-scope `GET`, `POST` (put), `GET /{name}`, `POST /{name}/rotate`,
-`POST /{name}/revoke` and `DELETE /{name}` under `/api/secrets/workspace`,
-`/api/projects/{project}/secrets` and
-`/api/projects/{project}/environments/{environment}/secrets`.
+All management routes require a signed-in person (or the local operator in
+the `local` profile). Their responses contain metadata only. The scope routes
+below use one of `/api/secrets/workspace`, `/api/projects/{project}/secrets`,
+or `/api/projects/{project}/environments/{environment}/secrets` as `{base}`.
+
+| Method and path | Request | Success response |
+|---|---|---|
+| `GET /api/secrets` | None | Overview object described below. |
+| `PUT /api/secrets/backends` | Backend binding object described below. | `200` with the saved binding; selecting `builtin` removes the external binding. |
+| `GET /api/secrets/audit?scope=<scope>&limit=<n>` | Both query fields optional; default limit is 200. | `200` with `{ "entries": [...] }`, filtered to visible scopes. |
+| `GET {base}` | None | `200` with a metadata array for that exact scope. |
+| `GET {base}/{name}` | None | `200` with one metadata object. |
+| `POST {base}` | `{ "name": "API_KEY", "value": "..." }` | `201` with metadata and a `Location` header for the new item. A put also replaces an existing item. |
+| `POST {base}/{name}/rotate` | `{ "value": "..." }` | `200` with metadata. |
+| `POST {base}/{name}/revoke` | `{ "version": 2 }`, or `null` for all active versions. | `200` with metadata. |
+| `DELETE {base}/{name}` | None | `204` with no body. |
+
+The overview has `store` (`builtin` or `scoped`), `keySource`,
+`canWriteWorkspace`, `secrets`, `unreadable`, `backends`, and
+`backendHealth`. Each `secrets` item has `reference`, `scope`, `scopeKind`,
+`name`, `status`, `currentVersion`, creation/update/rotation/last-use actor
+and time fields, and a `versions` array with version, origin, active flag,
+creation/revocation/last-use metadata. No human response has a `value` field.
+Each `unreadable` item has `id`, claimed `scope` and `name`, `problem`, and
+sanitized `reason`. One failed adapter contributes an unreadable item for its
+scope while healthy scopes remain available.
+
+The backend binding request and response use `scope` (`workspace`,
+`<project>`, or `<project>/<environment>`), `kind` (`builtin`, `vault`, or
+`onepassword`), `url`, `mount` (Vault/OpenBao), `vaultId` (1Password),
+`credentialReference` (`secret://workspace/NAME`) or
+`credentialEnvironmentVariable`, and `ttlSeconds` (1 to 300). Credential
+values are never in this contract. Only workspace-wide secret writers may
+change a binding, even for a project or environment. The server saves the
+selection before checking reachability. Read `backendHealth` on a subsequent
+overview to see `{ scope, kind, state, reason }`, where state is `healthy` or
+`unavailable`; the reason is sanitized. An unavailable selection remains
+selected and fails closed for its scope.
+
+Errors use `{ "error": "<code>", "message": "<safe explanation>" }`.
+Malformed bindings and values return `400`; an unauthenticated person gets
+`401`, denied rights get `403`, a missing secret gets `404`, and a revoked
+secret gets `409`. Backend failures, including `backend-auth-failed`,
+`backend-unreachable`, `backend-misconfigured`,
+`backend-rotation-unsupported`, `backend-revoke-unsupported`, and
+`backend-version-unsupported`, return `503`. Backend response bodies and
+secret values are never copied into these messages. A backend selection is
+audited as `backend-select`; secret operations use the normal audit actions.
 
 Workloads: `POST /api/runner/secrets/resolve` with an enrolled service
 credential. The workload block names the lease the credential runs under:
@@ -80,7 +186,84 @@ credential. The workload block names the lease the credential runs under:
 A `task-run` workload names `taskKey` and `leaseId`. The server derives the
 project and environment from the live lease, not from the request. A browser
 session never receives a value, in any profile. The response carries
-`Cache-Control: no-store`.
+`Cache-Control: no-store` and has
+`{ "reference": "...", "resolvedReference": "...@<version>",
+"version": <number>, "value": "..." }`. This is the only route that returns a
+value. A missing Runner credential returns `401`; a denied or mismatched
+workload lease returns `403` and is audited. An unavailable selected backend
+returns `503` for that resolution without falling back to a parent scope.
+
+## Project environment bindings and delivery (AGT-3246)
+
+The project Deploy area's Secrets view offers Preview plus every declared
+environment. It reuses the provider's write-only add and rotate controls and
+stores only name-to-reference bindings as control metadata. An environment
+declaration's `secretRefs` names must each be bound before its job starts.
+Names are converted to uppercase container variables, with `.` and `-`
+replaced by `_`. Declarations that produce the same variable name are invalid,
+including case-only collisions. The host also rejects older queued jobs with
+colliding names before resolving any value. The resolution audit purpose is
+`deploy:<environment-id>` when it fits the 64-character provider limit;
+longer IDs use `deploy:` followed by a 16-character SHA-256 prefix of the ID.
+An older queued job with a collision reports `secret-reference-collision`.
+The binding may address the environment, its project, or the workspace;
+provider inheritance still chooses the closest existing secret. Preview
+bindings may be prepared before a deploy declaration exists.
+
+`GET /api/projects/{project}/secret-bindings/{environment}` returns bindings
+and a metadata-only preflight. Each missing entry names the reference, scope,
+and reason (`not-bound`, `not-found`, `revoked`, `unreadable`, or
+`approval-required`).
+`PUT /api/projects/{project}/secret-bindings/{environment}/{name}` accepts
+`{ "reference": "secret://...", "approve": true|false }`. Only the current
+Owner or Operator secret-management check may write. A Production binding
+also needs an interactive Owner or project production approver with
+`approve: true`; the binding records that approval. This is the single
+permission seam for AGT-3228 to replace with scope roles.
+The Secrets view uses the environment declaration's `kind` to show the
+Production approval control, even when its ID is not `production` or `prod`.
+
+Bindings are persisted under
+`<TaskRepository>/.security/secret-bindings/<key>.json`, separate from the
+provider's sealed values. `<key>` is the lowercase hexadecimal SHA-256 of
+the project ID, one LF byte, and the environment ID encoded as UTF-8, using
+the IDs passed to the binding service. Each file is a JSON array of
+`{ name, reference, boundBy, boundAt, approvedBy }` records. A rebind replaces
+the record with the same name. The service writes a temporary file in the
+same directory, sets mode 600 on Unix, and atomically replaces the file.
+Missing files mean no bindings. Back up this metadata with `TaskRepository`;
+restoring it alone does not restore the secret values or their key. No value,
+lease token, or resolved version is stored in a binding.
+
+The claim response gives the host only references and preflight problems.
+Health-only retries of an already deployed container skip secret preflight and
+resolution because they run the health check without starting a new container.
+Card preview jobs keep their isolated test-data secret handling in the preview
+run zone and skip project environment binding preflight.
+The host fails a job with missing references before touching its artifact.
+The queue stores the declaration's secret names and environment kind with each
+job. Claim preflight and workload issuance use that snapshot even if the live
+declaration later changes. For older queue records without a kind, promotion
+history supplies stage or production when available; otherwise the job uses
+the production approval rule. A storage or provider error after a claim returns
+the claimed job with `preflight-unavailable` missing references, so the host
+can report a failed deployment without receiving any secret value.
+For a container job it resolves each bound reference over the authenticated
+workload route using the claimed job's lease on the run host. It writes the
+container environment file under Linux `/dev/shm` in a private directory,
+passes that file to Docker, and removes it in `finally`. Values never enter
+the job record, release, image, control-plane deploy log or host error text.
+The existing production deployment approval remains required before the
+Production job is queued. Rotation takes effect on the next deploy.
+
+`agent-host deploy-poll` takes `<server-url> <host-id> <token-file>
+<artifact-store>`. The artifact store remains the fourth argument for static
+deployments. For compatibility, the command also accepts a fifth positional
+argument formerly used as a local secret-store path, but ignores it. Container
+deployments obtain values from `POST /api/runner/secrets/resolve` on the run
+host using the claimed job's lease; a local secret directory is no longer a
+source of deploy values. A claim with missing references reports
+`secret-reference-missing` without resolving values or starting the deploy.
 
 ## Built-in store
 
@@ -252,7 +435,6 @@ and operators can add, rotate and revoke there. Viewers see metadata only.
 ## Not in this card
 
 - External store adapters (IP-9).
-- Delivery of values into deploy steps (IP-7).
 - Migrating the Task Server credential registry metadata into this store.
   That registry records custody of host credentials, not values.
 - An OS key store (DPAPI, Keychain, Secret Service) as a KEK source. It can be

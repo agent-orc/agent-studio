@@ -73,7 +73,7 @@ import { ArchivedTaskNoticeComponent } from '../retention/components/archived-ta
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { OlderBriefOfferComponent } from './components/older-brief-offer/older-brief-offer.component';
 import { BatchDetailComponent } from '../batch-gate/batch-detail/batch-detail';
-
+import { CardEnvironmentBadgesComponent } from '../deployments/components/card-environment-badges/card-environment-badges';
 @Component({
   selector: 'app-task-detail, app-job-detail',
   standalone: true,
@@ -96,7 +96,7 @@ import { BatchDetailComponent } from '../batch-gate/batch-detail/batch-detail';
     TooltipDirective,
     OlderBriefOfferComponent,
     TaskResourceStatusComponent,
-    BatchDetailComponent,
+    BatchDetailComponent, CardEnvironmentBadgesComponent,
   ],
   providers: [
     LayoutPanesService,

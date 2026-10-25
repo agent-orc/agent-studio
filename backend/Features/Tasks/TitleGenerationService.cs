@@ -157,10 +157,11 @@ public class TitleGenerationService
         // Fallback for tests that build the service without DI. Still
         // stdin-piped; the OneShot path is just the production wiring.
         var claudePath = _configuration["ClaudeCli:Path"] ?? "claude";
+        using var workspace = new HostOneShotIsolation.Workspace();
         var psi = new ProcessStartInfo
         {
             FileName = GenericCliExecutionService.ResolveExecutable(claudePath),
-            WorkingDirectory = Directory.GetCurrentDirectory(),
+            WorkingDirectory = workspace.Path,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -175,7 +176,7 @@ public class TitleGenerationService
         var sw = Stopwatch.StartNew();
         try
         {
-            using var p = Process.Start(psi);
+            using var p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_configuration), CliTypes.Claude);
             if (p == null) return (false, null, "Process.Start returned null");
             await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
             p.StandardInput.Close();

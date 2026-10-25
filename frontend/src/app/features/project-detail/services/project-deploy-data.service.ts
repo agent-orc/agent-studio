@@ -18,6 +18,12 @@ import { EnvironmentHealthService } from '../../environment-health/services/envi
 import type { EnvironmentHealthResponse } from '../../environment-health/models/environment-health.model';
 
 export interface DeployPage<T> { items: T[]; offset: number; limit: number; total: number }
+export interface ReleaseNotes {
+  releaseId: string;
+  version: string;
+  preview: boolean;
+  notes: { cardKey: string; text: string }[];
+}
 
 /**
  * A 404 without an `error` body: the route is not on this server. AGT-3201 and
@@ -65,9 +71,20 @@ export class ProjectDeployDataService {
     return panel(this.http.get<Release[]>(`${deployRoot(projectName)}/releases`), 'Releases could not be loaded.', true);
   }
 
+  releaseNotes(projectName: string, releaseId: string): Observable<DeployPanel<ReleaseNotes>> {
+    return panel(this.http.get<ReleaseNotes>(`${deployRoot(projectName)}/releases/${encodeURIComponent(releaseId)}/notes`),
+      'Release notes could not be loaded.', true);
+  }
+
   releasePage(projectName: string, offset: number): Observable<DeployPanel<DeployPage<Release>>> {
     return panel(this.http.get<DeployPage<Release>>(`${deployRoot(projectName)}/releases/page`,
       { params: { offset, limit: 25 } }), 'Releases could not be loaded.', true);
+  }
+
+  releasePageContaining(projectName: string, releaseId: string): Observable<DeployPanel<DeployPage<Release>>> {
+    return panel(this.http.get<DeployPage<Release>>(
+      `${deployRoot(projectName)}/releases/${encodeURIComponent(releaseId)}/page`, { params: { limit: 25 } }),
+    'The selected release could not be loaded.', true);
   }
 
   /**

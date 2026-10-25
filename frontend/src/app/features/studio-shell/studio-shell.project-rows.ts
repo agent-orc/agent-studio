@@ -90,9 +90,7 @@ export function buildProjectSidebarRows(
     return value;
   };
 
-  const boardGrouped = grouped;
-
-  for (const [laneKey, lane] of Object.entries(boardGrouped)) {
+  for (const [laneKey, lane] of Object.entries(grouped)) {
     // `review` is the legacy alias of `autoReview` (see GroupedJobs) - iterating
     // it would double-count every auto-review card. `archive` is terminal.
     // Neither feeds a visible board chip, so skip both outright.

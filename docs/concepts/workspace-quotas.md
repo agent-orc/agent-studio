@@ -3,7 +3,8 @@
 Workspace owners set weekly model-token and compute core-hour limits and a
 hosting-slot limit in Settings. A project can also have its own limits. Both
 levels apply: a project cannot bypass the workspace limit. A blank field has no
-limit; zero refuses new work. Weeks start Monday at 00:00 UTC. Usage resets by
+limit; zero refuses new work. Saving all fields blank removes the limit, so
+admission stays a strict no-op. Weeks start Monday at 00:00 UTC. Usage resets by
 the read window, while the stored limits remain in force.
 
 The quota read API is `GET /api/workspaces/{id}/quota` or
@@ -50,47 +51,38 @@ flight. Hosting slots are reserved atomically: usage is checked first, and the
 slot count is checked again and the slot written under one lock.
 
 An unreadable quota settings file keeps the last good settings in memory, logs
-a warning, and marks admissions as meter unavailable. Without a last good state
-(the file is unreadable since the service started) every admission and the
-board refuse new work, and no quota write replaces the file until an owner
-repairs it.
+a warning, and marks admissions as meter unavailable.
 
 Hosting counts running project environments. Website dispatch reserves its slot
-before sending the workflow and releases it when dispatch fails. The quota
-settings persist which dispatch owns a reservation it took. A failed workflow
-releases the slot only for that owning dispatch, also after a restart and when
-the workflow created no GitHub Pages deployment; the minute reconciliation
-looks the run up again. A redeploy that takes no slot keeps the reservation
-time of the live deployment, so a failed redeploy keeps the slot and a later
-stop of the prior deployment still releases it. An inactive GitHub Pages
-deployment is also found by the minute reconciliation service, without a
+before sending the workflow and releases it when dispatch fails. A failed
+workflow releases the slot only when that dispatch created the reservation, so
+a failed redeploy keeps the slot of the live deployment. An inactive GitHub
+Pages deployment is also found by the minute reconciliation service, without a
 publish panel refresh. Refresh and dispatch use the same lock so an older run
 cannot release a newer reservation. The reconciliation runs only while a quota
 limit exists.
 
-Card previews reserve a hosting slot when their deploy job is claimed. A
-successful preview keeps the slot until its removal succeeds; a failed first
-deploy returns it. Preview removal records a stop so reconciliation also frees
-the slot after a restart.
-
 Declared environments (`docs/deployments/environments/*.json`) take a slot on
-their first deploy. An environment runs when its latest successful deploy is
-not followed by a recorded stop; a failed deploy changes nothing. The minute
-reconciliation, which runs without a limit too, and saving a limit both give
-every running declared environment its slot first, so environments deployed
-before slots were tracked count before a new limit admits work. A release, an approved promotion, and a rollback are
+their first deploy. A release, an approved promotion, and a rollback are
 admitted with a hosting slot when the target environment is not running yet;
 a refusal answers `409` with the reason. A deploy job claim reserves the slot
-atomically; a refused job stays queued for the next claim. A healthy report
-marks the environment running, a failed first deploy returns the slot, and
-`POST /api/projects/{project}/environments/{environmentId}/stop` records an
-operator-confirmed stop and frees the slot. A stop while a deploy is claimed is
-refused so that the active deploy keeps the slot. The minute reconciliation frees the
-slot of a removed declaration and the slot a claimed deploy job reserved when
-its five-minute lease expired without a report; a later claim of that job
-reserves it again. When a newer job claims a slot held by an older failed or
-interrupted job, the reservation moves to the newer job. Reconciliation of the
-older job or of a failed redeploy cannot release the slot of a live deployment. Reading the
+atomically; a refused job stays queued for the next claim. A report settles
+the reservation: a healthy report marks the environment running and keeps the
+slot, a failed first deploy returns it.
+`POST /api/projects/{project}/environments/{environmentId}/stop` answers `202`
+and queues a stop job for the environment's host; the environment stays
+running and keeps its slot until that host claims the job and reports the stop
+done. A failed or lost stop leaves the environment running and counted. The
+stop request settles any deploy claim abandoned for fifteen minutes as
+`host-lost` before it queues the stop, so that claim cannot block the host.
+The minute reconciliation frees the slot of a removed declaration and the slot of
+an unsettled claim (lease expired without a report, host lost, or aborted); a
+later claim of that job reserves it again. A settled healthy deploy is never
+released by the reconciliation. Reconciliation also reconstructs slots for
+already running declared environments before a new limit admits work, and a
+failed redeploy does not end the previous healthy deployment. A newer claim
+can take over an unsettled reservation from an older failed claim; settling
+the older claim cannot release the new deployment's slot. Reading the
 environments changes no slot. A timed promotion
 that quota refuses stays pending.
 

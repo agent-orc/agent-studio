@@ -1,11 +1,14 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace AgentStudio.Security;
 
 public static class AccessSecurityEndpoints
 {
+    private const int MaxLoginPayloadBytes = 4 * 1024;
+
     public static void MapAccessSecurityEndpoints(this WebApplication app)
     {
         var auth = app.MapGroup("/api/auth");
@@ -21,24 +24,61 @@ public static class AccessSecurityEndpoints
                 BootstrapCodeRequired: store.BootstrapRequired && RequiresBootstrapCode(context, configuration)));
         });
 
-        auth.MapPost("/bootstrap", (BootstrapRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
+        auth.MapPost("/bootstrap", (BootstrapRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration, ILoggerFactory loggers) =>
             Execute(() =>
             {
+                // The address is the client the edge resolved (Cloudflare or
+                // direct), forwarded by the trusted frontend hop (AGT-3230).
+                var audit = loggers.CreateLogger("AgentStudio.Security.Bootstrap");
                 if (RequiresBootstrapCode(context, configuration) && !MatchesBootstrapCode(request.BootstrapCode, configuration))
+                {
+                    audit.LogWarning("Owner bootstrap without a valid installer code from client {ClientAddress}", context.Connection.RemoteIpAddress);
                     throw new SecurityOperationException(403, "bootstrap-code-required", "A valid installer owner code is required.");
+                }
                 var created = store.Bootstrap(request);
+                audit.LogInformation("Owner {Username} bootstrapped from client {ClientAddress}", created.User.Username, context.Connection.RemoteIpAddress);
                 SetSessionCookies(context, created.SessionToken, created.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(created.User), created.CsrfToken));
             }));
 
-        auth.MapPost("/login", (LoginRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
-            Execute(() =>
+        auth.MapPost("/login", async (HttpContext context, AccessSecurityStore store, IConfiguration configuration,
+            NetworkedLoginAddressHealth addressHealth, ILogger<NetworkedLoginAddressHealth> logger) =>
+        {
+            if (!context.Request.HasJsonContentType()) return Results.StatusCode(StatusCodes.Status415UnsupportedMediaType);
+            if (context.Request.ContentLength > MaxLoginPayloadBytes) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+
+            // Bound the body before JSON binding, including requests without Content-Length.
+            var body = new byte[MaxLoginPayloadBytes + 1];
+            var length = 0;
+            while (length < body.Length)
             {
+                var read = await context.Request.Body.ReadAsync(body.AsMemory(length), context.RequestAborted);
+                if (read == 0) break;
+                length += read;
+            }
+            if (length > MaxLoginPayloadBytes) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+
+            LoginRequest? request;
+            try { request = JsonSerializer.Deserialize<LoginRequest>(body.AsSpan(0, length), JsonSerializerOptions.Web); }
+            catch (JsonException) { return Results.BadRequest(); }
+            if (request is null) return Results.BadRequest();
+
+            return Execute(() =>
+            {
+                if (SecurityProfiles.IsNetworked(configuration)
+                    && NetworkedLoginAddressHealth.IsInvalid(context.Connection.RemoteIpAddress, configuration))
+                {
+                    logger.LogError("login-client-address-invalid resolved={Address}", context.Connection.RemoteIpAddress);
+                    addressHealth.ReportInvalid();
+                    if (SecurityProfiles.PublicCloudflareEdgeEnabled(configuration))
+                        throw new SecurityOperationException(503, "login-client-address-invalid", "Login is temporarily unavailable.");
+                }
                 var key = ClientThrottleKey(context.Connection.RemoteIpAddress);
                 var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key);
                 SetSessionCookies(context, result.SessionToken, result.CsrfToken);
                 return Results.Ok(new AuthStatusResponse(SecurityProfiles.ActiveProfile(configuration), false, true, ToResponse(result.User), result.CsrfToken));
-            }));
+            });
+        });
 
         auth.MapPost("/invite/accept", (AcceptInvitationRequest request, HttpContext context, AccessSecurityStore store, IConfiguration configuration) =>
             Execute(() =>
@@ -243,9 +283,7 @@ public static class AccessSecurityEndpoints
 
     private static HumanPrincipal RequireHuman(HttpContext context, AccessSecurityStore store)
         => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal
-           ?? store.AuthenticateSession(
-               context.Request.Cookies[AccessSecurityStore.SessionCookieName]
-               ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName])
+           ?? store.AuthenticateSession(ReadSessionToken(context))
            ?? throw new SecurityOperationException(401, "authentication-required", "A human session is required.");
 
     private static HumanPrincipal RequireOwner(HttpContext context, AccessSecurityStore store)
@@ -260,9 +298,16 @@ public static class AccessSecurityEndpoints
     {
         if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal principal)
             return principal;
-        var token = context.Request.Cookies[AccessSecurityStore.SessionCookieName]
-                    ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName];
+        var token = ReadSessionToken(context);
         return store.AuthenticateSession(token, touch);
+    }
+
+    private static string? ReadSessionToken(HttpContext context)
+    {
+        var secureToken = context.Request.Cookies[AccessSecurityStore.SessionCookieName];
+        if (SecurityProfiles.IsNetworked(context.RequestServices.GetRequiredService<IConfiguration>()))
+            return secureToken;
+        return secureToken ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName];
     }
 
     internal static string ClientThrottleKey(IPAddress? address)
@@ -276,9 +321,10 @@ public static class AccessSecurityEndpoints
         return new IPAddress(bytes).ToString() + "/64";
     }
 
+    // Only a direct loopback connection may skip the installer code; a
+    // forwarded 127.0.0.1 comes from whoever controls the proxy header.
     private static bool RequiresBootstrapCode(HttpContext context, IConfiguration configuration)
-        => SecurityProfiles.IsNetworked(configuration)
-           && (context.Connection.RemoteIpAddress is not { } address || !IPAddress.IsLoopback(address));
+        => SecurityProfiles.IsNetworked(configuration) && !ConnectionPeer.IsDirectLoopback(context);
 
     private static bool MatchesBootstrapCode(string? candidate, IConfiguration configuration)
     {
@@ -303,10 +349,10 @@ public static class AccessSecurityEndpoints
 
     private static void SetSessionCookies(HttpContext context, string token, string csrfToken)
     {
-        // __Host--Cookies erfordern Secure+HTTPS; ueber HTTP (lokaler Dev-Betrieb
-        // via ng-serve-Proxy) wuerde der Browser sie stumm verwerfen und der Login
-        // bliebe wirkungslos. Namen und Secure-Flag folgen daher dem Schema.
-        var https = context.Request.IsHttps;
+        // Local HTTP needs a fallback cookie name. Networked sessions always
+        // use the Secure __Host- name, even if a proxy failed to mark HTTPS.
+        var https = context.Request.IsHttps
+            || SecurityProfiles.IsNetworked(context.RequestServices.GetRequiredService<IConfiguration>());
         context.Response.Cookies.Append(
             https ? AccessSecurityStore.SessionCookieName : AccessSecurityStore.InsecureSessionCookieName,
             token, SessionCookieOptions(https));

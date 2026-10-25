@@ -91,6 +91,7 @@ public static class TaskTokenSummaryFold
                 OutputTokens = usage.OutputTokens,
                 CacheReadTokens = usage.CacheReadTokens,
                 CacheCreationTokens = usage.CacheCreationTokens,
+                ReasoningTokens = usage.ReasoningTokens,
                 InputIncludesCached = usage.InputIncludesCached,
                 UsageNormalization = usage.UsageNormalization,
                 PinnedModel = string.IsNullOrWhiteSpace(usage.PinnedModel)

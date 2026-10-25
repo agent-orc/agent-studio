@@ -2763,6 +2763,99 @@ public sealed partial class TaskServerStoreTests
                 Sequence: 1, OutcomeDecision: decision), "runner-a", default);
     }
 
+    [Fact]
+    public async Task Held_primary_model_does_not_hide_a_provider_refusal_sibling_route()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("gpt-6-astra", 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await store.RegisterRunnerAsync("runner-b", Runner("instance-b"), "test", default);
+        await AdvertiseModelsAsync(store, clock, 1, 1,
+            ("codex", "gpt-6-astra", "ready"), ("codex", "gpt-5.6-sol", "ready"));
+        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "runner-b", "instance-b", 2, clock.GetUtcNow().UtcDateTime, 180, 1,
+            [new AdvertisedCapabilityDto(
+                CapabilityProtocol.ModelAcceptance("codex", "gpt-6-astra"),
+                "model-acceptance", "ready", CredentialGeneration: "login-1",
+                CredentialObservedAt: clock.GetUtcNow().UtcDateTime, ProbeSequence: 1)]),
+            "runner-b", default);
+        await HoldPrimaryOnRunnerAAsync(store, "gpt-6-astra");
+        Assert.NotEqual("claimed", (await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+
+        var other = await store.ClaimAsync(new ClaimRequest("runner-b", "instance-b"), "test", default);
+        var refusal = ProviderRefusalDecision(other.Run!.RunId, "gpt-6-astra");
+        await store.CompleteRunAsync(other.Run.RunId,
+            new CompleteRunRequest("runner-b", "instance-b", other.Lease!.LeaseId,
+                other.Lease.Fence, refusal.Outcome.ToString(),
+                IdempotencyKey: $"completion:{other.Run.RunId}:provider-refusal",
+                Sequence: 1, OutcomeDecision: refusal,
+                SalvageBranch: "refs/heads/agent-studio/salvage/runner/AGT-3258/run-1/fence-2/1111111",
+                SalvageCommitSha: "1111111111111111111111111111111111111111"), "runner-b", default);
+
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal("gpt-5.6-sol", claim.ModelFallback?.To);
+    }
+
+    [Fact]
+    public async Task Held_primary_model_does_not_hide_an_operator_selected_route()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("codex", 0), "operator", default);
+        await store.SetTaskModelAsync(project.ProjectId, task.TaskId,
+            new SetTaskModelRequest("gpt-6-sol", 1), "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        await AdvertiseModelsAsync(store, clock, 1, 1,
+            ("codex", "gpt-6-sol", "ready"), ("codex", "gpt-5.6-sol", "ready"));
+        await HoldPrimaryOnRunnerAAsync(store, "gpt-6-sol");
+        Assert.NotEqual("claimed", (await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+
+        var held = (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!;
+        await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "other-model", held.Version,
+                "Continue on the accepted model", "gpt-5.6-sol", "codex", null, "continue", "operator"),
+            "operator", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+
+        Assert.Equal("claimed", claim.Status);
+        Assert.Equal("gpt-5.6-sol", claim.ContinuationIntent?.Model);
+    }
+
+    private static async Task HoldPrimaryOnRunnerAAsync(TaskServerStore store, string model)
+    {
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("claimed", claim.Status);
+        var frame = $$$"""
+            {"type":"turn.failed","error":{"type":"invalid_request_error","message":"The {{{model}}} model is not supported when using Codex with a ChatGPT account","status":400}}
+            """;
+        var decision = ExecutionOutcomeAdapter.Classify(new ExecutionRawFacts(
+            claim.Run!.RunId, ExecutionAttemptKind.Coding, ProviderTerminalEvent: frame,
+            ExitCode: 1, DurableOutputState: DurableOutputState.Missing,
+            EffectiveCliType: "codex", EffectiveModel: model, EffectiveThinkingLevel: "high"));
+        await store.CompleteRunAsync(claim.Run.RunId,
+            new CompleteRunRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                claim.Lease.Fence, decision.Outcome.ToString(),
+                IdempotencyKey: $"completion:{claim.Run.RunId}:model-refusal",
+                Sequence: 1, OutcomeDecision: decision), "runner-a", default);
+        Assert.Contains(await store.ListEventsAsync(claim.Run.RunId, 0, default),
+            item => item.Kind == "execution.model-capability-held");
+    }
+
     private static ExecutionOutcomeDecision ProviderRefusalDecision(string runId, string model)
     {
         const string frame = """

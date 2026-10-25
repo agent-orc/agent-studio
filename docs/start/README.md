@@ -51,6 +51,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Topic | Start here |
 |---|---|
 | Product installer for Windows and Linux | [operations/setup/install.md](../operations/setup/install.md) |
+| Hosted app database binding, retained volumes, scheduled backups and restore (IP-D5 option A) | [operations/hosted-data/](../operations/hosted-data/README.md) |
 | Studio website on a dedicated VM | [operations/setup/studio-website.md](../operations/setup/studio-website.md) |
 | Contribution and style conventions for all agents | [contribution-and-style-guide.html](contribution-and-style-guide.html) |
 | Windows process spawn safety and repository guards | [operations/windows-process-spawn-safety.md](../operations/windows-process-spawn-safety.md) |
@@ -228,7 +229,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Single-host Task Server rehearsal handoff: daily health, backup verification, update, rollback, and maintenance-window checklist | [operations/setup/single-host-task-server.md](../operations/setup/single-host-task-server.md) |
 | Windows Task Server fallback runbook (Phase B slice B4: install, warm standby, sub-15-minute switch drill both directions; AGT-2735) | [operations/setup/windows-fallback-runbook.md](../operations/setup/windows-fallback-runbook.md) |
 | Hosted Wiki publication (published revision, freshness SLO, credentials, atomic promotion, typed failures, rollback drill) | [operations/setup/hosted-wiki-publication.md](../operations/setup/hosted-wiki-publication.md) |
-| Secret provider: `secret://` references, scopes, versions, rotation, revocation, write without read, built-in envelope-encrypted store, key custody, audit and log scrubbing (IP-6) | [operations/security/secret-provider.md](../operations/security/secret-provider.md) |
+| Secret provider: `secret://` references, scopes, versions, rotation, revocation, write without read, built-in envelope-encrypted store, scoped Vault/OpenBao and 1Password Connect adapters, key custody, audit and log scrubbing (IP-6, IP-9) | [operations/security/secret-provider.md](../operations/security/secret-provider.md) |
 | Common problems | [common-problems/README.md](../operations/common-problems/README.md) |
 | Background polling leaves an open HTTP request at `verify()` | [system/common-problems/open-http-request-at-verify-from-chat-polling/](../system/common-problems/open-http-request-at-verify-from-chat-polling/) |
 | Background chat polling test measure | [system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md](../system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md) |

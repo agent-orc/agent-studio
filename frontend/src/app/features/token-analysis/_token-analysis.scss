@@ -1,0 +1,72 @@
+// Shared surface grammar of the token analysis panels (AGT-3267): flat deck
+// panels, sentence-case titles, recessive axes, tabular numbers. No accent
+// stripes (R1); colours come from tokens in both themes (R5).
+@use '../../../styles/mixins' as m;
+
+@mixin panel {
+  @include m.deck-panel;
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+  min-width: 0;
+}
+
+@mixin panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--studio-spacing-1) var(--studio-spacing-2);
+
+  h3 {
+    margin: 0;
+    color: var(--studio-fg-strong);
+    font-size: 0.86rem;
+    font-weight: 600;
+  }
+
+  p {
+    margin: 0;
+    color: var(--studio-fg-muted);
+    font-size: 0.72rem;
+  }
+}
+
+@mixin legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-1) var(--studio-spacing-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--studio-fg-dim);
+  font-size: 0.72rem;
+
+  li {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--studio-spacing-1);
+  }
+}
+
+@mixin swatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+@mixin numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+@mixin axis-text {
+  fill: var(--studio-fg-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+@mixin grid-line {
+  stroke: var(--studio-border-muted);
+  stroke-width: 1;
+}

@@ -55,10 +55,10 @@ test('owner can inspect and edit a blocked workspace quota', async ({ page, requ
   await expect(panel).toContainText('AGT-1');
   await expect(panel).toContainText('Mon 12 Oct');
   const results = process.env.JOB_RESULTS_DIR;
-  if (results) await panel.screenshot({ path: path.join(results, 'workspace-quota--mocked.png') });
+  if (results) await panel.screenshot({ path: path.join(results, 'workspace-quota.png') });
   await page.evaluate(() => document.documentElement.setAttribute('data-studio-theme', 'dark'));
   await expect(page.locator('html')).toHaveAttribute('data-studio-theme', 'dark');
-  if (results) await page.getByTestId('workspace-quota').screenshot({ path: path.join(results, 'workspace-quota-dark--mocked.png') });
+  if (results) await page.getByTestId('workspace-quota').screenshot({ path: path.join(results, 'workspace-quota-dark.png') });
 });
 
 test('a blocked workspace quota shows in the board header and on waiting cards', async ({ page }) => {
@@ -99,7 +99,7 @@ test('a blocked workspace quota shows in the board header and on waiting cards',
     expect(boardReads).toBeGreaterThan(0);
     expect(perProjectReads).toEqual([]);
     const results = process.env.JOB_RESULTS_DIR;
-    if (results) await card.screenshot({ path: path.join(results, 'workspace-quota-card--mocked.png') });
+    if (results) await card.screenshot({ path: path.join(results, 'workspace-quota-card.png') });
   } finally {
     await removeCards();
   }

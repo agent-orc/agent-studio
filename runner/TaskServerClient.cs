@@ -59,6 +59,32 @@ public sealed class TaskServerClient : IDisposable
         _capacityWarning = message => Console.Error.WriteLine($"WARNING: {message}");
         _options = options;
         _deviceLoginRunnerId = options.RunnerId;
+        _http = new HttpClient(CreateServiceHandler(options))
+        {
+            BaseAddress = new Uri(options.ServerUrl),
+            Timeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds),
+        };
+        _configuredClientId = options.ClientId;
+        _usesServiceCredential = !string.IsNullOrWhiteSpace(options.AuthToken);
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("X-Principal-Consumer-Id", options.RunnerId);
+        if (!string.IsNullOrWhiteSpace(options.AuthToken) && string.IsNullOrWhiteSpace(options.AuthTokenFile))
+            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.AuthToken);
+        // X-Client-Id is attribution only. Seed it with the configured label or
+        // Runner id; authentication is supplied independently by the service
+        // credential in the networked profile.
+        SetClientId(options.ClientId ?? options.RunnerId);
+        _http.DefaultRequestHeaders.Add(Contract.TaskServerProtocol.HeaderName, RunnerOptions.ProtocolVersion.ToString());
+        _http.DefaultRequestHeaders.Add(Contract.TaskServerProtocol.ClientVersionHeaderName, typeof(TaskServerClient).Assembly.GetName().Version?.ToString(3) ?? "unknown");
+        _runtimeCapacityCache = ConfigureRuntimeCapacityCache(options);
+        RestoreRuntimeCapacityCache();
+    }
+
+    /// <summary>
+    /// TLS pin and reloading service credential of a Runner principal. The
+    /// run-target role uses the same handler for its Studio calls.
+    /// </summary>
+    internal static HttpMessageHandler CreateServiceHandler(RunnerOptions options)
+    {
         HttpMessageHandler handler = new HttpClientHandler();
         if (!string.IsNullOrWhiteSpace(options.TlsServerCertificateSha256))
         {
@@ -78,24 +104,7 @@ public sealed class TaskServerClient : IDisposable
         }
         if (!string.IsNullOrWhiteSpace(options.AuthTokenFile))
             handler = new ReloadingPrincipalCredentialHandler(options.AuthTokenFile, handler);
-        _http = new HttpClient(handler)
-        {
-            BaseAddress = new Uri(options.ServerUrl),
-            Timeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds),
-        };
-        _configuredClientId = options.ClientId;
-        _usesServiceCredential = !string.IsNullOrWhiteSpace(options.AuthToken);
-        _http.DefaultRequestHeaders.TryAddWithoutValidation("X-Principal-Consumer-Id", options.RunnerId);
-        if (!string.IsNullOrWhiteSpace(options.AuthToken) && string.IsNullOrWhiteSpace(options.AuthTokenFile))
-            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.AuthToken);
-        // X-Client-Id is attribution only. Seed it with the configured label or
-        // Runner id; authentication is supplied independently by the service
-        // credential in the networked profile.
-        SetClientId(options.ClientId ?? options.RunnerId);
-        _http.DefaultRequestHeaders.Add(Contract.TaskServerProtocol.HeaderName, RunnerOptions.ProtocolVersion.ToString());
-        _http.DefaultRequestHeaders.Add(Contract.TaskServerProtocol.ClientVersionHeaderName, typeof(TaskServerClient).Assembly.GetName().Version?.ToString(3) ?? "unknown");
-        _runtimeCapacityCache = ConfigureRuntimeCapacityCache(options);
-        RestoreRuntimeCapacityCache();
+        return handler;
     }
 
     /// <summary>
@@ -1054,34 +1063,6 @@ public sealed class TaskServerClient : IDisposable
                request, ct)
            ?? throw new TaskServerException(500, "Empty repository probe response.");
 
-    public async Task<Contract.RunnerDeviceLoginWork?> ClaimDeviceLoginAsync(
-        string runnerId, CancellationToken ct)
-    {
-        using var response = await _http.PostAsJsonAsync(
-            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/claim", new { }, ct);
-        if (response.StatusCode == HttpStatusCode.NoContent) return null;
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<Contract.RunnerDeviceLoginWork>(
-            TaskServerContractJson, ct);
-    }
-
-    public async Task ReportDeviceLoginInstructionsAsync(string runnerId, string id,
-        Contract.ReportRunnerDeviceInstructionsRequest request, CancellationToken ct)
-    {
-        using var response = await _http.PostAsJsonAsync(
-            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/{Uri.EscapeDataString(id)}/instructions",
-            request, ct);
-        response.EnsureSuccessStatusCode();
-    }
-
-    public async Task ReportDeviceLoginResultAsync(string runnerId, string id, bool verified, CancellationToken ct)
-    {
-        using var response = await _http.PostAsJsonAsync(
-            $"/api/v1/runners/{Uri.EscapeDataString(runnerId)}/device-logins/{Uri.EscapeDataString(id)}/result",
-            new Contract.ReportRunnerDeviceResultRequest(verified), ct);
-        response.EnsureSuccessStatusCode();
-    }
-
     public async Task<Contract.RunnerGitSetupWork?> ClaimGitSetupAsync(string runnerId, CancellationToken ct)
     {
         using var response = await _http.PostAsJsonAsync(
@@ -1307,6 +1288,16 @@ public sealed class TaskServerClient : IDisposable
         => await PostJsonWithoutResponseAsync(
             $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/{Uri.EscapeDataString(handle)}/instructions",
             instructions, ct);
+
+    /// <summary>The session state only; null once the Task Server no longer knows the session.</summary>
+    public async Task<string?> DeviceLoginStateAsync(string handle, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v1/runners/{Uri.EscapeDataString(_deviceLoginRunnerId)}/device-login/{Uri.EscapeDataString(handle)}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<Contract.DeviceLoginRunnerStateDto>(Json, ct))?.State;
+    }
 
     public async Task CompleteDeviceLoginAsync(string handle,
         Contract.DeviceLoginCompletionRequest completion, CancellationToken ct)

@@ -4,6 +4,7 @@ using AgentStudio.Projects;
 using AgentStudio.Registry;
 using AgentStudio.Review;
 using AgentStudio.Runner;
+using AgentStudio.Security;
 using AgentStudio.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -17,11 +18,13 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
         Path.GetTempPath(), "quota-remote-chat-" + Guid.NewGuid().ToString("N"));
 
     [Theory]
-    [InlineData(null)]
-    [InlineData("task:fallback-remote-chat/AGT-2901")]
-    [InlineData("workbench:fallback-remote-chat/AGT-W43")]
-    public async Task Unreachable_assigned_host_preserves_chat_context_on_workstation_fallback(
-        string? contextKey)
+    [InlineData(null, false, true)]
+    [InlineData("task:fallback-remote-chat/AGT-2901", false, true)]
+    [InlineData("workbench:fallback-remote-chat/AGT-W43", false, true)]
+    [InlineData(null, true, true)]
+    [InlineData(null, true, false)]
+    public async Task Chat_uses_local_fallback_only_outside_networked_profile(
+        string? contextKey, bool networked, bool runnerConfigured)
     {
         const string projectName = "fallback-remote-chat";
         var watchPath = Path.Combine(_root, "projects", projectName);
@@ -32,6 +35,7 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["TaskRepository"] = _root,
+                ["Security:Profile"] = networked ? "networked" : "local",
                 ["WatchPaths:0:Name"] = projectName,
                 ["WatchPaths:0:Path"] = watchPath,
                 ["WatchPaths:0:RootPath"] = repositoryPath,
@@ -40,10 +44,16 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
             .Build();
         var settings = new ProjectSettingsService(
             NullLogger<ProjectSettingsService>.Instance, configuration);
-        settings.SetExecutionRunner(projectName, "runner-offline", remoteExecutionEnabled: true);
+        if (runnerConfigured)
+            settings.SetExecutionRunner(projectName, "runner-offline", remoteExecutionEnabled: true);
         var projects = new ProjectRegistry(configuration, NullLogger<ProjectRegistry>.Instance);
         var project = projects.EnsureProjectForStorage(watchPath, projectName, "default");
-        projects.AddUrl(project.Id, "repo", "https://example.invalid/fallback-remote-chat.git");
+        projects.AddUrl(project.Id, "repo", "https://example.invalid/fallback-remote-chat.git",
+            actor: new StudioUser
+            {
+                Id = "usr_test_owner", Username = "test.owner", DisplayName = "Test Owner",
+                Role = StudioRoles.Owner, PasswordHash = "unused",
+            });
         var summaries = new SummaryGenerationService(
             NullLogger<SummaryGenerationService>.Instance, configuration);
         var scanner = new TaskScannerService(
@@ -73,6 +83,18 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
                 "Answer briefly.", Attachments: null,
                 Model: ModelIds.Gpt56Sol, ThinkingLevel: "medium"),
             clientId: null, context, CancellationToken.None);
+
+        if (networked)
+        {
+            Assert.False(runner.WasCalled);
+            Assert.Contains(runnerConfigured ? "unreachable" : "No remote runner is configured",
+                reply.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("cannot run on the Studio host", reply.ErrorMessage);
+            if (runnerConfigured)
+                Assert.Equal("remote", service.ResolveExecutionContext(
+                    projectName, watchPath, context).ExecutionKind);
+            return;
+        }
 
         Assert.True(runner.WasCalled);
         Assert.Contains("Ran on the workstation because runner-offline was unreachable.", reply.Text);

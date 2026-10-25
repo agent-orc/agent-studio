@@ -199,11 +199,12 @@ public sealed class SoftReasoningHostedService : BackgroundService
     /// </summary>
     private async Task<string> InvokeCliAsync(string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
     {
-        var oneShot = _oneShotRegistry?.Get("claude");
+        var cliType = ReviewDecisionOrchestrator.NormalizeReviewCliType(cli);
+        var oneShot = _oneShotRegistry?.Get(cliType);
         if (oneShot != null)
         {
             var r = await oneShot.RunAsync(new AgentStudio.Cli.CliOneShotRequest(
-                CliType: "claude", Model: model, Prompt: prompt)
+                CliType: cliType, Model: model, Prompt: prompt)
             {
                 Timeout = timeout,
                 Source = AdHocUsageSources.SoftReasoning,
@@ -218,23 +219,20 @@ public sealed class SoftReasoningHostedService : BackgroundService
             return CliOneShotCompatibility.ToClaudeResultEnvelope(r, model);
         }
 
+        using var workspace = new HostOneShotIsolation.Workspace();
         var psi = new ProcessStartInfo
         {
             FileName = cli,
+            WorkingDirectory = workspace.Path,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        psi.ArgumentList.Add("-p");
-        psi.ArgumentList.Add("--output-format");
-        psi.ArgumentList.Add("json");
-        psi.ArgumentList.Add("--model");
-        psi.ArgumentList.Add(model);
-        psi.ArgumentList.Add("--dangerously-skip-permissions");
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model);
 
-        using var p = Process.Start(psi);
+        using var p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_configuration), cliType);
         if (p == null) return string.Empty;
         try
         {

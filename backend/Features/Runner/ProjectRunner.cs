@@ -427,6 +427,7 @@ public class ProjectRunner
     public event Action<string, string>? OnModePersist;
 
     private readonly ILocalCodingAdmissionPolicy? _localCodingAdmission;
+    private readonly bool _networked;
     private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
 
     /// <summary>Workspace or project quota refusal for a new local run; null admits it.</summary>
@@ -488,7 +489,8 @@ public class ProjectRunner
         LocalRunClaimAdapter? localRunClaims = null,
         ILocalCodingAdmissionPolicy? localCodingAdmission = null,
         ReviewInputDecisionGateway? reviewInputDecisions = null,
-        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null)
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
+        bool networked = false)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -530,6 +532,7 @@ public class ProjectRunner
         _pickupLockOwner = pickupLockOwner;
         _localRunClaims = localRunClaims;
         _localCodingAdmission = localCodingAdmission;
+        _networked = networked;
         _workspaceQuota = workspaceQuota;
         _integrationLeases = integrationLeases;
         _timeline = timeline;
@@ -1453,7 +1456,8 @@ public class ProjectRunner
                 var placementHold = PickupHoldPolicy.Evaluate(new PickupHoldFacts(
                     candidate.Info, null, false, null, null, DateTime.UtcNow,
                     ProjectExecutionPolicy.ResolveExecutionLocation(_projectSettings.Get(ProjectName)),
-                    _localCodingAdmission?.AllowsLocalCoding == true));
+                    (!_networked && _localCodingAdmission?.AllowsLocalCoding == true),
+                    DenyAllLocalRuns: _networked));
                 if (placementHold?.Mechanism == PickupHoldMechanisms.ExecutionPlacement)
                 {
                     _lastPickReason = placementHold.Reason;
@@ -2533,7 +2537,12 @@ public class ProjectRunner
         {
             var info = _scanner.FindJob(jobId, Entry.Path);
             if (info == null) return RunOutcome.Reject(new RunRejection(RunRejectReason.TaskNotFound, "Job not found"));
-            if (WorktreeRunPolicy.RequiresWorktree(info.Mode)
+            var location = ProjectExecutionPolicy.ResolveExecutionLocation(_projectSettings.Get(ProjectName));
+            if (_networked && location != ExecutionLocations.Local)
+                return RunOutcome.Reject(new RunRejection(
+                    RunRejectReason.RemoteExecutionRequired,
+                    $"{RemoteExecutionRequirement.Code}: Project {ProjectName} is placed at {location}; dispatch its agent run to that runner."));
+            if (_networked || WorktreeRunPolicy.RequiresWorktree(info.Mode)
                 && _localCodingAdmission?.AllowsLocalCoding != true)
                 return RunOutcome.Reject(new RunRejection(
                     RunRejectReason.RemoteExecutionRequired,

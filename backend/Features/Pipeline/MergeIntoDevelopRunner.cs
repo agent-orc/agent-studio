@@ -329,6 +329,11 @@ public sealed partial class MergeIntoDevelopRunner
             // and must not retarget acceptance after project settings or
             // origin/HEAD change.
             var branch = _git.ResolveIntegrationBranch(developerRoot, integrationBranch);
+            // Capture publication before any gate runs. The merge outcome can be
+            // a fresh local merge even when origin already carries an equivalent
+            // delivery, so that outcome cannot establish when it was published.
+            var publishedAtStart = _git.CheckPublishedDelivery(developerRoot, branch,
+                delivery.ExpectedResultSha ?? "", ct);
 
             // From here on every git mutation runs in the integration worktree.
             // The developer checkout is only ever read: the uncommitted changes
@@ -388,6 +393,12 @@ public sealed partial class MergeIntoDevelopRunner
                     developAvailable: false,
                     mainIsAncestorOfDevelop: false);
             }
+
+            // A failed initial fetch is unknown, not proof that delivery was missing.
+            // Branch sync supplies another chance to establish the pre-gate baseline.
+            if (synchronized.Success && publishedAtStart == PublishedDeliveryContainment.Unavailable)
+                publishedAtStart = _git.CheckPublishedDelivery(developerRoot, branch,
+                    delivery.ExpectedResultSha ?? "", ct);
 
             // The synchronized local tips a refused publication restores. Every
             // local mutation below stays unpublished until the fence admits it.
@@ -514,7 +525,6 @@ public sealed partial class MergeIntoDevelopRunner
             // reservation is released as soon as this call returns.
             // Containment observed here is this attempt's own premise, not a
             // later integration that would make its gate result stale.
-            var startedContained = result.Outcome.IsAlreadyContained();
             ContainedDeliveryVerification? verification = null;
             var noOpIntegration = false;
             if (result.Outcome.IsAlreadyContained())
@@ -634,7 +644,7 @@ public sealed partial class MergeIntoDevelopRunner
             {
                 if (returnedGate is null || supersededCancellation) return false;
                 var live = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null);
-                var checkPublished = !startedContained
+                var checkPublished = publishedAtStart == PublishedDeliveryContainment.Missing
                     && cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive);
                 var published = PublishedDeliveryContainment.Unavailable;
                 if (checkPublished)
@@ -656,9 +666,7 @@ public sealed partial class MergeIntoDevelopRunner
                 if (live.Lane is TaskStates.Completed or TaskStates.Archive
                     && (cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
                         || returnedGate.Verdict == BuildTestGateVerdict.Fail)
-                    || !startedContained
-                        && cancellationSubject.Lane is not (TaskStates.Completed or TaskStates.Archive)
-                        && published == PublishedDeliveryContainment.Contained)
+                    || checkPublished && published == PublishedDeliveryContainment.Contained)
                 {
                     staleGateSubject = live;
                     return true;
@@ -699,14 +707,8 @@ public sealed partial class MergeIntoDevelopRunner
                 // A stale verdict never authorizes an unpublished merge. Report
                 // rollback failure as a repairable integration error instead of
                 // claiming routine supersession while the local ref is dirty.
-                var alreadyPublished = result.Outcome.IsFreshMerge()
-                    && !string.IsNullOrWhiteSpace(result.MergedSha)
-                    && _git.CheckPublishedDelivery(developerRoot, branch, result.MergedSha)
-                        == PublishedDeliveryContainment.Contained;
-                var clean = true;
-                var rollback = alreadyPublished
-                    ? null
-                    : RollBackSupersededPublication(repoRoot, fenceAnchors, out clean);
+                var rollback = RollBackSupersededPublication(repoRoot, fenceAnchors,
+                    out var clean, preservePublishedCommits: true);
                 _timeline?.Append(live.Folder, new TimelineEvent
                 {
                     Ts = _gateTime.GetUtcNow().UtcDateTime,
@@ -900,9 +902,16 @@ public sealed partial class MergeIntoDevelopRunner
                 if (content is null) continue;
                 const int reportLimit = 16 * 1024;
                 var bytes = System.Text.Encoding.UTF8.GetBytes(content);
-                var start = Math.Max(0, bytes.Length - reportLimit);
-                while (start < bytes.Length && (bytes[start] & 0xC0) == 0x80) start++;
-                File.WriteAllBytes(fallbackArtifact, bytes[start..]);
+                if (bytes.Length <= reportLimit) File.WriteAllBytes(fallbackArtifact, bytes);
+                else
+                {
+                    var firstEnd = reportLimit / 2;
+                    while (firstEnd > 0 && (bytes[firstEnd] & 0xC0) == 0x80) firstEnd--;
+                    var endStart = bytes.Length - reportLimit / 2;
+                    while (endStart < bytes.Length && (bytes[endStart] & 0xC0) == 0x80) endStart++;
+                    File.WriteAllBytes(fallbackArtifact,
+                        [.. bytes[..firstEnd], .. bytes[endStart..]]);
+                }
             }
         }
         catch (Exception ex)
@@ -1764,20 +1773,25 @@ public sealed partial class MergeIntoDevelopRunner
         bool MechanicalAttributionHandled);
 
     /// <summary>
-    /// Restores the synchronized local tips after a successor review generation
-    /// refused publication. Nothing reached origin, so the rollback is local.
+    /// Restores unpublished local tips after publication was refused or a gate
+    /// result became stale. A stale result preserves only exact published commits.
     /// </summary>
     private MergeIntoIntegrationResult RollBackSupersededPublication(
         string repoRoot,
         IReadOnlyDictionary<string, string> anchors,
-        out bool rolledBack)
+        out bool rolledBack,
+        bool preservePublishedCommits = false)
     {
         var failures = new List<string>();
         foreach (var (anchoredBranch, anchorSha) in anchors)
         {
             var integrationRef = _git.IntegrationLineRef(repoRoot, anchoredBranch);
-            if (string.Equals(_git.GetBranchTip(repoRoot, integrationRef), anchorSha,
-                    StringComparison.OrdinalIgnoreCase))
+            var currentSha = _git.GetBranchTip(repoRoot, integrationRef);
+            if (string.Equals(currentSha, anchorSha, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (preservePublishedCommits && currentSha is not null
+                && _git.CheckPublishedDelivery(repoRoot, anchoredBranch, currentSha,
+                    exactCommit: true) == PublishedDeliveryContainment.Contained)
                 continue;
             var reset = _git.ResetIntegrationBranch(repoRoot, anchoredBranch, anchorSha);
             if (!reset.Success) failures.Add($"{anchoredBranch}: {reset.Error ?? "reset failed"}");
