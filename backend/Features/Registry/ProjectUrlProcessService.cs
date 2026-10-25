@@ -111,6 +111,7 @@ public sealed class ProjectUrlProcessService : IProjectUrlProcessStarter, IProje
     private readonly ConcurrentDictionary<string, ProjectUrlDiagnostic> _latest = new(StringComparer.Ordinal);
     private readonly object _lifecycleGate = new();
     private int _disposed;
+    internal bool IsHostIsolated => _isHostIsolated;
 
     public ProjectUrlProcessService(
         ILogger<ProjectUrlProcessService> logger,
@@ -121,7 +122,7 @@ public sealed class ProjectUrlProcessService : IProjectUrlProcessStarter, IProje
         _logger = logger;
         _httpFactory = httpFactory;
         _portInspector = portInspector ?? new ProjectUrlPortInspector();
-        _isHostIsolated = configuration is not null && !SecurityProfiles.IsLocal(configuration);
+        _isHostIsolated = configuration is null || !SecurityProfiles.IsLocal(configuration);
     }
 
     /// <summary>

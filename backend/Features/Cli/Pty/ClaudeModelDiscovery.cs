@@ -140,7 +140,7 @@ public sealed class ClaudeModelDiscovery
             rows: 80,
             verbatimCommandLine: verbatimCommandLine,
             ct: ct,
-            networked: SecurityProfiles.IsNetworked(_config));
+            networked: !SecurityProfiles.IsLocal(_config));
 
         await pty.WaitForIdleAsync(idleMs: 1500, timeoutMs: 8000, ct);
         await DismissTrustPromptIfPresentAsync(pty, ct);

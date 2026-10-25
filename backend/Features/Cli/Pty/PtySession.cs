@@ -73,8 +73,7 @@ public sealed class PtySession : IAsyncDisposable
         CancellationToken ct = default,
         bool networked = false)
     {
-        if (networked)
-            throw new InvalidOperationException("Host interactive CLI execution is disabled in the networked profile.");
+        HostCliSpawnGuard.ValidateInteractive(networked);
 
         // Seed from the backend process's full environment first, THEN layer our
         // overrides on top. Starting from an empty dictionary would strip

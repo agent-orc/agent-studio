@@ -92,6 +92,34 @@ public sealed class WikiContentCacheTests : IDisposable
     }
 
     [Fact]
+    public void Security_writes_refuse_delivered_file_and_directory_links()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var outside = Directory.CreateDirectory(Path.Combine(
+            Path.GetTempPath(), "security-write-outside-" + Guid.NewGuid().ToString("N"))).FullName;
+        var outsideFile = Path.Combine(outside, "settings.json");
+        File.WriteAllText(outsideFile, "private content");
+        try
+        {
+            var security = Directory.CreateDirectory(Path.Combine(
+                _root, "docs", "operations", "security")).FullName;
+            File.CreateSymbolicLink(Path.Combine(security, "notes.md"), outsideFile);
+            File.CreateSymbolicLink(Path.Combine(security, "state.json"), outsideFile);
+            Directory.CreateSymbolicLink(Path.Combine(security, "linked"), outside);
+
+            Assert.False(_docs.WriteSecurityFile(ProjectName, "notes.md", "changed"));
+            Assert.False(_docs.WriteSecurityFile(ProjectName, "linked/new.md", "changed"));
+            Assert.False(_docs.WriteSecurityMeta(ProjectName, new SecurityMeta(null, null, "changed")));
+            Assert.Equal("private content", File.ReadAllText(outsideFile));
+            Assert.False(File.Exists(Path.Combine(outside, "new.md")));
+        }
+        finally
+        {
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Wiki_classification_refuses_delivered_companion_symlink()
     {
         if (OperatingSystem.IsWindows()) return;

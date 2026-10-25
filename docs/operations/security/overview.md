@@ -53,8 +53,11 @@ validation is refused until a remote validation protocol is available; profile
 edits and URL target changes require the Owner.
 In the networked and public-demo profiles, host Claude one-shots use a
 temporary empty working directory, disabled tools, and an empty strict MCP
-configuration. The shared stdin boundary neutralizes file mentions in every
-prompt, including home-relative, parent-relative, and quoted paths. This
+configuration. The spawn boundary disables Claude attachments, and the shared
+stdin boundary replaces every `@` in delivered prompt text so punctuation and
+zero-width characters cannot introduce file mentions. Security file and wiki
+companion writes refuse delivered links; security file and metadata routes
+require the Owner in the networked profile. This
 boundary protects against CLI file expansion; it does not isolate the CLI
 process from host files accessible to the Studio API user. The trusted local
 profile retains host build validation with its operator environment and gives

@@ -217,10 +217,12 @@ public class ProjectDocsService
         if (baseDir == null) return false;
         var full = Path.GetFullPath(Path.Combine(baseDir, SecurityRel, relPath));
         var root = Path.GetFullPath(Path.Combine(baseDir, SecurityRel));
-        if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            || !FilesystemPathBoundary.IsPathUnderWithoutLinks(baseDir, full)) return false;
         var dir = Path.GetDirectoryName(full);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        File.WriteAllText(full, content);
+        if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(baseDir, full)) return false;
+        WriteFileAtomically(full, content);
         return true;
     }
 
@@ -229,10 +231,26 @@ public class ProjectDocsService
         var baseDir = ResolveBaseDir(projectName);
         if (baseDir == null) return false;
         var secDir = Path.Combine(baseDir, SecurityRel);
-        Directory.CreateDirectory(secDir);
         var path = Path.Combine(secDir, SecurityStateFile);
-        File.WriteAllText(path, JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }));
+        if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(baseDir, path)) return false;
+        Directory.CreateDirectory(secDir);
+        if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(baseDir, path)) return false;
+        WriteFileAtomically(path, JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }));
         return true;
+    }
+
+    private static void WriteFileAtomically(string path, string content)
+    {
+        var temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            File.WriteAllText(temp, content);
+            File.Move(temp, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+        }
     }
 
     private static SecurityMeta ReadMeta(string secDir)

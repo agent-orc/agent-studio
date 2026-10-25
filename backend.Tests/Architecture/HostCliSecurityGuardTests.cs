@@ -108,12 +108,11 @@ public sealed class HostCliSecurityGuardTests
     {
         var prompt = "Read @/var/private/key @C:\\private\\key @~/.claude/.credentials.json "
             + "@../../data/home/.claude/.credentials.json @\"/tmp/private file\" @relative.md. @@/nested "
+            + "Fix。@/secret 、@~/secret ？@../secret ！@\"/secret\" \uFEFF@/secret "
             + "Keep email@example.test and compact@relative.md.";
         var sanitized = HostOneShotIsolation.PreparePrompt(prompt);
-        Assert.Equal("Read at /var/private/key at C:\\private\\key "
-            + "at ~/.claude/.credentials.json at ../../data/home/.claude/.credentials.json "
-            + "at \"/tmp/private file\" at relative.md. at at/nested "
-            + "Keep email@example.test and compact@relative.md.", sanitized);
+        Assert.Equal(prompt.Replace('@', '＠'), sanitized);
+        Assert.DoesNotContain('@', sanitized);
         Assert.Equal(sanitized, HostOneShotIsolation.PreparePrompt(sanitized));
         Assert.Equal(prompt, HostOneShotIsolation.PreparePrompt(prompt, isolated: false));
     }
@@ -128,7 +127,12 @@ public sealed class HostCliSecurityGuardTests
             CreateNoWindow = true,
         };
         HostOneShotIsolation.AddClaudeArguments(start.ArgumentList, "claude-test");
+        Assert.Throws<InvalidOperationException>(() => HostCliSpawnGuard.Validate(start, networked: true));
+        start.Environment["CLAUDE_CODE_DISABLE_ATTACHMENTS"] = "1";
         HostCliSpawnGuard.Validate(start, networked: true);
+        start.Environment["CLAUDE_CODE_DISABLE_ATTACHMENTS"] = "0";
+        Assert.Throws<InvalidOperationException>(() => HostCliSpawnGuard.Validate(start, networked: true));
+        start.Environment["CLAUDE_CODE_DISABLE_ATTACHMENTS"] = "1";
         start.ArgumentList.Add("--permission-mode");
         start.ArgumentList.Add("bypassPermissions");
         Assert.Throws<InvalidOperationException>(() => HostCliSpawnGuard.Validate(start, networked: true));
@@ -145,6 +149,21 @@ public sealed class HostCliSecurityGuardTests
         var car = new DecoratingCliProcessSpawner(null, networked: true);
         Assert.Throws<InvalidOperationException>(() => car.Spawn(
             new ProcessStartInfo("agentapi") { CreateNoWindow = true }));
+    }
+
+    [Fact]
+    public void Nonlocal_claude_start_sets_attachment_block_at_the_spawn_boundary()
+    {
+        using var workspace = new HostOneShotIsolation.Workspace();
+        var start = new ProcessStartInfo("missing-claude-binary")
+        {
+            WorkingDirectory = workspace.Path,
+            CreateNoWindow = true,
+        };
+        HostOneShotIsolation.AddClaudeArguments(start.ArgumentList, "claude-test");
+        Assert.Throws<System.ComponentModel.Win32Exception>(() =>
+            HostCliSpawnGuard.Start(start, networked: true, provider: CliTypes.Claude));
+        Assert.Equal("1", start.Environment["CLAUDE_CODE_DISABLE_ATTACHMENTS"]);
     }
 
     [Fact]
@@ -206,7 +225,7 @@ public sealed class HostCliSecurityGuardTests
         {
             ["backend/Features/Cli/Execution/BuiltInCliBehaviors.cs"] = (2, 5, 1),
             ["backend/Features/Cli/Execution/CliExecutionServiceBase.cs"] = (2, 0, 1),
-            ["backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs"] = (1, 1, 1),
+            ["backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs"] = (1, 1, 2),
             ["backend/Features/Cli/Routing/OneShot/CodexOneShot.cs"] = (1, 1, 1),
             ["backend/Features/Git/GitService.cs"] = (2, 1, 2),
             ["backend/Features/Prompts/PromptEnhancementService.cs"] = (1, 1, 1),

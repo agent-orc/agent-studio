@@ -66,6 +66,8 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
                      ("/api/projects/networked-smoke/build-profile", HttpMethod.Put),
                      ("/api/projects/networked-smoke/build-profile", HttpMethod.Delete),
                      ("/api/projects/networked-smoke/build-profile/validate", HttpMethod.Post),
+                     ("/api/projects/networked-smoke/security/files/notes.md", HttpMethod.Put),
+                     ("/api/projects/networked-smoke/security/meta", HttpMethod.Put),
                      ($"/api/projects/{project.Id}/urls", HttpMethod.Post),
                      ($"/api/projects/{project.Id}/urls/url-1", HttpMethod.Put),
                      ($"/api/projects/{project.Id}/urls/test", HttpMethod.Post),

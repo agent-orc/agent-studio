@@ -25,8 +25,8 @@ namespace AgentStudio.AdHoc;
 /// </summary>
 public static class AdHocClaudeInvoker
 {
-    public static string PreparePrompt(string prompt) =>
-        AgentStudio.Cli.HostOneShotIsolation.PreparePrompt(prompt);
+    public static string PreparePrompt(string prompt, bool isolated = true) =>
+        AgentStudio.Cli.HostOneShotIsolation.PreparePrompt(prompt, isolated);
 
     /// <summary>
     /// Argv tail for one-shot Haiku calls that follow the convention
@@ -34,10 +34,10 @@ public static class AdHocClaudeInvoker
     /// build the <c>ProcessStartInfo</c> themselves (working directory,
     /// claude path, stdin encoding) and append these arguments.
     /// </summary>
-    public static IReadOnlyList<string> BuildArgs(string model)
+    public static IReadOnlyList<string> BuildArgs(string model, bool isolated = true)
     {
         var arguments = new List<string>();
-        AgentStudio.Cli.HostOneShotIsolation.AddClaudeArguments(arguments, model);
+        AgentStudio.Cli.HostOneShotIsolation.AddClaudeArguments(arguments, model, networked: isolated);
         return arguments;
     }
 

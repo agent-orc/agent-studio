@@ -589,7 +589,8 @@ public sealed class SummaryGenerationService
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8
         };
-        foreach (var arg in AdHocClaudeInvoker.BuildArgs(model)) psi.ArgumentList.Add(arg);
+        var isolated = !SecurityProfiles.IsLocal(_configuration);
+        foreach (var arg in AdHocClaudeInvoker.BuildArgs(model, isolated)) psi.ArgumentList.Add(arg);
 
         try
         {
@@ -599,7 +600,7 @@ public sealed class SummaryGenerationService
             // Write the prompt up front, then close stdin so Claude can finalise
             // the request. WriteAsync is awaited so the OS pipe buffer can drain
             // before we move on to reading stdout.
-            await p.StandardInput.WriteAsync(AdHocClaudeInvoker.PreparePrompt(prompt).AsMemory(), ct);
+            await p.StandardInput.WriteAsync(AdHocClaudeInvoker.PreparePrompt(prompt, isolated).AsMemory(), ct);
             p.StandardInput.Close();
 
             var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);

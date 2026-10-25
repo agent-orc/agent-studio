@@ -73,7 +73,7 @@ public sealed class ClaudeOneShot : ICliOneShot
         // CAR owns npm-shim healing for CAR-backed agent runs. One-shot calls
         // do not use CAR yet, so retain their existing best-effort repair until
         // T4 removes this temporary non-agent invocation exception.
-        if (!QuickProbe(executable))
+        if (!QuickProbe(executable, networked))
         {
             _logger.LogWarning(
                 "claude --version failed pre-OneShot at '{Path}'; running rollback NpmShimHealer", executable);
@@ -335,11 +335,11 @@ public sealed class ClaudeOneShot : ICliOneShot
     /// 5 seconds. Used as the gate for the pre-spawn heal hook so the heal
     /// is paid for only when the install is actually broken.
     /// </summary>
-    private static bool QuickProbe(string executable)
+    private static bool QuickProbe(string executable, bool networked)
     {
         try
         {
-            using var p = Process.Start(new ProcessStartInfo
+            using var p = HostCliSpawnGuard.Start(new ProcessStartInfo
             {
                 FileName = executable,
                 Arguments = "--version",
@@ -347,7 +347,7 @@ public sealed class ClaudeOneShot : ICliOneShot
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-            });
+            }, networked, CliTypes.Claude);
             if (p is null) return false;
             if (!p.WaitForExit(5000))
             {
@@ -356,8 +356,9 @@ public sealed class ClaudeOneShot : ICliOneShot
             }
             return p.ExitCode == 0;
         }
-        catch
+        catch (Exception ex)
         {
+            SilentCatch.Note(ex, "ClaudeOneShot: version probe failed");
             return false;
         }
     }

@@ -7,8 +7,20 @@ public static class HostCliSpawnGuard
 {
     public static Process? Start(ProcessStartInfo startInfo, bool networked, string? provider = null)
     {
+        if (networked && IsClaude(startInfo, provider))
+            startInfo.Environment["CLAUDE_CODE_DISABLE_ATTACHMENTS"] = "1";
         Validate(startInfo, networked, provider);
         return Process.Start(startInfo);
+    }
+
+    private static bool IsClaude(ProcessStartInfo startInfo, string? provider) =>
+        string.Equals(provider ?? Path.GetFileNameWithoutExtension(
+            startInfo.FileName.Replace('\\', '/')), "claude", StringComparison.OrdinalIgnoreCase);
+
+    public static void ValidateInteractive(bool networked)
+    {
+        if (networked)
+            throw new InvalidOperationException("Host interactive CLI execution is disabled in the networked profile.");
     }
 
     public static void Validate(ProcessStartInfo startInfo, bool networked, string? provider = null)
@@ -17,6 +29,10 @@ public static class HostCliSpawnGuard
         var executable = (provider ?? Path.GetFileNameWithoutExtension(
             startInfo.FileName.Replace('\\', '/'))).ToLowerInvariant();
         if (executable is not ("claude" or "codex" or "gemini")) return;
+        if (executable == "claude"
+            && (!startInfo.Environment.TryGetValue("CLAUDE_CODE_DISABLE_ATTACHMENTS", out var value)
+                || value != "1"))
+            throw new InvalidOperationException("Host Claude execution requires disabled attachments in the networked profile.");
 
         var args = startInfo.ArgumentList.Count > 0
             ? startInfo.ArgumentList.ToArray()

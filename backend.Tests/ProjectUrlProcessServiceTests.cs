@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
 
 using Xunit;
 
@@ -78,6 +79,20 @@ public sealed class ProjectUrlProcessServiceTests : IDisposable
 
         info.Environment.TryGetValue("HOME", out var home);
         Assert.Equal(Environment.GetEnvironmentVariable("HOME"), home);
+    }
+
+    [Fact]
+    public void MissingProfileConfigurationDefaultsToIsolatedStartRules()
+    {
+        using var defaultService = new ProjectUrlProcessService(
+            NullLogger<ProjectUrlProcessService>.Instance, new PassiveHttpClientFactory());
+        var local = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Security:Profile"] = "local" }).Build();
+        using var localService = new ProjectUrlProcessService(
+            NullLogger<ProjectUrlProcessService>.Instance, new PassiveHttpClientFactory(), configuration: local);
+
+        Assert.True(defaultService.IsHostIsolated);
+        Assert.False(localService.IsHostIsolated);
     }
 
     [Fact]
