@@ -4,7 +4,6 @@
 # unless STUDIO_CLOUDFLARE_ALLOW_DIRECT is true, in which case the peer
 # itself is the client and its CF-Connecting-IP is ignored.
 #
-# AGT-3298 owns origin authentication and host firewall enforcement.
 {
     servers {
         import /etc/caddy/cloudflare-ips.caddy
@@ -22,6 +21,12 @@
 {$STUDIO_DOMAIN} {
     # An invalid direct-access value has no snippet and stops Caddy.
     import origin-direct-{$STUDIO_CLOUDFLARE_ALLOW_DIRECT:false}
+    tls {
+        client_auth {
+            mode require_and_verify
+            trust_pool file /etc/caddy/origin-pull/ca.pem
+        }
+    }
     encode zstd gzip
     header {
         >Strict-Transport-Security "max-age=31536000; includeSubDomains"

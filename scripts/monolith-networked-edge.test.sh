@@ -52,10 +52,22 @@ printf '<!doctype html><app-root></app-root>\n' > "$work/studio/index.html"
 cat > "$work/Caddyfile.api" <<'CADDY'
 :5031 {
 	header /api/sandboxed Content-Security-Policy "sandbox allow-scripts"
+	header /healthz X-Agent-Studio-Tag "v1"
+	header /healthz X-Agent-Studio-Commit "deadbeef"
+	respond /healthz "healthy" 200
 	respond /api/* "client={header.X-Forwarded-For} proto={header.X-Forwarded-Proto}"
 }
 CADDY
 printf 'trusted_proxies static %s/32\n' "$cloudflare_peer" > "$work/cloudflare-ips.caddy"
+mkdir -p "$work/origin-pull"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=Studio test CA' \
+  -keyout "$work/origin-pull/ca.key" -out "$work/origin-pull/ca.pem" > /dev/null 2>&1
+openssl req -newkey rsa:2048 -nodes -subj '/CN=Studio test client' \
+  -keyout "$work/origin-pull/client.key" -out "$work/origin-pull/client.csr" > /dev/null 2>&1
+printf 'extendedKeyUsage=clientAuth\n' > "$work/origin-pull/client.ext"
+openssl x509 -req -in "$work/origin-pull/client.csr" -CA "$work/origin-pull/ca.pem" \
+  -CAkey "$work/origin-pull/ca.key" -CAcreateserial -days 1 \
+  -extfile "$work/origin-pull/client.ext" -out "$work/origin-pull/client.pem" > /dev/null 2>&1
 
 docker run -d --name "$run_id-api" --network "$net" --ip "$prefix.4" --network-alias api \
   -v "$work/Caddyfile.api:/etc/caddy/Caddyfile:ro" "$caddy_image" > /dev/null
@@ -69,6 +81,7 @@ start_edge() {
     -e STUDIO_DOMAIN=studio.localhost -e STUDIO_CLOUDFLARE_ALLOW_DIRECT="$2" \
     -v "$stack/$1:/etc/caddy/Caddyfile:ro" \
     -v "$work/cloudflare-ips.caddy:/etc/caddy/cloudflare-ips.caddy:ro" \
+    -v "$work/origin-pull:/etc/caddy/origin-pull:ro" \
     "$caddy_image" > /dev/null
 }
 
@@ -76,8 +89,10 @@ start_edge() {
 request() {
   local peer="$1" path="$2"
   shift 2
-  docker run --rm --network "$net" --ip "$peer" "$caddy_image" \
+  docker run --rm --network "$net" --ip "$peer" \
+    -v "$work/origin-pull:/origin-pull:ro" "$caddy_image" \
     curl --silent --show-error --insecure --max-time 10 --dump-header - \
+    --cert /origin-pull/client.pem --key /origin-pull/client.key \
     --resolve "studio.localhost:443:$edge_ip" "$@" "https://studio.localhost$path"
 }
 
@@ -115,6 +130,12 @@ spoof=(-H 'CF-Connecting-IP: 198.51.100.7' -H 'X-Forwarded-For: 192.0.2.66')
 # rejects a direct peer unless direct access is explicitly enabled.
 start_edge Caddyfile.cloudflare false
 wait_ready "$cloudflare_peer"
+if docker run --rm --network "$net" --ip "$cloudflare_peer" "$caddy_image" \
+  curl --silent --show-error --insecure --max-time 10 \
+  --resolve "studio.localhost:443:$edge_ip" https://studio.localhost/api/whoami > /dev/null 2>&1; then
+  echo 'Cloudflare edge accepted a client without the origin-pull certificate' >&2
+  exit 1
+fi
 response="$(request "$cloudflare_peer" /api/whoami "${spoof[@]}")"
 expect 'Cloudflare peer' "$response" '^HTTP/[0-9.]* 200'
 expect 'Cloudflare peer' "$response" '^client=198\.51\.100\.7 proto=https$'
@@ -141,6 +162,9 @@ response="$(request "$cloudflare_peer" /api/sandboxed)"
 expect 'Sandboxed API route' "$response" '^content-security-policy: sandbox allow-scripts'
 reject 'Sandboxed API route' "$response" '^x-frame-options:'
 expect 'Sandboxed API route' "$response" '^strict-transport-security: max-age=31536000; includeSubDomains'
+response="$(request "$cloudflare_peer" /healthz)"
+expect 'Public health' "$response" '^HTTP/[0-9.]* 200'
+reject 'Public health' "$response" '^x-agent-studio-(tag|commit):'
 echo 'Headers: shell policy from the frontend, HSTS from the edge, API routes keep their own policy.'
 
 # Cloudflare mode with direct access explicitly allowed.

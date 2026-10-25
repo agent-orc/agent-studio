@@ -56,10 +56,12 @@ public static class RegistryEndpoints
 
     public static void MapRegistryEndpoints(this WebApplication app)
     {
-        app.MapPost("/api/projects/path-import", (ProjectPathImportRequest request, HttpContext context, ProjectRegistry projects) =>
+        app.MapPost("/api/projects/path-import", (ProjectPathImportRequest request, HttpContext context,
+            ProjectRegistry projects, IConfiguration configuration) =>
         {
-            if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
-                && human.User.Role != StudioRoles.Owner)
+            var actor = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User;
+            if ((SecurityProfiles.IsNetworked(configuration) && actor?.Role != StudioRoles.Owner)
+                || actor is not null && actor.Role != StudioRoles.Owner)
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             if (request.Mappings is null || request.Mappings.Count == 0
                 || request.Mappings.Any(mapping => string.IsNullOrWhiteSpace(mapping.WindowsPrefix)
@@ -199,11 +201,18 @@ public static class RegistryEndpoints
             AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService definitionProposals,
             IProjectRepositoryProvisioner repositoryProvisioner,
             AgentStudio.Runner.BuildProfileValidationService profileValidation,
-            TaskMutationService taskMutations, ILoggerFactory loggerFactory, CancellationToken cancellationToken) =>
+            TaskMutationService taskMutations, ILoggerFactory loggerFactory, IConfiguration configuration,
+            HttpContext context, CancellationToken cancellationToken) =>
         {
             var onboardingStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             if (body == null)
                 return Results.BadRequest(new { error = "body required" });
+            var creatingActor = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User;
+            if (SecurityProfiles.IsNetworked(configuration) && creatingActor?.Role != StudioRoles.Owner
+                && (!string.IsNullOrWhiteSpace(body.RepositoryUrl) || body.CreateRepository is not null
+                    || !string.IsNullOrWhiteSpace(body.RepositoryPath)
+                    || !string.IsNullOrWhiteSpace(body.RootPath)))
+                return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden);
             if (string.IsNullOrWhiteSpace(body.WorkspaceId))
                 return Results.BadRequest(new { error = "workspaceId is required" });
             if (workspaces.Find(body.WorkspaceId) == null)
@@ -323,7 +332,7 @@ public static class RegistryEndpoints
             var appended = false;
             try
             {
-                created = projects.Append(record);
+                created = projects.Append(record, creatingActor);
                 appended = true;
                 if (executionRunner != null)
                 {
@@ -348,6 +357,11 @@ public static class RegistryEndpoints
                 if (provisioned is not null)
                     await DeleteProvisionedRepositoryAsync(repositoryProvisioner, body.CreateRepository!, provisioned, loggerFactory);
                 return Results.BadRequest(new { error = ex.Message });
+            }
+            catch (UnauthorizedAccessException)
+            {
+                CleanupFailedCreate(record, appended, projects, workspaceManagement, loggerFactory);
+                return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden);
             }
             catch (ProjectPersistenceException ex)
             {
@@ -435,9 +449,21 @@ public static class RegistryEndpoints
             if (previous == null)
                 return Results.NotFound(new { error = $"Unknown projectId '{projId}'" });
 
-            var repositoryUrlChanged = body.RepositoryUrl != null || body.ClearRepositoryUrl == true;
+            var currentRepositoryUrl = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(previous);
+            var repositoryUrlChanged = body.ClearRepositoryUrl == true
+                ? currentRepositoryUrl is not null
+                : body.RepositoryUrl != null && !string.Equals(
+                    body.RepositoryUrl.Trim(), currentRepositoryUrl, StringComparison.Ordinal);
+            var repositoryPathChanged = body.ClearRepositoryPath == true
+                ? previous.RepositoryPath is not null
+                : body.RepositoryPath != null && !string.Equals(
+                    body.RepositoryPath.Trim(), previous.RepositoryPath, StringComparison.Ordinal);
+            var rootPathChanged = body.ClearRootPath == true
+                ? previous.RootPath is not null
+                : body.RootPath != null && !string.Equals(
+                    body.RootPath.Trim(), previous.RootPath, StringComparison.Ordinal);
             var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
-            if (repositoryUrlChanged && SecurityProfiles.IsNetworked(configuration)
+            if ((repositoryUrlChanged || repositoryPathChanged || rootPathChanged) && SecurityProfiles.IsNetworked(configuration)
                 && human?.User.Role != StudioRoles.Owner)
                 return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden);
 
@@ -603,8 +629,6 @@ public static class RegistryEndpoints
         {
             try
             {
-                // The registry checks URL existence and repository authority before
-                // stopping the process, then persists the removal under its lock.
                 var actor = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User;
                 var updated = projects.RemoveUrl(projId, urlId, actor, () =>
                 {
@@ -683,8 +707,12 @@ public static class RegistryEndpoints
         // Start/restart, inspect, and stop the owned dev-server lifecycle. The
         // bounded snapshot output powers the embed's in-place live console.
         app.MapPost(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls/{urlId}/start",
-            (string projId, string urlId, ProjectRegistry projects, IProjectUrlProcessStarter procs) =>
+            (string projId, string urlId, ProjectRegistry projects, IProjectUrlProcessStarter procs,
+                IConfiguration configuration, HttpContext context) =>
         {
+            if (SecurityProfiles.IsNetworked(configuration)
+                && (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role != StudioRoles.Owner)
+                return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden);
             try
             {
                 return projects.UseUrl<IResult>(projId, urlId, (record, url) =>
@@ -761,9 +789,13 @@ public static class RegistryEndpoints
         // with a bounded start + readiness run whose process never outlives
         // the request. Returns the diagnostic contract, never a saved URL.
         app.MapPost(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls/test",
-            async (string projId, TestProjectUrlRequest body, ProjectRegistry projects, ProjectUrlProcessService procs, CancellationToken ct) =>
+            async (string projId, TestProjectUrlRequest body, ProjectRegistry projects, ProjectUrlProcessService procs,
+                IConfiguration configuration, HttpContext context, CancellationToken ct) =>
         {
             if (body == null) return Results.BadRequest(new { error = "body required" });
+            if (body.StartRule is not null && SecurityProfiles.IsNetworked(configuration)
+                && (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role != StudioRoles.Owner)
+                return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden);
             var record = projects.FindById(projId);
             if (record == null) return Results.NotFound(new { error = $"Unknown projectId '{projId}'" });
             var candidate = new ProjectUrlRecord
@@ -1001,8 +1033,7 @@ public sealed record ProjectSummary
         StorageLocation = p.StorageLocation,
         RepositoryPath = p.RepositoryPath,
         RootPath = p.RootPath,
-        RepositoryUrl = p.Urls.FirstOrDefault(url =>
-            string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase))?.Url,
+        RepositoryUrl = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(p),
         Urls = [.. p.Urls.OrderBy(u => u.SortOrder)],
         OwnershipMappings = p.OwnershipMappings,
         WikiSourceBranch = p.WikiSourceBranch,

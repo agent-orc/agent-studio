@@ -222,7 +222,11 @@ public record ProjectsFile
     public int NextProjectIdSeq { get; init; } = 1;
     public List<ProjectRecord> Projects { get; init; } = [];
     public List<ProjectRepositoryAuditEvent> RepositoryAudit { get; init; } = [];
+    public List<ProjectStartRuleAuditEvent> StartRuleAudit { get; init; } = [];
 }
+
+public sealed record ProjectStartRuleAuditEvent(DateTime Timestamp, string ProjectId,
+    string ActorId, string Actor, string UrlId, string? BeforeDigest, string? AfterDigest);
 
 public sealed record ProjectRepositoryAuditEvent(
     DateTime Timestamp,

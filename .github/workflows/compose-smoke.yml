@@ -49,6 +49,8 @@ jobs:
           bash scripts/docker-scenario-images.test.sh
           bash scripts/monolith-networked-compose-render.test.sh
           bash scripts/monolith-networked-edge.test.sh
+          bash scripts/monolith-networked-ca.test.sh
+          bash scripts/monolith-networked-firewall.test.sh
 
       - name: Build, start, and verify onboarding stack
         run: scripts/compose-smoke-test.sh
