@@ -116,6 +116,10 @@ public class TaskFolderAccessIsolationTest
             ["backend/Features/Management/ManagementService.cs"] =
                 "Deletes isolated restore-verification staging outside the task store, never task folders.",
 
+            // One-shot Claude removes only its GUID-named scratch folder under the system temp root, never a job folder.
+            ["backend/Features/Cli/Routing/OneShot/HostOneShotIsolation.cs"] =
+                "Deletes only a temporary one-shot folder under the system temp root, never a job folder.",
+
             // AGT-3175 rolls back a project created from a template: the fresh
             // checkout never held job folders and is removed with the remote repository.
             ["backend/Features/Registry/ProjectRepositoryProvisioning.cs"] =

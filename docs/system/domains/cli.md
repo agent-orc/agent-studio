@@ -76,8 +76,8 @@ CLI execution tests.
   builder rejects tool overrides. In the networked profile, the process spawn
   boundary refuses provider starts unless they are isolated Claude one-shots
   with these controls; it also refuses host Claude session resume and host
-  Codex one-shots. Interactive PTY sessions, including model and quota probes
-  and the diagnostic CLI probe route, are refused in the networked profile.
+  Codex one-shots. Interactive model and quota PTY probes are refused in the
+  networked profile; the diagnostic CLI probe route is mapped only in local mode.
   Tool-dependent work needs a runner.
 - A CLI's model catalog is the known-model registry union live discovery. A
   model the registry knows for that CLI's vendor but the installed CLI does not

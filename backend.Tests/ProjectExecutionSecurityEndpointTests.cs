@@ -137,8 +137,7 @@ public sealed class ProjectExecutionSecurityEndpointTests : IDisposable
         using var probe = new HttpRequestMessage(HttpMethod.Get, "/api/cli/_probe/claude?cmd=hello");
         probe.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={owner.SessionToken}");
         using var probeResponse = await http.SendAsync(probe);
-        Assert.Equal(HttpStatusCode.BadRequest, probeResponse.StatusCode);
-        Assert.Contains("remote-execution-required", await probeResponse.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.NotFound, probeResponse.StatusCode);
     }
 
     public void Dispose()
