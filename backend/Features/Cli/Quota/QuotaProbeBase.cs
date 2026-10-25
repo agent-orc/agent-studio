@@ -16,12 +16,15 @@ public abstract class QuotaProbeBase : IQuotaProbe
     protected readonly ILogger _logger;
     protected readonly CliRouter _router;
     protected readonly CliEnvironment _env;
+    private readonly bool _networked;
 
-    protected QuotaProbeBase(ILogger logger, CliRouter router, CliEnvironment env)
+    protected QuotaProbeBase(ILogger logger, CliRouter router, CliEnvironment env,
+        IConfiguration? configuration = null)
     {
         _logger = logger;
         _router = router;
         _env = env;
+        _networked = configuration is not null && SecurityProfiles.IsNetworked(configuration);
     }
 
     public abstract string CliType { get; }
@@ -80,7 +83,8 @@ public abstract class QuotaProbeBase : IQuotaProbe
             app: resolvedPath,
             cwd: scratch,
             extraEnv: CliEnvironment.ProbeEnvironment(),
-            ct: ct);
+            ct: ct,
+            networked: _networked);
         await pty.WaitForIdleAsync(idleMs: 1500, timeoutMs: initialIdleMs, ct);
 
         if (!string.IsNullOrEmpty(sendKeys))
@@ -127,7 +131,8 @@ public abstract class QuotaProbeBase : IQuotaProbe
             app: resolvedPath,
             cwd: scratch,
             extraEnv: CliEnvironment.ProbeEnvironment(),
-            ct: ct);
+            ct: ct,
+            networked: _networked);
         await pty.WaitForIdleAsync(idleMs: 1500, timeoutMs: initialIdleMs, ct);
 
         foreach (var step in steps)

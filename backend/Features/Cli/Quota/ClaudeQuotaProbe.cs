@@ -96,7 +96,7 @@ public sealed class ClaudeQuotaProbe : QuotaProbeBase
         CliEnvironment env,
         IConfiguration configuration,
         TimeProvider? time = null)
-        : base(logger, router, env)
+        : base(logger, router, env, configuration)
     {
         _configuration = configuration;
         _time = time ?? TimeProvider.System;

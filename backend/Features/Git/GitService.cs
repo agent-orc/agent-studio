@@ -2913,6 +2913,9 @@ public partial class GitService
         if (diff.Length > 60_000) diff = diff[..60_000] + "\n[truncated]";
 
         var intent = ReadTaskIntent(jobId, watchPath);
+        if (SecurityProfiles.IsNetworked(_config))
+            return new GenerateMessageResult(null,
+                "Remote runner required: host Codex commit-message review is disabled in the networked profile.");
         var codexPath = _config["CodexCli:Path"] ?? "codex";
         var model = ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
         var prompt = _prompts.Render(RuntimePromptService.CommitMessage,
@@ -2951,7 +2954,7 @@ public partial class GitService
         var sw = Stopwatch.StartNew();
         try
         {
-            using var p = Process.Start(psi)!;
+            using var p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_config), CliTypes.Codex)!;
             await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
             p.StandardInput.Close();
             var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);

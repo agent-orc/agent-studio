@@ -963,7 +963,7 @@ public static class ProjectSettingsEndpoints
         // and the canonical pickupMode + executionLocation pair.
         app.MapPut("/api/projects/{projectName}/execution-runner", (string projectName, SetExecutionRunnerRequest req,
             ProjectSettingsService settings, TaskScannerService scanner, ClientIdentityStore clients,
-            TaskRunnerService runners) =>
+            TaskRunnerService runners, HttpContext context, IConfiguration configuration) =>
         {
             var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
@@ -1004,6 +1004,16 @@ public static class ProjectSettingsEndpoints
                         && req.RemoteExecutionEnabled != false)
                         pickupMode ??= PickupModes.Auto;
                 }
+
+                var currentLocation = ProjectExecutionPolicy.ResolveExecutionLocation(settings.Get(projectName));
+                var targetLocation = req.RemoteExecutionEnabled == false
+                    ? ExecutionLocations.Local
+                    : executionLocation ?? currentLocation;
+                var role = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role;
+                if (!ProjectExecutionSecurityPolicy.MaySelectLocation(
+                        SecurityProfiles.IsNetworked(configuration), role, currentLocation, targetLocation))
+                    return Results.Json(new { code = "owner-required", error = "Only the Owner can turn off remote execution in the networked profile." },
+                        statusCode: StatusCodes.Status403Forbidden);
 
                 settings.SetExecutionSettings(
                     projectName,

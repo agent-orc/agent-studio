@@ -8,6 +8,7 @@ import { ProjectDeployHistoryComponent } from '../project-deploy-history/project
 import { DeployRunDrawerComponent, type DeployRunActionState } from '../deploy-run-drawer/deploy-run-drawer';
 import { ProjectPipelinePanelComponent } from '../project-pipeline-panel/project-pipeline-panel.component';
 import { EnvironmentHealthPanelComponent } from '../../../environment-health';
+import { ProjectEnvironmentOverviewComponent } from '../project-environment-overview/project-environment-overview.component';
 import { ProjectOperationsComponent } from '../project-operations/project-operations';
 import { OperationsCardLookupService } from '../../state/operations-card-lookup.service';
 import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
@@ -33,7 +34,7 @@ import {
   type ArtifactReleaseLookup,
 } from '../../state/deploy-area.model';
 
-export type DeployView = 'overview' | 'releases' | 'pipeline' | 'history' | 'steps' | 'operations' | 'tools';
+export type DeployView = 'overview' | 'releases' | 'pipeline' | 'history' | 'steps' | 'runbooks' | 'operations' | 'tools';
 
 const IDLE: DeployRunActionState = { busy: null, error: null };
 
@@ -43,7 +44,7 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
   imports: [
     ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent,
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
-    ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent,
+    ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
     ProjectOperationsComponent, HostedDataPanelComponent,
   ],
   templateUrl: './project-deploy-area.html',

@@ -167,7 +167,8 @@ public readonly record struct PickupHoldFacts(
     DateTime NowUtc,
     string? ExecutionLocation = null,
     bool AllowsLocalCoding = false,
-    string? SuggestedRemoteRunnerId = null);
+    string? SuggestedRemoteRunnerId = null,
+    bool DenyAllLocalRuns = false);
 
 /// <summary>
 /// Pure policy: is this card held in its pickup lane, and by what.
@@ -251,14 +252,14 @@ public static class PickupHoldPolicy
 
         if (string.Equals(facts.ExecutionLocation, ExecutionLocations.Local, StringComparison.OrdinalIgnoreCase)
             && !facts.AllowsLocalCoding
-            && AgentStudio.Runner.WorktreeRunPolicy.RequiresWorktree(task.Mode))
+            && (facts.DenyAllLocalRuns || AgentStudio.Runner.WorktreeRunPolicy.RequiresWorktree(task.Mode)))
         {
             var destination = string.IsNullOrWhiteSpace(facts.SuggestedRemoteRunnerId)
                 ? "<runner-id>"
                 : facts.SuggestedRemoteRunnerId;
             return Hold(
                 PickupHoldMechanisms.ExecutionPlacement,
-                $"Project {task.ProjectName} is placed at local execution, but local coding is disabled on this orchestrator.",
+                $"Project {task.ProjectName} is placed at local execution, but local agent execution is disabled on this orchestrator.",
                 laneEntry, facts.NowUtc, unsatisfiable: true,
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.RouteToRemoteRunner,

@@ -46,6 +46,13 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     bool GuidedResolved = false, string? RetryStep = null, string? RetryOfJobId = null,
     DateTime? FirstClaimedAt = null, RunTargetHosting? Hosting = null)
 {
+    public string? RunbookName { get; init; }
+    public string? RunbookRunId { get; init; }
+    public string? RunbookDefinitionCommit { get; init; }
+    public IReadOnlyList<string> RunbookSteps { get; init; } = [];
+    public IReadOnlyDictionary<string, string> RunbookVariables { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyDictionary<string, string> RunbookSecretVariables { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyList<RunbookStepResult> RunbookResults { get; init; } = [];
     public string? Tenant { get; init; }
     public IReadOnlyDictionary<string, string> ResolvedVariables { get; init; } = new Dictionary<string, string>();
     public IReadOnlyDictionary<string, string> SecretVariableRefs { get; init; } = new Dictionary<string, string>();
@@ -79,6 +86,8 @@ public sealed record PreviewJobSpec(string Project, string CardKey, string Sourc
     public string? Dockerfile { get; init; }
 }
 
+public sealed record RunbookStepResult(int Index, bool Success);
+
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
 
@@ -90,7 +99,8 @@ public sealed record ProjectEnvironmentsResponse(string Project, IReadOnlyList<P
     IReadOnlyList<DeploymentFailureCard> FailureCards, IReadOnlyList<RunTargetRemovalRecord>? RunTargetRemovals = null);
 
 public sealed record DeployReportRequest(string LeaseToken, bool Healthy, string? Evidence,
-    IReadOnlyList<DeployStepResult>? Steps = null, string? ScreenshotBase64 = null);
+    IReadOnlyList<DeployStepResult>? Steps = null, string? ScreenshotBase64 = null,
+    IReadOnlyList<RunbookStepResult>? RunbookResults = null);
 public sealed record DeployStepLogRequest(string LeaseToken, string Step, string Message);
 public sealed record DeployLeaseRequest(string LeaseToken);
 public sealed record DeployClaimRequest(string HostId);
@@ -109,6 +119,8 @@ public sealed partial class ProjectEnvironmentService
     public const string DeclarationDirectory = "docs/deployments/environments";
     /// <summary>After this, the claiming host may claim its job again (it restarted).</summary>
     public static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(5);
+    /// <summary>Runbook scripts may take longer than an artifact deploy; the host caps the entire run at ten minutes.</summary>
+    public static readonly TimeSpan RunbookLeaseDuration = TimeSpan.FromMinutes(12);
     /// <summary>A claim without report or reclaim for this long fails as <c>host-lost</c>.</summary>
     public static readonly TimeSpan HostLostAfter = TimeSpan.FromMinutes(15);
     private const int MaxClaims = 3;
@@ -555,7 +567,7 @@ public sealed partial class ProjectEnvironmentService
                 var history = state.History.Where(row => row.EnvironmentId == item.Id)
                     .Reverse().Take(30).Select(row => row.Item).ToArray();
                 var latest = history.FirstOrDefault();
-                var pending = state.Jobs.LastOrDefault(job => job.EnvironmentId == item.Id && !job.IsStop
+                var pending = state.Jobs.LastOrDefault(job => job.EnvironmentId == item.Id && !job.IsStop && job.RunbookName is null
                     && (job.Status is "queued" or "claimed"));
                 return new ProjectEnvironmentView(item, latest?.Artifact,
                     latest is null ? "unknown" : latest.Status is "failed" or "stopped" ? latest.Status : "healthy",
@@ -719,6 +731,35 @@ public sealed partial class ProjectEnvironmentService
         }
     }
 
+    public DeployJob? QueueRunbook(string project, EnvironmentDeclaration target, string runId,
+        string definitionCommit, string name,
+        IReadOnlyList<string> steps, IReadOnlyDictionary<string, string> variables,
+        IReadOnlyDictionary<string, string> secretVariables, string actor)
+    {
+        lock (_gate)
+        {
+            var current = Declarations(project);
+            var declaration = current?.FirstOrDefault(item => item.Id == target.Id);
+            if (declaration is null) return null;
+            var state = Load(project);
+            if (state.Jobs.Any(job => job.EnvironmentId == target.Id && job.Status is "queued" or "claimed"))
+                return null;
+            var now = _clock.GetUtcNow().UtcDateTime;
+            var job = new DeployJob(Guid.NewGuid().ToString("N"), project, target.Id, declaration.TargetHostId,
+                "", declaration.Template, declaration.Destination, declaration.HealthUrl,
+                declaration.SecretRefs.Concat(secretVariables.Values).Distinct(StringComparer.Ordinal).ToArray(),
+                declaration.ContainerPort, null, "queued", now, RequestedBy: actor)
+            {
+                RunbookName = name, RunbookRunId = runId, RunbookDefinitionCommit = definitionCommit,
+                RunbookSteps = steps.ToArray(), RunbookVariables = variables,
+                RunbookSecretVariables = secretVariables,
+            };
+            state.Jobs.Add(job);
+            Save(project, state);
+            return job;
+        }
+    }
+
     /// <summary>Queues a card build and deployment on the same fenced host queue as release deployments.</summary>
     public DeployJob QueuePreview(PreviewJobSpec spec)
     {
@@ -794,7 +835,7 @@ public sealed partial class ProjectEnvironmentService
                 Status = "cancelled", LeaseToken = null, FinishedAt = now,
                 Evidence = aborted ? AbortedEvidence : null,
             };
-            if (aborted && !job.IsStop)
+            if (aborted && !job.IsStop && job.RunbookName is null)
                 state.History.Add(new(job.EnvironmentId, now,
                     new(now, "failed", job.Artifact, job.PreviousArtifact, AbortedEvidence)));
             var promotion = job.Tenant is null ? state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact
@@ -994,7 +1035,7 @@ public sealed partial class ProjectEnvironmentService
                 && IsProductionHost(hostId);
             if (states.Any(item => item.State.Jobs.Any(job =>
                     job.HostId == hostId && job.Destination != RunTargetVocabulary.EdgeDestination
-                    && job.Status == "claimed" && job.ClaimedAt > now - LeaseDuration)))
+                    && job.Status == "claimed" && job.ClaimedAt > now - LeaseFor(job))))
                 return null;
             foreach (var (project, state) in states)
             {
@@ -1002,7 +1043,7 @@ public sealed partial class ProjectEnvironmentService
                 foreach (var job in state.Jobs.Where(item => item.HostId == hostId &&
                     item.Destination != RunTargetVocabulary.EdgeDestination &&
                     (!productionHost || item.Kind is not ("preview" or "preview-remove")) &&
-                    (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration)).ToArray())
+                    (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseFor(item))).ToArray())
                 {
                     if (job.Status == "claimed" && job.Claims >= MaxClaims)
                     {
@@ -1019,7 +1060,7 @@ public sealed partial class ProjectEnvironmentService
                     // project's original case. Never use the filename as its identity.
                     var verification = !string.Equals(job.Project, project, StringComparison.OrdinalIgnoreCase)
                         ? new ReleaseVerification(null)
-                        : job.IsStop ? new ReleaseVerification(job)
+                        : job.IsStop || job.RunbookName is not null ? new ReleaseVerification(job)
                         : VerifyRelease(job.Project, job, state, requireVerifiedRelease);
                     if (verification.Retryable)
                     {
@@ -1033,7 +1074,7 @@ public sealed partial class ProjectEnvironmentService
                         continue;
                     }
                     var reserved = false;
-                    if (!verified.IsStop && verified.Kind != "preview-remove"
+                    if (!verified.IsStop && verified.Kind != "preview-remove" && verified.RunbookName is null
                         && !TryAdmitClaim(project, verified, out reserved)) continue;
                     var claimed = verified with
                     {
@@ -1042,7 +1083,8 @@ public sealed partial class ProjectEnvironmentService
                     };
                     state.Jobs[state.Jobs.IndexOf(job)] = claimed;
                     Save(project, state);
-                    if (!claimed.IsStop) _quota?.RecordDeployStart(project, claimed.Id, claimed.EnvironmentId);
+                    if (!claimed.IsStop && claimed.RunbookName is null)
+                        _quota?.RecordDeployStart(project, claimed.Id, claimed.EnvironmentId);
                     return claimed;
                 }
             }
@@ -1139,9 +1181,9 @@ public sealed partial class ProjectEnvironmentService
             var job = state.Jobs.FirstOrDefault(item => item.Id == jobId && item.Status == "claimed"
                 && item.LeaseToken is not null && CryptographicOperations.FixedTimeEquals(
                     System.Text.Encoding.UTF8.GetBytes(item.LeaseToken), System.Text.Encoding.UTF8.GetBytes(leaseToken)));
-            if (job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseDuration)
+            if (job is null || job.ClaimedAt < _clock.GetUtcNow().UtcDateTime - LeaseFor(job))
                 return (null, false);
-            var verification = job.IsStop ? new ReleaseVerification(job)
+            var verification = job.IsStop || job.RunbookName is not null ? new ReleaseVerification(job)
                 : VerifyRelease(project, job, state, requireVerifiedRelease);
             var verified = verification.Job;
             if (verified is null) return (null, verification.Retryable);
@@ -1261,7 +1303,7 @@ public sealed partial class ProjectEnvironmentService
                 if (advanced) Save(project, state);
                 return false;
             }
-            var verification = job.IsStop ? new ReleaseVerification(job)
+            var verification = job.IsStop || job.RunbookName is not null ? new ReleaseVerification(job)
                 : VerifyRelease(project, job, state, requireVerifiedRelease);
             if (verification.Retryable)
             {
@@ -1281,21 +1323,27 @@ public sealed partial class ProjectEnvironmentService
             }
             var now = _clock.GetUtcNow().UtcDateTime;
             // Schema 1 hosts cannot renew against an older backend. Their token remains valid until reclaim.
-            if (job.SshSteps.Count > 0 && job.ClaimedAt < now - LeaseDuration) return false;
+            if ((job.RunbookName is not null || job.SshSteps.Count > 0)
+                && job.ClaimedAt < now - LeaseFor(job)) return false;
             if (job.IsStop)
             {
                 ReportStop(project, state, job, report.Healthy, now);
                 Save(project, state);
                 return true;
             }
+            var results = job.RunbookName is null ? Array.Empty<RunbookStepResult>() : report.RunbookResults?
+                .Take(job.RunbookSteps.Count).Where(item => item.Index >= 0 && item.Index < job.RunbookSteps.Count)
+                .ToArray() ?? [];
+            var validResults = job.RunbookName is null || results.Select((item, index) => item.Index == index).All(value => value);
             var expectedSteps = job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}").ToArray();
             var reportedSteps = report.Steps ?? [];
-            if (reportedSteps.Count > expectedSteps.Length || reportedSteps.Where((step, index) =>
+            if (job.RunbookName is null && (reportedSteps.Count > expectedSteps.Length || reportedSteps.Where((step, index) =>
                     step.Name != expectedSteps[index]).Any() || reportedSteps.SkipLast(1).Any(step => !step.Succeeded)
                 || report.Healthy && (reportedSteps.Count != expectedSteps.Length
-                    || reportedSteps.Any(step => !step.Succeeded)))
+                    || reportedSteps.Any(step => !step.Succeeded))))
                 return false;
-            var success = report.Healthy;
+            var success = report.Healthy && validResults && (job.RunbookName is null
+                || results.Length == job.RunbookSteps.Count && results.All(item => item.Success));
             string? screenshotUrl = null;
             if (success && job.Kind == "preview")
             {
@@ -1305,15 +1353,21 @@ public sealed partial class ProjectEnvironmentService
             if (success && job.Kind == "preview-remove")
                 DeletePreviewScreenshot(project, job.CardKey!);
             // Host output is deliberately not accepted as an audit string. Keep a bounded status code only.
-            var evidence = report.Evidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
+            var evidence = !success && report.Healthy ? "deploy-step-failed"
+                : report.Evidence is "health-http-failed" or "deploy-step-failed" or "health-ok"
                 ? report.Evidence : success ? "health-ok" : "deploy-step-failed";
             // The report settles the reservation: a healthy deploy keeps its slot as a running
             // environment, a failed one returns it below. The reconciler only releases unsettled claims.
             state.Jobs[state.Jobs.IndexOf(job)] = job with
             {
                 Status = success ? "healthy" : "failed", LeaseToken = null, FinishedAt = now, Evidence = evidence,
-                ReservedSlot = false, StepResults = reportedSteps, ScreenshotUrl = screenshotUrl,
+                ReservedSlot = false, StepResults = reportedSteps, ScreenshotUrl = screenshotUrl, RunbookResults = results,
             };
+            if (job.RunbookName is not null)
+            {
+                Save(project, state);
+                return true;
+            }
             var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
@@ -1435,12 +1489,16 @@ public sealed partial class ProjectEnvironmentService
             changed = true;
             // A lost stop leaves the environment as it was: running and counted.
             if (job.IsStop) continue;
+            if (job.RunbookName is not null) continue;
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, "failed", job.Artifact, job.PreviousArtifact, HostLostEvidence)));
             if (!job.GuidedFailure) ClosePromotionForResult(state, lost, success: false, now);
         }
         return changed;
     }
+
+    private static TimeSpan LeaseFor(DeployJob job)
+        => job.RunbookName is null ? LeaseDuration : RunbookLeaseDuration;
 
     /// <summary>
     /// The declaration the artifact last deployed healthy with, so a rollback

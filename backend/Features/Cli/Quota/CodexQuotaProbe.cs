@@ -98,8 +98,9 @@ public sealed class CodexQuotaProbe : QuotaProbeBase
     public CodexQuotaProbe(
         ILogger<CodexQuotaProbe> logger,
         CliRouter router,
-        CliEnvironment env)
-        : base(logger, router, env) { }
+        CliEnvironment env,
+        IConfiguration? configuration = null)
+        : base(logger, router, env, configuration) { }
 
     public override string CliType => CliTypes.Codex;
 

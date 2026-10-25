@@ -112,22 +112,28 @@ public static class ProjectOperatorDashboardEndpoints
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         app.MapPost("/api/deploy/jobs/claim", (HttpContext context, DeployClaimRequest request,
-            ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration) =>
+            ProjectEnvironmentService environments, DeployService deploy, RunbookService runbooks, IConfiguration configuration) =>
         {
             if (SecurityProfiles.IsNetworked(configuration) &&
                 (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
                  || principal.RunnerId != request.HostId))
                 return Results.Forbid();
             var job = environments.Claim(request.HostId, requireVerifiedRelease: true);
-            if (job is not null) deploy.SyncAfterHostCall(job.Project);
+            if (job is not null)
+            {
+                deploy.SyncAfterHostCall(job.Project);
+                runbooks.SyncAfterHostCall(job.Project);
+            }
             return Results.Ok(job);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         app.MapPost("/api/deploy/jobs/{project}/{jobId}/report", (string project, string jobId,
-            DeployReportRequest request, ProjectEnvironmentService environments, DeployService deploy) =>
+            DeployReportRequest request, ProjectEnvironmentService environments, DeployService deploy,
+            RunbookService runbooks) =>
         {
             if (!environments.Report(project, jobId, request, requireVerifiedRelease: true)) return Results.Conflict();
             deploy.SyncAfterHostCall(project);
+            runbooks.SyncAfterHostCall(project);
             return Results.Ok();
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 

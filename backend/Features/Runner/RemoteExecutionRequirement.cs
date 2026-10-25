@@ -4,7 +4,7 @@ namespace AgentStudio.Runner;
 public static class RemoteExecutionRequirement
 {
     public const string Code = "remote-execution-required";
-    public const string Message = "This operation requires a remote executor; local build, test and coding execution is disabled on the orchestrator.";
+    public const string Message = "This operation requires a remote executor; local agent execution is disabled on the orchestrator.";
 }
 
 /// <summary>Explicit injection seam for deterministic runner tests. Production defaults to deny.</summary>
