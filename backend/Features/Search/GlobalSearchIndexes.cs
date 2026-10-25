@@ -173,6 +173,7 @@ public sealed class GlobalSearchIndexes(IConfiguration config, GitService git, I
             UseShellExecute = false, CreateNoWindow = true
         }};
         foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
+        AgentStudio.Git.HostGitProcessHardening.Apply(process.StartInfo);
         process.Start();
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();

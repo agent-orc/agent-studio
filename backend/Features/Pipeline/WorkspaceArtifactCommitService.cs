@@ -818,6 +818,7 @@ public sealed class WorkspaceArtifactCommitService
         foreach (var arg in args) psi.ArgumentList.Add(arg);
 
         using var tracked = AgentStudio.Git.GitChildProcessRegistry.Track(cwd);
+        AgentStudio.Git.HostGitProcessHardening.Apply(psi);
         using var p = Process.Start(psi)!;
         if (stdin != null)
         {
