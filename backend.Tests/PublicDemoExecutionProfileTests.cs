@@ -307,7 +307,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
                 [ExecutionAdmissionPath.Continue] = 31,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
-                [ExecutionAdmissionPath.Preview] = 32,
+                [ExecutionAdmissionPath.Preview] = 31,
                 [ExecutionAdmissionPath.PostStep] = 21,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
