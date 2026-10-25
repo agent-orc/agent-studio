@@ -1,0 +1,83 @@
+@use '../../token-analysis' as ta;
+
+:host { display: block; min-width: 0; }
+.tc { @include ta.panel; }
+.tc__head { @include ta.panel-head; }
+.tc__legend { @include ta.legend; }
+.tc__swatch { @include ta.swatch; }
+
+.tc__swatch--incomplete {
+  border: 1px dashed var(--studio-fg-muted);
+  background: transparent;
+}
+
+.tc__plot {
+  position: relative;
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- plot height, not spacing */
+  height: 160px;
+  padding-left: var(--studio-spacing-6);
+  border-bottom: 1px solid var(--studio-border);
+  background:
+    linear-gradient(var(--studio-border-muted), var(--studio-border-muted)) 0 0 / 100% 1px no-repeat,
+    linear-gradient(var(--studio-border-muted), var(--studio-border-muted)) 0 50% / 100% 1px no-repeat;
+}
+
+.tc__axis {
+  @include ta.numeric;
+  position: absolute;
+  left: 0;
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.tc__axis--top { top: 0; }
+.tc__axis--mid { top: calc(50% - 5px); }
+
+.tc__columns {
+  display: flex;
+  align-items: flex-end;
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- 2px surface gap between chart fills */
+  gap: 2px;
+  height: 100%;
+}
+
+.tc__column {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-width: 2px;
+  height: 100%;
+}
+
+.tc__column:hover { background: var(--studio-bg-hover); }
+
+.tc__stack {
+  display: flex;
+  flex-direction: column-reverse;
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- 2px surface gap between chart fills */
+  gap: 2px;
+  overflow: hidden;
+  border-radius: 4px 4px 0 0;
+}
+
+.tc__segment {
+  flex-basis: 0;
+  min-height: 1px;
+}
+
+.tc__column--incomplete .tc__stack {
+  opacity: 0.55;
+  outline: 1px dashed var(--studio-fg-muted);
+  outline-offset: 1px;
+}
+
+.tc__ticks {
+  @include ta.numeric;
+  display: flex;
+  justify-content: space-between;
+  padding-left: var(--studio-spacing-6);
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+}

@@ -159,6 +159,8 @@ public class TaskFolderAccessIsolationTest
             // projects back into backend/ (the scan covers them again):
             ["backend/Features/Cli/Execution/NpmShimHealer.cs"] =
                 "Temporary legacy/OneShot npm staging cleanup under the user npm directory, not the job-folder tree; removed in AGT-2373.",
+            ["backend/Features/Projects/HostedData/HostedVolumeBackupEngine.cs"] =
+                "AGT-3248 stages, swaps and prunes hosted-app volume backup and restore directories under the hosted data root, never a lane or task folder.",
             ["backend/Features/Secrets/BuiltIn/BuiltInSecretStore.cs"] =
                 "AGT-3222 removes a revoked or replaced secret item directory under the secret store root (tombstone move, then delete), never a lane or task folder.",
             ["backend/Features/Cli/Execution/RunLogStore.cs"] =

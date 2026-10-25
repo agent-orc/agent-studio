@@ -99,6 +99,7 @@
         @defer (when overlays.projectShellRail() === 'token-usage') {
           @if (overlays.projectShellRail() === 'token-usage') {
             <app-project-token-usage-panel [projectName]="projShell" />
+            <app-token-analysis-view [fixedProject]="projShell" />
           }
         }
         @defer (when overlays.projectShellRail() === 'agent-activity') {

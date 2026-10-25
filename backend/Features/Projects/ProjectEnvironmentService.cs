@@ -15,6 +15,7 @@ public sealed record EnvironmentDeclaration(
 {
     public IReadOnlyDictionary<string, TenantDeployTarget> TenantTargets { get; init; }
         = new Dictionary<string, TenantDeployTarget>();
+    public HostedDataDeclaration Data { get; init; } = HostedDataDeclaration.Empty;
     public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
     public IReadOnlyList<ProjectArtifactDefinition> Artifacts { get; init; } = [];
@@ -48,6 +49,7 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     public string? Tenant { get; init; }
     public IReadOnlyDictionary<string, string> ResolvedVariables { get; init; } = new Dictionary<string, string>();
     public IReadOnlyDictionary<string, string> SecretVariableRefs { get; init; } = new Dictionary<string, string>();
+    public HostedDataDeclaration Data { get; init; } = HostedDataDeclaration.Empty;
     public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
     public IReadOnlyList<ProjectArtifactDefinition> Artifacts { get; init; } = [];
@@ -76,7 +78,6 @@ public sealed record PreviewJobSpec(string Project, string CardKey, string Sourc
     public string? ArtifactPath { get; init; }
     public string? Dockerfile { get; init; }
 }
-
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -110,6 +111,7 @@ public sealed partial class ProjectEnvironmentService
     public static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(5);
     /// <summary>A claim without report or reclaim for this long fails as <c>host-lost</c>.</summary>
     public static readonly TimeSpan HostLostAfter = TimeSpan.FromMinutes(15);
+    private const int MaxClaims = 3;
     private static readonly Regex Identifier = new("^[a-z0-9][a-z0-9._-]{0,63}$", RegexOptions.Compiled);
     private static readonly Regex SecretIdentifier = new("^[A-Za-z][A-Za-z0-9._-]{0,63}$", RegexOptions.Compiled);
     private static readonly Regex Commit = new(@"\A[0-9a-f]{40}\z", RegexOptions.Compiled);
@@ -117,6 +119,8 @@ public sealed partial class ProjectEnvironmentService
     private const string HostLostEvidence = "host-lost";
     private const string AbortedEvidence = "deploy-aborted";
     private readonly object _gate = new();
+    private readonly Dictionary<string, (string Signature, IReadOnlyList<EnvironmentDeclarationFile> Files)>
+        _productionDeclarationCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly IConfiguration _configuration;
     private readonly ReleaseArtifactRegistry _registry;
     private readonly DeployStore _deployStore;
@@ -207,7 +211,7 @@ public sealed partial class ProjectEnvironmentService
                 failures.Add(new(Path.GetFileNameWithoutExtension(file), null, $"{Path.GetFileName(file)}: {ex.Message}"));
             }
         }
-        IReadOnlyList<EnvironmentDeclarationFile> parsed = [.. ParseDeclarationFiles(readable), .. failures];
+        IReadOnlyList<EnvironmentDeclarationFile> parsed = [.. ParseDeclarationFiles(readable, project), .. failures];
         var yamlPath = Path.Combine(root, ProjectPreparationPaths.Definition);
         if (!File.Exists(yamlPath)) return parsed;
         try { return ApplyDefinition(parsed, File.ReadAllText(yamlPath)); }
@@ -238,7 +242,7 @@ public sealed partial class ProjectEnvironmentService
             if (_git.GetFileAtCommit(root, commit, path) is not { } json) return null;
             files.Add((Path.GetFileName(path), json));
         }
-        var parsed = ParseDeclarationFiles(files);
+        var parsed = ParseDeclarationFiles(files, project);
         if (parsed.FirstOrDefault(item => item.Error is not null) is { Error: { } error }) throw new JsonException(error);
         var yaml = _git.GetFileAtCommit(root, commit, ProjectPreparationPaths.Definition);
         var effective = yaml is null ? parsed : ApplyDefinition(parsed, yaml);
@@ -260,6 +264,14 @@ public sealed partial class ProjectEnvironmentService
                 read.Issues.Select(item => $"{item.Path}: {item.Message}")));
         if (definition.Deploy.Any(item => item.Step is not ("static-site" or "container")))
             throw new JsonException("Schema 2 release deployment only supports static-site and container SSH steps.");
+        if (definition.Deploy.Select(item => item.Artifact).Distinct(StringComparer.Ordinal).Count() > 1)
+            throw new JsonException("Schema 2 release deployment requires one artifact for all steps.");
+        if (definition.Deploy.Select(item => item.Step).Distinct(StringComparer.Ordinal).Count() > 1)
+            throw new JsonException("Schema 2 release deployment requires one artifact kind for all steps.");
+        if (definition.Deploy.Any(item => item.Step == "container" && definition.Deploy.Any(site =>
+                site.Step == "static-site" && site.Target == item.Target && site.Directory is { } directory
+                && item.ComposeFile?.StartsWith(directory.TrimEnd('/') + "/", StringComparison.Ordinal) == true)))
+            throw new JsonException("A compose file cannot be inside a static site directory.");
         var output = new List<EnvironmentDeclarationFile>();
         foreach (var environment in definition.Environments.Where(item =>
                      !files.Any(file => PipelineMigrationPolicy.EnvironmentFor(file.Declaration?.Kind ?? "") == item.Name)))
@@ -274,7 +286,7 @@ public sealed partial class ProjectEnvironmentService
                 || item.Environments.Contains(environment.Name, StringComparer.Ordinal)).ToArray();
             var id = environment.Name == "staging" ? "stage" : environment.Name;
             var declaration = new EnvironmentDeclaration(id, environment.Name, id, first.Target!,
-                first.HealthUrl ?? "", first.Step == "static-site" ? "static" : "container",
+                first.HealthUrl ?? "", "ssh-v2",
                 first.Directory ?? "1", first.HealthUrl,
                 environment.Protected ? "person" : "stage-healthy-10m",
                 variables.Where(item => item.Secret is not null && item.Tenants.Count == 0
@@ -313,12 +325,15 @@ public sealed partial class ProjectEnvironmentService
             }
             output.Add(file with { Declaration = legacy with
             {
+                Template = "ssh-v2",
                 SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
                 Protected = environment.Protected,
                 Automatic = phase.Automatic, Requires = phase.Requires,
             } });
         }
-        return output;
+        return output.OrderBy(item => item.Declaration?.Kind switch
+            { null => 3, "stage" => 0, "production" => 1, _ => 2 })
+            .ThenBy(item => item.EnvironmentId, StringComparer.Ordinal).ToArray();
     }
 
     private bool IsWatched(string project)
@@ -349,7 +364,7 @@ public sealed partial class ProjectEnvironmentService
                 throw new JsonException($"Environment {name} has an invalid removal tombstone.");
             if (!tombstones.Add(id.GetString()!)) throw new JsonException("Duplicate environment removal tombstone.");
         }
-        var parsed = ParseDeclarationFiles(files);
+        var parsed = ParseDeclarationFiles(files, project);
         if (parsed.FirstOrDefault(item => item.Error is not null) is { Error: { } error }) throw new JsonException(error);
         var declarations = parsed.Select(item => item.Declaration!).ToArray();
         if (declarations.Any(item => tombstones.Contains(item.Id)))
@@ -357,7 +372,7 @@ public sealed partial class ProjectEnvironmentService
         return (DeclarationSource.Read, declarations, tombstones);
     }
 
-    private static IReadOnlyList<EnvironmentDeclarationFile> ParseDeclarationFiles(IEnumerable<(string Name, string Json)> files)
+    private static IReadOnlyList<EnvironmentDeclarationFile> ParseDeclarationFiles(IEnumerable<(string Name, string Json)> files, string project)
     {
         var result = new List<EnvironmentDeclarationFile>();
         foreach (var (file, json) in files)
@@ -375,6 +390,7 @@ public sealed partial class ProjectEnvironmentService
                     continue;
                 }
                 var declaration = ParseDeclaration(file, json);
+                HostedDataBinding.DeclaredSecretNames(project, declaration.Id, declaration.SecretRefs, declaration.Data);
                 result.Add(new(declaration.Id, declaration, null));
             }
             catch (JsonException ex)
@@ -522,7 +538,7 @@ public sealed partial class ProjectEnvironmentService
             HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)),
             guidedFailure, timeout,
             edgeHosted ? RunTargetHostingDeclaration.Parse(value, Path.GetFileName(file), healthUrl, secrets) : null)
-        { TenantTargets = targets };
+        { TenantTargets = targets, Data = HostedDataDeclaration.Parse(value, template, id, Path.GetFileName(file)) };
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -578,8 +594,18 @@ public sealed partial class ProjectEnvironmentService
         }
     }
 
-    public bool HasVerifiedArtifact(string project, string artifact, string commit, string template)
-        => _registry.Verified(project, commit, artifact, template) is not null;
+    public static string? ArtifactTemplate(string template, IReadOnlyList<ProjectDeployStep> steps)
+        => template == "ssh-v2" ? steps.FirstOrDefault()?.Step switch
+        {
+            "container" => "container",
+            "static-site" => "static",
+            _ => null,
+        } : template;
+
+    public bool HasVerifiedArtifact(string project, string artifact, string commit,
+        EnvironmentDeclaration declaration)
+        => ArtifactTemplate(declaration.Template, declaration.SshSteps) is { } template
+            && _registry.Verified(project, commit, artifact, template) is not null;
 
     /// <summary>
     /// Queues stage for a gate-built artifact and returns the stage job. The
@@ -605,9 +631,10 @@ public sealed partial class ProjectEnvironmentService
             var production = declarations?.FirstOrDefault(item => item.Kind == "production");
             if (stage is null || production is null || !IsDeclared(current, stage.Id) || !IsDeclared(current, production.Id))
                 return null;
-            if (stage.Template == "static" && (variables?.Count > 0 || secretVariableRefs?.Count > 0)) return null;
-            if (!HasVerifiedArtifact(project, artifact, commit, stage.Template)
-                || !HasVerifiedArtifact(project, artifact, commit, production.Template)) return null;
+            if (ArtifactTemplate(stage.Template, stage.SshSteps) == "static"
+                && (variables?.Count > 0 || secretVariableRefs?.Count > 0)) return null;
+            if (!HasVerifiedArtifact(project, artifact, commit, stage)
+                || !HasVerifiedArtifact(project, artifact, commit, production)) return null;
             var state = Load(project);
             if (HasOpenPromotion(state, artifact)) return null;
             RequireQuota(project, stage.Id);
@@ -951,7 +978,6 @@ public sealed partial class ProjectEnvironmentService
     {
         lock (_gate)
         {
-            var productionHost = IsProductionHost(hostId);
             var root = StoreRoot();
             if (!Directory.Exists(root)) return null;
             var now = _clock.GetUtcNow().UtcDateTime;
@@ -963,6 +989,9 @@ public sealed partial class ProjectEnvironmentService
                 if (AdvanceQueue(state)) Save(project, state);
                 states.Add((project, state));
             }
+            var productionHost = states.Any(item => item.State.Jobs.Any(job => job.HostId == hostId
+                && job.Kind is ("preview" or "preview-remove") && job.Status is ("queued" or "claimed")))
+                && IsProductionHost(hostId);
             if (states.Any(item => item.State.Jobs.Any(job =>
                     job.HostId == hostId && job.Destination != RunTargetVocabulary.EdgeDestination
                     && job.Status == "claimed" && job.ClaimedAt > now - LeaseDuration)))
@@ -975,6 +1004,16 @@ public sealed partial class ProjectEnvironmentService
                     (!productionHost || item.Kind is not ("preview" or "preview-remove")) &&
                     (item.Status == "queued" || item.Status == "claimed" && item.ClaimedAt <= now - LeaseDuration)).ToArray())
                 {
+                    if (job.Status == "claimed" && job.Claims >= MaxClaims)
+                    {
+                        state.Jobs[state.Jobs.IndexOf(job)] = job with
+                        { Status = "failed", LeaseToken = null, FinishedAt = now, Evidence = HostLostEvidence };
+                        state.History.Add(new(job.EnvironmentId, now,
+                            new(now, "failed", job.Artifact, job.PreviousArtifact, HostLostEvidence)));
+                        if (!job.GuidedFailure) ClosePromotionForResult(state, job, success: false, now);
+                        Save(project, state);
+                        continue;
+                    }
                     if (retryableEnvironments.Contains(job.EnvironmentId)) continue;
                     // The queue filename is normalized; provenance keeps the
                     // project's original case. Never use the filename as its identity.
@@ -1057,8 +1096,25 @@ public sealed partial class ProjectEnvironmentService
     {
         foreach (var project in _scanner.GetWatchPaths())
         {
-            var files = DeclarationFiles(project.Name);
-            if (files is null) continue;
+            var root = _git.ResolveRepoRootForProject(project.Name);
+            if (root is null) continue;
+            var directory = Path.Combine(root, "docs", "deployments", "environments");
+            var paths = Directory.Exists(directory)
+                ? Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly)
+                : Enumerable.Empty<string>();
+            var yaml = Path.Combine(root, ProjectPreparationPaths.Definition);
+            var signature = string.Join('|', paths.Append(yaml).Order(StringComparer.Ordinal).Select(path =>
+            {
+                var info = new FileInfo(path);
+                return path + ":" + (info.Exists ? $"{info.Length}:{info.LastWriteTimeUtc.Ticks}" : "missing");
+            }));
+            if (!_productionDeclarationCache.TryGetValue(project.Name, out var cached)
+                || cached.Signature != signature)
+            {
+                cached = (signature, DeclarationFiles(project.Name) ?? []);
+                _productionDeclarationCache[project.Name] = cached;
+            }
+            var files = cached.Files;
             if (files.Any(file => file.Error is not null)) return true;
             if (files.Any(file => file.Declaration is { Kind: "production" } declaration
                 && string.Equals(declaration.TargetHostId, hostId, StringComparison.OrdinalIgnoreCase)))
@@ -1096,6 +1152,13 @@ public sealed partial class ProjectEnvironmentService
             }
             return (verified, false);
         }
+    }
+
+    public DeployJob? PreviewJob(string project, string jobId)
+    {
+        lock (_gate)
+            return Load(project).Jobs.FirstOrDefault(job => job.Id == jobId && job.Kind.StartsWith("preview", StringComparison.Ordinal))
+                is { } job ? Sanitize(job) : null;
     }
 
     private readonly record struct ReleaseVerification(DeployJob? Job, bool Retryable = false);
@@ -1145,13 +1208,6 @@ public sealed partial class ProjectEnvironmentService
             Save(project, state);
             return true;
         }
-    }
-
-    public DeployJob? PreviewJob(string project, string jobId)
-    {
-        lock (_gate)
-            return Load(project).Jobs.FirstOrDefault(job => job.Id == jobId && job.Kind.StartsWith("preview", StringComparison.Ordinal))
-                is { } job ? Sanitize(job) : null;
     }
 
     /// <summary>
@@ -1224,7 +1280,8 @@ public sealed partial class ProjectEnvironmentService
                 job = verified;
             }
             var now = _clock.GetUtcNow().UtcDateTime;
-            if (job.ClaimedAt < now - LeaseDuration) return false;
+            // Schema 1 hosts cannot renew against an older backend. Their token remains valid until reclaim.
+            if (job.SshSteps.Count > 0 && job.ClaimedAt < now - LeaseDuration) return false;
             if (job.IsStop)
             {
                 ReportStop(project, state, job, report.Healthy, now);
@@ -1399,6 +1456,7 @@ public sealed partial class ProjectEnvironmentService
             {
                 Template = deployed.Template, Destination = deployed.Destination,
                 HealthUrl = deployed.HealthUrl, SecretRefs = deployed.SecretRefs, ContainerPort = deployed.ContainerPort,
+                Data = deployed.Data,
                 Hosting = deployed.Hosting ?? current.Hosting,
                 SshSteps = deployed.SshSteps, Variables = deployed.Variables, Artifacts = deployed.Artifacts,
             }
@@ -1491,12 +1549,15 @@ public sealed partial class ProjectEnvironmentService
                 && (row.Item.Status is "healthy" or "rolled-back")).LastOrDefault()?.Item.Artifact;
         var job = new DeployJob(Guid.NewGuid().ToString("N"), project, declaration.Id,
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
-            declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
+            declaration.HealthUrl,
+            HostedDataBinding.DeclaredSecretNames(project, declaration.Id, declaration.SecretRefs, declaration.Data),
+            declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
             IsRollback: rollback, RequestedBy: actor, ReleaseId: releaseId, RollbackOfJobId: rollbackOfJobId,
             GuidedFailure: declaration.GuidedFailure, RetryStep: retryStep, RetryOfJobId: retryOfJobId,
             Hosting: declaration.Hosting)
-        { Tenant = tenant, SshSteps = declaration.SshSteps, Variables = declaration.Variables, Artifacts = declaration.Artifacts };
+        { Tenant = tenant, Data = declaration.Data, SshSteps = declaration.SshSteps,
+            Variables = declaration.Variables, Artifacts = declaration.Artifacts };
         state.Jobs.Add(job);
         return job;
     }

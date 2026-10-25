@@ -64,6 +64,7 @@ public static class ReleaseSnapshot
                 item.SshSteps,
                 tenantTargets = item.TenantTargets.OrderBy(target => target.Key, StringComparer.Ordinal)
                     .Select(target => new { target.Key, target.Value.Destination, target.Value.HealthUrl }),
+                volumes = item.Data.Volumes.OrderBy(volume => volume.Name, StringComparer.Ordinal),
             }),
         });
 
@@ -92,7 +93,7 @@ public static class ReleaseSnapshot
                 .Select(item => new { item.Id, item.Protected, item.Automatic, item.Requires }),
             environments = declarations.OrderBy(item => item.Id, StringComparer.Ordinal).Select(item => new
             {
-                item.Id, secretRefs = item.SecretRefs.Order(StringComparer.Ordinal),
+                item.Id, secretRefs = item.SecretRefs.Order(StringComparer.Ordinal), item.Data.Database,
             }),
         });
 

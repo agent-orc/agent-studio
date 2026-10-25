@@ -31,7 +31,8 @@ public static class DeployJobReleaseBinding
         if (record is null || declaration is null || record.Release.ProjectId != project
             || record.Release.CreatedAtUtc > job.CreatedAt
             || !record.Release.ArtifactDigests.Contains(job.Artifact, StringComparer.Ordinal)
-            || registry.VerifiedForDeployment(project, record.Release.CommitSha, job.Artifact, job.Template) is null)
+            || ProjectEnvironmentService.ArtifactTemplate(job.Template, job.SshSteps) is not { } artifactTemplate
+            || registry.VerifiedForDeployment(project, record.Release.CommitSha, job.Artifact, artifactTemplate) is null)
             return null;
         var tenant = record.Tenants.FirstOrDefault(item => item.Name == job.Tenant);
         if (job.Tenant is not null && (tenant is null
@@ -47,9 +48,11 @@ public static class DeployJobReleaseBinding
             .ToDictionary(item => item!.Name, item => item!.Value!, StringComparer.Ordinal);
         var secrets = variables.Where(item => item!.Secret is not null)
             .ToDictionary(item => item!.Name, item => item!.Secret!, StringComparer.Ordinal);
-        var expectedSecretRefs = expected.SecretRefs.Concat(secrets.Values).ToHashSet(StringComparer.Ordinal);
+        var expectedSecretRefs = HostedDataBinding.DeclaredSecretNames(project, expected.Id,
+            expected.SecretRefs, expected.Data).Concat(secrets.Values).ToHashSet(StringComparer.Ordinal);
         if (expected.Template != job.Template || expected.Destination != job.Destination
             || expected.HealthUrl != job.HealthUrl || expected.ContainerPort != job.ContainerPort
+            || JsonSerializer.Serialize(expected.Data) != JsonSerializer.Serialize(job.Data)
             || JsonSerializer.Serialize(expected.SshSteps) != JsonSerializer.Serialize(job.SshSteps)
             || !SameVariables(plain, job.ResolvedVariables)
             || !SameVariables(secrets, job.SecretVariableRefs)

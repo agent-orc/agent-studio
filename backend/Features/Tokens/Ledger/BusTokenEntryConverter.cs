@@ -31,6 +31,7 @@ internal static class BusTokenEntryConverter
                 OutputTokens = SafeInt(t.Output),
                 CacheReadTokens = SafeInt(t.CacheRead ?? 0),
                 CacheCreationTokens = SafeInt(t.CacheWrite ?? 0),
+                ReasoningTokens = t.ReasoningOutput is { } reasoning ? SafeInt(reasoning) : null,
                 ThinkingLevel = t.ThinkingLevel,
                 CliType = t.CliType,
                 Host = t.Host,

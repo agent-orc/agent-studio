@@ -14,6 +14,7 @@ import {
 } from '../../../../tokens';
 import { formatTokens } from '../overview-pane/overview-pane-formatters';
 import { TokenModelIdentityComponent } from './token-model-identity/token-model-identity.component';
+import { openCardTokenAnalysis } from '../../../../token-analysis/token-analysis-navigation.util';
 
 /** The task-wide total (every model summed over every run). */
 interface TaskTotal {
@@ -69,6 +70,15 @@ export class PipelineTokenUsageComponent {
   readonly summary = input<PipelineModelUsageSummary | null>(null);
   /** False when the single run's pipeline footer already represents the task total. */
   readonly showTaskTotal = input(true);
+  /** Card identity for the token analysis drill-down link (AGT-3267); no link without it. */
+  readonly analysisProject = input<string | null>(null);
+  readonly analysisJobId = input<string | null>(null);
+
+  openAnalysis(): void {
+    const project = this.analysisProject();
+    const jobId = this.analysisJobId();
+    if (project && jobId) openCardTokenAnalysis(project, jobId);
+  }
 
   /** Runs oldest-first (Run #1 -> latest), matching the run switcher. */
   readonly runs = computed<PipelineRunTokenUsage[]>(() => this.summary()?.runs ?? []);
