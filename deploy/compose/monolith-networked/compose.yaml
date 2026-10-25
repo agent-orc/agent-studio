@@ -3,7 +3,7 @@ name: agent-studio-website
 services:
   api:
     image: ghcr.io/agent-orc/agent-studio-api:v${STUDIO_VERSION:?Run setup.sh with a release version}
-    restart: unless-stopped
+    restart: on-failure
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       TaskRepository: /data/workspace
@@ -24,7 +24,7 @@ services:
 
   frontend:
     image: ghcr.io/agent-orc/agent-studio-web:v${STUDIO_VERSION}
-    restart: unless-stopped
+    restart: on-failure
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
     volumes:
@@ -37,7 +37,8 @@ services:
 
   edge:
     image: caddy:2-alpine
-    restart: unless-stopped
+    # The boot unit starts all three services after the Docker firewall is installed.
+    restart: on-failure
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
       # Caddyfile.cloudflare only: true admits peers outside Cloudflare's ranges.
@@ -59,6 +60,8 @@ services:
 
 networks:
   website:
+    driver_opts:
+      com.docker.network.bridge.name: br-studio-web
     ipam:
       config:
         - subnet: 172.30.83.0/24

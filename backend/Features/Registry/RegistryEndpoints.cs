@@ -449,8 +449,7 @@ public static class RegistryEndpoints
             if (previous == null)
                 return Results.NotFound(new { error = $"Unknown projectId '{projId}'" });
 
-            var currentRepositoryUrl = previous.Urls.FirstOrDefault(url =>
-                string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase))?.Url;
+            var currentRepositoryUrl = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(previous);
             var repositoryUrlChanged = body.ClearRepositoryUrl == true
                 ? currentRepositoryUrl is not null
                 : body.RepositoryUrl != null && !string.Equals(
@@ -1034,8 +1033,7 @@ public sealed record ProjectSummary
         StorageLocation = p.StorageLocation,
         RepositoryPath = p.RepositoryPath,
         RootPath = p.RootPath,
-        RepositoryUrl = p.Urls.FirstOrDefault(url =>
-            string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase))?.Url,
+        RepositoryUrl = RemoteProjectRepositoryResolver.ResolveRepositoryUrl(p),
         Urls = [.. p.Urls.OrderBy(u => u.SortOrder)],
         OwnershipMappings = p.OwnershipMappings,
         WikiSourceBranch = p.WikiSourceBranch,

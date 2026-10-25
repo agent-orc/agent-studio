@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -46,6 +47,41 @@ public class ProjectRegistryTests : IDisposable
 
     private ProjectRegistry Build(ILogger<ProjectRegistry> logger) =>
         new(_config, logger);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Name_mutations_wait_for_project_gate_without_holding_registry_gate(bool shortCode)
+    {
+        var registry = Build();
+        var project = registry.EnsureProjectForStorage(
+            Path.Combine(_root, "projects", "lock-order"), "Lock Order", DefaultWorkspace.Id);
+        var gate = typeof(ProjectRegistry).GetMethod("UrlOperationGate", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(registry, [project.Id])!;
+        using var started = new ManualResetEventSlim();
+        Task<ProjectRecord>? mutation = null;
+        Monitor.Enter(gate);
+        try
+        {
+            mutation = Task.Factory.StartNew(() =>
+            {
+                started.Set();
+                return shortCode ? registry.SetShortCode(project.Id, "LOCK")
+                    : registry.Rename(project.Id, "Lock Order Updated");
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            Assert.True(started.Wait(TimeSpan.FromSeconds(2)));
+            Thread.Sleep(100);
+            var read = Task.Factory.StartNew(() => registry.FindById(project.Id),
+                CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            Assert.True(read.Wait(TimeSpan.FromSeconds(2)), "Name mutation held the registry gate while waiting for the project gate.");
+            Assert.NotNull(read.Result);
+        }
+        finally
+        {
+            Monitor.Exit(gate);
+        }
+        Assert.True(mutation!.Wait(TimeSpan.FromSeconds(2)));
+    }
 
     [Fact]
     public void ExistingInvalidFile_FailsClosed_AndPreservesOriginalBytes()

@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 using RClient = Runner::AgentRunner.TaskServerClient;
@@ -25,6 +26,22 @@ namespace AgentStudio.Tests;
 public sealed class NetworkedSecurityEndpointTests : IDisposable
 {
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-networked-endpoints-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public void Invalid_login_address_health_expires_and_renews_on_injected_clock()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 25, 8, 0, 0, TimeSpan.Zero));
+        var health = new NetworkedLoginAddressHealth(clock);
+        Assert.True(health.Healthy);
+        health.ReportInvalid();
+        Assert.False(health.Healthy);
+        clock.Advance(TimeSpan.FromMinutes(4));
+        health.ReportInvalid();
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.False(health.Healthy);
+        clock.Advance(TimeSpan.FromMinutes(4));
+        Assert.True(health.Healthy);
+    }
 
     [Fact]
     public async Task Enrolled_runner_acquires_and_completes_a_fake_task_on_the_networked_stack()
@@ -210,16 +227,39 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, (await trustedClient.SendAsync(forwarded)).StatusCode);
     }
 
-    [Fact]
-    public async Task Login_from_trusted_proxy_address_marks_health_unhealthy()
+    [Theory]
+    [InlineData("172.30.83.3")]
+    [InlineData("192.168.1.12")]
+    [InlineData("100.64.2.3")]
+    public async Task Login_from_private_address_is_refused_on_public_edge(string address)
     {
-        using var factory = BuildFactory("172.30.83.3", publicCloudflareEdge: true);
+        using var factory = BuildFactory(address, publicCloudflareEdge: true);
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
         client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
         var response = await client.PostAsJsonAsync("/api/auth/login",
             new { username = "owner", password = "wrong" });
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.False(factory.Services.GetRequiredService<NetworkedLoginAddressHealth>().Healthy);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/healthz")).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1")]
+    [InlineData("192.168.1.12")]
+    [InlineData("100.64.2.3")]
+    [InlineData("172.30.83.3")]
+    public async Task Private_address_can_sign_in_without_public_cloudflare_edge(string address)
+    {
+        using var factory = BuildFactory(address);
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", null));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+        var response = await client.PostAsJsonAsync("/api/auth/login",
+            new { username = "owner", password = "correct horse battery staple!" });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.False(factory.Services.GetRequiredService<NetworkedLoginAddressHealth>().Healthy);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/healthz")).StatusCode);
     }
@@ -298,6 +338,11 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
             new { repositoryUrl = "https://example.test/changed.git" }));
         Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Put, $"/api/projects/{project.Id}",
             new { repositoryPath = "/data/projects/unrelated" }));
+        var labelled = projects.EnsureProjectForStorage(Path.Combine(_workspace, "labelled-project"),
+            "Labelled Project", DefaultWorkspace.Id);
+        projects.AddUrl(labelled.Id, "Repository", repo, null, owner.User);
+        Assert.Equal(HttpStatusCode.OK, await Send(HttpMethod.Put, $"/api/projects/{labelled.Id}",
+            new { displayName = "Labelled Project Updated", repositoryUrl = repo }));
         Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Post, $"/api/projects/{project.Id}/urls",
             new { label = "Other", url = "http://localhost:4201", startRule = new { command = "echo attack", port = 4201 } }));
         Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Post,
@@ -344,7 +389,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     }
 
     private WebApplicationFactory<Program> BuildFactory(string? remoteIp = null, string? projectPath = null,
-        bool? publicCloudflareEdge = null) => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        bool publicCloudflareEdge = false) => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
         if (remoteIp is not null)
@@ -353,9 +398,9 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         {
             ["TaskRepository"] = _workspace,
             ["Security:Profile"] = "networked",
-            ["Security:PublicCloudflareEdge"] = publicCloudflareEdge?.ToString(),
             ["Security:BootstrapCode"] = "website-setup-code",
             ["Security:TrustedProxyAddresses"] = "172.30.83.3",
+            ["Security:PublicCloudflareEdge"] = publicCloudflareEdge.ToString(),
             ["AllowedHosts"] = "studio.test",
             ["WatchPaths:0:Name"] = projectPath is null ? null : "networked-smoke",
             ["WatchPaths:0:Path"] = projectPath,

@@ -15,15 +15,19 @@ fi
 
 iptables -N STUDIO-CF-V4 2>/dev/null || true
 iptables -F STUDIO-CF-V4
+iptables -A STUDIO-CF-V4 -i br-studio-web -j RETURN
 iptables -A STUDIO-CF-V4 -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
 for range in "${ranges[@]}"; do
   if [[ "$range" != *:* ]]; then
-    iptables -A STUDIO-CF-V4 -s "$range" -j RETURN
+    iptables -A STUDIO-CF-V4 -s "$range" -d 172.30.83.2 -p tcp -m multiport --dports 80,443 -j RETURN
   fi
 done
 iptables -A STUDIO-CF-V4 -j REJECT
 while iptables -C DOCKER-USER -d 172.30.83.2 -p tcp -m multiport --dports 80,443 -j STUDIO-CF-V4 2>/dev/null; do
   iptables -D DOCKER-USER -d 172.30.83.2 -p tcp -m multiport --dports 80,443 -j STUDIO-CF-V4
 done
-iptables -I DOCKER-USER 1 -d 172.30.83.2 -p tcp -m multiport --dports 80,443 -j STUDIO-CF-V4
-echo 'Docker-published Studio ports now accept Cloudflare source ranges only.'
+while iptables -C DOCKER-USER -d 172.30.83.0/24 -j STUDIO-CF-V4 2>/dev/null; do
+  iptables -D DOCKER-USER -d 172.30.83.0/24 -j STUDIO-CF-V4
+done
+iptables -I DOCKER-USER 1 -d 172.30.83.0/24 -j STUDIO-CF-V4
+echo 'Forwarded traffic to the Studio Docker subnet now requires the Cloudflare edge path.'

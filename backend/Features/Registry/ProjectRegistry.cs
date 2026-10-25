@@ -397,6 +397,7 @@ public sealed partial class ProjectRegistry
     {
         var normalized = ValidateDisplayName(newDisplayName);
         EnsureLoaded();
+        lock (UrlOperationGate(id))
         lock (_gate)
         {
             ThrowIfDisplayNameCollisionLocked(id, normalized);
@@ -417,6 +418,7 @@ public sealed partial class ProjectRegistry
             throw new ArgumentException(
                 "shortCode must be 2-6 chars, start with A-Z, and use A-Z or 0-9", nameof(newShortCode));
         EnsureLoaded();
+        lock (UrlOperationGate(id))
         lock (_gate)
         {
             ThrowIfShortCodeCollisionLocked(id, normalized);
@@ -823,11 +825,15 @@ public sealed partial class ProjectRegistry
         string? repositoryUrl)
     {
         var existing = urls.FirstOrDefault(url =>
-            string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase));
-        if (existing is not null && string.Equals(existing.Url, repositoryUrl, StringComparison.Ordinal))
+            string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(url.Label, "repo", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(url.Label, "repository", StringComparison.OrdinalIgnoreCase));
+        if (existing is null && repositoryUrl is null
+            || existing is not null && repositoryUrl is not null
+                && string.Equals(existing.Url.Trim(), repositoryUrl, StringComparison.Ordinal))
             return urls;
         var next = urls
-            .Where(url => !string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase))
+            .Where(url => existing is null || !string.Equals(url.Id, existing.Id, StringComparison.OrdinalIgnoreCase))
             .ToList();
         if (repositoryUrl == null) return next;
         next.Add(new ProjectUrlRecord

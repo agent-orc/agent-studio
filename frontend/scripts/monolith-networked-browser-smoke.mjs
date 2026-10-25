@@ -36,7 +36,20 @@ try {
   await page.getByRole('button', { name: 'Sign in' }).click();
   const loginResponse = await login;
   if (!loginResponse.ok()) throw new Error(`Browser sign-in returned ${loginResponse.status()}`);
-  await expect(page.getByTestId('studio-board')).toBeVisible({ timeout: 30_000 });
+  // A new owner lands on the first-run checklist. Open the seeded board tab.
+  await page.locator('[data-tab-kind="board"]').first().click();
+  try {
+    await expect(page.getByTestId('studio-board')).toBeVisible({ timeout: 30_000 });
+  } catch (error) {
+    console.error('Browser state after sign-in:', {
+      url: page.url(),
+      responses: apiResponses,
+      body: (await page.locator('body').innerText()).slice(0, 1500),
+    });
+    if (process.env.JOB_RESULTS_DIR)
+      await page.screenshot({ path: join(process.env.JOB_RESULTS_DIR, 'website-board-failure.png') });
+    throw error;
+  }
   const boardResponse = apiResponses.find(response =>
     response.method === 'GET'
     && response.status === 200

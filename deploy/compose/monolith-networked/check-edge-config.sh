@@ -40,13 +40,28 @@ if [ -f "$stack_dir/.env" ]; then
     ./Caddyfile.public|./Caddyfile.cloudflare) ;;
     *) echo 'Networked cutover requires a verified public or Cloudflare Caddyfile' >&2; exit 1 ;;
   esac
-  if [ "$(sed -n 's/^STUDIO_PUBLIC_CLOUDFLARE_EDGE=//p' "$stack_dir/.env" | tail -n 1)" != true ]; then
+  if [ "$(sed -n 's/^STUDIO_CADDYFILE=//p' "$stack_dir/.env" | tail -n 1)" = ./Caddyfile.cloudflare ] \
+    && [ "$(sed -n 's/^STUDIO_PUBLIC_CLOUDFLARE_EDGE=//p' "$stack_dir/.env" | tail -n 1)" != true ]; then
     echo 'Public Cloudflare edge requires STUDIO_PUBLIC_CLOUDFLARE_EDGE=true' >&2
     exit 1
   fi
   if [ -z "$data_dir" ] || [ ! -s "$data_dir/origin-pull/ca.pem" ]; then
     echo 'Missing account-specific origin-pull CA certificate' >&2
     exit 1
+  fi
+  subject="$(openssl x509 -in "$data_dir/origin-pull/ca.pem" -noout -subject -nameopt RFC2253)" || {
+    echo 'Invalid origin-pull CA certificate' >&2
+    exit 1
+  }
+  if grep -Eiq '(^|[=,])CN=origin-pull\.cloudflare\.net(,|$)' <<< "$subject"; then
+    echo 'Cloudflare shared origin-pull CA is not account-specific' >&2
+    exit 1
+  fi
+  if [ -s "$data_dir/origin-pull/leaf.pem" ] \
+    && ! openssl x509 -in "$data_dir/origin-pull/leaf.pem" -noout -checkend 2592000 > /dev/null; then
+    echo 'WARNING: origin-pull leaf certificate expires within 30 days; rotate it in Cloudflare' >&2
+  elif [ ! -s "$data_dir/origin-pull/leaf.pem" ]; then
+    echo 'WARNING: origin-pull leaf certificate not present for expiry monitoring' >&2
   fi
 fi
 echo 'Edge files and origin-pull CA are current.'

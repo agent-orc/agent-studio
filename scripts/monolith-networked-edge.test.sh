@@ -52,6 +52,9 @@ printf '<!doctype html><app-root></app-root>\n' > "$work/studio/index.html"
 cat > "$work/Caddyfile.api" <<'CADDY'
 :5031 {
 	header /api/sandboxed Content-Security-Policy "sandbox allow-scripts"
+	header /healthz X-Agent-Studio-Tag "v1"
+	header /healthz X-Agent-Studio-Commit "deadbeef"
+	respond /healthz "healthy" 200
 	respond /api/* "client={header.X-Forwarded-For} proto={header.X-Forwarded-Proto}"
 }
 CADDY
@@ -159,6 +162,9 @@ response="$(request "$cloudflare_peer" /api/sandboxed)"
 expect 'Sandboxed API route' "$response" '^content-security-policy: sandbox allow-scripts'
 reject 'Sandboxed API route' "$response" '^x-frame-options:'
 expect 'Sandboxed API route' "$response" '^strict-transport-security: max-age=31536000; includeSubDomains'
+response="$(request "$cloudflare_peer" /healthz)"
+expect 'Public health' "$response" '^HTTP/[0-9.]* 200'
+reject 'Public health' "$response" '^x-agent-studio-(tag|commit):'
 echo 'Headers: shell policy from the frontend, HSTS from the edge, API routes keep their own policy.'
 
 # Cloudflare mode with direct access explicitly allowed.

@@ -26,10 +26,29 @@ public sealed class NetworkedCutoverContractTests
         Assert.Contains("trusted_proxies static 172.30.83.2", frontendCaddy);
         Assert.Contains("handle @health {", frontendCaddy);
         Assert.DoesNotContain("respond @health 200", frontendCaddy);
+        Assert.Contains("header_down -X-Agent-Studio-Tag", frontendCaddy);
+        Assert.Contains("header_down -X-Agent-Studio-Commit", frontendCaddy);
         Assert.Contains("Security__TrustedProxyAddresses: 172.30.83.3,172.30.83.2", compose);
         Assert.Contains("Security__PublicCloudflareEdge: ${STUDIO_PUBLIC_CLOUDFLARE_EDGE:-false}", compose);
         Assert.Contains("0.0.0.0:443:443", compose);
         Assert.Contains("${STUDIO_DATA_DIR}/origin-pull:/etc/caddy/origin-pull:ro", compose);
+        Assert.Contains("Security__PublicCloudflareEdge: ${STUDIO_PUBLIC_CLOUDFLARE_EDGE:-false}", compose);
+    }
+
+    [Fact]
+    public void Firewall_covers_the_subnet_and_starts_before_the_edge_container()
+    {
+        var stack = Path.Combine(FindRepositoryRoot(), "deploy", "compose", "monolith-networked");
+        var rules = File.ReadAllText(Path.Combine(stack, "apply-cloudflare-docker-firewall.sh"));
+        var installer = File.ReadAllText(Path.Combine(stack, "install-cloudflare-docker-firewall.sh"));
+        var compose = File.ReadAllText(Path.Combine(stack, "compose.yaml"));
+        Assert.Contains("-I DOCKER-USER 1 -d 172.30.83.0/24 -j STUDIO-CF-V4", rules);
+        Assert.Contains("-i br-studio-web -j RETURN", rules);
+        Assert.Contains("-d 172.30.83.2 -p tcp -m multiport --dports 80,443 -j RETURN", rules);
+        Assert.Contains("com.docker.network.bridge.name: br-studio-web", compose);
+        Assert.Contains("restart: on-failure", compose);
+        Assert.Contains("After=docker.service agent-studio-cloudflare-firewall.service", installer);
+        Assert.Contains("systemctl enable agent-studio-website.service", installer);
     }
 
     [Theory]

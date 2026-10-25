@@ -77,6 +77,7 @@ for name, (caddyfile, allow_direct) in expected.items():
     assert env['STUDIO_CADDYFILE'] == './' + caddyfile, (name, env)
     assert env['STUDIO_PUBLIC_CLOUDFLARE_EDGE'] == 'true', (name, env)
     assert env['STUDIO_CLOUDFLARE_ALLOW_DIRECT'] == allow_direct, (name, env)
+    assert env['STUDIO_PUBLIC_CLOUDFLARE_EDGE'] == 'true', (name, env)
     edge = rendered['services']['edge']
     edge_mounts = mounts(edge)
     assert edge_mounts['/etc/caddy/Caddyfile'].endswith('/' + caddyfile), (name, edge_mounts)
@@ -90,6 +91,7 @@ for name, (caddyfile, allow_direct) in expected.items():
     api = rendered['services']['api']
     assert api['environment']['Security__PublicCloudflareEdge'] == 'true', api['environment']
     assert api['environment']['Security__TrustedProxyAddresses'] == '172.30.83.3,172.30.83.2', api['environment']
+    assert api['environment']['Security__PublicCloudflareEdge'] == 'true', api['environment']
     assert 'ports' not in api and 'ports' not in frontend, 'only the edge may publish ports'
 print('Compose render passed for the public, Cloudflare and Cloudflare direct-access modes.')
 PY
