@@ -3,7 +3,7 @@ set -eu
 
 dotnet restore backend/OrchestratorApi.csproj --locked-mode
 dotnet restore agent-taskboard.sln --locked-mode
-npm --prefix frontend ci --prefer-offline
+bash scripts/npm-frontend.sh ci --prefer-offline
 
 if ! find "${PLAYWRIGHT_BROWSERS_PATH:?}" -maxdepth 1 -type d \( -name 'chromium-*' -o -name 'chromium_headless_shell-*' \) | grep -q .; then
   (cd frontend && npx playwright install chromium)

@@ -26,13 +26,16 @@ responses. The public demo denies these execution routes.
 The claim response supplies `id`, `project`, `environmentId`, `hostId`,
 `artifact`, `template`, `destination`, `healthUrl`, `secretRefs`, `containerPort`,
 `previousArtifact`, `status`, `leaseToken`, timestamps, and claim metadata.
-Schema 2 jobs also carry `sshSteps`, `variables`, and `artifacts` from the
-release snapshot. Each `sshSteps` item contains its `step` (`static-site` or
+It also carries a nullable `tenant`. Released jobs carry selected plain values
+in `resolvedVariables` and a `secretVariableRefs` map from workload variable
+name to provider entry name; secret values do not appear in the claim. Schema 2
+jobs carry `sshSteps` and `artifacts` from the release snapshot. Each `sshSteps`
+item contains its `step` (`static-site` or
 `container`), `artifact`, `target`, destination (`directory` or `composeFile`
 and `service`), `healthUrl`, `healthTimeoutSeconds`, and environment scope.
-Each variable has a `name` and either a plain `value` or a secret *name* in
-`secret`; the claim never contains a resolved secret value. The deploy host
-uses the snapshot, not the repository's current working tree, to execute the
+Non-release jobs may still carry `variables`; each one has a `name` and either
+a plain `value` or a secret name in `secret`. The deploy host uses the snapshot,
+not the repository's current working tree, to execute the
 job. A claim for a release's environment goes to its currently registered host.
 The SSH executor requires each snapshotted step's `target` to equal that host.
 If host registration changes after the release, an old release's step fails
@@ -44,6 +47,20 @@ projects to schema 2. The backend supports the old host's `/renew` 404
 compatibility path during this rollout.
 Artifact provenance still names the underlying `container` or `static` kind.
 All SSH steps in one release must use the same artifact kind.
+
+A tenant deployment requires a `tenantTargets[tenant]` entry in the release's
+committed environment declaration. Its `destination` and `healthUrl` must be
+distinct from the project target and every other tenant target. A missing or
+colliding target is refused before queueing. The host uses a distinct container
+name for a tenant template job. For SSH steps, it uses a tenant directory under
+the declared static directory or compose file parent. A container SSH step
+also supplies a stable tenant-specific Docker Compose project name. The host
+checks that tenant's health URL and reports the result on that tenant's run.
+Before a host claims the job, release verification checks the routed target,
+SSH steps, plain variables and secret variable-name mappings against the
+release snapshot for that tenant.
+Tenant routing on an edge-hosted declaration is refused until the run target
+supports an isolated tenant target.
 
 One host receives one job at a time. A claim is live for five minutes; the host
 renews it every minute while executing. A `409` renewal means the lease was
@@ -77,14 +94,16 @@ failure code. The run shows each reported step result. A failed deploy can
 queue the previous healthy artifact for rollback when no newer job is waiting
 for that environment.
 
-To resolve a schema 2 secret variable, the deploy host calls
+To resolve a schema 2 secret variable or a `secretVariableRefs` mapping, the deploy host calls
 `POST /api/runner/secrets/resolve` with a Runner bearer, `purpose: "deploy"`,
 `reference: "secret://{project}/{environmentId}/{secretName}"`, and a
 `workload` of `{ "kind": "deploy-job", "project": "...", "jobId": "...",
 "leaseToken": "..." }`. The secret provider verifies the live job lease
 and scope before returning the value. The value must not be copied into a
 deploy log, report, or release snapshot. The old host-local `secretRefs` store
-remains for legacy template jobs; schema 2 variables use the secret provider.
+remains for legacy template jobs; schema 2 SSH steps use the secret provider.
+The workload receives the mapped variable name even when the provider entry
+has a different name.
 
 `agent-host deploy-poll <server-url> <host-id> <token-file> <artifact-store>
 [secret-store]` makes one claim; `deploy-loop` repeats it every five seconds.

@@ -12,8 +12,13 @@ public static class DeployEndpoints
         project.MapGet("/environments", (string projectName, DeployService deploy) =>
             deploy.Environments(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
-        project.MapGet("/status", (string projectName, DeployService deploy) =>
-            deploy.Status(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+        project.MapGet("/tenants", (string projectName, DeployService deploy) =>
+            deploy.Tenants(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
+        project.MapGet("/status", (string projectName, string? tenant, DeployService deploy) =>
+            tenant is not null && deploy.Tenants(projectName)?.All(item => item.Name != tenant) == true
+                ? Results.NotFound(new { error = $"Unknown tenant '{tenant}'." })
+                : deploy.Status(projectName, tenant) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
         project.MapGet("/delivery-lanes", (string projectName, DeployService deploy) =>
             deploy.DeliveryLanes(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
@@ -26,6 +31,10 @@ public static class DeployEndpoints
             deploy.ReleasePage(projectName, offset ?? 0, limit ?? 25, artifact, notAfterUtc) is { } value
                 ? Results.Ok(value) : UnknownProject(projectName));
 
+        project.MapGet("/releases/{releaseId}/page", (string projectName, string releaseId, int? limit, DeployService deploy) =>
+            deploy.ReleasePageContaining(projectName, releaseId, limit ?? 25) is { } value
+                ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
+
         project.MapGet("/releases/{releaseId}", (string projectName, string releaseId, DeployService deploy) =>
             deploy.ReleaseDetail(projectName, releaseId) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
@@ -37,12 +46,12 @@ public static class DeployEndpoints
         project.MapGet("/cards", (string projectName, DeployService deploy) =>
             deploy.Cards(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
-        project.MapGet("/deployments", (string projectName, string? environmentId, DeployService deploy) =>
-            deploy.Deployments(projectName, environmentId) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+        project.MapGet("/deployments", (string projectName, string? environmentId, string? tenant, DeployService deploy) =>
+            deploy.Deployments(projectName, environmentId, tenant) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
-        project.MapGet("/deployments/page", (string projectName, string? environmentId, string? state,
+        project.MapGet("/deployments/page", (string projectName, string? environmentId, string? tenant, string? state,
             DateTime? sinceUtc, int? offset, int? limit, DeployService deploy) =>
-            deploy.DeploymentPage(projectName, environmentId, state, sinceUtc, offset ?? 0, limit ?? 25) is { } value
+            deploy.DeploymentPage(projectName, environmentId, state, sinceUtc, offset ?? 0, limit ?? 25, tenant) is { } value
                 ? Results.Ok(value) : UnknownProject(projectName));
 
         project.MapGet("/deployments/{deploymentId}", (string projectName, string deploymentId, DeployService deploy) =>
@@ -56,6 +65,24 @@ public static class DeployEndpoints
 
         project.MapGet("/audit", (string projectName, DeployService deploy) =>
             deploy.Audit(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
+        project.MapGet("/operations", (string projectName, AgentStudio.Projects.ProjectOperationsService operations) =>
+            operations.Read(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
+        project.MapGet("/operations/logs", (string projectName, string environmentId, DateTimeOffset? since,
+            DateTimeOffset? until, string? level, string? releaseId, string? text, int? limit,
+            AgentStudio.Projects.ProjectOperationsService operations) =>
+        {
+            try
+            {
+                return operations.SearchLogs(projectName, environmentId, since, until, level, releaseId, text, limit)
+                    is { } value ? Results.Ok(value) : Results.NotFound(new { error = "Unknown project or environment." });
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.BadRequest(new { error = exception.Message });
+            }
+        });
 
         project.MapPost("/releases/{releaseId}/deployments", (HttpContext context, string projectName,
             string releaseId, DeploymentRequest request, DeployService deploy,
@@ -98,18 +125,22 @@ public static class DeployEndpoints
         project.MapPost("/environments/{environmentId}/redeploy", (HttpContext context, string projectName,
             string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
             QuotaRefusable(() => Respond(deploy.Redeploy(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName), request?.GuidedFailure), accepted: true)))
+                Actor(context, projectName), request?.Tenant, request?.GuidedFailure), accepted: true)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapPost("/environments/{environmentId}/rollback", (HttpContext context, string projectName,
             string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
             QuotaRefusable(() => Respond(deploy.Rollback(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName), request?.GuidedFailure), accepted: true)))
+                Actor(context, projectName), request?.Tenant, request?.GuidedFailure), accepted: true)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
-        app.MapGet("/api/deploy/matrix", (HttpContext context, DeployService deploy, ProjectRegistry projects) =>
+        app.MapGet("/api/deploy/matrix", (HttpContext context, string? tenant, DeployService deploy, ProjectRegistry projects) =>
         {
             var matrix = deploy.Matrix();
+            if (tenant is not null)
+                matrix = matrix with { Projects = matrix.Projects.Select(row => row with
+                    { TenantStatuses = row.TenantStatuses.Where(status => status.Tenant == tenant).ToArray() })
+                    .Where(row => row.TenantStatuses.Count > 0).ToArray() };
             return Results.Ok(context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                 ? matrix with
                 {

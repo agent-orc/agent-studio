@@ -198,7 +198,7 @@ cmd_up() {
   # --- optionally boot frontend (ng serve, dynamic proxy) -------------------
   if [[ "${with_frontend}" -eq 1 ]]; then
     if [[ ! -d "${REPO_ROOT}/frontend/node_modules" ]]; then
-      err "frontend/node_modules missing - run 'npm --prefix frontend ci' first."
+      err "frontend/node_modules missing - run 'bash scripts/npm-frontend.sh ci' first."
       cmd_down || true
       exit 1
     fi

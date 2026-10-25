@@ -152,8 +152,9 @@ public static class ProjectOperatorDashboardEndpoints
                     && item.Environments.Any(environment => environment.Id == job.EnvironmentId
                         && environment.Template == job.Template));
                 if (record is null) return Results.Conflict(new { error = "The deploy job has no release." });
-                var provenance = registry.VerifiedForDeployment(project, record.Release.CommitSha, job.Artifact,
-                    job.Template);
+                var template = ProjectEnvironmentService.ArtifactTemplate(job.Template, job.SshSteps);
+                var provenance = template is null ? null : registry.VerifiedForDeployment(project,
+                    record.Release.CommitSha, job.Artifact, template);
                 if (provenance is null) return Results.Conflict(new { error = "Artifact provenance is unverified." });
                 if (context.Request.Query.ContainsKey("content"))
                 {

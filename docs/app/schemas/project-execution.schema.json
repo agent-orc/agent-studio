@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-taskboard.local/schemas/project-execution.schema.json",
   "title": "Repository project execution definition",
-  "description": "Repository-owned project.yml schema 1 or 2. Schema 2 adds project metadata and the P1 deployment definition: artifacts, ordered environments with protection, the standard lifecycle, deploy steps, and environment-scoped variables that name secrets without values.",
+  "description": "Repository-owned project.yml schema 1 or 2. Schema 2 adds deployment artifacts, environments, lifecycle, deploy steps, tenants and scoped variables. Secrets are references, never values.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -686,6 +686,20 @@
       },
       "description": "Deploy steps. static-site copies a static bundle to a directory over SSH; container pulls and restarts a compose service over SSH. Both need a health check URL and timeout."
     },
+    "tenants": {
+      "description": "Customer installations for this project, with their tags and participating environments.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "environments"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+          "tags": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" } },
+          "environments": { "$ref": "#/$defs/environmentScope", "minItems": 1 }
+        }
+      }
+    },
     "channels": {
       "description": "Channels select a lifecycle at release creation. Rules match the release version tag and source branch; exactly one default channel is required when channels are declared.",
       "type": "array",
@@ -734,6 +748,16 @@
           },
           "environments": {
             "$ref": "#/$defs/environmentScope"
+          },
+          "tenants": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" }
+          },
+          "tenantTags": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" }
           },
           "channels": {
             "type": "array",
@@ -935,6 +959,7 @@
             },
             {
               "required": [
+                "tenants",
                 "channels"
               ]
             }
