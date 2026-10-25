@@ -629,9 +629,9 @@ public static class V1ReviewPlaneEndpoints
             if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access
                 && !access.Allows(IamPermissions.ProjectRead, PermissionTarget.WorkspaceWide))
             {
-                var task = FindTask(scanner, review.TaskKey);
-                if (task is null || !ProjectAccessAuthorization.AllowsTasks(
-                        context, [task.ProjectName], IamPermissions.ProjectRead, projects))
+                var project = ReviewAttemptProject(review.TaskKey, projects, scanner);
+                if (project is null || !ProjectAccessAuthorization.AllowsTasks(
+                        context, [project], IamPermissions.ProjectRead, projects))
                     return Results.NotFound(new Contract.ApiError("not-found", "ReviewAttempt was not found."));
             }
             return Results.Ok(ToAttempt(review));
@@ -3264,6 +3264,23 @@ public static class V1ReviewPlaneEndpoints
     /// so this never needs to fall back to a sub-minute unit.</summary>
     internal static string FormatRetryDelay(TimeSpan delay)
         => $"{(int)Math.Round(delay.TotalMinutes, MidpointRounding.AwayFromZero)}m";
+
+    // Canonical and legacy task keys carry a registered project address. The
+    // published index handles old bare slugs without scanning every archived
+    // task folder for each scoped attempt read.
+    internal static string? ReviewAttemptProject(string taskKey, ProjectRegistry projects, TaskScannerService scanner)
+    {
+        var separator = taskKey.IndexOf("::", StringComparison.Ordinal);
+        if (separator > 0)
+        {
+            var prefix = taskKey[..separator];
+            var project = TaskKeyResolver.IsCanonical(taskKey)
+                ? projects.FindById(prefix)
+                : projects.FindByStorageLocation(prefix);
+            return project?.DisplayName;
+        }
+        return scanner.FindPublishedJob(taskKey)?.ProjectName;
+    }
 
     internal static TaskInfo? FindTask(TaskScannerService scanner, string taskKey)
         => scanner.ScanAllJobsWithArchive().FirstOrDefault(task =>

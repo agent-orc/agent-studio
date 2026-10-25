@@ -290,6 +290,11 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.WorkspaceAdminister, "/api/filesystem-layer/**");
         Add("R", IamPermissions.WorkspaceOperate,
             "/api/attempts/tasks/{}", "/api/attempts/runs/{}", "/api/attempts/reviews/{}");
+        // Static CLI catalogues carry no host state. Session transcripts,
+        // working memory, quota and model probes are installation-wide.
+        Add("R", IamPermissions.WorkspaceRead,
+            "/api/cli/types", "/api/cli/contracts", "/api/cli/model-migrations");
+        Add("R", IamPermissions.WorkspaceOperate, "/api/cli/**");
         Add("W", IamPermissions.WorkspaceOperate,
             "/api/cli/quota/refresh/**", "/api/cli/{}/session", "/api/cli/{}/working-memory", "/api/clients/**",
             "/api/crash-recovery/**", "/api/git/branch-sweep/**", "/api/git/cleanup/**", "/api/git/branch-reclaim/**",

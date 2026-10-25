@@ -169,6 +169,69 @@ public sealed class IamHandlerAccessTests : IDisposable
     }
 
     [Fact]
+    public async Task Canonical_review_attempt_key_resolves_its_project_without_a_task_folder()
+    {
+        using var factory = BuildFactory();
+        var projects = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        var betaId = projects.List().Single(project => project.DisplayName == "beta").Id;
+        var taskKey = betaId + "::removed-card";
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var run = Assert.IsType<RunAttemptDto>(authority.AcquireRun(
+            taskKey, "beta", null, "runner", "host", 60, "iam-canonical-run").RunAttempt);
+        authority.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, "iam-canonical-settle"),
+            Outcome = "done", ResultSha = new string('a', 40),
+        });
+        var review = Assert.IsType<ReviewAttemptDto>(authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            taskKey, "beta", new string('a', 40), run.AttemptId, "req", "policy", [], "iam-canonical-review")).ReviewAttempt);
+        using var beta = Client(factory, Invite(factory, "canonical.beta",
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("beta"))));
+        using var alpha = Client(factory, Invite(factory, "canonical.alpha",
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
+
+        using var allowed = await beta.GetAsync("/api/v1/reviews/attempts/" + review.AttemptId);
+        using var denied = await alpha.GetAsync("/api/v1/reviews/attempts/" + review.AttemptId);
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+    }
+
+    [Fact]
+    public async Task Project_member_cannot_read_host_cli_state_or_run_the_local_probe()
+    {
+        using var factory = BuildFactory();
+        using var viewer = Client(factory, Invite(factory, "cli.viewer",
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
+        foreach (var route in new[]
+                 {
+                     "/api/cli/usage",
+                     "/api/cli/claude/session-detail?id=missing",
+                     "/api/cli/claude/working-memory",
+                     "/api/cli/quota",
+                 })
+        {
+            using var denied = await viewer.GetAsync(route);
+            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        }
+        using var catalogue = await viewer.GetAsync("/api/cli/types");
+        Assert.Equal(HttpStatusCode.OK, catalogue.StatusCode);
+        using var probe = await viewer.GetAsync("/api/cli/_probe/claude?cmd=unsafe");
+        Assert.Equal(HttpStatusCode.NotFound, probe.StatusCode);
+    }
+
+    [Fact]
+    public async Task Pipeline_catalogue_checks_its_projectName_query_address()
+    {
+        using var factory = BuildFactory();
+        using var developer = Client(factory, Invite(factory, "catalogue.developer",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+        using var own = await developer.GetAsync("/api/projects/pipeline-catalogue?projectName=alpha");
+        using var foreign = await developer.GetAsync("/api/projects/pipeline-catalogue?projectName=beta");
+        Assert.Equal(HttpStatusCode.OK, own.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, foreign.StatusCode);
+    }
+
+    [Fact]
     public async Task Project_bindings_cannot_read_unaddressed_attempts_or_arbitrary_host_folders()
     {
         using var factory = BuildFactory();

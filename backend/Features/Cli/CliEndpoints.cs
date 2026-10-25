@@ -366,7 +366,8 @@ public static class CliEndpoints
         // Spawns the requested CLI in a scratch dir, sends a slash command,
         // waits for output to settle, returns the ANSI-stripped snapshot.
         // Example: /api/cli/_probe/claude?cmd=/usage
-        cliGroup.MapGet("/_probe/{cliType}", async (
+        if (AgentStudio.Security.SecurityProfiles.IsLocal(app.Configuration))
+            cliGroup.MapGet("/_probe/{cliType}", async (
             string cliType,
             string? cmd,
             string? followUp,

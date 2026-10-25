@@ -211,8 +211,9 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   bindings for `project.read`. The unscoped live-event group requires a
   workspace binding. Reading one `/api/v1/reviews/attempts/{id}` result also
   checks `project.read` against the attempt's card project and returns 404
-  outside that scope. A workspace binding can read the attempt even after its
-  card folder is removed. The older `/api/attempts/tasks/{key}`,
+  outside that scope. Canonical and legacy task keys resolve the project from
+  the registry; bare task ids use the published task index. A workspace
+  binding can read the attempt even after its card folder is removed. The older `/api/attempts/tasks/{key}`,
   `/api/attempts/runs/{id}`, and `/api/attempts/reviews/{id}` reads require
   `workspace.operate`, because their handlers do not resolve a project.
 - Filesystem-layer snapshots accept a host folder path and can refresh a
@@ -220,6 +221,12 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   `workspace.administer` permission. Managing installation secret backends
   also requires `workspace.administer`; deploy-job artifact reads require a
   Runner service credential.
+- CLI usage, transcripts, working memory, quota, models, and policy reads
+  expose installation-wide state and require `workspace.operate`. Only the
+  static CLI types, completion contracts, and migration catalogue use
+  `workspace.read`. The interactive CLI `_probe` is mapped only in the local
+  profile. A pipeline catalogue request with `projectName` checks
+  `project.read` for that project before reading its settings.
 - Environment scopes name the environment kind of the project's declarations
   (`docs/deployments/environments/*.json`): `stage`, `production`, or
   `other`, never an environment id. Releases address `stage`, promotions and
