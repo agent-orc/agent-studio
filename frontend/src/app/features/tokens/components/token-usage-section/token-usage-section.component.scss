@@ -76,6 +76,6 @@
 
 @media (max-width: 900px) {
   .token-usage { grid-template-columns: 1fr; }
-  .token-usage__tree { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .token-usage__tree { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
   .token-usage__tree-group { display: none; }
 }
