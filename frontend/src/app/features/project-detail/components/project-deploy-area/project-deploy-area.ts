@@ -8,6 +8,8 @@ import { ProjectDeployHistoryComponent } from '../project-deploy-history/project
 import { DeployRunDrawerComponent, type DeployRunActionState } from '../deploy-run-drawer/deploy-run-drawer';
 import { ProjectPipelinePanelComponent } from '../project-pipeline-panel/project-pipeline-panel.component';
 import { EnvironmentHealthPanelComponent } from '../../../environment-health';
+import { ProjectOperationsComponent } from '../project-operations/project-operations';
+import { OperationsCardLookupService } from '../../state/operations-card-lookup.service';
 import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
 import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
@@ -41,7 +43,8 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
   imports: [
     ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent,
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
-    ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, HostedDataPanelComponent,
+    ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent,
+    ProjectOperationsComponent, HostedDataPanelComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',
@@ -49,6 +52,7 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
 })
 export class ProjectDeployAreaComponent {
   private readonly data = inject(ProjectDeployDataService);
+  private readonly cardLookup = inject(OperationsCardLookupService);
   private readonly clock = inject(DEPLOY_CLOCK);
   private subscriptions = new Subscription();
   private runReads = new Subscription();
@@ -57,16 +61,20 @@ export class ProjectDeployAreaComponent {
   private runFetch = new Subscription();
   private artifactReads = new Subscription();
   private mutations = new Subscription();
+  private cardReads = new Subscription();
   private readGeneration = 0;
   private releaseGeneration = 0;
   private logGeneration = 0;
   private mutationAction: DeployRunAction | null = null;
   private runOpener: HTMLElement | null = null;
+  private openedTarget: { project: string; id: string } | null = null;
 
   readonly projectName = input.required<string>();
+  readonly releaseTarget = input<{ project: string; id: string } | null>(null);
   readonly initialView = input<DeployView>('overview');
   readonly focusStepId = input<string | undefined>();
   readonly openPrompts = output<void>();
+  readonly openTask = output<{ jobId: string; watchPath: string }>();
   readonly viewChange = output<DeployView>();
   readonly view = signal<DeployView>('overview');
   readonly now = signal(this.clock());
@@ -86,6 +94,29 @@ export class ProjectDeployAreaComponent {
   readonly logPanel = signal<DeployPanel<DeploymentLogLine[]>>({ status: 'loading' });
   readonly actionState = signal<DeployRunActionState>(IDLE);
   readonly selectedRunId = signal<string | null>(null);
+  readonly highlightedReleaseId = signal<string | null>(null);
+
+  openRelease(id: string): void {
+    this.highlightedReleaseId.set(id);
+    this.show('releases');
+    this.releaseReads.unsubscribe();
+    this.releaseReads = new Subscription();
+    const generation = ++this.releaseGeneration;
+    this.releaseReads.add(this.data.releasePageContaining(this.projectName(), id).subscribe(panel => {
+      if (generation !== this.releaseGeneration || this.highlightedReleaseId() !== id) return;
+      if (panel.status === 'ready') {
+        this.releaseOffset.set(panel.value.offset);
+        this.releaseTotal.set(panel.value.total);
+      }
+      this.releasePanel.set(this.items(panel));
+    }));
+  }
+
+  /** A later card click replaces a lookup that has not answered yet. */
+  openCard(key: string): void {
+    this.cardReads.unsubscribe();
+    this.cardReads = this.cardLookup.resolve(this.projectName(), key).subscribe(card => this.openTask.emit(card));
+  }
   /** A selected run that neither a loaded page nor `/deploy/status` contains, read by id. */
   readonly fetchedRun = signal<DeployPanel<Deployment> | null>(null);
   /** Releases of host artifacts that status does not name, by lookup key (project-scoped). */
@@ -149,6 +180,7 @@ export class ProjectDeployAreaComponent {
         this.runReads.unsubscribe();
         this.releaseReads.unsubscribe();
         this.logReads.unsubscribe();
+        this.cardReads.unsubscribe();
         this.runFetch.unsubscribe();
         this.artifactReads.unsubscribe();
         this.artifactReads = new Subscription();
@@ -157,6 +189,22 @@ export class ProjectDeployAreaComponent {
         this.mutationAction = null;
       });
     });
+    // A new target on the same project only opens its release page; the other sources stay loaded.
+    effect(() => {
+      const target = this.releaseTarget();
+      untracked(() => {
+        if (target && target !== this.openedTarget && target.project === this.projectName()) this.openTargetRelease(target);
+      });
+    });
+    this.watchArtifactReleases();
+  }
+
+  private openTargetRelease(target: { project: string; id: string }): void {
+    this.openedTarget = target;
+    this.openRelease(target.id);
+  }
+
+  private watchArtifactReleases(): void {
     effect(() => {
       // Without AGT-3201 (status route missing) there are no release records to look up.
       const status = this.statusPanel().status;
@@ -256,7 +304,9 @@ export class ProjectDeployAreaComponent {
       this.artifactReleases.set(new Map([...this.artifactReleases()].filter(([, panel]) => panel.status === 'ready' || panel.status === 'loading')));
     }
     this.subscriptions.add(this.data.environments(projectName).subscribe(panel => this.environmentPanel.set(panel)));
-    this.loadReleases(projectName, !resetSelection);
+    const target = this.releaseTarget();
+    if (resetSelection && target?.project === projectName) this.openTargetRelease(target);
+    else this.loadReleases(projectName, !resetSelection);
     this.subscriptions.add(this.data.pipeline(projectName).subscribe(panel => this.pipelinePanel.set(panel)));
     this.subscriptions.add(this.data.health(projectName).subscribe(panel => this.healthPanel.set(panel)));
     this.reloadRuns(projectName, false);

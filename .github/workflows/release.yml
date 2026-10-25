@@ -89,7 +89,7 @@ jobs:
 
       - name: Audit production dependencies
         working-directory: frontend
-        run: npm audit --omit=dev --audit-level=critical
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Build .NET solution
         run: dotnet build agent-taskboard.sln --configuration Release --no-restore

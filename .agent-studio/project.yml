@@ -7,14 +7,14 @@ commands:
   prepare: .agent-studio/prepare
   build:
     - dotnet build agent-taskboard.sln --no-restore
-    - npm --prefix frontend run build
+    - bash scripts/npm-frontend.sh run build
   test:
     - dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
     - dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound
     - dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound
-    - npm --prefix frontend run test:ci
+    - bash scripts/npm-frontend.sh run test:ci
   lint:
-    - npm --prefix frontend run lint
+    - bash scripts/npm-frontend.sh run lint
 testSuites:
   - id: backend-routine
     category: routine
@@ -45,20 +45,20 @@ testSuites:
   - id: frontend-unit
     category: routine
     expectedDurationSeconds: 360
-    command: npm --prefix frontend run test:ci
+    command: bash scripts/npm-frontend.sh run test:ci
   # Writes coverage/frontend/lcov.info for the scheduled coverage run (AGT-3074).
   - id: frontend-coverage
     category: release
     expectedDurationSeconds: 600
-    command: npm --prefix frontend run test:release
+    command: bash scripts/npm-frontend.sh run test:release
   - id: frontend-e2e
     category: machine-bound
     expectedDurationSeconds: 900
-    command: npm --prefix frontend run e2e
+    command: bash scripts/npm-frontend.sh run e2e
   - id: task-switch-workstation-budget
     category: machine-bound
     expectedDurationSeconds: 5400
-    command: npm --prefix frontend run e2e:task-switch-budget
+    command: bash scripts/npm-frontend.sh run e2e:task-switch-budget
 cachePaths:
   - frontend/node_modules
 capabilities: [git, child-process, loopback-network]
@@ -79,9 +79,9 @@ release:
       source: frontend/package-lock.json
   restore:
     - dotnet restore backend/OrchestratorApi.csproj --locked-mode
-    - npm --prefix frontend ci
+    - bash scripts/npm-frontend.sh ci
 devServer:
-  command: npm --prefix frontend start
+  command: bash scripts/npm-frontend.sh start
   workingDirectory: .
   healthUrl: http://127.0.0.1:4010
   startupTimeoutSeconds: 120

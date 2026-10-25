@@ -22,7 +22,7 @@ public sealed class SshDeployExecutor
 
     public async Task ExecuteAsync(string host, ProjectDeployStep step, string artifact, string artifactStore,
         IReadOnlyDictionary<string, string> variables, Func<string, Task> log, CancellationToken ct,
-        string? bundlePath = null)
+        string? bundlePath = null, string? composeProject = null)
     {
         if (!Host.IsMatch(host) || step.Target != host || step.Step is not ("static-site" or "container"))
             throw new InvalidOperationException("Invalid SSH deploy target or step.");
@@ -68,13 +68,15 @@ public sealed class SshDeployExecutor
             {
                 if (!RemotePath.IsMatch(step.ComposeFile ?? "") || step.Service is null || !Host.IsMatch(step.Service))
                     throw new InvalidOperationException("Invalid compose file or service.");
+                if (composeProject is not null && !Host.IsMatch(composeProject))
+                    throw new InvalidOperationException("Invalid compose project.");
                 if (variables.Any(item => !Regex.IsMatch(item.Key, "^[A-Za-z_][A-Za-z0-9_]*$")
                     || IsReservedVariable(item.Key)
                     || item.Value.Contains('\n') || item.Value.Contains('\r')))
                     throw new InvalidOperationException("Invalid deploy variable.");
                 Digest(artifact);
                 await Remote(host, new { action = "compose", file = step.ComposeFile, service = step.Service,
-                    image = artifact, variables }, limit.Token, log, variables);
+                    image = artifact, variables, project = composeProject }, limit.Token, log, variables);
             }
             await log($"Completed {step.Step} on {host}.");
         }
@@ -232,7 +234,10 @@ public sealed class SshDeployExecutor
                     override.write('services:\n  ' + json.dumps(p['service']) + ':\n    image: ' + json.dumps(p['image']) + '\n')
                     overridefile = override.name
                 try:
-                    base = ['docker', 'compose', '-f', p['file'], '-f', overridefile]
+                    base = ['docker', 'compose']
+                    if p.get('project'):
+                        base += ['-p', p['project']]
+                    base += ['-f', p['file'], '-f', overridefile]
                     subprocess.run(base + ['pull', p['service']], check=True, timeout=120, env=environment)
                     subprocess.run(base + ['up', '-d', '--no-deps', p['service']], check=True, timeout=120, env=environment)
                 finally:
