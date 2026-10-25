@@ -834,6 +834,7 @@ internal static class ProjectGraphScanner
             startInfo.ArgumentList.Add(root);
             foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
 
+            AgentStudio.Git.HostGitProcessHardening.Apply(startInfo);
             using var process = Process.Start(startInfo);
             if (process is null) return null;
             var output = process.StandardOutput.ReadToEndAsync();

@@ -2119,12 +2119,24 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         _gate.Batch = _ => throw new InvalidOperationException("A stale manifest reached the suite.");
-        var (ready, go) = PauseAtFirstCandidateRef();
+        using var ready = new ManualResetEventSlim();
+        using var go = new ManualResetEventSlim();
+        pilot.AfterAssemblyForTesting = () =>
+        {
+            ready.Set();
+            Assert.True(go.Wait(TimeSpan.FromMinutes(2)), "The supersession was not released.");
+        };
 
         var tick = Task.Run(() => pilot.TickAsync(CancellationToken.None));
-        await WaitForAsync(() => File.Exists(ready));
-        Supersede(authority, superseded.Key);
-        File.WriteAllText(go, string.Empty);
+        try
+        {
+            await WaitForAsync(() => ready.IsSet);
+            Supersede(authority, superseded.Key);
+        }
+        finally
+        {
+            go.Set();
+        }
         await tick;
 
         var manifest = Assert.Single(store.ListManifests());
@@ -2981,29 +2993,6 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         Git(_repo, "fetch", "-q", "--no-tags", "origin",
             $"+refs/heads/agent-studio/results/{key}:refs/remotes/origin/agent-studio/results/{key}");
         Assert.Empty(Git(_repo, "for-each-ref", $"refs/heads/agent-studio/results/{key}"));
-    }
-
-    // A reference-transaction hook parks the assembler right after it creates
-    // the candidate ref, which is after close and before the suite starts.
-    private (string Ready, string Go) PauseAtFirstCandidateRef()
-    {
-        var ready = Path.Combine(_workspace, "candidate-ref-ready");
-        var go = Path.Combine(_workspace, "candidate-ref-go");
-        var hooks = Path.Combine(_repo, ".git", "hooks");
-        Directory.CreateDirectory(hooks);
-        var hook = Path.Combine(hooks, "reference-transaction");
-        File.WriteAllText(hook, "#!/bin/sh\n"
-            + "[ \"$1\" = committed ] || exit 0\n"
-            + "grep -q 'refs/agent-studio/batch-candidates/' || exit 0\n"
-            + $"[ -e '{ready}' ] && exit 0\n"
-            + $"touch '{ready}'\n"
-            + "i=0\n"
-            + $"while [ ! -e '{go}' ] && [ $i -lt 2400 ]; do sleep 0.05; i=$((i+1)); done\n"
-            + "exit 0\n");
-        if (!OperatingSystem.IsWindows())
-            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite
-                | UnixFileMode.UserExecute);
-        return (ready, go);
     }
 
     private BatchPlanInput BuildSnapshot(WebApplicationFactory<Program> factory,

@@ -31,7 +31,7 @@ public static class HostCliSpawnGuard
             && args.Count(arg => arg == "--tools") == 1
             && args.Contains("--strict-mcp-config", StringComparer.Ordinal)
             && args.Count(arg => arg == "--strict-mcp-config") == 1
-            && mcpIndex >= 0 && mcpIndex + 1 < args.Length && args[mcpIndex + 1] == "{}"
+            && mcpIndex >= 0 && mcpIndex + 1 < args.Length && args[mcpIndex + 1] == "{\"mcpServers\":{}}"
             && args.Count(arg => arg == "--mcp-config") == 1
             && startInfo.CreateNoWindow
             && !string.IsNullOrWhiteSpace(startInfo.WorkingDirectory)

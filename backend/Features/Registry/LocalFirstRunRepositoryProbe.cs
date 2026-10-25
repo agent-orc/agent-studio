@@ -154,6 +154,7 @@ public sealed class LocalFirstRunGitCommand : ILocalFirstRunGitCommand
         foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
         try
         {
+            AgentStudio.Git.HostGitProcessHardening.Apply(process.StartInfo);
             if (!process.Start()) return (false, string.Empty);
             var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
             var stderr = process.StandardError.ReadToEndAsync(timeout.Token);

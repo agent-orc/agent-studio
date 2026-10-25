@@ -239,6 +239,25 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
     }
 
     [Fact]
+    public async Task Live_workspace_file_refuses_symlink_outside_task_root()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var job = WriteJob("ASS-LINK");
+        var outside = Path.Combine(_tempDir, "outside.md");
+        File.WriteAllText(outside, "private content");
+        File.CreateSymbolicLink(Path.Combine(job, "leak.md"), outside);
+
+        using var factory = CreateFactory();
+        using var client = CreateClient(factory);
+        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+        using var response = await client.GetAsync(
+            $"/api/tasks/ASS-LINK/files/leak.md?watchPath={watchPath}&scope=workspace");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.DoesNotContain("private content", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
     public async Task ResultHistory_ListsAndReadsTaskFolderVersions()
     {
         var job = WriteJob("ASS-RESULT-HISTORY");
