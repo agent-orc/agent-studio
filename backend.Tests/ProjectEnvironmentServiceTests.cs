@@ -3,12 +3,15 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Security.Cryptography;
 using System.Text;
 using AgentStudio.Pipeline;
 using AgentStudio.Deploy;
 using AgentStudio.Projects;
+using AgentStudio.Runner;
 using AgentStudio.Security;
+using AgentStudio.Secrets;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Hosting;
@@ -18,6 +21,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -276,6 +280,163 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Bindings_require_production_approval_and_preflight_checks_inherited_and_revoked_values()
+    {
+        var (environments, _, _) = Build();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+            ["Secrets:KeyFile"] = Path.Combine(_root, "keys", "secrets.kek"),
+        }).Build();
+        var provider = new SecretProvider(
+            new BuiltInSecretStore(config, new ConfiguredKeyEncryptionKeySource(config, _ => null, _ => { })),
+            new SecretAuditLog(config), new SecretValueScrubber(_clock), _clock,
+            NullLogger<SecretProvider>.Instance);
+        var bindings = new ProjectSecretBindings(config, provider, environments, _clock);
+        var before = await bindings.CheckAsync("demo", "production");
+        Assert.Equal("not-bound", Assert.Single(before.Missing).Reason);
+        Assert.Throws<SecretAccessDeniedException>(() => bindings.Bind("demo", "production", "DATABASE_URL",
+            "secret://demo/production/DATABASE_URL", "human:owner", null));
+        Assert.Throws<SecretValidationException>(() => bindings.Bind("demo", "production", "DATABASE_URL",
+            "secret://other/DATABASE_URL", "human:owner", "owner"));
+        bindings.Bind("demo", "production", "DATABASE_URL", "secret://demo/production/DATABASE_URL",
+            "human:owner", "owner");
+        Assert.Equal("not-found", Assert.Single((await bindings.CheckAsync("demo", "production")).Missing).Reason);
+        var value = "runtime-" + Guid.NewGuid().ToString("N");
+        await provider.PutAsync(SecretScope.ForProject("demo"), "DATABASE_URL", value, SecretActor.Human("owner"));
+        Assert.True((await bindings.CheckAsync("demo", "production")).Ready);
+        Assert.DoesNotContain(value, File.ReadAllText(Directory.GetFiles(Path.Combine(_root, "workspace", ".security", "secret-bindings"))[0]));
+        await provider.RevokeAsync(SecretScope.ForProject("demo"), "DATABASE_URL", null, SecretActor.Human("owner"));
+        Assert.Equal("revoked", Assert.Single((await bindings.CheckAsync("demo", "production")).Missing).Reason);
+    }
+
+    [Fact]
+    public async Task Production_binding_uses_declared_kind_when_environment_id_is_custom()
+    {
+        var (environments, repo, _) = Build();
+        var declarations = Path.Combine(repo, "docs", "deployments", "environments");
+        var original = Path.Combine(declarations, "production.json");
+        var custom = Path.Combine(declarations, "live-eu.json");
+        File.Move(original, custom);
+        File.WriteAllText(custom, File.ReadAllText(custom).Replace("\"id\":\"production\"", "\"id\":\"live-eu\"", StringComparison.Ordinal));
+        Assert.Equal("production", environments.Declarations("demo")!.Single(item => item.Id == "live-eu").Kind);
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+            ["Secrets:KeyFile"] = Path.Combine(_root, "keys", "secrets.kek"),
+        }).Build();
+        var provider = new SecretProvider(
+            new BuiltInSecretStore(config, new ConfiguredKeyEncryptionKeySource(config, _ => null, _ => { })),
+            new SecretAuditLog(config), new SecretValueScrubber(_clock), _clock,
+            NullLogger<SecretProvider>.Instance);
+        var bindings = new ProjectSecretBindings(config, provider, environments, _clock);
+        const string reference = "secret://demo/live-eu/DATABASE_URL";
+
+        Assert.Throws<SecretAccessDeniedException>(() => bindings.Bind("demo", "live-eu", "DATABASE_URL",
+            reference, "human:owner", null));
+        Assert.Equal("not-bound", Assert.Single((await bindings.CheckAsync("demo", "live-eu")).Missing).Reason);
+        bindings.Bind("demo", "live-eu", "DATABASE_URL", reference, "human:owner", "owner");
+        Assert.Equal(reference, bindings.ApprovedReferences("demo", "live-eu")["DATABASE_URL"]);
+        Assert.Equal("not-found", Assert.Single((await bindings.CheckAsync("demo", "live-eu")).Missing).Reason);
+    }
+
+    [Fact]
+    public async Task Claimed_job_uses_snapshot_names_and_kind_after_live_declaration_changes()
+    {
+        var (environments, repo, _) = Build();
+        var config = SecretConfig();
+        var provider = SecretProvider(config);
+        var bindings = new ProjectSecretBindings(config, provider, environments, _clock);
+        var target = environments.Declarations("demo")!.Single(item => item.Kind == "production");
+        const string reference = "secret://demo/DATABASE_URL";
+        bindings.Bind("demo", target.Id, "DATABASE_URL", reference, "human:owner", "owner");
+        await provider.PutAsync(SecretScope.ForProject("demo"), "DATABASE_URL", "runtime-" + Guid.NewGuid().ToString("N"),
+            SecretActor.Human("owner"));
+        Assert.NotNull(environments.QueueDeployment("demo", target, _artifact, "owner", false));
+        var job = environments.Claim("prod-host")!;
+        Assert.Equal("production", job.EnvironmentKind);
+
+        ChangeProductionDeclaration(repo, "stage", "NEW_KEY");
+        Assert.Equal("not-bound", Assert.Single((await bindings.CheckAsync("demo", target.Id)).Missing).Reason);
+        Assert.True((await bindings.CheckAsync(job.Project, job.EnvironmentId, job.SecretRefs, job.EnvironmentKind!)).Ready);
+
+        var scanner = Scanner(config);
+        var leases = new SecretWorkloadLeases(environments,
+            new RunLeaseService(NullLogger<RunLeaseService>.Instance, () => _clock.GetUtcNow().UtcDateTime), scanner, bindings);
+        var claimed = leases.FindClaimedDeployJob(job.Project, job.Id, job.LeaseToken!)!;
+        Assert.Equal(["DATABASE_URL"], claimed.SecretRefs);
+        Assert.Equal(reference, claimed.SecretBindings!["DATABASE_URL"]);
+        Assert.False(claimed.SecretBindings.ContainsKey("NEW_KEY"));
+        var workload = new SecretWorkload(SecretWorkload.DeployJob, job.HostId, job.Project, job.EnvironmentId,
+            claimed.SecretRefs, claimed.SecretBindings);
+        Assert.True(SecretAccessPolicy.ForWorkload(SecretReference.Parse(reference), workload, "deploy:production").Allowed);
+        Assert.Equal("reference-not-declared", SecretAccessPolicy.ForWorkload(
+            SecretReference.Parse("secret://demo/NEW_KEY"), workload, "deploy:production").Code);
+    }
+
+    [Fact]
+    public async Task Legacy_production_job_keeps_approval_requirement_after_current_kind_changes()
+    {
+        var (environments, repo, _) = Build();
+        var target = environments.Declarations("demo")!.Single(item => item.Kind == "production");
+        Assert.NotNull(environments.QueueDeployment("demo", target, _artifact, "owner", false));
+        var queueFile = Path.Combine(_root, "workspace", "deployments", "demo.json");
+        var state = JsonNode.Parse(File.ReadAllText(queueFile))!;
+        state["jobs"]![0]!.AsObject().Remove("environmentKind");
+        File.WriteAllText(queueFile, state.ToJsonString());
+        ChangeProductionDeclaration(repo, "stage", "DATABASE_URL");
+
+        var config = SecretConfig();
+        var bindings = new ProjectSecretBindings(config, SecretProvider(config), environments, _clock);
+        bindings.Bind("demo", target.Id, "DATABASE_URL", "secret://demo/DATABASE_URL", "human:operator", null);
+        var job = environments.Claim("prod-host")!;
+        Assert.Equal("production", job.EnvironmentKind);
+        Assert.Equal("production", environments.FindClaimedJob(job.Project, job.Id, job.LeaseToken!)!.EnvironmentKind);
+        Assert.Equal("approval-required", Assert.Single((await bindings.CheckAsync(
+            job.Project, job.EnvironmentId, job.SecretRefs, job.EnvironmentKind!)).Missing).Reason);
+        Assert.Empty(bindings.ApprovedReferences(job.Project, job.EnvironmentId, job.SecretRefs, job.EnvironmentKind!));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Claimed_job_preflight_failure_returns_reportable_missing_references(bool providerFailure)
+    {
+        var (environments, _, _) = Build();
+        var target = environments.Declarations("demo")!.Single(item => item.Kind == "production");
+        Assert.NotNull(environments.QueueDeployment("demo", target, _artifact, "owner", false));
+        var job = environments.Claim("prod-host")!;
+        var config = providerFailure ? SecretConfig() : new ConfigurationBuilder().Build();
+        ISecretProvider provider = providerFailure ? new FailingListingProvider() : SecretProvider(SecretConfig());
+        var bindings = new ProjectSecretBindings(config, provider, environments, _clock);
+
+        var result = await ProjectOperatorDashboardEndpoints.CompleteClaimAsync(job, _ => { }, bindings, CancellationToken.None);
+        var returned = Assert.IsType<Ok<DeployJob>>(result).Value!;
+        Assert.Equal(job.LeaseToken, returned.LeaseToken);
+        Assert.Null(returned.SecretBindings);
+        Assert.Equal("preflight-unavailable", Assert.Single(returned.MissingSecretRefs!).Reason);
+        Assert.True(environments.Report(job.Project, job.Id, new DeployReportRequest(returned.LeaseToken!, false,
+            "secret-reference-missing")));
+    }
+
+    [Fact]
+    public async Task Health_only_retry_skips_secret_preflight()
+    {
+        var (environments, _, _) = Build();
+        var target = environments.Declarations("demo")!.Single(item => item.Kind == "production");
+        Assert.NotNull(environments.QueueDeployment("demo", target, _artifact, "owner", false, retryStep: "health"));
+        var job = environments.Claim("prod-host")!;
+        var bindings = new ProjectSecretBindings(SecretConfig(), new FailingListingProvider(), environments, _clock);
+
+        var result = await ProjectOperatorDashboardEndpoints.CompleteClaimAsync(job, _ => { }, bindings, CancellationToken.None);
+        var returned = Assert.IsType<Ok<DeployJob>>(result).Value!;
+        Assert.Equal("health", returned.RetryStep);
+        Assert.Null(returned.MissingSecretRefs);
+        Assert.Null(returned.SecretBindings);
+    }
+
+    [Fact]
     public void PreviewDeclarationCanSpecifyItsOwnHostAndSecretReferences()
     {
         var (service, repo, _) = Build();
@@ -294,6 +455,27 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal("preview-host", preview.TargetHostId);
         Assert.Equal(["TEST_DATA"], preview.SecretRefs);
         Assert.Equal("static", preview.Template);
+    }
+
+    [Fact]
+    public async Task Preview_claim_leaves_secret_delivery_to_the_preview_run_zone()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        var spec = new PreviewJobSpec("demo", "agt-3180", commit, "preview-host",
+            "https://agt-3180.demo.preview.internal", "static", "/srv/agent-studio/previews/demo/agt-3180",
+            ["npm run build"], ["TEST_DATA"], 8080)
+        { SourceRepository = repo, SourceRef = commit, ArtifactPath = "dist" };
+        service.QueuePreview(spec);
+        var claimed = service.Claim("preview-host")!;
+        var bindings = new ProjectSecretBindings(SecretConfig(), new FailingListingProvider(), service, _clock);
+
+        var result = await ProjectOperatorDashboardEndpoints.CompleteClaimAsync(
+            claimed, _ => { }, bindings, CancellationToken.None);
+        var returned = Assert.IsType<Ok<DeployJob>>(result).Value!;
+        Assert.Equal("preview", returned.EnvironmentKind);
+        Assert.Equal(["TEST_DATA"], returned.SecretRefs);
+        Assert.Null(returned.MissingSecretRefs);
     }
 
     [Fact]
@@ -735,6 +917,21 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
             Assert.Null(files[1].Declaration);
             Assert.Contains(message, files[1].Error);
         }
+    }
+
+    [Theory]
+    [InlineData("DB-URL", "DB.URL")]
+    [InlineData("Db_url", "DB_URL")]
+    public void Colliding_secret_names_make_environment_declaration_unusable(string first, string second)
+    {
+        var (service, repo, _) = Build();
+        var stage = Path.Combine(repo, "docs", "deployments", "environments", "stage.json");
+        var declaration = JsonNode.Parse(File.ReadAllText(stage))!;
+        declaration["secretRefs"] = JsonSerializer.SerializeToNode(new[] { first, second });
+        File.WriteAllText(stage, declaration.ToJsonString());
+
+        Assert.Contains("same container variable", Assert.Throws<JsonException>(() => service.Declarations("demo")).Message);
+        Assert.Null(service.DeclarationFiles("demo")!.Single(item => item.EnvironmentId == "stage").Declaration);
     }
 
     [Fact]
@@ -1215,6 +1412,48 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
             CancellationToken cancellationToken)
             => FailPrune ? Task.FromException(new IOException("Archive cleanup is busy."))
                 : inner.PruneBackupsAsync(key, retainedIds, cancellationToken);
+    }
+
+    private IConfiguration SecretConfig() => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["TaskRepository"] = Path.Combine(_root, "workspace"),
+        ["Secrets:KeyFile"] = Path.Combine(_root, "keys", "secrets.kek"),
+    }).Build();
+
+    private SecretProvider SecretProvider(IConfiguration config) => new(
+        new BuiltInSecretStore(config, new ConfiguredKeyEncryptionKeySource(config, _ => null, _ => { })),
+        new SecretAuditLog(config), new SecretValueScrubber(_clock), _clock,
+        NullLogger<SecretProvider>.Instance);
+
+    private static TaskScannerService Scanner(IConfiguration config) => new(config,
+        NullLogger<TaskScannerService>.Instance,
+        new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+
+    private static void ChangeProductionDeclaration(string repo, string kind, string name)
+    {
+        var path = Path.Combine(repo, "docs", "deployments", "environments", "production.json");
+        var declaration = JsonNode.Parse(File.ReadAllText(path))!;
+        declaration["kind"] = kind;
+        declaration["secretRefs"] = JsonSerializer.SerializeToNode(new[] { name });
+        File.WriteAllText(path, declaration.ToJsonString());
+    }
+
+    private sealed class FailingListingProvider : ISecretProvider
+    {
+        public Task<SecretListing> ListAsync(SecretScope? scope = null, CancellationToken ct = default)
+            => throw new IOException("Injected provider failure.");
+        public Task<SecretRecord> PutAsync(SecretScope scope, string name, string value, SecretActor actor,
+            CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<SecretRecord> RotateAsync(SecretScope scope, string name, string value, SecretActor actor,
+            CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<SecretRecord> RevokeAsync(SecretScope scope, string name, int? version, SecretActor actor,
+            CancellationToken ct = default) => throw new NotSupportedException();
+        public Task DeleteAsync(SecretScope scope, string name, SecretActor actor,
+            CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<SecretAuditEntry>> ReadAuditAsync(SecretScope? scope, int limit,
+            CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ResolvedSecret> GetForWorkloadAsync(SecretReference reference, SecretWorkload workload,
+            string purpose, CancellationToken ct = default) => throw new NotSupportedException();
     }
 
     private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false,

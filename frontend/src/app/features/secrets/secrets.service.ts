@@ -73,6 +73,8 @@ export interface SecretBackendHealth {
 /** `workspace`, `<project>` or `<project>/<environment>`. */
 export type SecretScopeKey = string;
 
+export interface SecretEnvironment { id: string; kind: string }
+
 /** Route prefix of one scope, matching the backend scope groups. */
 export function secretScopeRoute(scope: SecretScopeKey): string {
   if (scope === 'workspace') return '/api/secrets/workspace';
@@ -113,14 +115,14 @@ export class SecretsService {
     });
   }
 
-  /** Environment ids a project declares, for the scope picker. */
-  environments(project: string): Observable<readonly string[]> {
+  /** Declaration kind determines whether a binding needs production approval. */
+  environments(project: string): Observable<readonly SecretEnvironment[]> {
     if (!this.http) return of([]);
-    return this.http.get<{ environments: readonly { declaration: { id: string } }[] }>(
+    return this.http.get<{ environments: readonly { declaration: SecretEnvironment }[] }>(
       `/api/projects/${encodeURIComponent(project)}/environments`,
     ).pipe(
-      map(response => response.environments.map(item => item.declaration.id)),
-      catchError(() => of([] as readonly string[])),
+      map(response => response.environments.map(item => item.declaration)),
+      catchError(() => of([] as readonly SecretEnvironment[])),
     );
   }
 
