@@ -85,7 +85,8 @@ public sealed record SecretWorkload(
     string Identity,
     string Project,
     string? Environment,
-    IReadOnlyCollection<string>? DeclaredNames = null)
+    IReadOnlyCollection<string>? DeclaredNames = null,
+    IReadOnlyDictionary<string, string>? DeclaredReferences = null)
 {
     public const string DeployJob = "deploy-job";
     public const string TaskRun = "task-run";

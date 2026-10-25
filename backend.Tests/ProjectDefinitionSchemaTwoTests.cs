@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.Projects;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
 using Xunit;
@@ -77,6 +78,17 @@ public sealed class ProjectDefinitionSchemaTwoTests
         """;
 
     private static string Valid => Head + Pipeline;
+
+    [Theory]
+    [InlineData("database-url")]
+    [InlineData("database_url")]
+    public void Environment_secret_names_that_share_a_container_variable_are_rejected(string second)
+    {
+        var yaml = Valid + "\n  - name: DATABASE_ALIAS\n    secret: " + second
+            + "\n    environments: [production]\n";
+        Assert.True(ProjectDefinitionReader.Parse(yaml).IsValid);
+        Assert.Throws<JsonException>(() => ProjectEnvironmentService.ApplyDefinition([], yaml));
+    }
 
     [Fact]
     public void Parses_channels_named_lifecycles_and_channel_scoped_variables()
