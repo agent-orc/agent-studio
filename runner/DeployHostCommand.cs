@@ -20,9 +20,6 @@ public static class DeployHostCommand
         string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken,
         bool IsStop = false, string? RetryStep = null)
     {
-        public ProjectDeployStep[] SshSteps { get; init; } = [];
-        public ProjectVariableDefinition[] Variables { get; init; } = [];
-        public ProjectArtifactDefinition[] Artifacts { get; init; } = [];
         public string Kind { get; init; } = "standard";
         public string? CardKey { get; init; }
         public string? SourceCommit { get; init; }
@@ -32,6 +29,9 @@ public static class DeployHostCommand
         public string? Dockerfile { get; init; }
         public string? Address { get; init; }
         public string[] BuildCommands { get; init; } = [];
+        public ProjectDeployStep[] SshSteps { get; init; } = [];
+        public ProjectVariableDefinition[] Variables { get; init; } = [];
+        public ProjectArtifactDefinition[] Artifacts { get; init; } = [];
     }
     private sealed record Provenance(string Project, string Commit, string Artifact, string Digest,
         string GateRunId, string Template, string BuilderIdentity, string Location, string SourceDigest);
@@ -78,7 +78,7 @@ public static class DeployHostCommand
             if (job.Kind is not ("preview" or "preview-remove") && job.RetryStep is null)
             {
                 var provenance = await VerifyArtifact(client, job, cancellationToken);
-                if (job.Template == "static")
+                if (ArtifactTemplate(job) == "static")
                     await DownloadArtifact(client, job, provenance, args[3], cancellationToken);
             }
             var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
@@ -146,7 +146,9 @@ public static class DeployHostCommand
                             or InvalidOperationException or HttpRequestException or System.ComponentModel.Win32Exception)
                         {
                             stepResults.Add(new { name, succeeded = false });
-                            await AppendLog(client, job, name, $"Step failed: {ex.GetType().Name}.", lease.Token);
+                            var detail = new string($"Step failed: {ex.GetType().Name}: {ex.Message}"
+                                .Where(ch => !char.IsControl(ch)).ToArray());
+                            await AppendLog(client, job, name, detail[..Math.Min(detail.Length, 480)], lease.Token);
                             throw;
                         }
                     }
@@ -169,10 +171,13 @@ public static class DeployHostCommand
         catch (RetryableRegistryException)
         {
             // Keep the claim for a later lease retry. No bytes were deployed.
+            lease.Cancel();
+            await renewal;
             return 0;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
-            or HttpRequestException or JsonException or System.ComponentModel.Win32Exception or OperationCanceledException)
+            or HttpRequestException or System.ComponentModel.Win32Exception or OperationCanceledException
+            or KeyNotFoundException or JsonException)
         {
             Console.Error.WriteLine($"Deploy job {job.Id} failed: {ex.GetType().Name}");
         }
@@ -190,6 +195,14 @@ public static class DeployHostCommand
     private static string ArtifactUrl(Job job)
         => $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/artifact";
 
+    private static string? ArtifactTemplate(Job job)
+        => job.Template == "ssh-v2" ? job.SshSteps.FirstOrDefault()?.Step switch
+        {
+            "container" => "container",
+            "static-site" => "static",
+            _ => null,
+        } : job.Template;
+
     private static HttpRequestMessage ArtifactRequest(Job job, bool content)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, ArtifactUrl(job) + (content ? "?content=1" : ""));
@@ -204,10 +217,10 @@ public static class DeployHostCommand
         EnsureArtifactAvailable(response);
         var record = await response.Content.ReadFromJsonAsync<Provenance>(cancellationToken: ct);
         if (record is null || record.Project != job.Project || record.Artifact != job.Artifact
-            || record.Template != job.Template || string.IsNullOrWhiteSpace(record.Commit)
+            || record.Template != ArtifactTemplate(job) || string.IsNullOrWhiteSpace(record.Commit)
             || string.IsNullOrWhiteSpace(record.GateRunId) || string.IsNullOrWhiteSpace(record.BuilderIdentity)
             || !job.Artifact.EndsWith("@sha256:" + record.Digest, StringComparison.Ordinal)
-            || record.Location != (job.Template == "static" ? "built-in" : "external"))
+            || record.Location != (ArtifactTemplate(job) == "static" ? "built-in" : "external"))
             throw new InvalidDataException("Artifact provenance does not match the deploy job.");
         return record;
     }
@@ -289,6 +302,7 @@ public static class DeployHostCommand
         Action onLost, CancellationToken ct)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), clock);
+        var lastSuccess = clock.GetUtcNow();
         try
         {
             while (await timer.WaitForNextTickAsync(ct))
@@ -300,10 +314,13 @@ public static class DeployHostCommand
                     using var response = await client.PostAsJsonAsync(
                         $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/renew",
                         new { job.LeaseToken }, timeout.Token);
-                    if (!response.IsSuccessStatusCode && !ct.IsCancellationRequested) { onLost(); return; }
+                    if (response.StatusCode == System.Net.HttpStatusCode.Conflict) { onLost(); return; }
+                    if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return;
+                    if (response.IsSuccessStatusCode) { lastSuccess = clock.GetUtcNow(); continue; }
                 }
-                catch (HttpRequestException) when (!ct.IsCancellationRequested) { onLost(); return; }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { onLost(); return; }
+                catch (HttpRequestException) when (!ct.IsCancellationRequested) { }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                if (clock.GetUtcNow() - lastSuccess >= TimeSpan.FromMinutes(4)) { onLost(); return; }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
@@ -326,18 +343,28 @@ public static class DeployHostCommand
             }, ct);
             response.EnsureSuccessStatusCode();
             using var body = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken: ct);
-            resolved.Add(variable.Name, body?.RootElement.GetProperty("value").GetString()
-                ?? throw new InvalidDataException("Secret provider returned no value."));
+            if (body is null || !body.RootElement.TryGetProperty("value", out var secretValue)
+                || secretValue.ValueKind != JsonValueKind.String || secretValue.GetString() is not { } secret)
+                throw new InvalidDataException("Secret provider returned no value.");
+            resolved.Add(variable.Name, secret);
         }
         return resolved;
     }
 
     private static async Task AppendLog(HttpClient client, Job job, string step, string message, CancellationToken ct)
     {
-        using var response = await client.PostAsJsonAsync(
-            $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/log",
-            new { job.LeaseToken, Step = step, Message = message }, ct);
-        response.EnsureSuccessStatusCode();
+        try
+        {
+            using var response = await client.PostAsJsonAsync(
+                $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/log",
+                new { job.LeaseToken, Step = step, Message = message }, ct);
+            if (!response.IsSuccessStatusCode)
+                Console.Error.WriteLine($"Deploy job {job.Id} step log was not accepted: {(int)response.StatusCode}.");
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested && ex is (HttpRequestException or TaskCanceledException))
+        {
+            Console.Error.WriteLine($"Deploy job {job.Id} step log could not be sent.");
+        }
     }
 
     private static async Task DeployStatic(Job job, string artifactStore, CancellationToken ct)
@@ -443,21 +470,23 @@ public static class DeployHostCommand
 
     private static async Task<bool> CheckHealth(string url, CancellationToken ct)
     {
-        using var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-        while (!ct.IsCancellationRequested)
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        while (true)
         {
             try
             {
                 using var response = await client.GetAsync(url, ct);
                 if (response.IsSuccessStatusCode) return true;
             }
-            catch (HttpRequestException)
+            catch (HttpRequestException) when (!ct.IsCancellationRequested)
             {
-                await Task.Delay(TimeSpan.FromSeconds(2), ct);
-                continue;
+                // A transient transport failure gets another probe within the outer health budget.
+            }
+            catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // The per-request timeout expired; the outer health budget still controls the job.
             }
             await Task.Delay(TimeSpan.FromSeconds(2), ct);
         }
-        return false;
     }
 }

@@ -97,6 +97,21 @@ describe('WorkspaceOverlaysService canonical settings routes', () => {
     expect(window.location.hash).toBe('#/workspace/settings/tokens/claude');
   });
 
+  it('opens the card token analysis page and keeps its filter segment (AGT-3267)', () => {
+    history.replaceState(null, '', '/#/workspace/settings/tokens/analysis&ta=card%253DStudio%252Fjob-1');
+    const service = new WorkspaceOverlaysService();
+
+    service.syncFromHash();
+
+    expect(service.section()).toBe('tokens');
+    expect(service.tokenUsagePage()).toBe('analysis');
+    expect(window.location.hash).toBe('#/workspace/settings/tokens/analysis&ta=card%253DStudio%252Fjob-1');
+    service.selectTokenUsagePage('workspace');
+    expect(window.location.hash).toBe('#/workspace/settings/tokens&ta=card%253DStudio%252Fjob-1');
+    service.close();
+    expect(window.location.hash).toBe('#ta=card%253DStudio%252Fjob-1');
+  });
+
   it('migrates the former remote-hosts route to Environment', () => {
     history.replaceState(null, '', '/#/workspace/settings/remote-hosts');
     const service = new WorkspaceOverlaysService();

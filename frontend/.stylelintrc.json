@@ -197,6 +197,7 @@
         "src/app/features/project-detail/components/project-pipeline-diagram/project-pipeline-diagram.scss",
         "src/app/features/project-detail/components/task-detail-latency/task-detail-latency.component.scss",
         "src/app/features/usage-cockpit/**/*.scss",
+        "src/app/features/token-analysis/**/*.scss",
         "src/app/features/deployments/components/delivery-lanes/delivery-lanes.scss",
         "src/app/components/async-feedback/loading-surface/loading-surface.component.scss",
         "src/app/components/cli-model-selector/cli-model-selector.component.scss",

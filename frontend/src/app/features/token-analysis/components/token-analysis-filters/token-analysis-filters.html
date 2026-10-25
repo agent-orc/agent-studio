@@ -1,0 +1,33 @@
+<form class="tf" data-testid="token-analysis-filters" aria-label="Token analysis filters" (submit)="$event.preventDefault()">
+  <label class="tf__field">
+    <span>Time range</span>
+    <select data-testid="token-analysis-filter-days" [value]="filters().days" (change)="setDays($event)">
+      @for (days of dayOptions; track days) {
+        <option [value]="days" [selected]="days === filters().days">{{ days === 1 ? 'Today' : 'Last ' + days + ' days' }}</option>
+      }
+    </select>
+  </label>
+  @for (dimension of dimensions(); track dimension.key) {
+    <label class="tf__field">
+      <span>{{ dimension.label }}</span>
+      <select [attr.data-testid]="'token-analysis-filter-' + dimension.key" (change)="set(dimension.key, $event)">
+        <option value="" [selected]="value(dimension.key) === ''">All</option>
+        @for (option of optionsFor(dimension); track option.value) {
+          <option [value]="option.value" [selected]="option.value === value(dimension.key)">{{ option.label }}</option>
+        }
+      </select>
+    </label>
+  }
+  <label class="tf__field">
+    <span>Rounds</span>
+    <select data-testid="token-analysis-filter-rounds" (change)="setRounds($event)">
+      <option value="0" [selected]="filters().minRounds === null">Any</option>
+      @for (rounds of roundOptions; track rounds) {
+        <option [value]="rounds" [selected]="rounds === filters().minRounds">{{ rounds }} or more</option>
+      }
+    </select>
+  </label>
+  @if (active()) {
+    <button type="button" class="tf__reset" data-testid="token-analysis-filter-reset" (click)="reset()">Reset filters</button>
+  }
+</form>

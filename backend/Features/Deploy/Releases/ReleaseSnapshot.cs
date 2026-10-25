@@ -59,6 +59,7 @@ public static class ReleaseSnapshot
                 item.Id, item.Kind, item.TargetHostId, item.Address, item.Template, item.Destination,
                 item.HealthUrl, item.Approval, item.ContainerPort, item.Protected, item.Automatic, item.Requires,
                 item.SshSteps,
+                volumes = item.Data.Volumes.OrderBy(volume => volume.Name, StringComparer.Ordinal),
             }),
         });
 
@@ -81,7 +82,7 @@ public static class ReleaseSnapshot
                 .Select(item => new { item.Id, item.Protected, item.Automatic, item.Requires }),
             environments = declarations.OrderBy(item => item.Id, StringComparer.Ordinal).Select(item => new
             {
-                item.Id, secretRefs = item.SecretRefs.Order(StringComparer.Ordinal),
+                item.Id, secretRefs = item.SecretRefs.Order(StringComparer.Ordinal), item.Data.Database,
             }),
         });
 

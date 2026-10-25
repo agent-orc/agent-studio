@@ -64,7 +64,7 @@
     "@tiptap/extension-image": "^3.31.3",
     "@tiptap/starter-kit": "^3.31.3",
     "diff2html": "^3.4.56",
-    "dompurify": "^3.4.16",
+    "dompurify": "^3.4.17",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.3",
     "rxjs": "~7.8.0",
