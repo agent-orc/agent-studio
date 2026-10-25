@@ -209,7 +209,14 @@ public sealed class ProjectRepositoryProvisioningTests
                 workspaceId = DefaultWorkspace.Id,
                 createRepository = Request(),
             }, requestCancellation.Token);
-            await provisioner.DeletionCompleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var first = await Task.WhenAny(provisioner.DeletionCompleted.Task, post)
+                .WaitAsync(TimeSpan.FromMinutes(2));
+            if (first == post && !provisioner.DeletionCompleted.Task.IsCompleted)
+            {
+                await post;
+                throw new InvalidOperationException("Project request completed before repository rollback.");
+            }
+            await provisioner.DeletionCompleted.Task;
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => post);
 
             Assert.Equal(1, handler.Deletes);

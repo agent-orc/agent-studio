@@ -1,6 +1,13 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using AgentStudio.Shared;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Microsoft.Extensions.Primitives;
@@ -34,6 +41,32 @@ public sealed class ContributorAccessTests : IDisposable
         { "HEAD", "/api/tasks/card/LoGs/raw", null, false, false },
         { "OPTIONS", "/api/tasks/card/RAW-LOGS", null, false, false },
         { "GET", "/api/projects/PROJ-1/SeCrEtS", null, false, false },
+        { "GET", "/api/tasks/card/session-events", null, false, false },
+        { "GET", "/api/tasks/card/Session-Events", null, false, false },
+        { "GET", "/api/tasks/card/AGENT-WORK-DETAIL", null, false, false },
+        { "GET", "/api/tasks/card/conversation", null, false, false },
+        { "GET", "/api/tasks/card/Conversation", null, false, false },
+        { "HEAD", "/api/tasks/card/CONVERSATION", null, false, false },
+        { "GET", "/api/tasks/card/results/report.html", null, false, true },
+        { "GET", "/api/tasks/card/results/screens/final.PNG", null, false, true },
+        { "GET", "/api/tasks/card/results/notes.md", null, false, true },
+        { "GET", "/api/tasks/card/results/run.log", null, false, false },
+        { "GET", "/api/tasks/card/RESULTS/run.log", null, false, false },
+        { "GET", "/API/TASKS/card/Results/run.log", null, false, false },
+        { "GET", "/api/tasks/card/results/tests.trx", null, false, false },
+        { "GET", "/api/tasks/card/results/events.jsonl", null, false, false },
+        { "GET", "/api/tasks/card/results/report", null, false, false },
+        { "GET", "/api/tasks/card/files/prompt.md", null, false, true },
+        { "GET", "/api/tasks/card/files/status.md", null, false, true },
+        { "GET", "/api/tasks/card/files/results/report.html", null, false, true },
+        { "GET", "/api/tasks/card/files/results/screens/final.PNG", null, false, true },
+        { "GET", "/api/tasks/card/files/results/run.log", null, false, false },
+        { "GET", "/api/tasks/card/FILES/RESULTS/run.log", null, false, false },
+        { "GET", "/api/tasks/card/files/logs/cli-output.log", null, false, false },
+        { "GET", "/api/tasks/card/files/credentials.md", null, false, false },
+        { "GET", "/api/tasks/card/checkout/credentials.txt", null, false, false },
+        { "GET", "/api/tasks/card/CHECKOUT/credentials.md", null, false, false },
+        { "GET", "/api/projects/PROJ-1/CREDENTIALS", null, false, false },
         { "GET", "/api/projects/PROJ-1/settings", null, false, false },
         { "GET", "/api/projects/PROJ-1/autonomy", null, false, false },
         { "GET", "/api/v1/management/credential-view", null, false, false },
@@ -53,6 +86,170 @@ public sealed class ContributorAccessTests : IDisposable
     [InlineData(TaskStates.Progress, TaskStates.Completed, false, false, false)]
     public void Contributor_lane_matrix(string current, string target, bool operatorOverride, bool archiveOverride, bool allowed)
         => Assert.Equal(allowed, ContributorAccessPolicy.AllowsTransition(current, target, operatorOverride, archiveOverride));
+
+    [Fact]
+    public void Product_create_drops_run_controls_and_records_the_session_user()
+    {
+        var forged = new CreateTaskRequest
+        {
+            Title = "A product wish", Project = "PROJ-1", PromptMarkdown = "Make the header calmer.",
+            TargetState = TaskStates.Ready, Model = "forged-model", CliType = CliTypes.Codex, ThinkingLevel = "max",
+            ModelExplicit = true, ThinkingLevelExplicit = true, Mode = TaskModes.Research, AllowWebAccess = true,
+            NoBranchExpected = true, RequiresIntegration = false, Fixture = true, CreatedBy = "forged-operator",
+        };
+
+        var product = ContributorAccessPolicy.ForProductCreate(forged, "usr_product");
+
+        Assert.Equal(new CreateTaskRequest
+        {
+            Title = "A product wish", Project = "PROJ-1", PromptMarkdown = "Make the header calmer.",
+            TargetState = TaskStates.Ready, CreatedBy = "usr_product",
+        }, product);
+    }
+
+    [Fact]
+    public async Task Product_session_over_http_is_denied_conversation_and_raw_results_and_creates_plain_wishes()
+    {
+        const string project = "product-project";
+        const string taskKey = "AGT-PRODUCT-1";
+        var projectPath = Path.Combine(_root, "projects", project);
+        var taskPath = Path.Combine(projectPath, TaskStates.HumanReview, taskKey);
+        foreach (var lane in new[] { TaskStates.Backlog, TaskStates.Ready, TaskStates.HumanReview })
+            Directory.CreateDirectory(Path.Combine(projectPath, lane));
+        Directory.CreateDirectory(Path.Combine(taskPath, "results", "screens"));
+        Directory.CreateDirectory(Path.Combine(taskPath, "logs"));
+        File.WriteAllText(Path.Combine(taskPath, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = taskKey, title = "Delivered header", state = TaskStates.HumanReview, order = 1, agent = "codex", kind = "task",
+        }));
+        File.WriteAllText(Path.Combine(taskPath, "prompt.md"), "Calm the header.");
+        File.WriteAllText(Path.Combine(taskPath, "status.md"), "Human review is ready.");
+        File.WriteAllText(Path.Combine(taskPath, "credentials.md"), "private credentials");
+        File.WriteAllText(Path.Combine(taskPath, "logs", "cli-output.log"), "raw agent transcript");
+        foreach (var name in new[] { "report.html", "notes.md", "screens/final.png", "run.log", "tests.trx", "events.jsonl" })
+            File.WriteAllText(Path.Combine(taskPath, "results", name), "content of " + name);
+
+        using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _root,
+                ["Security:Profile"] = "networked",
+                ["Security:BootstrapCode"] = "product-setup-code",
+                ["AllowedHosts"] = "studio.test",
+                ["WatchPaths:0:Name"] = project,
+                ["WatchPaths:0:Path"] = projectPath,
+                ["WatchPaths:0:RootPath"] = projectPath,
+                ["WatchPaths:0:RepositoryPath"] = projectPath,
+            }));
+            builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(_clock));
+        });
+        using var http = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var restrictedPath = Path.Combine(_root, "projects", "restricted-project");
+        Directory.CreateDirectory(restrictedPath);
+        var restricted = registry.EnsureProjectForStorage(restrictedPath, "restricted-project", DefaultWorkspace.Id, _clock);
+        registry.UpsertOwnershipMapping(restricted.Id, new ComponentOwnershipMapping
+        {
+            Id = "restricted-widget", Component = "Restricted widget", PrimaryProjectId = restricted.Id,
+            Confidence = 1,
+        });
+        var owner = store.Bootstrap(new BootstrapRequest("owner.account", "owner password phrase!", null));
+        var invite = store.InviteUser(new InviteUserRequest("product.user", "Product User", StudioRoles.Contributor, [project]));
+        var product = store.AcceptInvitation(new AcceptInvitationRequest(invite.Token, "new product password!"));
+
+        foreach (var route in new[] { "conversation", "Conversation", "CONVERSATION" })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken));
+        }
+        Assert.NotEqual(HttpStatusCode.Forbidden, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/conversation", owner.SessionToken));
+
+        foreach (var name in new[] { "report.html", "notes.md", "screens/final.png" })
+        {
+            using var response = await SendAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/results/{name}", product.SessionToken);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal("content of " + name, await response.Content.ReadAsStringAsync());
+        }
+        foreach (var route in new[] { "results/run.log", "results/RUN.LOG", "RESULTS/run.log", "results/tests.trx", "results/events.jsonl" })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken));
+        }
+        Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/results/run.log", owner.SessionToken));
+        foreach (var name in new[] { "prompt.md", "status.md", "results/report.html", "results/screens/final.png" })
+            Assert.Equal(HttpStatusCode.OK, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/files/{name}", product.SessionToken));
+        foreach (var route in new[]
+        {
+            "files/results/run.log", "FILES/RESULTS/run.log", "files/logs/cli-output.log",
+            "files/credentials.md", "checkout/credentials.md", "CHECKOUT/credentials.md",
+            "files/prompt.md?scope=code", "files/results/report.html?scope=code",
+        })
+            Assert.Equal(HttpStatusCode.Forbidden, await StatusAsync(HttpMethod.Get, $"/api/tasks/{taskKey}/{route}", product.SessionToken));
+        var decisionRequest = new
+        {
+            title = "Choose a design", watchPath = projectPath, kind = TaskKinds.Decision,
+            decision = new
+            {
+                question = "Which layout should we use?",
+                options = new[] { new { id = "a", label = "Compact" }, new { id = "b", label = "Spacious" } },
+            },
+        };
+        Assert.Equal(HttpStatusCode.Forbidden,
+            await StatusAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, decisionRequest));
+        Assert.Equal(HttpStatusCode.OK,
+            await StatusAsync(HttpMethod.Post, "/api/tasks", owner.SessionToken, owner.CsrfToken, decisionRequest));
+
+        var crossProjectRequest = new
+        {
+            title = "Fix the restricted widget", watchPath = projectPath, targetState = TaskStates.Backlog,
+            routing = new { component = "Restricted widget" },
+        };
+        Assert.Equal(restricted.Id, new ComponentRoutingService(registry)
+            .Resolve(new(Component: "Restricted widget")).StorageProjectId);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            await StatusAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, crossProjectRequest));
+
+        using var created = await SendAsync(HttpMethod.Post, "/api/tasks", product.SessionToken, product.CsrfToken, new
+        {
+            title = "A product wish", watchPath = projectPath, promptMarkdown = "Make the header calmer.", targetState = TaskStates.Backlog,
+            model = "forged-model", cliType = CliTypes.Gemini, thinkingLevel = "max", modelExplicit = true,
+            thinkingLevelExplicit = true, mode = TaskModes.Research, allowWebAccess = true, noBranchExpected = true,
+            requiresIntegration = false, fixture = true, createdBy = "forged-operator",
+        });
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        var jobId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+        var job = factory.Services.GetRequiredService<TaskScannerService>().FindJob(jobId);
+        Assert.NotNull(job);
+        var stored = JsonNode.Parse(File.ReadAllText(Path.Combine(job.FolderPath, "task.json")))!.AsObject();
+        Assert.Equal(product.User.Id, (string?)stored["createdBy"]);
+        Assert.Equal(TaskModes.Coding, (string?)stored["mode"]);
+        Assert.False((bool?)stored["allowWebAccess"]);
+        Assert.False((bool?)stored["modelExplicit"]);
+        Assert.False((bool?)stored["thinkingLevelExplicit"]);
+        Assert.NotEqual("forged-model", (string?)stored["model"]);
+        Assert.NotEqual(CliTypes.Gemini, (string?)stored["cliType"]);
+        Assert.NotEqual("max", (string?)stored["thinkingLevel"]);
+        foreach (var field in new[] { "noBranchExpected", "requiresIntegration", "fixture" })
+            Assert.False(stored.ContainsKey(field), field);
+
+        async Task<HttpStatusCode> StatusAsync(HttpMethod method, string path, string session, string? csrf = null, object? body = null)
+        {
+            using var response = await SendAsync(method, path, session, csrf, body);
+            return response.StatusCode;
+        }
+
+        Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, string session, string? csrf = null, object? body = null)
+        {
+            var request = new HttpRequestMessage(method, path);
+            request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={session}");
+            request.Headers.Add("Sec-Fetch-Site", "same-origin");
+            if (csrf is not null) request.Headers.Add("X-CSRF-Token", csrf);
+            if (body is not null) request.Content = JsonContent.Create(body);
+            return http.SendAsync(request);
+        }
+    }
 
     [Fact]
     public void Invitation_is_hashed_single_use_and_expires_with_injected_clock()

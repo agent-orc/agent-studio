@@ -329,7 +329,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             engineClock);
         var deciding = new ReviewDecisionOrchestratorLoop(step, plane)
             .ExecuteAsync(claim.Run!, CancellationToken.None);
-        var modelJob = await ClaimAsync(coding, runnerId);
+        var modelJob = await ClaimAsync(coding, runnerId, plane, deciding);
         var response = scenario switch
         {
             "invalid" => "{}",
@@ -617,7 +617,7 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
             engineClock);
         var recording = step.RecordAsync(occurrence.RunId, CancellationToken.None);
 
-        var claim = await ClaimAsync(coding, runnerId);
+        var claim = await ClaimAsync(coding, runnerId, plane, recording);
         Assert.Equal(DecisionDefaultsCli, claim.Cli);
         Assert.Contains(frozen.Grounds.Facts[0].Id, claim.Prompt);
         Assert.DoesNotContain("CreateReview", claim.Prompt);
@@ -1207,16 +1207,17 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
 
     private const string DecisionDefaultsCli = "codex";
 
-    private static async Task<OrchestratorDecisionJobWork> ClaimAsync(RClient client, string runnerId)
+    private static async Task<OrchestratorDecisionJobWork> ClaimAsync(
+        RClient client, string runnerId, HttpDecisionPlane plane, Task deciding)
     {
-        for (var attempt = 0; attempt < 100; attempt++)
+        if (await Task.WhenAny(plane.JobCreated, deciding).WaitAsync(TimeSpan.FromMinutes(2)) == deciding)
         {
-            var claim = await client.ClaimOrchestratorDecisionJobAsync(
-                new OrchestratorDecisionJobClaimRequest(runnerId, "service"), CancellationToken.None);
-            if (claim.Work is { } work) return work;
-            await Task.Delay(100);
+            await deciding;
+            throw new InvalidOperationException("Decision completed without creating a claimable job.");
         }
-        throw new TimeoutException("No orchestrator decision job became claimable.");
+        var claim = await client.ClaimOrchestratorDecisionJobAsync(
+            new OrchestratorDecisionJobClaimRequest(runnerId, "service"), CancellationToken.None);
+        return Assert.IsType<OrchestratorDecisionJobWork>(claim.Work);
     }
 
     private static DecisionShadowInputV1 Shadow(string occurrence)
@@ -1300,6 +1301,9 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
 
     private sealed class HttpDecisionPlane(HttpClient client) : IDecisionReceiptPlane
     {
+        private readonly TaskCompletionSource _jobCreated = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task JobCreated => _jobCreated.Task;
+
         public async Task<IReadOnlyList<string>> GetPendingDecisionGroundsAsync(int limit, CancellationToken ct)
             => (await client.GetFromJsonAsync<string[]>(
                 $"/api/v1/orchestration/decision-grounds/pending?limit={limit}", DecisionGroundsPolicy.Json, ct))!;
@@ -1310,8 +1314,12 @@ public sealed class OrchestratorDecisionReceiptTests : IDisposable
 
         public async Task<OrchestratorDecisionJobDto> CreateDecisionJobAsync(OrchestratorDecisionJobRequest request,
             CancellationToken ct)
-            => await Read<OrchestratorDecisionJobDto>(await client.PostAsJsonAsync(
+        {
+            var job = await Read<OrchestratorDecisionJobDto>(await client.PostAsJsonAsync(
                 "/api/v1/orchestration/decision-jobs", request, DecisionGroundsPolicy.Json, ct));
+            _jobCreated.TrySetResult();
+            return job;
+        }
 
         public async Task<OrchestratorDecisionJobDto> GetDecisionJobAsync(string jobId, CancellationToken ct)
             => (await client.GetFromJsonAsync<OrchestratorDecisionJobDto>(

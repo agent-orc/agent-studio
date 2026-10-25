@@ -773,7 +773,7 @@ public static class TaskCrudEndpoints
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
+            if (ContributorAccessPolicy.IsProductSession(ctx)
                 && !ContributorAccessPolicy.AllowsTransition(scanner.FindJob(jobId, watchPath)?.State,
                     req.TargetState, req.OperatorOverride, req.ArchiveOverride))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
@@ -815,7 +815,7 @@ public static class TaskCrudEndpoints
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
+            if (ContributorAccessPolicy.IsProductSession(ctx)
                 && !ContributorAccessPolicy.AllowsTransition(scanner.FindJob(jobId, watchPath)?.State,
                     req.TargetState, req.OperatorOverride, req.ArchiveOverride))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
@@ -1014,11 +1014,21 @@ public static class TaskCrudEndpoints
                 ctx.Response.Headers["Deprecation"] = "true";
                 ctx.Response.Headers.Warning = "299 - \"epicId is deprecated and ignored\"";
             }
-            // The Product role's lane limit applies per project: a user with
-            // Developer elsewhere is still a Contributor in this one.
-            if (ProjectAccessAuthorization.IsProductRoleIn(ctx, string.IsNullOrWhiteSpace(req.Project) ? req.WatchPath : req.Project)
-                && req.TargetState is not (null or TaskStates.Backlog or TaskStates.Ready))
-                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            // The Product role's lane and run-control limits apply per project:
+            // a Developer binding elsewhere does not lift them here.
+            var requestedProject = string.IsNullOrWhiteSpace(req.Project) ? req.WatchPath : req.Project;
+            var productUser = ProjectAccessAuthorization.IsProductRoleIn(ctx, requestedProject)
+                ? (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User
+                : null;
+            if (productUser is not null)
+            {
+                var effectiveState = string.IsNullOrWhiteSpace(req.TargetState)
+                    ? TaskKinds.IsDecision(req.Kind) ? TaskStates.Preparation : TaskStates.Backlog
+                    : req.TargetState;
+                if (effectiveState is not (TaskStates.Backlog or TaskStates.Ready))
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                req = ContributorAccessPolicy.ForProductCreate(req, productUser.Id);
+            }
             if (string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest("Title is required");
             if (req.Kind is not null && !TaskKinds.All.Contains(req.Kind.Trim(), StringComparer.OrdinalIgnoreCase))
@@ -1040,7 +1050,6 @@ public static class TaskCrudEndpoints
             // attribution header must never override the authenticated user.
             if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
             {
-                var requestedProject = string.IsNullOrWhiteSpace(req.Project) ? req.WatchPath : req.Project;
                 if (!ProjectAccessAuthorization.AllowsTasks(ctx, [requestedProject], IamPermissions.ProjectCardsWrite, projects))
                     return Results.Json(new { error = "project-scope-denied", message = "This account is not a member of the requested project." }, statusCode: StatusCodes.Status403Forbidden);
                 req = req with { OwnerClientId = human.User.Id };
@@ -1073,6 +1082,9 @@ public static class TaskCrudEndpoints
                         routing = resolvedRouting,
                     });
                 }
+                if (productUser is not null
+                    && !ProjectAccessAuthorization.Allows(productUser, resolvedRouting.StorageProjectId, projects))
+                    return Results.Json(new { error = "project-scope-denied", message = "This account is not a member of the destination project." }, statusCode: StatusCodes.Status403Forbidden);
                 if (!string.IsNullOrWhiteSpace(req.RequestedTaskPrefix)
                     && !string.Equals(req.RequestedTaskPrefix, resolvedRouting.AllowedTicketPrefix, StringComparison.OrdinalIgnoreCase))
                 {
