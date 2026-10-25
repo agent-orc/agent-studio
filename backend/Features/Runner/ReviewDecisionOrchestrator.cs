@@ -175,7 +175,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// Args: cliBinary, model, prompt, timeout, ct → captured stdout/stderr.
     /// </summary>
     public Func<string, string, string, TimeSpan, CancellationToken, Task<string>> CliRunner { get; set; }
-        = DefaultRunCliAsync;
 
     internal Func<int, TimeSpan> BuildTestGateRetryBackoff { get; set; }
         = PostProcessingOutcomeTaxonomy.RetryBackoff;
@@ -297,6 +296,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _aspectRunner = aspectRunner;
         _statusSnapshot = statusSnapshot;
         _configuration = configuration;
+        CliRunner = DefaultRunCliAsync;
         _taskMutations = taskMutations;
         _logger = logger;
         _usage = usage;
@@ -8366,23 +8366,24 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         return value.ToLowerInvariant();
     }
 
-    private static async Task<string> DefaultRunCliAsync(string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
+    private async Task<string> DefaultRunCliAsync(string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
     {
         if (NormalizeReviewCliType(cli) != CliTypes.Claude) return string.Empty;
-        using var workspace = new HostOneShotIsolation.Workspace();
+        var networked = SecurityProfiles.IsNetworked(_configuration);
+        using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;
         var psi = new ProcessStartInfo
         {
             FileName = cli,
-            WorkingDirectory = workspace.Path,
+            WorkingDirectory = networked ? workspace!.Path : Directory.GetCurrentDirectory(),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model);
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model, networked: networked);
 
-        using var p = HostCliSpawnGuard.Start(psi, networked: true, CliTypes.Claude);
+        using var p = HostCliSpawnGuard.Start(psi, networked, CliTypes.Claude);
         if (p == null) return string.Empty;
         try
         {

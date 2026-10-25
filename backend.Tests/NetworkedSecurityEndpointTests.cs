@@ -31,6 +31,8 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     {
         var projectPath = Directory.CreateDirectory(Path.Combine(_workspace, "projects", "networked-smoke")).FullName;
         using var factory = BuildFactory(projectPath: projectPath);
+        Assert.IsType<RemoteRequiredBuildCommandRunner>(
+            factory.Services.GetRequiredService<IBuildCommandRunner>());
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
         var store = factory.Services.GetRequiredService<AccessSecurityStore>();

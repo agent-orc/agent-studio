@@ -33,11 +33,15 @@ public sealed class HostCliSecurityGuardTests
         var root = RepositoryRoot.Find();
         var features = Path.Combine(root, "backend", "Features");
         var offenders = BackendSources(root)
-            .Where(file => Path.GetFileName(file) != "HostCliSpawnGuard.cs")
+            .Where(file => Path.GetFileName(file) is not ("HostCliSpawnGuard.cs" or "HostOneShotIsolation.cs"))
             .Where(file => File.ReadAllText(file).Contains("--dangerously-skip-permissions",
                 StringComparison.Ordinal))
             .Select(file => Path.GetRelativePath(root, file)).ToArray();
         Assert.Empty(offenders);
+        var argumentBuilder = File.ReadAllText(Path.Combine(features, "Cli", "Routing", "OneShot",
+            "HostOneShotIsolation.cs"));
+        Assert.Matches(@"if \(!networked\)\s*\{\s*arguments.Add\(""--dangerously-skip-permissions""\)",
+            argumentBuilder);
 
         var directClaudeLaunchers = BackendSources(root)
             .Where(file => File.ReadAllText(file).Contains("HostOneShotIsolation.Workspace", StringComparison.Ordinal))
@@ -48,13 +52,16 @@ public sealed class HostCliSecurityGuardTests
             var source = File.ReadAllText(file);
             var relative = Path.GetRelativePath(root, file);
             Assert.Contains("HostOneShotIsolation.Workspace", source);
-            Assert.Contains("WorkingDirectory = workspace.Path", source);
+            Assert.True(source.Contains("WorkingDirectory = workspace.Path", StringComparison.Ordinal)
+                || source.Contains("WorkingDirectory = networked ? workspace!.Path", StringComparison.Ordinal),
+                relative);
             Assert.True(source.Contains("HostOneShotIsolation.AddClaudeArguments", StringComparison.Ordinal)
                 || source.Contains("AdHocClaudeInvoker.BuildArgs", StringComparison.Ordinal), relative);
             Assert.Contains("HostCliSpawnGuard.Start(psi", source);
             Assert.Contains("CliTypes.Claude)", source);
             Assert.DoesNotContain("ArgumentList.Add(\"--tools\")", source);
             Assert.DoesNotContain("--allowedTools", source);
+            Assert.DoesNotContain("networked: true", source);
         }
     }
 
@@ -80,6 +87,19 @@ public sealed class HostCliSecurityGuardTests
             ["--max-budget-usd", "--dangerously-skip-permissions"]));
         using var workspace = new HostOneShotIsolation.Workspace();
         Assert.Empty(Directory.EnumerateFileSystemEntries(workspace.Path));
+    }
+
+    [Fact]
+    public void Local_claude_arguments_keep_tools_and_session_resume()
+    {
+        var args = new List<string>();
+        var session = Guid.NewGuid().ToString("D");
+        HostOneShotIsolation.AddClaudeArguments(args, "claude-test", ["-r", session], networked: false);
+
+        Assert.Contains("--dangerously-skip-permissions", args);
+        Assert.DoesNotContain("--tools", args);
+        Assert.DoesNotContain("--strict-mcp-config", args);
+        Assert.Equal(session, args[args.IndexOf("-r") + 1]);
     }
 
     [Fact]

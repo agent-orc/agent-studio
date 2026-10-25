@@ -128,13 +128,14 @@ public sealed class TestCliGuardTests
         using var workspace = new TempWorkspace("cli-guard-explicit");
         const string reply = "explicit stub reply";
         var stub = await StubCli.WriteAsync(workspace.Directory("bin"), "claude-explicit", reply);
+        var cwdProbe = Path.Combine(workspace.Path, "one-shot-cwd.txt");
         // StubCli exits after printing. Keep this one alive until OneShot closes
         // stdin, so the prompt write cannot race with process exit.
         await File.AppendAllTextAsync(
             stub,
             OperatingSystem.IsWindows()
-                ? "if not \"%~1\"==\"--version\" more >nul\r\n"
-                : "if [ \"$1\" != \"--version\" ]; then cat >/dev/null; fi\n");
+                ? $"if not \"%~1\"==\"--version\" (more >nul & cd > \"{cwdProbe}\")\r\n"
+                : $"if [ \"$1\" != \"--version\" ]; then cat >/dev/null; pwd > '{cwdProbe.Replace("'", "'\\''")}'; fi\n");
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["ClaudeCli:Path"] = stub })
             .Build();
@@ -144,6 +145,8 @@ public sealed class TestCliGuardTests
 
         Assert.True(result.Ok, $"Explicit stub did not run: exit {result.ExitCode}, stderr '{result.Stderr}'.");
         Assert.Contains(reply, result.ParsedText, StringComparison.Ordinal);
+        Assert.Equal(Path.GetFullPath(workspace.Path),
+            Path.GetFullPath((await File.ReadAllTextAsync(cwdProbe)).Trim()));
         Assert.DoesNotContain(TestCliGuard.ReadInvocations(), invocation => invocation.RanIn(workspace.Path));
     }
 
@@ -151,8 +154,8 @@ public sealed class TestCliGuardTests
     /// The in-suite tripwire. The real CLI names its transcript folder after the
     /// encoded cwd, and every test cwd lives below the suite root
     /// <c>ats-&lt;token&gt;</c>, so a folder carrying that name means some call in
-    /// this process got past the guard. It runs one guarded finalization of its
-    /// own first, so it never passes vacuously when it happens to run early.
+    /// this process got past the guard. The adjacent finalization test proves
+    /// the guard was exercised without relying on a shared invocation count.
     /// </summary>
     [Fact]
     public async Task No_claude_transcript_carries_the_suite_root_token()
@@ -163,11 +166,8 @@ public sealed class TestCliGuardTests
             .AddInMemoryCollection(new Dictionary<string, string?> { ["SummaryGeneration:FinalizationMaxAttempts"] = "1" })
             .Build();
         var service = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, configuration);
-        var before = TestCliGuard.ReadInvocations().Count;
         var outcome = await service.FinalizeAsync(await TaskIn(workspace));
         Assert.Equal(TaskSummaryStatus.Degraded, outcome.Status);
-        Assert.Contains(TestCliGuard.ReadInvocations().Skip(before), invocation =>
-            Path.GetFileName(invocation.WorkingDirectory).StartsWith("studio-one-shot-", StringComparison.Ordinal));
 
         var token = Path.GetFileName(Path.TrimEndingDirectorySeparator(TestTempRoot.SuiteRoot));
         Assert.True(TempRootLengthPolicy.IsSuiteRootName(token), $"Unexpected suite root name '{token}'.");

@@ -58,8 +58,8 @@ public sealed class ClaudeOneShot : ICliOneShot
     public async Task<CliOneShotResult> RunAsync(CliOneShotRequest request, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (SecurityProfiles.IsNetworked(_configuration)
-            && request.ExtraArgs?.Contains("-r", StringComparer.Ordinal) == true)
+        var networked = SecurityProfiles.IsNetworked(_configuration);
+        if (networked && request.ExtraArgs?.Contains("-r", StringComparer.Ordinal) == true)
         {
             var now = DateTime.UtcNow;
             return CliOneShotResult.SpawnFailure(
@@ -89,11 +89,11 @@ public sealed class ClaudeOneShot : ICliOneShot
             // result and its callers apply their own fallback policy.
         }
 
-        using var workspace = new HostOneShotIsolation.Workspace();
+        using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;
         var psi = new ProcessStartInfo
         {
             FileName = executable,
-            WorkingDirectory = workspace.Path,
+            WorkingDirectory = networked ? workspace!.Path : request.WorkingDirectory ?? Directory.GetCurrentDirectory(),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -105,7 +105,8 @@ public sealed class ClaudeOneShot : ICliOneShot
         };
         psi.Environment["LC_ALL"] = "C.UTF-8";
         psi.Environment["LANG"] = "C.UTF-8";
-        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, request.Model, request.ExtraArgs);
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, request.Model, request.ExtraArgs,
+            networked: networked);
         foreach (var arg in CodingAgentRunner.Model.CliReasoningFlags.For(CliTypes.Claude, request.Model, request.ThinkingLevel))
             psi.ArgumentList.Add(arg);
         var multimodal = request.InlineImages is { Count: > 0 };
@@ -128,7 +129,7 @@ public sealed class ClaudeOneShot : ICliOneShot
         Process? p = null;
         try
         {
-            p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_configuration), CliTypes.Claude);
+            p = HostCliSpawnGuard.Start(psi, networked, CliTypes.Claude);
             if (p == null)
             {
                 var completedAt = DateTime.UtcNow;

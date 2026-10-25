@@ -32,6 +32,7 @@ public sealed class AspectRunnerService
 {
     private readonly RuntimePromptService _prompts;
     private readonly ILogger<AspectRunnerService> _logger;
+    private readonly IConfiguration? _configuration;
 
     /// <summary>
     /// CLI runner injection point. Tests substitute a deterministic stub
@@ -41,7 +42,6 @@ public sealed class AspectRunnerService
     /// constructor; tests can still overwrite the property directly.
     /// </summary>
     public Func<string, string, string, string, TimeSpan, CancellationToken, Task<string>> CliRunner { get; set; }
-        = DefaultRunCliAsync;
 
     private Func<string, string, string, string, string?, TimeSpan, string, CancellationToken, Task<string>>? _thinkingAwareCliRunner;
 
@@ -64,7 +64,8 @@ public sealed class AspectRunnerService
         AdHocUsageRecorder? usage = null,
         CliOneShotRegistry? oneShotRegistry = null,
         PipelineExecutionLog? pipelineLog = null,
-        FileGenerationIndex? fileGenerationIndex = null)
+        FileGenerationIndex? fileGenerationIndex = null,
+        IConfiguration? configuration = null)
     {
         _prompts = prompts;
         _logger = logger;
@@ -72,6 +73,8 @@ public sealed class AspectRunnerService
         _oneShotRegistry = oneShotRegistry;
         _pipelineLog = pipelineLog;
         _fileGenerationIndex = fileGenerationIndex;
+        _configuration = configuration;
+        CliRunner = DefaultRunCliAsync;
 
         // Wire production CLI invocation to the OneShot service so prompts
         // travel via stdin (the failure mode this fix exists to prevent
@@ -763,25 +766,26 @@ public sealed class AspectRunnerService
     /// pattern; we removed the previous <c>-p &lt;prompt&gt;</c> argv path
     /// that caused the 2026-05-11 empty-reply incident.
     /// </summary>
-    private static async Task<string> DefaultRunCliAsync(
+    private async Task<string> DefaultRunCliAsync(
         string aspectId, string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
     {
         if (!Path.GetFileNameWithoutExtension(cli).Equals(CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
             return string.Empty;
-        using var workspace = new HostOneShotIsolation.Workspace();
+        var networked = _configuration is null || SecurityProfiles.IsNetworked(_configuration);
+        using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = cli,
-            WorkingDirectory = workspace.Path,
+            WorkingDirectory = networked ? workspace!.Path : Directory.GetCurrentDirectory(),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model);
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model, networked: networked);
 
-        using var p = HostCliSpawnGuard.Start(psi, networked: true, CliTypes.Claude);
+        using var p = HostCliSpawnGuard.Start(psi, networked, CliTypes.Claude);
         if (p == null) return string.Empty;
         try
         {
