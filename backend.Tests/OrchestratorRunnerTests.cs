@@ -121,15 +121,21 @@ public class OrchestratorRunnerTests
     [Fact]
     public void BuildArgs_NeverEmbedsPromptContent()
     {
-        var (args, modelId) = OrchestratorRunner.BuildArgs("claude-opus-4-7", resumeSessionId: null);
+        var (args, modelId) = OrchestratorRunner.BuildArgs("claude-opus-4-7", resumeSessionId: null,
+            networked: true);
 
         Assert.Equal("claude-opus-4-7", modelId);
         Assert.Contains("-p", args);
         Assert.Contains("--output-format", args);
         var idx = args.IndexOf("--output-format");
         Assert.Equal("json", args[idx + 1]);
-        Assert.DoesNotContain("--dangerously-skip-permissions", args);
+        Assert.Contains("--strict-mcp-config", args);
         Assert.Equal("", args[args.IndexOf("--tools") + 1]);
+        Assert.DoesNotContain("--dangerously-skip-permissions", args);
+
+        var (localArgs, _) = OrchestratorRunner.BuildArgs("claude-opus-4-7", resumeSessionId: null, networked: false);
+        Assert.Contains("--dangerously-skip-permissions", localArgs);
+        Assert.DoesNotContain("--tools", localArgs);
 
         // -p is always followed by another flag (no positional prompt arg).
         var pIdx = args.IndexOf("-p");

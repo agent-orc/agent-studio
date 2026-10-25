@@ -89,6 +89,7 @@ internal static class GitNetworkProcessRunner
     {
         ArgumentNullException.ThrowIfNull(startInfo);
         ApplyWindowsLongPathConfig(startInfo);
+        HostGitProcessHardening.Apply(startInfo);
         var boundedTimeout = timeout ?? DefaultTimeout;
         if (boundedTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(timeout), "Git process timeout must be positive.");
@@ -179,6 +180,7 @@ internal static class GitNetworkProcessRunner
     {
         ArgumentNullException.ThrowIfNull(startInfo);
         ApplyWindowsLongPathConfig(startInfo);
+        HostGitProcessHardening.Apply(startInfo);
         if (timeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(timeout), "Git process timeout must be positive.");
         if (cancellationToken.IsCancellationRequested)
@@ -427,5 +429,44 @@ internal static class GitNetworkProcessRunner
             || message.Contains("not enough memory", StringComparison.OrdinalIgnoreCase)
             || message.Contains("resource temporarily unavailable", StringComparison.OrdinalIgnoreCase)
             || message.Contains("insufficient system resources", StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+/// <summary>Process-local Git settings for repository content handled by the Studio host.</summary>
+internal static class HostGitProcessHardening
+{
+    internal static void Apply(ProcessStartInfo startInfo)
+    {
+        if (startInfo.Environment.TryGetValue("GIT_CONFIG_COUNT", out var raw)
+            && int.TryParse(raw, out var previous)
+            && previous >= 3
+            && startInfo.Environment.TryGetValue($"GIT_CONFIG_KEY_{previous - 3}", out var lastFirst)
+            && lastFirst == "core.hooksPath"
+            && startInfo.Environment.TryGetValue($"GIT_CONFIG_VALUE_{previous - 3}", out var hooksValue)
+            && hooksValue == (OperatingSystem.IsWindows() ? "NUL" : "/dev/null")
+            && startInfo.Environment.TryGetValue($"GIT_CONFIG_KEY_{previous - 2}", out var lastSecond)
+            && lastSecond == "core.fsmonitor"
+            && startInfo.Environment.TryGetValue($"GIT_CONFIG_VALUE_{previous - 2}", out var monitorValue)
+            && monitorValue == "false"
+            && startInfo.Environment.TryGetValue($"GIT_CONFIG_KEY_{previous - 1}", out var lastThird)
+            && lastThird == "safe.bareRepository"
+            && startInfo.Environment.TryGetValue($"GIT_CONFIG_VALUE_{previous - 1}", out var bareValue)
+            && bareValue == "explicit")
+            return;
+
+        var count = startInfo.Environment.TryGetValue("GIT_CONFIG_COUNT", out raw)
+            && int.TryParse(raw, out previous) && previous >= 0 ? previous : 0;
+        foreach (var (key, value) in new[]
+                 {
+                     ("core.hooksPath", OperatingSystem.IsWindows() ? "NUL" : "/dev/null"),
+                     ("core.fsmonitor", "false"),
+                     ("safe.bareRepository", "explicit"),
+                 })
+        {
+            startInfo.Environment[$"GIT_CONFIG_KEY_{count}"] = key;
+            startInfo.Environment[$"GIT_CONFIG_VALUE_{count}"] = value;
+            count++;
+        }
+        startInfo.Environment["GIT_CONFIG_COUNT"] = count.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 }

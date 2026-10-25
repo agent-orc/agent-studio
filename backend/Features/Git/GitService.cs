@@ -2913,7 +2913,7 @@ public partial class GitService
         if (diff.Length > 60_000) diff = diff[..60_000] + "\n[truncated]";
 
         var intent = ReadTaskIntent(jobId, watchPath);
-        if (SecurityProfiles.IsNetworked(_config))
+        if (!SecurityProfiles.IsLocal(_config))
             return new GenerateMessageResult(null,
                 "Remote runner required: host Codex commit-message review is disabled in the networked profile.");
         var codexPath = _config["CodexCli:Path"] ?? "codex";
@@ -2954,7 +2954,7 @@ public partial class GitService
         var sw = Stopwatch.StartNew();
         try
         {
-            using var p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_config), CliTypes.Codex)!;
+            using var p = HostCliSpawnGuard.Start(psi, !SecurityProfiles.IsLocal(_config), CliTypes.Codex)!;
             await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
             p.StandardInput.Close();
             var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);
@@ -8639,7 +8639,7 @@ public partial class GitService
             // we can get without an unreliable PID/window-title scan.
             psi.ArgumentList.Add("-r");
             psi.ArgumentList.Add(root);
-            using var p = Process.Start(psi);
+            using var p = HostCliSpawnGuard.Start(psi, !SecurityProfiles.IsLocal(_config));
             return p != null;
         }
         catch (Exception ex)

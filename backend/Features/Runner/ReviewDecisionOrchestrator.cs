@@ -296,6 +296,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _aspectRunner = aspectRunner;
         _statusSnapshot = statusSnapshot;
         _configuration = configuration;
+        CliRunner = DefaultRunCliAsync;
         _taskMutations = taskMutations;
         _logger = logger;
         _usage = usage;
@@ -326,8 +327,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _decisionRequests = decisionRequests;
         _orchestration = orchestration;
         _reviewInputDecisions = reviewInputDecisions;
-        CliRunner = (cli, model, prompt, timeout, ct) =>
-            DefaultRunCliAsync(cli, model, prompt, timeout, ct, SecurityProfiles.IsNetworked(_configuration));
 
         _statusSnapshot.ConfigureEscalationRateAlert(
             _configuration.GetValue(
@@ -8367,26 +8366,28 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         return value.ToLowerInvariant();
     }
 
-    private static async Task<string> DefaultRunCliAsync(string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct, bool networked)
+    private async Task<string> DefaultRunCliAsync(string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
     {
-        using var workspace = new HostOneShotIsolation.Workspace();
+        if (NormalizeReviewCliType(cli) != CliTypes.Claude) return string.Empty;
+        var networked = !SecurityProfiles.IsLocal(_configuration);
+        using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;
         var psi = new ProcessStartInfo
         {
             FileName = cli,
-            WorkingDirectory = workspace.Path,
+            WorkingDirectory = networked ? workspace!.Path : Directory.GetCurrentDirectory(),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model);
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model, networked: networked);
 
-        using var p = HostCliSpawnGuard.Start(psi, networked, NormalizeReviewCliType(cli));
+        using var p = HostCliSpawnGuard.Start(psi, networked, CliTypes.Claude);
         if (p == null) return string.Empty;
         try
         {
-            await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
+            await p.StandardInput.WriteAsync(HostOneShotIsolation.PreparePrompt(prompt, networked).AsMemory(), ct);
             p.StandardInput.Close();
         }
         catch (Exception __ex) { SilentCatch.Note(__ex, "ReviewDecisionOrchestrator: stdin may already be closed by CLI"); /* stdin may already be closed by CLI */ }

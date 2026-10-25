@@ -1,8 +1,14 @@
 namespace AgentStudio.Cli;
 
-/// <summary>Host-side Claude calls have no project filesystem context or tools.</summary>
+/// <summary>Shared-profile host Claude calls have no project filesystem context or tools.</summary>
 public static class HostOneShotIsolation
 {
+    // Claude expands file mentions before tool restrictions take effect, including
+    // mentions after punctuation and zero-width characters. Remove every sigil.
+    public static string PreparePrompt(string prompt, bool isolated = true) => isolated
+        ? prompt.Replace('@', '＠')
+        : prompt;
+
     public sealed class Workspace : IDisposable
     {
         public string Path { get; } = System.IO.Path.Combine(
@@ -19,13 +25,20 @@ public static class HostOneShotIsolation
     }
 
     public static void AddClaudeArguments(ICollection<string> arguments, string model,
-        IReadOnlyList<string>? extraArgs = null)
+        IReadOnlyList<string>? extraArgs = null, bool networked = true)
     {
         arguments.Add("-p");
         arguments.Add("--output-format");
         arguments.Add("json");
         arguments.Add("--model");
         arguments.Add(model);
+        if (!networked)
+        {
+            arguments.Add("--dangerously-skip-permissions");
+            if (extraArgs is not null)
+                foreach (var arg in extraArgs) arguments.Add(arg);
+            return;
+        }
         if (extraArgs is not null)
         {
             for (var i = 0; i < extraArgs.Count; i++)
@@ -52,6 +65,6 @@ public static class HostOneShotIsolation
         arguments.Add("");
         arguments.Add("--strict-mcp-config");
         arguments.Add("--mcp-config");
-        arguments.Add("{}");
+        arguments.Add("{\"mcpServers\":{}}");
     }
 }

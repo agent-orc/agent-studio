@@ -748,14 +748,10 @@ public sealed class WorkbenchCatalogueTests : IDisposable
         RunGit("add", ".");
         RunGit("commit", "-m", "test: seed workbench without a key");
         var before = RunGit("rev-parse", "HEAD").Trim();
-        var hook = Path.Combine(_root, ".git", "hooks", "pre-commit");
-        File.WriteAllText(hook, "#!/bin/sh\nexit 1\n");
-        if (!OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(
-                hook,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
+        // Host Git deliberately ignores repository hooks. Require a signing
+        // program that does not exist to exercise the managed commit failure.
+        RunGit("config", "commit.gpgsign", "true");
+        RunGit("config", "gpg.program", "studio-test-missing-gpg-program");
 
         var item = Assert.Single(Service().List("Project", includeHistory: true)!.Items);
 

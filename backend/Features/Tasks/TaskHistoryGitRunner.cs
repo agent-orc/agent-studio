@@ -54,6 +54,7 @@ public sealed class ProcessTaskHistoryGitRunner : ITaskHistoryGitRunner
         foreach (var arg in args) psi.ArgumentList.Add(arg);
 
         var started = Stopwatch.StartNew();
+        AgentStudio.Git.HostGitProcessHardening.Apply(psi);
         using var p = Process.Start(psi);
         if (p == null) return TaskHistoryGitResult.Failed("Failed to start git.");
 

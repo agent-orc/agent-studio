@@ -11,7 +11,7 @@
       [warning]="runningSourcesDiverge()"
       testid="status-bar-running"
       (activated)="navigateToExecutionHosts()" />
-    <app-statusbar-item
+    <app-statusbar-item class="statusbar__review"
       bullet="◎"
       [pulsing]="reviewActiveSlots() > 0"
       [signalTone]="reviewAttention() ? 'mismatch' : (reviewActiveSlots() > 0 ? 'working' : null)"
@@ -19,7 +19,7 @@
       [tooltip]="reviewTooltip()"
       [button]="false"
       testid="status-bar-review" />
-    <app-statusbar-item
+    <app-statusbar-item class="statusbar__automation"
       [button]="false"
       icon="refresh"
       [iconSize]="11"

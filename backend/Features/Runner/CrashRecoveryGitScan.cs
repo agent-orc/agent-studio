@@ -285,6 +285,7 @@ internal static class CrashRecoveryGitScan
         psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         if (index != null) psi.Environment["GIT_INDEX_FILE"] = index;
         foreach (var arg in args) psi.ArgumentList.Add(arg);
+        AgentStudio.Git.HostGitProcessHardening.Apply(psi);
         using var process = Process.Start(psi)!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();
@@ -302,6 +303,7 @@ internal static class CrashRecoveryGitScan
         };
         psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         foreach (var arg in args) psi.ArgumentList.Add(arg);
+        AgentStudio.Git.HostGitProcessHardening.Apply(psi);
         using var process = Process.Start(psi)!;
         var writer = Task.Run(async () =>
         {

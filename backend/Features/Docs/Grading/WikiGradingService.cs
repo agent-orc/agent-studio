@@ -163,6 +163,9 @@ public sealed class WikiGradingService
         string content;
         try
         {
+            if (!FilesystemPathBoundary.IsRegularFileUnder(wikiDir, fullPath))
+                return new WikiPageGradeResult(page.RelPath, "unknown", WikiGradeOutcome.Failed,
+                    "read rejected: page is outside the wiki root or is a link");
             content = File.ReadAllText(fullPath);
         }
         catch (Exception ex)
@@ -172,6 +175,9 @@ public sealed class WikiGradingService
 
         var hash = WikiCompanionStore.HashContent(content);
         var companionAbs = WikiCompanionStore.CompanionPathFor(wikiDir, page.RelPath);
+        if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(wikiDir, companionAbs))
+            return new WikiPageGradeResult(page.RelPath, "unknown", WikiGradeOutcome.Failed,
+                "companion path is outside the wiki root or is a link");
 
         // Idempotency: an unchanged page graded by the same model is skipped
         // unless the operator forces a full re-grade.

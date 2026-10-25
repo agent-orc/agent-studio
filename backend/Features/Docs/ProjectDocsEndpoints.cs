@@ -49,14 +49,14 @@ public static class ProjectDocsEndpoints
             var ok = docs.WriteSecurityFile(projectName, relPath, content);
             return ok ? Results.Ok(new { relPath, saved = true })
                       : Results.BadRequest(new { error = "Write rejected (path unsafe or project unknown)" });
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
 
         app.MapPut("/api/projects/{projectName}/security/meta", (string projectName, SecurityMeta meta, ProjectDocsService docs) =>
         {
             var ok = docs.WriteSecurityMeta(projectName, meta);
             return ok ? Results.Ok(new { saved = true })
                       : Results.NotFound(new { error = $"Unknown project '{projectName}'" });
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
 
         // ---- Wiki (docs/ tree) ----
 

@@ -40,6 +40,41 @@ operator. This preserves account-free single-seat operation without turning
 management request requires a human owner or operator session; anonymous
 requests return `401` with the Studio login entry.
 
+In the networked profile, checkout sync and runner-host provider authentication
+and sign-in are Owner-only. URL start rules run with a minimal child environment
+that excludes the Studio API's credentials and service configuration. Host Git
+processes disable repository hooks and fsmonitor and require explicit bare
+repository access. The selected mitigation for repository scripts is the
+Owner-only checkout sync gate; the Owner remains responsible for code promoted
+into the developer checkout before starting a URL preview. Clearing the child
+environment does not isolate a start rule: it still runs as the Studio API user
+and can read absolute paths accessible to that account. Networked build-profile
+validation is refused until a remote validation protocol is available; profile
+edits and URL target changes require the Owner.
+In the networked and public-demo profiles, host Claude one-shots use a
+temporary empty working directory, disabled tools, and an empty strict MCP
+configuration. The spawn boundary disables Claude attachments, and the shared
+stdin boundary replaces every `@` in delivered prompt text so punctuation and
+zero-width characters cannot introduce file mentions. Security file and wiki
+companion writes refuse delivered links; security file and metadata routes
+require the Owner in the networked profile. This
+boundary protects against CLI file expansion; it does not isolate the CLI
+process from host files accessible to the Studio API user. The trusted local
+profile retains host build validation with its operator environment and gives
+URL start rules the local environment. Its canonical Claude one-shot runner
+keeps the requested working directory and tools.
+
+**Accepted risk for single-team installs (2026-10-25).** Coding agents on
+`agent-runner-01` currently run with skip-all permissions in a shared host
+environment. A Developer-authored card executed there can read that host's
+provider credentials and other projects' checkouts. Treat all users allowed to
+submit coding work to that runner as one trust group. Before admitting separate
+teams, implement the Stage 2 per-job isolation proposed by the
+[dynamic placement Dossier](../../dynamic-placement/index.html) (AGT-3171):
+place each job in its own container, mount only that job's repository, and give
+it a short-lived credential scoped to that job. Do not put persistent provider
+credentials or another project's checkout in the job container.
+
 ## Networked threat model
 
 The central URL contains task prompts, code and review evidence, CLI output,

@@ -301,6 +301,50 @@ public class WikiGradingServiceTests : IDisposable
         Assert.Contains(stale.GetProperty("grade").GetString(), new[] { "C", "D" });
     }
 
+    [Fact]
+    public async Task Run_DoesNotReadDeliveredPageLink()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var repoRoot = SeedRepo(new() { ["safe.md"] = "# Safe\n" });
+        var outside = Path.Combine(_tempDir, "outside.md");
+        File.WriteAllText(outside, "private content");
+        File.CreateSymbolicLink(Path.Combine(repoRoot, "docs", "leak.md"), outside);
+        var seen = new List<string>();
+        var grader = new StubGrader(input =>
+        {
+            seen.Add(input.Content);
+            return Verdict("B");
+        });
+
+        await BuildGrading(grader, ("Proj", repoRoot)).RunToCompletionAsync("Proj", Req());
+
+        Assert.DoesNotContain("private content", seen);
+        Assert.False(File.Exists(Path.Combine(repoRoot, "docs", "leak.md.meta.json")));
+    }
+
+    [Fact]
+    public void CompanionWrites_RejectDeliveredLinks()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var wikiDir = Directory.CreateDirectory(Path.Combine(_tempDir,
+            "companion-links-" + Guid.NewGuid().ToString("N"), "docs")).FullName;
+        var outside = Directory.CreateDirectory(Path.Combine(_tempDir,
+            "outside-" + Guid.NewGuid().ToString("N"))).FullName;
+        var outsideFile = Path.Combine(outside, "companion.json");
+        File.WriteAllText(outsideFile, "private content");
+        Directory.CreateSymbolicLink(Path.Combine(wikiDir, "linked"), outside);
+        File.CreateSymbolicLink(Path.Combine(wikiDir, "page.md.meta.json"), outsideFile);
+        var store = new WikiCompanionStore();
+        var now = new DateTime(2026, 10, 25, 0, 0, 0, DateTimeKind.Utc);
+
+        Assert.Throws<IOException>(() => store.WriteCreationClassification(
+            wikiDir, "linked/page.md", "Page", "# Page", null, now));
+        Assert.Throws<IOException>(() => store.WriteGrading(
+            wikiDir, "page.md", "Page", "# Page", Verdict("B"), Req(), "run-1", now));
+        Assert.Equal("private content", File.ReadAllText(outsideFile));
+        Assert.False(File.Exists(Path.Combine(outside, "page.md.meta.json")));
+    }
+
     // ---- helpers ----
 
     private const string TestModel = "claude-sonnet-5";
