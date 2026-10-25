@@ -20,6 +20,7 @@ import {
 } from '../../../project-detail';
 import { ProjectDetailComponent } from '../../../project-detail/lazy';
 import { ProjectTokenUsagePanelComponent } from '../../../project-token-usage';
+import { TokenAnalysisViewComponent } from '../../../token-analysis';
 import { ProjectCycleTimePanelComponent } from '../../../project-cycle-time';
 import { PromptAdminPanelComponent } from '../../../orchestrator';
 import { WorkspaceScreenshotsComponent } from '../../../screenshots';
@@ -92,6 +93,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
     SecurityPanelComponent,
     UxuiPanelComponent,
     ProjectTokenUsagePanelComponent,
+    TokenAnalysisViewComponent,
     ProjectCycleTimePanelComponent,
     ProjectObservabilityPanelComponent,
     ProjectProductRuntimePanelComponent,

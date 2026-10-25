@@ -76,11 +76,12 @@ for name, (caddyfile, allow_direct) in expected.items():
     env = env_file(name)
     assert env['STUDIO_CADDYFILE'] == './' + caddyfile, (name, env)
     assert env['STUDIO_CLOUDFLARE_ALLOW_DIRECT'] == allow_direct, (name, env)
+    assert env['STUDIO_PUBLIC_CLOUDFLARE_EDGE'] == 'true', (name, env)
     edge = rendered['services']['edge']
     edge_mounts = mounts(edge)
     assert edge_mounts['/etc/caddy/Caddyfile'].endswith('/' + caddyfile), (name, edge_mounts)
     assert edge_mounts['/etc/caddy/cloudflare-ips.caddy'].endswith('/cloudflare-ips.caddy'), (name, edge_mounts)
-    assert '/etc/caddy/cloudflare-origin-pull-ca.pem' not in edge_mounts, (name, edge_mounts)
+    assert edge_mounts['/etc/caddy/origin-pull'].endswith('/origin-pull'), (name, edge_mounts)
     assert edge['environment']['STUDIO_CLOUDFLARE_ALLOW_DIRECT'] == allow_direct, (name, edge['environment'])
     assert edge['networks']['website']['ipv4_address'] == '172.30.83.2', edge['networks']
     frontend = rendered['services']['frontend']
@@ -88,6 +89,7 @@ for name, (caddyfile, allow_direct) in expected.items():
     assert frontend['networks']['website']['ipv4_address'] == '172.30.83.3', frontend['networks']
     api = rendered['services']['api']
     assert api['environment']['Security__TrustedProxyAddresses'] == '172.30.83.3,172.30.83.2', api['environment']
+    assert api['environment']['Security__PublicCloudflareEdge'] == 'true', api['environment']
     assert 'ports' not in api and 'ports' not in frontend, 'only the edge may publish ports'
 print('Compose render passed for the public, Cloudflare and Cloudflare direct-access modes.')
 PY
@@ -137,15 +139,20 @@ assert site.get('trusted_proxies_strict') == 1, site
 config = json.dumps(site)
 assert '{http.vars.trusted_proxy}' in config and '{env.STUDIO_CLOUDFLARE_ALLOW_DIRECT}' in config, config
 
-# Origin authentication is owned by AGT-3298. Both edge modes preserve the
-# same trusted proxy range and have no client certificate policy yet.
-assert not any(policy.get('client_authentication') for policy in site.get('tls_connection_policies', [])), site
+def requires_origin_pull(server):
+    return any(policy.get('client_authentication') == {
+        'ca': {'pem_files': ['/etc/caddy/origin-pull/ca.pem'], 'provider': 'file'},
+        'mode': 'require_and_verify',
+    } for policy in server.get('tls_connection_policies', []))
+
+assert requires_origin_pull(site), site
 direct = next(server for server in adapted('Caddyfile.cloudflare-direct').values() if ':443' in server['listen'])
-assert not any(policy.get('client_authentication') for policy in direct.get('tls_connection_policies', [])), direct
+assert requires_origin_pull(direct), direct
 assert direct['trusted_proxies'] == site['trusted_proxies'], direct
 
 public = next(server for server in adapted('Caddyfile.public').values() if ':443' in server['listen'])
 assert public['trusted_proxies'] == {'source': 'static', 'ranges': listed}, public
+assert requires_origin_pull(public), public
 public_matchers = re.findall(r'@cloudflare remote_ip (.+)', open(os.path.join(os.path.dirname(ranges_file), 'Caddyfile.public'), encoding='utf-8').read())
 assert len(public_matchers) == 1 and public_matchers[0].split() == listed, public_matchers
 for server in adapted('Caddyfile.private').values():

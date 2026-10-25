@@ -9,6 +9,7 @@ import { DeployRunDrawerComponent, type DeployRunActionState } from '../deploy-r
 import { ProjectPipelinePanelComponent } from '../project-pipeline-panel/project-pipeline-panel.component';
 import { EnvironmentHealthPanelComponent } from '../../../environment-health';
 import { ProjectEnvironmentOverviewComponent } from '../project-environment-overview/project-environment-overview.component';
+import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
 import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
 import { ProjectDeployDataService, serverMessage, type DeployPage } from '../../services/project-deploy-data.service';
@@ -41,7 +42,7 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
   imports: [
     ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent,
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
-    ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
+    ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent, HostedDataPanelComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',

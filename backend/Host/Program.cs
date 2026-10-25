@@ -75,6 +75,7 @@ builder.Services.AddHostedService<OrchestrationEngineReadinessService>();
 builder.Services.AddSingleton<EngineApplierEffectProbe>();
 builder.Services.AddHostedService<EngineApplierCanaryService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
+builder.Services.AddSingleton<NetworkedLoginAddressHealth>();
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -555,6 +556,16 @@ builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconcil
 builder.Services.AddHostedService<AgentStudio.Publishing.PublishEnvironmentReconciliationService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
+builder.Services.AddSingleton<IHostedVolumeBackupEngine>(sp =>
+    sp.GetRequiredService<IConfiguration>()["HostedData:LocalVolumeRoot"] is { Length: > 0 } root
+        ? new LocalHostedVolumeBackupEngine(root, Path.Combine(
+            sp.GetRequiredService<IConfiguration>()["TaskRepository"] ?? throw new InvalidOperationException("TaskRepository is required."),
+            "hosted-volume-archives"), sp.GetRequiredService<ILogger<LocalHostedVolumeBackupEngine>>(),
+            sp.GetRequiredService<TimeProvider>())
+        : new UnboundHostedVolumeBackupEngine());
+builder.Services.AddSingleton<HostedVolumeBackupService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<HostedVolumeBackupWorker>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
@@ -936,6 +947,7 @@ builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchIntegrationRes
         1, 24 * 60))));
 builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();
+builder.Services.AddSingleton<AgentStudio.Tokens.TokenAnalysisService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,
     AgentStudio.Pipeline.RemoteRequiredLintScssRunner>();
 builder.Services.AddHttpClient<AgentStudio.Pipeline.IQualityStudioAnalysisCore,

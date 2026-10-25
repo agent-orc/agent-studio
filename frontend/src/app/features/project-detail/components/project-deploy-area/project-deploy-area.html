@@ -36,7 +36,11 @@
         @case ('pipeline') { @defer { <app-project-deploy-pipeline [panel]="pipelinePanel()" /> } @placeholder { <p>Loading pipeline…</p> } }
         @case ('steps') { <app-project-pipeline-panel [projectName]="projectName()" [focusStepId]="focusStepId()" (openPrompts)="openPrompts.emit()" /> }
         @case ('runbooks') { @defer { <app-project-environment-overview [projectName]="projectName()" heading="Runbooks" (openDeploy)="show('overview')" /> } @placeholder { <p>Loading runbooks…</p> } }
-        @case ('operations') { <app-environment-health-panel [projectName]="projectName()" /> }
+        @case ('operations') {
+          <app-environment-health-panel [projectName]="projectName()" />
+          @defer (on idle) { <app-hosted-data-panel [projectName]="projectName()" /> }
+          @placeholder { <p>Loading hosted data…</p> }
+        }
         @case ('history') {
           @defer { <app-project-deploy-history [panel]="historyPanel()" [runs]="historyRuns()" [environments]="environmentOptions()"
             [now]="now()" [selectedFilter]="historyFilter()" [total]="historyTotal()" [offset]="historyOffset()" [selectedRunId]="selectedRunId()"

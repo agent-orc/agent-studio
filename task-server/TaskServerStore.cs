@@ -1663,7 +1663,9 @@ public sealed partial class TaskServerStore
             var verdicts = new List<ClaimPlacementVerdict>();
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
                 WhereModelAcceptedAsync(
-                    ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
+                    ExceptHeldModelRoutesAsync(connection, transaction,
+                        ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
+                        request.RunnerId, UtcNow, ct),
                     connection, transaction, request.RunnerId, ct),
                 async projectId =>
                 {
@@ -1696,17 +1698,7 @@ public sealed partial class TaskServerStore
                 connection, transaction, task.TaskId, ct);
             var continuationIntent = await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct);
             var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
-            SessionContinuationLedgerEntry? previousSession = null;
-            var priorSessionJson = Convert.ToString(await ScalarAsync(connection, """
-                SELECT payload_json FROM events
-                 WHERE task_id = $task AND kind = 'session.continuation'
-                 ORDER BY rowid DESC LIMIT 1;
-                """, ct, transaction, ("$task", task.TaskId)), CultureInfo.InvariantCulture);
-            if (!string.IsNullOrWhiteSpace(priorSessionJson))
-            {
-                try { previousSession = JsonSerializer.Deserialize<SessionContinuationLedgerEntry>(priorSessionJson); }
-                catch (JsonException) { /* Corrupt evidence never authorizes a resume. */ }
-            }
+            var previousSession = await ReadPreviousSessionAsync(connection, transaction, task.TaskId, ct);
             var mechanicalFreshRoute = await ReadMechanicalFreshRouteAsync(
                 connection, transaction, task.TaskId, mechanicalDelta, previousSession, ct);
             var mechanicalBase = MechanicalFallbackBase(previousSession);

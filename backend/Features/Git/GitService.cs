@@ -352,6 +352,7 @@ public sealed record RemoteDeliveryCommitRange(
     /// <summary>True when the repository actively contradicts the claimed delivery.</summary>
     public bool IsDisproved =>
         Verification is DeliveryVerificationStatus.ShaMismatch
+            or DeliveryVerificationStatus.BaseNotAncestor
             or DeliveryVerificationStatus.RefMissing
             or DeliveryVerificationStatus.CommitMissing;
 }
@@ -4809,7 +4810,7 @@ public partial class GitService
             if (ancestorCode != 0)
                 return Failed(
                     $"Fenced delivery base {AbbreviateSha(baseSha)} is not an ancestor of result {AbbreviateSha(tip)}: {ancestorError.Trim()}",
-                    DeliveryVerificationStatus.ShaMismatch);
+                    DeliveryVerificationStatus.BaseNotAncestor);
 
             var integrationBranch = TaskIntegrationBranch.NormalizeRef(recordedIntegrationBranch);
             if (integrationBranch is null)
@@ -5266,9 +5267,10 @@ public partial class GitService
         return new(IntegrationBranchSyncOutcome.UpToDate);
     }
 
-    /// <summary>Checks a delivery against the freshly fetched publication, not the developer checkout.</summary>
+    /// <summary>Checks a delivery against freshly fetched publication; exactCommit requires commit ancestry.</summary>
     public PublishedDeliveryContainment CheckPublishedDelivery(
-        string repoRoot, string branch, string deliverySha, CancellationToken cancellationToken = default)
+        string repoRoot, string branch, string deliverySha, CancellationToken cancellationToken = default,
+        bool exactCommit = false)
     {
         if (!ReviewSubjectStore.IsValidResultSha(deliverySha)) return PublishedDeliveryContainment.Unavailable;
         var fetched = FetchIntegrationBranch(repoRoot, branch, cancellationToken);
@@ -5276,7 +5278,9 @@ public partial class GitService
             return PublishedDeliveryContainment.Unavailable;
         var published = GetBranchTip(repoRoot, $"refs/remotes/origin/{branch}");
         if (published is null) return PublishedDeliveryContainment.Unavailable;
-        return IsDeliveryPublished(repoRoot, deliverySha, published)
+        return (exactCommit
+            ? IsAncestor(repoRoot, deliverySha, published)
+            : IsDeliveryPublished(repoRoot, deliverySha, published))
             ? PublishedDeliveryContainment.Contained
             : PublishedDeliveryContainment.Missing;
     }

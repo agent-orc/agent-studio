@@ -177,6 +177,68 @@ public sealed partial class TaskServerStore
     }
 
     /// <summary>
+    /// Drops a ready task only while the route this claim would hand the runner
+    /// is held on this host. A refused primary model does not hide a card whose
+    /// claim resolves to a mechanical, operator-selected or provider-refusal
+    /// route, and a refused fallback does not hide a runnable primary.
+    /// </summary>
+    private async IAsyncEnumerable<TaskDto> ExceptHeldModelRoutesAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IAsyncEnumerable<TaskDto> readyInClaimOrder,
+        string runnerId,
+        DateTime now,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        await foreach (var task in readyInClaimOrder.WithCancellation(ct))
+        {
+            var held = await ReadHeldModelRoutesAsync(connection, transaction, task.TaskId, runnerId, now, ct);
+            if (held.Count > 0
+                && await ReadEffectiveModelRouteAsync(connection, transaction, task.TaskId, ct) is { Model: { } model } route
+                && held.Contains((route.Provider.Trim().ToLowerInvariant(), model.Trim().ToLowerInvariant())))
+                continue;
+            yield return task;
+        }
+    }
+
+    /// <summary>
+    /// The task's model holds on this runner that no accepted probe observed
+    /// after the refusal has cleared. Provider and model are lower case.
+    /// </summary>
+    private static async Task<HashSet<(string Provider, string Model)>> ReadHeldModelRoutesAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string taskId,
+        string runnerId,
+        DateTime now,
+        CancellationToken ct)
+    {
+        var held = new HashSet<(string Provider, string Model)>();
+        await using var command = Command(connection, """
+            SELECT DISTINCT lower(json_extract(held.payload_json, '$.provider')),
+                            lower(json_extract(held.payload_json, '$.model'))
+              FROM events held
+             WHERE held.kind = 'execution.model-capability-held'
+               AND held.task_id = $task
+               AND json_extract(held.payload_json, '$.runnerId') = $runner
+               AND NOT EXISTS (
+                   SELECT 1 FROM runner_capabilities recovery
+                    WHERE recovery.runner_id = $runner
+                      AND recovery.capability_key =
+                          'model-acceptance:' || json_extract(held.payload_json, '$.provider')
+                          || ':' || json_extract(held.payload_json, '$.model')
+                      AND recovery.advertised_status = 'ready'
+                      AND recovery.credential_observed_at > held.occurred_at
+                      AND recovery.fresh_until > $now);
+            """, transaction, ("$task", taskId), ("$runner", runnerId), ("$now", Iso(now)));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            if (!reader.IsDBNull(0) && !reader.IsDBNull(1))
+                held.Add((reader.GetString(0), reader.GetString(1)));
+        return held;
+    }
+
+    /// <summary>
     /// One project's claim verdict for one poll. A legacy project (no placement
     /// row) is admitted on the host-level capability admission.
     /// </summary>

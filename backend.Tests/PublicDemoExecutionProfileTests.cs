@@ -227,7 +227,18 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3239 added the operator candidate verification record on PostStep:
         // it appends immutable integrated-verified evidence after a passed suite.
         // AGT-3274 added the authenticated deploy artifact route on Claim.
-        Assert.Equal(147, routes.Count);
+        Assert.Equal(150, routes.Count);
+        foreach (var (method, suffix) in new[]
+        {
+            ("PUT", "/{volume}/schedule"), ("POST", "/{volume}/backups"),
+            ("POST", "/{volume}/backups/{backupId}/restore"),
+        })
+        {
+            var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText ==
+                "/api/projects/{projectName}/environments/{environmentId}/volumes" + suffix);
+            Assert.Equal(ExecutionAdmissionPath.Start, route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+            Assert.Contains(method, route.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
+        }
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -310,7 +321,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 12,
-                [ExecutionAdmissionPath.Start] = 31,
+                [ExecutionAdmissionPath.Start] = 34,
                 [ExecutionAdmissionPath.Continue] = 33,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,

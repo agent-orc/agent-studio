@@ -31,6 +31,8 @@ public sealed class DeployService
     private const int ReleaseCommitWindow = 5000;
     private const int AuditLimit = 500;
     private readonly object _gate = new();
+    private readonly Dictionary<string, (DateTime Window, int Count)> _hostLogRates = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _hostLogRunIds = new(StringComparer.Ordinal);
     private readonly ProjectEnvironmentService _environments;
     private readonly DeployStore _store;
     private readonly GitService _git;
@@ -129,7 +131,7 @@ public sealed class DeployService
             return DeployOutcome<Release>.Invalid(
                 $"Staging and production declarations are required at commit {ShortSha(commit)}.");
         if (declarations.Any(item => (item.Kind is "stage" or "production")
-                && !_environments.HasVerifiedArtifact(project, artifact, commit, item.Template)))
+                && !_environments.HasVerifiedArtifact(project, artifact, commit, item)))
             return DeployOutcome<Release>.Invalid("Artifact provenance does not match the release template.");
         var id = ReleaseSnapshot.Id(project, commit, [artifact]);
         var repo = _git.ResolveRepoRootForProject(project);
@@ -336,8 +338,27 @@ public sealed class DeployService
             var job = _environments.FindClaimedJob(project, jobId, request.LeaseToken);
             if (job is null || !job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}")
                     .Contains(request.Step, StringComparer.Ordinal)) return false;
-            var runId = _store.ReadDeployments(project).FirstOrDefault(item => item.JobId == jobId)?.Id ?? jobId;
-            _store.AppendLog(project, [new(runId, request.Step, _clock.GetUtcNow().UtcDateTime, request.Message)]);
+            var now = _clock.GetUtcNow().UtcDateTime;
+            if (_hostLogRates.Count > 1024)
+                foreach (var expired in _hostLogRates.Where(item => item.Value.Window < now - TimeSpan.FromHours(1))
+                             .Select(item => item.Key).ToArray())
+                {
+                    _hostLogRates.Remove(expired);
+                    _hostLogRunIds.Remove(expired);
+                }
+            var key = project + "/" + jobId;
+            if (_hostLogRates.TryGetValue(key, out var rate) && rate.Window > now - TimeSpan.FromMinutes(1))
+            {
+                if (rate.Count >= 30) return false;
+                _hostLogRates[key] = (rate.Window, rate.Count + 1);
+            }
+            else _hostLogRates[key] = (now, 1);
+            if (!_hostLogRunIds.TryGetValue(key, out var runId))
+            {
+                runId = _store.ReadDeployments(project).FirstOrDefault(item => item.JobId == jobId)?.Id ?? jobId;
+                _hostLogRunIds[key] = runId;
+            }
+            _store.AppendLog(project, [new(runId, request.Step, now, request.Message)]);
             return true;
         }
     }
@@ -1107,7 +1128,9 @@ public sealed class DeployService
         var run = new DeploymentRecord
         {
             Id = job?.Id ?? Guid.NewGuid().ToString("N"), ReleaseId = release.Id, EnvironmentId = environment.Id,
-            State = state, Trigger = trigger, DeployStep = DeployStepNames.ForTemplate(template),
+            State = state, Trigger = trigger,
+            DeployStep = declaration?.SshSteps.FirstOrDefault()?.Step == "static-site"
+                ? DeployStepNames.PublishStatic : DeployStepNames.ForTemplate(template),
             NeedsApproval = phases is { Count: > 0 }
                 ? phases.FirstOrDefault(item => item.Phase == environment.Kind)?.Approval.Count > 0
                 : declaration?.Protected ?? StandardLifecyclePolicy.RequiresApproval(environment),

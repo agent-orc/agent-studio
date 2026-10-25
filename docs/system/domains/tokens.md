@@ -29,6 +29,14 @@ Canonical stored input is uncached input. `cacheRead` is the cached subset and i
 
 The project pipeline cost view uses receipt calls when they contain the coding run, mapping `agent:*` to core, `support:*` to aspect, and `orchestrator:*` to orchestrator. Calls without such receipts keep their pipeline execution records. The token usage cockpit joins the same ledger with route and quota evidence. CLI quota windows and slot occupancy are separate measurements; they are never added to ledger token totals.
 
+## Card analysis (AGT-3267)
+
+`GET /api/workspace/tokens/analysis?days=&project=` and `GET /api/projects/{p}/token-usage/analysis/cards/{jobId}` serve the card-centric analysis view. `TokenAnalysisService` loads the merged ledger, the pipeline execution log of every card, and the workspace ad-hoc rows attributed to the project; the pure `TokenAnalysisFold` counts each token once. Agent ledger calls price the coding run they fall into, and that run's logged counters become duration and result only. An orchestrator or supporting call that equals a measured decision, aspect, drift, or analysis execution is priced by the execution (`ProjectPipelineCostService.ReconcileReceipts`). `TokenUsageKindPolicy` assigns one usage kind per token: coding, fix round (every coding execution after the first), review aspect, review grade, deep review, gate, orchestrator decision, chat, enrichment, or other. Each card ships as a cube of slices (kind, model, level, CLI, host, UTC day), so frontend filters keep the sum invariant. Cards in `3-progress` or `4-auto-review`, or with a running step, are in flight; the view marks their days incomplete.
+
+`QuotaEfficiencyFold` splits each `.runtime/quota-history` window series at resets and divides the CLI's workspace tokens inside a window by the percentage points it consumed. The quota chart shares the time axis with the token chart and never its y axis.
+
+Workspace-scope ad-hoc rows used to land in the cockpit's "Unattributed" bucket even when the call knew its project. `TokenUsageAttribution` now resolves a row by its bus project, then the `project:<name>` tag that `AdHocUsageRecorder` writes, then the project that owns its job id. Rows stay in the workspace scope, so `BusAdHocUsageReader` is unchanged. Bus rows and task receipts also carry `reasoningOutput` / `ReasoningTokens` when the CLI reports it (Codex `reasoning_output_tokens`); it is a subset of output and null means not reported.
+
 ## Completed migrations
 
 The one-time `OpenAiUsageHistoryRepair` completed on Stable on 2026-09-25: `.metadata/migrations/openai-usage-input-v1.json` reports 605 repaired rows and 0 failures. The one-time `TokenLedgerDuplicateRepair` completed on Stable on 2026-10-10: `.metadata/migrations/token-ledger-duplicates-v1.json` reports 0 failures. AGT-3037 removed both startup services and their dedicated tests after those completion reports were verified. The reports remain historical operator evidence. Immutable bus files still need read time normalization and duplicate collapse; those read policies remain in `StoredUsageNormalization` and `TokenLedgerDuplicates`.
@@ -46,7 +54,8 @@ for recording and attribution rules.
 | Stage | Files |
 |---|---|
 | Read | `Ledger/ProjectTokenLedger.cs`, `Ledger/ProjectTokenReceiptReader.cs`, `Ledger/BusTokenEntryConverter.cs`, `Ledger/BusAdHocUsageReader.cs`, `Ledger/ChatUsageFallbackReceipts.cs` |
-| Identity | `Identity/ModelIdentity.cs`, `Identity/TokenParticipants.cs`, `Identity/TokenUsageHost.cs` |
+| Identity | `Identity/ModelIdentity.cs`, `Identity/TokenParticipants.cs`, `Identity/TokenUsageHost.cs`, `Identity/TokenUsageAttribution.cs` |
+| Card analysis | `Analysis/TokenAnalysisService.cs`, `Analysis/TokenAnalysisFold.cs`, `Analysis/TokenUsageKindPolicy.cs`, `Analysis/QuotaEfficiencyFold.cs`, `Analysis/TokenAnalysisEndpoints.cs` |
 | Price | `Pricing/TokenPricing.cs`, `Pricing/TokenEconomyPriceProvider.cs`, `Pricing/RunModelPricing.cs`, `Pricing/PricedTokenEntry.cs` |
 | Aggregate | `Aggregation/ModelUsageFold.cs`, `Aggregation/TokenSummaryFold.cs`, `Aggregation/ProjectTokenUsageFold.cs`, `Aggregation/ProjectTokenJobFold.cs`, `Aggregation/WorkspaceTimelineFold.cs`, `Aggregation/AdHocUsageFold.cs` |
 | Project | `TokenAggregationService.cs`, `ITokenAggregator.cs`, token endpoints and cache stores |
