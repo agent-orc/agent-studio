@@ -1,5 +1,6 @@
 using System.Formats.Tar;
 using System.Security.Cryptography;
+using System.Text.Json;
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
@@ -12,6 +13,39 @@ namespace AgentRunner.Tests;
 
 public sealed class SshDeployExecutorTests
 {
+    [Fact]
+    public async Task Tenant_compose_jobs_use_distinct_files_and_project_names()
+    {
+        var payloads = new List<JsonDocument>();
+        var executor = new SshDeployExecutor((_, _, input, _) =>
+        {
+            payloads.Add(JsonDocument.Parse(input!));
+            return Task.FromResult(new ProcessResult(0, "", ""));
+        });
+        try
+        {
+            foreach (var tenant in new[] { "acme", "beta" })
+            {
+                var step = Step("container") with
+                {
+                    ComposeFile = $"/srv/apps/web/tenants/{tenant}/compose.yml", Service = "web",
+                };
+                await executor.ExecuteAsync("web-vm", step, "image@sha256:" + new string('a', 64), "/unused",
+                    new Dictionary<string, string>(), _ => Task.CompletedTask, CancellationToken.None,
+                    composeProject: "tenant-" + tenant);
+            }
+            Assert.Equal(2, payloads.Count);
+            Assert.Equal("/srv/apps/web/tenants/acme/compose.yml", payloads[0].RootElement.GetProperty("file").GetString());
+            Assert.Equal("/srv/apps/web/tenants/beta/compose.yml", payloads[1].RootElement.GetProperty("file").GetString());
+            Assert.Equal("tenant-acme", payloads[0].RootElement.GetProperty("project").GetString());
+            Assert.Equal("tenant-beta", payloads[1].RootElement.GetProperty("project").GetString());
+        }
+        finally
+        {
+            foreach (var payload in payloads) payload.Dispose();
+        }
+    }
+
     [Fact]
     public void Local_step_cap_exceeds_two_remote_compose_timeouts()
     {
