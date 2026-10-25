@@ -3,13 +3,13 @@ name: agent-studio-website
 services:
   api:
     image: ghcr.io/agent-orc/agent-studio-api:v${STUDIO_VERSION:?Run setup.sh with a release version}
-    restart: on-failure
+    restart: ${STUDIO_RESTART_POLICY:-on-failure}
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       TaskRepository: /data/workspace
       HOME: /data/home
       Security__Profile: networked
-      Security__PublicCloudflareEdge: ${STUDIO_PUBLIC_CLOUDFLARE_EDGE:-false}
+      Security__PublicCloudflareEdge: ${STUDIO_PUBLIC_CLOUDFLARE_EDGE:?Set true for public or false for private installs}
       Security__BootstrapCode: ${STUDIO_BOOTSTRAP_CODE:?Run setup.sh}
       Security__TrustedProxyAddresses: 172.30.83.3,172.30.83.2
       AllowedHosts: ${STUDIO_DOMAIN:?Set STUDIO_DOMAIN}
@@ -24,7 +24,7 @@ services:
 
   frontend:
     image: ghcr.io/agent-orc/agent-studio-web:v${STUDIO_VERSION}
-    restart: on-failure
+    restart: ${STUDIO_RESTART_POLICY:-on-failure}
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
     volumes:
@@ -37,8 +37,8 @@ services:
 
   edge:
     image: caddy:2-alpine
-    # The boot unit starts all three services after the Docker firewall is installed.
-    restart: on-failure
+    # Public stacks wait for the firewall boot unit; private stacks use Docker restart.
+    restart: ${STUDIO_RESTART_POLICY:-on-failure}
     environment:
       STUDIO_DOMAIN: ${STUDIO_DOMAIN}
       # Caddyfile.cloudflare only: true admits peers outside Cloudflare's ranges.

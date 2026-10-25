@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if [ "$(grep -c 'restart: on-failure' "$repo_root/deploy/compose/monolith-networked/compose.yaml")" -ne 3 ]; then
+if [ "$(grep -Fc 'restart: ${STUDIO_RESTART_POLICY:-on-failure}' "$repo_root/deploy/compose/monolith-networked/compose.yaml")" -ne 3 ]; then
   echo 'All website containers must wait for the firewall boot unit' >&2
   exit 1
 fi

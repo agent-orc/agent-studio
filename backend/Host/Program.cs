@@ -1373,6 +1373,9 @@ if (connectorProfile)
 
 hostTimeline.Checkpoint("entryToBuild");
 var app = builder.Build();
+// Test-host overrides and deployment configuration are final only after Build().
+// Reject a mistyped public-edge setting before the host accepts requests.
+_ = SecurityProfiles.PublicCloudflareEdgeEnabled(app.Configuration);
 hostTimeline.Checkpoint("build");
 hostTimeline.Attach(app.Services);
 // Capture the secrets key-encryption key now, before any hosted service starts
@@ -1429,7 +1432,15 @@ var publishedArtifactSha = app.Services.GetRequiredService<PublishedArtifactSha>
 app.Use(async (context, next) =>
 {
     if (publishedArtifactSha is not null && context.Request.Path.StartsWithSegments("/api"))
-        context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
+        context.Response.OnStarting(() =>
+        {
+            if ((!networkedSecurityProfile && !publicDemoExecutionProfile)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.HumanPrincipalItem)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.RunnerPrincipalItem)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.ApiTokenPrincipalItem))
+                context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
+            return Task.CompletedTask;
+        });
     await next(context);
 });
 // An explicitly selected standalone Task Server owns task data. Legacy task

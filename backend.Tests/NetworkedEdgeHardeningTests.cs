@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Management;
 using AgentStudio.Registry;
+using AgentStudio.Runtime;
 using AgentStudio.Security;
 using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Builder;
@@ -33,6 +34,64 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
     private const string TaskKey = "AGT-EDGE-HARDENING";
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-edge-hardening-" + Guid.NewGuid().ToString("N"));
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 20, 8, 0, 0, TimeSpan.Zero));
+
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("1")]
+    [InlineData("TRUE")]
+    public void Public_cloudflare_edge_flag_rejects_ambiguous_values_at_startup(string value)
+    {
+        using var factory = BuildFactory(settings: new Dictionary<string, string?>
+        {
+            ["Security:PublicCloudflareEdge"] = value,
+        });
+        var exception = Assert.Throws<InvalidOperationException>(() => NewClient(factory));
+        Assert.Contains("Security:PublicCloudflareEdge must be exactly 'true' or 'false'", exception.Message);
+    }
+
+    [Fact]
+    public async Task Commit_header_requires_an_authenticated_networked_request()
+    {
+        const string sha = "0123456789abcdef0123456789abcdef01234567";
+        using var factory = BuildFactory(publishedSha: sha);
+        using var client = NewClient(factory);
+        using (var anonymous = await client.GetAsync("/api/auth/status"))
+        {
+            Assert.Equal(HttpStatusCode.OK, anonymous.StatusCode);
+            Assert.False(anonymous.Headers.Contains("X-Agent-Studio-Commit"));
+        }
+        using (var rejected = await client.GetAsync("/api/tasks"))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
+            Assert.False(rejected.Headers.Contains("X-Agent-Studio-Commit"));
+        }
+
+        var owner = factory.Services.GetRequiredService<AccessSecurityStore>()
+            .Bootstrap(new BootstrapRequest("first.owner", Password, null));
+        using var authenticated = await SendAsync(client, HttpMethod.Get, "/api/auth/status", owner.SessionToken);
+        Assert.Equal(HttpStatusCode.OK, authenticated.StatusCode);
+        Assert.Equal(sha, Header(authenticated, "X-Agent-Studio-Commit"));
+    }
+
+    [Fact]
+    public async Task Container_probe_ignores_login_address_warning_and_requires_loopback()
+    {
+        using (var factory = BuildFactory(remoteIp: "127.0.0.1"))
+        {
+            using var client = NewClient(factory);
+            factory.Services.GetRequiredService<NetworkedLoginAddressHealth>().ReportInvalid();
+            using var publicHealth = await client.GetAsync("/healthz");
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, publicHealth.StatusCode);
+            using var containerHealth = await client.GetAsync("/healthz/container");
+            Assert.Equal(HttpStatusCode.OK, containerHealth.StatusCode);
+        }
+        using (var factory = BuildFactory(remoteIp: "203.0.113.15", repository: Path.Combine(_workspace, "remote-probe")))
+        {
+            using var client = NewClient(factory);
+            using var denied = await client.GetAsync("/healthz/container");
+            Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+        }
+    }
 
     [Fact]
     public async Task Api_shell_rejection_and_health_responses_carry_the_baseline_headers()
@@ -500,11 +559,13 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
 
     private WebApplicationFactory<Program> BuildFactory(
         string? remoteIp = null, bool previewUpstream = false, string? projectPath = null, string? repository = null,
-        IReadOnlyDictionary<string, string?>? settings = null)
+        IReadOnlyDictionary<string, string?>? settings = null, string? publishedSha = null)
         => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
             builder.ConfigureTestServices(services => services.AddSingleton<TimeProvider>(_clock));
+            if (publishedSha is not null)
+                builder.ConfigureTestServices(services => services.AddSingleton(new PublishedArtifactSha(publishedSha)));
             if (remoteIp is not null)
                 builder.ConfigureServices(services => services.AddSingleton<IStartupFilter>(new RemoteIpStartupFilter(IPAddress.Parse(remoteIp))));
             if (previewUpstream)

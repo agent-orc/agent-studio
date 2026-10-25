@@ -34,4 +34,4 @@ COPY --from=build /studio-dist /srv/studio
 EXPOSE 8080
 USER app
 HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=12 \
-    CMD wget --quiet --output-document=- http://127.0.0.1:8080/healthz || exit 1
+    CMD wget --quiet --output-document=/dev/null http://127.0.0.1:8080/ || exit 1
