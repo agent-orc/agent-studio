@@ -75,6 +75,7 @@ for name, (caddyfile, allow_direct) in expected.items():
     rendered = model(name)
     env = env_file(name)
     assert env['STUDIO_CADDYFILE'] == './' + caddyfile, (name, env)
+    assert env['STUDIO_PUBLIC_CLOUDFLARE_EDGE'] == 'true', (name, env)
     assert env['STUDIO_CLOUDFLARE_ALLOW_DIRECT'] == allow_direct, (name, env)
     edge = rendered['services']['edge']
     edge_mounts = mounts(edge)
@@ -87,10 +88,19 @@ for name, (caddyfile, allow_direct) in expected.items():
     assert mounts(frontend)['/etc/caddy/Caddyfile'].endswith('/Caddyfile.frontend'), frontend['volumes']
     assert frontend['networks']['website']['ipv4_address'] == '172.30.83.3', frontend['networks']
     api = rendered['services']['api']
+    assert api['environment']['Security__PublicCloudflareEdge'] == 'true', api['environment']
     assert api['environment']['Security__TrustedProxyAddresses'] == '172.30.83.3,172.30.83.2', api['environment']
     assert 'ports' not in api and 'ports' not in frontend, 'only the edge may publish ports'
 print('Compose render passed for the public, Cloudflare and Cloudflare direct-access modes.')
 PY
+
+printf 'test-only CA certificate\n' > "$work/cloudflare/data/origin-pull/ca.pem"
+bash "$work/cloudflare/stack/check-edge-config.sh" "$stack" > /dev/null
+sed -i 's|STUDIO_PUBLIC_CLOUDFLARE_EDGE=true|STUDIO_PUBLIC_CLOUDFLARE_EDGE=false|' "$work/cloudflare/stack/.env"
+if bash "$work/cloudflare/stack/check-edge-config.sh" "$stack" > /dev/null 2>&1; then
+  echo 'Public edge check accepted a disabled Cloudflare login boundary' >&2
+  exit 1
+fi
 
 # Adapting proves the Caddyfiles parse and shows what the edge trusts.
 # adapt <Caddyfile> [allow-direct] [output name]

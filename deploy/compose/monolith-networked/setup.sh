@@ -53,6 +53,7 @@ STUDIO_DOMAIN=$domain
 STUDIO_DATA_DIR=$data_dir
 STUDIO_BOOTSTRAP_CODE=$code
 STUDIO_CADDYFILE=./Caddyfile.$edge
+STUDIO_PUBLIC_CLOUDFLARE_EDGE=true
 STUDIO_CLOUDFLARE_ALLOW_DIRECT=$allow_direct
 EOF
 printf 'Installer owner code: %s\nStore it until the first owner signs in. It is accepted once.\n' "$code"

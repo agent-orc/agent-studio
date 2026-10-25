@@ -9,6 +9,7 @@ services:
       TaskRepository: /data/workspace
       HOME: /data/home
       Security__Profile: networked
+      Security__PublicCloudflareEdge: ${STUDIO_PUBLIC_CLOUDFLARE_EDGE:-false}
       Security__BootstrapCode: ${STUDIO_BOOTSTRAP_CODE:?Run setup.sh}
       Security__TrustedProxyAddresses: 172.30.83.3,172.30.83.2
       AllowedHosts: ${STUDIO_DOMAIN:?Set STUDIO_DOMAIN}

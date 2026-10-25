@@ -27,6 +27,7 @@ public sealed class NetworkedCutoverContractTests
         Assert.Contains("handle @health {", frontendCaddy);
         Assert.DoesNotContain("respond @health 200", frontendCaddy);
         Assert.Contains("Security__TrustedProxyAddresses: 172.30.83.3,172.30.83.2", compose);
+        Assert.Contains("Security__PublicCloudflareEdge: ${STUDIO_PUBLIC_CLOUDFLARE_EDGE:-false}", compose);
         Assert.Contains("0.0.0.0:443:443", compose);
         Assert.Contains("${STUDIO_DATA_DIR}/origin-pull:/etc/caddy/origin-pull:ro", compose);
     }

@@ -31,7 +31,7 @@ try {
   await page.getByLabel('Username').fill(username);
   await page.getByLabel('Password').fill(password);
   const login = page.waitForResponse(response =>
-    response.url() === `${url}/api/v1/studio/auth/login`
+    response.url() === `${url}/api/auth/login`
     && response.request().method() === 'POST', { timeout: 30_000 });
   await page.getByRole('button', { name: 'Sign in' }).click();
   const loginResponse = await login;

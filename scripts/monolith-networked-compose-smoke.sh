@@ -35,6 +35,7 @@ docker build -f "$repo_root/frontend/Dockerfile" --build-arg VERSION="$version" 
 cd "$stack"
 bash setup.sh "$version" studio.test "$smoke_root/data" >/dev/null
 sed -i 's|STUDIO_CADDYFILE=./Caddyfile.public|STUDIO_CADDYFILE=./Caddyfile.private|' .env
+sed -i 's|STUDIO_PUBLIC_CLOUDFLARE_EDGE=true|STUDIO_PUBLIC_CLOUDFLARE_EDGE=false|' .env
 code="$(sed -n 's/^STUDIO_BOOTSTRAP_CODE=//p' .env)"
 docker compose up -d --no-build
 url=https://studio.test

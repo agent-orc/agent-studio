@@ -40,6 +40,10 @@ if [ -f "$stack_dir/.env" ]; then
     ./Caddyfile.public|./Caddyfile.cloudflare) ;;
     *) echo 'Networked cutover requires a verified public or Cloudflare Caddyfile' >&2; exit 1 ;;
   esac
+  if [ "$(sed -n 's/^STUDIO_PUBLIC_CLOUDFLARE_EDGE=//p' "$stack_dir/.env" | tail -n 1)" != true ]; then
+    echo 'Public Cloudflare edge requires STUDIO_PUBLIC_CLOUDFLARE_EDGE=true' >&2
+    exit 1
+  fi
   if [ -z "$data_dir" ] || [ ! -s "$data_dir/origin-pull/ca.pem" ]; then
     echo 'Missing account-specific origin-pull CA certificate' >&2
     exit 1

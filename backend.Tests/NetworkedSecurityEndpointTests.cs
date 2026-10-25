@@ -213,12 +213,44 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     [Fact]
     public async Task Login_from_trusted_proxy_address_marks_health_unhealthy()
     {
-        using var factory = BuildFactory("172.30.83.3");
+        using var factory = BuildFactory("172.30.83.3", publicCloudflareEdge: true);
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
         client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
         var response = await client.PostAsJsonAsync("/api/auth/login",
             new { username = "owner", password = "wrong" });
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.False(factory.Services.GetRequiredService<NetworkedLoginAddressHealth>().Healthy);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/healthz")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Private_address_login_is_allowed_without_public_cloudflare_edge()
+    {
+        using var factory = BuildFactory("192.168.1.25");
+        factory.Services.GetRequiredService<AccessSecurityStore>()
+            .Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+        using var response = await client.PostAsJsonAsync("/api/auth/login",
+            new { username = "first.owner", password = "correct horse battery staple!" });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.False(factory.Services.GetRequiredService<NetworkedLoginAddressHealth>().Healthy);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/healthz")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Private_address_login_is_refused_with_public_cloudflare_edge()
+    {
+        using var factory = BuildFactory("192.168.1.25", publicCloudflareEdge: true);
+        factory.Services.GetRequiredService<AccessSecurityStore>()
+            .Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+        using var response = await client.PostAsJsonAsync("/api/auth/login",
+            new { username = "first.owner", password = "correct horse battery staple!" });
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.False(factory.Services.GetRequiredService<NetworkedLoginAddressHealth>().Healthy);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/healthz")).StatusCode);
@@ -311,7 +343,8 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         })).EnsureSuccessStatusCode();
     }
 
-    private WebApplicationFactory<Program> BuildFactory(string? remoteIp = null, string? projectPath = null) => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+    private WebApplicationFactory<Program> BuildFactory(string? remoteIp = null, string? projectPath = null,
+        bool? publicCloudflareEdge = null) => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
         if (remoteIp is not null)
@@ -320,6 +353,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         {
             ["TaskRepository"] = _workspace,
             ["Security:Profile"] = "networked",
+            ["Security:PublicCloudflareEdge"] = publicCloudflareEdge?.ToString(),
             ["Security:BootstrapCode"] = "website-setup-code",
             ["Security:TrustedProxyAddresses"] = "172.30.83.3",
             ["AllowedHosts"] = "studio.test",

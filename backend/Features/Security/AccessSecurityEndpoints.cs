@@ -70,7 +70,8 @@ public static class AccessSecurityEndpoints
                 {
                     logger.LogError("login-client-address-invalid resolved={Address}", context.Connection.RemoteIpAddress);
                     addressHealth.ReportInvalid();
-                    throw new SecurityOperationException(503, "login-client-address-invalid", "Login is temporarily unavailable.");
+                    if (configuration.GetValue<bool>("Security:PublicCloudflareEdge"))
+                        throw new SecurityOperationException(503, "login-client-address-invalid", "Login is temporarily unavailable.");
                 }
                 var key = ClientThrottleKey(context.Connection.RemoteIpAddress);
                 var result = store.Login(request.Username ?? string.Empty, request.Password ?? string.Empty, key);
