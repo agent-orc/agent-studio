@@ -22,6 +22,30 @@ if bash "$work/stack/check-edge-config.sh" "$stack" > "$work/check.log" 2>&1; th
 fi
 grep -q 'shared origin-pull CA' "$work/check.log"
 
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+  -subj '/O=Cloudflare/CN=studio-account-ca' -keyout "$work/ca.key" \
+  -out "$work/data/origin-pull/ca.pem" > /dev/null 2>&1
+if bash "$work/stack/check-edge-config.sh" "$stack" > "$work/check.log" 2>&1; then
+  echo 'Cloudflare organization CA was accepted' >&2
+  exit 1
+fi
+grep -q 'shared origin-pull CA' "$work/check.log"
+
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+  -subj '/O=Cloudflare/CN=shared-issuer' -keyout "$work/shared-issuer.key" \
+  -out "$work/shared-issuer.pem" > /dev/null 2>&1
+openssl req -new -newkey rsa:2048 -nodes \
+  -subj '/CN=studio-account-ca' -keyout "$work/account.key" \
+  -out "$work/account.csr" > /dev/null 2>&1
+openssl x509 -req -in "$work/account.csr" -CA "$work/shared-issuer.pem" \
+  -CAkey "$work/shared-issuer.key" -CAcreateserial -days 2 \
+  -out "$work/data/origin-pull/ca.pem" > /dev/null 2>&1
+if bash "$work/stack/check-edge-config.sh" "$stack" > "$work/check.log" 2>&1; then
+  echo 'CA issued by Cloudflare organization was accepted' >&2
+  exit 1
+fi
+grep -q 'shared origin-pull CA' "$work/check.log"
+
 make_ca studio-account-ca
 bash "$work/stack/check-edge-config.sh" "$stack" > "$work/check.log" 2>&1
 grep -q 'Edge files and origin-pull CA are current.' "$work/check.log"
@@ -36,6 +60,20 @@ if bash "$work/stack/check-edge-config.sh" "$stack" > "$work/check.log" 2>&1; th
 fi
 grep -q 'exactly one certificate' "$work/check.log"
 cp "$work/account-ca.pem" "$work/data/origin-pull/ca.pem"
+
+printf 'STUDIO_PUBLIC_CLOUDFLARE_EDGE=yes\n' >> "$work/stack/.env"
+if bash "$work/stack/check-edge-config.sh" "$stack" > "$work/check.log" 2>&1; then
+  echo 'Non-boolean public edge flag was accepted' >&2
+  exit 1
+fi
+grep -q 'must be exactly true or false' "$work/check.log"
+sed -i '$d' "$work/stack/.env"
+
+if STUDIO_PUBLIC_CLOUDFLARE_EDGE=yes bash "$work/stack/check-edge-config.sh" "$stack" > "$work/check.log" 2>&1; then
+  echo 'Exported non-boolean public edge flag was accepted' >&2
+  exit 1
+fi
+grep -q 'must be exactly true or false' "$work/check.log"
 
 printf 'STUDIO_PUBLIC_CLOUDFLARE_EDGE=false\n' >> "$work/stack/.env"
 if bash "$work/stack/check-edge-config.sh" "$stack" > "$work/check.log" 2>&1; then

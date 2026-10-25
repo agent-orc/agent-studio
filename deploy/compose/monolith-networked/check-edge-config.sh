@@ -38,11 +38,26 @@ fi
 
 if [ -f "$stack_dir/.env" ]; then
   data_dir="$(sed -n 's/^STUDIO_DATA_DIR=//p' "$stack_dir/.env" | tail -n 1)"
+  public_edge="$(sed -n 's/^STUDIO_PUBLIC_CLOUDFLARE_EDGE=//p' "$stack_dir/.env" | tail -n 1)"
+  case "$public_edge" in
+    true|false) ;;
+    *) echo 'STUDIO_PUBLIC_CLOUDFLARE_EDGE must be exactly true or false' >&2; exit 1 ;;
+  esac
+  if [ "${STUDIO_PUBLIC_CLOUDFLARE_EDGE+x}" = x ]; then
+    case "$STUDIO_PUBLIC_CLOUDFLARE_EDGE" in
+      true|false) ;;
+      *) echo 'STUDIO_PUBLIC_CLOUDFLARE_EDGE must be exactly true or false' >&2; exit 1 ;;
+    esac
+    if [ "$STUDIO_PUBLIC_CLOUDFLARE_EDGE" != "$public_edge" ]; then
+      echo 'STUDIO_PUBLIC_CLOUDFLARE_EDGE conflicts with .env' >&2
+      exit 1
+    fi
+  fi
   case "$(sed -n 's/^STUDIO_CADDYFILE=//p' "$stack_dir/.env" | tail -n 1)" in
     ./Caddyfile.public|./Caddyfile.cloudflare) ;;
     *) echo 'Networked cutover requires a verified public or Cloudflare Caddyfile' >&2; exit 1 ;;
   esac
-  if [ "$(sed -n 's/^STUDIO_PUBLIC_CLOUDFLARE_EDGE=//p' "$stack_dir/.env" | tail -n 1)" != true ]; then
+  if [ "$public_edge" != true ]; then
     echo 'Public Cloudflare edge requires STUDIO_PUBLIC_CLOUDFLARE_EDGE=true' >&2
     exit 1
   fi
@@ -60,11 +75,12 @@ if [ -f "$stack_dir/.env" ]; then
     echo 'Origin-pull ca.pem must contain exactly one certificate' >&2
     exit 1
   fi
-  subject="$(openssl x509 -in "$data_dir/origin-pull/ca.pem" -noout -subject -nameopt RFC2253)" || {
+  identity="$(openssl x509 -in "$ca_file" -noout -subject -issuer -nameopt RFC2253)" || {
     echo 'Invalid origin-pull CA certificate' >&2
     exit 1
   }
-  if grep -Eiq '(^|[=,])CN=origin-pull\.cloudflare\.net(,|$)' <<< "$subject"; then
+  if grep -Eiq '(^|[=,])CN=origin-pull\.cloudflare\.net(,|$)' <<< "$identity" \
+    || grep -Eiq '(^|[=,])O=Cloudflare' <<< "$identity"; then
     echo 'Cloudflare shared origin-pull CA is not account-specific' >&2
     exit 1
   fi

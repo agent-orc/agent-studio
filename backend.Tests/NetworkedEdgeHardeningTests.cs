@@ -35,6 +35,20 @@ public sealed class NetworkedEdgeHardeningTests : IDisposable
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-edge-hardening-" + Guid.NewGuid().ToString("N"));
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 20, 8, 0, 0, TimeSpan.Zero));
 
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("1")]
+    [InlineData("TRUE")]
+    public void Public_cloudflare_edge_flag_rejects_ambiguous_values_at_startup(string value)
+    {
+        using var factory = BuildFactory(settings: new Dictionary<string, string?>
+        {
+            ["Security:PublicCloudflareEdge"] = value,
+        });
+        var exception = Assert.Throws<InvalidOperationException>(() => NewClient(factory));
+        Assert.Contains("Security:PublicCloudflareEdge must be exactly 'true' or 'false'", exception.Message);
+    }
+
     [Fact]
     public async Task Commit_header_requires_an_authenticated_networked_request()
     {

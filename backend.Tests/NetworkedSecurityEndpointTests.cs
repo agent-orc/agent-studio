@@ -400,7 +400,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
             ["Security:Profile"] = "networked",
             ["Security:BootstrapCode"] = "website-setup-code",
             ["Security:TrustedProxyAddresses"] = "172.30.83.3",
-            ["Security:PublicCloudflareEdge"] = publicCloudflareEdge.ToString(),
+            ["Security:PublicCloudflareEdge"] = publicCloudflareEdge ? "true" : "false",
             ["AllowedHosts"] = "studio.test",
             ["WatchPaths:0:Name"] = projectPath is null ? null : "networked-smoke",
             ["WatchPaths:0:Path"] = projectPath,

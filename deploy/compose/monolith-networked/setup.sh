@@ -30,6 +30,16 @@ else
   public_edge=true
   restart_policy=on-failure
 fi
+if [ "${STUDIO_PUBLIC_CLOUDFLARE_EDGE+x}" = x ]; then
+  case "$STUDIO_PUBLIC_CLOUDFLARE_EDGE" in
+    true|false) ;;
+    *) echo 'STUDIO_PUBLIC_CLOUDFLARE_EDGE must be exactly true or false' >&2; exit 2 ;;
+  esac
+  if [ "$STUDIO_PUBLIC_CLOUDFLARE_EDGE" != "$public_edge" ]; then
+    echo 'STUDIO_PUBLIC_CLOUDFLARE_EDGE conflicts with the selected setup mode' >&2
+    exit 2
+  fi
+fi
 version="$1"
 domain="$2"
 data_dir="$3"

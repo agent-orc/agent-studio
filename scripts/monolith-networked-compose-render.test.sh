@@ -47,6 +47,16 @@ if [ -e "$work/invalid/stack/.env" ]; then
   echo 'setup.sh wrote .env after rejecting its flags' >&2
   exit 1
 fi
+if STUDIO_PUBLIC_CLOUDFLARE_EDGE=yes PATH="$work/bin:$PATH" \
+  bash "$work/invalid/stack/setup.sh" 0.0.0-test studio.example.test "$work/invalid/data" 2> "$work/invalid-flag.log"; then
+  echo 'setup.sh accepted a non-boolean public edge flag' >&2
+  exit 1
+fi
+grep -q 'must be exactly true or false' "$work/invalid-flag.log"
+if [ -e "$work/invalid/stack/.env" ]; then
+  echo 'setup.sh wrote .env after rejecting the public edge flag' >&2
+  exit 1
+fi
 
 python3 - "$work" <<'PY'
 import json, os, sys
