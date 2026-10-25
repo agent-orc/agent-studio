@@ -10,6 +10,17 @@ namespace AgentStudio.Tests.Architecture;
 
 public sealed class HostCliSecurityGuardTests
 {
+    [Fact]
+    public void Host_spawn_boundary_has_one_guarded_process_start()
+    {
+        var path = Path.Combine(RepositoryRoot.Find(), "backend", "Features", "Cli",
+            "Execution", "HostCliSpawnGuard.cs");
+        var source = File.ReadAllText(path);
+        Assert.Single(Regex.Matches(source, @"\bProcess\.Start\s*\(").Cast<Match>());
+        Assert.Matches(@"Validate\(startInfo, networked, provider\);\s*return Process\.Start\(startInfo\);",
+            source);
+    }
+
     private static string[] BackendSources(string root) => Directory
         .EnumerateFiles(Path.Combine(root, "backend"), "*.cs", SearchOption.AllDirectories)
         .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
