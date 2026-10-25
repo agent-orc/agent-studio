@@ -352,7 +352,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var cliType = NormalizeReviewCliType(cli);
         var oneShot = _oneShotRegistry?.Get(cliType);
-        if (oneShot == null) return await DefaultRunCliAsync(cli, model, prompt, timeout, ct);
+        if (oneShot == null) return await CliRunner(cli, model, prompt, timeout, ct);
 
         var result = await oneShot.RunAsync(new AgentStudio.Cli.CliOneShotRequest(
             CliType: cliType,

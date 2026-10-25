@@ -18,8 +18,8 @@ namespace AgentStudio.Tests.Architecture;
 /// on it, that <c>--version</c> keeps answering, and that no transcript carries
 /// this host's suite root.
 ///
-/// Other tests hit the guard in parallel, so every assertion filters on its own
-/// working directory or a unique marker argument, never on a global count.
+/// Other tests hit the guard in parallel, so assertions use a unique marker or
+/// compare new isolated one-shot directories with an invocation snapshot.
 /// </summary>
 public sealed class TestCliGuardTests
 {
@@ -84,20 +84,16 @@ public sealed class TestCliGuardTests
     public async Task Summary_finalization_without_a_configured_path_hits_the_guard()
     {
         using var workspace = new TempWorkspace("cli-guard-summary");
+        var before = TestCliGuard.ReadInvocations().ToHashSet();
         var service = new SummaryGenerationService(
             NullLogger<SummaryGenerationService>.Instance,
             UnconfiguredClaude(workspace));
 
-        var before = TestCliGuard.ReadInvocations().Count;
         var outcome = await service.FinalizeAsync(await TaskIn(workspace));
 
         Assert.Equal(TaskSummaryStatus.Degraded, outcome.Status);
         Assert.Equal(3, outcome.Attempt);
-        var calls = TestCliGuard.ReadInvocations()
-            .Skip(before)
-            .Where(invocation => Path.GetFileName(invocation.WorkingDirectory)
-                .StartsWith("studio-one-shot-", StringComparison.Ordinal))
-            .ToList();
+        var calls = NewIsolatedCalls(before);
         Assert.True(calls.Count >= 3);
         Assert.All(calls, call =>
         {
@@ -140,6 +136,7 @@ public sealed class TestCliGuardTests
             .AddInMemoryCollection(new Dictionary<string, string?> { ["ClaudeCli:Path"] = stub })
             .Build();
         var oneShot = NewOneShot(configuration, new CapturingLogger<ClaudeOneShot>());
+        var before = TestCliGuard.ReadInvocations().ToHashSet();
 
         var result = await oneShot.RunAsync(OneShotRequest(workspace));
 
@@ -147,7 +144,7 @@ public sealed class TestCliGuardTests
         Assert.Contains(reply, result.ParsedText, StringComparison.Ordinal);
         Assert.Equal(Path.GetFullPath(workspace.Path),
             Path.GetFullPath((await File.ReadAllTextAsync(cwdProbe)).Trim()));
-        Assert.DoesNotContain(TestCliGuard.ReadInvocations(), invocation => invocation.RanIn(workspace.Path));
+        Assert.Empty(NewIsolatedCalls(before));
     }
 
     /// <summary>
@@ -197,6 +194,17 @@ public sealed class TestCliGuardTests
                 ["TaskRepository"] = workspace.Path,
             })
             .Build();
+
+    private static List<TestCliGuardInvocation> NewIsolatedCalls(
+        IReadOnlySet<TestCliGuardInvocation> before)
+        => TestCliGuard.ReadInvocations()
+            .Where(invocation => !before.Contains(invocation)
+                && Path.GetFileName(invocation.WorkingDirectory).StartsWith(
+                    "studio-one-shot-", StringComparison.Ordinal)
+                && Path.GetFullPath(invocation.WorkingDirectory).StartsWith(
+                    Path.GetFullPath(Path.GetTempPath()),
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            .ToList();
 
     private static async Task<TaskInfo> TaskIn(TempWorkspace workspace)
     {

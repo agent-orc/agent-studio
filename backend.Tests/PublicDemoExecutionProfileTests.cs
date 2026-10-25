@@ -227,7 +227,10 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3239 added the operator candidate verification record on PostStep:
         // it appends immutable integrated-verified evidence after a passed suite.
         // AGT-3274 added the authenticated deploy artifact route on Claim.
-        Assert.Equal(146, routes.Count);
+        // The local-only PTY _probe route is absent from the public-demo route set.
+        // AGT-3247 added three Runbooks routes (one Start, two Continue).
+        Assert.Equal(149, routes.Count);
+        Assert.DoesNotContain(allRoutes, route => route.RoutePattern.RawText == "/api/cli/_probe/{cliType}");
         foreach (var (method, suffix) in new[]
         {
             ("PUT", "/{volume}/schedule"), ("POST", "/{volume}/backups"),
@@ -262,6 +265,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/approve", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/reject", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/cancel", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/deploy/environments/{environmentId}/runbooks/{name}/runs", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/deploy/runbooks/runs/{runId}/approve", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/deploy/runbooks/runs/{runId}/reject", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/environments/{environmentId}/stop", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/intervention", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/pipeline-definition/migration", ExecutionAdmissionPath.PostStep),
@@ -318,8 +324,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 12,
-                [ExecutionAdmissionPath.Start] = 33,
-                [ExecutionAdmissionPath.Continue] = 31,
+                [ExecutionAdmissionPath.Start] = 34,
+                [ExecutionAdmissionPath.Continue] = 33,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 31,

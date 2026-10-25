@@ -111,6 +111,37 @@ public sealed class ProjectDeploymentDefinitionTests
     }
 
     [Fact]
+    public void Parses_named_runbooks_and_rejects_invalid_operations()
+    {
+        var yaml = Base + "\nrunbooks:\n  - name: restart\n    steps: [restart-container, health]\n    environments: [staging, production]\n";
+        var parsed = ProjectDefinitionReader.Parse(yaml);
+        Assert.True(parsed.IsValid, string.Join("; ", parsed.Issues.Select(issue => issue.Message)));
+        var runbook = Assert.Single(parsed.Definition!.Deployment!.Runbooks);
+        Assert.Equal("restart", runbook.Name);
+        Assert.Equal(["restart-container", "health"], runbook.Steps);
+        Assert.Contains(ProjectDefinitionReader.Parse(yaml.Replace("restart-container", "../escape", StringComparison.Ordinal)).Issues,
+            issue => issue.Code == "runbook-steps-invalid");
+        Assert.Contains(ProjectDefinitionReader.Parse(yaml.Replace("[staging, production]", "[unknown]", StringComparison.Ordinal)).Issues,
+            issue => issue.Code == "runbook-environment-unknown");
+        Assert.Contains(ProjectDefinitionReader.Parse(yaml.Replace("restart-container", "approval", StringComparison.Ordinal)).Issues,
+            issue => issue.Code == "runbook-step-reserved");
+    }
+
+    [Theory]
+    [InlineData("LD_PRELOAD")]
+    [InlineData("LD_LIBRARY_PATH")]
+    [InlineData("PATH")]
+    [InlineData("BASH_ENV")]
+    [InlineData("GCONV_PATH")]
+    public void Rejects_variables_that_control_the_host_loader_or_shell(string name)
+    {
+        var yaml = Base + $"\nvariables:\n  - name: {name}\n    value: /tmp/preload\n";
+        Assert.Contains(ProjectDefinitionReader.Parse(yaml).Issues, issue => issue.Code == "variable-name-reserved");
+        Assert.DoesNotContain(ProjectDefinitionReader.Parse(yaml.Replace(name, "LOG_LEVEL", StringComparison.Ordinal)).Issues,
+            issue => issue.Code == "variable-name-reserved");
+    }
+
+    [Fact]
     public void Schema_one_keeps_legacy_contract_and_rejects_deployment_fields()
     {
         var legacy = Base.Replace("schemaVersion: 2", "schemaVersion: 1", StringComparison.Ordinal)

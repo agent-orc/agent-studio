@@ -90,7 +90,7 @@ public sealed class AspectRunnerService
     private async Task<string> RunViaOneShotAsync(string aspectId, string cli, string model, string prompt, string? thinkingLevel, TimeSpan timeout, string jobFolderPath, CancellationToken ct)
     {
         var oneShot = _oneShotRegistry?.Get(cli);
-        if (oneShot == null) return await DefaultRunCliAsync(aspectId, cli, model, prompt, timeout, ct);
+        if (oneShot == null) return await CliRunner(aspectId, cli, model, prompt, timeout, ct);
 
         var result = await oneShot.RunAsync(new CliOneShotRequest(
             CliType: cli,
@@ -769,7 +769,7 @@ public sealed class AspectRunnerService
     private async Task<string> DefaultRunCliAsync(
         string aspectId, string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
     {
-        if (!Path.GetFileNameWithoutExtension(cli).Equals(CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
+        if (!Path.GetFileNameWithoutExtension(cli.Replace('\\', '/')).Equals(CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
             return string.Empty;
         var networked = _configuration is null || SecurityProfiles.IsNetworked(_configuration);
         using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;

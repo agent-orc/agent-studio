@@ -490,6 +490,7 @@ public class OrchestratorChatService
     private readonly AdHocUsageRecorder? _chatUsage;
     private readonly LocalChatUsageTracker? _localChatUsage;
     private readonly string? _taskRepositoryRoot;
+    private readonly bool _networked;
 
     /// <summary>
     /// Serializes local session resumes. Remote turns use independent host
@@ -529,6 +530,7 @@ public class OrchestratorChatService
         _scanner = scanner;
         _logger = logger;
         _taskRepositoryRoot = config["TaskRepository"];
+        _networked = SecurityProfiles.IsNetworked(config);
         _bus = bus;
         _chatUsage = chatUsage;
         _localChatUsage = localChatUsage;
@@ -608,7 +610,7 @@ public class OrchestratorChatService
 
         var remoteRoute = _remoteWork is null ? null : ResolveRemoteRoute(projectName, watchPath);
         var contextRoute = remoteRoute is null ? null : remoteRoute with { ContextKey = context?.Value };
-        var holdsSessionGate = remoteRoute is null;
+        var holdsSessionGate = remoteRoute is null && !_networked;
         var queuedAt = DateTime.UtcNow;
         var localStarted = false;
         OrchestratorChatTurn? localOutcome = null;
@@ -638,7 +640,7 @@ public class OrchestratorChatService
                 : req.ThinkingLevel.Trim();
             var workingDirectory = ResolveWorkingDirectory(projectName, watchPath);
             var startedAt = DateTime.UtcNow;
-            if (remoteRoute is null)
+            if (remoteRoute is null && !_networked)
             {
                 _localChatUsage?.Start(userTurn.Id, projectName, queuedAt, startedAt);
                 localStarted = true;
@@ -716,41 +718,47 @@ public class OrchestratorChatService
                         catch (RemoteChatHostUnreachableException unreachable)
                         {
                             fallbackQueuedAt = unreachable.QueuedAt;
-                            await SessionGate.WaitAsync(ct);
-                            try
+                            if (_networked)
                             {
-                                startedAt = DateTime.UtcNow;
-                                _localChatUsage?.Start(userTurn.Id, projectName,
-                                    fallbackQueuedAt ?? queuedAt, startedAt);
-                                localStarted = true;
-                                result = await _runner.DecideCodexAsync(
-                                    fullPrompt, effectiveModel, effectiveThinking,
-                                    workingDirectory, ct, projectName, watchPath);
+                                result = new OrchestratorDecisionResult(false, "", effectiveModel, null,
+                                    null, $"Remote runner '{remoteRoute.RunnerId}' is unreachable. Project chat cannot run on the Studio host in the networked profile.");
                             }
-                            finally
+                            else
                             {
-                                SessionGate.Release();
+                                await SessionGate.WaitAsync(ct);
+                                try
+                                {
+                                    startedAt = DateTime.UtcNow;
+                                    _localChatUsage?.Start(userTurn.Id, projectName,
+                                        fallbackQueuedAt ?? queuedAt, startedAt);
+                                    localStarted = true;
+                                    result = await _runner.DecideCodexAsync(
+                                        fullPrompt, effectiveModel, effectiveThinking,
+                                        workingDirectory, ct, projectName, watchPath);
+                                }
+                                finally
+                                {
+                                    SessionGate.Release();
+                                }
+                                executionNote = $"Ran on the workstation because {remoteRoute.RunnerId} was unreachable.";
+                                if (result.Success)
+                                    _remoteWork.RecordLocalFallback(contextRoute!, new ChatExecutionContext(
+                                        "local", "local", workingDirectory,
+                                        _git?.ReadBranchAt(workingDirectory),
+                                        _git?.ReadHeadShaAt(workingDirectory),
+                                        "ready", DateTime.UtcNow));
                             }
-                            executionNote = $"Ran on the workstation because {remoteRoute.RunnerId} was unreachable.";
-                            if (result.Success)
-                                _remoteWork.RecordLocalFallback(contextRoute!, new ChatExecutionContext(
-                                    "local", "local", workingDirectory,
-                                    _git?.ReadBranchAt(workingDirectory),
-                                    _git?.ReadHeadShaAt(workingDirectory),
-                                    "ready", DateTime.UtcNow));
                         }
                     }
                 }
                 else
                 {
-                    result = await _runner.DecideCodexAsync(
-                        fullPrompt,
-                        requestedModel,
-                        thinkingLevel,
-                        workingDirectory,
-                        ct,
-                        projectName,
-                        watchPath);
+                    result = _networked
+                        ? new OrchestratorDecisionResult(false, "", requestedModel, null, null,
+                            "No remote runner is configured for this project. Project chat cannot run on the Studio host in the networked profile.")
+                        : await _runner.DecideCodexAsync(
+                            fullPrompt, requestedModel, thinkingLevel, workingDirectory,
+                            ct, projectName, watchPath);
                 }
             }
             catch (Exception ex)

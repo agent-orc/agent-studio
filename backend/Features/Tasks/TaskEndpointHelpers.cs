@@ -242,7 +242,8 @@ internal static class TaskEndpointHelpers
                 NowUtc: DateTime.UtcNow,
                 ExecutionLocation: runners.ResolvePlacement(job.ProjectName),
                 AllowsLocalCoding: runners.AllowsLocalCoding,
-                SuggestedRemoteRunnerId: runners.SuggestedRemoteRunnerId))
+                SuggestedRemoteRunnerId: runners.SuggestedRemoteRunnerId,
+                DenyAllLocalRuns: runners.DenyAllLocalRuns))
             : null;
         return job with
         {

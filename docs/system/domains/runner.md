@@ -74,17 +74,23 @@ The claim hold matches the route handed to the runner: a required mechanical
 route, an operator-selected continuation, a provider-refusal sibling, or the
 stored primary. A refused primary does not hide a card using another route.
 
-For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
-denies local coding, `PickupHoldPolicy` projects an unsatisfiable
-`execution-placement` hold. The picker skips it before `RunCliAsync`, records
+For a Ready agent card placed at `local`, `PickupHoldPolicy` projects an
+unsatisfiable `execution-placement` hold when local admission denies its mode.
+The networked profile denies every agent mode. In the local profile,
+`ILocalCodingAdmissionPolicy` still gates modes that need a worktree; planning
+and research keep their existing local admission behavior. The picker skips the
+held card before `RunCliAsync`, records
 the hold reason as `lastPickReason`, and logs one refusal per card and reason
 until the card leaves Ready. The queue-starvation view includes these cards
 even with zero remote slots. Route the project with
 `PUT /api/projects/{projectName}/execution-runner` and a remote runner ID;
 the system does not change placement automatically. The project settings
 projection exposes `localCodingAdmitted` for the placement warning. Explicit
-`POST /api/tasks/{id}/start` checks this refusal before queueing for another
-reason and returns `remote-execution-required` without spawning a CLI.
+`POST /api/tasks/{id}/start` and continuation check this refusal before
+mutating the card and return `remote-execution-required` without spawning a CLI.
+New networked projects without a remote runner start paused. Only the Owner
+may explicitly select local placement in the networked profile, including
+through the project registry update route; local placement remains unrunnable.
 
 Prelaunch infrastructure faults use the per-card fingerprint budget described
 in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infrastructure-failures).
@@ -665,7 +671,10 @@ unreported claim expires with its lease and is queued again.
 - `backend/Features/Runner/OrchestratorChat.cs` and `OrchestratorRunner.cs`:
   side-sheet chat dispatch. This operating mode accepts the effective model and
   reasoning choice from the live Codex catalogue, executes through the Codex
-  one-shot registry, and rejects non-GPT models without a Claude fallback.
+  one-shot registry, and rejects non-GPT models without a Claude fallback. In
+  the networked profile it never executes Codex on the Studio host: an absent
+  or unreachable assigned runner produces a failed turn with a clear reason.
+  Changing a remotely placed project to local execution requires the Owner.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat
@@ -2343,6 +2352,74 @@ not labelled as drift. The policy accepts a deployment start error when one is
 provided by a release source; the current collector does not yet receive
 compose errors or image digests for arbitrary containers.
 
+## Environment runbooks
+
+`project.yml` schema 2 accepts `runbooks` as named ordered lists:
+
+```yaml
+runbooks:
+  - name: restart
+    steps: [restart-container]
+  - name: backup
+    steps: [backup]
+  - name: enter-maintenance
+    steps: [maintenance-on]
+  - name: leave-maintenance
+    steps: [maintenance-off]
+  - name: rotation
+    steps: [rotate-secrets, restart-container]
+```
+
+Optional `environments`
+restricts a runbook to staging or production. The integration branch version
+is read when the run is requested; its steps and environment-scoped variables
+are frozen in the run. Plain variables and secret-provider names follow the
+deployment variable contract. A production run waits for a signed-in Owner or
+Maintainer; approval queues the frozen steps through the existing deploy host
+claim and report lease. No artifact is required and the release and deployment
+history remain unchanged. Runs share the deployment log and audit store.
+
+The project deployment API uses the prefix
+`/api/projects/{projectName}/deploy`. The environment page uses these
+runbook routes:
+
+| Method | Path after the prefix | Purpose |
+|---|---|---|
+| `GET` | `/runbooks` | List runbook definitions from the integration branch. |
+| `GET` | `/runbooks/runs?environmentId={environmentId}` | List runs for one environment; omit the query to list all project runs. |
+| `GET` | `/runbooks/runs/{runId}` | Read one run, including its steps and approval state. |
+| `GET` | `/runbooks/runs/{runId}/log?step={stepName}` | Read the run log; omit `step` for every step. |
+| `POST` | `/environments/{environmentId}/runbooks/{name}/runs` | Request a run with no request body. Returns `202 Accepted` and the run. |
+| `POST` | `/runbooks/runs/{runId}/approve` | Approve a waiting run and queue its frozen steps. Returns the updated run. |
+| `POST` | `/runbooks/runs/{runId}/reject` | Reject a waiting run. Returns the updated run. |
+
+The mutation routes use the signed-in project actor and the same public-demo
+execution admission as deployment mutations. Production approval and rejection
+require an Owner or Maintainer. `GET /audit` under the same prefix includes
+runbook request, approval, rejection and completion events. A run response
+includes its `id`, `environmentId`, `state`, `steps` and `definitionCommit`;
+each step has a `logRef` for its filtered log.
+
+The target host keeps operator-owned scripts at
+`/etc/agent-host/runbooks/<project>/<step>.sh`. The host runs each script with
+`/bin/sh` and no shell text from the repository. It supplies
+`AGENT_STUDIO_PROJECT`, `AGENT_STUDIO_ENVIRONMENT`,
+`AGENT_STUDIO_DESTINATION`, a per-run `AGENT_STUDIO_RUNBOOK_RUN` marker,
+scoped plain variables and named secrets as environment variables. Names that
+steer the loader or shell (`LD_*`, `DYLD_*`, `BASH_FUNC_*`, `PATH`, `IFS`,
+`ENV`, `BASH_ENV` and the libc loading variables) are rejected by the
+`project.yml` validator as `variable-name-reserved` and again by the host
+before any script starts. Scripts must exit zero to advance; failure stops the
+remaining steps. The host drains output locally and reports only step success
+or failure, so logs do not expose secret values. A step times out after nine
+minutes, and the whole run after ten. On Linux, `setsid` gives each script its
+own process group; timeout or host cancellation also applies while draining
+output after the script exits and kills that group. Descendants that start a
+new session keep the run marker, so cancellation then sweeps `/proc` and kills
+every process carrying it until a sweep finds none. Waiting for the script and
+its output streams is bounded at five seconds, so a survivor cannot hang the
+host. Install scripts on the assigned deploy host before
+invoking the runbook.
 ## Operator deploy targets (AGT-3263)
 
 The runner's DeployTargetExecutor is the call seam for the deploy executor

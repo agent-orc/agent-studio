@@ -18,6 +18,9 @@ public static class DeployHostCommand
     private sealed record Job(string Id, string Project, string EnvironmentId, string HostId,
         string Artifact, string Template, string Destination, string? HealthUrl,
         string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken,
+        string? RunbookName = null, string[]? RunbookSteps = null,
+        Dictionary<string, string>? RunbookVariables = null,
+        Dictionary<string, string>? RunbookSecretVariables = null,
         bool IsStop = false, string? RetryStep = null)
     {
         public string? Tenant { get; init; }
@@ -47,7 +50,7 @@ public static class DeployHostCommand
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
         HttpClient? transport = null, SshDeployExecutor? sshExecutor = null,
         Func<string, CancellationToken, Task<bool>>? checkHealth = null, TimeProvider? clock = null,
-        IPreviewRunZone? previewZone = null,
+        IPreviewRunZone? previewZone = null, string? runbookRoot = null,
         Func<string, IReadOnlyList<string>, CancellationToken, Task>? runCommand = null)
     {
         if (args.Length < 4 || args.Length > 5)
@@ -79,6 +82,7 @@ public static class DeployHostCommand
         }
         var evidence = "deploy-step-failed";
         var healthy = false;
+        IReadOnlyList<RunbookHostStepResult> runbookResults = [];
         var stepResults = new List<object>();
         string? screenshotBase64 = null;
         try
@@ -90,7 +94,16 @@ public static class DeployHostCommand
                     await DownloadArtifact(client, job, provenance, args[3], cancellationToken);
             }
             var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
-            if (job.Kind is "preview" or "preview-remove")
+            if (job.RunbookName is not null)
+            {
+                var result = await RunbookHostExecutor.ExecuteAsync(job.Project, job.EnvironmentId,
+                    job.Destination, job.RunbookSteps ?? [], job.RunbookVariables ?? [],
+                    job.RunbookSecretVariables ?? [], job.SecretRefs,
+                    runbookRoot ?? "/etc/agent-host/runbooks", secretRoot, lease.Token);
+                runbookResults = result.Steps;
+                healthy = result.Success;
+            }
+            else if (job.Kind is "preview" or "preview-remove")
             {
                 if (previewZone is null)
                 {
@@ -207,7 +220,7 @@ public static class DeployHostCommand
         using var report = await client.PostAsJsonAsync(
             $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/report",
             new { job.LeaseToken, Healthy = healthy, Evidence = evidence, Steps = stepResults,
-                ScreenshotBase64 = screenshotBase64 }, cancellationToken);
+                ScreenshotBase64 = screenshotBase64, RunbookResults = runbookResults }, cancellationToken);
         report.EnsureSuccessStatusCode();
         return healthy ? 0 : 1;
     }
