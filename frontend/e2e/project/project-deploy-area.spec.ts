@@ -60,6 +60,15 @@ const HOST_ONLY = { status: MISSING, releases: MISSING, deployments: MISSING };
 
 async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route('**/api/**', route => route.fulfill(json([])).catch(() => undefined));
+  await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill(json({
+    negotiateVersion: 1, connectionId: 'deploy-area-mock', connectionToken: 'deploy-area-mock',
+    availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+  })));
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
+    socket.onMessage(message => {
+      if (typeof message === 'string' && message.includes('"protocol":"json"')) socket.send('{}\u001e');
+    });
+  });
   await page.route('**/api/v1/studio/auth/status', route => route.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   })));
