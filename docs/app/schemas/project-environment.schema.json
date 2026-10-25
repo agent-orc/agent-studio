@@ -6,7 +6,6 @@
   "additionalProperties": false,
   "allOf": [{ "if": { "properties": { "template": { "const": "static" } }, "required": ["template"] },
               "then": { "not": { "required": ["data"] } } }],
-  "required": ["id", "name", "kind", "targetHostId", "address", "template", "destination", "healthUrl"],
   "required": ["id"],
   "if": { "required": ["removed"] },
   "then": { "propertyNames": { "enum": ["id", "removed"] } },
