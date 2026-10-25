@@ -1437,7 +1437,7 @@ app.Use(async (context, next) =>
             if ((!networkedSecurityProfile && !publicDemoExecutionProfile)
                 || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.HumanPrincipalItem)
                 || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.RunnerPrincipalItem)
-                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.ApiTokenPrincipalItem))
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.ServiceAccountPrincipalItem))
                 context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
             return Task.CompletedTask;
         });
