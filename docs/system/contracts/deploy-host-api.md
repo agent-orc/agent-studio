@@ -49,6 +49,9 @@ name for a tenant template job. For SSH steps, it uses a tenant directory under
 the declared static directory or compose file parent. A container SSH step
 also supplies a stable tenant-specific Docker Compose project name. The host
 checks that tenant's health URL and reports the result on that tenant's run.
+Before a host claims the job, release verification checks the routed target,
+SSH steps, plain variables and secret variable-name mappings against the
+release snapshot for that tenant.
 Tenant routing on an edge-hosted declaration is refused until the run target
 supports an isolated tenant target.
 

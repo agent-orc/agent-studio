@@ -1273,13 +1273,15 @@ public sealed class DeployServiceTests : IDisposable
     public void Automatic_stage_and_approved_production_jobs_bind_release_variables()
     {
         var (deploy, environments, _) = Build();
-        WriteProjectYml("variables:\n  - name: MODE\n    value: standard\n  - name: API_TOKEN\n    secret: provider-entry\n");
+        WriteEnvironmentSecretRefs("stage", ["provider-entry"]);
+        WriteEnvironmentSecretRefs("production", ["DATABASE_URL", "provider-entry"]);
+        WriteProjectYml("variables:\n  - name: DATABASE_URL\n    secret: DATABASE_URL\n    environments: [production]\n  - name: MODE\n    value: standard\n  - name: API_TOKEN\n    secret: provider-entry\n");
         var release = CreateRelease(deploy, Artifact('a'), Commit("release-variables"));
         var stage = environments.Claim("stage-host")!;
         Assert.Equal("standard", stage.ResolvedVariables["MODE"]);
         Assert.Equal("provider-entry", stage.SecretVariableRefs["API_TOKEN"]);
         Assert.Contains("provider-entry", stage.SecretRefs);
-        Assert.True(environments.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+        Assert.True(environments.Report("demo", stage.Id, ReportJob(stage, healthy: true)));
         deploy.SyncAfterHostCall("demo");
 
         var waiting = deploy.Deployments("demo", "production")!.Single(item =>
@@ -1305,6 +1307,9 @@ public sealed class DeployServiceTests : IDisposable
                 tags: [standard]
                 environments: [staging, production]
             variables:
+              - name: DATABASE_URL
+                secret: DATABASE_URL
+                environments: [production]
               - name: MODE
                 value: base
               - name: MODE
@@ -1336,7 +1341,7 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal("premium", acmeJob.ResolvedVariables["MODE"]);
         Assert.Equal("ACME_TOKEN", acmeJob.SecretVariableRefs["API_TOKEN"]);
         Assert.Contains("ACME_TOKEN", acmeJob.SecretRefs);
-        Assert.True(environments.Report("demo", acmeJob.Id, new(acmeJob.LeaseToken!, true, "health-ok")));
+        Assert.True(environments.Report("demo", acmeJob.Id, ReportJob(acmeJob, healthy: true)));
         deploy.SyncAfterHostCall("demo");
         var acmeProd = deploy.RequestDeployment("demo", release.Id,
             new DeploymentRequest("production") { Tenant = "acme" }, Operator);
@@ -1354,7 +1359,7 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(betaJob.HealthUrl, betaJob.SshSteps[0].HealthUrl);
         Assert.Equal("base", betaJob.ResolvedVariables["MODE"]);
         Assert.DoesNotContain("API_TOKEN", betaJob.SecretVariableRefs.Keys);
-        Assert.True(environments.Report("demo", betaJob.Id, new(betaJob.LeaseToken!, true, "health-ok")));
+        Assert.True(environments.Report("demo", betaJob.Id, ReportJob(betaJob, healthy: true)));
         deploy.SyncAfterHostCall("demo");
         var betaProd = deploy.RequestDeployment("demo", release.Id,
             new DeploymentRequest("production") { Tenant = "beta" }, Operator);
@@ -1368,7 +1373,7 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal("/srv/apps/demo/production/tenants/acme/compose.yml", Assert.Single(prodJob.SshSteps).ComposeFile);
         Assert.Equal(("acme", "acme-prod"), (prodJob.Tenant, prodJob.ResolvedVariables["MODE"]));
         Assert.Null(prodJob.PreviousArtifact);
-        Assert.True(environments.Report("demo", prodJob.Id, new(prodJob.LeaseToken!, true, "health-ok")));
+        Assert.True(environments.Report("demo", prodJob.Id, ReportJob(prodJob, healthy: true)));
         deploy.SyncAfterHostCall("demo");
         Assert.Equal(DeploymentStates.Queued, deploy.Approve("demo", betaProd.Value.Id, Owner).Value?.State);
         var betaProdJob = Assert.IsType<DeployJob>(environments.Claim("prod-host"));
@@ -1377,7 +1382,7 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal("/srv/apps/demo/production/tenants/beta/compose.yml", Assert.Single(betaProdJob.SshSteps).ComposeFile);
         Assert.Null(betaProdJob.PreviousArtifact);
         Assert.True(environments.Report("demo", betaProdJob.Id,
-            new(betaProdJob.LeaseToken!, false, "health-http-failed")));
+            ReportJob(betaProdJob, healthy: false, "health-http-failed")));
         deploy.SyncAfterHostCall("demo");
         Assert.Equal(release.Id, deploy.Status("demo", "acme")!.Single(item => item.Environment.Id == "production").CurrentRelease?.Id);
         Assert.Null(deploy.Status("demo", "beta")!.Single(item => item.Environment.Id == "production").CurrentRelease);
@@ -1466,6 +1471,9 @@ public sealed class DeployServiceTests : IDisposable
                 lifecycle: hotfix
                 branchPattern: refs/heads/hotfix/*
             variables:
+              - name: DATABASE_URL
+                secret: DATABASE_URL
+                environments: [production]
               - name: LOG_LEVEL
                 value: debug
                 channels: [hotfix]
@@ -1781,7 +1789,7 @@ public sealed class DeployServiceTests : IDisposable
             Directory.Delete(provenanceFile);
             File.Move(provenanceFile + ".backup", provenanceFile);
         }
-        Assert.True(hosts.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+        Assert.True(hosts.Report("demo", stage.Id, ReportJob(stage, healthy: true)));
         service.SyncAfterHostCall("demo");
         var production = Assert.Single(service.Deployments("demo", "production")!);
         using var agent = factory.CreateClient();
@@ -1972,6 +1980,14 @@ public sealed class DeployServiceTests : IDisposable
         _clock.Advance(TimeSpan.FromMinutes(1));
     }
 
+    private static DeployReportRequest ReportJob(DeployJob job, bool healthy, string? evidence = null)
+    {
+        var steps = job.SshSteps.Select((step, index) =>
+            new DeployStepResult($"deploy[{index}]:{step.Step}", healthy))
+            .Take(healthy ? job.SshSteps.Count : 1).ToArray();
+        return new(job.LeaseToken!, healthy, evidence ?? (healthy ? "health-ok" : "deploy-step-failed"), steps);
+    }
+
     private Release CreateRelease(DeployService deploy, string artifact, string commit)
     {
         WriteReleaseEvidence(artifact, commit);
@@ -2110,6 +2126,14 @@ public sealed class DeployServiceTests : IDisposable
             });
             File.WriteAllText(path, declaration.ToJsonString());
         }
+    }
+
+    private void WriteEnvironmentSecretRefs(string environment, IReadOnlyList<string> secretRefs)
+    {
+        var path = Path.Combine(_repo, "docs", "deployments", "environments", environment + ".json");
+        var declaration = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        declaration["secretRefs"] = JsonSerializer.SerializeToNode(secretRefs);
+        File.WriteAllText(path, declaration.ToJsonString());
     }
 
     private string Head() => Git("rev-parse", "HEAD").Trim();

@@ -1,4 +1,6 @@
+using System.Text.Json;
 using AgentStudio.Projects;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Deploy;
 
@@ -26,16 +28,39 @@ public static class DeployJobReleaseBinding
 
         var record = releases.SingleOrDefault(item => item.Release.Id == releaseId);
         var declaration = record?.Environments.SingleOrDefault(item => item.Id == job.EnvironmentId);
-        if (record is null || record.Release.ProjectId != project || record.Release.CreatedAtUtc > job.CreatedAt
+        if (record is null || declaration is null || record.Release.ProjectId != project
+            || record.Release.CreatedAtUtc > job.CreatedAt
             || !record.Release.ArtifactDigests.Contains(job.Artifact, StringComparer.Ordinal)
-            || declaration is null || declaration.Template != job.Template
-            || declaration.Destination != job.Destination || declaration.HealthUrl != job.HealthUrl
-            || declaration.ContainerPort != job.ContainerPort
-            || !declaration.SecretRefs.SequenceEqual(job.SecretRefs, StringComparer.Ordinal)
             || registry.VerifiedForDeployment(project, record.Release.CommitSha, job.Artifact, job.Template) is null)
             return null;
+        var tenant = record.Tenants.FirstOrDefault(item => item.Name == job.Tenant);
+        if (job.Tenant is not null && (tenant is null
+            || !declaration.TenantTargets.ContainsKey(job.Tenant))) return null;
+        var expected = job.Tenant is null ? declaration
+            : ProjectEnvironmentService.RouteTenant(declaration, job.Tenant,
+                declaration.TenantTargets[job.Tenant]);
+        var environment = declaration.Kind == "stage" ? "staging" : declaration.Kind;
+        var variables = record.Variables.Select(item => item.Name).Distinct(StringComparer.Ordinal)
+            .Select(name => ProjectVariableResolution.Resolve(record.Variables, name, environment,
+                tenant, record.Release.Channel)).Where(item => item is not null).ToArray();
+        var plain = variables.Where(item => item!.Value is not null)
+            .ToDictionary(item => item!.Name, item => item!.Value!, StringComparer.Ordinal);
+        var secrets = variables.Where(item => item!.Secret is not null)
+            .ToDictionary(item => item!.Name, item => item!.Secret!, StringComparer.Ordinal);
+        var expectedSecretRefs = expected.SecretRefs.Concat(secrets.Values).ToHashSet(StringComparer.Ordinal);
+        if (expected.Template != job.Template || expected.Destination != job.Destination
+            || expected.HealthUrl != job.HealthUrl || expected.ContainerPort != job.ContainerPort
+            || JsonSerializer.Serialize(expected.SshSteps) != JsonSerializer.Serialize(job.SshSteps)
+            || !SameVariables(plain, job.ResolvedVariables)
+            || !SameVariables(secrets, job.SecretVariableRefs)
+            || !expectedSecretRefs.SetEquals(job.SecretRefs)) return null;
         return job with { ReleaseId = releaseId };
     }
+
+    private static bool SameVariables(IReadOnlyDictionary<string, string> expected,
+        IReadOnlyDictionary<string, string> actual)
+        => expected.Count == actual.Count && expected.All(item =>
+            actual.TryGetValue(item.Key, out var value) && value == item.Value);
 
     private static string? AutomaticRollbackRelease(DeployJob rollback, IReadOnlyList<DeployJob> jobs,
         IReadOnlyList<DeploymentRecord> runs)

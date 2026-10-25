@@ -2764,7 +2764,7 @@ schema 2. After migration, existing JSON declarations are checked for
 divergence; a project may run from schema 2 without JSON. project.yml owns
 hosts, protection, lifecycle, variables and
 SSH steps. Release creation compares the committed JSON declaration's host,
-template, health URL, static directory and secret names with project.yml and
+template, health URL, static directory and unscoped secret names with project.yml and
 refuses divergence. The effective schema 2 definition is stored in the release
 snapshot and copied to each host job. The host checks SSH host keys strictly,
 copies static bundles to a version directory before switching `current`, or

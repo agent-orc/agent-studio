@@ -277,7 +277,9 @@ public sealed partial class ProjectEnvironmentService
                 first.HealthUrl ?? "", first.Step == "static-site" ? "static" : "container",
                 first.Directory ?? "1", first.HealthUrl,
                 environment.Protected ? "person" : "stage-healthy-10m",
-                variables.Where(item => item.Secret is not null).Select(item => item.Secret!).ToArray(), 8080)
+                variables.Where(item => item.Secret is not null && item.Tenants.Count == 0
+                    && item.TenantTags.Count == 0 && item.Channels.Count == 0)
+                    .Select(item => item.Secret!).ToArray(), 8080)
             {
                 SshSteps = steps, Variables = variables, Artifacts = definition.Artifacts,
                 Protected = environment.Protected, Automatic = phase.Automatic, Requires = phase.Requires,
@@ -295,7 +297,9 @@ public sealed partial class ProjectEnvironmentService
                 && (item.Environments.Count == 0 || item.Environments.Contains(name, StringComparer.Ordinal))).ToArray();
             var variables = definition.Variables.Where(item => item.Environments.Count == 0
                 || item.Environments.Contains(name, StringComparer.Ordinal)).ToArray();
-            var secrets = variables.Where(item => item.Secret is not null).Select(item => item.Secret!).Order(StringComparer.Ordinal).ToArray();
+            var secrets = variables.Where(item => item.Secret is not null && item.Tenants.Count == 0
+                && item.TenantTags.Count == 0 && item.Channels.Count == 0)
+                .Select(item => item.Secret!).Order(StringComparer.Ordinal).ToArray();
             var first = steps.FirstOrDefault();
             if (environment is null || phase is null || first is null || steps.Any(item => item.Target != legacy.TargetHostId)
                 || first.Target != legacy.TargetHostId || legacy.Template != (first.Step == "static-site" ? "static" : "container")
@@ -1451,7 +1455,7 @@ public sealed partial class ProjectEnvironmentService
             }
             : snapshot;
 
-    private static EnvironmentDeclaration RouteTenant(EnvironmentDeclaration declaration, string tenant,
+    internal static EnvironmentDeclaration RouteTenant(EnvironmentDeclaration declaration, string tenant,
         TenantDeployTarget target)
         => declaration with
         {
