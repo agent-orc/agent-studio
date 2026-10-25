@@ -60,6 +60,15 @@ const HOST_ONLY = { status: MISSING, releases: MISSING, deployments: MISSING };
 
 async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route('**/api/**', route => route.fulfill(json([])).catch(() => undefined));
+  await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill(json({
+    negotiateVersion: 1, connectionId: 'deploy-area-mock', connectionToken: 'deploy-area-mock',
+    availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
+  })));
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
+    socket.onMessage(message => {
+      if (typeof message === 'string' && message.includes('"protocol":"json"')) socket.send('{}\u001e');
+    });
+  });
   await page.route('**/api/v1/studio/auth/status', route => route.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   })));
@@ -151,7 +160,7 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   await page.route(`**/api/projects/${PROJECT}/pipeline-definition`, route => answer(route, deploy.pipelineDefinition));
 }
 
-async function openDeploy(page: Page, deploy: DeployMocks): Promise<void> {
+async function openDeploy(page: Page, deploy: DeployMocks, navigationTimeoutMs = 30_000): Promise<void> {
   page.on('dialog', dialog => dialog.accept());
   await page.clock.setFixedTime(new Date(DEPLOY_FIXTURE_NOW));
   await page.addInitScript(({ project }) => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
@@ -160,7 +169,7 @@ async function openDeploy(page: Page, deploy: DeployMocks): Promise<void> {
     activeKey: `hub:${project}`,
   })), { project: PROJECT });
   await mockApp(page, deploy);
-  await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await page.goto('/', { waitUntil: 'domcontentloaded', timeout: navigationTimeoutMs });
   await page.evaluate(() => document.querySelectorAll('[data-testid="error-dialog-overlay"], vite-error-overlay')
     .forEach(element => ((element as HTMLElement).style.display = 'none')));
   await expect(page.getByTestId('project-deploy-area')).toBeVisible({ timeout: 60_000 });
@@ -177,6 +186,26 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('opens the Runbooks tab with current-page semantics', async ({ page }) => {
+    test.setTimeout(180_000);
+    await openDeploy(page, fullMocks(), 90_000);
+    await page.route(`**${DEPLOY}/runbooks`, route => route.fulfill(json([
+      { name: 'restart', steps: ['restart-container'], environments: [] },
+    ])));
+    await page.route(`**${DEPLOY}/runbooks/runs?*`, route => route.fulfill(json([])));
+
+    const tab = page.getByTestId('deploy-tab-runbooks');
+    await expect(tab).toBeEnabled();
+    await tab.click();
+    await expect(tab).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByTestId('deploy-tab-overview')).not.toHaveAttribute('aria-current', 'page');
+    await expect(page.getByTestId('project-deploy-area').getByTestId('environment-runbooks').first()).toContainText('restart');
+    await setTheme(page, 'light');
+    await capture(page, 'runbooks-tab-light');
+    await setTheme(page, 'dark');
+    await capture(page, 'runbooks-tab-dark');
+  });
+
   test('Operations rail opens an older release on a fresh Deploy mount without fetching the first page', async ({ page }) => {
     const base = deployReleasesFixture()[0];
     const releases = Array.from({ length: 40 }, (_, index) => ({ ...base,

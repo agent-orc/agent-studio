@@ -247,6 +247,176 @@ public sealed class DeployServiceTests : IDisposable
         }
     }
 
+    [Fact]
+    public void Runbook_executes_on_environment_without_creating_or_changing_a_release()
+    {
+        var (deploy, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: restart\n    steps: [restart-container, health]\n");
+        var definitionPath = Path.Combine(_repo, ".agent-studio", "project.yml");
+        File.WriteAllText(definitionPath, File.ReadAllText(definitionPath).Replace(
+            "variables:\n  - name: DATABASE_URL",
+            "variables:\n  - name: LOG_LEVEL\n    value: info\n  - name: DATABASE_URL",
+            StringComparison.Ordinal));
+        Commit("runbook-definition");
+        var runbooks = Runbooks(environments, store);
+
+        var requested = runbooks.Request("demo", "stage", "restart", Operator);
+        Assert.Equal(DeployOutcomeKind.Ok, requested.Kind);
+        Assert.Equal(DeploymentStates.Queued, requested.Value!.State);
+        var job = environments.Claim("stage-host", requireVerifiedRelease: true)!;
+        Assert.Equal("restart", job.RunbookName);
+        Assert.NotNull(environments.FindClaimedJob("demo", job.Id, job.LeaseToken!, requireVerifiedRelease: true));
+        Assert.Equal(["restart-container", "health"], job.RunbookSteps);
+        Assert.Equal("8081", job.Destination);
+        Assert.Equal("info", job.RunbookVariables["LOG_LEVEL"]);
+        runbooks.SyncAfterHostCall("demo");
+        Assert.Equal(DeploymentStates.Running, runbooks.Run("demo", requested.Value.Id)!.State);
+        _clock.Advance(TimeSpan.FromMinutes(6));
+        Assert.Null(environments.Claim("stage-host"));
+        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok",
+            RunbookResults: [new(0, true), new(1, true)]), requireVerifiedRelease: true));
+        runbooks.SyncAfterHostCall("demo");
+
+        var result = runbooks.Run("demo", requested.Value.Id)!;
+        Assert.Equal(DeploymentStates.Succeeded, result.State);
+        Assert.All(result.Steps, step => Assert.Equal(DeploymentStates.Succeeded, step.State));
+        Assert.Contains(runbooks.Log("demo", result.Id, "health")!.Lines,
+            line => line.Message == "Operation succeeded.");
+        Assert.Contains(deploy.Audit("demo")!, entry => entry.Action == "runbook-succeeded"
+            && entry.DeploymentId == result.Id && entry.EnvironmentId == "stage");
+        Assert.Empty(deploy.Releases("demo")!);
+        Assert.Empty(deploy.Deployments("demo", null)!);
+        Assert.Null(deploy.Status("demo")!.Single(item => item.Environment.Id == "stage").CurrentRelease);
+        Assert.Empty(environments.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").History);
+    }
+
+    [Fact]
+    public void Production_runbook_waits_for_owner_or_maintainer_and_records_rejection()
+    {
+        var (_, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: rotate\n    steps: [rotate-secrets]\n    environments: [production]\n");
+        Commit("runbook-definition");
+        var runbooks = Runbooks(environments, store);
+
+        Assert.Equal(DeployOutcomeKind.NotFound, runbooks.Request("demo", "stage", "rotate", Owner).Kind);
+        var waiting = runbooks.Request("demo", "production", "rotate", Operator).Value!;
+        Assert.Equal(DeploymentStates.AwaitingApproval, waiting.State);
+        Assert.Null(environments.Claim("prod-host"));
+        Assert.Equal(DeployOutcomeKind.Forbidden, runbooks.Approve("demo", waiting.Id, Operator).Kind);
+        Assert.Equal(DeployOutcomeKind.Forbidden, runbooks.Reject("demo", waiting.Id, Operator).Kind);
+        Assert.Equal(DeploymentStates.Queued, runbooks.Approve("demo", waiting.Id, Owner).Value!.State);
+        var job = environments.Claim("prod-host")!;
+        Assert.Equal("prod-host", job.HostId);
+        Assert.Contains("DATABASE_URL", job.SecretRefs);
+        Assert.True(environments.Report("demo", job.Id, new(job.LeaseToken!, false, "deploy-step-failed",
+            RunbookResults: [new(0, false)])));
+        runbooks.SyncAfterHostCall("demo");
+        Assert.Equal(DeploymentStates.Failed, runbooks.Run("demo", waiting.Id)!.State);
+        Assert.Contains(store.ReadAudit("demo", 20), entry => entry.Action == "runbook-approved"
+            && entry.Actor == Owner.Id);
+        Assert.Contains(store.ReadAudit("demo", 20), entry => entry.Action == "runbook-failed");
+
+        var second = runbooks.Request("demo", "production", "rotate", Operator).Value!;
+        Assert.Equal(DeploymentStates.Cancelled, runbooks.Reject("demo", second.Id, Owner).Value!.State);
+        Assert.Contains(store.ReadAudit("demo", 20), entry => entry.Action == "runbook-rejected");
+        Assert.Null(environments.Claim("prod-host"));
+    }
+
+    [Fact]
+    public async Task Concurrent_runbook_and_deployment_audit_appends_preserve_every_event()
+    {
+        var (_, _, store) = Build();
+        const int Rounds = 200;
+        using var start = new Barrier(2);
+        var now = _clock.GetUtcNow().UtcDateTime;
+        // The runbook and deployment services hold separate gates and share this store.
+        Task Writer(string actor, string action) => Task.Run(() =>
+        {
+            start.SignalAndWait();
+            for (var i = 0; i < Rounds; i++)
+                store.AppendAudit("demo", [new(now, actor, action, null, $"{action}-{i}", "stage", $"{action} {i}")]);
+        });
+
+        await Task.WhenAll(Writer("deploy-host", "runbook-succeeded"), Writer("operator", "deployment-queued"));
+
+        var audit = store.ReadAudit("demo", Rounds * 4);
+        Assert.Equal(Rounds * 2, audit.Count);
+        Assert.Equal(Rounds, audit.Select(entry => entry.DeploymentId).Distinct()
+            .Count(id => id!.StartsWith("runbook-succeeded-", StringComparison.Ordinal)));
+        Assert.Equal(Rounds, audit.Select(entry => entry.DeploymentId).Distinct()
+            .Count(id => id!.StartsWith("deployment-queued-", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void Runbook_recovers_a_queued_host_job_when_the_run_record_write_is_lost()
+    {
+        var (_, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: backup\n    steps: [backup]\n");
+        Commit("runbook-definition");
+        var runbooks = Runbooks(environments, store);
+        var requested = runbooks.Request("demo", "stage", "backup", Operator).Value!;
+        store.SaveRunbookRuns("demo", []);
+
+        var recovered = runbooks.Run("demo", requested.Id)!;
+        Assert.Equal(DeploymentStates.Queued, recovered.State);
+        Assert.Equal(requested.DefinitionCommit, recovered.DefinitionCommit);
+        Assert.Contains(store.ReadAudit("demo", 20), entry => entry.Action == "runbook-recovered"
+            && entry.DeploymentId == requested.Id);
+        Assert.NotNull(environments.Claim("stage-host"));
+    }
+
+    [Fact]
+    public async Task Corrupt_runbook_store_does_not_fail_host_claim_or_report_and_later_reconciles()
+    {
+        var (_, environments, store) = Build();
+        WriteProjectYml("runbooks:\n  - name: backup\n    steps: [backup]\n");
+        Commit("runbook-definition");
+        var runbooks = Runbooks(environments, store);
+        var requested = runbooks.Request("demo", "stage", "backup", Operator).Value!;
+        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.UseSetting("TaskRepository", Path.Combine(_root, "workspace"));
+            builder.UseSetting("WatchPaths:0:Name", "demo");
+            builder.UseSetting("WatchPaths:0:Path", _watch);
+            builder.UseSetting("WatchPaths:0:RootPath", _repo);
+            builder.UseSetting("WatchPaths:0:RepositoryPath", _repo);
+            builder.UseSetting("ReviewDecisionOrchestrator:Enabled", "false");
+            builder.UseSetting("Logging:BackendFile:LogDirectory", Path.Combine(_root, "logs"));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(_clock);
+            });
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var password = $"test-{Guid.NewGuid():N}!";
+        using var bootstrap = await client.PostAsJsonAsync("/api/auth/bootstrap", new
+        {
+            username = "local.owner", password, displayName = "Local Owner",
+        });
+        bootstrap.EnsureSuccessStatusCode();
+        var auth = await bootstrap.Content.ReadFromJsonAsync<AuthStatusResponse>();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", auth!.CsrfToken);
+        var file = Path.Combine(_root, "workspace", "deployments", "projects", "demo", "runbooks.json");
+        File.WriteAllText(file, "{invalid-json");
+
+        using var claim = await client.PostAsJsonAsync("/api/deploy/jobs/claim", new DeployClaimRequest("stage-host"));
+        Assert.Equal(HttpStatusCode.OK, claim.StatusCode);
+        var claimed = (await claim.Content.ReadFromJsonAsync<DeployJob>())!;
+        Assert.Equal(requested.Id, claimed.RunbookRunId);
+        using var report = await client.PostAsJsonAsync($"/api/deploy/jobs/demo/{claimed.Id}/report",
+            new DeployReportRequest(claimed.LeaseToken!, true, "health-ok", RunbookResults: [new(0, true)]));
+        Assert.Equal(HttpStatusCode.OK, report.StatusCode);
+        Assert.Equal("healthy", environments.Read("demo")!.Jobs.Single().Status);
+
+        File.Delete(file);
+        Assert.Equal(DeploymentStates.Succeeded, runbooks.Run("demo", requested.Id)!.State);
+        Assert.Contains(store.ReadAudit("demo", 20), entry => entry.Action == "runbook-succeeded"
+            && entry.DeploymentId == requested.Id);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
@@ -2226,6 +2396,22 @@ public sealed class DeployServiceTests : IDisposable
         _environments = environments;
         return (new DeployService(environments, store, git, scanner, _clock, NullLogger<DeployService>.Instance, null),
             environments, store);
+    }
+
+    private RunbookService Runbooks(ProjectEnvironmentService environments, DeployStore store)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+            ["WatchPaths:0:Name"] = "demo", ["WatchPaths:0:Path"] = _watch,
+            ["WatchPaths:0:RootPath"] = _repo, ["WatchPaths:0:RepositoryPath"] = _repo,
+        }).Build();
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        return new RunbookService(environments, store, git, settings, _clock,
+            NullLogger<RunbookService>.Instance);
     }
 
     private DeployService Reopen()

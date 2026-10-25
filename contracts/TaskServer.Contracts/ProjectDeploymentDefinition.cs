@@ -48,6 +48,10 @@ public sealed record ProjectTenantDefinition(string Name, IReadOnlyList<string> 
 public sealed record ProjectChannelDefinition(string Name, string Lifecycle, string? PrereleaseTag,
     string? BranchPattern, bool Default);
 
+/// <summary>Named host operations. The host resolves each name to an operator-installed script.</summary>
+public sealed record ProjectRunbookDefinition(string Name, IReadOnlyList<string> Steps,
+    IReadOnlyList<string> Environments);
+
 /// <summary>
 /// Deploy hosts registered for one project, per P1 environment. The backend
 /// builds it from the AGT-3176 declarations under docs/deployments/environments,
@@ -70,6 +74,7 @@ public sealed record ProjectDeploymentDefinition(
     IReadOnlyList<ProjectDeployStep> Deploy)
 {
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
+    public IReadOnlyList<ProjectRunbookDefinition> Runbooks { get; init; } = [];
     public IReadOnlyList<ProjectTenantDefinition> Tenants { get; init; } = [];
     public IReadOnlyList<ProjectChannelDefinition> Channels { get; init; } = [];
     public IReadOnlyDictionary<string, IReadOnlyList<ProjectLifecyclePhase>> Lifecycles { get; init; }
@@ -80,7 +85,7 @@ public sealed record ProjectDeploymentDefinition(
     public bool LifecycleDefaulted { get; init; }
 
     public bool IsConfigured => Artifacts.Count > 0 || Environments.Count > 0
-        || StandardLifecycle.Count > 0 || Deploy.Count > 0 || Variables.Count > 0 || Tenants.Count > 0 || Channels.Count > 0;
+        || StandardLifecycle.Count > 0 || Deploy.Count > 0 || Variables.Count > 0 || Tenants.Count > 0 || Channels.Count > 0 || Runbooks.Count > 0;
 }
 
 /// <summary>
@@ -90,7 +95,7 @@ public sealed record ProjectDeploymentDefinition(
 public static class ProjectDeploymentVocabulary
 {
     public static readonly IReadOnlyList<string> Sections =
-        ["pipeline", "artifacts", "environments", "lifecycles", "deploy", "variables", "tenants", "channels"];
+        ["pipeline", "artifacts", "environments", "lifecycles", "deploy", "variables", "tenants", "channels", "runbooks"];
     public static readonly IReadOnlyList<string> ArtifactTypes = ["static", "container"];
     public static readonly IReadOnlyList<string> ArtifactKeys = ["name", "type", "path", "dockerfile", "image"];
     public static readonly IReadOnlyList<string> EnvironmentNames = ["staging", "production"];
@@ -100,9 +105,26 @@ public static class ProjectDeploymentVocabulary
     public static readonly IReadOnlyList<string> VariableKeys = ["name", "value", "secret", "environments", "tenants", "tenantTags", "channels"];
     public static readonly IReadOnlyList<string> TenantKeys = ["name", "tags", "environments"];
     public static readonly IReadOnlyList<string> ChannelKeys = ["name", "lifecycle", "versionRules", "prereleaseTag", "branchPattern", "default"];
+    public static readonly IReadOnlyList<string> RunbookKeys = ["name", "steps", "environments"];
     public static readonly IReadOnlyList<string> StepKinds =
         ["static-site", "container", "publish-static", "start-container", "run", "health", "approval"];
     public const int MaxHealthTimeoutSeconds = 900;
+
+    /// <summary>
+    /// Variable names that steer the dynamic loader, libc, or the shell that
+    /// starts an operator-installed host script. A repository must not set them.
+    /// </summary>
+    private static readonly HashSet<string> ReservedVariableNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "PATH", "IFS", "ENV", "BASH_ENV", "SHELLOPTS", "BASHOPTS", "PS4", "CDPATH", "GLOBIGNORE",
+        "GCONV_PATH", "GETCONF_DIR", "GLIBC_TUNABLES", "HOSTALIASES", "LOCALDOMAIN", "LOCPATH",
+        "MALLOC_TRACE", "NIS_PATH", "NLSPATH", "RESOLV_HOST_CONF", "RES_OPTIONS",
+    };
+    private static readonly string[] ReservedVariablePrefixes = ["LD_", "DYLD_", "BASH_FUNC_"];
+
+    public static bool IsReservedVariableName(string name)
+        => ReservedVariableNames.Contains(name)
+           || ReservedVariablePrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Artifact names, deploy host ids, and compose services; the JSON schema's <c>identifier</c>.</summary>
     public const string IdentifierPattern = "^[a-z0-9][a-z0-9._-]{0,63}$";
@@ -244,10 +266,17 @@ public static partial class ProjectDefinitionReader
                     Get(item, "prereleaseTag"), Get(item, "branchPattern"),
                     bool.TryParse(defaultText, out var isDefault) && isDefault);
             }).ToArray();
+        var runbooks = SequenceMaps(lines, "runbooks", 2, 4, issues)
+            .Select((item, index) =>
+            {
+                CheckMapKeys(item, ProjectDeploymentVocabulary.RunbookKeys, $"runbooks[{index}]", issues);
+                return new ProjectRunbookDefinition(Get(item, "name") ?? "", List(item, "steps"),
+                    List(item, "environments"));
+            }).ToArray();
 
         // Staging and Production with the standard lifecycle are the P1 default
         // once the file starts describing a deployment.
-        var deploying = artifacts.Length > 0 || steps.Length > 0 || phases.Length > 0 || variables.Length > 0 || tenants.Length > 0 || channels.Length > 0
+        var deploying = artifacts.Length > 0 || steps.Length > 0 || phases.Length > 0 || variables.Length > 0 || tenants.Length > 0 || channels.Length > 0 || runbooks.Length > 0
             || Declared("environments");
         var defaultEnvironments = deploying && !Declared("environments");
         var defaultLifecycle = deploying && !Declared("lifecycles");
@@ -258,6 +287,7 @@ public static partial class ProjectDefinitionReader
             steps)
         {
             Variables = variables,
+            Runbooks = runbooks,
             Tenants = tenants,
             Channels = channels,
             Lifecycles = lifecycles,
@@ -403,6 +433,20 @@ public static partial class ProjectDefinitionValidator
             ValidateStep(value, value.Deploy[i], $"deploy[{i}]", environments, names, hosts, issues);
         ValidateTenants(value.Tenants, environments, issues);
         ValidateVariables(value.Variables, value.Tenants, environments, value.Channels, issues);
+        var runbookNames = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < value.Runbooks.Count; i++)
+        {
+            var runbook = value.Runbooks[i];
+            var path = $"runbooks[{i}]";
+            if (!Identifier().IsMatch(runbook.Name) || !runbookNames.Add(runbook.Name))
+                issues.Add(new($"{path}.name", "runbook-name-invalid", "Runbook names must be unique lower-case identifiers."));
+            if (runbook.Steps.Count == 0 || runbook.Steps.Any(step => !Identifier().IsMatch(step)))
+                issues.Add(new($"{path}.steps", "runbook-steps-invalid", "Runbook steps must be a non-empty list of operation identifiers."));
+            if (runbook.Steps.Contains("approval", StringComparer.Ordinal))
+                issues.Add(new($"{path}.steps", "runbook-step-reserved", "approval is reserved for the environment approval step."));
+            if (runbook.Environments.Any(environment => !environments.Contains(environment)))
+                issues.Add(new($"{path}.environments", "runbook-environment-unknown", "Runbook environments must be declared."));
+        }
         return issues;
     }
 
@@ -412,7 +456,8 @@ public static partial class ProjectDefinitionValidator
         if (value.Environments.Count == 0)
         {
             // Only an explicitly empty environments section gets here with deploy content.
-            if (value.Artifacts.Count > 0 || value.Deploy.Count > 0 || value.Variables.Count > 0)
+            if (value.Artifacts.Count > 0 || value.Deploy.Count > 0 || value.Variables.Count > 0
+                || value.Runbooks.Count > 0)
                 issues.Add(new("environments", "deployment-environments-invalid",
                     "P1 environments must be [staging, production] in deployment order."));
             return environments;
@@ -634,6 +679,9 @@ public static partial class ProjectDefinitionValidator
             var path = $"variables[{i}]";
             if (!EnvironmentName().IsMatch(variable.Name))
                 issues.Add(new($"{path}.name", "variable-name-invalid", "Variable names must be portable shell identifiers."));
+            else if (ProjectDeploymentVocabulary.IsReservedVariableName(variable.Name))
+                issues.Add(new($"{path}.name", "variable-name-reserved",
+                    $"Variable '{variable.Name}' controls the loader or shell on the deploy host and cannot be set from project.yml."));
             if ((variable.Value is null) == (variable.Secret is null))
                 issues.Add(new(path, "variable-source-invalid", "A variable has either a value or a secret name, not both."));
             if (variable.Secret is not null && !SecretReference().IsMatch(variable.Secret))

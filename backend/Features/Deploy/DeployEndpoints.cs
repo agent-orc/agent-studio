@@ -66,6 +66,33 @@ public static class DeployEndpoints
         project.MapGet("/audit", (string projectName, DeployService deploy) =>
             deploy.Audit(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
+        project.MapGet("/runbooks", (string projectName, RunbookService runbooks) =>
+            runbooks.Definitions(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
+        project.MapGet("/runbooks/runs", (string projectName, string? environmentId, RunbookService runbooks) =>
+            runbooks.Runs(projectName, environmentId) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
+        project.MapGet("/runbooks/runs/{runId}", (string projectName, string runId, RunbookService runbooks) =>
+            runbooks.Run(projectName, runId) is { } value ? Results.Ok(value) : Results.NotFound());
+
+        project.MapGet("/runbooks/runs/{runId}/log", (string projectName, string runId, string? step,
+            RunbookService runbooks) => runbooks.Log(projectName, runId, step) is { } value
+                ? Results.Ok(value) : Results.NotFound());
+
+        project.MapPost("/environments/{environmentId}/runbooks/{name}/runs", (HttpContext context,
+            string projectName, string environmentId, string name, RunbookService runbooks) =>
+            Respond(runbooks.Request(projectName, environmentId, name, Actor(context, projectName)), accepted: true))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
+        project.MapPost("/runbooks/runs/{runId}/approve", (HttpContext context, string projectName,
+            string runId, RunbookService runbooks) =>
+            Respond(runbooks.Approve(projectName, runId, Actor(context, projectName))))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+
+        project.MapPost("/runbooks/runs/{runId}/reject", (HttpContext context, string projectName,
+            string runId, RunbookService runbooks) =>
+            Respond(runbooks.Reject(projectName, runId, Actor(context, projectName))))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
         project.MapGet("/operations", (string projectName, AgentStudio.Projects.ProjectOperationsService operations) =>
             operations.Read(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 

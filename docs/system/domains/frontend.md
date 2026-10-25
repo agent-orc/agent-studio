@@ -455,6 +455,14 @@ occur. It is not a claim about tunnel transfer time.
   aborts require confirmation; the server remains the authority for refusals.
   At phone widths the shell hides its Explorer sidebar so the Deploy cards use
   the editor width while the activity bar stays available.
+- The Operations environment cards and the Deploy Runbooks tab show repository-defined
+  runbooks for each environment. The tab stays deferred until opened and marks
+  itself current for assistive technology. They read
+  `/api/projects/{projectName}/deploy/runbooks` and the
+  environment-filtered `/runbooks/runs` history; start, approve and reject
+  return a run id whose per-step log is available under `/runs/{runId}/log`.
+  Production approvals use the same signed-in Owner or Maintainer authority as
+  deployments. Runbook history does not alter the current release projection.
 - `frontend/src/app/features/task-detail/`: task detail shell, protocol pane,
   prompt pane, git pane, timeline, pipeline overview, and command surfaces.
   Ordinary task selection reads the bounded `/core` projection first and paints
