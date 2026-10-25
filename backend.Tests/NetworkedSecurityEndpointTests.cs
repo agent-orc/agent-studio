@@ -7,6 +7,7 @@ using System.Text.Json;
 using AgentStudio.Security;
 using AgentStudio.Clients;
 using AgentStudio.Projects;
+using AgentStudio.Registry;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -209,6 +210,99 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, (await trustedClient.SendAsync(forwarded)).StatusCode);
     }
 
+    [Theory]
+    [InlineData("172.30.83.3")]
+    [InlineData("192.168.1.12")]
+    [InlineData("100.64.2.3")]
+    public async Task Login_from_private_address_is_refused_on_public_edge(string address)
+    {
+        using var factory = BuildFactory(address, publicCloudflareEdge: true);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+        var response = await client.PostAsJsonAsync("/api/auth/login",
+            new { username = "owner", password = "wrong" });
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.False(factory.Services.GetRequiredService<NetworkedLoginAddressHealth>().Healthy);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/healthz")).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1")]
+    [InlineData("192.168.1.12")]
+    [InlineData("100.64.2.3")]
+    [InlineData("172.30.83.3")]
+    public async Task Private_address_can_sign_in_without_public_cloudflare_edge(string address)
+    {
+        using var factory = BuildFactory(address);
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", null));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+        var response = await client.PostAsJsonAsync("/api/auth/login",
+            new { username = "owner", password = "correct horse battery staple!" });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.False(factory.Services.GetRequiredService<NetworkedLoginAddressHealth>().Healthy);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/healthz")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Networked_operator_cannot_create_or_start_rules_or_change_repository_identity()
+    {
+        using var factory = BuildFactory("203.0.113.15");
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var owner = store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", null));
+        var created = store.CreateUser(new CreateUserRequest("operator", "Operator", StudioRoles.Operator,
+            ["*"], "temporary pass phrase!"));
+        var operatorLogin = store.Login("operator", created.TemporaryPassword, "203.0.113.15");
+        store.ChangePassword(store.AuthenticateSession(operatorLogin.SessionToken)!,
+            new ChangePasswordRequest(created.TemporaryPassword, "permanent pass phrase!"));
+        var projects = factory.Services.GetRequiredService<ProjectRegistry>();
+        var workspaces = factory.Services.GetRequiredService<WorkspaceRegistry>();
+        workspaces.EnsureDefaultWorkspace();
+        var project = projects.EnsureProjectForStorage(Path.Combine(_workspace, "project"),
+            "Existing", DefaultWorkspace.Id);
+        const string repo = "https://example.test/repo.git";
+        projects.Update(project.Id, new UpdateProjectRequest { RepositoryUrl = repo },
+            workspaces, owner.User);
+        var url = projects.AddUrl(project.Id, "Preview", "http://localhost:4200",
+            new ProjectUrlStartRule { Command = "echo ready", Port = 4200 }, owner.User).Urls.Last();
+
+        async Task<HttpStatusCode> Send(HttpMethod method, string path, object body)
+        {
+            using var request = new HttpRequestMessage(method, path) { Content = JsonContent.Create(body) };
+            request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={operatorLogin.SessionToken}");
+            request.Headers.Add("X-CSRF-Token", operatorLogin.CsrfToken);
+            using var response = await client.SendAsync(request);
+            return response.StatusCode;
+        }
+
+        Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Post, "/api/projects",
+            new { workspaceId = DefaultWorkspace.Id, displayName = "Injected", repositoryUrl = repo }));
+        Assert.Equal(HttpStatusCode.OK, await Send(HttpMethod.Put, $"/api/projects/{project.Id}",
+            new { repositoryUrl = repo }));
+        Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Put, $"/api/projects/{project.Id}",
+            new { repositoryUrl = "https://example.test/changed.git" }));
+        Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Put, $"/api/projects/{project.Id}",
+            new { repositoryPath = "/data/projects/unrelated" }));
+        var labelled = projects.EnsureProjectForStorage(Path.Combine(_workspace, "labelled-project"),
+            "Labelled Project", DefaultWorkspace.Id);
+        projects.AddUrl(labelled.Id, "Repository", repo, null, owner.User);
+        Assert.Equal(HttpStatusCode.OK, await Send(HttpMethod.Put, $"/api/projects/{labelled.Id}",
+            new { displayName = "Labelled Project Updated", repositoryUrl = repo }));
+        Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Post, $"/api/projects/{project.Id}/urls",
+            new { label = "Other", url = "http://localhost:4201", startRule = new { command = "echo attack", port = 4201 } }));
+        Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Post,
+            $"/api/projects/{project.Id}/urls/{url.Id}/start", new { }));
+        Assert.Equal(HttpStatusCode.Forbidden, await Send(HttpMethod.Post,
+            $"/api/projects/{project.Id}/urls/test",
+            new { label = "Probe", url = "http://localhost:4202", startRule = new { command = "echo attack", port = 4202 } }));
+    }
+
     [Fact]
     public async Task First_remote_owner_requires_the_installer_code()
     {
@@ -245,7 +339,8 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         })).EnsureSuccessStatusCode();
     }
 
-    private WebApplicationFactory<Program> BuildFactory(string? remoteIp = null, string? projectPath = null) => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+    private WebApplicationFactory<Program> BuildFactory(string? remoteIp = null, string? projectPath = null,
+        bool publicCloudflareEdge = false) => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
         if (remoteIp is not null)
@@ -256,6 +351,7 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
             ["Security:Profile"] = "networked",
             ["Security:BootstrapCode"] = "website-setup-code",
             ["Security:TrustedProxyAddresses"] = "172.30.83.3",
+            ["Security:PublicCloudflareEdge"] = publicCloudflareEdge.ToString(),
             ["AllowedHosts"] = "studio.test",
             ["WatchPaths:0:Name"] = projectPath is null ? null : "networked-smoke",
             ["WatchPaths:0:Path"] = projectPath,
