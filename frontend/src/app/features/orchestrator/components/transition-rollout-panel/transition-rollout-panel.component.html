@@ -2,7 +2,7 @@
   <header class="rollout__head">
     <div>
       <h3>Transition decisions</h3>
-      <p>Compare consecutive decisions per profile before switching the engine on.</p>
+      <p>Compare consecutive decisions per profile, then let an applier canary prove the engine decisions apply.</p>
     </div>
     <button type="button" (click)="refresh()">Refresh</button>
   </header>
@@ -21,6 +21,23 @@
         </div>
         <p><span class="rollout__number">{{ item.streak }} / {{ item.threshold }}</span> matching shadow decisions ·
           <span class="rollout__number">{{ item.mismatchCount }}</span> mismatches</p>
+        <dl class="rollout__checks">
+          <dt>Applier contract</dt>
+          <dd [attr.data-testid]="'applier-contract-' + item.profile">
+            @if (item.applierContract; as contract) {
+              {{ contract.status }} · <span class="rollout__number">{{ contract.actions.length }}</span> actions
+              @if (contract.uncovered.length) { · no effect for {{ contract.uncovered.join(', ') }} }
+            } @else { not reported }
+          </dd>
+          <dt>Applier canary</dt>
+          <dd class="rollout__number" [attr.data-testid]="'applier-canary-' + item.profile">
+            {{ item.canary ? canaryText(item.canary) : 'not run' }}
+          </dd>
+          <dt>Last effect check</dt>
+          <dd [attr.data-testid]="'effect-check-' + item.profile" [attr.title]="item.lastEffectCheck?.evidence ?? null">
+            {{ item.lastEffectCheck ? effectText(item.lastEffectCheck) : 'none yet' }}
+          </dd>
+        </dl>
         @if (item.lastMismatch; as mismatch) {
           <details>
             <summary>Last mismatch · {{ mismatch.engine.occurrence }}</summary>
@@ -37,11 +54,19 @@
           }
           @if (item.state === 'ready') {
             <button type="button" [disabled]="!reason().trim() || !!busy()"
+                    (click)="switch(item, 'canary')">Start applier canary</button>
+          }
+          @if (item.state === 'ready' && item.canary?.passedOnThisInstance) {
+            <button type="button" [disabled]="!reason().trim() || !!busy()"
                     (click)="switch(item, 'engine')">Switch to engine</button>
           }
-          @if (item.state === 'engine' || item.state === 'ready' || item.state === 'shadow') {
+          @if (item.state === 'engine' || item.state === 'canary' || item.state === 'ready' || item.state === 'shadow') {
             <button type="button" [disabled]="!reason().trim() || !!busy()"
                     (click)="switch(item, 'rollback')">Roll back</button>
+          }
+          @if (item.state !== 'engine') {
+            <button type="button" [attr.data-testid]="'force-engine-' + item.profile" [disabled]="!reason().trim() || !!busy()"
+                    (click)="switch(item, 'force-engine')">Force engine (emergency override)</button>
           }
         </div>
       </section>

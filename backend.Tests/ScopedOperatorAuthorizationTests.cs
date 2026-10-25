@@ -467,7 +467,12 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
         context.Request.Path = path;
         context.Request.QueryString = new QueryString(query);
         context.Request.Scheme = "https";
-        if (sessionToken is not null) context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={sessionToken}");
+        if (sessionToken is not null)
+        {
+            context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={sessionToken}");
+            // A browser session request from a Studio page (AGT-3230 Origin rule).
+            context.Request.Headers["Sec-Fetch-Site"] = "same-origin";
+        }
         if (csrf is not null) context.Request.Headers["X-CSRF-Token"] = new StringValues(csrf);
         if (authorization is not null) context.Request.Headers.Authorization = new StringValues(authorization);
         if (endpoint is not null) context.SetEndpoint(endpoint);

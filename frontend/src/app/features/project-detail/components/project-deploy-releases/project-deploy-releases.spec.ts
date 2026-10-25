@@ -1,6 +1,8 @@
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
+import { of } from 'rxjs';
 import { ProjectDeployReleasesComponent } from './project-deploy-releases';
+import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
 import { buildEnvironmentCards, type DeployPanel, type Release } from '../../state/deploy-area.model';
 import { DEPLOY_FIXTURE_NOW, deployReleasesFixture, deploySourcesFixture } from '../../testing/deploy-fixtures';
 
@@ -20,7 +22,8 @@ describe('ProjectDeployReleasesComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectDeployReleasesComponent],
-      providers: [provideZonelessChangeDetection()],
+      providers: [provideZonelessChangeDetection(),
+        { provide: ProjectDeployDataService, useValue: { releaseNotes: () => of({ status: 'unavailable' }) } }],
     }).compileComponents();
     fixture = TestBed.createComponent(ProjectDeployReleasesComponent);
   });

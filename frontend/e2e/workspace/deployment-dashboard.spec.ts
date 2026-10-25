@@ -22,10 +22,21 @@ test('workspace deployment matrix filters and opens project deployment in both t
   await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
     v: 1, tabs: [{ kind: 'deployment-dashboard' }], activeKey: 'deployment-dashboard',
   })));
-  await page.route('**/api/**', route => {
+  await page.context().route('**/api/**', route => {
     const url = route.request().url();
     const json = (body: unknown) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
     if (url.includes('/api/v1/studio/auth/status')) return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
+    if (url.includes('/api/v1/management/credential-inventory')) return json({ generatedAt: '2026-10-20T12:00:00Z', items: [] });
+    if (url.includes('/deploy/delivery-lanes')) {
+      const website = decodeURIComponent(url).includes('/Website/');
+      const projectId = website ? 'Website' : 'API';
+      return json({ projectId, lanes: [
+        { environmentId: null, name: 'Waiting for release', order: -1, cards: [] },
+        { environmentId: 'dev', name: 'Dev', order: 0, cards: website ? [{ key: 'WEB-1', title: 'Ship landing page', releaseVersion: '2026.10.20.1', deployedAtUtc: '2026-10-20T12:00:00Z' }] : [] },
+        { environmentId: 'stage', name: 'Stage', order: 1, cards: [] },
+        { environmentId: 'production', name: 'Production', order: 2, cards: [] },
+      ] });
+    }
     if (url.includes('/api/watch-paths')) return json(projects.map(project => ({ name: project.displayName, path: project.storageLocation })));
     if (new URL(url).pathname === '/api/v1/projects') return json(projects);
     if (url.includes('/api/v1/workspaces') || url.includes('/api/workspaces')) return json([
@@ -58,6 +69,15 @@ test('workspace deployment matrix filters and opens project deployment in both t
   await expect(dashboard.getByRole('columnheader')).toHaveCount(3);
   await expect(dashboard.getByRole('row')).toHaveCount(4);
   await expect(dashboard.getByRole('row', { name: /Website.*acme/ })).toBeVisible();
+  await expect(dashboard.getByText(/Release .* · default/).first()).toBeVisible();
+  await expect(dashboard.getByTestId('delivery-card-WEB-1')).toBeVisible();
+  await expect(dashboard.getByRole('button', { name: 'Delivery to Stage 0' })).toHaveCount(2);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await dashboard.getByTestId('delivery-card-WEB-1').scrollIntoViewIfNeeded();
+    const shot = path.join(resultsDir, `agt-3277-delivery-dashboard-${width}.png`);
+    await page.screenshot({ path: shot, fullPage: true });
+  }
   for (const theme of ['dark', 'light'] as const) {
     await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
     const shot = path.join(resultsDir, `agt-3261-deployment-dashboard-${theme}.png`);
@@ -72,4 +92,16 @@ test('workspace deployment matrix filters and opens project deployment in both t
   await expect(dashboard.getByText('Awaiting approval')).toBeVisible();
   await dashboard.getByRole('button', { name: 'Website acme Production deployment' }).click();
   await expect(page.getByTestId('studio-tab-hub:Website')).toBeVisible();
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole('button', { name: 'Board, 0 ready, 0 in progress, 0 human review' }).click();
+  await page.getByTestId('delivery-mode-toggle').click();
+  await expect(page.getByTestId('delivery-lane-Website-dev')).toBeVisible();
+  await expect(page.getByTestId('delivery-lane-API-dev')).toHaveCount(0);
+  await expect(page.getByTestId('delivery-card-WEB-1')).toBeVisible();
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.getByTestId('delivery-card-WEB-1').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(resultsDir, `agt-3277-delivery-board-${width}.png`), fullPage: true });
+  }
 });

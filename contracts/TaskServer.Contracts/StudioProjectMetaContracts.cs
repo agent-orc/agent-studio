@@ -1,48 +1,10 @@
 namespace AgentStudio.TaskServer.Contracts;
 
 /// <summary>
-/// Wire contracts for the G2 "project meta" P1 bundle: epics and their
-/// linked sub-tasks, tags, per-project autonomy/execution-runner settings,
+/// Wire contracts for the G2 "project meta" P1 bundle: tags, per-project autonomy/execution-runner settings,
 /// and thin pipeline projections layered on top of the existing
 /// orchestration <see cref="FlowDefinitionDto"/> (see <c>OrchestrationContracts.cs</c>).
-/// There is no P1 route that creates an epic - only list/detail/sub-task-create
-/// and the completed-count projection are in scope - so epic creation is a
-/// store-level capability only (<c>TaskServerStore.CreateEpicAsync</c>), used by
-/// tests and by whichever later slice adds the authoring route.
 /// </summary>
-public static class EpicStates
-{
-    public const string Open = "open";
-    public const string Done = "done";
-}
-
-public sealed record EpicDto(
-    string EpicId,
-    string ProjectId,
-    string Title,
-    string State,
-    long Version,
-    DateTime CreatedAt,
-    DateTime UpdatedAt);
-
-public sealed record CreateEpicRequest(string Title, string? EpicId = null, string State = EpicStates.Open);
-
-public sealed record EpicTaskSummaryDto(string TaskId, string TaskKey, string Title, string State);
-
-public sealed record EpicDetailDto(EpicDto Epic, int TaskCount, IReadOnlyList<EpicTaskSummaryDto> Tasks);
-
-public sealed record EpicListResponse(IReadOnlyList<EpicDto> Epics);
-
-/// <summary>
-/// The request body for <c>POST /api/v1/studio/epics/{epicId}/sub-tasks</c> is
-/// the existing <see cref="CreateTaskRequest"/> verbatim - a "sub-task" is a
-/// normal task linked to its epic through the <c>epic_tasks</c> join table,
-/// not a distinct task shape.
-/// </summary>
-public sealed record EpicSubTaskResponse(EpicDto Epic, TaskDto Task);
-
-public sealed record EpicCompletedCountResponse(int Count);
-
 public static class TagIdPrefixes
 {
     public const string Tag = "tag";

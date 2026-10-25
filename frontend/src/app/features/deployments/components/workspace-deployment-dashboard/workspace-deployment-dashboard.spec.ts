@@ -46,6 +46,13 @@ describe('WorkspaceDeploymentDashboardComponent', () => {
         tenantStatuses: [status('staging', 'acme', 'succeeded'), status('production', 'acme', 'awaiting-approval'),
           status('staging', 'beta', 'succeeded'), status('production', 'beta', 'succeeded')] }],
     });
+    fixture.detectChanges();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const http = TestBed.inject(HttpTestingController);
+    for (const name of ['Website', 'Other']) {
+      http.expectOne(`/api/projects/${name}/deploy/delivery-lanes`)
+        .flush({ projectId: name, lanes: [] });
+    }
     await fixture.whenStable();
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelectorAll('tbody tr')).toHaveLength(3);

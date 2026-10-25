@@ -5,6 +5,7 @@ import type { RegistryWorkspaceListItem } from '../../../../models/task.model';
 import type { DeploymentState, EnvironmentStatus } from '../../models/deployment.model';
 import { DEPLOYMENT_CLOCK, DeploymentStatusService } from '../../services/deployment-status.service';
 import type { DeployMatrixResponse } from '../../services/deployment-status.service';
+import { DeliveryLanesComponent } from '../delivery-lanes/delivery-lanes';
 
 interface DashboardRow {
   id: string;
@@ -17,6 +18,7 @@ interface DashboardRow {
 @Component({
   selector: 'app-workspace-deployment-dashboard',
   standalone: true,
+  imports: [DeliveryLanesComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-deployment-dashboard.html',
   styleUrl: './workspace-deployment-dashboard.scss',
@@ -30,6 +32,7 @@ export class WorkspaceDeploymentDashboardComponent {
   readonly projectStorageByName = input<ReadonlyMap<string, string>>(new Map());
   readonly workspaces = input<readonly RegistryWorkspaceListItem[]>([]);
   readonly openDeployment = output<string>();
+  readonly openCard = output<string>();
   readonly groupFilter = signal('all');
   readonly environmentFilter = signal('all');
   readonly tenantFilter = signal('all');

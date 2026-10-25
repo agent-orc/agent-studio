@@ -352,6 +352,23 @@
     "lifecycles": {
       "type": "object",
       "additionalProperties": false,
+      "patternProperties": {
+        "^(?!standard$)[a-z0-9][a-z0-9._-]{0,63}$": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["phase"],
+            "properties": {
+              "phase": {"$ref": "#/$defs/deployEnvironmentName"},
+              "automatic": {"type": "boolean"},
+              "approval": {"type": "array", "items": {"enum": ["Owner", "Maintainer"]}},
+              "requires": {"$ref": "#/$defs/deployEnvironmentName"}
+            }
+          }
+        }
+      },
       "required": [
         "standard"
       ],
@@ -683,6 +700,31 @@
         }
       }
     },
+    "channels": {
+      "description": "Channels select a lifecycle at release creation. Rules match the release version tag and source branch; exactly one default channel is required when channels are declared.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "lifecycle"],
+        "properties": {
+          "name": {"$ref": "#/$defs/identifier"},
+          "lifecycle": {"$ref": "#/$defs/identifier"},
+          "versionRules": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "prereleaseTag": {"$ref": "#/$defs/identifier"},
+              "branchPattern": {"type": "string", "pattern": "^refs/heads/[A-Za-z0-9._/*-]+$"}
+            }
+          },
+          "prereleaseTag": {"$ref": "#/$defs/identifier"},
+          "branchPattern": {"type": "string", "pattern": "^refs/heads/[A-Za-z0-9._/*-]+$"},
+          "default": {"type": "boolean"}
+        }
+      }
+    },
     "variables": {
       "description": "Deploy variables. A value is plain configuration; a secret names a secret-provider entry and never holds its value.",
       "type": "array",
@@ -716,6 +758,11 @@
             "type": "array",
             "uniqueItems": true,
             "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" }
+          },
+          "channels": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"$ref": "#/$defs/identifier"}
           }
         },
         "oneOf": [
@@ -734,6 +781,7 @@
     }
   },
   "$defs": {
+    "deployEnvironmentName": {"enum": ["staging", "production"]},
     "relativePath": {
       "type": "string",
       "minLength": 1,
@@ -911,7 +959,8 @@
             },
             {
               "required": [
-                "tenants"
+                "tenants",
+                "channels"
               ]
             }
           ]

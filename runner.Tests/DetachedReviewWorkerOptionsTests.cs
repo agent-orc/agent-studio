@@ -25,6 +25,7 @@ public sealed class DetachedReviewWorkerOptionsTests
         Assert.Equal(0, options.ReviewNoCpuProgressSeconds);
         Assert.Equal("review-runner", options.RunnerId);
         Assert.Equal("review", options.Role);
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "review-state"), options.StateDir);
     }
 
     [Fact]
@@ -38,6 +39,7 @@ public sealed class DetachedReviewWorkerOptionsTests
         Assert.NotNull(restored);
         Assert.Equal(1800, restored!.CommandSilenceWatchdogSeconds);
         Assert.Equal(2400, restored.ReviewNoCpuProgressSeconds);
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "review-state"), restored.StateDir);
     }
 
     [Fact]
@@ -97,6 +99,7 @@ public sealed class DetachedReviewWorkerOptionsTests
             Path.GetTempPath(),
             [],
             CommandSilenceWatchdogSeconds: commandSilenceWatchdogSeconds,
-            ReviewNoCpuProgressSeconds: reviewNoCpuProgressSeconds);
+            ReviewNoCpuProgressSeconds: reviewNoCpuProgressSeconds,
+            StateDir: Path.Combine(Path.GetTempPath(), "review-state"));
     }
 }

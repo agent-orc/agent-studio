@@ -105,6 +105,19 @@
   <!-- AGT-2709: the release gate is the one dependency state an operator has to
        act on; without a facet a pending release is only visible per card. -->
   <section class="sheet__section">
+    <h3 class="sheet__section-title">Environments</h3>
+    <label class="sheet__filter-label" for="board-environment-filter">Card deployment state</label>
+    <select class="sheet__select" id="board-environment-filter" data-testid="board-environment-filter"
+            [value]="environmentFilter()" (change)="onEnvironmentFilter($event)">
+      <option value="all">All cards</option>
+      <option value="staging-only">In Staging, not Production</option>
+      <option value="production">In Production</option>
+      <option value="not-production">Not yet in Production</option>
+      <option value="rolled-back">Rolled back</option>
+    </select>
+  </section>
+
+  <section class="sheet__section">
     <h3 class="sheet__section-title">Dependencies</h3>
     <ul class="sheet__list">
       <li>

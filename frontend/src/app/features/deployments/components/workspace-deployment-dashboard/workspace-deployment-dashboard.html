@@ -44,7 +44,7 @@
                           [attr.aria-label]="cellLabel(row, environment.name)"
                           (click)="openDeployment.emit(row.name)">
                     <span class="deployment-dashboard__cell-head">
-                      <strong>Release {{ status.currentRelease?.version ?? 'None' }}</strong>
+                      <strong>Release {{ status.currentRelease?.version ?? 'None' }}{{ status.currentRelease?.channel ? ' · ' + status.currentRelease?.channel : '' }}</strong>
                       <span class="deployment-dashboard__state">{{ stateLabel(status.currentDeployment?.state) }}</span>
                     </span>
                     <span class="deployment-dashboard__cell-detail">
@@ -52,7 +52,7 @@
                       <span class="deployment-dashboard__health" [attr.data-health]="status.health">{{ status.health }}</span>
                     </span>
                     @if (status.currentDeployment?.state === 'awaiting-approval') { <span class="deployment-dashboard__marker">Approval pending</span> }
-                    @if (status.newerRelease; as newer) { <span class="deployment-dashboard__marker">Newer release {{ newer.version }}</span> }
+                    @if (status.newerRelease; as newer) { <span class="deployment-dashboard__marker">Newer release {{ newer.version }} · {{ newer.channel }}</span> }
                   </button>
                 }
               </td>
@@ -64,4 +64,8 @@
       </tbody>
     </table>
   </div>
+  @for (project of projectNames(); track project) {
+    <app-delivery-lanes [project]="project" [heading]="project + ' delivery'"
+      (openDeployment)="openDeployment.emit($event)" (openCard)="openCard.emit($event)" />
+  }
 </section>

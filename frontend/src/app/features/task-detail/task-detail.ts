@@ -7,11 +7,9 @@ import {
   inject,
   input,
   output,
-  signal,
-  effect,
+  signal, effect,
   OnDestroy,
-  ViewChild,
-  ViewEncapsulation,
+  ViewChild, ViewEncapsulation,
 } from '@angular/core';
 import { ModalStackService } from '../../services/modal-stack.service';
 import { FormsModule } from '@angular/forms';
@@ -49,8 +47,6 @@ import { GitPaneComponent } from './components/git-pane/git-pane/git-pane.compon
 import { CliOutputPollService } from '../polling/services/cli-output-poll.service';
 import { CommandDeckComponent } from './components/command-deck/command-deck.component';
 import { PromptPaneComponent, type PromptPaneTabId } from './components/prompt-pane/prompt-pane.component';
-import { EpicRollupPaneComponent } from './components/epic-rollup-pane/epic-rollup-pane.component';
-import { EpicMembershipBannerComponent } from './components/epic-membership-banner/epic-membership-banner.component';
 import { LogOverlayComponent } from './components/log-overlay/log-overlay.component';
 import { ProtocolPaneComponent } from './components/protocol-pane/protocol-pane/protocol-pane.component';
 import { authoritativeDeliveryFacts, deriveProtocolVerdict } from './components/protocol-pane/protocol-verdict';
@@ -62,6 +58,7 @@ import { DecisionBlockedNoticeComponent } from './components/decision-blocked-no
 import { decisionBlockReason, decisionBlockers } from '../../models/decision-card-presentation';
 import { DetailHeaderComponent } from './components/detail-header/detail-header.component';
 import { TaskLiveStatusComponent } from '../../components/task-live-status/task-live-status.component';
+import { TaskPreviewComponent } from '../../components/task-preview/task-preview.component';
 import { freshestRunInfo, isTaskRunActive } from '../../services/run-activity.util';
 import { PaneToggleBarComponent } from './components/pane-toggle-bar/pane-toggle-bar.component';
 import { TriageActionPayload, laneLabelFor } from './state/triage-actions.model';
@@ -76,7 +73,7 @@ import { ArchivedTaskNoticeComponent } from '../retention/components/archived-ta
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { OlderBriefOfferComponent } from './components/older-brief-offer/older-brief-offer.component';
 import { BatchDetailComponent } from '../batch-gate/batch-detail/batch-detail';
-
+import { CardEnvironmentBadgesComponent } from '../deployments/components/card-environment-badges/card-environment-badges';
 @Component({
   selector: 'app-task-detail, app-job-detail',
   standalone: true,
@@ -85,8 +82,6 @@ import { BatchDetailComponent } from '../batch-gate/batch-detail/batch-detail';
     GitPaneComponent,
     CommandDeckComponent,
     PromptPaneComponent,
-    EpicRollupPaneComponent,
-    EpicMembershipBannerComponent,
     LogOverlayComponent,
     ProtocolPaneComponent,
     EscalationSummaryComponent,
@@ -95,12 +90,13 @@ import { BatchDetailComponent } from '../batch-gate/batch-detail/batch-detail';
     DecisionBlockedNoticeComponent,
     DetailHeaderComponent,
     TaskLiveStatusComponent,
+    TaskPreviewComponent,
     PaneToggleBarComponent,
     ArchivedTaskNoticeComponent,
     TooltipDirective,
     OlderBriefOfferComponent,
     TaskResourceStatusComponent,
-    BatchDetailComponent,
+    BatchDetailComponent, CardEnvironmentBadgesComponent,
   ],
   providers: [
     LayoutPanesService,
@@ -140,18 +136,12 @@ export class TaskDetailComponent implements OnDestroy {
   readonly watchPaths = input<WatchPathEntry[]>([]);
   /** Peers in the same on-disk lane as the current job, in kanban order. */
   readonly lanePeers = input<TaskInfo[]>([]);
-  readonly selectedSubTaskId = input<string | null>(null);
   readonly routeDetailTab = input<PromptPaneTabId | null>(null);
   readonly routeInspectorTab = input<'task' | 'activity' | 'protocol' | null>(null);
   /** True while the update-service is mid-update; disables triage actions. */
   readonly mutationsBlocked = input(false);
   readonly back = output<void>();
   readonly fileSaved = output<void>();
-  /** Back-jump to the parent epic from the epic-membership banner. The host
-   *  routes this through the same getDetail + select flow used to open any
-   *  task by id (app.onOpenJobDetailFromSheet). */
-  readonly openEpicRequested = output<{ jobId: string; watchPath: string }>();
-  readonly openSubTaskRequested = output<{ jobId: string; watchPath: string }>();
   /** Forwarded from the prompt-pane Evidence tab into the existing job
    *  service mutation endpoint; the protocol pane no longer hosts the
    *  panel after the user moved Evidence into the left-pane tab. */
@@ -1290,7 +1280,7 @@ export class TaskDetailComponent implements OnDestroy {
     this.savingTitle.set(false);
   }
 
-  /** Inline title save from a child pane (e.g. the epic card) by value. */
+  /** Inline title save from a child pane by value. */
   saveTitleValue(title: string) {
     this.titleDraft.set(title);
     this.saveTitle();
