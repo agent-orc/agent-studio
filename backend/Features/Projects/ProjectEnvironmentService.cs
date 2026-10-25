@@ -13,6 +13,7 @@ public sealed record EnvironmentDeclaration(
     IReadOnlyList<HealthCheckDefinition>? HealthChecks = null, bool HealthChecksAllowPrivateNetwork = false,
     bool GuidedFailure = false, int InterventionTimeoutMinutes = 60, RunTargetHosting? Hosting = null)
 {
+    public HostedDataDeclaration Data { get; init; } = HostedDataDeclaration.Empty;
     public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
     public IReadOnlyList<ProjectArtifactDefinition> Artifacts { get; init; } = [];
@@ -41,6 +42,7 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     bool GuidedResolved = false, string? RetryStep = null, string? RetryOfJobId = null,
     DateTime? FirstClaimedAt = null, RunTargetHosting? Hosting = null)
 {
+    public HostedDataDeclaration Data { get; init; } = HostedDataDeclaration.Empty;
     public IReadOnlyList<ProjectDeployStep> SshSteps { get; init; } = [];
     public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
     public IReadOnlyList<ProjectArtifactDefinition> Artifacts { get; init; } = [];
@@ -69,7 +71,6 @@ public sealed record PreviewJobSpec(string Project, string CardKey, string Sourc
     public string? ArtifactPath { get; init; }
     public string? Dockerfile { get; init; }
 }
-
 
 public sealed record EnvironmentPromotion(string Artifact, string StageId, string ProductionId,
     DateTime StageHealthyAt, string Status, string? Actor = null, DateTime? ExpiresAt = null);
@@ -203,7 +204,7 @@ public sealed partial class ProjectEnvironmentService
                 failures.Add(new(Path.GetFileNameWithoutExtension(file), null, $"{Path.GetFileName(file)}: {ex.Message}"));
             }
         }
-        IReadOnlyList<EnvironmentDeclarationFile> parsed = [.. ParseDeclarationFiles(readable), .. failures];
+        IReadOnlyList<EnvironmentDeclarationFile> parsed = [.. ParseDeclarationFiles(readable, project), .. failures];
         var yamlPath = Path.Combine(root, ProjectPreparationPaths.Definition);
         if (!File.Exists(yamlPath)) return parsed;
         try { return ApplyDefinition(parsed, File.ReadAllText(yamlPath)); }
@@ -234,7 +235,7 @@ public sealed partial class ProjectEnvironmentService
             if (_git.GetFileAtCommit(root, commit, path) is not { } json) return null;
             files.Add((Path.GetFileName(path), json));
         }
-        var parsed = ParseDeclarationFiles(files);
+        var parsed = ParseDeclarationFiles(files, project);
         if (parsed.FirstOrDefault(item => item.Error is not null) is { Error: { } error }) throw new JsonException(error);
         var yaml = _git.GetFileAtCommit(root, commit, ProjectPreparationPaths.Definition);
         var effective = yaml is null ? parsed : ApplyDefinition(parsed, yaml);
@@ -351,7 +352,7 @@ public sealed partial class ProjectEnvironmentService
                 throw new JsonException($"Environment {name} has an invalid removal tombstone.");
             if (!tombstones.Add(id.GetString()!)) throw new JsonException("Duplicate environment removal tombstone.");
         }
-        var parsed = ParseDeclarationFiles(files);
+        var parsed = ParseDeclarationFiles(files, project);
         if (parsed.FirstOrDefault(item => item.Error is not null) is { Error: { } error }) throw new JsonException(error);
         var declarations = parsed.Select(item => item.Declaration!).ToArray();
         if (declarations.Any(item => tombstones.Contains(item.Id)))
@@ -359,7 +360,7 @@ public sealed partial class ProjectEnvironmentService
         return (DeclarationSource.Read, declarations, tombstones);
     }
 
-    private static IReadOnlyList<EnvironmentDeclarationFile> ParseDeclarationFiles(IEnumerable<(string Name, string Json)> files)
+    private static IReadOnlyList<EnvironmentDeclarationFile> ParseDeclarationFiles(IEnumerable<(string Name, string Json)> files, string project)
     {
         var result = new List<EnvironmentDeclarationFile>();
         foreach (var (file, json) in files)
@@ -377,6 +378,7 @@ public sealed partial class ProjectEnvironmentService
                     continue;
                 }
                 var declaration = ParseDeclaration(file, json);
+                HostedDataBinding.DeclaredSecretNames(project, declaration.Id, declaration.SecretRefs, declaration.Data);
                 result.Add(new(declaration.Id, declaration, null));
             }
             catch (JsonException ex)
@@ -479,7 +481,8 @@ public sealed partial class ProjectEnvironmentService
             HealthCheckDeclarations.Parse(value, Path.GetFileName(file)),
             HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)),
             guidedFailure, timeout,
-            edgeHosted ? RunTargetHostingDeclaration.Parse(value, Path.GetFileName(file), healthUrl, secrets) : null);
+            edgeHosted ? RunTargetHostingDeclaration.Parse(value, Path.GetFileName(file), healthUrl, secrets) : null)
+        { Data = HostedDataDeclaration.Parse(value, template, id, Path.GetFileName(file)) };
     }
 
     public ProjectEnvironmentsResponse? Read(string project)
@@ -1334,6 +1337,7 @@ public sealed partial class ProjectEnvironmentService
             {
                 Template = deployed.Template, Destination = deployed.Destination,
                 HealthUrl = deployed.HealthUrl, SecretRefs = deployed.SecretRefs, ContainerPort = deployed.ContainerPort,
+                Data = deployed.Data,
                 Hosting = deployed.Hosting ?? current.Hosting,
                 SshSteps = deployed.SshSteps, Variables = deployed.Variables, Artifacts = deployed.Artifacts,
             }
@@ -1403,12 +1407,14 @@ public sealed partial class ProjectEnvironmentService
             .LastOrDefault()?.Item.Artifact;
         var job = new DeployJob(Guid.NewGuid().ToString("N"), project, declaration.Id,
             declaration.TargetHostId, artifact, declaration.Template, declaration.Destination,
-            declaration.HealthUrl, declaration.SecretRefs, declaration.ContainerPort, previous, "queued",
+            declaration.HealthUrl,
+            HostedDataBinding.DeclaredSecretNames(project, declaration.Id, declaration.SecretRefs, declaration.Data),
+            declaration.ContainerPort, previous, "queued",
             _clock.GetUtcNow().UtcDateTime,
             IsRollback: rollback, RequestedBy: actor, ReleaseId: releaseId, RollbackOfJobId: rollbackOfJobId,
             GuidedFailure: declaration.GuidedFailure, RetryStep: retryStep, RetryOfJobId: retryOfJobId,
             Hosting: declaration.Hosting)
-        { SshSteps = declaration.SshSteps, Variables = declaration.Variables, Artifacts = declaration.Artifacts };
+        { Data = declaration.Data, SshSteps = declaration.SshSteps, Variables = declaration.Variables, Artifacts = declaration.Artifacts };
         state.Jobs.Add(job);
         return job;
     }

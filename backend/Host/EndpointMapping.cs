@@ -122,6 +122,7 @@ public static class EndpointMapping
         app.MapDeployEndpoints();
         app.MapProjectPipelineDefinitionEndpoints();
         app.MapEnvironmentHealthEndpoints();
+        app.MapHostedVolumeBackupEndpoints();
         app.MapTelemetryEndpoints();
         app.MapProjectCycleTimeEndpoints();
         app.MapTestRunEndpoints();
