@@ -34,6 +34,7 @@ render_setup() {
 render_setup public
 render_setup cloudflare --cloudflare
 render_setup direct --cloudflare --allow-direct-origin
+render_setup private --private
 
 mkdir -p "$work/invalid"
 cp -a "$stack/." "$work/invalid/stack"
@@ -70,14 +71,15 @@ expected = {
     'public': ('Caddyfile.public', 'false'),
     'cloudflare': ('Caddyfile.cloudflare', 'false'),
     'direct': ('Caddyfile.cloudflare', 'true'),
+    'private': ('Caddyfile.private', 'false'),
 }
 for name, (caddyfile, allow_direct) in expected.items():
     rendered = model(name)
     env = env_file(name)
     assert env['STUDIO_CADDYFILE'] == './' + caddyfile, (name, env)
-    assert env['STUDIO_PUBLIC_CLOUDFLARE_EDGE'] == 'true', (name, env)
+    expected_public_edge = 'false' if name == 'private' else 'true'
+    assert env['STUDIO_PUBLIC_CLOUDFLARE_EDGE'] == expected_public_edge, (name, env)
     assert env['STUDIO_CLOUDFLARE_ALLOW_DIRECT'] == allow_direct, (name, env)
-    assert env['STUDIO_PUBLIC_CLOUDFLARE_EDGE'] == 'true', (name, env)
     edge = rendered['services']['edge']
     edge_mounts = mounts(edge)
     assert edge_mounts['/etc/caddy/Caddyfile'].endswith('/' + caddyfile), (name, edge_mounts)
@@ -89,14 +91,16 @@ for name, (caddyfile, allow_direct) in expected.items():
     assert mounts(frontend)['/etc/caddy/Caddyfile'].endswith('/Caddyfile.frontend'), frontend['volumes']
     assert frontend['networks']['website']['ipv4_address'] == '172.30.83.3', frontend['networks']
     api = rendered['services']['api']
-    assert api['environment']['Security__PublicCloudflareEdge'] == 'true', api['environment']
+    assert api['environment']['Security__PublicCloudflareEdge'] == expected_public_edge, api['environment']
     assert api['environment']['Security__TrustedProxyAddresses'] == '172.30.83.3,172.30.83.2', api['environment']
-    assert api['environment']['Security__PublicCloudflareEdge'] == 'true', api['environment']
     assert 'ports' not in api and 'ports' not in frontend, 'only the edge may publish ports'
-print('Compose render passed for the public, Cloudflare and Cloudflare direct-access modes.')
+print('Compose render passed for the public, Cloudflare, Cloudflare direct-access and private modes.')
 PY
 
-printf 'test-only CA certificate\n' > "$work/cloudflare/data/origin-pull/ca.pem"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -keyout "$work/cloudflare/data/origin-pull/test-ca.key" \
+  -out "$work/cloudflare/data/origin-pull/ca.pem" \
+  -subj '/CN=studio-test-ca' > /dev/null 2>&1
 bash "$work/cloudflare/stack/check-edge-config.sh" "$stack" > /dev/null
 sed -i 's|STUDIO_PUBLIC_CLOUDFLARE_EDGE=true|STUDIO_PUBLIC_CLOUDFLARE_EDGE=false|' "$work/cloudflare/stack/.env"
 if bash "$work/cloudflare/stack/check-edge-config.sh" "$stack" > /dev/null 2>&1; then
