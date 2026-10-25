@@ -2,12 +2,25 @@ using System.Net;
 
 namespace AgentStudio.Security;
 
-/// <summary>Latched warning when forwarded login traffic resolves to an internal peer.</summary>
-public sealed class NetworkedLoginAddressHealth
+/// <summary>Temporary warning when forwarded login traffic resolves to an internal peer.</summary>
+public sealed class NetworkedLoginAddressHealth(TimeProvider clock)
 {
-    private int _invalidAddressSeen;
-    public bool Healthy => Volatile.Read(ref _invalidAddressSeen) == 0;
-    public void ReportInvalid() => Interlocked.Exchange(ref _invalidAddressSeen, 1);
+    private static readonly TimeSpan WarningDuration = TimeSpan.FromMinutes(5);
+    private long _warningUntilUtcTicks;
+
+    public bool Healthy => clock.GetUtcNow().UtcDateTime.Ticks >= Volatile.Read(ref _warningUntilUtcTicks);
+
+    public void ReportInvalid()
+    {
+        var until = clock.GetUtcNow().Add(WarningDuration).UtcDateTime.Ticks;
+        var current = Volatile.Read(ref _warningUntilUtcTicks);
+        while (until > current)
+        {
+            var previous = Interlocked.CompareExchange(ref _warningUntilUtcTicks, until, current);
+            if (previous == current) return;
+            current = previous;
+        }
+    }
 
     public static bool IsInvalid(IPAddress? address, IConfiguration configuration)
     {
