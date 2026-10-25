@@ -686,6 +686,7 @@ public sealed class IamHandlerAccessTests : IDisposable
     [Fact]
     public async Task Secret_routes_are_decided_by_the_secret_permissions_of_the_bindings()
     {
+        WriteEnvironmentDeclaration("alpha", "stage", "stage");
         using var factory = BuildFactory();
         using var developer = Client(factory, Invite(factory, "secret.dev", new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
         using var admin = Client(factory, Invite(factory, "secret.admin", new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))));
@@ -704,6 +705,14 @@ public sealed class IamHandlerAccessTests : IDisposable
             Assert.Equal(HttpStatusCode.Forbidden, workspace.StatusCode);
         using (var write = await admin.PostAsJsonAsync("/api/projects/alpha/secrets", put))
             Assert.DoesNotContain("permission-denied", await write.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        using (var bindingRead = await developer.GetAsync("/api/projects/alpha/secret-bindings/stage"))
+            Assert.Equal(HttpStatusCode.OK, bindingRead.StatusCode);
+        using (var bindingWrite = await developer.PutAsJsonAsync(
+                   "/api/projects/alpha/secret-bindings/stage/DEPLOY_KEY", new { reference = "invalid" }))
+            Assert.Equal(HttpStatusCode.Forbidden, bindingWrite.StatusCode);
+        using (var bindingWrite = await admin.PutAsJsonAsync(
+                   "/api/projects/alpha/secret-bindings/stage/DEPLOY_KEY", new { reference = "invalid" }))
+            Assert.NotEqual(HttpStatusCode.Forbidden, bindingWrite.StatusCode);
     }
 
     [Fact]

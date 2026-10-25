@@ -273,6 +273,10 @@ public static class RoutePermissionCatalog
         // Only a Runner credential bound to a live lease resolves a value.
         Add("POST", IamPermissions.RunnerService, "/api/runner/secrets/resolve");
         Add("PUT", IamPermissions.WorkspaceAdminister, "/api/secrets/backends");
+        Environment("R", IamPermissions.SecretsRead,
+            "/api/projects/{}/secret-bindings/{}", null, "environment");
+        Environment("PUT", IamPermissions.SecretsWrite,
+            "/api/projects/{}/secret-bindings/{}/{}", null, "environment");
         Add("R", IamPermissions.SecretsRead,
             "/api/secrets", "/api/secrets/audit", "/api/secrets/workspace/**", "/api/projects/{}/secrets/**");
         Add("W", IamPermissions.SecretsWrite, "/api/secrets/workspace/**", "/api/projects/{}/secrets/**");

@@ -302,7 +302,8 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   `/api/secrets` and `/api/secrets/audit` filter each entry by its actual
   workspace, project, or declared environment scope. A service account with
   `secrets.write` may manage secrets in scope; records and audit entries name
-  it as `service-account:<id>`.
+  it as `service-account:<id>`. Project environment secret-binding reads and
+  writes require `secrets.read` and `secrets.write` at that environment scope.
 - Requests never authorize through the stored legacy fields. After the
   permission decision the middleware gives the handler a projected principal
   for this request: `role` is the strongest role among the workspace and
