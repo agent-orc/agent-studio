@@ -309,7 +309,6 @@ public static class RoutePermissionCatalog
         Add("R", IamPermissions.WorkspaceOperate,
             "/api/admin/prompts/**", "/api/admin/git-telemetry/**", "/api/clients/**",
             "/api/watcher/**", "/api/crash-recovery/**", "/api/cause-breakers/**",
-            "/api/parked-cards", "/api/pickup-holds", "/api/workspace/screenshots/**",
             "/api/workspace/summary", "/api/workspaces/{}/quota/**");
         Add("W", IamPermissions.WorkspaceOperate,
             "/api/cli/quota/refresh/**", "/api/cli/{}/session", "/api/cli/{}/working-memory", "/api/clients/**",

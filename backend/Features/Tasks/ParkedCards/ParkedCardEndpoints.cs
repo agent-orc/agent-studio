@@ -22,12 +22,17 @@ public static class ParkedCardEndpoints
     public static void MapParkedCardEndpoints(this WebApplication app)
     {
         app.MapGet("/api/parked-cards", (
+            HttpContext context,
+            ProjectRegistry registry,
             ParkedCardRecallSweep sweep,
             string? project,
             bool? recallableOnly,
             CancellationToken ct) =>
         {
             var items = sweep.Sweep(ct).AsEnumerable();
+
+            if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
+                items = items.Where(item => ProjectAccessAuthorization.Allows(human.User, item.ProjectName, registry));
 
             if (!string.IsNullOrWhiteSpace(project))
                 items = items.Where(item => string.Equals(item.ProjectName, project, StringComparison.OrdinalIgnoreCase));

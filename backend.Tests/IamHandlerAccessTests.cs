@@ -45,6 +45,27 @@ public sealed class IamHandlerAccessTests : IDisposable
     }
 
     [Fact]
+    public async Task Project_viewer_sees_only_its_projects_workspace_screenshots()
+    {
+        using var factory = BuildFactory();
+        foreach (var project in new[] { "alpha", "beta" })
+        {
+            var results = Path.Combine(ProjectPath(project), TaskStates.Backlog, project + "-card", "results");
+            Directory.CreateDirectory(results);
+            File.WriteAllBytes(Path.Combine(results, project + "-capture.png"), [1, 2, 3]);
+        }
+        using var viewer = Client(factory, Invite(factory, "screenshots.viewer",
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
+
+        using var response = await viewer.GetAsync("/api/workspace/screenshots?windowHours=24");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var entries = body.RootElement.GetProperty("screenshots").EnumerateArray().ToArray();
+        Assert.NotEmpty(entries);
+        Assert.All(entries, entry => Assert.Equal("alpha", entry.GetProperty("projectName").GetString()));
+    }
+
+    [Fact]
     public async Task A_viewer_of_beta_who_develops_alpha_cannot_write_beta_through_body_addressed_routes()
     {
         using var factory = BuildFactory();

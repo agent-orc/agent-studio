@@ -224,9 +224,11 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   their project; schedule, backup, and restore require
   `environment.production.deploy` on the declared environment.
 - Installation-wide prompt overrides, client identities, watcher and crash
-  recovery records, parked cards, pickup holds, workspace screenshots and
-  summary, quota records, and git telemetry require `workspace.operate`.
-  Project-scoped bindings alone do not admit these unfiltered collections.
+  recovery records, workspace summary and quota records, and git telemetry
+  require `workspace.operate`. Project-scoped bindings alone do not admit
+  these unfiltered collections. Parked cards, pickup holds, and workspace
+  screenshots remain available with `workspace.read`; their handlers filter
+  entries by the caller's project bindings before returning them.
 - CLI usage, transcripts, working memory, and session state require
   `workspace.operate`. The static catalogues, model list, maintenance model,
   effective mode, and quota strip reads use `workspace.read`. Quota refresh

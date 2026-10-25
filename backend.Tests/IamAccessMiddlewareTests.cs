@@ -129,8 +129,7 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         {
             "/api/admin/prompts", "/api/admin/prompts/{name}", "/api/clients", "/api/clients/{id}",
             "/api/watcher/cases", "/api/watcher/proposals", "/api/crash-recovery/pending",
-            "/api/cause-breakers", "/api/parked-cards", "/api/pickup-holds",
-            "/api/workspace/screenshots", "/api/workspace/summary", "/api/workspaces/{workspaceId}/quota",
+            "/api/cause-breakers", "/api/workspace/summary", "/api/workspaces/{workspaceId}/quota",
             "/api/admin/git-telemetry",
         };
         foreach (var route in routes)
@@ -141,6 +140,8 @@ public sealed class IamAccessMiddlewareTests : IDisposable
             Assert.Equal((403, false), (denied.Status, denied.Called));
             Assert.True((await Invoke("GET", route, path, operatorUser)).Called);
         }
+        foreach (var route in new[] { "/api/parked-cards", "/api/pickup-holds", "/api/workspace/screenshots" })
+            Assert.True((await Invoke("GET", route, route, scoped)).Called);
     }
 
     [Fact]
@@ -189,7 +190,7 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         var tasks = await InvokeBearer("GET", "/api/tasks/", "/api/tasks", token);
         Assert.True(tasks.Called);
         var collection = await InvokeBearer("GET", "/api/workspace/screenshots", "/api/workspace/screenshots", token);
-        Assert.Equal((403, "permission-denied"), (collection.Status, collection.Error));
+        Assert.Equal((403, "project-scope-denied"), (collection.Status, collection.Error));
         var audit = File.ReadAllLines(Path.Combine(_store.SecurityFolder, AccessSecurityStore.ServiceAccountAuditFileName));
         Assert.Contains(audit, row => row.Contains($"\"actor\":\"service-account:{account.Id}\"", StringComparison.Ordinal)
             && row.Contains("\"status\":403", StringComparison.Ordinal));
