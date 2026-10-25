@@ -69,6 +69,14 @@ export class SecretsPanelComponent {
 
   constructor() {
     this.service.load();
+    effect(onCleanup => {
+      const project = this.project();
+      this.environmentOptions.set([]);
+      if (!project) return;
+      const subscription = this.service.environments(project).subscribe(options =>
+        this.environmentOptions.set(options.map(item => item.id)));
+      onCleanup(() => subscription.unsubscribe());
+    });
     effect(() => {
       const project = this.fixedProject();
       if (project && project !== this.project()) this.selectProject(project);
@@ -82,10 +90,6 @@ export class SecretsPanelComponent {
   selectProject(project: string): void {
     this.project.set(project);
     this.environment.set('');
-    this.environmentOptions.set([]);
-    if (!project) return;
-    this.service.environments(project).pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(options => this.environmentOptions.set(options.map(item => item.id)));
   }
 
   add(): void {
