@@ -165,15 +165,35 @@ public sealed class HostCliSecurityGuardTests
     public void Configured_provider_executables_pass_the_spawn_guard()
     {
         var root = RepositoryRoot.Find();
-        var unguarded = BackendSources(root)
+        var expected = new Dictionary<string, (int Resolutions, int ConfigPaths, int Guards)>
+        {
+            ["backend/Features/Cli/Execution/BuiltInCliBehaviors.cs"] = (2, 5, 1),
+            ["backend/Features/Cli/Execution/CliExecutionServiceBase.cs"] = (2, 0, 1),
+            ["backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs"] = (1, 1, 1),
+            ["backend/Features/Cli/Routing/OneShot/CodexOneShot.cs"] = (1, 1, 1),
+            ["backend/Features/Git/GitService.cs"] = (2, 1, 2),
+            ["backend/Features/Prompts/PromptEnhancementService.cs"] = (1, 1, 1),
+            ["backend/Features/Review/SummaryGenerationService.cs"] = (1, 1, 1),
+            ["backend/Features/Tasks/TitleGenerationService.cs"] = (1, 1, 1),
+        };
+        var sources = BackendSources(root)
             .Where(file =>
             {
                 var source = File.ReadAllText(file);
                 return Regex.IsMatch(source, @"\b\w+Cli:Path\b|\bResolveExecutable\s*\(")
-                    && !source.Contains("HostCliSpawnGuard", StringComparison.Ordinal);
+                    && (source.Contains("Process.Start", StringComparison.Ordinal)
+                        || source.Contains("proc.Start()", StringComparison.Ordinal)
+                        || source.Contains("HostCliSpawnGuard.Start", StringComparison.Ordinal));
             })
-            .Select(file => Path.GetRelativePath(root, file));
-        Assert.Empty(unguarded);
+            .ToDictionary(file => Path.GetRelativePath(root, file).Replace('\\', '/'), File.ReadAllText);
+        Assert.Equal(expected.Keys.OrderBy(path => path), sources.Keys.OrderBy(path => path));
+        foreach (var (path, source) in sources)
+        {
+            var inventory = expected[path];
+            Assert.Equal(inventory.Resolutions, Regex.Matches(source, @"\bResolveExecutable\s*\(").Count);
+            Assert.Equal(inventory.ConfigPaths, Regex.Matches(source, @"\b\w+Cli:Path\b").Count);
+            Assert.Equal(inventory.Guards, Regex.Matches(source, @"HostCliSpawnGuard\.(?:Start|Validate)\s*\(").Count);
+        }
     }
 
     [Fact]
