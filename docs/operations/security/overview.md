@@ -125,6 +125,12 @@ that is already allowed to edit that project's checkout.
   that are not currently selected. The project, actor, selected URL before and
   after, candidate lists before and after, and timestamp are written with the
   project mutation in `<TaskRepository>/.metadata/projects.json`.
+- In the networked profile, only the owner can create or change project URL
+  start rules, start a saved rule, or run a temporary rule through the URL test
+  endpoint. Rule changes are audited with before and after digests in the same
+  project registry write. Repository checkout and root path changes also require
+  the owner. Login health fails when a resolved visitor address is an internal
+  peer, indicating a broken trusted proxy chain.
 - Owners mint short-lived one-time Runner enrollment codes. Enrollment reveals
   one service credential once. The server stores only credential hashes.
   Credentials carry explicit scopes, optional expiry, last-use time, and

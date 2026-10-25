@@ -519,6 +519,97 @@ public sealed class AccessSecurityLoginThrottleTests : IDisposable
         Assert.Equal(401, (await first).Status);
     }
 
+    [Fact]
+    public async Task Recently_successful_client_uses_reserved_slot_when_general_hashes_are_busy()
+    {
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var store = NewStore(new() { ["Security:LoginThrottle:MaxConcurrentHashes"] = "1" }, (password, hash) =>
+        {
+            if (password == "flood") { entered.Set(); release.Wait(); }
+            return PasswordSecretHasher.VerifyPassword(password, hash);
+        });
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        store.Login("owner", Password, "2001:db8:1:2::/64");
+        var flood = Task.Run(() => Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented", "flood", "2001:db8:2:2::/64")));
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
+            Assert.Equal("owner", store.Login("owner", Password, "2001:db8:1:2::/64").User.Username);
+        }
+        finally { release.Set(); }
+        Assert.Equal(401, (await flood).Status);
+    }
+
+    [Fact]
+    public void IPv6_48_and_IPv4_24_budgets_limit_rotating_client_addresses()
+    {
+        var store = NewStore(new()
+        {
+            ["Security:Profile"] = SecurityProfiles.Networked,
+            ["Security:LoginThrottle:NetworkMaxFailures"] = "2"
+        }, (_, _) => false);
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        foreach (var address in new[] { "2001:db8:1:1::/64", "2001:db8:1:2::/64",
+                     "192.0.2.1", "192.0.2.2" })
+            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("invented", "wrong", address)).Status);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", Password, "2001:db8:1:3::/64")).Status);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("owner", Password, "192.0.2.3")).Status);
+    }
+
+    [Fact]
+    public void Successful_client_does_not_clear_the_network_failure_budget()
+    {
+        var store = NewStore(new()
+        {
+            ["Security:Profile"] = SecurityProfiles.Networked,
+            ["Security:LoginThrottle:NetworkMaxFailures"] = "2"
+        });
+        store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        store.Login("owner", Password, "2001:db8:1:1::/64");
+        foreach (var address in new[] { "2001:db8:1:2::/64", "2001:db8:1:3::/64" })
+            Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+                store.Login("invented", "wrong", address)).Status);
+        Assert.Equal("owner", store.Login("owner", Password, "2001:db8:1:1::/64").User.Username);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("invented", "wrong", "2001:db8:1:4::/64")).Status);
+    }
+
+    [Fact]
+    public async Task Password_change_hash_does_not_hold_store_lock_and_wrong_password_is_throttled()
+    {
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var store = NewStore(verifyPassword: (password, hash) =>
+        {
+            if (password == "wrong") { entered.Set(); release.Wait(); }
+            return PasswordSecretHasher.VerifyPassword(password, hash);
+        });
+        var owner = store.Bootstrap(new BootstrapRequest("owner", Password, null));
+        var principal = store.AuthenticateSession(owner.SessionToken)!;
+        var runner = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("runner", null, null, null)).Code);
+        var change = Task.Run(() => Assert.Throws<SecurityOperationException>(() =>
+            store.ChangePassword(principal, new ChangePasswordRequest("wrong", "new long pass phrase!"))));
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
+            await Task.Run(() => Assert.NotNull(store.AuthenticateRunner(runner.Secret)))
+                .WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally { release.Set(); }
+        Assert.Equal(400, (await change).Status);
+        for (var i = 1; i < 5; i++)
+            Assert.Equal(400, Assert.Throws<SecurityOperationException>(() =>
+                store.ChangePassword(principal, new ChangePasswordRequest("incorrect", "new long pass phrase!"))).Status);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.ChangePassword(principal, new ChangePasswordRequest(Password, "new long pass phrase!"))).Status);
+    }
+
     [Theory]
     [InlineData("192.0.2.4", "192.0.2.4")]
     [InlineData("::ffff:192.0.2.4", "192.0.2.4")]

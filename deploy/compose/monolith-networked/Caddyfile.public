@@ -7,6 +7,12 @@
 }
 
 {$STUDIO_DOMAIN} {
+    tls {
+        client_auth {
+            mode require_and_verify
+            trust_pool file /etc/caddy/origin-pull/ca.pem
+        }
+    }
     encode zstd gzip
     header {
         >Strict-Transport-Security "max-age=31536000; includeSubDomains"
