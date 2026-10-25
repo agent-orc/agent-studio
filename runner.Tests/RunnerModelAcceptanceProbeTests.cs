@@ -103,9 +103,29 @@ public sealed class RunnerModelAcceptanceProbeTests
         Assert.Equal(("claude", "claude-opus-6[1m]"), candidates[1]);
         Assert.Contains(("codex", "gpt-6.2-sol"), candidates);
         Assert.Contains(("claude", "claude-opus-6[1m]"), candidates);
-        Assert.Contains(("codex", "gpt-6-sol"), candidates);
+        Assert.Equal(2, candidates.Count);
         Assert.DoesNotContain(candidates, item => item.Model.Contains("escape", StringComparison.Ordinal)
                                                   || item.Model.Contains(' ') || item.Provider == "gemini");
+    }
+
+    [Fact]
+    public void Review_daemon_with_default_routes_probes_only_routed_models()
+    {
+        var options = new RunnerOptions
+        {
+            ServerUrl = "http://127.0.0.1:5031",
+            RunnerId = "review-a",
+            RunnerName = "review-a",
+            Hostname = "host-a",
+            BackendName = "test",
+            Role = "review",
+            WorkDir = Path.GetTempPath(),
+            BaseBranch = "main",
+        };
+        (string Provider, string Model)[] routes =
+            [("codex", "gpt-5.4-mini"), ("codex", "gpt-6-sol")];
+
+        Assert.Equal(routes, RunnerCapabilityProbe.ModelCandidates(options, routes));
     }
 
     [Fact]
@@ -131,7 +151,7 @@ public sealed class RunnerModelAcceptanceProbeTests
     }
 
     [Fact]
-    public async Task Session_bound_ready_verdict_is_rechecked_after_thirty_minutes()
+    public async Task Session_bound_ready_verdict_is_rechecked_after_six_hours()
     {
         var now = DateTimeOffset.UnixEpoch.AddHours(1);
         var calls = 0;
@@ -144,7 +164,7 @@ public sealed class RunnerModelAcceptanceProbeTests
 
         await probe.RefreshAsync([("claude", "claude-opus-5-5")], CancellationToken.None);
         Assert.Equal("ready", Assert.Single(probe.Snapshot("claude", ["claude-opus-5-5"])).Status);
-        now = now.AddMinutes(29);
+        now = now.AddHours(6).AddMinutes(-1);
         await probe.RefreshAsync([("claude", "claude-opus-5-5")], CancellationToken.None);
         Assert.Equal(1, calls);
         now = now.AddMinutes(1);

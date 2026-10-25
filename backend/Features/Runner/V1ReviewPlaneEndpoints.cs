@@ -186,7 +186,10 @@ public static class V1ReviewPlaneEndpoints
             V1ReviewExecutorRegistry registry,
             AdaptiveReviewParallelismAdvisor reviewParallelism,
             AgentStudio.Clients.ClientIdentityStore clients,
-            CliQuotaFallbackService quotaRoutes) =>
+            CliQuotaFallbackService quotaRoutes,
+            AttemptAuthorityService authority,
+            TaskScannerService scanner,
+            IConfiguration configuration) =>
         {
             if (!RunnerMatches(context, runnerId))
                 return Results.Unauthorized();
@@ -198,7 +201,12 @@ public static class V1ReviewPlaneEndpoints
             {
                 var snapshot = registry.AdvertiseCapabilities(runnerId, request) with
                 {
-                    ConfiguredModelRoutes = ConfiguredModelRoutes(quotaRoutes.GetAll().Values),
+                    ConfiguredModelRoutes = request.Capabilities.Any(capability =>
+                            capability.Key == Contract.ReviewCapabilities.ReviewExecutor)
+                        ? ReviewConfiguredModelRoutes(authority.ListPendingReviewAttempts(), configuration,
+                            quotaRoutes.GetAll().Values)
+                        : CodingConfiguredModelRoutes(quotaRoutes.GetAll().Values,
+                            scanner.ScanAllAutomationJobs()),
                 };
                 clients.RecordSeen(runnerId);
                 // AGT-2820: the review plane's parallelism recommendation used to
@@ -3373,6 +3381,46 @@ public static class V1ReviewPlaneEndpoints
                 route.Cli.Trim().ToLowerInvariant(), route.Model!.Trim()))
             .Distinct()
             .ToArray();
+
+    internal static IReadOnlyList<Contract.ConfiguredModelRouteDto> CodingConfiguredModelRoutes(
+        IEnumerable<CliModelRouteProfile> profiles, IEnumerable<TaskInfo> tasks)
+        => ConfiguredModelRoutes(profiles)
+            .Concat(tasks.Where(task => task.State == TaskStates.Ready
+                && !string.IsNullOrWhiteSpace(task.Model))
+                .Select(task => new Contract.ConfiguredModelRouteDto(
+                    (task.CliType ?? CliTypes.Claude).Trim().ToLowerInvariant(),
+                    task.Model!.Trim())))
+            .Distinct().ToArray();
+
+    /// <summary>Models the review executor can be assigned from its current queue.</summary>
+    internal static IReadOnlyList<Contract.ConfiguredModelRouteDto> ReviewConfiguredModelRoutes(
+        IEnumerable<ReviewAttemptDto> pending, IConfiguration configuration,
+        IEnumerable<CliModelRouteProfile>? profiles = null)
+    {
+        var defaultModel = configuration.GetValue(
+            "ReviewDecisionOrchestrator:AspectModel", PipelineStepModelDefaults.SupportModel);
+        var defaultCli = ReviewDecisionOrchestrator.NormalizeReviewCliType(
+            configuration.GetValue("ReviewDecisionOrchestrator:Cli", PipelineStepModelDefaults.DefaultCli));
+        var routes = new List<Contract.ConfiguredModelRouteDto>
+        {
+            new(defaultCli, defaultModel),
+        };
+        if (configuration["DeepReview:Mode"] == DeepReviewPolicy.Active)
+            routes.Add(new Contract.ConfiguredModelRouteDto("codex", DeepReviewPolicy.Model));
+        routes.AddRange(pending.SelectMany(attempt => attempt.Subject.Plan?.Commands ?? [])
+            .Where(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                && !string.IsNullOrWhiteSpace(command.CliType)
+                && !string.IsNullOrWhiteSpace(command.Model))
+            .Select(command => new Contract.ConfiguredModelRouteDto(
+                command.CliType!.Trim().ToLowerInvariant(), command.Model!.Trim())));
+        // Quota admission can move an aspect to this CLI's configured fallback.
+        // Profiles for unrelated coding routes never reach a review daemon.
+        var routedClis = routes.Select(route => route.CliType)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        routes.AddRange(ConfiguredModelRoutes((profiles ?? [])
+            .Where(profile => routedClis.Contains(profile.CliType))));
+        return routes.Distinct().ToArray();
+    }
 
     private static bool RunnerMatches(HttpContext context, string runnerId)
         => context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal

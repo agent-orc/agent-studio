@@ -253,8 +253,8 @@ string? ModelProbeCredentialGeneration(string provider)
     return credential.CredentialGeneration
            // A CLI can authenticate through a store the metadata reader does
            // not recognize. Keep probing that login instead of advertising
-           // every named model as unknown forever. Session evidence is short
-           // lived in RunnerModelAcceptanceProbe.
+           // every named model as unknown forever. Session evidence is
+           // periodically rechecked in RunnerModelAcceptanceProbe.
            ?? environmentCredentialGeneration;
 }
 RunnerModelAcceptanceProbe.Shared.Configure(

@@ -98,6 +98,33 @@ public sealed class ReviewClaimCapabilityRegistrationTests : IDisposable
         Assert.DoesNotContain(Contract.CapabilityProtocol.DotNet, registered);
     }
 
+    [Fact]
+    public void Capability_routes_include_pending_aspect_pins_and_active_deep_review()
+    {
+        var authority = NewAuthority();
+        var plan = new Contract.ReviewPlanDto(
+            [new Contract.ReviewCommandDto("aspect-code-quality", "code-quality", "claude", [],
+                ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
+                CliType: "claude", Model: "claude-opus-5-5", ThinkingLevel: "high")],
+            ["code-quality"]);
+        CreatePendingReviewAttempt(authority, "AGT-2", new string('2', 40), plan);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["DeepReview:Mode"] = "active" }).Build();
+
+        var routes = V1ReviewPlaneEndpoints.ReviewConfiguredModelRoutes(
+            authority.ListPendingReviewAttempts(), configuration,
+            [new CliModelRouteProfile
+            {
+                CliType = "claude", PrimaryModel = "claude-opus-5-5",
+                FallbackCliType = "codex", FallbackModel = "gpt-6.3-sol",
+            }]);
+
+        Assert.Contains(new Contract.ConfiguredModelRouteDto("claude", "claude-opus-5-5"), routes);
+        Assert.Contains(new Contract.ConfiguredModelRouteDto("codex", "gpt-6-sol"), routes);
+        Assert.Contains(new Contract.ConfiguredModelRouteDto("codex", "gpt-6.3-sol"), routes);
+        Assert.True(routes.Count <= 4);
+    }
+
     // ---- (d) contract: registration is a superset of every emitted key ------
 
     [Fact]

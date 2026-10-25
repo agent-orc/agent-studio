@@ -42,15 +42,15 @@ internal static class RunnerCapabilityProbe
         RunnerOptions options,
         IReadOnlyList<(string Provider, string Model)>? configured = null)
     {
-        // Operator-configured primary and fallback routes are probed even when
-        // they are newer than the built-in list or the CLI's own catalogue.
+        // The server supplies routed models, including pending review plans.
+        // Only a host without configured routes needs the built-in catalogue.
         var providers = CodingCliBinaries(options).Select(item => item.CliType).ToHashSet(StringComparer.Ordinal);
-        return (configured ?? RunnerModelAcceptanceProbe.Shared.ConfiguredModels)
+        var routed = (configured ?? RunnerModelAcceptanceProbe.Shared.ConfiguredModels)
                 .Where(route => providers.Contains(route.Provider)
                     && RunnerModelAcceptanceProbe.IsProbeableModelId(route.Model))
-            .Concat(BuiltInModelCandidates(options))
             .Distinct()
             .ToArray();
+        return routed.Length > 0 ? routed : BuiltInModelCandidates(options);
     }
 
     private static IReadOnlyList<(string Provider, string Model)> BuiltInModelCandidates(RunnerOptions options)

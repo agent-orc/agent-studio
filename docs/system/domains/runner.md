@@ -57,14 +57,17 @@ results are audited with actor, host, provider and outcome, without the code.
 Timeout and cancel clear the instructions. Each runner keeps its own native credential store; neither
 Task Server nor Studio distributes ChatGPT login files.
 
-Coding and review hosts probe the small set of primary and fallback model ids
-with a real request in an isolated scratch context. They add the valid model ids
-the server returns as operator-configured quota routes or ready-card models in
-the capability response. Each verdict is bound to
+Coding and review hosts probe routed model ids with a real request in an
+isolated scratch context. Coding routes include configured primary and fallback
+models and ready-card pins. Review routes include the configured aspect default,
+active deep-review default, pinned models in pending review plans, and quota
+fallback routes for the CLIs those plans use. The
+built-in catalogue is used only when the server supplies no route. Each verdict is bound to
 the local credential generation and advertised as `model-acceptance:<provider>:<model>`.
 When a CLI authenticates through a store without readable generation metadata,
 the probe uses the daemon session as its generation and rechecks accepted models
-every 30 minutes. Configured routes run before the built-in candidate list.
+every 6 hours. Inconclusive verdicts retry after 10 minutes. The daemon starts
+the probe after receiving server routes in its first capability response.
 A completed host device login invalidates that provider's cached model verdicts
 before the next advertisement; an in-flight probe from the old login cannot
 restore them.
