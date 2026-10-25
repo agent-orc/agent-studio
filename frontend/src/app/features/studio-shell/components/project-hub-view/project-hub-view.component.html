@@ -109,6 +109,7 @@
   @defer (when activeRail() === 'token-usage') {
     @if (activeRail() === 'token-usage') {
       <app-project-token-usage-panel [projectName]="projectName()" />
+      <app-token-analysis-view [fixedProject]="projectName()" />
     }
   }
   @defer (when activeRail() === 'cycle-time') {

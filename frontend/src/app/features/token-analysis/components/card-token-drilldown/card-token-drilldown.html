@@ -1,0 +1,57 @@
+<section class="dd" data-testid="card-token-drilldown" aria-labelledby="dd-title">
+  <header class="dd__head">
+    <div>
+      <h3 id="dd-title">
+        @if (detail(); as d) { {{ d.card.key ?? d.card.jobId }} · {{ d.card.title }} } @else { Card drill-down }
+      </h3>
+      @if (detail(); as d) {
+        <p data-testid="card-token-drilldown-summary">{{ d.card.project }} · {{ d.card.outcome }} · {{ d.card.rounds }} rounds ·
+          {{ fmt(d.card.totalTokens) }} tokens · {{ usd(d.card.costUsd) }} theoretical</p>
+      }
+    </div>
+    <button type="button" class="dd__close" data-testid="card-token-drilldown-close" (click)="closed.emit()">Close</button>
+  </header>
+
+  @if (loading()) {
+    <p class="dd__state" data-testid="card-token-drilldown-loading">Loading the card timeline…</p>
+  } @else if (error(); as message) {
+    <div class="dd__state dd__state--error" role="alert" data-testid="card-token-drilldown-error">
+      <span>{{ message }}</span>
+      <button type="button" class="dd__close" (click)="retry.emit()">Retry</button>
+    </div>
+  } @else if (detail(); as d) {
+    <ul class="dd__kinds" aria-label="Tokens per usage kind">
+      @for (k of kinds(); track k.kind) {
+        <li><span class="dd__swatch" [style.background]="k.color"></span>{{ kindLabel(k.kind) }}
+          <span class="dd__num">{{ fmt(k.total) }} · {{ k.share }}%</span></li>
+      }
+    </ul>
+    <ol class="dd__events" data-testid="card-token-drilldown-events">
+      @for (item of events(); track $index) {
+        <li class="dd__event" [attr.data-kind]="item.event.kind">
+          <div class="dd__when dd__num">
+            <span>{{ item.event.at | date: 'MMM d, HH:mm' }}</span>
+            @if (duration(item.event.durationMs); as d) { <span class="dd__dim">{{ d }}</span> }
+          </div>
+          <div class="dd__what">
+            <span class="dd__kind"><span class="dd__swatch" [style.background]="kindColor(item.event.kind)"></span>
+              {{ kindLabel(item.event.kind) }}</span>
+            <span class="dd__label">{{ item.event.label }}</span>
+            <span class="dd__dim">Attempt {{ item.event.attempt }} · {{ item.event.model }} · {{ item.event.level }} ·
+              {{ item.event.cli }} on {{ item.event.host }}@if (item.event.calls > 1) { · {{ item.event.calls }} calls }</span>
+            @if (item.event.result) { <span class="dd__result">{{ item.event.result }}</span> }
+          </div>
+          <div class="dd__tokens dd__num">
+            <span class="dd__bar"><span [style.width.%]="item.share * 100" [style.background]="kindColor(item.event.kind)"></span></span>
+            <span><strong>{{ fmt(item.event.total) }}</strong> · {{ usd(item.event.costUsd) }}@if (!item.event.priced) {*}</span>
+            <span class="dd__dim">in {{ fmt(item.event.input) }} · cached {{ fmt(item.event.cacheRead) }} · write {{ fmt(item.event.cacheWrite) }}
+              · out {{ fmt(item.event.output) }}@if (item.event.reasoning !== null) { · reasoning {{ fmt(item.event.reasoning) }} }</span>
+          </div>
+        </li>
+      } @empty {
+        <li class="dd__state">No recorded steps for this card.</li>
+      }
+    </ol>
+    <p class="dd__note">{{ d.disclaimer }}</p>
+  }
+</section>

@@ -7,6 +7,16 @@ Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
 
+Unknown or interrupted attempts that publish salvage hand its exact ref and SHA
+to the next coding claim. The runner starts that worktree at the salvage commit;
+an unavailable or moved ref fails preparation instead of selecting the
+integration branch. The continuation prompt directs a merge of the current
+integration branch so the salvaged commit remains an ancestor of the result.
+If the delivery fence still finds that the recorded base is not an ancestor of
+the result, the legacy completion path withholds the stamp and returns the card
+to Ready. Its next claim starts at the refused result and its prompt names both
+the missing base and the result for an explicit merge.
+
 ## Host-owned provider device login
 
 One device-login service serves the first-run checklist and the Access and
@@ -60,6 +70,9 @@ A refused model stays held until the same runner instance advertises it as not
 ready and then advertises a ready verdict with a larger runner-local probe
 sequence. Runner and server clock order never clears the hold. A refused
 fallback does not hold the card once quota admission can use its primary route.
+The claim hold matches the route handed to the runner: a required mechanical
+route, an operator-selected continuation, a provider-refusal sibling, or the
+stored primary. A refused primary does not hide a card using another route.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable

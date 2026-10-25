@@ -104,6 +104,17 @@ gate started, or a delivery published while it waited, records
 `gate-result-superseded` on the live card and cannot apply its failure step or
 move the card. With guarded delivery on, the acceptance worker leaves a
 completed card in place when an older gate failure arrives.
+The merge gate also checks completion and publication before settling a verdict
+and again inside its publication fence. It captures whether the delivery was
+already published before verification began; that existing publication cannot
+make this attempt's gate result stale, including when the local merge reports a
+fresh outcome for a patch-equivalent delivery. A publication that appears during
+verification supersedes the result.
+An unavailable initial publication fetch leaves the baseline unknown until a
+successful pre-gate check. Only confirmed absence can make later containment
+new publication. A stale verdict restores each advanced local integration ref
+unless origin contains that exact commit; an equivalent tree does not preserve
+an unpublished local merge.
 Local aspect review also checks the captured subject after its asynchronous
 verdict and grade work. A superseded review records `review-result-superseded`
 with the original aspect statuses and leaves the newer round alone.
@@ -2413,8 +2424,10 @@ broken. An operator had to requeue every one by hand.
   salvage commit SHA, the delivery already exists and only lacks its finishing
   round, so `RunTimeoutContinuationService` starts one automatic continuation
   round instead of escalating. The round appends the finishing instruction to
-  `prompt.md` (fetch the salvage, rebase, build, run the touched tests, write
-  `results/status.md`, deliver), saves the matching `steer` intent, pins a clean
+  `prompt.md` (continue from the salvage, merge the current integration branch,
+  build, run the touched tests, write `results/status.md`, deliver), saves the
+  salvage ref and SHA as the next claim's required worktree base, saves the
+  matching `steer` intent, pins a clean
   CLI context because a salvaged worktree leaves no resumable session, keeps the
   card's own model, returns the card to the front of `2-ready` under the
   completing attempt's authority write, and records

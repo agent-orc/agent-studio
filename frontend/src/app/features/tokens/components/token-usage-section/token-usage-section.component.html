@@ -6,6 +6,11 @@
             data-testid="token-usage-nav-workspace" (click)="pageChange.emit('workspace')">
       <strong>Workspace &amp; projects</strong><span>Recorded token spend and project filters</span>
     </button>
+    <button type="button" [class.token-usage__tree-item--active]="page() === 'analysis'"
+            [attr.aria-current]="page() === 'analysis' ? 'page' : null"
+            data-testid="token-usage-nav-analysis" (click)="pageChange.emit('analysis')">
+      <strong>Card analysis</strong><span>Spend per card</span>
+    </button>
     <div class="token-usage__tree-group">CLI accounts</div>
     <button type="button" [class.token-usage__tree-item--active]="page() === 'claude'"
             [attr.aria-current]="page() === 'claude' ? 'page' : null"
@@ -23,6 +28,11 @@
   @if (ledgerScopeLabel(); as scope) {
     <p class="token-usage__scope" data-testid="token-usage-ledger-scope">Opened from usage. {{ scope }}</p>
   }
+  @if (page() === 'analysis') {
+    @defer {
+      <app-token-analysis-view />
+    }
+  } @else {
   @if (page() !== 'workspace' && ledgerScope()) {
     <app-workspace-token-timeline [scope]="ledgerScope()" />
   }
@@ -67,6 +77,7 @@
       [refreshing]="usage.refreshing()[cliPage()]"
       (refresh)="usage.refreshOne(cliPage())" />
     }
+  }
   }
   </div>
 </section>

@@ -12,6 +12,7 @@ import { ProjectShellComponent } from '../project-shell/project-shell.component'
 import { SecurityPanelComponent } from '../security-panel/security-panel.component';
 import { UxuiPanelComponent } from '../uxui-panel/uxui-panel.component';
 import { ProjectTokenUsagePanelComponent } from '../../../project-token-usage';
+import { TokenAnalysisViewComponent } from '../../../token-analysis';
 import { ProjectObservabilityPanelComponent } from '../project-observability/project-observability-panel.component';
 import { ProjectEnvironmentOverviewComponent } from '../project-environment-overview/project-environment-overview.component';
 import { ProjectProductRuntimePanelComponent } from '../project-product-runtime/project-product-runtime-panel.component';
@@ -52,6 +53,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     SecurityPanelComponent,
     UxuiPanelComponent,
     ProjectTokenUsagePanelComponent,
+    TokenAnalysisViewComponent,
     ProjectObservabilityPanelComponent,
     ProjectEnvironmentOverviewComponent,
     ProjectProductRuntimePanelComponent,

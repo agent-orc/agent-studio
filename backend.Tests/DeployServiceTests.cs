@@ -966,10 +966,10 @@ public sealed class DeployServiceTests : IDisposable
         CreateRelease(deploy, Artifact('a'), Head());
         var job = environments.Claim("stage-host")!;
         _clock.Advance(TimeSpan.FromMinutes(8));
-        Assert.False(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
         var reclaimed = environments.Claim("stage-host")!;
         Assert.Equal(job.Id, reclaimed.Id);
         Assert.NotEqual(job.LeaseToken, reclaimed.LeaseToken);
+        Assert.False(environments.Report("demo", job.Id, new(job.LeaseToken!, true, "health-ok")));
         Assert.True(environments.Report("demo", reclaimed.Id, new(reclaimed.LeaseToken!, true, "health-ok")));
         deploy.SyncAfterHostCall("demo");
         Assert.Equal(DeploymentStates.Succeeded, deploy.Deployments("demo", "stage")!.Single().State);
@@ -1339,14 +1339,14 @@ public sealed class DeployServiceTests : IDisposable
         var first = CreateRelease(deploy, Artifact('a'), Commit("ssh-definition"));
         var firstJob = environments.Claim("stage-host")!;
         Assert.Equal("container", Assert.Single(firstJob.SshSteps).Step);
-        Assert.True(environments.Report("demo", firstJob.Id, new(firstJob.LeaseToken!, true, "health-ok",
+        Assert.True(environments.Report("demo", firstJob.Id, new(firstJob.LeaseToken!, true, "health-ok", Steps:
             [new("deploy[0]:container", true)])));
         deploy.SyncAfterHostCall("demo");
 
         var second = CreateRelease(deploy, Artifact('b'), Commit("new-release"));
         var secondJob = environments.Claim("stage-host")!;
         Assert.Equal(second.ArtifactDigests[0], secondJob.Artifact);
-        Assert.True(environments.Report("demo", secondJob.Id, new(secondJob.LeaseToken!, false, "deploy-step-failed",
+        Assert.True(environments.Report("demo", secondJob.Id, new(secondJob.LeaseToken!, false, "deploy-step-failed", Steps:
             [new("deploy[0]:container", false)])));
         deploy.SyncAfterHostCall("demo");
 
@@ -1358,6 +1358,39 @@ public sealed class DeployServiceTests : IDisposable
         var failed = deploy.Deployments("demo", "stage")!.First(item => item.ReleaseId == second.Id);
         Assert.Equal(DeploymentStates.Failed, failed.State);
         Assert.Equal(DeploymentStates.Failed, failed.Steps[0].State);
+    }
+
+    [Fact]
+    public void Mixed_stage_json_and_generated_production_keep_lifecycle_order()
+    {
+        var (_, environments, _) = Build();
+        WriteSshProjectYml();
+        File.Delete(Path.Combine(_repo, "docs", "deployments", "environments", "production.json"));
+
+        var declarations = environments.Declarations("demo")!;
+        Assert.Equal(["stage", "production"], declarations.Select(item => item.Id));
+        Assert.All(declarations, item => Assert.Equal("ssh-v2", item.Template));
+        Assert.Equal(["stage", "production"], environments.Read("demo")!.Environments
+            .Select(item => item.Declaration.Id));
+    }
+
+    [Fact]
+    public void Host_step_log_validates_claim_step_content_and_rate()
+    {
+        var (deploy, environments, store) = Build();
+        WriteSshProjectYml();
+        CreateRelease(deploy, Artifact('a'), Commit("ssh-definition"));
+        var job = environments.Claim("stage-host")!;
+        const string step = "deploy[0]:container";
+
+        Assert.False(deploy.AppendHostStepLog("demo", job.Id, new("wrong", step, "message")));
+        Assert.False(deploy.AppendHostStepLog("demo", job.Id, new(job.LeaseToken!, "health", "message")));
+        Assert.False(deploy.AppendHostStepLog("demo", job.Id, new(job.LeaseToken!, step, "bad\nline")));
+        Assert.False(deploy.AppendHostStepLog("demo", job.Id, new(job.LeaseToken!, step, new string('x', 513))));
+        for (var i = 0; i < 30; i++)
+            Assert.True(deploy.AppendHostStepLog("demo", job.Id, new(job.LeaseToken!, step, "line " + i)));
+        Assert.False(deploy.AppendHostStepLog("demo", job.Id, new(job.LeaseToken!, step, "overflow")));
+        Assert.Equal(30, store.ReadLog("demo", job.Id).Count(item => item.Step == step));
     }
 
     [Fact]
@@ -1865,7 +1898,7 @@ public sealed class DeployServiceTests : IDisposable
             new DeployStepResult($"deploy[{index}]:{step.Step}", healthy))
             .Take(healthy ? job.SshSteps.Count : 1).ToArray();
         Assert.True(environments.Report("demo", job.Id,
-            new(job.LeaseToken!, healthy, evidence ?? (healthy ? "health-ok" : "deploy-step-failed"), steps)));
+            new(job.LeaseToken!, healthy, evidence ?? (healthy ? "health-ok" : "deploy-step-failed"), Steps: steps)));
         deploy.SyncAfterHostCall("demo");
         _clock.Advance(TimeSpan.FromMinutes(1));
     }
