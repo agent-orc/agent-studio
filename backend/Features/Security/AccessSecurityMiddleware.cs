@@ -1071,7 +1071,12 @@ public sealed class AccessSecurityMiddleware
             // scanner), only a workspace binding can reach the handler's 404.
             if (context.Items[SkipTaskResolutionItem] is true)
                 return ProjectRouteAddress.WorkspaceWide;
-            return ProjectRouteAddress.Addressed(ResolveTaskProjects(Uri.UnescapeDataString(taskId)));
+            var identity = Uri.UnescapeDataString(taskId);
+            if (_taskIndex is null && endpoint is null)
+                // Unrouted requests cannot execute an endpoint handler. Keep
+                // their legacy scope check for direct middleware fixtures.
+                return ProjectRouteAddress.Addressed(_scanner?.FindPublishedJob(identity)?.ProjectName);
+            return ProjectRouteAddress.Addressed(ResolveTaskProjects(identity));
         }
         return ProjectRouteAddress.Unaddressed;
     }
