@@ -208,9 +208,10 @@ not publish versioned binaries. It runs, in order:
    exists, `OrchestratorApi.csproj` requires its NuGet lock file, and a locked
    restore does not rewrite it;
 2. .NET solution restore: restores `agent-taskboard.sln` with `--locked-mode`;
-3. Frontend dependency install: installs dependencies with `npm ci`;
-4. Production dependency audit: checks production dependencies for critical
-   vulnerabilities;
+3. Frontend dependency install: installs dependencies with the npm 11.21.1
+   version declared by `frontend/package.json` via Corepack;
+4. Production dependency audit: checks production dependencies for high and
+   critical vulnerabilities;
 5. Release shell contract tests: runs the release scripts test suite, including
    promotion and deploy-watcher tests;
 6. .NET Release build: builds the solution in Release configuration without
