@@ -51,12 +51,15 @@ environment does not isolate a start rule: it still runs as the Studio API user
 and can read absolute paths accessible to that account. Networked build-profile
 validation is refused until a remote validation protocol is available; profile
 edits and URL target changes require the Owner.
-In the networked profile, host Claude one-shots use a temporary empty working
-directory, disabled tools, and an empty strict MCP configuration. Prompt
-enhancement and title generation escape absolute file mentions before sending
-text to the CLI. The trusted local profile retains host build validation with
-its operator environment. Its canonical Claude one-shot runner keeps the
-requested working directory and tools.
+In the networked and public-demo profiles, host Claude one-shots use a
+temporary empty working directory, disabled tools, and an empty strict MCP
+configuration. The shared stdin boundary neutralizes file mentions in every
+prompt, including home-relative, parent-relative, and quoted paths. This
+boundary protects against CLI file expansion; it does not isolate the CLI
+process from host files accessible to the Studio API user. The trusted local
+profile retains host build validation with its operator environment and gives
+URL start rules the local environment. Its canonical Claude one-shot runner
+keeps the requested working directory and tools.
 
 **Accepted risk for single-team installs (2026-10-25).** Coding agents on
 `agent-runner-01` currently run with skip-all permissions in a shared host

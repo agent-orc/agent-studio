@@ -179,7 +179,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
-            HostCliSpawnGuard.Validate(proc.StartInfo, SecurityProfiles.IsNetworked(_configuration));
+            HostCliSpawnGuard.Validate(proc.StartInfo, !SecurityProfiles.IsLocal(_configuration));
             proc.Start();
             var rawVersion = proc.StandardOutput.ReadToEnd().Trim();
             proc.WaitForExit(5000);

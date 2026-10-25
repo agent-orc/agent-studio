@@ -221,7 +221,7 @@ public sealed class SoftReasoningHostedService : BackgroundService
 
         if (!cliType.Equals(CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
             return string.Empty;
-        var networked = SecurityProfiles.IsNetworked(_configuration);
+        var networked = !SecurityProfiles.IsLocal(_configuration);
         using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;
         var psi = new ProcessStartInfo
         {
@@ -239,7 +239,7 @@ public sealed class SoftReasoningHostedService : BackgroundService
         if (p == null) return string.Empty;
         try
         {
-            await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
+            await p.StandardInput.WriteAsync(HostOneShotIsolation.PreparePrompt(prompt, networked).AsMemory(), ct);
             p.StandardInput.Close();
         }
         catch (Exception __ex) { SilentCatch.Note(__ex, "SoftReasoningHostedService: stdin may already be closed"); /* stdin may already be closed */ }

@@ -1,11 +1,14 @@
 namespace AgentStudio.Cli;
 
-/// <summary>Networked host Claude calls have no project filesystem context or tools.</summary>
+/// <summary>Shared-profile host Claude calls have no project filesystem context or tools.</summary>
 public static class HostOneShotIsolation
 {
-    public static string EscapeAbsoluteFileMentions(string prompt) =>
-        System.Text.RegularExpressions.Regex.Replace(prompt,
-            @"@(?=(?:/|[A-Za-z]:[\\/]|\\\\))", "at ");
+    // Claude expands file mentions before tool restrictions take effect. Remove
+    // the sigil at the stdin boundary, including relative, home and quoted paths.
+    public static string PreparePrompt(string prompt, bool isolated = true) => isolated
+        ? System.Text.RegularExpressions.Regex.Replace(prompt, @"(?<!\S)@\S+",
+            match => "at " + match.Value[1..].Replace("@", "at", StringComparison.Ordinal))
+        : prompt;
 
     public sealed class Workspace : IDisposable
     {

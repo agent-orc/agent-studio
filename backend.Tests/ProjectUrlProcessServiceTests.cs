@@ -51,7 +51,7 @@ public sealed class ProjectUrlProcessServiceTests : IDisposable
     [Fact]
     public void BuildStartInfo_DetachesTheCommandFromInteractiveInput()
     {
-        var info = ProjectUrlProcessService.BuildStartInfo("echo ready", _root);
+        var info = ProjectUrlProcessService.BuildStartInfo("echo ready", _root, isolated: true);
 
         Assert.True(info.CreateNoWindow);
         Assert.True(info.RedirectStandardInput);
@@ -62,13 +62,22 @@ public sealed class ProjectUrlProcessServiceTests : IDisposable
     [Fact]
     public void BuildStartInfo_PassesOnlyProcessBootstrapVariables()
     {
-        var info = ProjectUrlProcessService.BuildStartInfo("echo ready", _root);
+        var info = ProjectUrlProcessService.BuildStartInfo("echo ready", _root, isolated: true);
 
         Assert.All(info.Environment.Keys, key => Assert.Contains(key,
             new[] { "PATH", "SystemRoot", "ComSpec", "PATHEXT", "TMPDIR", "TEMP", "TMP" }));
         Assert.DoesNotContain("HOME", info.Environment.Keys);
         Assert.DoesNotContain("GIT_CONFIG_COUNT", info.Environment.Keys);
         Assert.DoesNotContain("AGENT_STUDIO_GITHUB_PROVISIONING_TOKEN", info.Environment.Keys);
+    }
+
+    [Fact]
+    public void BuildStartInfo_LocalProfilePreservesHome()
+    {
+        var info = ProjectUrlProcessService.BuildStartInfo("echo ready", _root);
+
+        info.Environment.TryGetValue("HOME", out var home);
+        Assert.Equal(Environment.GetEnvironmentVariable("HOME"), home);
     }
 
     [Fact]

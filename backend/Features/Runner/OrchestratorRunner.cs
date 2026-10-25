@@ -485,7 +485,7 @@ public class OrchestratorRunner
     /// class this rewrite exists to prevent.
     /// </summary>
     public static (List<string> Args, string ModelId) BuildArgs(
-        string? model, string? resumeSessionId, bool networked = false)
+        string? model, string? resumeSessionId, bool networked = true)
     {
         var modelId = string.IsNullOrWhiteSpace(model) ? DefaultModel : model!.Trim();
         var args = new List<string>();

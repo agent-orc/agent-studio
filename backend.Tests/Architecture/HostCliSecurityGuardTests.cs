@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using AgentStudio.Cli;
+using AgentStudio.Security;
 using AgentStudio.TestSupport;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -103,13 +104,18 @@ public sealed class HostCliSecurityGuardTests
     }
 
     [Fact]
-    public void Absolute_file_mentions_are_not_passed_to_host_claude()
+    public void File_mentions_are_not_passed_to_host_claude()
     {
-        var sanitized = HostOneShotIsolation.EscapeAbsoluteFileMentions(
-            "Read @/var/private/key and @C:\\private\\key; keep @relative.md.");
-        Assert.DoesNotContain("@/var", sanitized);
-        Assert.DoesNotContain("@C:\\", sanitized);
-        Assert.Contains("@relative.md", sanitized);
+        var prompt = "Read @/var/private/key @C:\\private\\key @~/.claude/.credentials.json "
+            + "@../../data/home/.claude/.credentials.json @\"/tmp/private file\" @relative.md. @@/nested "
+            + "Keep email@example.test and compact@relative.md.";
+        var sanitized = HostOneShotIsolation.PreparePrompt(prompt);
+        Assert.Equal("Read at /var/private/key at C:\\private\\key "
+            + "at ~/.claude/.credentials.json at ../../data/home/.claude/.credentials.json "
+            + "at \"/tmp/private file\" at relative.md. at at/nested "
+            + "Keep email@example.test and compact@relative.md.", sanitized);
+        Assert.Equal(sanitized, HostOneShotIsolation.PreparePrompt(sanitized));
+        Assert.Equal(prompt, HostOneShotIsolation.PreparePrompt(prompt, isolated: false));
     }
 
     [Fact]
@@ -179,7 +185,7 @@ public sealed class HostCliSecurityGuardTests
         var carSpawner = File.ReadAllText(Path.Combine(features, "Cli", "Execution", "CarProcessSpawner.cs"));
         Assert.Contains("HostCliSpawnGuard.Validate(startInfo, networked)", carSpawner);
         var commitMessageLauncher = File.ReadAllText(Path.Combine(features, "Git", "GitService.cs"));
-        Assert.Contains("HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_config), CliTypes.Codex)", commitMessageLauncher);
+        Assert.Contains("HostCliSpawnGuard.Start(psi, !SecurityProfiles.IsLocal(_config), CliTypes.Codex)", commitMessageLauncher);
         var ptyLaunches = BackendSources(root)
             .SelectMany(file => Regex.Matches(File.ReadAllText(file),
                     "await\\s+PtySession\\.SpawnAsync\\((?<arguments>[\\s\\S]*?)\\);",
@@ -228,19 +234,22 @@ public sealed class HostCliSecurityGuardTests
     }
 
     [Fact]
-    public async Task Networked_host_claude_does_not_resume_owner_session()
+    public async Task Nonlocal_host_claude_does_not_resume_owner_session()
     {
-        var config = new ConfigurationBuilder().AddInMemoryCollection(
-            new Dictionary<string, string?> { ["Security:Profile"] = "networked" }).Build();
-        var oneShot = new ClaudeOneShot(config, NullLogger<ClaudeOneShot>.Instance,
-            new CliUsageParserRegistry([new ClaudeUsageParser()]), new CliModelRegistry());
-
-        var result = await oneShot.RunAsync(new CliOneShotRequest("claude", "claude-test", "hello")
+        foreach (var profile in new[] { SecurityProfiles.Networked, SecurityProfiles.PublicDemo })
         {
-            ExtraArgs = ["-r", Guid.NewGuid().ToString("D")]
-        });
+            var config = new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?> { ["Security:Profile"] = profile }).Build();
+            var oneShot = new ClaudeOneShot(config, NullLogger<ClaudeOneShot>.Instance,
+                new CliUsageParserRegistry([new ClaudeUsageParser()]), new CliModelRegistry());
 
-        Assert.False(result.Ok);
-        Assert.Contains("session resume is disabled", result.Error);
+            var result = await oneShot.RunAsync(new CliOneShotRequest("claude", "claude-test", "hello")
+            {
+                ExtraArgs = ["-r", Guid.NewGuid().ToString("D")]
+            });
+
+            Assert.False(result.Ok);
+            Assert.Contains("session resume is disabled", result.Error);
+        }
     }
 }

@@ -58,7 +58,7 @@ public sealed class ClaudeOneShot : ICliOneShot
     public async Task<CliOneShotResult> RunAsync(CliOneShotRequest request, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var networked = SecurityProfiles.IsNetworked(_configuration);
+        var networked = !SecurityProfiles.IsLocal(_configuration);
         if (networked && request.ExtraArgs?.Contains("-r", StringComparer.Ordinal) == true)
         {
             var now = DateTime.UtcNow;
@@ -148,12 +148,15 @@ public sealed class ClaudeOneShot : ICliOneShot
             {
                 if (multimodal)
                 {
-                    var envelope = BuildStreamJsonUserMessage(request.Prompt, request.InlineImages!);
+                    var envelope = BuildStreamJsonUserMessage(
+                        HostOneShotIsolation.PreparePrompt(request.Prompt, networked), request.InlineImages!);
                     await p.StandardInput.WriteAsync(envelope.AsMemory(), effectiveCt).ConfigureAwait(false);
                 }
                 else
                 {
-                    await p.StandardInput.WriteAsync(request.Prompt.AsMemory(), effectiveCt).ConfigureAwait(false);
+                    await p.StandardInput.WriteAsync(
+                        HostOneShotIsolation.PreparePrompt(request.Prompt, networked).AsMemory(), effectiveCt)
+                        .ConfigureAwait(false);
                 }
                 await p.StandardInput.FlushAsync(effectiveCt).ConfigureAwait(false);
             }

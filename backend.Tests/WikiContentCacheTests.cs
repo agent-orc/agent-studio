@@ -65,6 +65,76 @@ public sealed class WikiContentCacheTests : IDisposable
     }
 
     [Fact]
+    public void Wiki_mutations_refuse_delivered_directory_symlink()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var outside = Directory.CreateDirectory(Path.Combine(
+            Path.GetTempPath(), "wiki-write-outside-" + Guid.NewGuid().ToString("N"))).FullName;
+        var outsidePage = Path.Combine(outside, "page.md");
+        File.WriteAllText(outsidePage, "# Outside\n");
+        try
+        {
+            Directory.CreateSymbolicLink(Path.Combine(_root, "docs", "linked"), outside);
+
+            Assert.False(_docs.WriteWikiFile(ProjectName, "linked/page.md", "changed").Success);
+            Assert.False(_docs.SetWikiClassificationStatus(
+                ProjectName, "linked/page.md", "archived", new WikiCompanionStore()).Success);
+            Assert.False(_docs.CreateWikiPage(ProjectName, "linked/new.md", "new").Success);
+            Assert.Null(_docs.ResolveWikiNodeFullPath(ProjectName, "linked/page.md"));
+            Assert.Equal("# Outside\n", File.ReadAllText(outsidePage));
+            Assert.False(File.Exists(outsidePage + ".meta.json"));
+            Assert.False(File.Exists(Path.Combine(outside, "new.md")));
+        }
+        finally
+        {
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Wiki_classification_refuses_delivered_companion_symlink()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var outside = Path.Combine(Path.GetTempPath(),
+            "wiki-companion-outside-" + Guid.NewGuid().ToString("N") + ".json");
+        File.WriteAllText(outside, "private content");
+        try
+        {
+            var companion = Path.Combine(_root, "docs", "guide", "start.md.meta.json");
+            File.CreateSymbolicLink(companion, outside);
+
+            Assert.False(_docs.SetWikiClassificationStatus(
+                ProjectName, "guide/start.md", "archived", new WikiCompanionStore()).Success);
+            Assert.Equal("private content", File.ReadAllText(outside));
+        }
+        finally
+        {
+            File.Delete(outside);
+        }
+    }
+
+    [Fact]
+    public void Wiki_order_refuses_delivered_config_directory_symlink()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var outside = Directory.CreateDirectory(Path.Combine(
+            Path.GetTempPath(), "wiki-order-outside-" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            var app = Directory.CreateDirectory(Path.Combine(_root, "docs", "app")).FullName;
+            Directory.CreateSymbolicLink(Path.Combine(app, "config"), outside);
+
+            Assert.False(_docs.SetWikiFolderOrder(ProjectName, "", ["guide"]).Success);
+            Assert.False(_docs.SetWikiFileOrder(ProjectName, "guide", ["start.md"]).Success);
+            Assert.False(File.Exists(Path.Combine(outside, "wiki-order.json")));
+        }
+        finally
+        {
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Preload_FillsOnce_AndAllWikiReadersShareTheSnapshot()
     {
         Assert.True(_cache.Preload(ProjectName));

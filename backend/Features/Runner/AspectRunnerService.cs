@@ -771,7 +771,7 @@ public sealed class AspectRunnerService
     {
         if (!Path.GetFileNameWithoutExtension(cli.Replace('\\', '/')).Equals(CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
             return string.Empty;
-        var networked = _configuration is null || SecurityProfiles.IsNetworked(_configuration);
+        var networked = _configuration is null || !SecurityProfiles.IsLocal(_configuration);
         using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;
         var psi = new System.Diagnostics.ProcessStartInfo
         {
@@ -789,7 +789,7 @@ public sealed class AspectRunnerService
         if (p == null) return string.Empty;
         try
         {
-            await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
+            await p.StandardInput.WriteAsync(HostOneShotIsolation.PreparePrompt(prompt, networked).AsMemory(), ct);
             p.StandardInput.Close();
         }
         catch (Exception __ex) { SilentCatch.Note(__ex, "AspectRunnerService: CLI may have closed stdin already"); /* CLI may have closed stdin already */ }

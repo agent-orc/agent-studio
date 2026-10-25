@@ -39,7 +39,7 @@ public sealed class CodexOneShot : ICliOneShot
     {
         ArgumentNullException.ThrowIfNull(request);
         var requestedAt = DateTime.UtcNow;
-        if (SecurityProfiles.IsNetworked(_configuration))
+        if (!SecurityProfiles.IsLocal(_configuration))
             return CliOneShotResult.SpawnFailure(
                 "Remote runner required: host Codex one-shot execution is disabled in the networked profile.",
                 requestedAt, DateTime.UtcNow);
@@ -54,7 +54,7 @@ public sealed class CodexOneShot : ICliOneShot
         {
             var imagePaths = MaterializeInlineImages(request.InlineImages, out imageDirectory);
             var psi = BuildStartInfo(executable, request, imagePaths);
-            process = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_configuration), CliTypes.Codex);
+            process = HostCliSpawnGuard.Start(psi, !SecurityProfiles.IsLocal(_configuration), CliTypes.Codex);
             if (process == null)
                 return Record(request, CliOneShotResult.SpawnFailure("Process.Start returned null", requestedAt, DateTime.UtcNow));
 

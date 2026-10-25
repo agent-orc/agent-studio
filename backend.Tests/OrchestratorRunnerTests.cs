@@ -133,7 +133,7 @@ public class OrchestratorRunnerTests
         Assert.Equal("", args[args.IndexOf("--tools") + 1]);
         Assert.DoesNotContain("--dangerously-skip-permissions", args);
 
-        var (localArgs, _) = OrchestratorRunner.BuildArgs("claude-opus-4-7", resumeSessionId: null);
+        var (localArgs, _) = OrchestratorRunner.BuildArgs("claude-opus-4-7", resumeSessionId: null, networked: false);
         Assert.Contains("--dangerously-skip-permissions", localArgs);
         Assert.DoesNotContain("--tools", localArgs);
 

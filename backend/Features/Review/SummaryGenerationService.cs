@@ -593,13 +593,13 @@ public sealed class SummaryGenerationService
 
         try
         {
-            using var p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_configuration), CliTypes.Claude);
+            using var p = HostCliSpawnGuard.Start(psi, !SecurityProfiles.IsLocal(_configuration), CliTypes.Claude);
             if (p == null) return SummaryModelResult.Failure(model, "Process.Start returned null", startedAt, DateTime.UtcNow, sw.ElapsedMilliseconds);
 
             // Write the prompt up front, then close stdin so Claude can finalise
             // the request. WriteAsync is awaited so the OS pipe buffer can drain
             // before we move on to reading stdout.
-            await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
+            await p.StandardInput.WriteAsync(AdHocClaudeInvoker.PreparePrompt(prompt).AsMemory(), ct);
             p.StandardInput.Close();
 
             var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);

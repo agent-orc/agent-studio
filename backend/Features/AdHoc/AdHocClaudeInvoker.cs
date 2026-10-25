@@ -25,6 +25,9 @@ namespace AgentStudio.AdHoc;
 /// </summary>
 public static class AdHocClaudeInvoker
 {
+    public static string PreparePrompt(string prompt) =>
+        AgentStudio.Cli.HostOneShotIsolation.PreparePrompt(prompt);
+
     /// <summary>
     /// Argv tail for one-shot Haiku calls that follow the convention
     /// "feed the prompt via stdin, ask for the JSON wrapper". Callers
