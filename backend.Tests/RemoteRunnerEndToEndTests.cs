@@ -2599,6 +2599,69 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
+    public async Task AGT_3245_fenced_base_refusal_requeues_with_both_commits_and_a_result_checkout_base()
+    {
+        SeedTask(TaskStates.Progress, TaskKey, "Fenced salvage continuation", "Finish the earlier work.");
+        var origin = await SeedOriginAsync();
+        var publisher = Path.Combine(_workspace, "fence-publisher");
+        await GitAsync(_workspace, "clone", origin, publisher);
+        await GitAsync(publisher, "config", "user.name", "Test");
+        await GitAsync(publisher, "config", "user.email", "test@example.invalid");
+        await GitAsync(publisher, "checkout", "-b", "previous-salvage", "origin/main");
+        await File.WriteAllTextAsync(Path.Combine(publisher, "earlier.txt"), "earlier work");
+        await GitAsync(publisher, "add", "earlier.txt");
+        await GitAsync(publisher, "commit", "-m", "wip(runner): salvage before teardown - outcome Unknown");
+        var previousSalvageSha = (await GitAsync(publisher, "rev-parse", "HEAD")).StdOut.Trim();
+        await GitAsync(publisher, "push", "origin", "HEAD:refs/heads/previous-salvage");
+        await GitAsync(publisher, "checkout", "-b", "new-attempt", "origin/main");
+        await File.WriteAllTextAsync(Path.Combine(publisher, "current.txt"), "current attempt");
+        await GitAsync(publisher, "add", "current.txt");
+        await GitAsync(publisher, "commit", "-m", "feat: current attempt without salvage");
+        var refusedResultSha = (await GitAsync(publisher, "rev-parse", "HEAD")).StdOut.Trim();
+        await GitAsync(_watchPath, "init");
+        await GitAsync(_watchPath, "remote", "add", "origin", origin);
+        await GitAsync(_watchPath, "fetch", "origin");
+
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await client.RegisterAsync(ProjectName, "service", CancellationToken.None);
+        var acquired = await client.AcquireLeaseAsync(
+            new RAcquire(TaskKey, RunnerId, ProjectName, "host", 4242, "codex"), CancellationToken.None);
+        Assert.True(acquired.Granted);
+        var lease = acquired.Lease!;
+        var immutableRef = Contract.FencedGitRefs.ImmutableResult(
+            lease.AttemptId!, lease.FencingToken, refusedResultSha);
+        await GitAsync(publisher, "push", "origin", $"{refusedResultSha}:{immutableRef}");
+
+        var completion = await client.CompleteRunAsync(new RRemoteComplete(
+            TaskKey, lease.LeaseId, lease.FencingToken, RunnerId, "Done",
+            Source: ProjectName,
+            ResultSha: refusedResultSha,
+            AttemptChainId: lease.LeaseId,
+            AttemptId: lease.AttemptId,
+            AuthorityEpoch: lease.AuthorityEpoch,
+            IdempotencyKey: "agt-3245-fence-refusal",
+            BaseSha: previousSalvageSha,
+            ImmutableResultRef: immutableRef,
+            ArtifactManifestDigest: new string('a', 64),
+            IntegrationBranch: "refs/heads/main"), CancellationToken.None);
+
+        Assert.Equal(TaskStates.Ready, completion?.TargetState);
+        Assert.Contains(previousSalvageSha, completion!.Message);
+        Assert.Contains(refusedResultSha, completion.Message);
+        var ready = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        var prompt = File.ReadAllText(Path.Combine(ready, "prompt.md"));
+        Assert.Contains(previousSalvageSha, prompt);
+        Assert.Contains(refusedResultSha, prompt);
+        Assert.Contains("Merge the previous salvage base commit into this result", prompt);
+        var baseRecord = ContinuationBaseStore.Read(ready);
+        Assert.Equal(immutableRef, baseRecord?.Ref);
+        Assert.Equal(refusedResultSha, baseRecord?.CommitSha);
+        Assert.Null(ReviewSubjectStore.Read(ready));
+    }
+
+    [Fact]
     public async Task Second_runner_is_refused_while_the_lease_is_held()
     {
         SeedTask(TaskStates.Progress, TaskKey, "Contended", "Prompt.");

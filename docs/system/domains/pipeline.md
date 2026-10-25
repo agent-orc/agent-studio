@@ -2424,8 +2424,10 @@ broken. An operator had to requeue every one by hand.
   salvage commit SHA, the delivery already exists and only lacks its finishing
   round, so `RunTimeoutContinuationService` starts one automatic continuation
   round instead of escalating. The round appends the finishing instruction to
-  `prompt.md` (fetch the salvage, rebase, build, run the touched tests, write
-  `results/status.md`, deliver), saves the matching `steer` intent, pins a clean
+  `prompt.md` (continue from the salvage, merge the current integration branch,
+  build, run the touched tests, write `results/status.md`, deliver), saves the
+  salvage ref and SHA as the next claim's required worktree base, saves the
+  matching `steer` intent, pins a clean
   CLI context because a salvaged worktree leaves no resumable session, keeps the
   card's own model, returns the card to the front of `2-ready` under the
   completing attempt's authority write, and records
