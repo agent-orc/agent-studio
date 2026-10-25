@@ -199,7 +199,8 @@ public static class RegistryEndpoints
             AgentStudio.ExecutionPreparation.ProjectDefinitionProposalService definitionProposals,
             IProjectRepositoryProvisioner repositoryProvisioner,
             AgentStudio.Runner.BuildProfileValidationService profileValidation,
-            TaskMutationService taskMutations, ILoggerFactory loggerFactory, CancellationToken cancellationToken) =>
+            TaskMutationService taskMutations, ILoggerFactory loggerFactory, HttpContext context,
+            IConfiguration configuration, CancellationToken cancellationToken) =>
         {
             var onboardingStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             if (body == null)
@@ -240,6 +241,12 @@ public static class RegistryEndpoints
             string? executionRunner;
             try { executionRunner = ExecutionRunnerAssignment.NormalizeAndValidate(body.ExecutionRunner, clients); }
             catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            var role = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role;
+            if (body.ExecutionRunner != null && executionRunner == null
+                && !ProjectExecutionSecurityPolicy.MaySelectLocation(
+                    SecurityProfiles.IsNetworked(configuration), role, "unassigned", ExecutionLocations.Local))
+                return Results.Json(new { code = "owner-required", error = "Only the Owner can select local execution in the networked profile." },
+                    statusCode: StatusCodes.Status403Forbidden);
 
             string? repositoryUrl;
             try { repositoryUrl = ProjectRegistry.ValidateRepositoryUrl(body.RepositoryUrl); }
@@ -333,6 +340,11 @@ public static class RegistryEndpoints
                         updateExecutionRunner: true,
                         executionRunner: executionRunner,
                         remoteExecutionEnabled: true);
+                }
+                else if (SecurityProfiles.IsNetworked(configuration))
+                {
+                    projectSettings.SetExecutionSettings(created.DisplayName,
+                        PickupModes.Paused, ExecutionLocations.Local, false);
                 }
             }
             catch (InvalidOperationException ex)
@@ -455,6 +467,14 @@ public static class RegistryEndpoints
                 {
                     return Results.BadRequest(new { error = ex.Message });
                 }
+                var currentLocation = ProjectExecutionPolicy.ResolveExecutionLocation(
+                    projectSettings.Get(previous.DisplayName));
+                var targetLocation = executionRunner ?? ExecutionLocations.Local;
+                if (!ProjectExecutionSecurityPolicy.MaySelectLocation(
+                        SecurityProfiles.IsNetworked(configuration), human?.User.Role,
+                        currentLocation, targetLocation))
+                    return Results.Json(new { code = "owner-required", error = "Only the Owner can turn off remote execution in the networked profile." },
+                        statusCode: StatusCodes.Status403Forbidden);
             }
 
             try

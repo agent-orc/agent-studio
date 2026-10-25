@@ -70,8 +70,12 @@ public sealed class PtySession : IAsyncDisposable
         int cols = 160,
         int rows = 40,
         bool verbatimCommandLine = false,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool networked = false)
     {
+        if (networked)
+            throw new InvalidOperationException("Host interactive CLI execution is disabled in the networked profile.");
+
         // Seed from the backend process's full environment first, THEN layer our
         // overrides on top. Starting from an empty dictionary would strip
         // USERPROFILE/HOME/APPDATA and leave the spawned CLI unable to locate its

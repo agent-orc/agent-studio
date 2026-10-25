@@ -593,7 +593,7 @@ public sealed class SummaryGenerationService
 
         try
         {
-            using var p = Process.Start(psi);
+            using var p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_configuration), CliTypes.Claude);
             if (p == null) return SummaryModelResult.Failure(model, "Process.Start returned null", startedAt, DateTime.UtcNow, sw.ElapsedMilliseconds);
 
             // Write the prompt up front, then close stdin so Claude can finalise

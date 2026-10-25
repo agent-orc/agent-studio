@@ -50,5 +50,8 @@ public static class HostOneShotIsolation
         }
         arguments.Add("--tools");
         arguments.Add("");
+        arguments.Add("--strict-mcp-config");
+        arguments.Add("--mcp-config");
+        arguments.Add("{}");
     }
 }

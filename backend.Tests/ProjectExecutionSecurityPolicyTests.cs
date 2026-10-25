@@ -12,6 +12,8 @@ public sealed class ProjectExecutionSecurityPolicyTests
     [InlineData(true, StudioRoles.Contributor, "runner-a", "local", false)]
     [InlineData(true, null, "runner-a", "local", false)]
     [InlineData(true, StudioRoles.Operator, "runner-a", "runner-b", true)]
+    [InlineData(true, StudioRoles.Operator, "unassigned", "local", false)]
+    [InlineData(true, StudioRoles.Owner, "unassigned", "local", true)]
     [InlineData(true, StudioRoles.Operator, "local", "local", true)]
     [InlineData(false, StudioRoles.Operator, "runner-a", "local", true)]
     public void Remote_execution_can_only_be_disabled_by_networked_owner(

@@ -14,7 +14,8 @@ namespace AgentStudio.Cli;
 internal sealed class DecoratingCliProcessSpawner(
     Action<ProcessStartInfo>? decorate,
     ICliProcessSpawner? inner = null,
-    Action<Process>? onSpawned = null) : ICliProcessSpawner
+    Action<Process>? onSpawned = null,
+    bool networked = false) : ICliProcessSpawner
 {
     private Process? _spawnedProcess;
 
@@ -23,6 +24,9 @@ internal sealed class DecoratingCliProcessSpawner(
     public CliSpawn Spawn(ProcessStartInfo startInfo)
     {
         decorate?.Invoke(startInfo);
+        HostCliSpawnGuard.Validate(startInfo, networked);
+        if (networked)
+            throw new InvalidOperationException("Host task-agent execution is disabled in the networked profile.");
 
         CliSpawn spawn;
         if (inner != null)

@@ -243,7 +243,7 @@ public class PromptEnhancementService
         var sw = Stopwatch.StartNew();
         try
         {
-            using var p = Process.Start(psi);
+            using var p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_configuration), CliTypes.Claude);
             if (p == null) return (false, null, "Process.Start returned null");
 
             await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);

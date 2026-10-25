@@ -374,8 +374,13 @@ public static class CliEndpoints
             int? followUpSettleMs,
             CliRouter router,
             CliEnvironment env,
+            IConfiguration configuration,
             CancellationToken ct) =>
         {
+            if (SecurityProfiles.IsNetworked(configuration))
+                return Results.Json(new { code = "remote-execution-required",
+                    error = "Interactive CLI probes require a runner in the networked profile." },
+                    statusCode: StatusCodes.Status400BadRequest);
             if (!CliTypes.IsValid(cliType))
                 return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
             var slashCmd = string.IsNullOrWhiteSpace(cmd) ? "/usage" : cmd!;
@@ -396,7 +401,8 @@ public static class CliEndpoints
                     app: resolvedPath,
                     cwd: scratch,
                     extraEnv: CliEnvironment.ProbeEnvironment(),
-                    ct: ct);
+                    ct: ct,
+                    networked: SecurityProfiles.IsNetworked(configuration));
                 await pty.WaitForIdleAsync(idleMs: 1500, timeoutMs: 8000, ct);
                 // For Claude/Codex confirm trust prompt first.
                 if (cliType is "claude" or "codex")

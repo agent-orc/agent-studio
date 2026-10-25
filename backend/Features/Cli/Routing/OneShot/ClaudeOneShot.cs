@@ -128,7 +128,7 @@ public sealed class ClaudeOneShot : ICliOneShot
         Process? p = null;
         try
         {
-            p = Process.Start(psi);
+            p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_configuration), CliTypes.Claude);
             if (p == null)
             {
                 var completedAt = DateTime.UtcNow;

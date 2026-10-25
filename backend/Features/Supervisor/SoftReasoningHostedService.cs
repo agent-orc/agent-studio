@@ -233,7 +233,7 @@ public sealed class SoftReasoningHostedService : BackgroundService
         };
         HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model);
 
-        using var p = Process.Start(psi);
+        using var p = HostCliSpawnGuard.Start(psi, networked: true, CliTypes.Claude);
         if (p == null) return string.Empty;
         try
         {

@@ -2954,7 +2954,7 @@ public partial class GitService
         var sw = Stopwatch.StartNew();
         try
         {
-            using var p = Process.Start(psi)!;
+            using var p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_config), CliTypes.Codex)!;
             await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
             p.StandardInput.Close();
             var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);
