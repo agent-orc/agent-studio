@@ -76,10 +76,12 @@ docker run -d --name "$run_id-frontend" --network "$net" --ip "$prefix.3" --netw
   "$caddy_image" > /dev/null
 
 start_edge() {
+  local caddyfile="$stack/$1"
+  if [[ "$1" = /* ]]; then caddyfile="$1"; fi
   docker rm -f "$run_id-edge" > /dev/null 2>&1 || true
   docker run -d --name "$run_id-edge" --network "$net" --ip "$edge_ip" \
     -e STUDIO_DOMAIN=studio.localhost -e STUDIO_CLOUDFLARE_ALLOW_DIRECT="$2" \
-    -v "$stack/$1:/etc/caddy/Caddyfile:ro" \
+    -v "$caddyfile:/etc/caddy/Caddyfile:ro" \
     -v "$work/cloudflare-ips.caddy:/etc/caddy/cloudflare-ips.caddy:ro" \
     -v "$work/origin-pull:/etc/caddy/origin-pull:ro" \
     "$caddy_image" > /dev/null
@@ -183,3 +185,15 @@ wait_ready "$cloudflare_peer"
 response="$(request "$cloudflare_peer" /api/whoami "${spoof[@]}")"
 expect 'Public mode' "$response" "^client=${cloudflare_peer//./\\.} proto=https\$"
 echo 'Public mode: untrusted peer headers are ignored.'
+
+# Give the test peer a matching remote_ip range as well as trusted_proxies.
+# The public Caddyfile must take CF-Connecting-IP, never its forged XFF value.
+sed "s|173\.245\.48\.0/20|$cloudflare_peer/32|" "$stack/Caddyfile.public" > "$work/Caddyfile.public-trusted"
+start_edge "$work/Caddyfile.public-trusted" false
+wait_ready "$cloudflare_peer"
+response="$(request "$cloudflare_peer" /api/whoami "${spoof[@]}")"
+expect 'Public trusted Cloudflare peer' "$response" '^client=198\.51\.100\.7 proto=https$'
+reject 'Public trusted Cloudflare peer' "$response" 'client=192\.0\.2\.66'
+response="$(request "$cloudflare_peer" /api/whoami -H 'X-Forwarded-For: 192.0.2.66')"
+expect 'Public trusted peer without CF-Connecting-IP' "$response" "^client=${cloudflare_peer//./\\.} proto=https\$"
+echo 'Public mode: trusted Cloudflare peer cannot choose the client through X-Forwarded-For.'
