@@ -116,7 +116,28 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("GET", "/api/cli/usage", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/cli/{cliType}/session-detail", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/cli/{cliType}/working-memory", IamPermissions.WorkspaceOperate)]
-    [InlineData("GET", "/api/cli/quota", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/cli/quota", IamPermissions.WorkspaceRead)]
+    [InlineData("GET", "/api/cli/{cliType}/models", IamPermissions.WorkspaceRead)]
+    [InlineData("GET", "/api/cli/maintenance-model", IamPermissions.WorkspaceRead)]
+    [InlineData("GET", "/api/cli/{name}/effective-mode", IamPermissions.WorkspaceRead)]
+    [InlineData("GET", "/api/admin/prompts", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/admin/prompts/{name}", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/clients", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/clients/{id}", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/watcher/cases", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/watcher/proposals", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/crash-recovery/pending", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/cause-breakers", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/parked-cards", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/pickup-holds", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/workspace/screenshots", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/workspace/summary", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/workspaces/{workspaceId}/quota", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/admin/git-telemetry", IamPermissions.WorkspaceOperate)]
+    [InlineData("GET", "/api/projects/{projectName}/environments/{environmentId}/volumes", IamPermissions.ProjectRead)]
+    [InlineData("PUT", "/api/projects/{projectName}/environments/{environmentId}/volumes/{volume}/schedule", IamPermissions.EnvironmentProductionDeploy)]
+    [InlineData("POST", "/api/projects/{projectName}/environments/{environmentId}/volumes/{volume}/backups", IamPermissions.EnvironmentProductionDeploy)]
+    [InlineData("POST", "/api/projects/{projectName}/environments/{environmentId}/volumes/{volume}/backups/{backupId}/restore", IamPermissions.EnvironmentProductionDeploy)]
     [InlineData("GET", "/api/attempts/reviews/{attemptId}", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/attempts/runs/{attemptId}", IamPermissions.WorkspaceOperate)]
     [InlineData("GET", "/api/attempts/tasks/{taskKey}", IamPermissions.WorkspaceOperate)]
@@ -161,6 +182,8 @@ public sealed class RoutePermissionInventoryTests : IDisposable
         Assert.Equal("environmentId", RoutePermissionCatalog.Resolve("POST",
             "/api/projects/{}/deploy/releases/{}/deployments")?.EnvironmentBodyField);
         Assert.Equal("environment", RoutePermissionCatalog.Resolve("GET", "/api/projects/{}/environments/{}/secrets")?.EnvironmentRouteValue);
+        Assert.Equal("environmentId", RoutePermissionCatalog.Resolve("POST",
+            "/api/projects/{}/environments/{}/volumes/{}/backups")?.EnvironmentRouteValue);
     }
 
     [Fact]

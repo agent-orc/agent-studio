@@ -220,13 +220,26 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   snapshot in that folder. Their routes require the Owner's
   `workspace.administer` permission. Managing installation secret backends
   also requires `workspace.administer`; deploy-job artifact reads require a
-  Runner service credential.
-- CLI usage, transcripts, working memory, quota, models, and policy reads
-  expose installation-wide state and require `workspace.operate`. Only the
-  static CLI types, completion contracts, and migration catalogue use
-  `workspace.read`. The interactive CLI `_probe` is mapped only in the local
-  profile. A pipeline catalogue request with `projectName` checks
+  Runner service credential. Hosted-volume reads require `project.read` on
+  their project; schedule, backup, and restore require
+  `environment.production.deploy` on the declared environment.
+- Installation-wide prompt overrides, client identities, watcher and crash
+  recovery records, parked cards, pickup holds, workspace screenshots and
+  summary, quota records, and git telemetry require `workspace.operate`.
+  Project-scoped bindings alone do not admit these unfiltered collections.
+- CLI usage, transcripts, working memory, and session state require
+  `workspace.operate`. The static catalogues, model list, maintenance model,
+  effective mode, and quota strip reads use `workspace.read`. Quota refresh
+  writes still require `workspace.operate`. The interactive CLI `_probe` is
+  mapped only in the local profile. A pipeline catalogue request with `projectName` checks
   `project.read` for that project before reading its settings.
+- When `TaskServer:BaseUrl` is configured, `/api/v1` reads pass through the
+  standalone proxy under its workspace permission. The proxy does not filter
+  Task Server responses by project. The networked Studio stack leaves that
+  setting unset; deployments that enable it must treat the proxy as a
+  workspace-wide surface.
+- Wiki and security document paths reject symbolic links at every segment
+  beneath the project root, including the document itself.
 - Environment scopes name the environment kind of the project's declarations
   (`docs/deployments/environments/*.json`): `stage`, `production`, or
   `other`, never an environment id. Releases address `stage`, promotions and

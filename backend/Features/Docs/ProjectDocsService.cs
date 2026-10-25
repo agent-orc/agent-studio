@@ -186,13 +186,14 @@ public class ProjectDocsService
         if (baseDir == null) return null;
 
         var secDir = Path.Combine(baseDir, SecurityRel);
-        var meta = ReadMeta(secDir);
-        var files = ListFiles(secDir);
+        var safe = IsLinkFreePath(baseDir, secDir);
+        var meta = safe ? ReadMeta(secDir) : new SecurityMeta(null, null, null);
+        var files = safe ? ListFiles(baseDir, secDir) : [];
 
         return new SecurityOverview(
             ProjectName: projectName,
             BaseDir: secDir,
-            Exists: Directory.Exists(secDir),
+            Exists: safe && Directory.Exists(secDir),
             Meta: meta,
             Files: files);
     }
@@ -204,7 +205,7 @@ public class ProjectDocsService
         if (baseDir == null) return null;
         var full = Path.GetFullPath(Path.Combine(baseDir, SecurityRel, relPath));
         var root = Path.GetFullPath(Path.Combine(baseDir, SecurityRel));
-        if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return null;
+        if (!IsLinkFreePath(baseDir, full) || !full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return null;
         if (!File.Exists(full)) return null;
         return File.ReadAllText(full);
     }
@@ -216,7 +217,7 @@ public class ProjectDocsService
         if (baseDir == null) return false;
         var full = Path.GetFullPath(Path.Combine(baseDir, SecurityRel, relPath));
         var root = Path.GetFullPath(Path.Combine(baseDir, SecurityRel));
-        if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!IsLinkFreePath(baseDir, full) || !full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return false;
         var dir = Path.GetDirectoryName(full);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         File.WriteAllText(full, content);
@@ -228,6 +229,7 @@ public class ProjectDocsService
         var baseDir = ResolveBaseDir(projectName);
         if (baseDir == null) return false;
         var secDir = Path.Combine(baseDir, SecurityRel);
+        if (!IsLinkFreePath(baseDir, Path.Combine(secDir, SecurityStateFile))) return false;
         Directory.CreateDirectory(secDir);
         var path = Path.Combine(secDir, SecurityStateFile);
         File.WriteAllText(path, JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }));
@@ -249,13 +251,15 @@ public class ProjectDocsService
         }
     }
 
-    private static List<SecurityFileEntry> ListFiles(string secDir)
+    private static List<SecurityFileEntry> ListFiles(string baseDir, string secDir)
     {
         if (!Directory.Exists(secDir)) return [];
         var root = Path.GetFullPath(secDir);
         var results = new List<SecurityFileEntry>();
-        foreach (var f in Directory.EnumerateFiles(secDir, "*.md", SearchOption.AllDirectories))
+        foreach (var f in Directory.EnumerateFiles(secDir, "*.md",
+                     new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint }))
         {
+            if (!IsLinkFreePath(baseDir, f)) continue;
             var fi = new FileInfo(f);
             var rel = Path.GetRelativePath(root, f).Replace('\\', '/');
             results.Add(new SecurityFileEntry(
@@ -384,7 +388,8 @@ public class ProjectDocsService
         var full = Path.GetFullPath(Path.Combine(root, relPath));
         // Append a separator to the root so "docs-other/" can't satisfy the prefix.
         var rootWithSep = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
-        return full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase) ? full : null;
+        return full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase)
+               && IsLinkFreePath(baseDir, full) ? full : null;
     }
 
     private static string? ResolveWikiPathUnderRoot(string wikiRoot, string relPath)
@@ -396,12 +401,34 @@ public class ProjectDocsService
             var rootWithSep = root.EndsWith(Path.DirectorySeparatorChar)
                 ? root
                 : root + Path.DirectorySeparatorChar;
-            return full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase) ? full : null;
+            return full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase)
+                   && IsLinkFreePath(Path.GetDirectoryName(root)!, full) ? full : null;
         }
         catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
         {
             return null;
         }
+    }
+
+    private static bool IsLinkFreePath(string baseDir, string fullPath)
+    {
+        var relative = Path.GetRelativePath(baseDir, fullPath);
+        if (relative == "." || Path.IsPathRooted(relative)
+            || relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            return false;
+        var current = baseDir;
+        foreach (var segment in relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            if (File.Exists(current) || Directory.Exists(current))
+            {
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return false;
+            }
+            else if (new FileInfo(current).LinkTarget is not null
+                     || new DirectoryInfo(current).LinkTarget is not null)
+                return false;
+        }
+        return true;
     }
 
     /// <summary>
@@ -446,7 +473,8 @@ public class ProjectDocsService
         {
             var di = new DirectoryInfo(fullWikiDir);
             var sb = new StringBuilder();
-            foreach (var f in di.EnumerateFiles("*", SearchOption.AllDirectories)
+            foreach (var f in di.EnumerateFiles("*", new EnumerationOptions
+                     { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint })
                                 .OrderBy(f => f.FullName, StringComparer.Ordinal))
             {
                 sb.Append(f.FullName).Append('')
@@ -475,7 +503,7 @@ public class ProjectDocsService
 
         using var _t = GitProcessTelemetry.BeginRequest("wiki/cache-fill", _logger);
         var wikiDir = Path.GetFullPath(Path.Combine(source.BaseDir, WikiRel));
-        var exists = Directory.Exists(wikiDir);
+        var exists = Directory.Exists(wikiDir) && IsLinkFreePath(source.BaseDir, wikiDir);
         var sourceKey = string.Join('\u001f', source.Info.Mode, source.Info.Branch, source.Info.Commit ?? "unresolved");
 
         if (!exists)
@@ -494,12 +522,12 @@ public class ProjectDocsService
                 new Dictionary<string, WikiFolderView>(StringComparer.OrdinalIgnoreCase),
                 new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase),
                 new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase),
-                BuildWikiHomeRaw(projectName, wikiDir) ?? new WikiHomeView([]),
+                new WikiHomeView([]),
                 WikiPulseLifecycle.Unavailable("No docs/ folder for this project yet."),
                 new WikiPulseInbox(false, "No docs/ folder for this project yet.", 0, []),
                 WikiPulseCritical.Unavailable("No docs/ folder for this project yet."),
                 WikiPulseWarnings.Unavailable("No docs/ folder for this project yet."),
-                _workbenches?.ListFromSource(projectName, source, includeHistory: true));
+                null);
         }
 
         var signature = ComputeDocsSignature(wikiDir) ?? "unavailable";
@@ -529,7 +557,8 @@ public class ProjectDocsService
 
         var folders = new Dictionary<string, WikiFolderView>(StringComparer.OrdinalIgnoreCase);
         var folderPaths = new List<string> { string.Empty };
-        foreach (var directory in Directory.EnumerateDirectories(wikiDir, "*", SearchOption.AllDirectories))
+        foreach (var directory in Directory.EnumerateDirectories(wikiDir, "*", new EnumerationOptions
+                 { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint }))
         {
             var rel = Path.GetRelativePath(wikiDir, directory).Replace('\\', '/');
             if (IsHiddenWikiPath(rel) || IsWikiAppPath(rel)) continue;
@@ -1565,6 +1594,7 @@ public class ProjectDocsService
 
         foreach (var sub in dir.GetDirectories())
         {
+            if ((sub.Attributes & FileAttributes.ReparsePoint) != 0) continue;
             if (sub.Name.StartsWith('.')) continue;
             var subRel = Path.GetRelativePath(docsRoot, sub.FullName).Replace('\\', '/');
             if (IsWikiAppPath(subRel)) continue; // docs/app/ is code contract, not a wiki page
@@ -1581,6 +1611,7 @@ public class ProjectDocsService
 
         foreach (var file in dir.GetFiles())
         {
+            if ((file.Attributes & FileAttributes.ReparsePoint) != 0) continue;
             if (file.Name.StartsWith('.')) continue;
             var ext = file.Extension;
             var rel = Path.GetRelativePath(docsRoot, file.FullName).Replace('\\', '/');
@@ -2553,7 +2584,8 @@ public class ProjectDocsService
         if (!Directory.Exists(wikiDir)) return [];
         var root = Path.GetFullPath(wikiDir);
         var results = new List<WikiFileEntry>();
-        foreach (var f in Directory.EnumerateFiles(wikiDir, "*", SearchOption.AllDirectories))
+        foreach (var f in Directory.EnumerateFiles(wikiDir, "*", new EnumerationOptions
+                 { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint }))
         {
             var ext = Path.GetExtension(f);
             if (!WikiDocExtensions.Contains(ext)) continue;
@@ -2767,6 +2799,7 @@ public class ProjectDocsService
             if (!full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase)) return null;
         }
         if (!Directory.Exists(full)) return null;
+        if (!IsLinkFreePath(Path.GetDirectoryName(root)!, full)) return null;
         if (IsWikiAppPath(rel)) return null; // docs/app/ is code contract, never a wiki folder
 
         var dir = new DirectoryInfo(full);
@@ -2775,6 +2808,7 @@ public class ProjectDocsService
 
         foreach (var sub in dir.GetDirectories())
         {
+            if ((sub.Attributes & FileAttributes.ReparsePoint) != 0) continue;
             if (sub.Name.StartsWith('.')) continue;
             var subRel = Path.GetRelativePath(root, sub.FullName).Replace('\\', '/');
             if (IsWikiAppPath(subRel)) continue; // hide docs/app/ from the folder overview
@@ -2795,6 +2829,7 @@ public class ProjectDocsService
 
         foreach (var file in dir.GetFiles())
         {
+            if ((file.Attributes & FileAttributes.ReparsePoint) != 0) continue;
             if (!IsWikiFolderPage(file)) continue;
             var fileRel = Path.GetRelativePath(root, file.FullName).Replace('\\', '/');
             var updated = GetPageUpdatedAt(file, gitDates);

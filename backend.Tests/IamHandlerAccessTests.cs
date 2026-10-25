@@ -28,6 +28,23 @@ public sealed class IamHandlerAccessTests : IDisposable
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "iam-handlers-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Scoped_cli_reads_use_static_models_and_do_not_start_refresh()
+    {
+        using var factory = BuildFactory();
+        using var viewer = Client(factory, Invite(factory, "cli.viewer",
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
+
+        using var models = await viewer.GetAsync("/api/cli/codex/models");
+        Assert.Equal(HttpStatusCode.OK, models.StatusCode);
+        using var catalog = JsonDocument.Parse(await models.Content.ReadAsStringAsync());
+        Assert.Equal("scoped-registry", catalog.RootElement.GetProperty("source").GetString());
+        using var refresh = await viewer.GetAsync("/api/cli/codex/models?refresh=true");
+        Assert.Equal(HttpStatusCode.Forbidden, refresh.StatusCode);
+        using var quota = await viewer.GetAsync("/api/cli/quota");
+        Assert.Equal(HttpStatusCode.OK, quota.StatusCode);
+    }
+
+    [Fact]
     public async Task A_viewer_of_beta_who_develops_alpha_cannot_write_beta_through_body_addressed_routes()
     {
         using var factory = BuildFactory();
@@ -207,7 +224,6 @@ public sealed class IamHandlerAccessTests : IDisposable
                      "/api/cli/usage",
                      "/api/cli/claude/session-detail?id=missing",
                      "/api/cli/claude/working-memory",
-                     "/api/cli/quota",
                  })
         {
             using var denied = await viewer.GetAsync(route);

@@ -755,6 +755,34 @@ public class ProjectWikiEnhancementsTests : IDisposable
         Assert.Equal("# Checkout\n", File.ReadAllText(file));
     }
 
+    [Fact]
+    public void Wiki_and_security_documents_reject_links_at_every_path_segment()
+    {
+        var repoRoot = Path.Combine(_tempDir, "linked-repo");
+        var docsRoot = Path.Combine(repoRoot, "docs");
+        var securityRoot = Path.Combine(docsRoot, "operations", "security");
+        var outside = Path.Combine(_tempDir, "outside");
+        Directory.CreateDirectory(securityRoot);
+        Directory.CreateDirectory(outside);
+        var secret = Path.Combine(outside, "secret.md");
+        File.WriteAllText(secret, "outside content");
+        Directory.CreateSymbolicLink(Path.Combine(docsRoot, "linked-folder"), outside);
+        File.CreateSymbolicLink(Path.Combine(docsRoot, "linked-file.md"), secret);
+        Directory.CreateSymbolicLink(Path.Combine(securityRoot, "linked-folder"), outside);
+        File.CreateSymbolicLink(Path.Combine(securityRoot, "linked-file.md"), secret);
+        var docs = BuildDocsService(("Linked", repoRoot));
+
+        Assert.Null(docs.ReadWikiFile("Linked", "linked-folder/secret.md"));
+        Assert.Null(docs.ReadWikiFile("Linked", "linked-file.md"));
+        Assert.False(docs.WriteWikiFile("Linked", "linked-folder/secret.md", "changed").Success);
+        Assert.False(docs.WriteWikiFile("Linked", "linked-file.md", "changed").Success);
+        Assert.Null(docs.ReadSecurityFile("Linked", "linked-folder/secret.md"));
+        Assert.Null(docs.ReadSecurityFile("Linked", "linked-file.md"));
+        Assert.False(docs.WriteSecurityFile("Linked", "linked-folder/secret.md", "changed"));
+        Assert.False(docs.WriteSecurityFile("Linked", "linked-file.md", "changed"));
+        Assert.Equal("outside content", File.ReadAllText(secret));
+    }
+
     // ---- helpers ----
 
     private ProjectDocsService BuildDocsService(params (string Name, string RootPath)[] entries)

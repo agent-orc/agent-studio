@@ -121,6 +121,50 @@ public sealed class IamAccessMiddlewareTests : IDisposable
     }
 
     [Fact]
+    public async Task Unfiltered_workspace_collections_require_a_workspace_operator()
+    {
+        var scoped = Invite("collection.viewer", new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha")));
+        var operatorUser = Invite("collection.operator", new IamGrantRequest(IamRoles.Admin, IamScope.Workspace));
+        var routes = new[]
+        {
+            "/api/admin/prompts", "/api/admin/prompts/{name}", "/api/clients", "/api/clients/{id}",
+            "/api/watcher/cases", "/api/watcher/proposals", "/api/crash-recovery/pending",
+            "/api/cause-breakers", "/api/parked-cards", "/api/pickup-holds",
+            "/api/workspace/screenshots", "/api/workspace/summary", "/api/workspaces/{workspaceId}/quota",
+            "/api/admin/git-telemetry",
+        };
+        foreach (var route in routes)
+        {
+            var path = route.Replace("{name}", "sample").Replace("{id}", "sample")
+                .Replace("{workspaceId}", "main");
+            var denied = await Invoke("GET", route, path, scoped);
+            Assert.Equal((403, false), (denied.Status, denied.Called));
+            Assert.True((await Invoke("GET", route, path, operatorUser)).Called);
+        }
+    }
+
+    [Fact]
+    public async Task Scoped_viewers_keep_read_only_cli_configuration_and_hosted_volume_reads()
+    {
+        var viewer = Invite("scoped.cli.viewer", new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha")));
+        foreach (var route in new[] { "/api/cli/{cliType}/models", "/api/cli/quota",
+                     "/api/cli/maintenance-model", "/api/cli/{name}/effective-mode" })
+        {
+            var path = route.Replace("{cliType}", "codex").Replace("{name}", "codex");
+            Assert.True((await Invoke("GET", route, path, viewer)).Called);
+        }
+        const string volumes = "/api/projects/{projectName}/environments/{environmentId}/volumes";
+        Assert.True((await Invoke("GET", volumes, "/api/projects/alpha/environments/stage/volumes", viewer)).Called);
+        Assert.Equal(403, (await Invoke("GET", volumes, "/api/projects/beta/environments/stage/volumes", viewer)).Status);
+        const string schedule = volumes + "/{volume}/schedule";
+        Assert.Equal(403, (await Invoke("PUT", schedule,
+            "/api/projects/alpha/environments/stage/volumes/data/schedule", viewer)).Status);
+        var owner = Login("first.owner", Password);
+        Assert.True((await Invoke("PUT", schedule,
+            "/api/projects/alpha/environments/stage/volumes/data/schedule", owner)).Called);
+    }
+
+    [Fact]
     public async Task Service_accounts_act_through_their_own_bindings_without_csrf()
     {
         var account = _store.CreateServiceAccount(new CreateServiceAccountRequest("docs-bot", null,
@@ -145,7 +189,7 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         var tasks = await InvokeBearer("GET", "/api/tasks/", "/api/tasks", token);
         Assert.True(tasks.Called);
         var collection = await InvokeBearer("GET", "/api/workspace/screenshots", "/api/workspace/screenshots", token);
-        Assert.Equal((403, "project-scope-denied"), (collection.Status, collection.Error));
+        Assert.Equal((403, "permission-denied"), (collection.Status, collection.Error));
         var audit = File.ReadAllLines(Path.Combine(_store.SecurityFolder, AccessSecurityStore.ServiceAccountAuditFileName));
         Assert.Contains(audit, row => row.Contains($"\"actor\":\"service-account:{account.Id}\"", StringComparison.Ordinal)
             && row.Contains("\"status\":403", StringComparison.Ordinal));

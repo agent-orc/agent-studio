@@ -246,6 +246,10 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/deploy/environments/{}/redeploy", null, "environmentId");
         Environment("POST", IamPermissions.EnvironmentProductionDeploy,
             "/api/projects/{}/deploy/environments/{}/rollback", null, "environmentId");
+        Environment("R", IamPermissions.ProjectRead,
+            "/api/projects/{}/environments/{}/volumes/**", null, "environmentId");
+        Environment("W", IamPermissions.EnvironmentProductionDeploy,
+            "/api/projects/{}/environments/{}/volumes/**", null, "environmentId");
 
         // OTLP intake checks its own environment token. Studio reads require
         // project access; issuing or revoking an ingest token changes project
@@ -294,7 +298,19 @@ public static class RoutePermissionCatalog
         // working memory, quota and model probes are installation-wide.
         Add("R", IamPermissions.WorkspaceRead,
             "/api/cli/types", "/api/cli/contracts", "/api/cli/model-migrations");
+        // These return configuration or cached data without reading sessions.
+        Add("R", IamPermissions.WorkspaceRead,
+            "/api/cli/{}/models", "/api/cli/maintenance-model", "/api/cli/{}/effective-mode",
+            "/api/cli/quota", "/api/cli/quota/caps", "/api/cli/quota/wait-policy",
+            "/api/cli/quota/model-routes");
         Add("R", IamPermissions.WorkspaceOperate, "/api/cli/**");
+        // These collections expose installation-wide prompts, runner identity,
+        // recovery and operational records without per-project filtering.
+        Add("R", IamPermissions.WorkspaceOperate,
+            "/api/admin/prompts/**", "/api/admin/git-telemetry/**", "/api/clients/**",
+            "/api/watcher/**", "/api/crash-recovery/**", "/api/cause-breakers/**",
+            "/api/parked-cards", "/api/pickup-holds", "/api/workspace/screenshots/**",
+            "/api/workspace/summary", "/api/workspaces/{}/quota/**");
         Add("W", IamPermissions.WorkspaceOperate,
             "/api/cli/quota/refresh/**", "/api/cli/{}/session", "/api/cli/{}/working-memory", "/api/clients/**",
             "/api/crash-recovery/**", "/api/git/branch-sweep/**", "/api/git/cleanup/**", "/api/git/branch-reclaim/**",
