@@ -7,7 +7,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/stack" "$work/data/origin-pull"
 cp "$stack"/{compose.yaml,Caddyfile.public,Caddyfile.cloudflare,Caddyfile.frontend,cloudflare-ips.caddy,check-edge-config.sh} "$work/stack/"
-printf 'STUDIO_CADDYFILE=./Caddyfile.cloudflare\nSTUDIO_PUBLIC_CLOUDFLARE_EDGE=true\nSTUDIO_DATA_DIR=%s/data\n' "$work" > "$work/stack/.env"
+printf 'STUDIO_CADDYFILE=./Caddyfile.cloudflare\nSTUDIO_PUBLIC_CLOUDFLARE_EDGE=true\nSTUDIO_RESTART_POLICY=on-failure\nSTUDIO_DATA_DIR=%s/data\n' "$work" > "$work/stack/.env"
 
 make_ca() {
   openssl req -x509 -newkey rsa:2048 -nodes -days 2 \

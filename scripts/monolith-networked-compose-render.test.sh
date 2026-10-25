@@ -108,6 +108,17 @@ if env -u STUDIO_PUBLIC_CLOUDFLARE_EDGE docker compose \
   exit 1
 fi
 
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -keyout "$work/cloudflare/data/origin-pull/test-ca.key" \
+  -out "$work/cloudflare/data/origin-pull/ca.pem" \
+  -subj '/CN=studio-test-ca' > /dev/null 2>&1
+bash "$work/cloudflare/stack/check-edge-config.sh" "$stack" > /dev/null
+sed -i 's|STUDIO_PUBLIC_CLOUDFLARE_EDGE=true|STUDIO_PUBLIC_CLOUDFLARE_EDGE=false|' "$work/cloudflare/stack/.env"
+if bash "$work/cloudflare/stack/check-edge-config.sh" "$stack" > /dev/null 2>&1; then
+  echo 'Public edge check accepted a disabled Cloudflare login boundary' >&2
+  exit 1
+fi
+
 # Adapting proves the Caddyfiles parse and shows what the edge trusts.
 # adapt <Caddyfile> [allow-direct] [output name]
 adapt() {

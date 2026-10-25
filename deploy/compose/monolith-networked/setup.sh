@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 usage() {
-  echo 'Usage: setup.sh [--cloudflare [--allow-direct-origin] | --private] <release-version> <hostname> <absolute-data-directory>' >&2
+  echo 'Usage: setup.sh [--private | --cloudflare [--allow-direct-origin]] <release-version> <hostname> <absolute-data-directory>' >&2
   exit 2
 }
 edge=public
