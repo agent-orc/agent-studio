@@ -231,7 +231,15 @@ public static class RoutePermissionCatalog
             "/api/projects/{}/deploy/releases/{}",
             "/api/projects/{}/deploy/deployments", "/api/projects/{}/deploy/deployments/page",
             "/api/projects/{}/deploy/deployments/{}",
-            "/api/projects/{}/deploy/deployments/{}/log", "/api/projects/{}/deploy/audit");
+            "/api/projects/{}/deploy/deployments/{}/log", "/api/projects/{}/deploy/audit",
+            "/api/projects/{}/deploy/runbooks", "/api/projects/{}/deploy/runbooks/runs",
+            "/api/projects/{}/deploy/runbooks/runs/{}", "/api/projects/{}/deploy/runbooks/runs/{}/log");
+        Environment("POST", IamPermissions.EnvironmentDeploy,
+            "/api/projects/{}/deploy/environments/{}/runbooks/{}/runs", null, "environmentId");
+        Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
+            "/api/projects/{}/deploy/runbooks/runs/{}/approve", IamEnvironments.Production);
+        Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,
+            "/api/projects/{}/deploy/runbooks/runs/{}/reject", IamEnvironments.Production);
         BodyEnvironment("POST", IamPermissions.EnvironmentDeploy,
             "/api/projects/{}/deploy/releases/{}/deployments", "environmentId");
         Environment("POST", IamPermissions.EnvironmentProductionDeployApprove,

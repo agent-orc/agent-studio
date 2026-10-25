@@ -74,6 +74,13 @@ public sealed class RoutePermissionInventoryTests : IDisposable
     [InlineData("GET", "/api/projects/{projectName}/deploy/deployments/{deploymentId}", IamPermissions.ProjectRead)]
     [InlineData("GET", "/api/projects/{projectName}/deploy/deployments/{deploymentId}/log", IamPermissions.ProjectRead)]
     [InlineData("GET", "/api/projects/{projectName}/deploy/audit", IamPermissions.ProjectRead)]
+    [InlineData("GET", "/api/projects/{projectName}/deploy/runbooks", IamPermissions.ProjectRead)]
+    [InlineData("GET", "/api/projects/{projectName}/deploy/runbooks/runs", IamPermissions.ProjectRead)]
+    [InlineData("GET", "/api/projects/{projectName}/deploy/runbooks/runs/{runId}", IamPermissions.ProjectRead)]
+    [InlineData("GET", "/api/projects/{projectName}/deploy/runbooks/runs/{runId}/log", IamPermissions.ProjectRead)]
+    [InlineData("POST", "/api/projects/{projectName}/deploy/environments/{environmentId}/runbooks/{name}/runs", IamPermissions.EnvironmentDeploy)]
+    [InlineData("POST", "/api/projects/{projectName}/deploy/runbooks/runs/{runId}/approve", IamPermissions.EnvironmentProductionDeployApprove)]
+    [InlineData("POST", "/api/projects/{projectName}/deploy/runbooks/runs/{runId}/reject", IamPermissions.EnvironmentProductionDeployApprove)]
     [InlineData("POST", "/api/projects/{projectName}/deploy/releases/{releaseId}/deployments", IamPermissions.EnvironmentDeploy)]
     [InlineData("POST", "/api/projects/{projectName}/deploy/deployments/{deploymentId}/approve", IamPermissions.EnvironmentProductionDeployApprove)]
     [InlineData("POST", "/api/projects/{projectName}/deploy/deployments/{deploymentId}/reject", IamPermissions.EnvironmentProductionDeployApprove)]
@@ -187,6 +194,12 @@ public sealed class RoutePermissionInventoryTests : IDisposable
             "/api/projects/{}/environments/{}/run-target-removal/confirm")?.EnvironmentRouteValue);
         Assert.Equal("environmentId", RoutePermissionCatalog.Resolve("POST",
             "/api/projects/{}/deploy/releases/{}/deployments")?.EnvironmentBodyField);
+        Assert.Equal("environmentId", RoutePermissionCatalog.Resolve("POST",
+            "/api/projects/{}/deploy/environments/{}/runbooks/{}/runs")?.EnvironmentRouteValue);
+        Assert.Equal("production", RoutePermissionCatalog.Resolve("POST",
+            "/api/projects/{}/deploy/runbooks/runs/{}/approve")?.Environment);
+        Assert.Equal("production", RoutePermissionCatalog.Resolve("POST",
+            "/api/projects/{}/deploy/runbooks/runs/{}/reject")?.Environment);
         Assert.Equal("environment", RoutePermissionCatalog.Resolve("GET", "/api/projects/{}/environments/{}/secrets")?.EnvironmentRouteValue);
         Assert.Equal("environmentId", RoutePermissionCatalog.Resolve("POST",
             "/api/projects/{}/environments/{}/volumes/{}/backups")?.EnvironmentRouteValue);

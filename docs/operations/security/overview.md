@@ -285,6 +285,10 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   observation writes require `project.runs.operate`; recording operator
   candidate verification additionally requires a human Admin or Owner and
   `workspace.operate` on the workspace.
+- Runbook definitions, runs, and logs require `project.read`. Requesting a
+  run requires `environment.deploy` for the declared environment named in the
+  route. Approving or rejecting a protected run requires
+  `environment.production.deploy.approve`; service accounts cannot approve.
 - The deployment card matrix requires `workspace.read` and filters project
   rows. Run targets use Runner credentials with the deploy scope for desired
   and observed state, and the handler checks the enrolled host id. Stopping
