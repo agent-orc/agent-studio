@@ -128,7 +128,9 @@ public class OrchestratorRunnerTests
         Assert.Contains("--output-format", args);
         var idx = args.IndexOf("--output-format");
         Assert.Equal("json", args[idx + 1]);
-        Assert.Contains("--dangerously-skip-permissions", args);
+        Assert.Contains("--strict-mcp-config", args);
+        Assert.Equal("", args[args.IndexOf("--tools") + 1]);
+        Assert.DoesNotContain("--dangerously-skip-permissions", args);
 
         // -p is always followed by another flag (no positional prompt arg).
         var pIdx = args.IndexOf("-p");

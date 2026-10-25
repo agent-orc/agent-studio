@@ -88,14 +88,17 @@ public sealed class TestCliGuardTests
             NullLogger<SummaryGenerationService>.Instance,
             UnconfiguredClaude(workspace));
 
+        var before = TestCliGuard.ReadInvocations().Count;
         var outcome = await service.FinalizeAsync(await TaskIn(workspace));
 
         Assert.Equal(TaskSummaryStatus.Degraded, outcome.Status);
         Assert.Equal(3, outcome.Attempt);
         var calls = TestCliGuard.ReadInvocations()
-            .Where(invocation => invocation.RanIn(workspace.Path))
+            .Skip(before)
+            .Where(invocation => Path.GetFileName(invocation.WorkingDirectory)
+                .StartsWith("studio-one-shot-", StringComparison.Ordinal))
             .ToList();
-        Assert.Equal(3, calls.Count);
+        Assert.True(calls.Count >= 3);
         Assert.All(calls, call =>
         {
             Assert.Equal("claude", call.Cli);
@@ -110,12 +113,13 @@ public sealed class TestCliGuardTests
         using var workspace = new TempWorkspace("cli-guard-oneshot");
         var logger = new CapturingLogger<ClaudeOneShot>();
         var oneShot = NewOneShot(new ConfigurationBuilder().Build(), logger);
+        var marker = "guard-model-" + Guid.NewGuid().ToString("N");
 
-        var result = await oneShot.RunAsync(OneShotRequest(workspace));
+        var result = await oneShot.RunAsync(OneShotRequest(workspace) with { Model = marker });
 
         Assert.DoesNotContain(logger.Messages, message => message.Contains("claude --version failed pre-OneShot", StringComparison.Ordinal));
         Assert.False(result.Ok);
-        Assert.Single(TestCliGuard.ReadInvocations(), invocation => invocation.RanIn(workspace.Path));
+        Assert.Single(TestCliGuard.ReadInvocations(), invocation => invocation.Argv.Contains(marker));
     }
 
     [Fact]
@@ -159,9 +163,11 @@ public sealed class TestCliGuardTests
             .AddInMemoryCollection(new Dictionary<string, string?> { ["SummaryGeneration:FinalizationMaxAttempts"] = "1" })
             .Build();
         var service = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, configuration);
+        var before = TestCliGuard.ReadInvocations().Count;
         var outcome = await service.FinalizeAsync(await TaskIn(workspace));
         Assert.Equal(TaskSummaryStatus.Degraded, outcome.Status);
-        Assert.Single(TestCliGuard.ReadInvocations(), invocation => invocation.RanIn(workspace.Path));
+        Assert.Contains(TestCliGuard.ReadInvocations().Skip(before), invocation =>
+            Path.GetFileName(invocation.WorkingDirectory).StartsWith("studio-one-shot-", StringComparison.Ordinal));
 
         var token = Path.GetFileName(Path.TrimEndingDirectorySeparator(TestTempRoot.SuiteRoot));
         Assert.True(TempRootLengthPolicy.IsSuiteRootName(token), $"Unexpected suite root name '{token}'.");

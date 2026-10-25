@@ -22,7 +22,7 @@ public interface IBuildCommandRunner
 
 /// <summary>
 /// Default <see cref="IBuildCommandRunner"/>: runs the command through git-bash
-/// (<c>bash -lc</c>, located by <see cref="BashExecutable"/>) in the given
+/// (<c>bash -c</c>, located by <see cref="BashExecutable"/>) in the given
 /// working directory, matching the repo's shell policy (sh, not PowerShell).
 /// Captures combined stdout+stderr (tail-bounded).
 /// </summary>
@@ -41,7 +41,13 @@ public sealed class ProcessBuildCommandRunner : IBuildCommandRunner
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        psi.ArgumentList.Add("-lc");
+        psi.Environment.Clear();
+        psi.Environment["PATH"] = OperatingSystem.IsWindows()
+            ? Environment.GetEnvironmentVariable("PATH") ?? string.Empty
+            : "/usr/local/bin:/usr/bin:/bin";
+        if (OperatingSystem.IsWindows())
+            psi.Environment["SystemRoot"] = Environment.GetEnvironmentVariable("SystemRoot") ?? @"C:\Windows";
+        psi.ArgumentList.Add("-c");
         psi.ArgumentList.Add(command);
 
         using var proc = new Process { StartInfo = psi };

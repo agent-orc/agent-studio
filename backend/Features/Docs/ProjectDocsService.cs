@@ -205,7 +205,7 @@ public class ProjectDocsService
         var full = Path.GetFullPath(Path.Combine(baseDir, SecurityRel, relPath));
         var root = Path.GetFullPath(Path.Combine(baseDir, SecurityRel));
         if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return null;
-        if (!File.Exists(full)) return null;
+        if (!FilesystemPathBoundary.IsRegularFileUnder(baseDir, full)) return null;
         return File.ReadAllText(full);
     }
 
@@ -310,7 +310,8 @@ public class ProjectDocsService
         }
 
         var full = ResolveWikiPathUnderRoot(snapshot.WikiDir, normalized);
-        if (full == null || !File.Exists(full))
+        if (full == null || !FilesystemPathBoundary.IsRegularFileUnder(
+                Path.GetDirectoryName(snapshot.WikiDir)!, full))
         {
             var revision = snapshot.Source.Info.ShortCommit is { } shortCommit
                 ? $" at {shortCommit}"
@@ -358,7 +359,8 @@ public class ProjectDocsService
         var ext = Path.GetExtension(relPath);
         if (!WikiAssetContentTypes.TryGetValue(ext, out var contentType)) return null;
         var full = ResolveWikiPath(projectName, relPath, requireDoc: false);
-        if (full == null || !File.Exists(full)) return null;
+        if (full == null || !FilesystemPathBoundary.IsRegularFileUnder(
+                ResolveWikiSource(projectName)!.BaseDir, full)) return null;
         return (full, contentType);
     }
 

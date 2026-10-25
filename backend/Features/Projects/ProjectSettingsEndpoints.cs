@@ -1121,7 +1121,7 @@ public static class ProjectSettingsEndpoints
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             var profile = settings.Get(projectName).BuildProfile;
             return Results.Ok(new { profile, pickupAllowed = BuildProfileGate.AllowsAutoPickup(profile) });
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
 
         app.MapPut("/api/projects/{projectName}/test-execution", (string projectName, TestExecutionPolicy req, ProjectSettingsService settings, TaskScannerService scanner) =>
         {
@@ -1272,14 +1272,16 @@ public static class ProjectSettingsEndpoints
             settings.SetBuildProfile(projectName, null);
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             return Results.Ok(new { cleared = true });
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
 
         // POST runs the validation dry-run (install + build in the project's
         // checkout). On green the profile flips to pipeline-ready and the runner
         // may auto-pick the project; on red it lands in validation-failed with a
         // recorded reason. Synchronous: the caller waits for the verdict.
-        app.MapPost("/api/projects/{projectName}/build-profile/validate", async (string projectName, ProjectSettingsService settings, TaskScannerService scanner, BuildProfileValidationService validator, CancellationToken ct) =>
+        app.MapPost("/api/projects/{projectName}/build-profile/validate", async (string projectName, ProjectSettingsService settings, TaskScannerService scanner, BuildProfileValidationService validator, IConfiguration configuration, CancellationToken ct) =>
         {
+            if (SecurityProfiles.IsNetworked(configuration))
+                return Results.Conflict(new { error = RemoteExecutionRequirement.Code, message = RemoteExecutionRequirement.Message });
             var entry = scanner.GetWatchPaths().FirstOrDefault(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (entry is null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
 
@@ -1305,7 +1307,7 @@ public static class ProjectSettingsEndpoints
                 profile,
                 pickupAllowed = BuildProfileGate.AllowsAutoPickup(profile),
             });
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+        }).RequireStudioRole(StudioRoles.Owner).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
         // The orchestrator's model can be tuned per project. Defaults to
         // Opus when null. This is the only knob today; per-call overrides
