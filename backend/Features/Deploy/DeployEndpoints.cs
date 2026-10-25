@@ -31,6 +31,10 @@ public static class DeployEndpoints
             deploy.ReleasePage(projectName, offset ?? 0, limit ?? 25, artifact, notAfterUtc) is { } value
                 ? Results.Ok(value) : UnknownProject(projectName));
 
+        project.MapGet("/releases/{releaseId}/page", (string projectName, string releaseId, int? limit, DeployService deploy) =>
+            deploy.ReleasePageContaining(projectName, releaseId, limit ?? 25) is { } value
+                ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
+
         project.MapGet("/releases/{releaseId}", (string projectName, string releaseId, DeployService deploy) =>
             deploy.ReleaseDetail(projectName, releaseId) is { } value
                 ? Results.Ok(value) : Results.NotFound(new { error = $"Unknown release '{releaseId}'." }));
@@ -61,6 +65,24 @@ public static class DeployEndpoints
 
         project.MapGet("/audit", (string projectName, DeployService deploy) =>
             deploy.Audit(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
+        project.MapGet("/operations", (string projectName, AgentStudio.Projects.ProjectOperationsService operations) =>
+            operations.Read(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
+        project.MapGet("/operations/logs", (string projectName, string environmentId, DateTimeOffset? since,
+            DateTimeOffset? until, string? level, string? releaseId, string? text, int? limit,
+            AgentStudio.Projects.ProjectOperationsService operations) =>
+        {
+            try
+            {
+                return operations.SearchLogs(projectName, environmentId, since, until, level, releaseId, text, limit)
+                    is { } value ? Results.Ok(value) : Results.NotFound(new { error = "Unknown project or environment." });
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.BadRequest(new { error = exception.Message });
+            }
+        });
 
         project.MapPost("/releases/{releaseId}/deployments", (HttpContext context, string projectName,
             string releaseId, DeploymentRequest request, DeployService deploy) =>
