@@ -68,9 +68,9 @@ public class PromptEnhancementService
                             ?? _configuration["TitleGeneration:Model"]
                             ?? _configuration["ClaudeCli:SummaryModel"]
                             ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku);
-        var prompt = _prompts.Render(TemplateName,
+        var prompt = HostOneShotIsolation.EscapeAbsoluteFileMentions(_prompts.Render(TemplateName,
             new Dictionary<string, string?> { ["input"] = bounded },
-            new PromptCallContext(Step: "prompt-enhancement", Model: fallbackModel));
+            new PromptCallContext(Step: "prompt-enhancement", Model: fallbackModel)));
 
         var sw = AdHocClaudeInvoker.StartTiming();
         var (ok, raw, error) = await InvokeAsync(prompt, ct);
@@ -224,10 +224,11 @@ public class PromptEnhancementService
 
         var claudePath = _configuration["ClaudeCli:Path"] ?? "claude";
 
+        using var workspace = new HostOneShotIsolation.Workspace();
         var psi = new ProcessStartInfo
         {
             FileName = GenericCliExecutionService.ResolveExecutable(claudePath),
-            WorkingDirectory = Directory.GetCurrentDirectory(),
+            WorkingDirectory = workspace.Path,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -242,7 +243,7 @@ public class PromptEnhancementService
         var sw = Stopwatch.StartNew();
         try
         {
-            using var p = Process.Start(psi);
+            using var p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_configuration), CliTypes.Claude);
             if (p == null) return (false, null, "Process.Start returned null");
 
             await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);

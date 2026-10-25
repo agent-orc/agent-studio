@@ -46,7 +46,14 @@ that excludes the Studio API's credentials and service configuration. Host Git
 processes disable repository hooks and fsmonitor and require explicit bare
 repository access. The selected mitigation for repository scripts is the
 Owner-only checkout sync gate; the Owner remains responsible for code promoted
-into the developer checkout before starting a URL preview.
+into the developer checkout before starting a URL preview. Clearing the child
+environment does not isolate a start rule: it still runs as the Studio API user
+and can read absolute paths accessible to that account. Networked build-profile
+validation is refused until a remote validation protocol is available; profile
+edits and URL target changes require the Owner.
+Host Claude one-shots use a temporary empty working directory, disabled tools,
+and an empty strict MCP configuration. Prompt enhancement and title generation
+escape absolute file mentions before sending text to the CLI.
 
 **Accepted risk for single-team installs (2026-10-25).** Coding agents on
 `agent-runner-01` currently run with skip-all permissions in a shared host

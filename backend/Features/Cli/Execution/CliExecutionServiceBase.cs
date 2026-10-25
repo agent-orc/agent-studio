@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.CliHosting;
+using AgentStudio.Security;
 using LibOutcome = CodingAgentRunner.Model.RunOutcome;
 
 namespace AgentStudio.Cli;
@@ -178,6 +179,7 @@ public partial class GenericCliExecutionService : ICliExecutionService
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            HostCliSpawnGuard.Validate(proc.StartInfo, SecurityProfiles.IsNetworked(_configuration));
             proc.Start();
             var rawVersion = proc.StandardOutput.ReadToEnd().Trim();
             proc.WaitForExit(5000);

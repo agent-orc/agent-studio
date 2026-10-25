@@ -54,8 +54,8 @@ public sealed record CliOneShotRequest(
     /// concrete runner.</summary>
     public string? ThinkingLevel { get; init; }
 
-    /// <summary>Working directory the child process runs in. Defaults to
-    /// the backend's CWD when null - usually the workspace root.</summary>
+    /// <summary>Context hint for the caller. Host Claude execution uses an
+    /// empty temporary directory regardless of this value.</summary>
     public string? WorkingDirectory { get; init; }
 
     /// <summary>Wall-clock cap. The child is killed when this elapses.
@@ -78,8 +78,8 @@ public sealed record CliOneShotRequest(
     public bool RecordUsage { get; init; } = true;
 
     /// <summary>Extra argv tokens appended after the standard
-    /// <c>-p / --output-format / --model / --dangerously-skip-permissions</c>
-    /// args. Use for resume flags like <c>-r &lt;sessionId&gt;</c>. Tokens are
+    /// <c>-p / --output-format / --model / --tools ""</c>
+    /// args. Host Claude allows only a resume id or budget. Tokens are
     /// passed through ProcessStartInfo.ArgumentList so no manual quoting
     /// is required.</summary>
     public IReadOnlyList<string>? ExtraArgs { get; init; }

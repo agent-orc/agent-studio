@@ -27,6 +27,58 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-networked-endpoints-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Networked_host_execution_and_url_targets_require_owner()
+    {
+        var projectPath = Directory.CreateDirectory(Path.Combine(_workspace, "projects", "networked-smoke")).FullName;
+        using var factory = BuildFactory(projectPath: projectPath);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var owner = store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        var created = store.CreateUser(new CreateUserRequest(
+            "ops.user", "Ops", StudioRoles.Operator, ["*"], "temporary pass phrase!"));
+        var operatorSession = store.Login(created.User.Username, created.TemporaryPassword, "ops|127.0.0.1");
+        store.ChangePassword(new HumanPrincipal(operatorSession.User,
+                store.AuthenticateSession(operatorSession.SessionToken)!.Session),
+            new ChangePasswordRequest(created.TemporaryPassword, "new permanent pass phrase!"));
+        var registry = factory.Services.GetRequiredService<ProjectRegistry>();
+        var project = registry.EnsureProjectForStorage(projectPath, "networked-smoke", "ws-1");
+        var settings = factory.Services.GetRequiredService<ProjectSettingsService>();
+        settings.SetBuildProfile("networked-smoke", new BuildProfile { InstallCmd = "echo should-not-run" });
+
+        async Task<HttpStatusCode> SendAsync(string path, HttpMethod method, string session, string csrf)
+        {
+            using var request = new HttpRequestMessage(method, path);
+            request.Headers.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={session}");
+            request.Headers.Add("Sec-Fetch-Site", "same-origin");
+            request.Headers.Add("X-CSRF-Token", csrf);
+            request.Content = JsonContent.Create(new { label = "Probe", url = "http://127.0.0.1:2019/", installCmd = "echo test" });
+            using var response = await client.SendAsync(request);
+            return response.StatusCode;
+        }
+
+        foreach (var (path, method) in new[]
+                 {
+                     ("/api/projects/networked-smoke/checkout/sync", HttpMethod.Post),
+                     ("/api/projects/networked-smoke/build-profile", HttpMethod.Put),
+                     ("/api/projects/networked-smoke/build-profile", HttpMethod.Delete),
+                     ("/api/projects/networked-smoke/build-profile/validate", HttpMethod.Post),
+                     ($"/api/projects/{project.Id}/urls", HttpMethod.Post),
+                     ($"/api/projects/{project.Id}/urls/url-1", HttpMethod.Put),
+                     ($"/api/projects/{project.Id}/urls/test", HttpMethod.Post),
+                     ("/api/v1/management/remote-hosts/provider-auth", HttpMethod.Post),
+                     ("/api/v1/management/remote-hosts/runner-01/codex-sign-in", HttpMethod.Post),
+                 })
+            Assert.Equal(HttpStatusCode.Forbidden, await SendAsync(path, method,
+                operatorSession.SessionToken, operatorSession.CsrfToken));
+
+        Assert.Equal(HttpStatusCode.Conflict, await SendAsync(
+            "/api/projects/networked-smoke/build-profile/validate", HttpMethod.Post,
+            owner.SessionToken, owner.CsrfToken));
+        Assert.Equal(BuildProfileStatuses.Declared, settings.Get("networked-smoke").BuildProfile!.Status);
+    }
+
+    [Fact]
     [Trait("Category", "MachineBound")]
     public async Task CheckoutSyncAndRunnerHostSignInRequireOwnerInNetworkedProfile()
     {

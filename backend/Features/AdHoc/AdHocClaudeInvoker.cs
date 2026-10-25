@@ -31,13 +31,12 @@ public static class AdHocClaudeInvoker
     /// build the <c>ProcessStartInfo</c> themselves (working directory,
     /// claude path, stdin encoding) and append these arguments.
     /// </summary>
-    public static IReadOnlyList<string> BuildArgs(string model) => new[]
+    public static IReadOnlyList<string> BuildArgs(string model)
     {
-        "-p",
-        "--output-format", "json",
-        "--model", model,
-        "--dangerously-skip-permissions"
-    };
+        var arguments = new List<string>();
+        AgentStudio.Cli.HostOneShotIsolation.AddClaudeArguments(arguments, model);
+        return arguments;
+    }
 
     /// <summary>
     /// Parse the raw stdout the subprocess returned. When it is the

@@ -604,7 +604,7 @@ public static class RegistryEndpoints
             catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
             catch (UnauthorizedAccessException) { return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden); }
             catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
 
         app.MapPut(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls/{urlId}",
             (string projId, string urlId, UpdateProjectUrlRequest body, ProjectRegistry projects, ClientIdentityStore clients,
@@ -621,7 +621,7 @@ public static class RegistryEndpoints
             catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
             catch (UnauthorizedAccessException) { return Results.Json(new { error = "owner-required" }, statusCode: StatusCodes.Status403Forbidden); }
             catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
 
         app.MapDelete(@"/api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls/{urlId}",
             (string projId, string urlId, ProjectRegistry projects, IProjectUrlProcessStopper procs, ClientIdentityStore clients,
@@ -804,7 +804,7 @@ public static class RegistryEndpoints
                 StartRule = body.StartRule,
             };
             return Results.Ok(await procs.TestAsync(record, candidate, ct));
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+        }).RequireStudioRole(StudioRoles.Owner).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
     }
 
     private static async Task DeleteProvisionedRepositoryAsync(
