@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 usage() {
-  echo 'Usage: setup.sh [--cloudflare [--allow-direct-origin]] <release-version> <hostname> <absolute-data-directory>' >&2
+  echo 'Usage: setup.sh [--private | --cloudflare [--allow-direct-origin]] <release-version> <hostname> <absolute-data-directory>' >&2
   exit 2
 }
 edge=public
@@ -11,6 +11,7 @@ allow_direct=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --cloudflare) edge=cloudflare; shift ;;
+    --private) edge=private; shift ;;
     --allow-direct-origin) allow_direct=true; shift ;;
     --) shift; break ;;
     -*) usage ;;
@@ -54,7 +55,7 @@ STUDIO_DATA_DIR=$data_dir
 STUDIO_BOOTSTRAP_CODE=$code
 STUDIO_CADDYFILE=./Caddyfile.$edge
 STUDIO_CLOUDFLARE_ALLOW_DIRECT=$allow_direct
-STUDIO_PUBLIC_CLOUDFLARE_EDGE=true
+STUDIO_PUBLIC_CLOUDFLARE_EDGE=$([ "$edge" = private ] && echo false || echo true)
 EOF
 printf 'Installer owner code: %s\nStore it until the first owner signs in. It is accepted once.\n' "$code"
 if [ "$edge" = cloudflare ]; then

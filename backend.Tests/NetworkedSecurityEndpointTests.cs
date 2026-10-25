@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 using RClient = Runner::AgentRunner.TaskServerClient;
@@ -25,6 +26,22 @@ namespace AgentStudio.Tests;
 public sealed class NetworkedSecurityEndpointTests : IDisposable
 {
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-networked-endpoints-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public void Invalid_login_address_health_expires_and_renews_on_injected_clock()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 25, 8, 0, 0, TimeSpan.Zero));
+        var health = new NetworkedLoginAddressHealth(clock);
+        Assert.True(health.Healthy);
+        health.ReportInvalid();
+        Assert.False(health.Healthy);
+        clock.Advance(TimeSpan.FromMinutes(4));
+        health.ReportInvalid();
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.False(health.Healthy);
+        clock.Advance(TimeSpan.FromMinutes(4));
+        Assert.True(health.Healthy);
+    }
 
     [Fact]
     public async Task Enrolled_runner_acquires_and_completes_a_fake_task_on_the_networked_stack()
@@ -243,6 +260,38 @@ public sealed class NetworkedSecurityEndpointTests : IDisposable
         var response = await client.PostAsJsonAsync("/api/auth/login",
             new { username = "owner", password = "correct horse battery staple!" });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.False(factory.Services.GetRequiredService<NetworkedLoginAddressHealth>().Healthy);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/healthz")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Private_address_login_is_allowed_without_public_cloudflare_edge()
+    {
+        using var factory = BuildFactory("192.168.1.25");
+        factory.Services.GetRequiredService<AccessSecurityStore>()
+            .Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+        using var response = await client.PostAsJsonAsync("/api/auth/login",
+            new { username = "first.owner", password = "correct horse battery staple!" });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.False(factory.Services.GetRequiredService<NetworkedLoginAddressHealth>().Healthy);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/healthz")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Private_address_login_is_refused_with_public_cloudflare_edge()
+    {
+        using var factory = BuildFactory("192.168.1.25", publicCloudflareEdge: true);
+        factory.Services.GetRequiredService<AccessSecurityStore>()
+            .Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        { BaseAddress = new Uri("https://studio.test"), HandleCookies = false });
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+        using var response = await client.PostAsJsonAsync("/api/auth/login",
+            new { username = "first.owner", password = "correct horse battery staple!" });
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.False(factory.Services.GetRequiredService<NetworkedLoginAddressHealth>().Healthy);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, (await client.GetAsync("/healthz")).StatusCode);
     }
