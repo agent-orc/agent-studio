@@ -1332,6 +1332,7 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal("8181", acmeJob.Destination);
         Assert.Equal("https://acme-stage.example/health", acmeJob.HealthUrl);
         Assert.Equal("/srv/apps/demo/stage/tenants/acme/compose.yml", Assert.Single(acmeJob.SshSteps).ComposeFile);
+        Assert.Equal(acmeJob.HealthUrl, acmeJob.SshSteps[0].HealthUrl);
         Assert.Equal("premium", acmeJob.ResolvedVariables["MODE"]);
         Assert.Equal("ACME_TOKEN", acmeJob.SecretVariableRefs["API_TOKEN"]);
         Assert.Contains("ACME_TOKEN", acmeJob.SecretRefs);
@@ -1350,6 +1351,7 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal("8182", betaJob.Destination);
         Assert.Equal("https://beta-stage.example/health", betaJob.HealthUrl);
         Assert.Equal("/srv/apps/demo/stage/tenants/beta/compose.yml", Assert.Single(betaJob.SshSteps).ComposeFile);
+        Assert.Equal(betaJob.HealthUrl, betaJob.SshSteps[0].HealthUrl);
         Assert.Equal("base", betaJob.ResolvedVariables["MODE"]);
         Assert.DoesNotContain("API_TOKEN", betaJob.SecretVariableRefs.Keys);
         Assert.True(environments.Report("demo", betaJob.Id, new(betaJob.LeaseToken!, true, "health-ok")));

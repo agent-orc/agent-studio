@@ -1459,9 +1459,11 @@ public sealed partial class ProjectEnvironmentService
             HealthUrl = target.HealthUrl,
             SshSteps = declaration.SshSteps.Select(step => step.Step switch
             {
-                "static-site" => step with { Directory = step.Directory!.TrimEnd('/') + "/tenants/" + tenant },
+                "static-site" => step with { Directory = step.Directory!.TrimEnd('/') + "/tenants/" + tenant,
+                    HealthUrl = target.HealthUrl },
                 "container" => step with { ComposeFile = step.ComposeFile![..step.ComposeFile.LastIndexOf('/')]
-                    + "/tenants/" + tenant + "/" + step.ComposeFile[(step.ComposeFile.LastIndexOf('/') + 1)..] },
+                    + "/tenants/" + tenant + "/" + step.ComposeFile[(step.ComposeFile.LastIndexOf('/') + 1)..],
+                    HealthUrl = target.HealthUrl },
                 _ => step,
             }).ToArray(),
         };
