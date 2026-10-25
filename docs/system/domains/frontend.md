@@ -1042,6 +1042,12 @@ header chip, and Result header agree on word and resolved colour, both themes).
   tab-state restoration. This does not affect the Board's `0-backlog` lane,
   which remains the lifecycle landing lane for new tasks.
 
+## Appearance
+
+Appearance offers Light, Dark and System. System resolves the current operating
+system colour scheme and updates when that preference changes; the titlebar
+quick toggle selects an explicit Light or Dark preference.
+
 ## Credential inventory (AGT-3170)
 
 Settings → Credentials reads the Task Server's metadata-only
@@ -1051,6 +1057,8 @@ human accounts. Filters cover host, kind and state. The board and Activity feed
 show current expiry and missing-access alerts from the same projection; an
 Execution Host row shows its own alert count. The per-host Credentials section
 still owns provider login renewal. No secret value or verifier is returned.
+The local and public demo profiles have no Task Server inventory route, so the
+client skips that request and labels the inventory as requiring a Task Server.
 
 The requirement policy uses registered project integration and release refs for
 control-host write access, and active private review subjects for per-host
