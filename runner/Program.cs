@@ -2,6 +2,9 @@ using AgentRunner;
 using AgentStudio.CliHosting;
 using System.Runtime.InteropServices;
 
+if (WindowsProviderBridge.IsBridgeProcess(Environment.ProcessPath, out var bridgeProvider))
+    return await WindowsProviderBridge.RunAsync(bridgeProvider, args);
+
 // Standalone agent host. With a task key it performs the RM-5 one-shot run;
 // without one (or with --poll) it continuously fills bounded host slots. See
 // docs/operations/setup/linux-runner-host.md.
@@ -168,12 +171,18 @@ ProviderAuthProbe.Shared.UseLauncher(
     (fileName, arguments, ct) =>
     {
         var invocation = ProviderAuthProbe.LowPriorityInvocation(fileName, arguments);
-        var context = AuthProbeContext(RunnerCapabilityProbe.Provider(fileName));
+        var provider = RunnerCapabilityProbe.Provider(fileName);
+        var context = AuthProbeContext(provider);
+        var environment = context?.Environment.ToDictionary(kv => kv.Key, kv => (string?)kv.Value)
+            ?? new Dictionary<string, string?>();
+        // A device sign-in probes its unverified Claude token in this child only (AGT-3225).
+        if (ProviderAuthEnvironment.TryGetForCli(provider, out var authName, out var authValue))
+            environment[authName] = authValue;
         return ProcessRunner.RunAsync(
             invocation.FileName,
             invocation.Arguments,
             workingDirectory: context?.HomePath,
-            environment: context?.Environment.ToDictionary(kv => kv.Key, kv => (string?)kv.Value),
+            environment: environment,
             ct: ct);
     },
     Log);
@@ -350,11 +359,31 @@ if (options.HealthCheckOnly)
 
 try
 {
+    // IP-1: a run target talks to Studio's deploy routes only, never to Task
+    // Server work queues, and opens no listener.
+    if (options.Role == "run-target")
+    {
+        if (!daemonMode)
+            throw new ArgumentException("Run target runs as a polling service and does not accept coding task keys.");
+        var runTarget = AgentRunner.RunTargets.RunTargetOptions.From(options, Environment.GetEnvironmentVariable);
+        using var studio = new HttpClient(TaskServerClient.CreateServiceHandler(options))
+        {
+            BaseAddress = new Uri(options.ServerUrl.TrimEnd('/') + "/"),
+            Timeout = TimeSpan.FromSeconds(options.ServerRequestTimeoutSeconds),
+        };
+        studio.DefaultRequestHeaders.TryAddWithoutValidation("X-Principal-Consumer-Id", options.RunnerId);
+        if (!string.IsNullOrWhiteSpace(options.AuthToken) && string.IsNullOrWhiteSpace(options.AuthTokenFile))
+            studio.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", options.AuthToken);
+        await AgentRunner.RunTargets.RunTargetDaemon.Create(runTarget, studio, Log).RunAsync(shutdown.Token);
+        Log("run-target daemon stopped");
+        return 0;
+    }
     await client.EnsureCompatibleAsync(shutdown.Token);
     // The host polls for device-login commands independently of task slots.
     // Only coding and review service identities own provider CLI homes.
     var deviceLoginPoll = daemonMode && options.Role is ("coding" or "review")
-        ? new DeviceLoginPoller(client, Log, options.StateDir).RunAsync(shutdown.Token)
+        ? new DeviceLoginPoller(client, Log, options.StateDir, options.CodexCliBin, options.ClaudeCliBin)
+            .RunAsync(shutdown.Token)
         : Task.CompletedTask;
     _ = deviceLoginPoll.ContinueWith(task => Log($"device-login poll stopped: {task.Exception?.GetBaseException().GetType().Name}"),
         CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
@@ -453,7 +482,8 @@ static void PrintUsage()
           --server <url>          Task Server base URL       (RUNNER_SERVER_URL)
           --runner-id <id>        Stable runner identity     (RUNNER_ID)
           --runner-name <name>    Board-facing runner name   (RUNNER_NAME)
-          --role <coding|review|gate>  Separate service role (RUNNER_ROLE)
+          --role <coding|review|gate|integration|run-target>
+                                  Separate service role (RUNNER_ROLE)
           --client-id <id>        Attribution label only     (RUNNER_CLIENT_ID)
           --git-remote <url>      Startup probe/one-shot URL  (RUNNER_GIT_REMOTE)
           --git-push-remote <url> Probe/one-shot push URL     (RUNNER_GIT_PUSH_REMOTE)

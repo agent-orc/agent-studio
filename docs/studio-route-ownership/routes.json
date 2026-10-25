@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "studio-route-ownership-2026-10-16",
   "title": "Studio route ownership inventory",
-  "updatedAt": "2026-10-16",
+  "updatedAt": "2026-10-20",
   "sourceTaskKeys": [
     "AGT-2731",
     "AGT-2754",
@@ -11,7 +11,8 @@
     "AGT-2758",
     "AGT-2835",
     "AGT-2983",
-    "AGT-3156"
+    "AGT-3156",
+    "AGT-3225"
   ],
   "countingUnit": "A route is one distinct frontend method plus normalized path template. Query combinations are variants on that route, not additional routes. WS and SSE transports are counted once each.",
   "scope": {
@@ -27,17 +28,17 @@
     ]
   },
   "counts": {
-    "frontendOperations": 467,
-    "frontendApiOperations": 466,
+    "frontendOperations": 468,
+    "frontendApiOperations": 467,
     "frontendHubOperations": 1,
     "byClassification": {
-      "task-server": 357,
+      "task-server": 358,
       "dev-seat": 110,
       "retired": 0
     },
     "orchestratorApiMapGroups": 31,
-    "frontendV1Operations": 80,
-    "frontendV1OperationsExistingInStandaloneTaskServer": 306,
+    "frontendV1Operations": 81,
+    "frontendV1OperationsExistingInStandaloneTaskServer": 307,
     "d4bRoutesToAdd": 51
   },
   "d4bEstimate": {
@@ -250,7 +251,7 @@
     {
       "id": "fe-462",
       "method": "POST",
-      "path": "/api/v1/management/runner-device-logins",
+      "path": "/api/v1/management/device-logins",
       "queryVariants": [
         {
           "kind": "none",
@@ -259,24 +260,24 @@
       ],
       "classification": "task-server",
       "owningComponent": "Remote Task Server",
-      "frontendOwner": "First-run checklist",
+      "frontendOwner": "Device sign-in (first-run checklist, Access, Execution Hosts)",
       "v1Status": "exists",
       "frontendEvidence": [
-        "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.ts"
+        "frontend/src/app/features/remote-hosts/services/provider-auth-status.service.ts"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
       ],
-      "classificationReason": "The Task Server owns the bounded runner device-login request and status.",
+      "classificationReason": "The Task Server owns the single device sign-in service, its 15-minute sessions and its code-free audit (AGT-3225).",
       "ownershipCaveat": null,
       "d4bPriority": null,
       "estimate": null,
-      "targetRoute": "/api/v1/management/runner-device-logins"
+      "targetRoute": "/api/v1/management/device-logins"
     },
     {
       "id": "fe-463",
       "method": "GET",
-      "path": "/api/v1/management/runner-device-logins/{id}",
+      "path": "/api/v1/management/device-logins/{handle}",
       "queryVariants": [
         {
           "kind": "none",
@@ -285,19 +286,45 @@
       ],
       "classification": "task-server",
       "owningComponent": "Remote Task Server",
-      "frontendOwner": "First-run checklist",
+      "frontendOwner": "Device sign-in (first-run checklist, Access, Execution Hosts)",
       "v1Status": "exists",
       "frontendEvidence": [
-        "frontend/src/app/features/shell/components/first-run-checklist/first-run-checklist.component.ts"
+        "frontend/src/app/features/remote-hosts/services/provider-auth-status.service.ts"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
       ],
-      "classificationReason": "The Task Server owns the bounded runner device-login request and status.",
+      "classificationReason": "The Task Server owns the single device sign-in service, its 15-minute sessions and its code-free audit (AGT-3225).",
       "ownershipCaveat": null,
       "d4bPriority": null,
       "estimate": null,
-      "targetRoute": "/api/v1/management/runner-device-logins/{id}"
+      "targetRoute": "/api/v1/management/device-logins/{handle}"
+    },
+    {
+      "id": "fe-468",
+      "method": "POST",
+      "path": "/api/v1/management/device-logins/{handle}/cancel",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "Device sign-in (first-run checklist, Access, Execution Hosts)",
+      "v1Status": "exists",
+      "frontendEvidence": [
+        "frontend/src/app/features/remote-hosts/services/provider-auth-status.service.ts"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23"
+      ],
+      "classificationReason": "The Task Server owns the single device sign-in service, its 15-minute sessions and its code-free audit (AGT-3225).",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null,
+      "targetRoute": "/api/v1/management/device-logins/{handle}/cancel"
     },
     {
       "id": "fe-458",

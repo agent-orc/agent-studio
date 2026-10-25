@@ -56,16 +56,16 @@ run_at() {
 printf '[promotion-full-gate] candidate=%s\n' "$(git -C "$repo" rev-parse HEAD)"
 printf '[promotion-full-gate] dotnet=%s\n' "$(dotnet --version)"
 printf '[promotion-full-gate] node=%s\n' "$(node --version)"
-printf '[promotion-full-gate] npm=%s\n' "$(npm --version)"
+printf '[promotion-full-gate] npm=%s\n' "$(cd "$repo/frontend" && corepack npm --version)"
 
 run_at "$repo" 'Locked dependency identity guard' \
   bash scripts/release/locked-restore.test.sh
 run_at "$repo" '.NET solution restore' \
   dotnet restore agent-taskboard.sln --locked-mode
 run_at "$repo/frontend" 'Frontend dependency install' \
-  npm ci
+  corepack npm ci
 run_at "$repo/frontend" 'Production dependency audit' \
-  npm audit --omit=dev --audit-level=critical
+  corepack npm audit --omit=dev --audit-level=high
 run_at "$repo" 'Release shell contract tests' \
   bash scripts/release/release-scripts.test.sh
 run_at "$repo" '.NET Release build' \
@@ -78,12 +78,12 @@ run_at "$repo" 'Deployment regression scenario (smoke)' \
     --filter 'FullyQualifiedName~TaskServer.Tests.ScenarioTests.Deployment_regression_scenario_smoke' \
     --logger 'console;verbosity=normal'
 run_at "$repo/frontend" 'Frontend lint' \
-  npm run lint:ci
+  corepack npm run lint:ci
 run_at "$repo/frontend" 'Frontend type-check' \
-  npm run typecheck
+  corepack npm run typecheck
 run_at "$repo/frontend" 'Frontend unit tests with coverage' \
-  npm run test:release
+  corepack npm run test:release
 run_at "$repo/frontend" 'Frontend production build' \
-  npm run build
+  corepack npm run build
 
 printf '\nPROMOTION_FULL_GATE=passed\n'

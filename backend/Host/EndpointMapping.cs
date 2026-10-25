@@ -2,6 +2,7 @@
 using AgentStudio.Deploy;
 using AgentStudio.Search;
 using AgentStudio.Proposals;
+using AgentStudio.Quota;
 using AgentStudio.Telemetry;
 using AgentStudio.Review;
 
@@ -91,6 +92,7 @@ public static class EndpointMapping
         }
         app.MapWorkspaceEndpoints();
         app.MapWorkspaceSettingsEndpoints();
+        app.MapWorkspaceQuotaEndpoints();
         app.MapProjectSettingsEndpoints();
         app.MapProjectCheckoutEndpoints();
         app.MapCrashRecoveryEndpoints();
@@ -104,8 +106,10 @@ public static class EndpointMapping
         app.MapSecurityReviewEndpoints();
         app.MapDesignSurfaceEndpoints();
         app.MapProjectTokenUsageEndpoints();
+        app.MapReviewStatisticsEndpoints();
         app.MapReviewObservationEndpoints();
         app.MapUsageCockpitEndpoints();
+        app.MapTokenAnalysisEndpoints();
         app.MapPipelineHealthEndpoints();
         app.MapGateEconomicsEndpoints();
         app.MapOperatorSweepEndpoints();
@@ -119,6 +123,7 @@ public static class EndpointMapping
         app.MapDeployEndpoints();
         app.MapProjectPipelineDefinitionEndpoints();
         app.MapEnvironmentHealthEndpoints();
+        app.MapHostedVolumeBackupEndpoints();
         app.MapTelemetryEndpoints();
         app.MapProjectCycleTimeEndpoints();
         app.MapTestRunEndpoints();

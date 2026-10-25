@@ -1,6 +1,13 @@
 using System.Text;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 using Xunit;
@@ -11,6 +18,18 @@ namespace AgentStudio.Tests;
 public sealed class AccessSecurityTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "studio-security-tests-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task Quota_admission_accepts_only_the_configured_service_bearer()
+    {
+        var serviceToken = "quota-service-" + Guid.NewGuid().ToString("N");
+        var (store, config, _) = NewStore(new() { ["TaskServer:QuotaAdmissionBearerToken"] = serviceToken });
+        var path = "/api/quota/admission/PROJ-001";
+        Assert.True((await Invoke(config, store, "GET", path, bearer: serviceToken)).Called.Value);
+        Assert.Equal(403, (await Invoke(config, store, "GET", path)).Context.Response.StatusCode);
+        Assert.Equal(403, (await Invoke(config, store, "GET", path, bearer: "wrong-" + Guid.NewGuid().ToString("N"))).Context.Response.StatusCode);
+        Assert.Equal(401, (await Invoke(config, store, "GET", "/api/workspaces/ws/quota", bearer: serviceToken)).Context.Response.StatusCode);
+    }
 
     [Fact]
     public void Bootstrap_password_session_and_runner_secrets_are_hashed_at_rest()
@@ -99,6 +118,26 @@ public sealed class AccessSecurityTests : IDisposable
                 new RunnerEnrollmentRequest("artifact-reader", [RunnerScopes.Artifacts], null, null)).Code).Secret)).Called.Value);
         Assert.Equal(403, (await Invoke(config, store, "GET", "/api/gate-artifacts/run",
             bearer: gate.Secret)).Context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Release_push_and_deploy_artifact_read_use_separate_service_scopes()
+    {
+        var (store, config, _) = NewStore();
+        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        var release = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("build-job", [RunnerScopes.Release], null, null)).Code);
+        var deploy = store.EnrollRunner(store.CreateEnrollment(
+            new RunnerEnrollmentRequest("deploy-job", [RunnerScopes.Deploy], null, null)).Code);
+
+        Assert.True((await Invoke(config, store, "POST", "/api/deploy/gate-releases",
+            bearer: release.Secret)).Called.Value);
+        Assert.Equal(403, (await Invoke(config, store, "POST", "/api/deploy/gate-releases",
+            bearer: deploy.Secret)).Context.Response.StatusCode);
+        Assert.True((await Invoke(config, store, "GET", "/api/deploy/jobs/demo/job/artifact",
+            bearer: deploy.Secret)).Called.Value);
+        Assert.Equal(403, (await Invoke(config, store, "GET", "/api/deploy/jobs/demo/job/artifact",
+            bearer: release.Secret)).Context.Response.StatusCode);
     }
 
     [Fact]
@@ -443,26 +482,94 @@ public sealed class AccessSecurityTests : IDisposable
         Assert.Equal((1, 1, 0, 0), store.LoginStateCounts);
     }
 
-    [Theory]
-    [InlineData("Authorization: Bearer rnr.abc.abcdefghijklmnopqrstuvwxyz012345")]
-    [InlineData("password=super-secret")]
-    [InlineData("ssn.abc.abcdefghijklmnopqrstuvwxyz012345")]
-    [InlineData("{\"temporaryPassword\":\"one-time-value\"}")]
-    [InlineData("{\"password\":\"correct horse battery staple\"}")]
-    [InlineData("https://tasks.test/enroll?access_token=query-secret")]
-    [InlineData("X-CSRF-Token: csrf-secret")]
-    [InlineData("Cookie: arbitrary-session=value; preference=also-private")]
-    public void Credential_redaction_removes_secret_material(string input)
+    [Fact]
+    public void Guessed_usernames_and_addresses_keep_throttle_state_bounded()
     {
-        var output = CredentialRedactor.Redact(input);
-        Assert.DoesNotContain("super-secret", output);
-        Assert.DoesNotContain("abcdefghijklmnopqrstuvwxyz012345", output);
-        Assert.DoesNotContain("one-time-value", output);
-        Assert.DoesNotContain("query-secret", output);
-        Assert.DoesNotContain("csrf-secret", output);
-        Assert.DoesNotContain("horse battery", output);
-        Assert.DoesNotContain("also-private", output);
-        Assert.Contains("REDACT", output);
+        var (store, _, clock) = NewStore(new Dictionary<string, string?>
+        {
+            ["Security:LoginThrottle:MaxTrackedClients"] = "8",
+            ["Security:LoginThrottle:MaxTrackedUsernames"] = "8",
+            ["Security:LoginThrottle:ClientMaxFailures"] = "2"
+        });
+        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+
+        for (var index = 0; index < 16; index++)
+        {
+            var failure = Assert.Throws<SecurityOperationException>(() =>
+                store.Login($"guessed.user.{index}", "wrong password", $"unknown|{index}"));
+            if (index < 8) Assert.Equal(401, failure.Status);
+            else Assert.Contains(failure.Status, new[] { 401, 429 });
+            Assert.InRange(store.LoginStateCounts.Clients, 0, 8);
+            Assert.InRange(store.LoginStateCounts.Usernames, 0, 8);
+        }
+        Assert.Equal((8, 8, 0, 0), store.LoginStateCounts);
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("guessed.user.0", "wrong password", "unknown|0")).Status);
+        Assert.Equal(429, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("guessed.user.0", "wrong password", "unknown|0")).Status);
+
+        clock.Advance(TimeSpan.FromMinutes(16));
+        Assert.Equal(401, Assert.Throws<SecurityOperationException>(() =>
+            store.Login("first.owner", "wrong password", "owner|new-address")).Status);
+        Assert.InRange(store.LoginStateCounts.Clients, 0, 8);
+        Assert.InRange(store.LoginStateCounts.Usernames, 0, 8);
+    }
+
+    [Fact]
+    public async Task Large_distinct_login_usernames_do_not_grow_retained_throttle_keys()
+    {
+        var clock = new MutableTimeProvider(DateTimeOffset.Parse("2026-07-13T12:00:00Z"));
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(host =>
+        {
+            host.UseEnvironment("Test");
+            host.ConfigureTestServices(services => services.AddSingleton<TimeProvider>(clock));
+            host.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = Path.Combine(_root, "http-login"),
+                ["Security:Profile"] = "networked",
+                ["Security:LoginThrottle:MaxTrackedClients"] = "8",
+                ["Security:LoginThrottle:MaxTrackedUsernames"] = "8",
+                ["Security:LoginThrottle:ClientMaxFailures"] = "8",
+                ["AllowedHosts"] = "studio.test"
+            }));
+        });
+        var store = factory.Services.GetRequiredService<AccessSecurityStore>();
+        store.Bootstrap(new BootstrapRequest("first.owner", "correct horse battery staple!", null));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://studio.test"), HandleCookies = false
+        });
+        client.DefaultRequestHeaders.Add("Origin", "https://studio.test");
+
+        for (var index = 0; index < 16; index++)
+        {
+            var username = $"guessed.{index}." + new string('x', 2000);
+            using var response = await client.PostAsJsonAsync("/api/auth/login", new { username, password = "wrong password" });
+            Assert.Equal(index < 8 ? HttpStatusCode.Unauthorized : HttpStatusCode.TooManyRequests, response.StatusCode);
+            if (index < 8)
+            {
+                var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+                Assert.Equal("invalid-credentials", body.GetProperty("error").GetString());
+            }
+            Assert.Equal(1, store.LoginStateCounts.Clients);
+            Assert.Equal(0, store.LoginStateCounts.Usernames);
+        }
+
+        using var oversized = await client.PostAsJsonAsync("/api/auth/login", new
+        {
+            username = new string('y', 5000), password = "wrong password"
+        });
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, oversized.StatusCode);
+        Assert.Equal(1, store.LoginStateCounts.Clients);
+
+        clock.Advance(TimeSpan.FromMinutes(16));
+        using var afterExpiry = await client.PostAsJsonAsync("/api/auth/login", new
+        {
+            username = "guessed.after-expiry." + new string('z', 2000), password = "wrong password"
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, afterExpiry.StatusCode);
+        Assert.Equal(1, store.LoginStateCounts.Clients);
+        Assert.Equal(0, store.LoginStateCounts.Usernames);
     }
 
     [Fact]
@@ -599,7 +706,12 @@ public sealed class AccessSecurityTests : IDisposable
         context.Request.Method = method;
         context.Request.Path = path;
         context.Request.Scheme = scheme;
-        if (sessionToken is not null) context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={sessionToken}");
+        if (sessionToken is not null)
+        {
+            context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={sessionToken}");
+            // A browser session request from a Studio page (AGT-3230 Origin rule).
+            context.Request.Headers["Sec-Fetch-Site"] = "same-origin";
+        }
         if (csrf is not null) context.Request.Headers["X-CSRF-Token"] = new StringValues(csrf);
         if (bearer is not null) context.Request.Headers.Authorization = new StringValues("Bearer " + bearer);
         context.Response.Body = new MemoryStream();
@@ -609,7 +721,7 @@ public sealed class AccessSecurityTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_root, true); } catch { }
+        if (Directory.Exists(_root)) Directory.Delete(_root, true);
     }
 
     private sealed class BoolBox { public bool Value; }

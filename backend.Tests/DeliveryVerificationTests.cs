@@ -202,6 +202,38 @@ public sealed class DeliveryVerificationTests
     }
 
     [Fact]
+    public void InspectRemoteDeliveryCommitRange_SalvageAncestor_IsAcceptedByTheFence()
+    {
+        WithRemoteFixture((git, repo, fixture) =>
+        {
+            var range = git.InspectRemoteDeliveryCommitRange(
+                repo, DeliveryBranch, fixture.Tip, "refs/heads/develop", fixture.First);
+
+            Assert.True(range.Success, range.Warning);
+            Assert.Equal(DeliveryVerificationStatus.Verified, range.Verification);
+            Assert.Equal(fixture.First, range.MergeBaseSha);
+            Assert.Contains(range.Commits, commit => commit.Sha == fixture.Tip);
+        });
+    }
+
+    [Fact]
+    public void InspectRemoteDeliveryCommitRange_OmittedSalvage_IsARecoverableBaseRefusal()
+    {
+        WithRemoteFixture((git, repo, fixture) =>
+        {
+            var previousSalvage = DivergentSha(repo, fixture);
+            var range = git.InspectRemoteDeliveryCommitRange(
+                repo, DeliveryBranch, fixture.Tip, "refs/heads/develop", previousSalvage);
+
+            Assert.False(range.Success);
+            Assert.Equal(DeliveryVerificationStatus.BaseNotAncestor, range.Verification);
+            Assert.True(range.IsDisproved);
+            Assert.Contains(previousSalvage[..8], range.Warning);
+            Assert.Contains(fixture.Tip[..8], range.Warning);
+        });
+    }
+
+    [Fact]
     public void InspectRemoteDeliveryCommitRange_MissingRepository_IsNotDisproved()
     {
         var git = NewGitService(Path.GetTempPath());
@@ -464,7 +496,8 @@ public sealed class DeliveryVerificationTests
 
     private static void TryDelete(string path)
     {
-        try { Directory.Delete(path, recursive: true); } catch { }
+        try { Directory.Delete(path, recursive: true); }
+        catch (Exception exception) { SilentCatch.Note(exception, "Delivery verification fixture cleanup is best-effort."); }
     }
 
     private static string RunGit(string cwd, string arguments)
@@ -477,6 +510,7 @@ public sealed class DeliveryVerificationTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         })!;
         var output = process.StandardOutput.ReadToEnd();
         var error = process.StandardError.ReadToEnd();

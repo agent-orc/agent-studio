@@ -497,7 +497,7 @@ public sealed class VerifyCommandPlannerTests : IDisposable
             c.Kind == VerifyCommandKind.Test && c.Command.Contains("OrchestratorApi.Tests.csproj", StringComparison.Ordinal));
         // frontend/package.json declares build/test/lint scripts.
         Assert.Contains(plan.Commands, c =>
-            c.Kind == VerifyCommandKind.Build && c.Command == "npm --prefix frontend run build");
+            c.Kind == VerifyCommandKind.Build && c.Command == "bash scripts/npm-frontend.sh run build");
     }
 
     private static string? FindRepoRoot()

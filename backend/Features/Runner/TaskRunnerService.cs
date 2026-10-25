@@ -32,6 +32,7 @@ public class TaskRunnerService : BackgroundService
     private readonly ProviderLimitRegistry _providerLimits;
     private readonly CliQuotaFallbackService? _quotaFallback;
     private readonly QuotaAdmissionService? _quotaAdmission;
+    private readonly AgentStudio.Quota.WorkspaceQuotaService? _workspaceQuota;
     private readonly OrchestratorChatLog _chatLog;
     private readonly OrchestratorLog _orchestratorLog;
     private readonly OrchestratorRunner _orchestratorRunner;
@@ -178,6 +179,7 @@ public class TaskRunnerService : BackgroundService
         AttemptAuthorityService? attemptAuthority = null,
         TimeProvider? time = null,
         ReviewInputDecisionGateway? reviewInputDecisions = null,
+        AgentStudio.Quota.WorkspaceQuotaService? workspaceQuota = null,
         RemoteRunStopRequestStore? runStops = null)
     {
         _config = config;
@@ -196,6 +198,7 @@ public class TaskRunnerService : BackgroundService
         _quotaCaps = quotaCaps;
         _quotaFallback = quotaFallback;
         _quotaAdmission = quotaAdmission;
+        _workspaceQuota = workspaceQuota;
         _loadThrottle = loadThrottle;
         _chatLog = chatLog;
         _orchestratorLog = orchestratorLog;
@@ -450,7 +453,9 @@ public class TaskRunnerService : BackgroundService
                 projectUrlPortInspector: _projectUrlPortInspector,
                 dispatchRejections: _dispatchRejections,
                 localCodingAdmission: _localCodingAdmission,
-                reviewInputDecisions: _reviewInputDecisions);
+                networked: SecurityProfiles.IsNetworked(_config),
+                reviewInputDecisions: _reviewInputDecisions,
+                workspaceQuota: _workspaceQuota);
             runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
@@ -700,8 +705,8 @@ public class TaskRunnerService : BackgroundService
         if (runner == null) throw new TaskOperationException($"No runner configured for project '{info.ProjectName}' - check RootPath in WatchPaths config", 400);
 
         if (ProjectExecutionPolicy.IsLocalExecution(_projectSettings.Get(info.ProjectName))
-            && !AllowsLocalCoding
-            && WorktreeRunPolicy.RequiresWorktree(info.Mode))
+            && (SecurityProfiles.IsNetworked(_config)
+                || !AllowsLocalCoding && WorktreeRunPolicy.RequiresWorktree(info.Mode)))
             throw new TaskOperationException(
                 RemoteExecutionRequirement.Code + ": " + RemoteExecutionRequirement.Message, 400);
 
@@ -768,6 +773,11 @@ public class TaskRunnerService : BackgroundService
 
         var runner = _runners.Values.FirstOrDefault(r => r.Entry.Name == info.ProjectName);
         if (runner == null) throw new TaskOperationException($"No runner configured for project '{info.ProjectName}'", 400);
+
+        if (SecurityProfiles.IsNetworked(_config)
+            && ProjectExecutionPolicy.IsLocalExecution(_projectSettings.Get(info.ProjectName)))
+            throw new TaskOperationException(
+                RemoteExecutionRequirement.Code + ": " + RemoteExecutionRequirement.Message, 400);
 
         if (!string.IsNullOrWhiteSpace(cliTypeOverride) && cliTypeOverride != info.CliType)
         {
@@ -1315,7 +1325,10 @@ public class TaskRunnerService : BackgroundService
         => !string.IsNullOrEmpty(projectName)
             && _projectSettings.Get(projectName).IntakeEnabled == true;
 
-    public bool AllowsLocalCoding => _localCodingAdmission?.AllowsLocalCoding == true;
+    public bool DenyAllLocalRuns => SecurityProfiles.IsNetworked(_config);
+
+    public bool AllowsLocalCoding => !DenyAllLocalRuns
+        && _localCodingAdmission?.AllowsLocalCoding == true;
 
     public string ResolvePlacement(string projectName)
         => ProjectExecutionPolicy.ResolveExecutionLocation(_projectSettings.Get(projectName));
@@ -1830,7 +1843,9 @@ public class TaskRunnerService : BackgroundService
             projectUrlPortInspector: _projectUrlPortInspector,
             dispatchRejections: _dispatchRejections,
             localCodingAdmission: _localCodingAdmission,
-            reviewInputDecisions: _reviewInputDecisions);
+            networked: SecurityProfiles.IsNetworked(_config),
+            reviewInputDecisions: _reviewInputDecisions,
+            workspaceQuota: _workspaceQuota);
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));

@@ -79,6 +79,18 @@ public sealed class PipelineMigrationPolicyTests
     }
 
     [Fact]
+    public void Static_destination_outside_srv_is_quoted_and_explained()
+    {
+        var staging = Staging with { Destination = "/var/www/site # old" };
+        var proposal = Propose(SchemaOne, [staging]);
+
+        Assert.Contains("directory: \"/var/www/site # old\"", proposal.ProposedYaml);
+        Assert.Contains(proposal.Notes, note => note.Contains("outside /srv", StringComparison.Ordinal));
+        var parsed = ProjectDefinitionReader.Parse(proposal.ProposedYaml!);
+        Assert.Contains(parsed.Issues, issue => issue.Code == "deploy-directory-invalid");
+    }
+
+    [Fact]
     public void Migrated_schema_two_declarations_execute_project_yml_and_refuse_divergence()
     {
         var yaml = Propose(SchemaOne, [Staging, Production]).ProposedYaml!;
@@ -99,8 +111,9 @@ public sealed class PipelineMigrationPolicyTests
 
         var changed = ProjectEnvironmentService.ApplyDefinition(
             [files[0] with { Declaration = Staging with { Destination = "/srv/www/other" } }, files[1]], yaml);
-        Assert.Contains("diverges", changed[0].Error);
-        Assert.Null(changed[0].Declaration);
+        var brokenStage = Assert.Single(changed, item => item.EnvironmentId == Staging.Id);
+        Assert.Contains("diverges", brokenStage.Error);
+        Assert.Null(brokenStage.Declaration);
     }
 
     [Fact]

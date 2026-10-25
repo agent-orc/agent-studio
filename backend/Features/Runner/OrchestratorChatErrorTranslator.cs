@@ -40,6 +40,9 @@ public static class OrchestratorChatErrorTranslator
         var raw = rawError.Trim();
         var lower = raw.ToLowerInvariant();
 
+        if (lower.Contains("project chat cannot run on the studio host in the networked profile"))
+            return new OrchestratorChatErrorTranslation(raw, false, raw);
+
         // Pipe / closed-stream IOException family. The Claude CLI process
         // exited before the backend finished writing the prompt to stdin,
         // so .NET throws "The pipe is being closed." or "Cannot access a

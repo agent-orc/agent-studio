@@ -7,20 +7,55 @@ Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
 
-## Host-owned Codex device login
+Unknown or interrupted attempts that publish salvage hand its exact ref and SHA
+to the next coding claim. The runner starts that worktree at the salvage commit;
+an unavailable or moved ref fails preparation instead of selecting the
+integration branch. The continuation prompt directs a merge of the current
+integration branch so the salvaged commit remains an ancestor of the result.
+If the delivery fence still finds that the recorded base is not an ancestor of
+the result, the legacy completion path withholds the stamp and returns the card
+to Ready. Its next claim starts at the refused result and its prompt names both
+the missing base and the result for an explicit merge.
 
-The Access and Execution Hosts sign-in actions create a 15-minute, one-at-a-time
-Codex login session for a registered host. Task Server holds the browser URL and
-one-time code only in memory. A random session key is returned solely to the
-initiating browser session and is required to read or cancel those instructions.
-The runner claims the command through its outbound Task Server channel, holds a
-local provider login lock, starts `codex login --device-auth` in its own service
-account, and reports the URL and
-code without logging them. A changed local `auth.json` and a successful real
-provider probe are required before completion. Terminal results are audited
-with actor, host, provider and outcome, without the code. Timeout and cancel
-clear the instructions. Each runner keeps its own native credential store;
-neither Task Server nor Studio distributes ChatGPT login files.
+## Host-owned provider device login
+
+One device-login service serves the first-run checklist and the Access and
+Execution Hosts sign-in actions (AGT-3225 merged the AGT-3214 and AGT-3156
+paths). Both surfaces call `/api/v1/management/device-logins`; runners poll
+`/api/v1/runners/{runnerId}/device-login`. `DeviceLoginRouteTests` fails if a
+second device-login route appears. Only an Owner may start, read or cancel a
+sign-in, because it authorizes the host's provider credentials. A start creates
+a 15-minute Codex or Claude login session for a registered host, one at a time
+per host and provider. The optional `targetRunnerId` pins it to one active
+runner of that host: the coding and the review identity of a host own separate
+CLI homes, so the first-run checklist and the Access and Execution Hosts actions
+pass the badge's runner, and only that runner can claim the session. Task
+Server holds the browser URL and one-time code only in memory. A random session
+key is returned solely to the initiating browser session and is required to
+read or cancel those instructions. Closing the dialog or leaving the first-run
+checklist cancels a queued or running session. A runner on that host claims the
+command through its outbound Task Server channel, holds a local provider login
+lock and starts `codex login --device-auth` or `claude setup-token` in its own
+service account through `DeviceLoginExecutor`, the only device-login launcher.
+The child gets a closed stdin pipe. The runner reports the URL and code without
+logging child output. While the CLI runs, the runner reads the session state
+every 2 seconds (`GET /api/v1/runners/{runnerId}/device-login/{handle}`, state
+only). A Studio cancel, a Task Server timeout or a failed instruction publish
+stops the process tree, accepts no credential and reports `failed`; on runner
+shutdown the completion is sent with its own short timeout. Completion requires
+a changed credential file and a successful real provider probe: Codex must
+rewrite its `auth.json`; for Claude only the probe child sees the new setup
+token. The Claude candidate probe makes a fresh real request without the shared
+advertisement cache or daily request budget. The runner checks the session state
+again before writing the token, and restores the previous file and process token
+if completion is rejected. The runner replaces its `provider-auth/claude-token`
+file and its process-wide `CLAUDE_CODE_OAUTH_TOKEN` only after the probe succeeds. At start
+that file wins over a `CLAUDE_CODE_OAUTH_TOKEN` from `runner.env`, because it is
+written only after a verified sign-in; delete it to return to the `runner.env`
+token. The runner logs which source is active, never the value. Terminal
+results are audited with actor, host, provider and outcome, without the code.
+Timeout and cancel clear the instructions. Each runner keeps its own native credential store; neither
+Task Server nor Studio distributes ChatGPT login files.
 
 The coding host also probes the small set of primary and fallback model ids
 with a real request in an isolated scratch context. It adds the valid model ids
@@ -35,18 +70,27 @@ A refused model stays held until the same runner instance advertises it as not
 ready and then advertises a ready verdict with a larger runner-local probe
 sequence. Runner and server clock order never clears the hold. A refused
 fallback does not hold the card once quota admission can use its primary route.
+The claim hold matches the route handed to the runner: a required mechanical
+route, an operator-selected continuation, a provider-refusal sibling, or the
+stored primary. A refused primary does not hide a card using another route.
 
-For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
-denies local coding, `PickupHoldPolicy` projects an unsatisfiable
-`execution-placement` hold. The picker skips it before `RunCliAsync`, records
+For a Ready agent card placed at `local`, `PickupHoldPolicy` projects an
+unsatisfiable `execution-placement` hold when local admission denies its mode.
+The networked profile denies every agent mode. In the local profile,
+`ILocalCodingAdmissionPolicy` still gates modes that need a worktree; planning
+and research keep their existing local admission behavior. The picker skips the
+held card before `RunCliAsync`, records
 the hold reason as `lastPickReason`, and logs one refusal per card and reason
 until the card leaves Ready. The queue-starvation view includes these cards
 even with zero remote slots. Route the project with
 `PUT /api/projects/{projectName}/execution-runner` and a remote runner ID;
 the system does not change placement automatically. The project settings
 projection exposes `localCodingAdmitted` for the placement warning. Explicit
-`POST /api/tasks/{id}/start` checks this refusal before queueing for another
-reason and returns `remote-execution-required` without spawning a CLI.
+`POST /api/tasks/{id}/start` and continuation check this refusal before
+mutating the card and return `remote-execution-required` without spawning a CLI.
+New networked projects without a remote runner start paused. Only the Owner
+may explicitly select local placement in the networked profile, including
+through the project registry update route; local placement remains unrunnable.
 
 Prelaunch infrastructure faults use the per-card fingerprint budget described
 in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infrastructure-failures).
@@ -169,6 +213,173 @@ whose digest matches the result envelope and includes its artifact ID and digest
 in the review subject. The Review Executor fetches that artifact and verifies
 its digest and HEAD before reporting. Completion leaves no review subject when
 the matching artifact is unavailable.
+
+### Run-target host (app hosting, IP-1)
+
+`RUNNER_ROLE=run-target` starts `RunTargetDaemon` (`runner/RunTargets/`).
+It hosts long-lived app containers for the container environments declared
+with `"destination": "edge"` and `targetHostId` equal to its `RUNNER_ID`
+([environment schema](../../app/schemas/project-environment.schema.json)).
+It is separate from the coding, review, gate, and integration roles and runs on
+a run host, not on a work host
+([Integrated platform §5, §7](../../operations/integrierte-plattform/index.html)).
+The protocol is outbound-only. Every `RUN_TARGET_POLL_SECONDS` (default 15) it
+reads `GET /api/deploy/run-targets/{hostId}/desired-state` from Studio.
+It then reports each answered AGT-3176 deploy job on
+`POST /api/deploy/jobs/{project}/{jobId}/report`, and the observed state and
+events on `POST /api/deploy/run-targets/{hostId}/observed-state`. All routes
+require `runner.deploy`, and in the networked profile the caller's Runner ID
+must equal `hostId`. The desired-state read claims the open deploy job, or
+renews its lease. A run target holds one job for at most 30 minutes from its
+first claim; after that Studio records it as `deploy-step-failed` and queues
+the usual automatic rollback. Without an open job, an environment keeps its
+last healthy or rolled-back artifact. Each job stores its approved hosting
+settings (domains, edge mode, health path, variables, and resources), port,
+and secret references. Desired state uses the open job's snapshot, then the
+last healthy job's snapshot. A rollback restores that earlier snapshot even
+if the declaration changed since approval. The legacy `deploy-loop` never claims an
+edge job. Studio writes a project's deploy state and the host's domain claims
+only when they changed.
+
+Only an explicit removal takes an app off the host. A project whose checkout,
+environments folder, declaration files, or deploy state Studio cannot read
+adds neither specs nor removals. When the project has a placement on the
+polling host, it is listed in that host's `skipped` (`checkout-missing`,
+`declarations-missing`, `declaration-invalid`, `declaration-unreadable`). With
+unreadable deploy state the placements are unknown, so no host is told.
+Studio records each placement: environment, host, and the environment kind
+of its last declaration. When a complete read no longer places the
+environment on the host, the placement is pending removal and is listed in
+`runTargetRemovals` of `GET /api/projects/{project}/environments`. Studio
+sends it in `removals` only on a decision:
+
+- `tombstone`: the repository holds `{ "id": "<id>", "removed": true }` in
+  `docs/deployments/environments/`. A tombstone for an id that is still
+  declared makes the declarations invalid.
+- `operator`: an operator calls
+  `POST /api/projects/{project}/environments/{id}/run-target-removal/confirm`
+  (optional body `{ "hostId": ... }`). The actor is recorded.
+- `grace`: kind `other` only, after 10 minutes missing.
+
+Deleting, renaming, or retargeting a `production` or `stage` declaration
+therefore removes nothing by itself. It stays `pending-confirmation`, and
+placements recorded before kinds were kept are treated the same way. A
+declaration that comes back clears the pending removal. The host takes both
+revisions down, each slot cleared as soon as it is gone, so a retry continues
+where a failure stopped. It then removes the app network and confirms with an
+observation in state `removed` only after Docker confirms network removal.
+Failed candidate and replaced-revision teardown stays in the host's durable
+`pendingCleanup` list; failed stops of replaced revisions stay in `pendingStops`.
+Every reconciliation pass retries them, including passes
+while Studio is unreachable. A revision awaiting teardown cannot be started
+again until cleanup succeeds. Studio drops the placement and keeps the last
+20 removals, with decision and actor, in `runTargetRemovals`. An app the
+desired state does not mention is kept as it is, with its route, its previous
+revision, and crash supervision. So is an app whose environment has no
+healthy artifact in Studio; it is still supervised and attached to the edge.
+A host talking to an older Studio without these fields never removes anything.
+
+Supervision does not depend on Studio. When the desired-state read fails,
+the daemon runs a supervise-only pass from its persisted state: every app is
+held, so crash restarts, crash rollbacks, and secret files after a reboot
+proceed without Studio. A failure of any type ends only the cycle, never the
+daemon. The host writes `state.json` through a flushed temporary file and a
+rename, and keeps the same content in `state.last-good.json`. A torn or
+unparsable `state.json` falls back to that copy. Studio flushes the domain
+claims file the same way before its rename.
+
+An app key (`rt-<project>-<environment>-<80-bit hash>`) belongs to the project
+environment stored under it. A spec or removal for another environment that
+maps to the same key is refused and its job reported failed. So are specs that
+share a key within one desired state. The stored app stays as it is, and
+secrets resolve only for the spec's own project after that check.
+
+`RunTargetReconciler` converges each environment through Docker Compose. A
+revision (artifact, port, health path, variables, secret names, resources) is
+pulled and started as its own compose project on the environment's internal
+Docker bridge network. Docker rejects an existing routable network with the
+same name. Only the edge joins both the app network and the public edge
+network, so apps have no route to the host's control-plane network. The app
+is health-checked from inside the edge container, so the check
+uses the same path as public traffic. Traffic switches only after the check
+passes. The replaced revision is stopped and kept, so a rollback restarts it.
+The revision before it is removed. A failed check removes the candidate and
+leaves the running revision serving. Studio then queues the previous artifact,
+which the host already runs. Docker's `on-failure:3` covers short crashes.
+After that the host restarts with `RunTargetCrashPolicy` backoff: 10 s
+doubling to 5 min. From the fifth attempt it reports `crash-loop`, and it
+forgets the attempts after two minutes of stable running. When the current
+revision restarts five times (Docker's and the host's restarts together)
+within 10 minutes and a previous revision is kept, the host restores the
+previous revision behind the same health check. It reports `crash-rollback`
+with the crashing artifact, then Studio queues a rollback job to the last
+healthy artifact. Studio acts on each `crash-rollback` event once, so an
+event still in the host's event list does not roll back a later redeploy of
+the same artifact. Until then the host does not return to the crashing
+revision; only a new deploy job brings it back. Apps get `cpus`,
+`mem_limit`, `memswap_limit`, `pids_limit`, and `no-new-privileges`. They
+publish no port, use no host network, and mount nothing from the host other
+than their secret files. They drop `NET_RAW` and `MKNOD`. Logs are capped
+at three 10 MB files. The writable layer has no size limit of its own,
+because Docker's `storage_opt size` works only on overlay2 over xfs with
+`pquota`. Bound it by placing `/var/lib/docker` on its own file system (or
+xfs with project quotas) sized for the apps of the host, so a growing
+container cannot fill the host's root file system.
+
+The edge is the `rt-edge` Caddy container. `RUN_TARGET_EDGE_IMAGE` must be
+pinned by digest, like app images. The default is `caddy:2.11-alpine` at
+the digest of `caddy:2-alpine` on 2026-10-20, and the image needs `wget` for
+the health check. It publishes
+`RUN_TARGET_HTTP_PORT`/`RUN_TARGET_HTTPS_PORT` (80/443) and joins each app
+network with `docker network connect`. When the edge is (re)started, the host
+connects it again to the network of every app with a current revision, held
+apps included. `RunTargetCaddyfile` gives `acme` sites
+automatic HTTPS (`RUN_TARGET_ACME_EMAIL`). `cloudflare` sites use the origin
+certificate in `RUN_TARGET_CLOUDFLARE_CERT_DIR` (`origin.pem`, `origin.key`;
+SSL mode Full strict) or else Caddy's internal CA (SSL mode Full). With
+`RUN_TARGET_CLOUDFLARE_TRUSTED_PROXIES` set, the client IP comes from
+`CF-Connecting-IP`. Studio offers a declared domain only when it falls under one
+of the project's operator-owned suffixes. They are set with
+`PUT /api/projects/{project}/run-target-domain-suffixes`
+(`{ "suffixes": ["example.com"] }`) and kept in Studio's project settings,
+never in the repository. `example.com` covers itself and its subdomains;
+without a suffix a project claims no domain. A domain belongs to the first
+environment that claims it on a host. Studio persists the claims per host
+(`deployments/run-targets/<host>.json`). It sends a later claimant the domain
+in `refusedDomains`, not in `domains`. A claim ends when its owner no longer
+declares the domain. It stays while the owner's project is skipped or its
+removal is unconfirmed. The host also persists first-claim ownership
+(`domainOwners` in its state) and routes a domain only to its owner, whatever
+key sorts first. Either refusal shows as `domain-conflict` on the other
+environment.
+
+Secret references are resolved on the host just in time, each project from
+its own root: `RUN_TARGET_SECRET_DIR/<project>/<secretRef>`. The default root
+is `/etc/agent-host/secrets`, and the project directory is the lowercased,
+URL-escaped project name, as in Studio's deploy store. A project cannot read
+another project's secret, and a host-wide file directly under the root is
+never used. The host writes each value to a file under
+`RUN_TARGET_SECRET_RUNTIME_DIR` (default `/run/agent-host/run-target-secrets`,
+directory `0700`, files `0444` so any container user can read them). It
+refuses unless `/proc/self/mounts` shows that path on `tmpfs` or `ramfs`. Run
+the service with `RuntimeDirectory=agent-host` and `RuntimeDirectoryPreserve=yes`,
+or point the variable at another tmpfs. Without `RuntimeDirectoryPreserve`,
+systemd deletes the directory when the agent stops, and Docker cannot restart
+an app container on its own until the agent writes the files again. Compose mounts each file read-only at `/run/secrets/<secretRef>`.
+The container gets only the path, in `<NAME>_FILE` (for example
+`DATABASE_URL_FILE`), so the app reads the value from that file. Docker's
+container configuration (`config.v2.json`) therefore holds paths, not values.
+A revision's files exist only while it may run: they go when it is stopped,
+discarded, or removed, and are written again before a restart, restore, or
+rollback. After a reboot the files are gone until the host restarts the app,
+which its supervision does even while Studio is unreachable.
+Values never enter compose files, host state (`RUN_TARGET_STATE_DIR`, default
+`$RUNNER_STATE_DIR/run-target`), Docker's container configuration, Studio, or
+logs; every diagnostic is masked before it is logged. Values exist on the host
+only in that tmpfs, in the agent's memory, and inside the running container.
+Every free-text value in a generated compose file has `$` doubled, so Compose
+interpolates no variable from the agent's environment. Egress allowlists and
+host firewall rules for the run zone belong to IP-2.
 
 ### Integration host (standalone review loop)
 
@@ -460,7 +671,10 @@ unreported claim expires with its lease and is queued again.
 - `backend/Features/Runner/OrchestratorChat.cs` and `OrchestratorRunner.cs`:
   side-sheet chat dispatch. This operating mode accepts the effective model and
   reasoning choice from the live Codex catalogue, executes through the Codex
-  one-shot registry, and rejects non-GPT models without a Claude fallback.
+  one-shot registry, and rejects non-GPT models without a Claude fallback. In
+  the networked profile it never executes Codex on the Studio host: an absent
+  or unreachable assigned runner produces a failed turn with a clear reason.
+  Changing a remotely placed project to local execution requires the Owner.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat
@@ -2138,6 +2352,74 @@ not labelled as drift. The policy accepts a deployment start error when one is
 provided by a release source; the current collector does not yet receive
 compose errors or image digests for arbitrary containers.
 
+## Environment runbooks
+
+`project.yml` schema 2 accepts `runbooks` as named ordered lists:
+
+```yaml
+runbooks:
+  - name: restart
+    steps: [restart-container]
+  - name: backup
+    steps: [backup]
+  - name: enter-maintenance
+    steps: [maintenance-on]
+  - name: leave-maintenance
+    steps: [maintenance-off]
+  - name: rotation
+    steps: [rotate-secrets, restart-container]
+```
+
+Optional `environments`
+restricts a runbook to staging or production. The integration branch version
+is read when the run is requested; its steps and environment-scoped variables
+are frozen in the run. Plain variables and secret-provider names follow the
+deployment variable contract. A production run waits for a signed-in Owner or
+Maintainer; approval queues the frozen steps through the existing deploy host
+claim and report lease. No artifact is required and the release and deployment
+history remain unchanged. Runs share the deployment log and audit store.
+
+The project deployment API uses the prefix
+`/api/projects/{projectName}/deploy`. The environment page uses these
+runbook routes:
+
+| Method | Path after the prefix | Purpose |
+|---|---|---|
+| `GET` | `/runbooks` | List runbook definitions from the integration branch. |
+| `GET` | `/runbooks/runs?environmentId={environmentId}` | List runs for one environment; omit the query to list all project runs. |
+| `GET` | `/runbooks/runs/{runId}` | Read one run, including its steps and approval state. |
+| `GET` | `/runbooks/runs/{runId}/log?step={stepName}` | Read the run log; omit `step` for every step. |
+| `POST` | `/environments/{environmentId}/runbooks/{name}/runs` | Request a run with no request body. Returns `202 Accepted` and the run. |
+| `POST` | `/runbooks/runs/{runId}/approve` | Approve a waiting run and queue its frozen steps. Returns the updated run. |
+| `POST` | `/runbooks/runs/{runId}/reject` | Reject a waiting run. Returns the updated run. |
+
+The mutation routes use the signed-in project actor and the same public-demo
+execution admission as deployment mutations. Production approval and rejection
+require an Owner or Maintainer. `GET /audit` under the same prefix includes
+runbook request, approval, rejection and completion events. A run response
+includes its `id`, `environmentId`, `state`, `steps` and `definitionCommit`;
+each step has a `logRef` for its filtered log.
+
+The target host keeps operator-owned scripts at
+`/etc/agent-host/runbooks/<project>/<step>.sh`. The host runs each script with
+`/bin/sh` and no shell text from the repository. It supplies
+`AGENT_STUDIO_PROJECT`, `AGENT_STUDIO_ENVIRONMENT`,
+`AGENT_STUDIO_DESTINATION`, a per-run `AGENT_STUDIO_RUNBOOK_RUN` marker,
+scoped plain variables and named secrets as environment variables. Names that
+steer the loader or shell (`LD_*`, `DYLD_*`, `BASH_FUNC_*`, `PATH`, `IFS`,
+`ENV`, `BASH_ENV` and the libc loading variables) are rejected by the
+`project.yml` validator as `variable-name-reserved` and again by the host
+before any script starts. Scripts must exit zero to advance; failure stops the
+remaining steps. The host drains output locally and reports only step success
+or failure, so logs do not expose secret values. A step times out after nine
+minutes, and the whole run after ten. On Linux, `setsid` gives each script its
+own process group; timeout or host cancellation also applies while draining
+output after the script exits and kills that group. Descendants that start a
+new session keep the run marker, so cancellation then sweeps `/proc` and kills
+every process carrying it until a sweep finds none. Waiting for the script and
+its output streams is bounded at five seconds, so a survivor cannot hang the
+host. Install scripts on the assigned deploy host before
+invoking the runbook.
 ## Operator deploy targets (AGT-3263)
 
 The runner's DeployTargetExecutor is the call seam for the deploy executor

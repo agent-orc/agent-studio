@@ -10,11 +10,11 @@ internal static class ReviewCommandExitDiagnosis
     private static readonly Regex Secret = new(
         @"(?ix)(?:
           https?://[^\s/@]+@[^\s/]+
-          | [""']?authorization[""']?\s*:\s*[""']?(?:bearer|basic)\s+[^\s,""';]+[""']?
-          | [""']?(?:[A-Za-z0-9]+[_-])*(?:token|password|secret|api[_-]?key)(?:[_-][A-Za-z0-9]+)*[""']?\s*[:=]\s*(?:""[^""\r\n]*""|'[^'\r\n]*'|[^\s,;]+)
-          | (?<![A-Za-z0-9_])(?:sk-[A-Za-z0-9_-]{6,}|ghp_[A-Za-z0-9_]{6,}|github_pat_[A-Za-z0-9_]{6,}|glpat-[A-Za-z0-9_-]{6,}|xox[a-z]-[A-Za-z0-9-]{6,})(?![A-Za-z0-9_])
+          | [""']?authorization[""']?\s*:\s*[""']?(?:bearer|basic|token)\s+[^\s,""';]+[""']?
+          | (?<![A-Za-z0-9_-])(?<key>(?>[A-Za-z0-9_-]{1,128}))[""']?\s*[:=]\s*(?:""[^""\r\n]*""|'[^'\r\n]*'|[^\s,;]+)
+          | (?<![A-Za-z0-9_])(?:sk-[A-Za-z0-9_-]{6,}|gh[psour]_[A-Za-z0-9_]{6,}|github_pat_[A-Za-z0-9_]{6,}|glpat-[A-Za-z0-9_-]{6,}|xox[a-z]-[A-Za-z0-9-]{6,})(?![A-Za-z0-9_])
         )",
-        RegexOptions.Compiled, TimeSpan.FromMilliseconds(100));
+        RegexOptions.Compiled, TimeSpan.FromSeconds(1));
 
     internal static bool Reproduced(int baselineExit, int firstExit, int? repeatExit,
         string? firstSignal = null, string? repeatSignal = null)
@@ -42,7 +42,19 @@ internal static class ReviewCommandExitDiagnosis
         var tail = output.Length > RedactionWindow ? output[^RedactionWindow..] : output;
         try
         {
-            return Secret.Replace(tail, "[redacted]");
+            return Secret.Replace(tail, match =>
+            {
+                var key = match.Groups["key"];
+                if (!key.Success) return "[redacted]";
+                var parts = key.Value.Split(['_', '-'], StringSplitOptions.RemoveEmptyEntries);
+                return parts.Any(part => part.Equals("token", StringComparison.OrdinalIgnoreCase)
+                    || part.Equals("password", StringComparison.OrdinalIgnoreCase)
+                    || part.Equals("secret", StringComparison.OrdinalIgnoreCase)
+                    || part.Equals("apikey", StringComparison.OrdinalIgnoreCase))
+                    || key.Value.Contains("api_key", StringComparison.OrdinalIgnoreCase)
+                    || key.Value.Contains("api-key", StringComparison.OrdinalIgnoreCase)
+                    ? "[redacted]" : match.Value;
+            });
         }
         catch (RegexMatchTimeoutException)
         {

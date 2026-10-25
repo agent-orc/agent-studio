@@ -112,7 +112,13 @@ public sealed record AgentMessageTokens(
     /// Executing host (AGT-2986): a remote runner id, or <c>local</c> for the
     /// workstation. Null on legacy rows, which readers attribute to local.
     /// </summary>
-    [property: JsonPropertyName("host")] string? Host = null);
+    [property: JsonPropertyName("host")] string? Host = null,
+    /// <summary>
+    /// Subset of <see cref="Output"/> the provider reported as reasoning
+    /// (Codex <c>reasoning_output_tokens</c>). Null when the CLI does not
+    /// report it; consumers show that as "not reported", never as zero.
+    /// </summary>
+    [property: JsonPropertyName("reasoningOutput")] long? ReasoningOutput = null);
 
 /// <summary>
 /// Snapshot of the model's context-window state at the moment one turn completed.

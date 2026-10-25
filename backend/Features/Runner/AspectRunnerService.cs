@@ -32,6 +32,7 @@ public sealed class AspectRunnerService
 {
     private readonly RuntimePromptService _prompts;
     private readonly ILogger<AspectRunnerService> _logger;
+    private readonly bool _networked;
 
     /// <summary>
     /// CLI runner injection point. Tests substitute a deterministic stub
@@ -41,7 +42,6 @@ public sealed class AspectRunnerService
     /// constructor; tests can still overwrite the property directly.
     /// </summary>
     public Func<string, string, string, string, TimeSpan, CancellationToken, Task<string>> CliRunner { get; set; }
-        = DefaultRunCliAsync;
 
     private Func<string, string, string, string, string?, TimeSpan, string, CancellationToken, Task<string>>? _thinkingAwareCliRunner;
 
@@ -64,7 +64,8 @@ public sealed class AspectRunnerService
         AdHocUsageRecorder? usage = null,
         CliOneShotRegistry? oneShotRegistry = null,
         PipelineExecutionLog? pipelineLog = null,
-        FileGenerationIndex? fileGenerationIndex = null)
+        FileGenerationIndex? fileGenerationIndex = null,
+        IConfiguration? configuration = null)
     {
         _prompts = prompts;
         _logger = logger;
@@ -72,6 +73,9 @@ public sealed class AspectRunnerService
         _oneShotRegistry = oneShotRegistry;
         _pipelineLog = pipelineLog;
         _fileGenerationIndex = fileGenerationIndex;
+        _networked = configuration is not null && SecurityProfiles.IsNetworked(configuration);
+        CliRunner = (aspectId, cli, model, prompt, timeout, ct) =>
+            DefaultRunCliAsync(aspectId, cli, model, prompt, timeout, ct, _networked);
 
         // Wire production CLI invocation to the OneShot service so prompts
         // travel via stdin (the failure mode this fix exists to prevent
@@ -87,7 +91,7 @@ public sealed class AspectRunnerService
     private async Task<string> RunViaOneShotAsync(string aspectId, string cli, string model, string prompt, string? thinkingLevel, TimeSpan timeout, string jobFolderPath, CancellationToken ct)
     {
         var oneShot = _oneShotRegistry?.Get(cli);
-        if (oneShot == null) return await DefaultRunCliAsync(aspectId, cli, model, prompt, timeout, ct);
+        if (oneShot == null) return await CliRunner(aspectId, cli, model, prompt, timeout, ct);
 
         var result = await oneShot.RunAsync(new CliOneShotRequest(
             CliType: cli,
@@ -666,8 +670,11 @@ public sealed class AspectRunnerService
             sw.Stop();
             var durationMs = sw.ElapsedMilliseconds;
             var parsed = AdHocClaudeInvoker.ParseOrFallback(rawResponse, model);
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.ReviewDecision, model, parsed.Usage,
-                durationMs, ok: true, project: inputs.Project, jobId: inputs.JobId);
+            AdHocClaudeInvoker.Record(_usage, $"aspect-{def.Id}", model, parsed.Usage,
+                durationMs, ok: true, project: inputs.Project, jobId: inputs.JobId,
+                thinkingLevel: thinkingLevel,
+                participantId: string.IsNullOrWhiteSpace(inputs.ReviewAttemptId) ? null
+                    : $"support:review-attempt:{inputs.ReviewAttemptId}:step:aspect-{def.Id}");
             return (parsed.Text, true, parsed.Usage, durationMs);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -761,25 +768,23 @@ public sealed class AspectRunnerService
     /// that caused the 2026-05-11 empty-reply incident.
     /// </summary>
     private static async Task<string> DefaultRunCliAsync(
-        string aspectId, string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
+        string aspectId, string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct, bool networked)
     {
+        using var workspace = new HostOneShotIsolation.Workspace();
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = cli,
+            WorkingDirectory = workspace.Path,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        psi.ArgumentList.Add("-p");
-        psi.ArgumentList.Add("--output-format");
-        psi.ArgumentList.Add("json");
-        psi.ArgumentList.Add("--model");
-        psi.ArgumentList.Add(model);
-        psi.ArgumentList.Add("--dangerously-skip-permissions");
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model);
 
-        using var p = System.Diagnostics.Process.Start(psi);
+        using var p = HostCliSpawnGuard.Start(psi, networked,
+            Path.GetFileNameWithoutExtension(cli.Replace('\\', '/')));
         if (p == null) return string.Empty;
         try
         {
@@ -837,6 +842,7 @@ public sealed record AspectRunInputs(
     string DiffSummary,
     string StatusSummary)
 {
+    public string? ReviewAttemptId { get; init; }
     /// <summary>
     /// Inventory of the job's <c>results/</c> folder (file list + short
     /// excerpts). Completes the evidence source so a reviewer never reads an

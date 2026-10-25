@@ -10,10 +10,11 @@
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: minmax(var(--studio-header-nav-h), auto) minmax(var(--studio-header-usage-h), auto);
+  grid-template-rows: minmax(var(--studio-header-nav-h), auto) minmax(var(--studio-header-usage-h), auto) auto;
   grid-template-areas:
     'nav more'
-    'usage usage';
+    'usage usage'
+    'quota quota';
   min-width: 0;
   background: var(--studio-bg-titlebar);
   border-bottom: 1px solid var(--studio-border-strong);
@@ -52,6 +53,10 @@
   color: var(--studio-text-primary);
   font-weight: 600;
   white-space: nowrap;
+}
+
+.cockpit-header__quota {
+  grid-area: quota;
 }
 
 .cockpit-header__usage {
@@ -162,7 +167,8 @@ app-usage-alarm-status {
 
     grid-template-rows:
       minmax(var(--studio-header-touch-row-h), auto)
-      minmax(var(--studio-header-touch-row-h), auto);
+      minmax(var(--studio-header-touch-row-h), auto)
+      auto;
   }
 }
 
@@ -171,8 +177,10 @@ app-usage-alarm-status {
   --usage-chip-min-h: var(--studio-target-coarse-min);
 
   grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-rows: minmax(var(--studio-header-phone-h), auto);
-  grid-template-areas: 'nav usage more';
+  grid-template-rows: minmax(var(--studio-header-phone-h), auto) auto;
+  grid-template-areas:
+    'nav usage more'
+    'quota quota quota';
 
   .cockpit-header__usage {
     justify-content: flex-end;

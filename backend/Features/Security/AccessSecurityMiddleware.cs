@@ -19,6 +19,7 @@ public sealed class AccessSecurityMiddleware
     private readonly TimelineLog? _timeline;
     private readonly TimeProvider _clock;
     private readonly AgentStudio.Registry.ProjectUrlPreviewAccess _previewAccess;
+    private readonly ILogger<AccessSecurityMiddleware>? _logger;
 
     public AccessSecurityMiddleware(
         RequestDelegate next,
@@ -29,7 +30,8 @@ public sealed class AccessSecurityMiddleware
         AgentStudio.Registry.ProjectRegistry? projects = null,
         TimelineLog? timeline = null,
         TimeProvider? clock = null,
-        AgentStudio.Registry.ProjectUrlPreviewAccess? previewAccess = null)
+        AgentStudio.Registry.ProjectUrlPreviewAccess? previewAccess = null,
+        ILogger<AccessSecurityMiddleware>? logger = null)
     {
         _next = next;
         _configuration = configuration;
@@ -40,6 +42,7 @@ public sealed class AccessSecurityMiddleware
         _timeline = timeline;
         _clock = clock ?? TimeProvider.System;
         _previewAccess = previewAccess ?? new AgentStudio.Registry.ProjectUrlPreviewAccess(TimeProvider.System);
+        _logger = logger;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -97,7 +100,8 @@ public sealed class AccessSecurityMiddleware
             return;
         }
         if (context.Request.Headers.Origin == "null"
-            && path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
+            && (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)
+                || BrowserOriginPolicy.IsEventStream(path, context.Request.Headers)))
         {
             await Reject(context, 403, "opaque-origin-denied", "An opaque origin cannot access Studio APIs.");
             return;
@@ -118,15 +122,60 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
+        // A request that carries a Studio session cookie, or asks for one, must
+        // prove it came from a Studio page. SameSite does not separate sibling
+        // hosts of the same site, and a WebSocket upgrade to an event stream
+        // is a GET that carries the cookie too (AGT-3230).
+        var browserCredential = context.Request.Cookies.ContainsKey(AccessSecurityStore.SessionCookieName)
+                                || (!SecurityProfiles.IsNetworked(_configuration)
+                                    && context.Request.Cookies.ContainsKey(AccessSecurityStore.InsecureSessionCookieName))
+                                || BrowserOriginPolicy.IsBrowserSignIn(path);
+        var origin = BrowserOriginPolicy.Decide(
+            context.Request.Method,
+            browserCredential,
+            BrowserOriginPolicy.IsEventStream(path, context.Request.Headers),
+            context.Request.Headers.Origin.FirstOrDefault(),
+            context.Request.Headers["Sec-Fetch-Site"].FirstOrDefault(),
+            context.Request.Scheme,
+            context.Request.Host);
+        if (!origin.Allowed)
+        {
+            _logger?.LogWarning(
+                "Rejected {Method} {Path} from client {ClientAddress}: {Code}",
+                context.Request.Method, path, context.Connection.RemoteIpAddress, origin.Code);
+            await Reject(context, 403, origin.Code!, origin.Message!);
+            return;
+        }
+
         context.Items[AttributionClientIdItem] = context.Request.Headers["X-Client-Id"].FirstOrDefault();
         if (path.StartsWith("/api/auth", StringComparison.OrdinalIgnoreCase))
             context.Response.Headers.CacheControl = "no-store";
-        var human = _store.AuthenticateSession(
-            context.Request.Cookies[AccessSecurityStore.SessionCookieName]
-            ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName]);
+        var sessionToken = context.Request.Cookies[AccessSecurityStore.SessionCookieName]
+                           ?? (SecurityProfiles.IsNetworked(_configuration)
+                               ? null
+                               : context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName]);
+        var human = _store.AuthenticateSession(sessionToken);
         var bearer = presentedBearer;
         var runner = _store.AuthenticateRunner(bearer);
         var apiToken = human is null ? _store.AuthenticateApiToken(bearer) : null;
+        if (HttpMethods.IsGet(context.Request.Method)
+            && path.StartsWith("/api/quota/admission/", StringComparison.OrdinalIgnoreCase))
+        {
+            var serviceToken = _configuration["TaskServer:QuotaAdmissionBearerToken"];
+            var serviceAuthenticated = !string.IsNullOrWhiteSpace(serviceToken)
+                && bearer is not null
+                && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                    System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(serviceToken)),
+                    System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(bearer)));
+            if (!serviceAuthenticated && (runner is null || !runner.Scopes.Contains(RunnerScopes.Claim)))
+            {
+                await Reject(context, 403, "quota-admission-scope-denied",
+                    "A Task Server service credential or Runner claim scope is required.");
+                return;
+            }
+            await _next(context);
+            return;
+        }
         if (human is not null)
         {
             context.Items[HumanPrincipalItem] = human;
@@ -213,10 +262,19 @@ public sealed class AccessSecurityMiddleware
         // original versioned route as a fallback so only those client reads
         // gain a Runner scope, not other legacy /api/tasks/{id} reads.
         var originalPath = context.Items[AgentStudio.Host.StudioV1LegacyRouteAlias.OriginalPathItem] as string;
+        var productTaskFileRead = human is not null
+            && ContributorAccessPolicy.IsProductSession(human.User)
+            && IsRunnerTaskFileRead(context.Request.Method, path);
+        if (productTaskFileRead
+            && !ContributorAccessPolicy.Allows(context.Request.Method, path, null, false))
+        {
+            await Reject(context, 403, "role-denied", "The Product role cannot read this file.");
+            return;
+        }
         var requiredRunnerScope = RequiredRunnerScope(context.Request.Method, path)
             ?? (originalPath is null ? null : RequiredRunnerScope(context.Request.Method, NormalizePath(originalPath)));
         if (requiredRunnerScope is not null
-            && (human is null || !(IsHumanSessionRead(context.Request.Method, path)
+            && (human is null || !(productTaskFileRead || IsHumanSessionRead(context.Request.Method, path)
                 || originalPath is not null && IsHumanSessionRead(context.Request.Method, NormalizePath(originalPath)))))
         {
             if (runner is null)
@@ -360,7 +418,7 @@ public sealed class AccessSecurityMiddleware
             }
         }
 
-        if (human.User.Role == StudioRoles.Contributor)
+        if (ContributorAccessPolicy.IsProductSession(human.User))
         {
             var card = path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
                 ? _scanner?.FindJob(Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]))
@@ -384,7 +442,7 @@ public sealed class AccessSecurityMiddleware
         }
 
         await _next(context);
-        if (human.User.Role == StudioRoles.Contributor
+        if (ContributorAccessPolicy.IsProductSession(human.User)
             && !safeMethod && context.Response.StatusCode is >= 200 and < 400
             && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
             && _timeline is not null)
@@ -407,6 +465,11 @@ public sealed class AccessSecurityMiddleware
         if (HttpMethods.IsPost(method) && path.Equals("/api/deploy/gate-releases", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Release;
         if (HttpMethods.IsPost(method) && path.StartsWith("/api/deploy/jobs/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Deploy;
+        if (HttpMethods.IsGet(method) && path.StartsWith("/api/deploy/jobs/", StringComparison.OrdinalIgnoreCase))
+            return RunnerScopes.Deploy;
+        if ((HttpMethods.IsGet(method) || HttpMethods.IsPost(method))
+            && path.StartsWith("/api/deploy/run-targets/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Deploy;
         if (path.StartsWith("/api/pull-gates/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Gate;
@@ -531,6 +594,7 @@ public sealed class AccessSecurityMiddleware
 
     private static bool IsHealth(string path)
         => path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/healthz/container", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/drain", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase);
     private static bool IsTelemetryIntake(string method, string path)

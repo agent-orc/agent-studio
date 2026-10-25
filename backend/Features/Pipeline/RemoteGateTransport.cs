@@ -243,7 +243,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                 await File.ReadAllTextAsync(responsePath, ct), RemoteBuildTestGateRunner.Json)
                 ?? throw new InvalidDataException("Remote gate response is empty.");
             return AcceptResponse(response, runId, digest, options.Host, request.Executor,
-                bundleBytes, transfer.Elapsed);
+                bundleBytes, transfer.Elapsed) with { GrantedCores = options.ProcessorCount };
         }
         finally
         {

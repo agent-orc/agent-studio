@@ -14,7 +14,6 @@ public static class PickupHoldMechanisms
     /// <summary>A remote runner refused the offered card and recorded why.</summary>
     public const string DispatchRejection = "dispatch-rejection";
 
-
     /// <summary>The card crashed fast and is serving its exponential cooldown.</summary>
     public const string CrashBackoff = "crash-backoff";
 
@@ -56,7 +55,6 @@ public static class PickupHoldResolutionKinds
 
     /// <summary>Re-offer the card so a healthy runner can claim it.</summary>
     public const string RetryDispatch = "retry-dispatch";
-
 
     /// <summary>Wait out the cooldown, or start the run by hand.</summary>
     public const string WaitOutBackoff = "wait-out-backoff";
@@ -169,7 +167,8 @@ public readonly record struct PickupHoldFacts(
     DateTime NowUtc,
     string? ExecutionLocation = null,
     bool AllowsLocalCoding = false,
-    string? SuggestedRemoteRunnerId = null);
+    string? SuggestedRemoteRunnerId = null,
+    bool DenyAllLocalRuns = false);
 
 /// <summary>
 /// Pure policy: is this card held in its pickup lane, and by what.
@@ -253,14 +252,14 @@ public static class PickupHoldPolicy
 
         if (string.Equals(facts.ExecutionLocation, ExecutionLocations.Local, StringComparison.OrdinalIgnoreCase)
             && !facts.AllowsLocalCoding
-            && AgentStudio.Runner.WorktreeRunPolicy.RequiresWorktree(task.Mode))
+            && (facts.DenyAllLocalRuns || AgentStudio.Runner.WorktreeRunPolicy.RequiresWorktree(task.Mode)))
         {
             var destination = string.IsNullOrWhiteSpace(facts.SuggestedRemoteRunnerId)
                 ? "<runner-id>"
                 : facts.SuggestedRemoteRunnerId;
             return Hold(
                 PickupHoldMechanisms.ExecutionPlacement,
-                $"Project {task.ProjectName} is placed at local execution, but local coding is disabled on this orchestrator.",
+                $"Project {task.ProjectName} is placed at local execution, but local agent execution is disabled on this orchestrator.",
                 laneEntry, facts.NowUtc, unsatisfiable: true,
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.RouteToRemoteRunner,

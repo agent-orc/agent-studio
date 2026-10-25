@@ -139,13 +139,9 @@ public sealed class OperatorCandidateVerificationEndpointTests : IDisposable
         var mappedCard = scanner.FindJob("AGT-3166", watchPath)!;
         var status = factory.Services.GetRequiredService<TaskIntegrationStatusService>()
             .BuildLookup([mappedCard])[mappedCard.TaskKey];
-        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
-        Assert.Equal(IntegrationVerificationStates.Verified, status.Verification?.State);
-        Assert.True(new IntegrationGenerationReconcileSweep(factory.Services.GetRequiredService<TaskMutationService>())
-            .Reconcile(mappedCard, status));
-        using (var reconciled = JsonDocument.Parse(File.ReadAllText(Path.Combine(mappedCard.FolderPath, "task.json"))))
-            Assert.Equal(CommitIntegrationRules.IntegratedByContent, reconciled.RootElement.GetProperty("commits")[0]
-                .GetProperty("integrationRule").GetString());
+        // The new attribution was not in the immutable candidate receipt.
+        // Status projection does not launch git to infer patch equivalence.
+        Assert.Equal(IntegrationStatuses.Pending, status.Status);
 
         TaskJsonFile.UpdateFieldOrThrow(cardFolder, "commits", new[]
         {

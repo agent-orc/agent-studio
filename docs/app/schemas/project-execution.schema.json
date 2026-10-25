@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-taskboard.local/schemas/project-execution.schema.json",
   "title": "Repository project execution definition",
-  "description": "Repository-owned project.yml schema 1 or 2. Schema 2 adds project metadata and the P1 deployment definition: artifacts, ordered environments with protection, the standard lifecycle, deploy steps, and environment-scoped variables that name secrets without values.",
+  "description": "Repository-owned project.yml schema 1 or 2. Schema 2 adds deployments, environments, lifecycle, tenants, scoped variables and operational runbooks. Secrets are references, never values.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -352,6 +352,23 @@
     "lifecycles": {
       "type": "object",
       "additionalProperties": false,
+      "patternProperties": {
+        "^(?!standard$)[a-z0-9][a-z0-9._-]{0,63}$": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["phase"],
+            "properties": {
+              "phase": {"$ref": "#/$defs/deployEnvironmentName"},
+              "automatic": {"type": "boolean"},
+              "approval": {"type": "array", "items": {"enum": ["Owner", "Maintainer"]}},
+              "requires": {"$ref": "#/$defs/deployEnvironmentName"}
+            }
+          }
+        }
+      },
       "required": [
         "standard"
       ],
@@ -669,6 +686,63 @@
       },
       "description": "Deploy steps. static-site copies a static bundle to a directory over SSH; container pulls and restarts a compose service over SSH. Both need a health check URL and timeout."
     },
+    "runbooks": {
+      "description": "Named ordered host operations. Each step resolves to an operator-installed script on the environment's deploy host. No release is created.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "steps"],
+        "properties": {
+          "name": { "$ref": "#/$defs/identifier" },
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/identifier" }
+          },
+          "environments": { "$ref": "#/$defs/environmentScope" }
+        }
+      }
+    },
+    "tenants": {
+      "description": "Customer installations for this project, with their tags and participating environments.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "environments"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+          "tags": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" } },
+          "environments": { "$ref": "#/$defs/environmentScope", "minItems": 1 }
+        }
+      }
+    },
+    "channels": {
+      "description": "Channels select a lifecycle at release creation. Rules match the release version tag and source branch; exactly one default channel is required when channels are declared.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "lifecycle"],
+        "properties": {
+          "name": {"$ref": "#/$defs/identifier"},
+          "lifecycle": {"$ref": "#/$defs/identifier"},
+          "versionRules": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "prereleaseTag": {"$ref": "#/$defs/identifier"},
+              "branchPattern": {"type": "string", "pattern": "^refs/heads/[A-Za-z0-9._/*-]+$"}
+            }
+          },
+          "prereleaseTag": {"$ref": "#/$defs/identifier"},
+          "branchPattern": {"type": "string", "pattern": "^refs/heads/[A-Za-z0-9._/*-]+$"},
+          "default": {"type": "boolean"}
+        }
+      }
+    },
     "variables": {
       "description": "Deploy variables. A value is plain configuration; a secret names a secret-provider entry and never holds its value.",
       "type": "array",
@@ -680,8 +754,12 @@
         ],
         "properties": {
           "name": {
+            "description": "Names that steer the deploy host loader or shell (LD_*, DYLD_*, BASH_FUNC_*, PATH, IFS, ENV, BASH_ENV, and the libc loading variables) are reserved.",
             "type": "string",
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "not": {
+              "pattern": "^(?:[Ll][Dd]_|[Dd][Yy][Ll][Dd]_|[Bb][Aa][Ss][Hh]_[Ff][Uu][Nn][Cc]_|(?:[Pp][Aa][Tt][Hh]|[Ii][Ff][Ss]|[Ee][Nn][Vv]|[Bb][Aa][Ss][Hh]_[Ee][Nn][Vv]|[Ss][Hh][Ee][Ll][Ll][Oo][Pp][Tt][Ss]|[Bb][Aa][Ss][Hh][Oo][Pp][Tt][Ss]|[Pp][Ss]4|[Cc][Dd][Pp][Aa][Tt][Hh]|[Gg][Ll][Oo][Bb][Ii][Gg][Nn][Oo][Rr][Ee]|[Gg][Cc][Oo][Nn][Vv]_[Pp][Aa][Tt][Hh]|[Gg][Ee][Tt][Cc][Oo][Nn][Ff]_[Dd][Ii][Rr]|[Gg][Ll][Ii][Bb][Cc]_[Tt][Uu][Nn][Aa][Bb][Ll][Ee][Ss]|[Hh][Oo][Ss][Tt][Aa][Ll][Ii][Aa][Ss][Ee][Ss]|[Ll][Oo][Cc][Aa][Ll][Dd][Oo][Mm][Aa][Ii][Nn]|[Ll][Oo][Cc][Pp][Aa][Tt][Hh]|[Mm][Aa][Ll][Ll][Oo][Cc]_[Tt][Rr][Aa][Cc][Ee]|[Nn][Ii][Ss]_[Pp][Aa][Tt][Hh]|[Nn][Ll][Ss][Pp][Aa][Tt][Hh]|[Rr][Ee][Ss][Oo][Ll][Vv]_[Hh][Oo][Ss][Tt]_[Cc][Oo][Nn][Ff]|[Rr][Ee][Ss]_[Oo][Pp][Tt][Ii][Oo][Nn][Ss])$)"
+            }
           },
           "value": {
             "type": "string"
@@ -692,6 +770,21 @@
           },
           "environments": {
             "$ref": "#/$defs/environmentScope"
+          },
+          "tenants": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" }
+          },
+          "tenantTags": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" }
+          },
+          "channels": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"$ref": "#/$defs/identifier"}
           }
         },
         "oneOf": [
@@ -710,6 +803,7 @@
     }
   },
   "$defs": {
+    "deployEnvironmentName": {"enum": ["staging", "production"]},
     "relativePath": {
       "type": "string",
       "minLength": 1,
@@ -883,6 +977,12 @@
             {
               "required": [
                 "variables"
+              ]
+            },
+            {
+              "required": [
+                "tenants",
+                "channels"
               ]
             }
           ]

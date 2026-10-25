@@ -18,6 +18,7 @@ export default defineConfig({
       '**/board/failed-pickup-lane.spec.ts',
       '**/project/project-deploy-area.spec.ts',
       '**/workspace/deployment-dashboard.spec.ts',
+      '**/project/project-deploy-area.spec.ts',
     ],
     use: { ...devices['Desktop Chrome'], channel: undefined, serviceWorkers: 'block' },
   }],

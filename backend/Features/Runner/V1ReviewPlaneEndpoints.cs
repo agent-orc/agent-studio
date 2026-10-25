@@ -347,6 +347,7 @@ public static class V1ReviewPlaneEndpoints
             ILoggerFactory loggerFactory,
             QuotaAdmissionService quotaAdmission,
             QuotaAdmissionRecorder quotaAdmissionRecorder,
+            AgentStudio.Quota.WorkspaceQuotaService workspaceQuota,
             ReviewClaimUnclaimableLog unclaimableLog,
             CauseBreakerService causeBreakers,
             CancellationToken ct) =>
@@ -421,8 +422,13 @@ public static class V1ReviewPlaneEndpoints
             // AGT-3077: resolve visibility and repository URL before selection,
             // so a private attempt this host cannot clone is skipped, not
             // leased, even when its plan or URL is only built at hand-out.
-            var repositoryFacts = ClaimRepositoryFacts(
-                authority.ListOpenReviewTaskKeys(), scanner, projects, settings);
+            var openReviewTaskKeys = authority.ListOpenReviewTaskKeys();
+            var repositoryFacts = ClaimRepositoryFacts(openReviewTaskKeys, scanner, projects, settings);
+            // AGT-3177: workspace quota verdicts, one per project, before selection,
+            // so a blocked project's attempt is skipped instead of leased and deferred
+            // at the head of the queue in front of every other project's review.
+            var quotaBlocked = WorkspaceQuotaBlockedReviews(openReviewTaskKeys, scanner, workspaceQuota);
+            string? quotaWaitReason = null;
             var activeByRunner = authority.ListActiveReviewAttempts()
                 .Where(review => review.Lease is not null)
                 .GroupBy(review => review.Lease!.ExecutorId, StringComparer.Ordinal)
@@ -471,6 +477,15 @@ public static class V1ReviewPlaneEndpoints
                 };
                 return placement == Contract.ReviewHostPlacementDecision.Admit;
             }
+            bool Admit(ReviewAttemptDto candidate)
+            {
+                if (quotaBlocked.TryGetValue(candidate.TaskKey, out var refusal))
+                {
+                    quotaWaitReason ??= refusal;
+                    return false;
+                }
+                return AdmitHost(candidate);
+            }
             var claimed = reviewAttemptLifecycle.ClaimNextReview(
                 runnerId,
                 executor.HostId,
@@ -478,7 +493,7 @@ public static class V1ReviewPlaneEndpoints
                 request.RequestedTtlSeconds,
                 executor.Capabilities,
                 heldByCauseBreaker,
-                AdmitHost,
+                Admit,
                 repositoryFacts);
             if (claimed.Status == AttemptWriteStatus.NotFound)
             {
@@ -488,6 +503,10 @@ public static class V1ReviewPlaneEndpoints
                         hostWaitReason == Contract.ReviewClaimEmptyReasons.DifferentHostRequired
                             ? $"Review waits for an executor on a host other than coding host '{executor.HostId}' because this project requires host separation."
                             : $"Review is reserved for an idle eligible executor on a host other than coding host '{executor.HostId}'."));
+                if (quotaWaitReason is not null)
+                    return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
+                        Contract.ReviewClaimEmptyReasons.QuotaDeferred,
+                        quotaWaitReason));
                 // AGT-2987: an empty queue and a queue this executor cannot
                 // serve used to read the same. Name the unclaimable attempts
                 // and the capability keys they need instead.
@@ -560,12 +579,10 @@ public static class V1ReviewPlaneEndpoints
                 mutations,
                 timeline,
                 loggerFactory.CreateLogger(LoggerName));
-            // Legacy plans retain claim-time quota fallback. A versioned
-            // library plan is immutable after sealing; model changes require
-            // a pending replan or a new eligible attempt.
+            // Library plans remain immutable. Check their frozen deep-review
+            // route against live quota before handing out the lease.
             string? quotaDeferredReason;
-            if (subjectTask is not null
-                && !subject.Plan.Commands.Any(command => command.LibraryStep is not null))
+            if (subjectTask is not null)
                 subject = ApplyQuotaFallbackToAspects(
                     subject,
                     subjectTask,
@@ -573,12 +590,14 @@ public static class V1ReviewPlaneEndpoints
                     quotaAdmissionRecorder,
                     (provider, model) => registry.AcceptsModel(
                         runnerId, request.InstanceId, provider, model),
-                    out quotaDeferredReason);
+                    out quotaDeferredReason,
+                    immutablePlan: subject.Plan.Commands.Any(command => command.LibraryStep is not null));
             else
                 quotaDeferredReason = null;
             if (!string.IsNullOrWhiteSpace(quotaDeferredReason))
             {
-                if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId))
+                if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId,
+                    quotaDeferred: true))
                 {
                     return Results.Conflict(new Contract.ApiError(
                         "review-quota-defer-failed",
@@ -1081,6 +1100,7 @@ public static class V1ReviewPlaneEndpoints
             if (preparedTask is null)
                 return Results.Json(new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
+            request = request with { Verdicts = MonolithTransitionAdapter.MergeReviewVerdicts(request.Verdicts) };
             var originalVerdicts = request.Verdicts;
             var previousRounds = projections.Read(preparedTask).Attempts
                 .Where(round => round.AttemptId != attemptId).ToArray();
@@ -2480,7 +2500,8 @@ public static class V1ReviewPlaneEndpoints
         QuotaAdmissionService quotaAdmission,
         QuotaAdmissionRecorder recorder,
         Func<string, string?, bool> modelAccepted,
-        out string? deferredReason)
+        out string? deferredReason,
+        bool immutablePlan = false)
     {
         var switched = false;
         string? deferred = null;
@@ -2490,6 +2511,8 @@ public static class V1ReviewPlaneEndpoints
         var resolvedCommands = subject.Plan.Commands.Select(command =>
         {
             if (!Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)) return command;
+            if (immutablePlan && !string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
+                return command;
             var plan = quotaAdmission.Plan(new QuotaAdmissionRequest(
                 command.CliType,
                 command.Model,
@@ -2560,6 +2583,31 @@ public static class V1ReviewPlaneEndpoints
             source: "review-claim",
             modelFallback: lastSwitch.ModelFallback);
         return subject with { Plan = subject.Plan with { Commands = resolvedCommands } };
+    }
+
+    /// <summary>
+    /// AGT-3177: workspace quota refusals per open review task. Each project is
+    /// admitted once from the task index; without any quota limit nothing is read.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> WorkspaceQuotaBlockedReviews(
+        IReadOnlyList<string> taskKeys,
+        TaskScannerService scanner,
+        AgentStudio.Quota.WorkspaceQuotaService workspaceQuota)
+    {
+        var blocked = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (taskKeys.Count == 0 || !workspaceQuota.HasLimits()) return blocked;
+        var wanted = taskKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var verdicts = new Dictionary<string, AgentStudio.Quota.QuotaAdmission>(StringComparer.OrdinalIgnoreCase);
+        foreach (var task in scanner.ScanAllJobsWithArchive())
+        {
+            var key = new[] { task.TaskKey, task.Key, task.Id }
+                .FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate) && wanted.Contains(candidate));
+            if (key is null) continue;
+            if (!verdicts.TryGetValue(task.ProjectName, out var verdict))
+                verdicts[task.ProjectName] = verdict = workspaceQuota.Admit(task.ProjectName);
+            if (!verdict.Allowed) blocked.TryAdd(key, verdict.Message ?? "Workspace quota reached.");
+        }
+        return blocked;
     }
 
     /// <summary>

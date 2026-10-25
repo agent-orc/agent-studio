@@ -1,0 +1,45 @@
+<section class="dist" data-testid="token-analysis-distribution" aria-labelledby="dist-title">
+  <header class="dist__head">
+    <h3 id="dist-title">Distribution and token mix</h3>
+    <p>Median and p90 are per card</p>
+  </header>
+  <div class="dist__mix" data-testid="token-analysis-mix">
+    <div class="dist__mix-bar" role="img" aria-label="Token type shares">
+      @for (part of mixParts(); track part.key) {
+        @if (part.value > 0) {
+          <span class="dist__mix-part" [style.flex-grow]="part.value" [style.background]="part.color"></span>
+        }
+      }
+    </div>
+    <ul class="dist__legend">
+      @for (part of mixParts(); track part.key) {
+        <li [attr.data-testid]="'token-analysis-mix-' + part.key"><span class="dist__swatch" [style.background]="part.color"></span>
+          {{ part.label }} <span class="dist__num">{{ part.share }}% · {{ fmt(part.value) }}</span></li>
+      }
+    </ul>
+    <p class="dist__note">Reasoning was reported for {{ reasoningCoverage() }}% of output tokens; the rest stays in output.</p>
+  </div>
+  @for (group of groups(); track group.key) {
+    <table class="dist__table" [attr.data-testid]="'token-analysis-distribution-' + group.key">
+      <caption>{{ group.title }}</caption>
+      <thead>
+        <tr><th scope="col">Group</th><th scope="col" class="dist__bar-col">Tokens</th>
+          <th scope="col" class="dist__num">Cards</th><th scope="col" class="dist__num">Median</th>
+          <th scope="col" class="dist__num">p90</th><th scope="col" class="dist__num">Cost</th></tr>
+      </thead>
+      <tbody>
+        @for (row of group.rows; track row.label) {
+          <tr>
+            <th scope="row">{{ row.label }}</th>
+            <td class="dist__bar-col"><span class="dist__bar" [style.width]="width(row.tokens, group.max)"></span>
+              <span class="dist__num">{{ fmt(row.tokens) }}</span></td>
+            <td class="dist__num">{{ row.cards }}</td>
+            <td class="dist__num">{{ fmt(row.medianPerCard) }}</td>
+            <td class="dist__num">{{ fmt(row.p90PerCard) }}</td>
+            <td class="dist__num">{{ usd(row.costUsd) }}</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</section>

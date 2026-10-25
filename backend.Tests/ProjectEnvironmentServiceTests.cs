@@ -49,6 +49,237 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ScheduledVolumeBackup_UsesInjectedClock_AndRestoreIsAudited()
+    {
+        var (environments, repo, _) = Build();
+        File.WriteAllText(Path.Combine(repo, "docs", "deployments", "environments", "stage.json"),
+            JsonSerializer.Serialize(new
+            {
+                id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
+                address = "https://stage.example", template = "container", destination = "8081",
+                healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
+                data = new { volumes = new[] { new { name = "uploads", mountPath = "/app/uploads" } } },
+            }));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+        }).Build();
+        var engine = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"), Path.Combine(_root, "archives"));
+        var key = new HostedVolumeKey("demo", "stage", "uploads");
+        Directory.CreateDirectory(engine.VolumePath(key));
+        File.WriteAllText(Path.Combine(engine.VolumePath(key), "data.txt"), "before");
+        var backups = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        await backups.SetScheduleAsync("demo", "stage", "uploads", 13, "owner", CancellationToken.None);
+        await backups.RunDueAsync(CancellationToken.None);
+        Assert.Empty((await backups.ReadAsync("demo", CancellationToken.None))!.Schedules.Single().Backups);
+        _clock.Advance(TimeSpan.FromHours(1));
+        await backups.RunDueAsync(CancellationToken.None);
+        var state = (await backups.ReadAsync("demo", CancellationToken.None))!;
+        var backup = Assert.Single(Assert.Single(state.Schedules).Backups);
+        File.WriteAllText(Path.Combine(engine.VolumePath(key), "data.txt"), "after");
+        await backups.RestoreAsync("demo", "stage", "uploads", backup.Id, "owner", CancellationToken.None);
+        Assert.Equal("before", File.ReadAllText(Path.Combine(engine.VolumePath(key), "data.txt")));
+        state = (await backups.ReadAsync("demo", CancellationToken.None))!;
+        Assert.Contains(state.Audit, entry => entry.Action == "backup" && entry.Outcome == "succeeded");
+        Assert.Contains(state.Audit, entry => entry.Action == "restore" && entry.Actor == "owner"
+            && entry.BackupId == backup.Id && entry.Outcome == "started");
+        Assert.Contains(state.Audit, entry => entry.Action == "restore" && entry.Actor == "owner"
+            && entry.BackupId == backup.Id && entry.Outcome == "succeeded");
+    }
+
+    [Fact]
+    public async Task VolumeBackupRetentionBoundsMetadataAndArchives()
+    {
+        var (environments, config, key, path) = PrepareVolumeBackups();
+        var engine = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"),
+            Path.Combine(_root, "archives"), clock: _clock);
+        var service = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        var ids = new List<string>();
+        for (var index = 0; index < HostedVolumeSchedulePolicy.MaxBackups + 2; index++)
+        {
+            File.WriteAllText(Path.Combine(path, "data.txt"), index.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            ids.Add((await service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None)).Id);
+            _clock.Advance(TimeSpan.FromMinutes(1));
+        }
+
+        var state = (await service.ReadAsync(key.Project, CancellationToken.None))!;
+        var retained = Assert.Single(state.Schedules).Backups.Select(item => item.Id).ToArray();
+        Assert.Equal(ids.Skip(2), retained);
+        var archives = Directory.EnumerateFiles(Path.Combine(_root, "archives", "demo", "stage", "uploads"), "*.zip")
+            .Select(Path.GetFileNameWithoutExtension).Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal(retained.Order(StringComparer.Ordinal), archives);
+    }
+
+    [Fact]
+    public async Task FailedPruneRemainsPendingAcrossRestartAndBlocksFurtherArchives()
+    {
+        var (environments, config, key, _) = PrepareVolumeBackups();
+        var local = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"),
+            Path.Combine(_root, "archives"), clock: _clock);
+        var engine = new FailingPruneEngine(local);
+        var service = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        for (var index = 0; index < HostedVolumeSchedulePolicy.MaxBackups; index++)
+            await service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+
+        engine.FailPrune = true;
+        await service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+        var archivePath = Path.Combine(_root, "archives", "demo", "stage", "uploads");
+        Assert.Equal(HostedVolumeSchedulePolicy.MaxBackups + 1,
+            Directory.EnumerateFiles(archivePath, "*.zip").Count());
+        var persisted = (await service.ReadAsync(key.Project, CancellationToken.None))!.Schedules.Single();
+        Assert.True(persisted.CleanupPending);
+        Assert.Contains("busy", persisted.LastError);
+
+        service = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        var creations = engine.BackupCount;
+        for (var index = 0; index < 3; index++)
+            await Assert.ThrowsAsync<IOException>(() => service.BackupAsync(
+                key.Project, key.Environment, key.Volume, "owner", CancellationToken.None));
+        Assert.Equal(creations, engine.BackupCount);
+        Assert.Equal(HostedVolumeSchedulePolicy.MaxBackups + 1,
+            Directory.EnumerateFiles(archivePath, "*.zip").Count());
+
+        engine.FailPrune = false;
+        await service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+        Assert.Equal(HostedVolumeSchedulePolicy.MaxBackups,
+            Directory.EnumerateFiles(archivePath, "*.zip").Count());
+        persisted = (await service.ReadAsync(key.Project, CancellationToken.None))!.Schedules.Single();
+        Assert.False(persisted.CleanupPending);
+        Assert.Null(persisted.LastError);
+        Assert.Equal(HostedVolumeSchedulePolicy.MaxBackups, persisted.Backups.Count);
+    }
+
+    [Fact]
+    public async Task CancelledBackupRemovesTemporaryArchive()
+    {
+        var (_, _, key, _) = PrepareVolumeBackups();
+        var reader = new BlockingReadStream(_clock);
+        var engine = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"),
+            Path.Combine(_root, "archives"), NullLogger<LocalHostedVolumeBackupEngine>.Instance,
+            path => Directory.Delete(path, recursive: true), _clock, _ => reader);
+        using var cancellation = new CancellationTokenSource();
+        var backup = engine.BackupAsync(key, _clock.GetUtcNow(), cancellation.Token);
+        await reader.Entered;
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => backup);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "archives", "demo", "stage", "uploads")));
+    }
+
+    [Fact]
+    public async Task TimedOutBackupDoesNotBlockOtherVolumeOperations()
+    {
+        var (environments, config, key, _) = PrepareVolumeBackups();
+        var reader = new BlockingReadStream(_clock);
+        var engine = new LocalHostedVolumeBackupEngine(Path.Combine(_root, "volumes"),
+            Path.Combine(_root, "archives"), NullLogger<LocalHostedVolumeBackupEngine>.Instance,
+            path => Directory.Delete(path, recursive: true), _clock,
+            path => Path.GetFileName(Path.GetDirectoryName(path)) == key.Volume
+                ? reader : new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true));
+        var service = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        var backup = service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+        await reader.Entered;
+
+        var other = await service.BackupAsync(key.Project, key.Environment, "logs", "owner", CancellationToken.None);
+        Assert.Equal("logs", other.Volume.Volume);
+
+        var schedule = service.SetScheduleAsync(key.Project, key.Environment, key.Volume, 8, "owner", CancellationToken.None);
+        Assert.True(schedule.IsCompleted);
+        await schedule;
+        _clock.Advance(LocalHostedVolumeBackupEngine.BackupTimeout);
+        await Assert.ThrowsAsync<TimeoutException>(() => backup);
+        var state = (await service.ReadAsync(key.Project, CancellationToken.None))!;
+        Assert.Contains("time limit", state.Schedules.Single(item => item.Volume == key.Volume).LastError);
+        Assert.Single(state.Schedules.Single(item => item.Volume == "logs").Backups);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "archives", "demo", "stage", "uploads")));
+    }
+
+    [Fact]
+    public async Task StalledRestoreDoesNotBlockOtherVolumeOrStateOperations()
+    {
+        var (environments, config, key, _) = PrepareVolumeBackups();
+        var engine = new BlockingRestoreEngine();
+        var service = new HostedVolumeBackupService(config, environments, engine, _clock,
+            NullLogger<HostedVolumeBackupService>.Instance);
+        var backup = await service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+        using var cancellation = new CancellationTokenSource();
+        var restore = service.RestoreAsync(key.Project, key.Environment, key.Volume, backup.Id,
+            "owner", cancellation.Token);
+        await engine.RestoreEntered;
+
+        Task<HostedVolumeBackup>? sameVolume = null;
+        try
+        {
+            var otherVolume = service.BackupAsync(key.Project, key.Environment, "logs", "owner", CancellationToken.None);
+            Assert.True(otherVolume.IsCompleted, "A stalled restore held the project state lock.");
+            Assert.Equal("logs", (await otherVolume).Volume.Volume);
+
+            var schedule = service.SetScheduleAsync(key.Project, key.Environment, key.Volume, 8,
+                "owner", CancellationToken.None);
+            Assert.True(schedule.IsCompleted, "A stalled restore blocked schedule changes.");
+            await schedule;
+            var state = service.ReadAsync(key.Project, CancellationToken.None);
+            Assert.True(state.IsCompleted, "A stalled restore blocked state reads.");
+            Assert.Contains((await state)!.Audit, entry => entry.Action == "restore" && entry.Outcome == "started");
+
+            sameVolume = service.BackupAsync(key.Project, key.Environment, key.Volume, "owner", CancellationToken.None);
+            Assert.False(sameVolume.IsCompleted, "A backup must wait for a restore of the same volume.");
+        }
+        finally { cancellation.Cancel(); }
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => restore);
+        Assert.NotNull(sameVolume);
+        await sameVolume;
+        var completed = (await service.ReadAsync(key.Project, CancellationToken.None))!;
+        Assert.Contains(completed.Audit, entry => entry.Action == "restore" && entry.Outcome == "cancelled");
+        Assert.Single(completed.Schedules.Single(item => item.Volume == "logs").Backups);
+    }
+
+    [Fact]
+    public void ConsecutiveDeployJobsRetainVolumeIdentityAndDatabaseBinding()
+    {
+        var (service, repo, _) = Build();
+        File.WriteAllText(Path.Combine(repo, "docs", "deployments", "environments", "stage.json"),
+            JsonSerializer.Serialize(new
+            {
+                id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
+                address = "https://stage.example", template = "container", destination = "8081",
+                healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
+                data = new
+                {
+                    database = new { secretRef = "secret://demo/stage/DATABASE_URL", environmentVariable = "DATABASE_URL" },
+                    volumes = new[] { new { name = "uploads", mountPath = "/app/uploads" } },
+                },
+            }));
+        Git(repo, "add", ".");
+        Git(repo, "commit", "-m", "Declare hosted data");
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        var jobs = new List<DeployJob>();
+        foreach (var marker in new[] { 'b', 'c' })
+        {
+            var artifact = "registry.example/app@sha256:" + new string(marker, 64);
+            Assert.True(QueueGateRelease(service, artifact, commit));
+            var stage = service.Claim("stage-host")!;
+            jobs.Add(stage);
+            Assert.Equal(["DATABASE_URL"], stage.SecretRefs);
+            Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+            Assert.True(service.Decide("demo", artifact, true, "operator"));
+            var production = service.Claim("prod-host")!;
+            Assert.True(service.Report("demo", production.Id, new(production.LeaseToken!, true, "health-ok")));
+        }
+        Assert.Equal(jobs[0].Data.Database, jobs[1].Data.Database);
+        Assert.Equal(jobs[0].Data.Volumes.Select(item => (item.Name, item.MountPath)),
+            jobs[1].Data.Volumes.Select(item => (item.Name, item.MountPath)));
+        Assert.Equal("uploads", Assert.Single(jobs[1].Data.Volumes).Name);
+        Assert.Equal("/app/uploads", jobs[1].Data.Volumes[0].MountPath);
+        Assert.Equal("secret://demo/stage/DATABASE_URL", jobs[1].Data.Database!.SecretRef);
+    }
+
+    [Fact]
     public async Task Bindings_require_production_approval_and_preflight_checks_inherited_and_revoked_values()
     {
         var (environments, _, _) = Build();
@@ -190,6 +421,22 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Health_only_retry_skips_secret_preflight()
+    {
+        var (environments, _, _) = Build();
+        var target = environments.Declarations("demo")!.Single(item => item.Kind == "production");
+        Assert.NotNull(environments.QueueDeployment("demo", target, _artifact, "owner", false, retryStep: "health"));
+        var job = environments.Claim("prod-host")!;
+        var bindings = new ProjectSecretBindings(SecretConfig(), new FailingListingProvider(), environments, _clock);
+
+        var result = await ProjectOperatorDashboardEndpoints.CompleteClaimAsync(job, _ => { }, bindings, CancellationToken.None);
+        var returned = Assert.IsType<Ok<DeployJob>>(result).Value!;
+        Assert.Equal("health", returned.RetryStep);
+        Assert.Null(returned.MissingSecretRefs);
+        Assert.Null(returned.SecretBindings);
+    }
+
+    [Fact]
     public void PreviewDeclarationCanSpecifyItsOwnHostAndSecretReferences()
     {
         var (service, repo, _) = Build();
@@ -211,9 +458,32 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     [Fact]
-    public void PreviewJobUsesTheNormalLeaseAndRequiresScreenshotAfterDeploy()
+    public async Task Preview_claim_leaves_secret_delivery_to_the_preview_run_zone()
     {
         var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        var spec = new PreviewJobSpec("demo", "agt-3180", commit, "preview-host",
+            "https://agt-3180.demo.preview.internal", "static", "/srv/agent-studio/previews/demo/agt-3180",
+            ["npm run build"], ["TEST_DATA"], 8080)
+        { SourceRepository = repo, SourceRef = commit, ArtifactPath = "dist" };
+        service.QueuePreview(spec);
+        var claimed = service.Claim("preview-host")!;
+        var bindings = new ProjectSecretBindings(SecretConfig(), new FailingListingProvider(), service, _clock);
+
+        var result = await ProjectOperatorDashboardEndpoints.CompleteClaimAsync(
+            claimed, _ => { }, bindings, CancellationToken.None);
+        var returned = Assert.IsType<Ok<DeployJob>>(result).Value!;
+        Assert.Equal("preview", returned.EnvironmentKind);
+        Assert.Equal(["TEST_DATA"], returned.SecretRefs);
+        Assert.Null(returned.MissingSecretRefs);
+    }
+
+    [Fact]
+    public void PreviewJobUsesTheNormalLeaseAndRequiresScreenshotAfterDeploy()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, _) = Build(quota: quota);
         var commit = Git(repo, "rev-parse", "HEAD").Trim();
         var spec = new PreviewJobSpec("demo", "agt-3180", commit, "preview-host",
             "https://agt-3180.demo.preview.internal", "static", "/srv/agent-studio/previews/demo/agt-3180",
@@ -225,7 +495,6 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal(["TEST_DATA"], queued.SecretRefs);
         var claimed = service.Claim("preview-host")!;
         Assert.Equal(queued.Id, claimed.Id);
-        Assert.Equal("preview", claimed.EnvironmentKind);
         Assert.False(service.Report("demo", claimed.Id, new DeployReportRequest(claimed.LeaseToken!, true, "health-ok")));
         var png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC";
         Assert.True(service.Report("demo", claimed.Id,
@@ -234,6 +503,10 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal("healthy", ready.Status);
         Assert.NotNull(ready.ScreenshotUrl);
         Assert.NotNull(service.PreviewScreenshotPath("demo", "agt-3180"));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        service.ReconcileHostingSlots();
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
         var removal = service.QueuePreviewRemoval(spec);
         Assert.Empty(removal.SecretRefs);
         var removalClaim = service.Claim("preview-host")!;
@@ -241,6 +514,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.True(service.Report("demo", removal.Id,
             new DeployReportRequest(removalClaim.LeaseToken!, true, "health-ok")));
         Assert.Null(service.PreviewScreenshotPath("demo", "agt-3180"));
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
     }
 
     [Fact]
@@ -306,9 +580,14 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     [Fact]
     public void Lease_renewal_keeps_claim_live_and_old_token_is_fenced_after_reclaim()
     {
-        var (service, repo, _) = Build();
-        var commit = Git(repo, "rev-parse", "HEAD").Trim();
-        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var (service, _, _) = Build();
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage") with
+        {
+            Template = "ssh-v2",
+            SshSteps = [new ProjectDeployStep("container", "app", "stage-host", null, null, null,
+                [], ["staging"]) { ComposeFile = "/srv/apps/web/compose.yml", Service = "web" }],
+        };
+        Assert.NotNull(service.QueueDeployment("demo", stage, _artifact, "operator", rollback: false));
         var first = service.Claim("stage-host")!;
 
         _clock.Advance(TimeSpan.FromMinutes(4));
@@ -324,6 +603,40 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.NotEqual(first.LeaseToken, restarted.LeaseToken);
         Assert.False(service.RenewClaim("demo", first.Id, first.LeaseToken!));
         Assert.True(service.RenewClaim("demo", restarted.Id, restarted.LeaseToken!));
+    }
+
+    [Fact]
+    public void Legacy_runner_report_is_accepted_after_five_minutes_until_reclaim()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var claimed = service.Claim("stage-host")!;
+        Assert.Empty(claimed.SshSteps);
+        _clock.Advance(TimeSpan.FromMinutes(6));
+
+        Assert.True(service.Report("demo", claimed.Id, new(claimed.LeaseToken!, true, "health-ok")));
+        Assert.Equal("healthy", service.Read("demo")!.Jobs.Single(item => item.Id == claimed.Id).Status);
+    }
+
+    [Fact]
+    public void Reclaim_stops_after_three_claims()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var first = service.Claim("stage-host")!;
+        Assert.Equal(1, first.Claims);
+        for (var expected = 2; expected <= 3; expected++)
+        {
+            _clock.Advance(TimeSpan.FromMinutes(5));
+            Assert.Equal(expected, service.Claim("stage-host")!.Claims);
+        }
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        Assert.Null(service.Claim("stage-host"));
+        var failed = service.Read("demo")!.Jobs.Single(item => item.Id == first.Id);
+        Assert.Equal("failed", failed.Status);
+        Assert.Equal("host-lost", failed.Evidence);
     }
 
     [Fact]
@@ -355,6 +668,69 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.False(service.RegisterGateArtifact("demo", _artifact, commit));
         WriteReleaseEvidence("demo", _artifact, commit);
         Assert.True(service.RegisterGateArtifact("demo", _artifact, commit));
+    }
+
+    [Fact]
+    public void GateRegistration_BindsDigestToProjectCommitRunTemplateAndBuilder()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        WriteReleaseEvidence("demo", _artifact, commit);
+        var registry = new ReleaseArtifactRegistry(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["TaskRepository"] = Path.Combine(_root, "workspace"),
+                ["Deploy:ReleaseEvidenceRoot"] = Path.Combine(_root, "release-evidence") }).Build());
+
+        Assert.True(service.RegisterGateArtifact("demo", _artifact, commit, "build-runner"));
+        var record = registry.Verified("demo", commit, _artifact, "container");
+        Assert.NotNull(record);
+        Assert.Equal(("release/test-gate", "build-runner", "external"),
+            (record.GateRunId, record.BuilderIdentity, record.Location));
+        Assert.Null(registry.Verified("other", commit, _artifact, "container"));
+        Assert.Null(registry.Verified("demo", new string('b', 40), _artifact, "container"));
+        Assert.Null(registry.Verified("demo", commit, _artifact, "static"));
+        Assert.False(service.RegisterGateArtifact("demo", _artifact, commit, "different-builder"));
+        Assert.True(service.CanQueueRelease("demo", _artifact, commit));
+
+        var path = Directory.GetFiles(Path.Combine(_root, "workspace", "release-registry", "records"),
+            "*.json", SearchOption.AllDirectories).Single();
+        File.WriteAllText(path, File.ReadAllText(path).Replace("build-runner", "imposter", StringComparison.Ordinal));
+        Assert.False(service.CanQueueRelease("demo", _artifact, commit));
+    }
+
+    [Fact]
+    public void GateRegistration_RefusesEvidenceWithoutRunIdentity()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        WriteReleaseEvidence("demo", _artifact, commit);
+        var path = Path.Combine(_root, "release-evidence", commit, "promotion-record.json");
+        File.WriteAllText(path, File.ReadAllText(path).Replace("\"gateRunId\":\"release/test-gate\",", "",
+            StringComparison.Ordinal));
+        Assert.False(service.RegisterGateArtifact("demo", _artifact, commit));
+    }
+
+    [Fact]
+    public void BuiltInRegistry_StoresPackageByDigestAndRefusesChangedBytes()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        var bytes = Encoding.UTF8.GetBytes("gate-built-release-for-" + commit);
+        var digest = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        var artifact = "release-package@sha256:" + digest;
+        WriteReleaseEvidence("demo", artifact, commit);
+        Assert.True(service.RegisterGateArtifact("demo", artifact, commit, "build-runner"));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["TaskRepository"] = Path.Combine(_root, "workspace") }).Build();
+        var registry = new ReleaseArtifactRegistry(config);
+        var record = registry.Verified("demo", commit, artifact, "static");
+        Assert.NotNull(record);
+        var blob = registry.VerifiedBlob(record);
+        Assert.NotNull(blob);
+        Assert.Equal(bytes, File.ReadAllBytes(blob));
+        Assert.False(service.QueueRelease("demo", artifact, commit)); // Both declared environments require a container.
+        File.WriteAllText(blob, "changed");
+        Assert.Null(registry.Verified("demo", commit, artifact, "static"));
+        Assert.False(service.CanQueueRelease("demo", artifact, commit));
     }
 
     [Theory]
@@ -421,12 +797,70 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", engine.Secret);
         Assert.Equal(HttpStatusCode.Forbidden,
             (await client.PostAsJsonAsync("/api/deploy/gate-releases", body)).StatusCode);
+        var deployEnrollment = security.CreateEnrollment(new RunnerEnrollmentRequest("deploy",
+            [RunnerScopes.Deploy], null, null));
+        var deploy = security.EnrollRunner(deployEnrollment.Code);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", deploy.Secret);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync("/api/deploy/gate-releases", body)).StatusCode);
         var releaseEnrollment = security.CreateEnrollment(new RunnerEnrollmentRequest("release-gate",
             [RunnerScopes.Release], null, null));
         var release = security.EnrollRunner(releaseEnrollment.Code);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", release.Secret);
         Assert.Equal(HttpStatusCode.BadRequest,
             (await client.PostAsJsonAsync("/api/deploy/gate-releases", body)).StatusCode);
+    }
+
+    [Fact]
+    public async Task GateReleaseRoute_LocalProfileAuthenticatesOnlyTheReleaseCredential()
+    {
+        const string project = "Operator Demo";
+        var (_, repo, watch) = Build(project: project);
+        Git(repo, "add", ".");
+        Git(repo, "commit", "-m", "declarations");
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        WriteReleaseEvidence(project, _artifact, commit);
+        await using var factory = new TestHostFactory().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.UseSetting("TaskRepository", Path.Combine(_root, "workspace"));
+            builder.UseSetting("Deploy:ReleaseEvidenceRoot", Path.Combine(_root, "release-evidence"));
+            builder.UseSetting("WatchPaths:0:Name", project);
+            builder.UseSetting("WatchPaths:0:Path", watch);
+            builder.UseSetting("WatchPaths:0:RootPath", repo);
+            builder.UseSetting("WatchPaths:0:RepositoryPath", repo);
+            builder.UseSetting("Security:Profile", "local");
+            builder.UseSetting("Logging:BackendFile:LogDirectory", Path.Combine(_root, "logs"));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(_clock);
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var security = factory.Services.GetRequiredService<AccessSecurityStore>();
+        var request = new GateArtifactRequest(project, _artifact, commit);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync("/api/deploy/gate-releases", request)).StatusCode);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "invalid-credential");
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync("/api/deploy/gate-releases", request)).StatusCode);
+        var deploy = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest("deploy-only",
+            [RunnerScopes.Deploy], null, null)).Code);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", deploy.Secret);
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await client.PostAsJsonAsync("/api/deploy/gate-releases", request)).StatusCode);
+        var builder = security.EnrollRunner(security.CreateEnrollment(new RunnerEnrollmentRequest("release-builder",
+            [RunnerScopes.Release], null, null)).Code);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", builder.Secret);
+        using var accepted = await client.PostAsJsonAsync("/api/deploy/gate-releases", request);
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        var registered = factory.Services.GetRequiredService<ReleaseArtifactRegistry>()
+            .Verified(project, commit, _artifact, "container");
+        Assert.Equal(builder.Runner.Id, registered?.BuilderIdentity);
+        Assert.Equal(project, factory.Services.GetRequiredService<ProjectEnvironmentService>()
+            .Claim("stage-host", requireVerifiedRelease: true)?.Project);
     }
 
     [Fact]
@@ -647,6 +1081,217 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.Equal(_artifact, service.Claim("prod-host")!.Artifact);
     }
 
+    [Fact]
+    public void Hosting_slots_admit_deploys_meter_jobs_and_free_on_stop()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var stage = service.Claim("stage-host")!;
+        Assert.True(stage.ReservedSlot);
+        _clock.Advance(TimeSpan.FromMinutes(3));
+        Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+        var running = quota.Snapshot(workspaceId);
+        Assert.Equal(1, running.Usage.HostingSlots);
+        Assert.Equal(0.05m, running.Usage.ComputeCoreHours);
+
+        // Production is not running yet and the only slot is taken by stage.
+        var refused = Assert.Throws<DeployQuotaRefusedException>(() => service.Decide("demo", _artifact, true, "operator"));
+        Assert.Contains("All 1 hosting slots are in use", refused.Message, StringComparison.Ordinal);
+        Assert.Equal("pending", Assert.Single(service.Read("demo")!.Promotions).Status);
+
+        Assert.True(service.Stop("demo", "stage", "operator"));
+        // The stop waits for the stage host; until it acknowledges, the environment keeps its slot.
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        var stop = service.Claim("stage-host")!;
+        Assert.True(stop.IsStop);
+        Assert.True(service.Report("demo", stop.Id, new(stop.LeaseToken!, true, "stop-ok")));
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Equal("stopped", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+        Assert.True(service.Decide("demo", _artifact, true, "operator"));
+        var production = service.Claim("prod-host")!;
+        Assert.True(service.Report("demo", production.Id, new(production.LeaseToken!, true, "health-ok")));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    [Fact]
+    public void Deploy_claim_waits_at_the_slot_boundary_and_a_failed_first_deploy_returns_its_slot()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        // Another deploy takes the last slot between queueing and claiming.
+        Assert.True(quota.ReserveProjectEnvironment("demo", "website"));
+
+        Assert.Null(service.Claim("stage-host"));
+        Assert.Equal("queued", Assert.Single(service.Read("demo")!.Jobs).Status);
+
+        quota.SetProjectEnvironment("demo", "website", false);
+        var stage = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, false, "health-http-failed")));
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    [Fact]
+    public void Healthy_deploy_keeps_its_slot_through_the_minute_reconciliation()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var stage = service.Claim("stage-host")!;
+        Assert.True(stage.ReservedSlot);
+        Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+
+        // The report settled the reservation; the running environment now holds the slot.
+        Assert.False(Assert.Single(service.Read("demo")!.Jobs).ReservedSlot);
+        for (var minute = 0; minute < 10; minute++)
+        {
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            service.ReconcileHostingSlots();
+        }
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Equal("healthy", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+    }
+
+    [Fact]
+    public void Unconfirmed_stop_leaves_the_environment_running_and_its_slot_occupied()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var stage = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+
+        Assert.True(service.Stop("demo", "stage", "operator"));
+        Assert.False(service.Stop("demo", "stage", "operator"));
+        // Another host cannot claim the stop, and an unclaimed stop changes nothing.
+        Assert.Null(service.Claim("prod-host"));
+        service.ReconcileHostingSlots();
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Equal("healthy", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+
+        // The host fails the stop: still running and counted.
+        var failed = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", failed.Id, new(failed.LeaseToken!, false, "stop-failed")));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Equal("healthy", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+
+        // A claimed stop whose host never reports is lost without stopping anything.
+        Assert.True(service.Stop("demo", "stage", "operator"));
+        Assert.True(service.Claim("stage-host")!.IsStop);
+        _clock.Advance(ProjectEnvironmentService.HostLostAfter + TimeSpan.FromMinutes(1));
+        service.ReconcileHostingSlots();
+        Assert.Null(service.Claim("stage-host"));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.Equal("healthy", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+    }
+
+    [Fact]
+    public void Stop_settles_an_abandoned_redeploy_before_the_host_claims_the_stop()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var first = service.Claim("stage-host")!;
+        Assert.True(service.Report("demo", first.Id, new(first.LeaseToken!, true, "health-ok")));
+
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage");
+        Assert.NotNull(service.QueueDeployment("demo", stage, _artifact, "operator", rollback: false));
+        var redeploy = service.Claim("stage-host")!;
+        _clock.Advance(ProjectEnvironmentService.HostLostAfter + TimeSpan.FromSeconds(1));
+
+        Assert.True(service.Stop("demo", "stage", "operator"));
+        var lost = service.Read("demo")!.Jobs.Single(job => job.Id == redeploy.Id);
+        Assert.Equal("failed", lost.Status);
+        Assert.Equal("host-lost", lost.Evidence);
+        Assert.False(service.Report("demo", redeploy.Id, new(redeploy.LeaseToken!, true, "health-ok")));
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+
+        var stop = service.Claim("stage-host")!;
+        Assert.True(stop.IsStop);
+        Assert.True(service.Report("demo", stop.Id, new(stop.LeaseToken!, true, "stop-ok")));
+        Assert.Equal("stopped", service.Read("demo")!.Environments.Single(item => item.Declaration.Id == "stage").Health);
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    [Fact]
+    public void Expired_unreported_deploy_claim_gives_its_slot_back_and_reading_changes_no_slot()
+    {
+        using var factory = QuotaFactory();
+        var (quota, workspaceId) = QuotaFor(factory, new AgentStudio.Quota.QuotaLimits(null, null, 1));
+        var (service, repo, watch) = Build(quota: quota);
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        IntegrationVerificationStore.Write(Path.Combine(watch, "card"), new IntegrationVerificationRecord
+        { State = IntegrationVerificationStates.Verified, Sha = commit, IntegrationBranch = "develop" });
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        Assert.True(service.Claim("stage-host")!.ReservedSlot);
+        // A slot of a declaration that no longer exists stays until the reconciliation, not the GET read.
+        quota.SetProjectEnvironment("demo", ProjectEnvironmentService.SlotKey("retired"), true);
+
+        service.Read("demo");
+        Assert.Equal(2, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        service.ReconcileHostingSlots();
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+
+        // The deploy host never reports; after the five-minute lease the reservation is released.
+        _clock.Advance(TimeSpan.FromMinutes(6));
+        service.ReconcileHostingSlots();
+        Assert.Equal(0, quota.Snapshot(workspaceId).Usage.HostingSlots);
+        Assert.False(Assert.Single(service.Read("demo")!.Jobs).ReservedSlot);
+        // A later claim of the same job reserves the slot again.
+        Assert.True(service.Claim("stage-host")!.ReservedSlot);
+        Assert.Equal(1, quota.Snapshot(workspaceId).Usage.HostingSlots);
+    }
+
+    private WebApplicationFactory<Program> QuotaFactory() => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+    {
+        builder.UseEnvironment("Test");
+        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "quota-workspace"), ["PublicDemo:Enabled"] = "false",
+        }));
+        builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<TimeProvider>();
+            services.AddSingleton<TimeProvider>(_clock);
+        });
+    });
+
+    private (AgentStudio.Quota.WorkspaceQuotaService Quota, string WorkspaceId) QuotaFor(
+        WebApplicationFactory<Program> factory, AgentStudio.Quota.QuotaLimits limits)
+    {
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<AgentStudio.Registry.WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var storage = Path.Combine(_root, "quota-workspace", "projects", "demo");
+        Directory.CreateDirectory(storage);
+        services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>()
+            .EnsureProjectForStorage(storage, "demo", workspace.Id, _clock);
+        var quota = services.GetRequiredService<AgentStudio.Quota.WorkspaceQuotaService>();
+        quota.SetLimits(workspace.Id, null, limits);
+        return (quota, workspace.Id);
+    }
+
     private bool QueueGateRelease(ProjectEnvironmentService service, string artifact, string commit)
     {
         WriteReleaseEvidence("demo", artifact, commit);
@@ -664,13 +1309,109 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         File.WriteAllText(Path.Combine(directory, "full-gate.log"), "PROMOTION_FULL_GATE=passed\n");
         File.WriteAllText(Path.Combine(directory, "promotion-record.json"), JsonSerializer.Serialize(new
         {
-            status = "promoted", gate = "passed", candidateSha = commit, atomicPush = true,
+            status = "promoted", gate = "passed", gateRunId = "release/test-gate", candidateSha = commit, atomicPush = true,
             releasePackage = new { status = "written", sha256 = digest },
         }));
         File.WriteAllText(Path.Combine(directory, "deploy-artifact.json"), JsonSerializer.Serialize(new
         {
             project, commit, artifact, sourceSha256 = digest,
         }));
+    }
+
+    private (ProjectEnvironmentService Environments, IConfiguration Config, HostedVolumeKey Key, string Path) PrepareVolumeBackups()
+    {
+        var (environments, repo, _) = Build();
+        File.WriteAllText(Path.Combine(repo, "docs", "deployments", "environments", "stage.json"),
+            JsonSerializer.Serialize(new
+            {
+                id = "stage", name = "Stage", kind = "stage", targetHostId = "stage-host",
+                address = "https://stage.example", template = "container", destination = "8081",
+                healthUrl = "https://stage.example/health", approval = "person", secretRefs = Array.Empty<string>(),
+                data = new { volumes = new[] { new { name = "uploads", mountPath = "/app/uploads" },
+                    new { name = "logs", mountPath = "/app/logs" } } },
+            }));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = Path.Combine(_root, "workspace"),
+        }).Build();
+        var key = new HostedVolumeKey("demo", "stage", "uploads");
+        var path = Path.Combine(_root, "volumes", key.Project, key.Environment, key.Volume);
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, "data.txt"), "initial");
+        var logs = Path.Combine(_root, "volumes", key.Project, key.Environment, "logs");
+        Directory.CreateDirectory(logs);
+        File.WriteAllText(Path.Combine(logs, "data.txt"), "other-volume");
+        return (environments, config, key, path);
+    }
+
+    private sealed class BlockingReadStream : Stream
+    {
+        private readonly TimeProvider _clock;
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public BlockingReadStream(TimeProvider clock) => _clock = clock;
+        public Task Entered => _entered.Task;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            => ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            _entered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, _clock, cancellationToken);
+            return 0;
+        }
+    }
+
+    private sealed class BlockingRestoreEngine : IHostedVolumeBackupEngine
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _never = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task RestoreEntered => _entered.Task;
+
+        public Task<HostedVolumeBackup> BackupAsync(HostedVolumeKey key, DateTimeOffset now,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new HostedVolumeBackup(Guid.NewGuid().ToString("N"), key, now, "digest", 0));
+        }
+
+        public Task RestoreAsync(HostedVolumeBackup backup, CancellationToken cancellationToken)
+        {
+            _entered.TrySetResult();
+            return _never.Task.WaitAsync(cancellationToken);
+        }
+
+        public Task PruneBackupsAsync(HostedVolumeKey key, IReadOnlySet<string> retainedIds,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class FailingPruneEngine(IHostedVolumeBackupEngine inner) : IHostedVolumeBackupEngine
+    {
+        public bool FailPrune { get; set; }
+        public int BackupCount { get; private set; }
+
+        public async Task<HostedVolumeBackup> BackupAsync(HostedVolumeKey key, DateTimeOffset now,
+            CancellationToken cancellationToken)
+        {
+            BackupCount++;
+            return await inner.BackupAsync(key, now, cancellationToken);
+        }
+
+        public Task RestoreAsync(HostedVolumeBackup backup, CancellationToken cancellationToken)
+            => inner.RestoreAsync(backup, cancellationToken);
+
+        public Task PruneBackupsAsync(HostedVolumeKey key, IReadOnlySet<string> retainedIds,
+            CancellationToken cancellationToken)
+            => FailPrune ? Task.FromException(new IOException("Archive cleanup is busy."))
+                : inner.PruneBackupsAsync(key, retainedIds, cancellationToken);
     }
 
     private IConfiguration SecretConfig() => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -716,7 +1457,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     }
 
     private (ProjectEnvironmentService Service, string Repo, string Watch) Build(bool timedApproval = false,
-        string project = "demo")
+        string project = "demo", AgentStudio.Quota.WorkspaceQuotaService? quota = null)
     {
         var repo = Path.Combine(_root, "repo");
         var watch = Path.Combine(_root, "workspace", "projects", project);
@@ -754,7 +1495,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
-        return (new(config, scanner, git, settings, _clock), repo, watch);
+        return (new(config, scanner, git, settings, _clock, quota: quota), repo, watch);
     }
 
     private string Git(string directory, params string[] arguments)

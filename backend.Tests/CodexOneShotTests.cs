@@ -1,9 +1,27 @@
 using Xunit;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentStudio.Tests;
 
 public sealed class CodexOneShotTests
 {
+    [Fact]
+    public async Task Networked_profile_refuses_host_codex_before_spawn()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Security:Profile"] = "networked",
+                ["CodexCli:Path"] = "missing-codex-executable" }).Build();
+        var parsers = new CliUsageParserRegistry([new CodexUsageParser()]);
+        var oneShot = new CodexOneShot(config, NullLogger<CodexOneShot>.Instance,
+            parsers, new CliModelRegistry());
+
+        var result = await oneShot.RunAsync(new CliOneShotRequest("codex", "gpt-5.5", "hello"));
+
+        Assert.False(result.Ok);
+        Assert.Contains("Remote runner required", result.Error);
+    }
+
     [Fact]
     public void BuildStartInfo_OrchestratorChatOutsideGit_AddsSkipGitRepoCheck()
     {

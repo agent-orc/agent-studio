@@ -351,10 +351,11 @@ public sealed class GitWorkspaceTests : IDisposable
         var report = Path.Combine(workspace.RepoPath, "status.md");
         var artifact = Path.Combine(_workDir, "tasks", "AGT-2147", "results",
             "legacy-repository-status.md");
-        await File.WriteAllTextAsync(report, new string('é', 10_000) + "first tail");
+        await File.WriteAllTextAsync(report, "first entry\n" + new string('é', 10_000) + "first tail");
         await workspace.CaptureLegacyRepositoryReportsAsync(CancellationToken.None);
         Assert.True(new FileInfo(artifact).Length <= 16 * 1024);
         Assert.EndsWith("first tail", await File.ReadAllTextAsync(artifact));
+        Assert.StartsWith("first entry\n", await File.ReadAllTextAsync(artifact));
 
         await File.WriteAllTextAsync(report, "second round\n");
         await workspace.CaptureLegacyRepositoryReportsAsync(CancellationToken.None);
@@ -933,12 +934,11 @@ public sealed class GitWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task A_salvage_base_that_moved_keeps_todays_start_on_the_integration_branch()
+    public async Task A_salvage_base_that_moved_refuses_to_start_on_the_integration_branch()
     {
         await SeedOriginAsync();
         var (resultRef, reviewedSha) = await PublishReviewedResultAsync("salvaged.txt", "salvage");
         await PublishRemoteCommitAsync(resultRef["refs/heads/".Length..], "moved.txt", "moved", "move the ref");
-        var mainTip = (await GitAsync(_origin, "rev-parse", "refs/heads/main")).StdOut;
 
         var continuation = CreateWorkspace(
             sourceRunAttemptId: "run_next",
@@ -946,9 +946,45 @@ public sealed class GitWorkspaceTests : IDisposable
             continuationBaseRef: resultRef,
             continuationBaseSha: reviewedSha,
             continuationBaseReason: "lost-worker-with-salvage");
-        await continuation.PrepareAsync(CancellationToken.None);
+        var failure = await Assert.ThrowsAsync<ContinuationBaseUnavailableException>(
+            () => continuation.PrepareAsync(CancellationToken.None));
+        Assert.Equal(ContinuationBaseUnavailableException.Moved, failure.ReasonCode);
+        Assert.Equal(reviewedSha, failure.ExpectedSha);
+        Assert.False(Directory.Exists(continuation.RepoPath));
+    }
 
-        Assert.Equal(mainTip, (await GitAsync(continuation.RepoPath, "rev-parse", "HEAD")).StdOut);
+    [Fact]
+    public async Task AGT_3245_unknown_salvage_starts_the_next_fenced_attempt_and_survives_develop_merge()
+    {
+        await SeedOriginAsync();
+        var first = CreateWorkspace(sourceRunAttemptId: "run_3245_first", fencingToken: 1);
+        await first.PrepareAsync(CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(first.RepoPath, "salvaged.txt"), "earlier work");
+        var salvage = await first.TeardownAsync("Unknown", "run_3245_first", CancellationToken.None);
+        Assert.NotNull(salvage.CommitSha);
+        var developTip = await PublishRemoteCommitAsync("main", "new-develop.txt", "current develop", "advance develop");
+
+        var second = CreateWorkspace(
+            sourceRunAttemptId: "run_3245_second",
+            fencingToken: 2,
+            continuationBaseRef: $"refs/heads/{salvage.Branch}",
+            continuationBaseSha: salvage.CommitSha,
+            continuationBaseReason: "run-timeout-with-salvage");
+        await second.PrepareAsync(CancellationToken.None);
+        var preparedBase = (await GitAsync(second.RepoPath, "rev-parse", "HEAD")).StdOut;
+        Assert.Equal(preparedBase, second.BaseSha);
+        Assert.Equal("earlier work", await File.ReadAllTextAsync(Path.Combine(second.RepoPath, "salvaged.txt")));
+        Assert.Equal("current develop", await File.ReadAllTextAsync(Path.Combine(second.RepoPath, "new-develop.txt")));
+        Assert.True((await RunGitAsync(second.RepoPath, "merge-base", "--is-ancestor",
+            salvage.CommitSha!, preparedBase)).Success);
+        Assert.True((await RunGitAsync(second.RepoPath, "merge-base", "--is-ancestor",
+            developTip, preparedBase)).Success);
+        var result = await second.TeardownAsync("Done", "run_3245_second", CancellationToken.None);
+        Assert.Equal(preparedBase, second.BaseSha);
+        Assert.True((await RunGitAsync(_origin, "merge-base", "--is-ancestor",
+            salvage.CommitSha!, result.ResultSha!)).Success);
+        Assert.True((await RunGitAsync(_origin, "merge-base", "--is-ancestor",
+            developTip, result.ResultSha!)).Success);
     }
 
     [Fact]

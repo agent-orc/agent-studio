@@ -19,7 +19,7 @@ LABEL org.opencontainers.image.title="agent-studio-api" \
       org.opencontainers.image.version="$VERSION" \
       org.opencontainers.image.revision="$SHA" \
       org.opencontainers.image.source="https://github.com/agent-orc/agent-studio"
-# curl: Compose uses the public health endpoint as its readiness contract.
+# curl: the container probe checks local readiness independently of public login diagnostics.
 # git: GitService shells out for merges, worktrees, and integration pushes.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl git openssh-client ca-certificates \
@@ -49,5 +49,5 @@ VOLUME ["/data/workspace", "/data/projects"]
 EXPOSE 5031
 USER agentstudio
 HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=24 \
-    CMD curl --fail --silent -H "Host: ${STUDIO_DOMAIN:-localhost}" http://127.0.0.1:5031/healthz || exit 1
+    CMD curl --fail --silent -H "Host: ${STUDIO_DOMAIN:-localhost}" http://127.0.0.1:5031/healthz/container || exit 1
 ENTRYPOINT ["dotnet", "OrchestratorApi.dll"]

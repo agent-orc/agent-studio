@@ -36,7 +36,7 @@ public static class AdHocClaudeInvoker
         "-p",
         "--output-format", "json",
         "--model", model,
-        "--dangerously-skip-permissions"
+        "--tools", ""
     };
 
     /// <summary>
@@ -90,7 +90,9 @@ public static class AdHocClaudeInvoker
         long durationMs,
         bool ok,
         string? project = null,
-        string? jobId = null)
+        string? jobId = null,
+        string? thinkingLevel = null,
+        string? participantId = null)
     {
         if (recorder == null) return;
         recorder.Record(new AdHocUsageRecord
@@ -98,6 +100,8 @@ public static class AdHocClaudeInvoker
             Ts = DateTime.UtcNow,
             Source = source,
             Model = string.IsNullOrWhiteSpace(usage?.Model) ? model : usage!.Model!,
+            ThinkingLevel = usage?.ThinkingLevel ?? thinkingLevel,
+            ParticipantId = participantId,
             InputTokens = usage?.InputTokens ?? 0,
             OutputTokens = usage?.OutputTokens ?? 0,
             CacheReadTokens = usage?.CacheReadTokens ?? 0,

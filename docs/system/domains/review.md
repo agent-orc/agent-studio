@@ -1,7 +1,29 @@
 # Review Domain Map
 
-Version: 2026-10-12
+Version: 2026-10-21
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Review economics (AGT-3278)
+
+`GET /api/projects/{projectName}/token-usage/reviews` folds the canonical
+deduplicated project token ledger into delivery review attempts. Query filters
+are `days` (1 to 90, default 30), `model`, `level`, and `host`. The endpoint
+returns median and nearest-rank p90 tokens and historical list-price USD per
+delivery review, accepted-card review rounds and spend, review share of card
+tokens, step and model/level splits, daily 7-day and 30-day median series, and
+the underlying review call rows. The ledger snapshot and the derived response
+are cached for at most 60 seconds against the task index generation.
+
+Remote Review receipts now preserve `support:remote-review:{attempt}:step:{stepId}`
+on each agent command. Replaying an attempt replaces all of its step rows.
+Local aspect and grade usage emits project-scoped ledger rows with the pipeline
+attempt and step; a local call made without a pipeline attempt remains a
+distinct legacy round. Review decision calls are attributed to the card.
+Older receipts retain their attempt attribution but appear under
+`review, step unknown`. Calls without a historical catalog price remain in
+token statistics and are omitted from USD samples. The project overview and
+usage cockpit show the same read-only tiles and link each tile to the matching
+review rows. Miss-rate feedback awaits AGT-3269.
 
 ## Deep review selection (AGT-3268)
 
@@ -18,11 +40,13 @@ The run-completion timeline names the receipt, and report projection records a
 The engine policy in `orchestration-decisions/DeepReviewPolicy.cs` selects from
 the card's Token Economy correctness floor, changed paths and line count, prior
 blocks, gate failures, delivered rounds, and quota admission. It defaults to
-`gpt-6-sol` at `medium`; P0, critical correctness floors, and touched security,
-fencing, lease, migration, concurrency, or orchestration-decision code require
-`xhigh`. Available quota never raises the effort. A capped route can suppress
+`gpt-6-sol` at `medium`; P0, critical correctness floors, and touched security
+or auth feature code, attempt authority, transition decisions, or deep-review
+policy require `xhigh`. Unknown diff size is recorded in the receipt without
+selecting review. Available quota never raises the effort. A capped route can suppress
 discretionary review, but a critical review retains its floor and waits for
 quota. The plan refuses a quota fallback that would replace its frozen route.
+Quota-deferred attempts have a short claim cooldown so other queued reviews can run.
 The AGT-3068 rules editor accepts the `deep-review` trigger with numeric
 `review.changed-lines`, `review.previous-blocks`, `review.gate-failures`, and
 `review.delivered-rounds` facts. A matching `prepare` rule selects review;
@@ -1195,8 +1219,8 @@ historical price catalogue at the review date if the model is priced.
 `POST /api/tasks/{jobId}/review-observations/{reviewId}/later-evidence?project=...`
 links a later review, gate, operator finding or production incident to an earlier
 approved review of the same SHA. The later evidence must be dated after approval
-and cite an artifact. A later blocking review or product-class remote gate on the
-same SHA supplies the link automatically. Replayed journal IDs do not duplicate
+and cite an artifact. A later blocking review of the same aspect and SHA supplies
+the link automatically. Replayed journal IDs do not duplicate
 records.
 
 `POST /api/tasks/{jobId}/review-observations/{reviewId}/finding-outcomes?project=...`
@@ -1215,7 +1239,10 @@ Token Economy. `/export/{reviewId}` returns one importer-ready version-1
 review-run JSON document when that review has the required fields.
 Unpriced reviews retain null cost. Cost per real finding is null unless reported
 findings have an explicit confirmed count. When a model/reasoning cohort has at
-least five approvals and two cited misses with a miss rate of at least 20%, the
+least twenty approvals and four cited misses with a miss rate of at least 20%, the
 remote review plan runs every semantic aspect on a follow-up round instead of
-carrying previous verdicts over. This affects review depth only, not the task's
+carrying previous verdicts over. Failed commands do not count as reviewed defects;
+an automatic later-review miss applies only to an earlier approval of the same
+aspect and delivered SHA. The previous finding remains in the full-review prompt.
+This affects review depth only, not the task's
 acceptance or transition decision.

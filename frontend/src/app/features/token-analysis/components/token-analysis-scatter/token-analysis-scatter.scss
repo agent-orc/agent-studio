@@ -1,0 +1,64 @@
+@use '../../token-analysis' as ta;
+
+:host { display: block; min-width: 0; }
+.sc { @include ta.panel; }
+.sc__head { @include ta.panel-head; }
+.sc__legend { @include ta.legend; }
+
+.sc__plot {
+  position: relative;
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- plot height, not spacing */
+  height: 180px;
+  padding-left: var(--studio-spacing-6);
+  border-bottom: 1px solid var(--studio-border);
+  border-left: 1px solid var(--studio-border);
+}
+
+.sc__axis {
+  @include ta.numeric;
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+}
+
+.sc__area { position: absolute; inset: 0 0 0 var(--studio-spacing-6); }
+
+.sc__mark {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 0;
+  box-shadow: 0 0 0 2px var(--studio-card-bg);
+  transform: translate(-50%, 50%);
+  cursor: pointer;
+}
+
+.sc__mark--legend {
+  position: static;
+  display: inline-block;
+  transform: none;
+  cursor: default;
+}
+
+.sc__mark--done { border-radius: 50%; }
+.sc__mark--stuck { border-radius: 1px; }
+.sc__mark--open { clip-path: polygon(50% 0, 100% 100%, 0 100%); box-shadow: none; }
+.sc__mark:focus-visible,
+.sc__mark--selected { outline: 2px solid var(--studio-fg-strong); outline-offset: 2px; }
+
+.sc__ticks {
+  @include ta.numeric;
+  position: relative;
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- tick row height */
+  height: 14px;
+  margin-left: var(--studio-spacing-6);
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+
+  span { position: absolute; transform: translateX(-50%); }
+}
+
+.sc__caption { margin: 0; color: var(--studio-fg-muted); font-size: 0.7rem; }

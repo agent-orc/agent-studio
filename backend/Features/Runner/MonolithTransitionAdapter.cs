@@ -19,6 +19,9 @@ public static class MonolithTransitionAdapter
     public static IReadOnlyList<ReviewFollowUpFinding> MergeReviewFindings(
         IEnumerable<ReviewFollowUpFinding> findings)
         => ReviewFindingMergePolicy.Merge(findings);
+    public static IReadOnlyList<ReviewVerdictDto> MergeReviewVerdicts(
+        IEnumerable<ReviewVerdictDto> verdicts)
+        => ReviewFindingMergePolicy.MergeVerdicts(verdicts);
     public static IReadOnlyList<string> BlockingReviewFindingKeys(
         IEnumerable<ReviewFollowUpFinding> findings)
         => ReviewFindingMergePolicy.BlockingFingerprints(findings);

@@ -35,6 +35,8 @@
 .project-environments__card h3,
 .project-environments__card p { margin: 0; overflow-wrap: anywhere; }
 
+.project-environments__card app-project-runbooks { grid-column: 1 / -1; }
+
 .project-environments__empty {
   background: var(--studio-bg-hover);
   padding: var(--studio-spacing-4);

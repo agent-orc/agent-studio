@@ -61,7 +61,7 @@
       [projectName]="projectName()"
       (openDetails)="openRail.emit('project-urls')"
       (openPreview)="openUrlPreview.emit($event)" />
-
+    @defer (on viewport) { <app-review-statistics class="operator-dashboard__review" [projectName]="projectName()" /> } @placeholder { <p class="operator-dashboard__empty operator-dashboard__review" data-testid="project-overview-review-placeholder">Review economics</p> }
     <section class="operator-dashboard__wiki" data-testid="project-overview-wiki">
       <header class="operator-dashboard__section-head">
         <div>
@@ -186,6 +186,8 @@
       <button type="button"
               data-testid="project-overview-open-deployment"
               (click)="openRail.emit('deploy')">Open Deploy</button>
+      <button type="button" data-testid="project-overview-open-operations"
+              (click)="openRail.emit('operations')">Open Operations</button>
       <span class="operator-dashboard__deployment-state"
             [class.operator-dashboard__deployment-state--pending]="deploymentState() === 'pending'"
             [class.operator-dashboard__deployment-state--failed]="deploymentState() === 'failed'">
