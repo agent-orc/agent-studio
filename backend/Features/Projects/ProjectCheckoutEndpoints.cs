@@ -1,5 +1,6 @@
 using AgentStudio.Git;
 using AgentStudio.Registry;
+using AgentStudio.Security;
 
 namespace AgentStudio.Projects;
 
@@ -20,7 +21,8 @@ public static class ProjectCheckoutEndpoints
             ProjectSettingsService settings, GitService git, CancellationToken ct) =>
             Resolve(projectName, scanner, registry, settings, git) is { } target
                 ? Results.Ok(git.SyncDeveloperCheckout(target.Path, target.Branch, ct))
-                : Results.NotFound(new { error = $"Unknown project '{projectName}' or repository unavailable." }));
+                : Results.NotFound(new { error = $"Unknown project '{projectName}' or repository unavailable." }))
+            .RequireStudioRole(StudioRoles.Owner);
     }
 
     internal static (string Path, string Branch)? Resolve(

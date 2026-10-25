@@ -42,6 +42,29 @@ public sealed class WikiContentCacheTests : IDisposable
     }
 
     [Fact]
+    public void Wiki_file_read_refuses_delivered_symlink_outside_docs()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var outside = Path.Combine(Path.GetTempPath(), "wiki-outside-" + Guid.NewGuid().ToString("N") + ".md");
+        File.WriteAllText(outside, "private content");
+        try
+        {
+            File.CreateSymbolicLink(Path.Combine(_root, "docs", "leak.md"), outside);
+            File.CreateSymbolicLink(Path.Combine(_root, "docs", "leak.png"), outside);
+            var security = Path.Combine(_root, "docs", "operations", "security");
+            Directory.CreateDirectory(security);
+            File.CreateSymbolicLink(Path.Combine(security, "leak.md"), outside);
+            Assert.Null(_docs.ReadWikiFile(ProjectName, "leak.md"));
+            Assert.Null(_docs.ReadWikiAsset(ProjectName, "leak.png"));
+            Assert.Null(_docs.ReadSecurityFile(ProjectName, "leak.md"));
+        }
+        finally
+        {
+            File.Delete(outside);
+        }
+    }
+
+    [Fact]
     public void Preload_FillsOnce_AndAllWikiReadersShareTheSnapshot()
     {
         Assert.True(_cache.Preload(ProjectName));

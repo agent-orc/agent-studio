@@ -784,6 +784,12 @@ public sealed class ProjectUrlProcessService : IProjectUrlProcessStarter, IProje
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        // URL start rules execute repository content. Do not pass the API's
+        // credentials, service tokens, or Git configuration to that process.
+        psi.Environment.Clear();
+        foreach (var name in new[] { "PATH", "SystemRoot", "ComSpec", "PATHEXT", "TMPDIR", "TEMP", "TMP" })
+            if (Environment.GetEnvironmentVariable(name) is { Length: > 0 } value)
+                psi.Environment[name] = value;
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             psi.FileName = "cmd.exe";

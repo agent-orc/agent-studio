@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.CliHosting;
+using AgentStudio.Security;
 
 namespace AgentStudio.Cli;
 
@@ -1205,6 +1206,7 @@ internal static class BuiltInCliBehaviors
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            HostCliSpawnGuard.Validate(proc.StartInfo, SecurityProfiles.IsNetworked(ctx.Configuration));
             proc.Start();
             var rawOutput = proc.StandardOutput.ReadToEnd().Trim();
             var rawError = proc.StandardError.ReadToEnd().Trim();

@@ -8639,7 +8639,7 @@ public partial class GitService
             // we can get without an unreliable PID/window-title scan.
             psi.ArgumentList.Add("-r");
             psi.ArgumentList.Add(root);
-            using var p = Process.Start(psi);
+            using var p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_config));
             return p != null;
         }
         catch (Exception ex)

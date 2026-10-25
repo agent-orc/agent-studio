@@ -368,77 +368,72 @@ public static class CliEndpoints
         // Example: /api/cli/_probe/claude?cmd=/usage
         if (SecurityProfiles.IsLocal(app.Configuration))
         {
-        cliGroup.MapGet("/_probe/{cliType}", async (
-            string cliType,
-            string? cmd,
-            string? followUp,
-            int? settleMs,
-            int? followUpSettleMs,
-            CliRouter router,
-            CliEnvironment env,
-            IConfiguration configuration,
-            CancellationToken ct) =>
-        {
-            if (SecurityProfiles.IsNetworked(configuration))
-                return Results.Json(new { code = "remote-execution-required",
-                    error = "Interactive CLI probes require a runner in the networked profile." },
-                    statusCode: StatusCodes.Status400BadRequest);
-            if (!CliTypes.IsValid(cliType))
-                return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
-            var slashCmd = string.IsNullOrWhiteSpace(cmd) ? "/usage" : cmd!;
-            var settle = settleMs ?? 2500;
-
-            var cli = router.Get(cliType);
-            var (available, _, resolvedPath) = cli.TestCliPath();
-            if (!available)
-                return Results.BadRequest(new { error = $"{cliType} CLI not available" });
-
-            var scratch = Path.Combine(Path.GetTempPath(), "agent-taskboard-probe", cliType);
-            Directory.CreateDirectory(scratch);
-            try { env.EnsureFolderTrusted(scratch); env.EnsureTerminalSetupAcknowledged("vscode", "vscode-insiders", "windows-terminal"); } catch (Exception __ex) { SilentCatch.Note(__ex, "CliEndpoints:178"); }
-
-            try
+            cliGroup.MapGet("/_probe/{cliType}", async (
+                string cliType,
+                string? cmd,
+                string? followUp,
+                int? settleMs,
+                int? followUpSettleMs,
+                CliRouter router,
+                CliEnvironment env,
+                CancellationToken ct) =>
             {
-                await using var pty = await PtySession.SpawnAsync(
-                    app: resolvedPath,
-                    cwd: scratch,
-                    extraEnv: CliEnvironment.ProbeEnvironment(),
-                    ct: ct,
-                    networked: SecurityProfiles.IsNetworked(configuration));
-                await pty.WaitForIdleAsync(idleMs: 1500, timeoutMs: 8000, ct);
-                // For Claude/Codex confirm trust prompt first.
-                if (cliType is "claude" or "codex")
+                if (!CliTypes.IsValid(cliType))
+                    return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
+                var slashCmd = string.IsNullOrWhiteSpace(cmd) ? "/usage" : cmd!;
+                var settle = settleMs ?? 2500;
+
+                var cli = router.Get(cliType);
+                var (available, _, resolvedPath) = cli.TestCliPath();
+                if (!available)
+                    return Results.BadRequest(new { error = $"{cliType} CLI not available" });
+
+                var scratch = Path.Combine(Path.GetTempPath(), "agent-taskboard-probe", cliType);
+                Directory.CreateDirectory(scratch);
+                try { env.EnsureFolderTrusted(scratch); env.EnsureTerminalSetupAcknowledged("vscode", "vscode-insiders", "windows-terminal"); } catch (Exception __ex) { SilentCatch.Note(__ex, "CliEndpoints:178"); }
+
+                try
                 {
-                    await pty.SendKeysAsync("1<Enter>", ct);
+                    await using var pty = await PtySession.SpawnAsync(
+                        app: resolvedPath,
+                        cwd: scratch,
+                        extraEnv: CliEnvironment.ProbeEnvironment(),
+                        ct: ct,
+                        networked: false);
                     await pty.WaitForIdleAsync(idleMs: 1500, timeoutMs: 8000, ct);
+                    // For Claude/Codex confirm trust prompt first.
+                    if (cliType is "claude" or "codex")
+                    {
+                        await pty.SendKeysAsync("1<Enter>", ct);
+                        await pty.WaitForIdleAsync(idleMs: 1500, timeoutMs: 8000, ct);
+                    }
+                    var preLen = pty.SnapshotStripped().Length;
+                    await pty.SendKeysAsync(slashCmd + "<Enter>", ct);
+                    await pty.WaitForIdleAsync(idleMs: settle, timeoutMs: 12000, ct);
+                    if (!string.IsNullOrEmpty(followUp))
+                    {
+                        await pty.SendKeysAsync(followUp, ct);
+                        await pty.WaitForIdleAsync(idleMs: followUpSettleMs ?? 2000, timeoutMs: 10000, ct);
+                    }
+                    var snap = pty.SnapshotStripped();
+                    try { await pty.SendKeysAsync("<Esc>", ct); } catch (Exception __ex) { SilentCatch.Note(__ex, "CliEndpoints:199"); }
+                    try { await pty.SendKeysAsync("<Esc>", ct); } catch (Exception __ex) { SilentCatch.Note(__ex, "CliEndpoints:200"); }
+                    return Results.Ok(new
+                    {
+                        cliType,
+                        command = slashCmd,
+                        followUp,
+                        resolvedPath,
+                        preCharCount = preLen,
+                        snapshotLength = snap.Length,
+                        snapshot = snap
+                    });
                 }
-                var preLen = pty.SnapshotStripped().Length;
-                await pty.SendKeysAsync(slashCmd + "<Enter>", ct);
-                await pty.WaitForIdleAsync(idleMs: settle, timeoutMs: 12000, ct);
-                if (!string.IsNullOrEmpty(followUp))
+                catch (Exception ex)
                 {
-                    await pty.SendKeysAsync(followUp, ct);
-                    await pty.WaitForIdleAsync(idleMs: followUpSettleMs ?? 2000, timeoutMs: 10000, ct);
+                    return Results.Problem(detail: ex.Message, title: "Probe failed");
                 }
-                var snap = pty.SnapshotStripped();
-                try { await pty.SendKeysAsync("<Esc>", ct); } catch (Exception __ex) { SilentCatch.Note(__ex, "CliEndpoints:199"); }
-                try { await pty.SendKeysAsync("<Esc>", ct); } catch (Exception __ex) { SilentCatch.Note(__ex, "CliEndpoints:200"); }
-                return Results.Ok(new
-                {
-                    cliType,
-                    command = slashCmd,
-                    followUp,
-                    resolvedPath,
-                    preCharCount = preLen,
-                    snapshotLength = snap.Length,
-                    snapshot = snap
-                });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem(detail: ex.Message, title: "Probe failed");
-            }
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+            }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
         }
     }
 

@@ -1073,8 +1073,12 @@ builder.Services.AddSingleton<BranchSweepService>();
 builder.Services.AddSingleton<BranchReclaimTriggerService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<GitBranchRetentionHostedService>();
-// Slice P (ASS-1663): build-profile onboarding validation dry-run.
-builder.Services.AddSingleton<IBuildCommandRunner, RemoteRequiredBuildCommandRunner>();
+// Keep host validation available for the trusted local profile. Networked and
+// public-demo profiles must never run delivered build commands in the API.
+builder.Services.AddSingleton<IBuildCommandRunner>(sp =>
+    SecurityProfiles.IsLocal(sp.GetRequiredService<IConfiguration>())
+        ? new ProcessBuildCommandRunner()
+        : new RemoteRequiredBuildCommandRunner());
 builder.Services.AddSingleton<BuildProfileValidationService>();
 // Completed-job auto-push runs off the request path: TaskTransitionService
 // enqueues here on the move to 6-completed (instant), CompletedPushWorker

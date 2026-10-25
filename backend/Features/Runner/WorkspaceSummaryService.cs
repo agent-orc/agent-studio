@@ -418,6 +418,7 @@ public sealed class WorkspaceSummaryService
         };
         try
         {
+            AgentStudio.Git.HostGitProcessHardening.Apply(psi);
             using var proc = Process.Start(psi);
             if (proc is null) return ("", "", -1);
             var stdout = proc.StandardOutput.ReadToEnd();

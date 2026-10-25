@@ -68,9 +68,9 @@ public class PromptEnhancementService
                             ?? _configuration["TitleGeneration:Model"]
                             ?? _configuration["ClaudeCli:SummaryModel"]
                             ?? ModelFamilyResolver.Resolve(ModelFamilies.ClaudeHaiku);
-        var prompt = _prompts.Render(TemplateName,
+        var prompt = HostOneShotIsolation.EscapeAbsoluteFileMentions(_prompts.Render(TemplateName,
             new Dictionary<string, string?> { ["input"] = bounded },
-            new PromptCallContext(Step: "prompt-enhancement", Model: fallbackModel));
+            new PromptCallContext(Step: "prompt-enhancement", Model: fallbackModel)));
 
         var sw = AdHocClaudeInvoker.StartTiming();
         var (ok, raw, error) = await InvokeAsync(prompt, ct);

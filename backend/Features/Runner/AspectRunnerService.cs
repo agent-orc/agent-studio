@@ -32,7 +32,7 @@ public sealed class AspectRunnerService
 {
     private readonly RuntimePromptService _prompts;
     private readonly ILogger<AspectRunnerService> _logger;
-    private readonly bool _networked;
+    private readonly IConfiguration? _configuration;
 
     /// <summary>
     /// CLI runner injection point. Tests substitute a deterministic stub
@@ -73,9 +73,8 @@ public sealed class AspectRunnerService
         _oneShotRegistry = oneShotRegistry;
         _pipelineLog = pipelineLog;
         _fileGenerationIndex = fileGenerationIndex;
-        _networked = configuration is not null && SecurityProfiles.IsNetworked(configuration);
-        CliRunner = (aspectId, cli, model, prompt, timeout, ct) =>
-            DefaultRunCliAsync(aspectId, cli, model, prompt, timeout, ct, _networked);
+        _configuration = configuration;
+        CliRunner = DefaultRunCliAsync;
 
         // Wire production CLI invocation to the OneShot service so prompts
         // travel via stdin (the failure mode this fix exists to prevent
@@ -767,24 +766,26 @@ public sealed class AspectRunnerService
     /// pattern; we removed the previous <c>-p &lt;prompt&gt;</c> argv path
     /// that caused the 2026-05-11 empty-reply incident.
     /// </summary>
-    private static async Task<string> DefaultRunCliAsync(
-        string aspectId, string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct, bool networked)
+    private async Task<string> DefaultRunCliAsync(
+        string aspectId, string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
     {
-        using var workspace = new HostOneShotIsolation.Workspace();
+        if (!Path.GetFileNameWithoutExtension(cli.Replace('\\', '/')).Equals(CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        var networked = _configuration is null || SecurityProfiles.IsNetworked(_configuration);
+        using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = cli,
-            WorkingDirectory = workspace.Path,
+            WorkingDirectory = networked ? workspace!.Path : Directory.GetCurrentDirectory(),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model);
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model, networked: networked);
 
-        using var p = HostCliSpawnGuard.Start(psi, networked,
-            Path.GetFileNameWithoutExtension(cli.Replace('\\', '/')));
+        using var p = HostCliSpawnGuard.Start(psi, networked, CliTypes.Claude);
         if (p == null) return string.Empty;
         try
         {
