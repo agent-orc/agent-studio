@@ -39,6 +39,12 @@ test('workspace deployment matrix filters and opens project deployment in both t
     }
     if (url.includes('/api/watch-paths')) return json(projects.map(project => ({ name: project.displayName, path: project.storageLocation })));
     if (new URL(url).pathname === '/api/v1/projects') return json(projects);
+    if (url.includes('/quota/admission')) return json({
+      workspaceId: new URL(url).pathname.split('/')[3],
+      workspace: { projectId: null, project: null, status: 'ok', message: null, overrideActive: false,
+        codingAllowed: true, hostingAllowed: true, limited: false },
+      projects: [],
+    });
     if (url.includes('/api/v1/workspaces') || url.includes('/api/workspaces')) return json([
       { id: 'web', displayName: 'Web', sortOrder: 0, isDefault: true, color: null, createdAt: '2026-10-16T00:00:00Z', projects: [projects[0]] },
       { id: 'services', displayName: 'Services', sortOrder: 1, isDefault: false, color: null, createdAt: '2026-10-16T00:00:00Z', projects: [projects[1]] },
