@@ -1,4 +1,4 @@
-namespace AgentStudio;
+namespace AgentStudio.Shared;
 
 /// <summary>Rejects links in a delivered relative path before opening a live file.</summary>
 public static class FilesystemPathBoundary
