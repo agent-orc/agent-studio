@@ -174,6 +174,10 @@ public class CliInvocationCentralizationGuardTests
             + "The non-agent ClaudeOneShot alone retains this repair helper. CAR owns repair "
             + "for card runs; AGT-2373 removed the local rollback path."),
 
+        new("backend/Features/Cli/Execution/HostCliSpawnGuard.cs",
+            DocumentedException
+            + "AGT-2373 retains this host spawn boundary to validate provider arguments and isolation before process start."),
+
         new("backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs",
             DocumentedException
             + "Short-lived non-agent claude call (summaries, classification, verdict extraction). "

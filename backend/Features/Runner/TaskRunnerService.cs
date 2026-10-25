@@ -774,9 +774,8 @@ public class TaskRunnerService : BackgroundService
         var runner = _runners.Values.FirstOrDefault(r => r.Entry.Name == info.ProjectName);
         if (runner == null) throw new TaskOperationException($"No runner configured for project '{info.ProjectName}'", 400);
 
-        if (ProjectExecutionPolicy.IsLocalExecution(_projectSettings.Get(info.ProjectName))
-            && (SecurityProfiles.IsNetworked(_config)
-                || !AllowsLocalCoding && WorktreeRunPolicy.RequiresWorktree(info.Mode)))
+        if (SecurityProfiles.IsNetworked(_config)
+            && ProjectExecutionPolicy.IsLocalExecution(_projectSettings.Get(info.ProjectName)))
             throw new TaskOperationException(
                 RemoteExecutionRequirement.Code + ": " + RemoteExecutionRequirement.Message, 400);
 
