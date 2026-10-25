@@ -24,7 +24,12 @@ public static class StudioRoleRequirements
 {
     public static TBuilder RequireStudioRole<TBuilder>(this TBuilder builder, string minimumRole)
         where TBuilder : IEndpointConventionBuilder
-        => builder.WithMetadata(new StudioRoleRequirement(minimumRole));
+    {
+        var guarded = builder.WithMetadata(new StudioRoleRequirement(minimumRole));
+        return minimumRole == StudioRoles.Owner
+            ? guarded.WithMetadata(new RequiredPermissionMetadata(IamPermissions.WorkspaceAdminister))
+            : guarded;
+    }
 }
 
 /// <summary>
