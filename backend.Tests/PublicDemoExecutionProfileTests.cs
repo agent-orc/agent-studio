@@ -211,7 +211,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3239 added the operator candidate verification record on PostStep:
         // it appends immutable integrated-verified evidence after a passed suite.
         // AGT-3274 added the authenticated deploy artifact route on Claim.
-        Assert.Equal(147, routes.Count);
+        // The interactive CLI probe is mapped only in the local profile.
+        Assert.Equal(146, routes.Count);
         foreach (var (method, suffix) in new[]
         {
             ("PUT", "/{volume}/schedule"), ("POST", "/{volume}/backups"),
