@@ -15,6 +15,8 @@ public sealed class NetworkedCutoverContractTests
         var cloudflareCaddy = File.ReadAllText(Path.Combine(stack, "Caddyfile.cloudflare"));
         var frontendCaddy = File.ReadAllText(Path.Combine(stack, "Caddyfile.frontend"));
         var compose = File.ReadAllText(Path.Combine(stack, "compose.yaml"));
+        var apiDockerfile = File.ReadAllText(Path.Combine(root, "backend", "Dockerfile"));
+        var frontendDockerfile = File.ReadAllText(Path.Combine(root, "frontend", "Dockerfile"));
 
         Assert.Contains("client_auth {", publicCaddy);
         Assert.Contains("mode require_and_verify", publicCaddy);
@@ -23,6 +25,9 @@ public sealed class NetworkedCutoverContractTests
         Assert.Contains("mode require_and_verify", cloudflareCaddy);
         Assert.Contains("trust_pool file /etc/caddy/origin-pull/ca.pem", cloudflareCaddy);
         Assert.Contains("header_up X-Forwarded-For {client_ip}", publicCaddy);
+        Assert.Contains("client_ip_headers CF-Connecting-IP", publicCaddy);
+        Assert.DoesNotContain("client_ip_headers X-Forwarded-For", publicCaddy);
+        Assert.Contains("import /etc/caddy/cloudflare-ips.caddy", publicCaddy);
         Assert.Contains("trusted_proxies static 172.30.83.2", frontendCaddy);
         Assert.Contains("handle @health {", frontendCaddy);
         Assert.DoesNotContain("respond @health 200", frontendCaddy);
@@ -31,7 +36,10 @@ public sealed class NetworkedCutoverContractTests
         Assert.Contains("Security__TrustedProxyAddresses: 172.30.83.3,172.30.83.2", compose);
         Assert.Contains("0.0.0.0:443:443", compose);
         Assert.Contains("${STUDIO_DATA_DIR}/origin-pull:/etc/caddy/origin-pull:ro", compose);
-        Assert.Contains("Security__PublicCloudflareEdge: ${STUDIO_PUBLIC_CLOUDFLARE_EDGE:-false}", compose);
+        Assert.Contains("Security__PublicCloudflareEdge: ${STUDIO_PUBLIC_CLOUDFLARE_EDGE:?", compose);
+        Assert.Contains("127.0.0.1:5031/healthz/container", apiDockerfile);
+        Assert.Contains("127.0.0.1:8080/", frontendDockerfile);
+        Assert.DoesNotContain("127.0.0.1:8080/healthz", frontendDockerfile);
     }
 
     [Fact]
@@ -45,7 +53,8 @@ public sealed class NetworkedCutoverContractTests
         Assert.Contains("-i br-studio-web -j RETURN", rules);
         Assert.Contains("-d 172.30.83.2 -p tcp -m multiport --dports 80,443 -j RETURN", rules);
         Assert.Contains("com.docker.network.bridge.name: br-studio-web", compose);
-        Assert.Contains("restart: on-failure", compose);
+        Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(compose,
+            @"restart: \$\{STUDIO_RESTART_POLICY:-on-failure\}").Count);
         Assert.Contains("After=docker.service agent-studio-cloudflare-firewall.service", installer);
         Assert.Contains("systemctl enable agent-studio-website.service", installer);
     }

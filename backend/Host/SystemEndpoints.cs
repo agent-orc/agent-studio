@@ -263,6 +263,17 @@ public static class SystemEndpoints
             return result;
         });
 
+        // Docker probes the loopback listener so a private login diagnostic does
+        // not hold the dependent frontend and edge containers unhealthy.
+        app.MapGet("/healthz/container", (HttpContext context) =>
+        {
+            IResult result = System.Net.IPAddress.IsLoopback(
+                context.Connection.RemoteIpAddress ?? System.Net.IPAddress.None)
+                ? Results.Ok("ok")
+                : Results.NotFound();
+            return result;
+        });
+
         // External stable-process watchdogs consult this immediately before a
         // hard restart. The merge gate is one consistency boundary that must
         // finish its build decision and possible rollback before process exit.

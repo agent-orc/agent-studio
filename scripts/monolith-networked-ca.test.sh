@@ -26,12 +26,31 @@ make_ca studio-account-ca
 bash "$work/stack/check-edge-config.sh" "$stack" > "$work/check.log" 2>&1
 grep -q 'Edge files and origin-pull CA are current.' "$work/check.log"
 
+cp "$work/data/origin-pull/ca.pem" "$work/account-ca.pem"
+make_ca origin-pull.cloudflare.net
+cat "$work/account-ca.pem" "$work/data/origin-pull/ca.pem" > "$work/chain.pem"
+mv "$work/chain.pem" "$work/data/origin-pull/ca.pem"
+if bash "$work/stack/check-edge-config.sh" "$stack" > "$work/check.log" 2>&1; then
+  echo 'Origin-pull CA bundle with a shared second certificate was accepted' >&2
+  exit 1
+fi
+grep -q 'exactly one certificate' "$work/check.log"
+cp "$work/account-ca.pem" "$work/data/origin-pull/ca.pem"
+
 printf 'STUDIO_PUBLIC_CLOUDFLARE_EDGE=false\n' >> "$work/stack/.env"
 if bash "$work/stack/check-edge-config.sh" "$stack" > "$work/check.log" 2>&1; then
   echo 'Public edge was accepted with a false effective login guard' >&2
   exit 1
 fi
 grep -q 'STUDIO_PUBLIC_CLOUDFLARE_EDGE=true' "$work/check.log"
+sed -i '$d' "$work/stack/.env"
+
+printf 'STUDIO_RESTART_POLICY=unless-stopped\n' >> "$work/stack/.env"
+if bash "$work/stack/check-edge-config.sh" "$stack" > "$work/check.log" 2>&1; then
+  echo 'Public edge was accepted with Docker restarting containers before the firewall' >&2
+  exit 1
+fi
+grep -q 'STUDIO_RESTART_POLICY=on-failure' "$work/check.log"
 sed -i '$d' "$work/stack/.env"
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \

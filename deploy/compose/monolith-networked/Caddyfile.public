@@ -1,7 +1,7 @@
 {
     servers {
         import /etc/caddy/cloudflare-ips.caddy
-        client_ip_headers X-Forwarded-For
+        client_ip_headers CF-Connecting-IP
         trusted_proxies_strict
     }
 }

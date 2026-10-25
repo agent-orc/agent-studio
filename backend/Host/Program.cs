@@ -1428,7 +1428,15 @@ var publishedArtifactSha = app.Services.GetRequiredService<PublishedArtifactSha>
 app.Use(async (context, next) =>
 {
     if (publishedArtifactSha is not null && context.Request.Path.StartsWithSegments("/api"))
-        context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
+        context.Response.OnStarting(() =>
+        {
+            if (!networkedSecurityProfile
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.HumanPrincipalItem)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.RunnerPrincipalItem)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.ApiTokenPrincipalItem))
+                context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
+            return Task.CompletedTask;
+        });
     await next(context);
 });
 // An explicitly selected standalone Task Server owns task data. Legacy task
