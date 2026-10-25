@@ -311,6 +311,36 @@ public sealed class TaskIndexCache
     }
 
     /// <summary>
+    /// Captures an index generation for authorization without blocking a
+    /// request thread. Unlike a board read, it waits for invalidations already
+    /// observed at entry, so a moved card is checked in its current project.
+    /// Concurrent callers share the dedicated refresh worker.
+    /// </summary>
+    public async ValueTask<TaskIndexPublication> AcquireAuthorizationReadAsync(CancellationToken cancellationToken)
+    {
+        long requiredMutation;
+        lock (_lock) requiredMutation = _requiredMutationGen;
+        while (true)
+        {
+            Task refresh;
+            lock (_lock)
+            {
+                if (_hasSnapshot && !_dirty && _publishedMutationGen >= requiredMutation
+                    && _time.GetUtcNow() - _snapshotAt < _safetyTtl)
+                    return _publication;
+                StartBackgroundRefreshLocked();
+                refresh = _refreshCompletion!.Task;
+            }
+            await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
+            lock (_lock)
+            {
+                if (_hasSnapshot && _publishedMutationGen >= requiredMutation)
+                    return _publication;
+            }
+        }
+    }
+
+    /// <summary>
     /// Pins <paramref name="publication"/> for the current async flow until the
     /// returned scope is disposed: every index read below answers from it
     /// without refreshing. Call it from the request method itself, not from an

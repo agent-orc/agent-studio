@@ -18,11 +18,14 @@ public sealed class AccessSecurityMiddleware
     /// <summary>The <see cref="RequestAccess"/> captured with the request's permission decision.</summary>
     public const string RequestAccessItem = "AccessSecurity.RequestAccess";
     public const string AttributionClientIdItem = "AccessSecurity.AttributionClientId";
+    private const string TaskResolutionItem = "AccessSecurity.TaskResolution";
+    private const string TaskPublicationItem = "AccessSecurity.TaskPublication";
 
     private readonly RequestDelegate _next;
     private readonly IConfiguration _configuration;
     private readonly AccessSecurityStore _store;
     private readonly TaskScannerService? _scanner;
+    private readonly TaskIndexCache? _taskIndex;
     private readonly RunLeaseService? _leases;
     private readonly AgentStudio.Registry.ProjectRegistry? _projects;
     private readonly TimelineLog? _timeline;
@@ -42,12 +45,14 @@ public sealed class AccessSecurityMiddleware
         TimeProvider? clock = null,
         AgentStudio.Registry.ProjectUrlPreviewAccess? previewAccess = null,
         AgentStudio.Projects.ProjectEnvironmentService? environments = null,
-        ILogger<AccessSecurityMiddleware>? logger = null)
+        ILogger<AccessSecurityMiddleware>? logger = null,
+        TaskIndexCache? taskIndex = null)
     {
         _next = next;
         _configuration = configuration;
         _store = store;
         _scanner = scanner;
+        _taskIndex = taskIndex;
         _leases = leases;
         _projects = projects;
         _timeline = timeline;
@@ -439,7 +444,8 @@ public sealed class AccessSecurityMiddleware
         if (productRole)
         {
             var card = path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
-                ? _scanner?.FindJob(Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]))
+                && IsParameterSegment(endpoint, 2)
+                ? await FindTaskAsync(context, Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]))
                 : null;
             var productionApproval = card is not null
                 && PermissionEvaluator.Evaluate(IamPermissions.EnvironmentProductionDeployApprove, subject, bindings,
@@ -466,7 +472,7 @@ public sealed class AccessSecurityMiddleware
             && _timeline is not null)
         {
             var taskId = Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]);
-            var updated = _scanner?.FindJob(taskId);
+            var updated = _scanner?.FindPublishedJob(taskId);
             if (updated is not null)
                 _timeline.Append(updated.FolderPath, new TimelineEvent
                 {
@@ -505,7 +511,7 @@ public sealed class AccessSecurityMiddleware
             await Reject(context, 403, "role-denied", "The Product role cannot perform this action.");
             return;
         }
-        if (!ProjectAllowed(human.User, context.Request, path))
+        if (!await ProjectAllowedAsync(human.User, context, path))
         {
             await Reject(context, 403, "project-scope-denied", "This account is not a member of the requested project.");
             return;
@@ -639,7 +645,7 @@ public sealed class AccessSecurityMiddleware
         var endpoint = context.GetEndpoint();
         var address = path.StartsWith("/api/secrets/workspace", StringComparison.OrdinalIgnoreCase)
             ? ProjectRouteAddress.WorkspaceWide
-            : ResolveRouteAddress(context.Request, path, endpoint);
+            : await ResolveRouteAddressAsync(context, path, endpoint);
         var scope = address.Scope == ProjectRouteScope.Unaddressed && !safeMethod && !required.ProjectBindingsSuffice
             ? ProjectRouteScope.WorkspaceWide
             : address.Scope;
@@ -956,12 +962,12 @@ public sealed class AccessSecurityMiddleware
     private static string? ReadBearer(string? authorization)
         => authorization?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true ? authorization[7..].Trim() : null;
 
-    private bool ProjectAllowed(StudioUser user, HttpRequest request, string path)
+    private async Task<bool> ProjectAllowedAsync(StudioUser user, HttpContext context, string path)
     {
         if (ProjectAccessAuthorization.HasUnrestrictedProjectAccess(user)) return true;
         return ProjectScopePolicy.Allows(
-            ResolveRouteAddress(request, path),
-            request.Query["project"].FirstOrDefault(),
+            await ResolveRouteAddressAsync(context, path, context.GetEndpoint()),
+            context.Request.Query["project"].FirstOrDefault(),
             project => ProjectAccessAuthorization.Allows(user, project, _projects));
     }
 
@@ -973,8 +979,9 @@ public sealed class AccessSecurityMiddleware
     /// segment is a resource id or a literal route name; without one (an
     /// unrouted request) the path alone decides.
     /// </summary>
-    private ProjectRouteAddress ResolveRouteAddress(HttpRequest request, string path, Endpoint? endpoint = null)
+    private async ValueTask<ProjectRouteAddress> ResolveRouteAddressAsync(HttpContext context, string path, Endpoint? endpoint = null)
     {
+        var request = context.Request;
         if (path.Equals("/api/workspace/tokens/timeline", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/api/workspace/tokens/timeline/cached", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/api/workspace/tokens/expensive-jobs", StringComparison.OrdinalIgnoreCase)
@@ -1011,15 +1018,15 @@ public sealed class AccessSecurityMiddleware
             // the colon is the project, never the task or workbench key. Read
             // the prefix only at the start of the context key: a task key can
             // itself contain text such as "project:mine".
-            var context = path.StartsWith("/api/orchestrator/context/", StringComparison.OrdinalIgnoreCase)
+            var contextKey = path.StartsWith("/api/orchestrator/context/", StringComparison.OrdinalIgnoreCase)
                 ? path["/api/orchestrator/context/".Length..]
                 : path.StartsWith("/api/orchestrator/sessions/", StringComparison.OrdinalIgnoreCase)
                     ? path["/api/orchestrator/sessions/".Length..]
                     : null;
-            if (context is null) return ProjectRouteAddress.WorkspaceWide;
+            if (contextKey is null) return ProjectRouteAddress.WorkspaceWide;
             foreach (var prefix in new[] { "project:", "task:", "workbench:" })
-                if (context.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                    return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(context[prefix.Length..].Split('/', 2)[0]));
+                if (contextKey.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(contextKey[prefix.Length..].Split('/', 2)[0]));
             return ProjectRouteAddress.WorkspaceWide;
         }
         // The task collection filters per task; creation checks its body
@@ -1059,7 +1066,7 @@ public sealed class AccessSecurityMiddleware
             // scoped account may act only on a task whose project it belongs to. If
             // that project cannot be resolved (unknown id or unavailable
             // scanner), only a workspace binding can reach the handler's 404.
-            return ProjectRouteAddress.Addressed(ResolveTaskProjects(Uri.UnescapeDataString(taskId), request));
+            return ProjectRouteAddress.Addressed(await ResolveTaskProjectsAsync(Uri.UnescapeDataString(taskId), context));
         }
         return ProjectRouteAddress.Unaddressed;
     }
@@ -1092,9 +1099,10 @@ public sealed class AccessSecurityMiddleware
     /// steer authorization towards a member project while the handler acts on
     /// a foreign task.
     /// </summary>
-    private string?[] ResolveTaskProjects(string taskId, HttpRequest request)
+    private async Task<string?[]> ResolveTaskProjectsAsync(string taskId, HttpContext context)
     {
-        var task = _scanner?.FindJob(taskId);
+        var request = context.Request;
+        var task = await FindTaskAsync(context, taskId);
         if (task is null) return [null];
         var projects = new List<string?> { task.ProjectName };
         var watchPath = request.Query["watchPath"].FirstOrDefault();
@@ -1105,10 +1113,32 @@ public sealed class AccessSecurityMiddleware
         };
         foreach (var scope in scopes.Where(scope => !string.IsNullOrWhiteSpace(scope)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var scoped = _scanner!.FindJob(taskId, scope);
+            var scoped = await FindTaskAsync(context, taskId, scope);
             if (scoped is not null) projects.Add(scoped.ProjectName);
         }
         return [.. projects];
+    }
+
+    private async ValueTask<TaskInfo?> FindTaskAsync(HttpContext context, string taskId, string? watchPath = null)
+    {
+        if (_scanner is null) return null;
+        if (context.Items[TaskResolutionItem] is not Dictionary<(string, string?), TaskInfo?> resolved)
+            context.Items[TaskResolutionItem] = resolved = [];
+        var key = (taskId, watchPath);
+        if (resolved.TryGetValue(key, out var task)) return task;
+        if (_taskIndex is null)
+            task = _scanner.FindPublishedJob(taskId, watchPath);
+        else
+        {
+            if (context.Items[TaskPublicationItem] is not TaskIndexPublication publication)
+            {
+                publication = await _taskIndex.AcquireAuthorizationReadAsync(context.RequestAborted);
+                context.Items[TaskPublicationItem] = publication;
+            }
+            task = TaskScannerService.FindInPublication(publication, taskId, watchPath);
+        }
+        resolved[key] = task;
+        return task;
     }
 
     /// <summary>

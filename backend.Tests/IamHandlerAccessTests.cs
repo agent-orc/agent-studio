@@ -28,6 +28,34 @@ public sealed class IamHandlerAccessTests : IDisposable
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "iam-handlers-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Concurrent_scoped_and_owner_task_reads_complete_without_blocking_index_refresh()
+    {
+        using var factory = BuildFactory();
+        using var owner = Client(factory, Login(factory, "first.owner"));
+        using var developer = Client(factory, Invite(factory, "burst.developer",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+
+        // Start the host and task index before the burst measures request handling.
+        using (var warm = await owner.GetAsync("/api/tasks/alpha-card"))
+            Assert.Equal(HttpStatusCode.OK, warm.StatusCode);
+        factory.Services.GetRequiredService<TaskIndexCache>()
+            .Invalidate(TaskIndexCache.InvalidationSource.External);
+
+        var requests = Enumerable.Range(0, 12).SelectMany(_ => new[]
+        {
+            (Client: owner, Path: "/api/tasks/alpha-card", Expected: HttpStatusCode.OK),
+            (Client: developer, Path: "/api/tasks/alpha-card", Expected: HttpStatusCode.OK),
+            (Client: developer, Path: "/api/tasks/beta-card", Expected: HttpStatusCode.Forbidden),
+            (Client: owner, Path: "/api/tasks/beta-card", Expected: HttpStatusCode.OK),
+        }).Select(async item =>
+        {
+            using var response = await item.Client.GetAsync(item.Path);
+            Assert.Equal(item.Expected, response.StatusCode);
+        });
+        await Task.WhenAll(requests).WaitAsync(TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
     public async Task Scoped_cli_reads_use_static_models_and_do_not_start_refresh()
     {
         using var factory = BuildFactory();
