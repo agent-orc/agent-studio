@@ -17,7 +17,7 @@ public sealed class DossierCardsTests
         Assert.Equal(1, parsed.ImplementationIndex);
 
         var fallback = TaskDossierProvenance.FromImplementation("docs/operations/one/index.html",
-            new ConceptImplementationTask { Id = "NV-3", PromptMarkdown = "Remove old Epic code." }, 2);
+            new ConceptImplementationTask { Id = "NV-3", PromptMarkdown = "Remove old workflow code." }, 2);
         Assert.Equal("NV-3", fallback.Section);
     }
 

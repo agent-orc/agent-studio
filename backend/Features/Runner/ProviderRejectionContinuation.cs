@@ -278,6 +278,7 @@ public sealed class ProviderRejectionContinuationService
         {
             checkpoint.Restore();
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(checkpoint.FolderPath);
             return Failed(reason);
         }
         catch (Exception ex)

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -54,7 +55,9 @@ public sealed partial class TaskServerStore
     // 35 adds project review plans, integration commands, publication leases
     // and the continuation base reason of the standalone review loop (I11).
     // 36 adds one-time Studio invitations and per-project production approval.
-    public const int CurrentSchemaVersion = 36;
+    // 37 removes retired parent tables and their task metadata field.
+    // Older binaries must reject this store before reading task metadata.
+    public const int CurrentSchemaVersion = 37;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -85,6 +88,8 @@ public sealed partial class TaskServerStore
     private readonly IResultFinalizationSummaryGenerator _resultSummaries;
     private readonly ITaskServerEventPublisher? _operationalEvents;
     private readonly ILogger<TaskServerStore>? _logger;
+    private readonly WorkspaceQuotaVerdictCache? _quotaVerdicts;
+    private readonly ConcurrentDictionary<QuotaClaimKind, Task> _quotaRefreshes = new();
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly DateTime _startedAt;
     private static readonly JsonSerializerOptions OutcomeJson = CreateOutcomeJson();
@@ -118,13 +123,15 @@ public sealed partial class TaskServerStore
         TimeProvider clock,
         IResultFinalizationSummaryGenerator resultSummaries,
         ITaskServerEventPublisher? operationalEvents,
-        ILogger<TaskServerStore>? logger)
+        ILogger<TaskServerStore>? logger,
+        IWorkspaceQuotaAdmission? workspaceQuota = null)
     {
         _options = options.Value;
         _clock = clock;
         _resultSummaries = resultSummaries;
         _operationalEvents = operationalEvents;
         _logger = logger;
+        _quotaVerdicts = workspaceQuota is null ? null : new WorkspaceQuotaVerdictCache(workspaceQuota, clock);
         _startedAt = UtcNow;
     }
 
@@ -135,6 +142,137 @@ public sealed partial class TaskServerStore
     public string ServerId => _serverId;
     public TaskServerMode Mode => _mode;
     private DateTime UtcNow => _clock.GetUtcNow().UtcDateTime;
+
+    /// <summary>"off" without a configured meter, else "on" or "unreachable" (see <see cref="WorkspaceQuotaAdmissionStates"/>).</summary>
+    public string QuotaAdmissionState => _quotaVerdicts?.State ?? WorkspaceQuotaAdmissionStates.Off;
+
+    private enum QuotaClaimKind { Coding, Review, Gate }
+
+    /// <summary>Projects whose next claim of the kind needs a quota verdict.</summary>
+    private static string QuotaProjectsSql(QuotaClaimKind kind) => kind switch
+    {
+        QuotaClaimKind.Coding => """
+            SELECT DISTINCT p.name FROM tasks t JOIN projects p ON p.id = t.project_id
+             WHERE t.state = '2-ready'
+               AND NOT EXISTS (
+                   SELECT 1 FROM leases l
+                    WHERE l.task_id = t.id AND l.status IN ('active', 'process-unknown'));
+            """,
+        QuotaClaimKind.Review => """
+            SELECT DISTINCT p.name
+              FROM review_attempts a
+              JOIN tasks t ON t.id = a.task_id
+              JOIN projects p ON p.id = t.project_id
+             WHERE (a.status IN ('queued', 'process-unknown') OR (a.status = 'leased' AND a.expires_at <= $now))
+               AND t.state = '4-auto-review';
+            """,
+        _ => """
+            SELECT DISTINCT p.name
+              FROM gate_attempts a
+              JOIN gate_subjects s ON s.id = a.subject_id
+              JOIN tasks t ON t.id = s.task_id
+              JOIN projects p ON p.id = t.project_id
+             WHERE a.state = 'queued';
+            """,
+    };
+
+    private bool QuotaAdmissionOn => _quotaVerdicts is not null;
+
+    /// <summary>
+    /// Stale-while-revalidate: a plain local read lists the projects a claim of
+    /// this kind may pick, then the meter is asked in the background, so no
+    /// claim waits on the monolith. Claims read the cached verdict, or admit a
+    /// project that has none yet. One refresh per claim kind runs at a time, and
+    /// the cache asks each project at most once per TTL.
+    /// </summary>
+    private async Task StartWorkspaceQuotaRefreshAsync(QuotaClaimKind kind, string actorId, CancellationToken ct)
+    {
+        if (_quotaVerdicts is null) return;
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_quotaRefreshes.TryAdd(kind, done.Task)) return;
+        void Finish()
+        {
+            _quotaRefreshes.TryRemove(kind, out _);
+            done.SetResult();
+        }
+        var names = new List<string>();
+        try
+        {
+            await using var connection = await OpenReadyAsync(ct);
+            await using var command = kind == QuotaClaimKind.Review
+                ? Command(connection, QuotaProjectsSql(kind), ("$now", Iso(UtcNow)))
+                : Command(connection, QuotaProjectsSql(kind));
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                names.Add(reader.GetString(0));
+        }
+        catch
+        {
+            Finish();
+            throw;
+        }
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await RefreshWorkspaceQuotaAsync(names, actorId);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                _logger?.LogWarning(ex, "quota-verdict-refresh-failed kind={Kind}", kind);
+            }
+            finally
+            {
+                Finish();
+            }
+        }, CancellationToken.None);
+    }
+
+    /// <summary>Starts the refresh of every claim kind, so the first claims after a start find verdicts.</summary>
+    internal async Task StartWorkspaceQuotaRefreshesAsync(string actorId, CancellationToken ct = default)
+    {
+        foreach (var kind in Enum.GetValues<QuotaClaimKind>()) await StartWorkspaceQuotaRefreshAsync(kind, actorId, ct);
+    }
+
+    /// <summary>Completes when no background verdict refresh is running.</summary>
+    internal Task WorkspaceQuotaRefreshesIdle() => Task.WhenAll(_quotaRefreshes.Values);
+
+    /// <summary>
+    /// The background part: the meter is asked outside any transaction, and
+    /// only availability transitions raise an operational event and a log line
+    /// (once per outage and once per recovery).
+    /// </summary>
+    private async Task RefreshWorkspaceQuotaAsync(IReadOnlyList<string> names, string actorId)
+    {
+        var transitions = await _quotaVerdicts!.RefreshAsync(names, CancellationToken.None);
+        foreach (var transition in transitions)
+            if (transition.MeterUnavailable)
+                _logger?.LogWarning("quota-meter-unavailable project={Project} detail={Detail}",
+                    transition.ProjectName, transition.Message);
+            else
+                _logger?.LogInformation("quota-meter-recovered project={Project}", transition.ProjectName);
+        await PublishOperationalEventsAsync(transitions.Select(transition => new TaskServerOperationalEvent(
+            transition.MeterUnavailable ? "quota.meter-unavailable" : "quota.meter-recovered", UtcNow, actorId,
+            new { project = transition.ProjectName, message = transition.Message })).ToList(), CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Cached verdict only (no I/O). Admission off, or a project without a
+    /// verdict yet, admits without an event; an unresolved project is admitted
+    /// with a meter warning that names the card.
+    /// </summary>
+    private WorkspaceQuotaVerdict CachedWorkspaceQuota(string? projectName, string subject)
+    {
+        if (_quotaVerdicts is null) return new WorkspaceQuotaVerdict(true, null);
+        if (projectName is null)
+            return new WorkspaceQuotaVerdict(true,
+                $"{subject} could not be resolved to a project; quota admission is off for it.", true);
+        return _quotaVerdicts.Read(projectName) ?? new WorkspaceQuotaVerdict(true, null);
+    }
+
+    /// <summary>The outage message for the first claimed card of a project after its meter became unavailable.</summary>
+    private string? ConsumeQuotaCardNotice(string? projectName)
+        => projectName is null ? null : _quotaVerdicts?.TryConsumeCardNotice(projectName);
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
         => await InitializeCoreAsync(quarantineActiveAuthority: true, cancellationToken);
@@ -270,7 +408,8 @@ public sealed partial class TaskServerStore
             _startedAt,
             _outboxBacklog,
             _oldestUnacknowledgedSequence,
-            _finalHandoffStates);
+            _finalHandoffStates,
+            QuotaAdmissionState);
     }
 
     public async Task<WorkspaceDto> CreateWorkspaceAsync(CreateWorkspaceRequest request, string actorId, CancellationToken ct)
@@ -1313,6 +1452,7 @@ public sealed partial class TaskServerStore
         else
             RequireWritable();
         ClaimResponse? response = null;
+        if (request.AvailableSlots > 0) await StartWorkspaceQuotaRefreshAsync(QuotaClaimKind.Coding, actorId, ct);
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             await ValidateRunnerAsync(connection, transaction, request.RunnerId, request.InstanceId, ct);
@@ -1459,8 +1599,20 @@ public sealed partial class TaskServerStore
                 ? null
                 : JsonSerializer.Deserialize<HostTelemetrySnapshotDto>(telemetryJson)?.CpuPercent;
             var hostAdmission = capabilityAdmission;
+            var quotaProjectNames = new Dictionary<string, string>(StringComparer.Ordinal);
             async Task<ClaimPlacementVerdict> EvaluateProjectAsync(string projectId)
             {
+                if (QuotaAdmissionOn)
+                {
+                    var projectName = await ScalarAsync(connection,
+                        "SELECT name FROM projects WHERE id = $project;", ct, transaction,
+                        ("$project", projectId)) as string;
+                    var quota = CachedWorkspaceQuota(projectName, "Project " + projectId);
+                    if (!quota.Allowed)
+                        return new ClaimPlacementVerdict(projectId,
+                            quota.Message ?? "Workspace quota reached.", null, null);
+                    if (projectName is not null) quotaProjectNames[projectId] = projectName;
+                }
                 var registered = Convert.ToInt64(await ScalarAsync(connection, """
                     SELECT count(*) FROM project_repositories WHERE project_id = $project;
                     """, ct, transaction, ("$project", projectId))) > 0;
@@ -1510,9 +1662,11 @@ public sealed partial class TaskServerStore
             // evaluation and one admission receipt rather than one per task.
             var verdicts = new List<ClaimPlacementVerdict>();
             var (task, selected) = await ProjectPlacementSelection.SelectAsync(
-                ExceptHeldModelRoutesAsync(connection, transaction,
-                    ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
-                    request.RunnerId, UtcNow, ct),
+                WhereModelAcceptedAsync(
+                    ExceptHeldModelRoutesAsync(connection, transaction,
+                        ReadClaimableTasksAsync(connection, transaction, capabilityRunner.HostId, ct),
+                        request.RunnerId, UtcNow, ct),
+                    connection, transaction, request.RunnerId, ct),
                 async projectId =>
                 {
                     var verdict = await EvaluateProjectAsync(projectId);
@@ -1541,7 +1695,7 @@ public sealed partial class TaskServerStore
             capabilityAdmission = selected!.Admission!;
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
-                connection, transaction, task, ct);
+                connection, transaction, task.TaskId, ct);
             var continuationIntent = await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct);
             var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
             var previousSession = await ReadPreviousSessionAsync(connection, transaction, task.TaskId, ct);
@@ -1624,6 +1778,16 @@ public sealed partial class TaskServerStore
                     placementVersion = selectedPlacement?.Version,
                     placementReason,
                 }), ct);
+            string? quotaWarning = null;
+            if (quotaProjectNames.TryGetValue(task.ProjectId, out var claimedProjectName))
+            {
+                var claimedQuota = CachedWorkspaceQuota(claimedProjectName, "Project " + task.ProjectId);
+                quotaWarning = claimedQuota.MeterUnavailable ? claimedQuota.Message : null;
+                var cardNotice = ConsumeQuotaCardNotice(claimedProjectName);
+                if (cardNotice is not null)
+                    await AppendLifecycleEventAsync(connection, transaction, runId, task.TaskId, fence,
+                        "quota.meter-unavailable", new { message = cardNotice }, ct);
+            }
 
             var run = new RunDto(runId, task.TaskId, "running", request.RunnerId, fence, now, now, null,
                 BriefVersion: briefVersion);
@@ -1633,6 +1797,7 @@ public sealed partial class TaskServerStore
                 run,
                 task with { State = "3-progress", Version = task.Version + 1, UpdatedAt = now },
                 lease,
+                Message: quotaWarning,
                 ReconciliationActions: reconciliationActions,
                 RequiredCapabilities: capabilityAdmission.Required,
                 CanaryCapabilities: capabilityAdmission.Canaries,
@@ -2206,14 +2371,8 @@ public sealed partial class TaskServerStore
                 var cli = request.OutcomeDecision?.RawFacts.EffectiveCliType?.Trim().ToLowerInvariant();
                 if (!string.IsNullOrWhiteSpace(cli))
                 {
-                    await ExecuteAsync(connection, """
-                        UPDATE runner_capabilities
-                           SET advertised_status = 'unavailable',
-                               detail = 'The provider refused this model for the host login.'
-                         WHERE runner_id = $runner AND capability_key = $key;
-                        """, ct, transaction,
-                        ("$runner", request.RunnerId),
-                        ("$key", CapabilityProtocol.ModelAcceptance(cli, providerRecovery.Model)));
+                    await RecordModelRejectionAsync(connection, transaction, request.RunnerId,
+                        CapabilityProtocol.ModelAcceptance(cli, providerRecovery.Model), now, ct);
                     await AppendLifecycleEventAsync(connection, transaction, runId, lease.TaskId,
                         lease.Fence, "execution.model-capability-held", new
                         {
@@ -3151,7 +3310,6 @@ public sealed partial class TaskServerStore
 
         foreach (var (kind, wanted) in new (string Kind, long Count)[]
                  {
-                     ("epic", expected.Epics),
                      ("dossier", expected.Dossiers),
                      ("orchestrator-session", expected.OrchestratorSessions),
                      ("context-chat", expected.ContextChats),
@@ -3531,9 +3689,7 @@ public sealed partial class TaskServerStore
         var storedVersion = Convert.ToInt32(
             await ScalarAsync(connection, "SELECT value FROM meta WHERE key = 'schema_version';", ct) ?? 0,
             CultureInfo.InvariantCulture);
-        if (storedVersion > CurrentSchemaVersion)
-            throw new InvalidOperationException(
-                $"Task Server store schema {storedVersion} is newer than this service supports ({CurrentSchemaVersion}).");
+        RejectUnsupportedSchemaVersion(storedVersion, CurrentSchemaVersion);
 
         await ExecuteAsync(connection, """
             CREATE TABLE IF NOT EXISTS schema_migrations(
@@ -4283,7 +4439,13 @@ public sealed partial class TaskServerStore
                 ON orchestrator_context_turns(context_key, sequence);
             CREATE INDEX IF NOT EXISTS ix_leases_task_status ON leases(task_id, status);
             CREATE INDEX IF NOT EXISTS ix_events_run_cursor ON events(run_id, cursor);
-            CREATE INDEX IF NOT EXISTS ix_events_kind_occurred ON events(kind, occurred_at);
+            CREATE TABLE IF NOT EXISTS runner_model_rejections(
+                runner_id TEXT NOT NULL,
+                capability_key TEXT NOT NULL,
+                rejected_at TEXT NOT NULL,
+                acknowledged_instance_id TEXT,
+                acknowledged_sequence INTEGER,
+                PRIMARY KEY(runner_id, capability_key));
             CREATE INDEX IF NOT EXISTS ix_artifacts_run ON artifacts(run_id);
             CREATE INDEX IF NOT EXISTS ix_legacy_entities_migration_kind
                 ON legacy_migration_entities(migration_id, entity_kind);
@@ -4397,6 +4559,8 @@ public sealed partial class TaskServerStore
         // (docs/studio-route-ownership/index.html): each group below owns a
         // disjoint set of new tables and touches no other group's schema.
         await ApplyStudioHostsMigrationAsync(connection, ct);
+        if (storedVersion < CurrentSchemaVersion)
+            await GuardRetiredSchemaRemovalAsync(connection, ct);
         await ApplyStudioProjectMetaMigrationAsync(connection, ct);
         await ApplyStudioRunnerOrchestratorMigrationAsync(connection, ct);
         await ApplyStudioTaskMetadataMigrationAsync(connection, ct);
@@ -4471,6 +4635,19 @@ public sealed partial class TaskServerStore
         await ApplyStandaloneReviewLoopMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
+
+    internal static void RejectUnsupportedSchemaVersion(int storedVersion, int supportedVersion)
+    {
+        if (storedVersion > supportedVersion)
+            throw new InvalidOperationException(
+                $"Task Server store schema {storedVersion} is newer than this service supports ({supportedVersion}).");
+    }
+
+    // The old reader checks meta.schema_version. Commit this guard before the
+    // retired schema is dropped so a crash cannot expose a version-36 store
+    // with the fields that reader expects already missing.
+    internal static Task GuardRetiredSchemaRemovalAsync(SqliteConnection connection, CancellationToken ct)
+        => SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
 
     /// <summary>
     /// Upgrades a pre-retention store where <c>artifacts.content</c> is <c>NOT NULL</c>. Archiving clears
@@ -5398,7 +5575,6 @@ internal sealed record LegacyTaskImport(
     IReadOnlyList<LegacyArtifactImport> Artifacts,
     string MetadataJson,
     string SourcePath,
-    bool IsEpic,
     int GitCommits,
     int IntegrationRecords,
     int PendingIntegrationRecords,

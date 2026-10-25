@@ -132,7 +132,6 @@ public sealed class LegacyMigrationService(TaskServerStore store)
                     .OrderBy(group => group.Key, StringComparer.Ordinal)
                     .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal),
                 tasks.Count,
-                tasks.Count(task => task.IsEpic),
                 tasks.Sum(task => task.Events.Count),
                 tasks.Sum(task => task.Artifacts.Count),
                 tasks.Sum(task => task.GitCommits),
@@ -158,7 +157,6 @@ public sealed class LegacyMigrationService(TaskServerStore store)
             scan.Authority.AuthorityEpoch,
             CreatedAt: DateTime.UtcNow,
             ProjectCounts: projectCounts,
-            Epics: projectCounts.Sum(project => project.Epics),
             Dossiers: scan.Supplementary.Count(item => item.Kind == "dossier"),
             OrchestratorSessions: scan.Supplementary.Count(item => item.Kind == "orchestrator-session"),
             ContextChats: scan.Supplementary.Count(item => item.Kind == "context-chat"),
@@ -191,7 +189,6 @@ public sealed class LegacyMigrationService(TaskServerStore store)
                 item.Project,
                 states = item.States.OrderBy(pair => pair.Key, StringComparer.Ordinal),
                 item.Tasks,
-                item.Epics,
                 item.Events,
                 item.Artifacts,
                 item.GitCommits,
@@ -204,7 +201,6 @@ public sealed class LegacyMigrationService(TaskServerStore store)
             inventory.Tasks,
             inventory.Events,
             inventory.Artifacts,
-            inventory.Epics,
             inventory.Dossiers,
             inventory.OrchestratorSessions,
             inventory.ContextChats,
@@ -395,7 +391,6 @@ public sealed class LegacyMigrationService(TaskServerStore store)
                     artifacts,
                     rootElement.GetRawText(),
                     metadataFile,
-                    string.Equals(ReadString(rootElement, "kind"), "epic", StringComparison.OrdinalIgnoreCase),
                     gitCommits,
                     integrationRecords,
                     pendingIntegration,
@@ -987,7 +982,6 @@ public sealed class LegacyMigrationService(TaskServerStore store)
                             kind, $"{task.TaskId}:{index}", project.Name, task.State,
                             task.MetadataJson, task.SourcePath, "", 0, false));
                 }
-                if (task.IsEpic) AddMany("epic", 1);
                 AddMany("git-commit", task.GitCommits);
                 AddMany("integration-record", task.IntegrationRecords);
                 AddMany("pending-integration-record", task.PendingIntegrationRecords);

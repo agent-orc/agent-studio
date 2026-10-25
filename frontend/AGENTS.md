@@ -231,21 +231,16 @@ chip, and Result header agree on word and resolved colour, both themes).
 ## Explorer lane metrics mirror the board, and use the lane's own hue (AGT-2676)
 
 The Explorer tree's per-project Board metrics (`<app-explorer-lane-dashboard>`,
-numbers **and** dots) are a projection of the flat lane board, so they must count
-exactly what the board draws. `buildProjectSidebarRows` therefore runs the board's
-own `excludeEpics` over the grouped feed instead of re-deriving `kind !== 'epic'`;
-an epic is a legacy container, not a board work-item. Deriving the
-same number twice is what caused the reported bug: an epic parked in
-`5-human-review` lit a lane dot on a project whose every board lane read 0.
+numbers and dots) are a projection of the flat lane board, so they must count
+exactly what the board draws. `buildProjectSidebarRows` uses the grouped feed
+and keeps the total equal to the visible lane counters.
 
 Lane pigments come from the shared `--lane-*` palette. Human Review reads
-`--lane-human-review`; **green is reserved for Delivered** (`--lane-completed`).
-The Review counter briefly borrowed the success green and so signalled "done" for
-the one lane that means "needs you".
+`--lane-human-review`; green is reserved for Delivered (`--lane-completed`).
 
-Locked by `studio-shell.project-rows.spec.ts` (dot count == visible board lane
-count, with an epic in the fixture) and
-`e2e/workspace/explorer-lane-dots-match-board.spec.ts` (both themes).
+Locked by `studio-shell.project-rows.spec.ts` (dot count equals visible board
+lane count) and `e2e/workspace/explorer-lane-dots-match-board.spec.ts` (both
+themes).
 
 ## Feature folders + barrel imports (ADR-0034, Cycle 9h)
 

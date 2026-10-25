@@ -449,6 +449,54 @@ public sealed class CarWorkerExecutionTests : IDisposable
     }
 
     [Fact]
+    public async Task Claude_device_login_candidate_reaches_a_real_request_child_before_acceptance()
+    {
+        if (OperatingSystem.IsWindows() || NodeMissing()) return;
+        Directory.CreateDirectory(_root);
+        var candidate = "sk-ant-" + new string('c', 32);
+        var previous = Environment.GetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken);
+        var cli = Path.Combine(_root, "fake-claude-login");
+        await File.WriteAllTextAsync(cli,
+            $"#!/bin/sh\nprintf '%s\\n' 'https://claude.ai/oauth/authorize' '{candidate}'\n");
+        File.SetUnixFileMode(cli, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var worker = Path.Combine(_root, "candidate-worker");
+        var workspace = Path.Combine(worker, "worktree");
+        var results = Path.Combine(worker, "results");
+        Directory.CreateDirectory(workspace);
+        Directory.CreateDirectory(results);
+        var spawner = new FixtureSpawner(Fixture.Load("p1-happy-done.claude.fixture").Path);
+        var realRequests = 0;
+        var probe = new ProviderAuthProbe();
+        probe.UseRealRequest(async (_, _, ct) =>
+        {
+            realRequests++;
+            var (result, _, _) = await CarWorkerExecution.RunAsync(
+                new DetachedJobSpec("node", [], workspace, "Reply with OK.", results,
+                    TimeoutSeconds: 20, CliType: "claude", RunId: "candidate-real-request"),
+                worker, (_, _) => { },
+                options => options with { ClaudePath = "node", Spawner = spawner },
+                cleanContextRoot: Path.Combine(_root, "clean-context"), stopToken: ct);
+            return result;
+        }, null!);
+        try
+        {
+            Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, "previous-token");
+            var store = DeviceLoginExecutor.ClaudeTokenPath(_root);
+            var result = await new DeviceLoginExecutor(cli, store, provider: "claude", authProbe: probe)
+                .RunAsync((_, _) => Task.CompletedTask, CancellationToken.None);
+            Assert.Equal("completed", result.Result);
+            Assert.Equal(1, realRequests);
+            Assert.NotNull(spawner.Spawned);
+            Assert.Equal(candidate, spawner.Environment?[ProviderAuthEnvironment.ClaudeCodeOAuthToken]);
+            Assert.Equal(candidate, (await File.ReadAllTextAsync(store)).Trim());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProviderAuthEnvironment.ClaudeCodeOAuthToken, previous);
+        }
+    }
+
+    [Fact]
     public async Task Launch_failure_is_preserved_as_an_explicit_pre_agent_fact()
     {
         var workerDirectory = Path.Combine(_root, "launch-failure");

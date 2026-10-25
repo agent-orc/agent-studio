@@ -11,6 +11,30 @@ public sealed class IntegrationVerificationPolicyTests
 {
     private const string Sha = "0123456789abcdef0123456789abcdef01234567";
 
+    [Fact]
+    public void OperatorCandidateRecord_VerifiesTheExactNoOpTreeAndShowsItsEvidence()
+    {
+        var record = new TaskIntegrationRecord
+        {
+            Id = "operator-candidate-0123456789ab-abcdef012345",
+            Classification = IntegrationRecordClasses.IntegratedVerified,
+            IntegrationSha = Sha,
+            SourceSha = "abcdef0123456789abcdef0123456789abcdef01",
+            IntegrationBranch = "develop",
+            VerificationHost = "gate-host",
+            SuiteSummary = "dotnet test: 120 passed, 0 failed, 2 skipped",
+            LogHash = new string('a', 64),
+        };
+        var projected = IntegrationVerificationProjection.Resolve(null, null, [record],
+            Sha, "develop", record.SourceSha);
+        Assert.Equal(IntegrationVerificationStates.Verified, projected.State);
+        Assert.Contains($"Verified by operator candidate {Sha}", projected.Reason);
+        Assert.Contains("gate-host", projected.Reason);
+        Assert.Contains("120 passed", projected.Reason);
+        Assert.Equal(IntegrationVerificationAction.CompleteVerified,
+            Decide(noOp: true, verifiedRecord: true).Action);
+    }
+
     [Theory]
     [InlineData(MergeIntoIntegrationOutcome.Merged)]
     [InlineData(MergeIntoIntegrationOutcome.MergedAfterRebase)]

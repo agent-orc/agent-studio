@@ -1,0 +1,9 @@
+@use '../../../../../styles/mixins' as m;
+
+:host {
+  display: block;
+}
+
+.workspace-quota-disclosure__toggle {
+  @include m.disclosure-control;
+}

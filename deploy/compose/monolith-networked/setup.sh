@@ -2,8 +2,24 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-if [ "$#" -ne 3 ]; then
-  echo 'Usage: setup.sh <release-version> <hostname> <absolute-data-directory>' >&2
+usage() {
+  echo 'Usage: setup.sh [--cloudflare [--allow-direct-origin]] <release-version> <hostname> <absolute-data-directory>' >&2
+  exit 2
+}
+edge=public
+allow_direct=false
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --cloudflare) edge=cloudflare; shift ;;
+    --allow-direct-origin) allow_direct=true; shift ;;
+    --) shift; break ;;
+    -*) usage ;;
+    *) break ;;
+  esac
+done
+if [ "$#" -ne 3 ]; then usage; fi
+if [ "$allow_direct" = true ] && [ "$edge" != cloudflare ]; then
+  echo '--allow-direct-origin applies only with --cloudflare' >&2
   exit 2
 fi
 version="$1"
@@ -35,6 +51,11 @@ STUDIO_VERSION=$version
 STUDIO_DOMAIN=$domain
 STUDIO_DATA_DIR=$data_dir
 STUDIO_BOOTSTRAP_CODE=$code
-STUDIO_CADDYFILE=./Caddyfile.public
+STUDIO_CADDYFILE=./Caddyfile.$edge
+STUDIO_CLOUDFLARE_ALLOW_DIRECT=$allow_direct
 EOF
 printf 'Installer owner code: %s\nStore it until the first owner signs in. It is accepted once.\n' "$code"
+if [ "$edge" = cloudflare ]; then
+  echo 'Cloudflare mode: create an A record only (no AAAA) and set SSL/TLS mode Full (strict).'
+  echo 'AGT-3298 will add origin authentication and host firewall enforcement.'
+fi

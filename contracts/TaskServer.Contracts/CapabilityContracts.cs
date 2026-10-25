@@ -85,7 +85,11 @@ public sealed record AdvertisedCapabilityDto(
     IReadOnlyList<string>? EvidenceRefs = null,
     string? HealthOutcome = null,
     string? ServiceAvailability = null,
-    string? CredentialHealth = null)
+    string? CredentialHealth = null,
+    // Runner-local causal order of model-acceptance evidence. A ready entry
+    // carries the sequence its verdict was written at; any other entry carries
+    // the runner's current sequence. Comparable only within one instance.
+    long? ProbeSequence = null)
 {
     // Keep the previous in-process constructor available during rolling
     // upgrades. Rich fields are negotiated on the HTTP wire separately.
@@ -367,7 +371,43 @@ public sealed record RunnerCapabilitySnapshotDto(
     IReadOnlyList<InstalledCliDto>? InstalledClis = null,
     HostCliUpdateDto? CliUpdate = null,
     RunnerReleaseIdentityDto? Release = null,
-    int ActiveGateCount = 0);
+    int ActiveGateCount = 0,
+    IReadOnlyList<ConfiguredModelRouteDto>? ConfiguredModelRoutes = null);
+
+/// <summary>
+/// The latest non-ready model-acceptance entry a host advertised after the
+/// provider refused that model at launch.
+/// </summary>
+public sealed record ModelRejectionAcknowledgement(string? InstanceId, long? Sequence)
+{
+    public static ModelRejectionAcknowledgement None { get; } = new(null, null);
+}
+
+/// <summary>
+/// Clears a launch rejection only on causal evidence. Runner and server clocks
+/// are not comparable, so a ready entry proves recovery only when the same
+/// runner instance wrote it after it advertised the model as not ready.
+/// </summary>
+public static class ModelAcceptanceRecovery
+{
+    public static (bool Cleared, ModelRejectionAcknowledgement Acknowledgement) Evaluate(
+        ModelRejectionAcknowledgement acknowledgement,
+        string instanceId,
+        string advertisedStatus,
+        long? probeSequence)
+    {
+        if (probeSequence is not { } sequence) return (false, acknowledgement);
+        if (!string.Equals(advertisedStatus, "ready", StringComparison.OrdinalIgnoreCase))
+            return (false, new ModelRejectionAcknowledgement(instanceId, sequence));
+        var cleared = string.Equals(acknowledgement.InstanceId, instanceId, StringComparison.Ordinal)
+                      && acknowledgement.Sequence is { } floor
+                      && sequence > floor;
+        return (cleared, acknowledgement);
+    }
+}
+
+/// <summary>An operator-configured primary or fallback model the host should probe.</summary>
+public sealed record ConfiguredModelRouteDto(string CliType, string Model);
 
 public static class InstalledCliProjection
 {

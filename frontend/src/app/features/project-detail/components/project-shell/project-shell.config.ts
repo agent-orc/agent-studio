@@ -143,7 +143,7 @@ export const PROJECT_RAIL_ITEMS: readonly ProjectRailItem[] = [
     description: 'Agent communication on the message bus, token summary, supervisor and meta-cycle activity, and analysis reports',
     empty: 'No bus messages for this project yet. Once the orchestrator, an agent, or the supervisor speaks, the timeline and counters fill in here.',
     icon: '⌁',
-    railIcon: 'activity',
+    railIcon: 'message',
   },
   {
     key: 'token-usage',

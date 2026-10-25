@@ -194,7 +194,9 @@ public static class ArtifactIngestionEndpoints
             // refused or still running, leaves a queued retry instead of a lost
             // run (AGT-2850).
             var resultDocument = req.FinalizeResult
-                ? await finalization.FinalizeForAcknowledgementAsync(task)
+                ? await finalization.FinalizeForAcknowledgementAsync(
+                    task, resultSha: req.AttemptId is null
+                        ? null : authority.GetRun(req.AttemptId)?.ResultSha)
                 : ResultAcknowledgementPlan.NotRequested;
 
             var committedFiles = written.Files.ToList();

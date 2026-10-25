@@ -81,9 +81,8 @@ internal static class StudioTaskLifecycleExtrasEndpoints
 
         studioTasks.MapPost("", async (
             HttpContext context, StudioCreateTaskRequest request, TaskServerStore store, CancellationToken ct)
-            => await TaskServerEndpoints.InvokeAsync(
-                () => store.CreateStudioTaskAsync(request, TaskServerEndpoints.Actor(context), ct),
-                StatusCodes.Status201Created))
+            => await TaskServerEndpoints.CreateTaskAsync(context, request.CompatibilityFields,
+                () => store.CreateStudioTaskAsync(request, TaskServerEndpoints.Actor(context), ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
         studioTasks.MapGet("/archive", async (

@@ -42,6 +42,7 @@ describe('FirstRunChecklistComponent probes', () => {
   const host = signal<RemoteHost[]>([]);
   const badges = signal<ProviderAuthBadge[]>([]);
   const authStatus = signal<AuthStatus | null>(null);
+  const deviceLogins = { startDeviceLogin: vi.fn(), deviceLoginStatus: vi.fn(), cancelActiveDeviceLogin: vi.fn() };
   let http: HttpTestingController;
   const readyBadge = (): ProviderAuthBadge => ({
     id: 'auth-a', provider: 'codex', providerLabel: 'Codex', runnerId: 'runner-a',
@@ -70,7 +71,7 @@ describe('FirstRunChecklistComponent probes', () => {
       { provide: WorkspaceManagerService, useValue: {} },
       { provide: WorkspaceOverlaysService, useValue: {} },
       { provide: RemoteHostsService, useValue: { hosts: host, reload: vi.fn() } },
-      { provide: ProviderAuthStatusService, useValue: { statuses: badges, refresh: vi.fn() } },
+      { provide: ProviderAuthStatusService, useValue: { statuses: badges, refresh: vi.fn(), ...deviceLogins } },
       { provide: CodexSignInDialogService, useValue: {} },
       { provide: ClaudeSignInDialogService, useValue: {} },
     ] });
@@ -89,6 +90,18 @@ describe('FirstRunChecklistComponent probes', () => {
     expect(component.ownerReady()).toBe(false);
     expect(component.repositoryReady()).toBe(false);
     expect(component.gitReady()).toBe(false);
+    fixture.destroy();
+  });
+
+  it('explains that the networked first-run journey needs the Task Server on a monolith', () => {
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/v1/installation').flush({}, { status: 404, statusText: 'Not Found' });
+    http.expectOne('/api/v1/projects').flush({}, { status: 404, statusText: 'Not Found' });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="first-run-task-server-unavailable"]')?.textContent)
+      .toContain('running without a Task Server connection');
+    expect(fixture.componentInstance.ownerReady()).toBe(false);
     fixture.destroy();
   });
 
@@ -336,5 +349,53 @@ describe('FirstRunChecklistComponent probes', () => {
       fetchVerified: false, pushVerified: false });
     expect(component.gitSetup()?.publicKey).toBe('ssh-ed25519 sample');
     fixture.destroy();
+  });
+
+  it('signs in through the shared Task Server device-login service of the Access page', () => {
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/v1/installation').flush({ installationId: 'install-a', ownerBootstrapped: true });
+    http.expectOne('/api/v1/projects').flush([]);
+    const session = { handle: 'dlogin_a', state: 'queued' as const, verificationUrl: null, userCode: null,
+      sessionKey: 'key-a', expiresAt: new Date(Date.now() + 900_000).toISOString() };
+    deviceLogins.startDeviceLogin.mockReturnValue(of(session));
+    deviceLogins.deviceLoginStatus.mockReturnValue(of({ ...session, sessionKey: null, state: 'running',
+      detail: null, verificationUrl: 'https://claude.ai/oauth/authorize' }));
+    const component = fixture.componentInstance;
+    component.signIn({ ...readyBadge(), provider: 'claude', providerLabel: 'Claude', hostId: 'host-a' });
+    expect(deviceLogins.startDeviceLogin).toHaveBeenCalledWith('host-a', 'claude', 'runner-a');
+    component.refreshDeviceLogin();
+    expect(deviceLogins.deviceLoginStatus).toHaveBeenCalledWith('dlogin_a', 'key-a');
+    component.refreshDeviceLogin();
+    expect(deviceLogins.deviceLoginStatus).toHaveBeenNthCalledWith(2, 'dlogin_a', 'key-a');
+    fixture.detectChanges();
+    const host: HTMLElement = fixture.nativeElement;
+    expect(host.querySelector('[data-testid="first-run-device-login"]')?.textContent).toContain('Claude on Runner A: running');
+    expect(host.querySelector('[data-testid="first-run-device-url"]')?.getAttribute('href'))
+      .toBe('https://claude.ai/oauth/authorize');
+    deviceLogins.deviceLoginStatus.mockReturnValue(of({ ...session, state: 'failed',
+      detail: 'The sign-in timed out.' }));
+    component.refreshDeviceLogin();
+    fixture.detectChanges();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('The sign-in timed out.');
+    expect(host.querySelector('[data-testid="first-run-device-url"]')).toBeNull();
+    fixture.destroy();
+  });
+
+  it('cancels its device sign-in session when the checklist is destroyed', () => {
+    const fixture = TestBed.createComponent(FirstRunChecklistComponent);
+    fixture.detectChanges();
+    http.expectOne('/api/v1/installation').flush({ installationId: 'install-a', ownerBootstrapped: true });
+    http.expectOne('/api/v1/projects').flush([]);
+    const session = { handle: 'dlogin_b', state: 'running' as const, verificationUrl: null, userCode: null,
+      sessionKey: 'key-b', expiresAt: new Date(Date.now() + 900_000).toISOString() };
+    deviceLogins.cancelActiveDeviceLogin.mockClear();
+    deviceLogins.startDeviceLogin.mockReturnValue(of(session));
+    fixture.componentInstance.signIn({ ...readyBadge(), hostId: 'host-a' });
+    deviceLogins.deviceLoginStatus.mockReturnValue(of({ ...session, sessionKey: null }));
+    fixture.componentInstance.refreshDeviceLogin();
+    fixture.destroy();
+    expect(deviceLogins.cancelActiveDeviceLogin).toHaveBeenCalledWith(
+      expect.objectContaining({ handle: 'dlogin_b', sessionKey: 'key-b', state: 'running' }));
   });
 });

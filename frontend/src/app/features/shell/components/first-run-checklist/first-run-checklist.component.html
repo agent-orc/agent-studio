@@ -9,6 +9,12 @@
     </button>
   </header>
 
+  @if (taskServerUnavailable()) {
+    <p role="alert" data-testid="first-run-task-server-unavailable">
+      The networked first-run checklist needs a Task Server. This Studio is running without a Task Server connection, so installation, host enrollment, and repository setup are unavailable.
+    </p>
+  }
+
   <ol class="first-run__steps">
     <li data-testid="first-run-owner" [attr.data-state]="ownerReady() ? 'ready' : 'pending'">
       <span class="first-run__number">1</span>
@@ -30,16 +36,16 @@
         }
         @if (deviceLogin(); as login) {
           <div class="first-run__form" data-testid="first-run-device-login">
-            <p>{{ login.provider }} on {{ login.runnerId }}: {{ login.state }}</p>
-            @if (login.verificationUrl && login.state === 'pending') {
+            <p>{{ login.providerLabel }} on {{ login.hostName }}: {{ login.state }}</p>
+            @if (login.verificationUrl && login.state === 'running') {
               <a data-testid="first-run-device-url" [href]="login.verificationUrl" target="_blank" rel="noopener noreferrer">Open provider sign-in</a>
               @if (login.userCode) {
                 <code data-testid="first-run-device-code">{{ login.userCode }}</code>
                 <button type="button" (click)="copyDeviceCode()">{{ codeCopyLabel() }}</button>
               }
             }
-            @if (login.state === 'failed' || login.state === 'expired') {
-              <p role="alert">Sign-in did not complete. Start it again on this host.</p>
+            @if (login.state === 'failed') {
+              <p role="alert">{{ login.detail ?? 'Sign-in did not complete.' }} Start it again on this host.</p>
             }
           </div>
         }

@@ -194,8 +194,8 @@ public sealed partial class TaskServerStore
         {
             var held = await ReadHeldModelRoutesAsync(connection, transaction, task.TaskId, runnerId, now, ct);
             if (held.Count > 0
-                && await ReadClaimRouteAsync(connection, transaction, task, ct) is { Model: { } model } route
-                && held.Contains((route.CliType, model.ToLowerInvariant())))
+                && await ReadEffectiveModelRouteAsync(connection, transaction, task.TaskId, ct) is { Model: { } model } route
+                && held.Contains((route.Provider.Trim().ToLowerInvariant(), model.Trim().ToLowerInvariant())))
                 continue;
             yield return task;
         }
@@ -236,52 +236,6 @@ public sealed partial class TaskServerStore
             if (!reader.IsDBNull(0) && !reader.IsDBNull(1))
                 held.Add((reader.GetString(0), reader.GetString(1)));
         return held;
-    }
-
-    /// <summary>
-    /// The provider and model a claim of this task hands the runner, in the
-    /// runner's precedence: a required mechanical route, an operator-selected
-    /// continuation, a provider-refusal sibling, then the stored primary route.
-    /// A null model means the CLI default, which no model hold names.
-    /// </summary>
-    private async Task<(string CliType, string? Model)> ReadClaimRouteAsync(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        TaskDto task,
-        CancellationToken ct)
-    {
-        var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
-        var previousSession = await ReadPreviousSessionAsync(connection, transaction, task.TaskId, ct);
-        if (await ReadMechanicalFreshRouteAsync(
-                connection, transaction, task.TaskId, mechanicalDelta, previousSession, ct) is { } mechanical)
-            return (NormalizeRouteCli(mechanical.CliType), Blank(mechanical.Model));
-        if (await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct) is
-            { Receipt.ExplicitSelection: true } intent)
-        {
-            var fields = intent.Selection;
-            return (NormalizeRouteCli(intent.CliType),
-                fields is null || fields.Model ? Blank(intent.Model) : null);
-        }
-        if (await ReadProviderFallbackForClaimAsync(connection, transaction, task, ct) is { } continuation)
-            return (NormalizeRouteCli(continuation.Fallback.CliType), Blank(continuation.Fallback.To));
-        string? cli = null;
-        string? model = null;
-        await using (var command = Command(connection, """
-            SELECT cli_type, model FROM task_studio_fields WHERE task_id = $task;
-            """, transaction, ("$task", task.TaskId)))
-        await using (var reader = await command.ExecuteReaderAsync(ct))
-        {
-            if (await reader.ReadAsync(ct))
-            {
-                cli = reader.IsDBNull(0) ? null : reader.GetString(0);
-                model = reader.IsDBNull(1) ? null : reader.GetString(1);
-            }
-        }
-        return (NormalizeRouteCli(cli), Blank(model));
-
-        static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-        static string NormalizeRouteCli(string? value)
-            => string.IsNullOrWhiteSpace(value) ? "claude" : value.Trim().ToLowerInvariant();
     }
 
     /// <summary>

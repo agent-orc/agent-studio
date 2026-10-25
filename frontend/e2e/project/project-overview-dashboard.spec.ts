@@ -247,6 +247,19 @@ async function mockDashboard(page: Page): Promise<{
   });
   await page.route('**/api/crash-recovery/pending', route => fulfillJson(route, { pending: [] }));
   await page.route('**/api/projects/*/token-usage/summary', route => fulfillJson(route, tokenSummary));
+  await page.route('**/api/projects/*/token-usage/reviews**', route => fulfillJson(route, {
+    deliveryTokens: { median: 12000, p90: 24000, samples: 2, last7d: [null, 8000, null, 12000, null, null, 24000], last30d: Array(30).fill(12000) },
+    deliveryUsd: { median: 0.12, p90: 0.24, samples: 2, last7d: Array(7).fill(0.12), last30d: Array(30).fill(0.12) },
+    roundsUntilAcceptance: { median: 2, p90: 3, samples: 1, last7d: Array(7).fill(2), last30d: Array(30).fill(2) },
+    tokensPerAcceptedCard: { median: 20000, p90: 20000, samples: 1, last7d: Array(7).fill(20000), last30d: Array(30).fill(20000) },
+    usdPerAcceptedCard: { median: 0.2, p90: 0.2, samples: 1, last7d: Array(7).fill(0.2), last30d: Array(30).fill(0.2) },
+    reviewSharePercent: { median: 12, p90: 12, samples: 1, last7d: Array(7).fill(12), last30d: Array(30).fill(12) },
+    byStepTokens: { 'requirement-fit': { median: 12000, p90: 12000, samples: 1, last7d: Array(7).fill(12000), last30d: Array(30).fill(12000) } },
+    byStepUsd: {}, byModelLevelTokens: {}, byModelLevelUsd: {}, acceptedCards: [`${PROJECT_NAME}/OPD-220`],
+    reviews: [{ project: PROJECT_NAME, jobId: 'OPD-220', attempt: 'review-1', step: 'requirement-fit',
+      at: '2026-10-20T12:00:00Z', model: 'gpt-6-sol', level: 'medium', host: 'review-1', tokens: 12000, usd: 0.12 }],
+    warning: null,
+  }));
   await page.route('**/api/projects/*/throughput', route => fulfillJson(route, {
     project: PROJECT_NAME, capturedAt: '2026-07-11T12:00:00Z',
     completedLast24h: 0, completedLast7d: 0, recentCompletions: [],
@@ -385,6 +398,33 @@ async function openDashboard(page: Page, projectName = PROJECT_NAME, freshDocume
 
 test.describe('Project Overview · operator dashboard', () => {
   test.beforeAll(() => fs.mkdirSync(RESULTS_DIR, { recursive: true }));
+
+  test('review economics tiles link to their reviews at desktop and phone widths', async ({ page, devBackend }) => {
+    await proxyBackend(page, devBackend.baseUrl);
+    await mockDashboard(page);
+    await openDashboard(page);
+    const results = process.env.JOB_RESULTS_DIR ?? RESULTS_DIR;
+    fs.mkdirSync(results, { recursive: true });
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      if (width === 390) await page.getByTestId('project-shell-splitter').click();
+      const placeholder = page.getByTestId('project-overview-review-placeholder');
+      if (await placeholder.isVisible()) await placeholder.scrollIntoViewIfNeeded();
+      const stats = page.getByTestId('review-statistics');
+      await expect(stats.getByTestId('review-tile-delivery-tokens')).toContainText('12,000');
+      await stats.evaluate(element => element.scrollIntoView({ block: 'start' }));
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.screenshot({ path: path.join(results, `review-economics-${width}-${theme}.png`), fullPage: true });
+      }
+      await stats.getByTestId('review-tile-step-requirement-fit').click();
+      await expect(stats.getByTestId('review-evidence')).toContainText('OPD-220');
+      for (const theme of ['light', 'dark'] as const) {
+        await setTheme(page, theme);
+        await page.screenshot({ path: path.join(results, `review-economics-evidence-${width}-${theme}.png`), fullPage: true });
+      }
+    }
+  });
 
   test('keeps the usage card intact and visual evidence bounded in both themes', async ({ page, devBackend }, testInfo) => {
     await proxyBackend(page, devBackend.baseUrl);

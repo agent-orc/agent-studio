@@ -197,6 +197,7 @@
         Archived: {{ showArchivedProjects() ? 'shown' : 'hidden' }}
       </button>
     </div>
+    @for (ws of registryWorkspaces(); track ws.id) { <app-workspace-quota-disclosure [workspaceId]="ws.id" [workspaceName]="ws.displayName" /> }
     <p class="wsm__note wsm__note--muted"
        data-testid="settings-workspaces-note">
       F45b mutation surface (ADR-0042). Click a workspace or project name to rename;

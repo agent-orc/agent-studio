@@ -3,7 +3,7 @@ import { api } from '../helpers/api';
 import { createJob } from '../helpers/jobs';
 
 /**
- * Completion-loop visible representation (EPIC ASS-566 / ADR-0049).
+ * Completion-loop visible representation (ASS-566 / ADR-0049).
  *
  * The orchestrator retries a task until it is truly done, feeding the
  * specific gap into the next attempt. This spec proves the two operator-
@@ -143,7 +143,7 @@ test.describe('Task completion loop — Overview indicator + Timeline tab', () =
       await expect(page.getByTestId('timeline-verdict-banner')).toBeVisible();
 
       // The reopen event carries an expandable structured steering block
-      // (Epic ASS-776) holding the verbatim steer prompt + context the
+      // (ASS-776) holding the verbatim steer prompt + context the
       // orchestrator handed the agent.
       const steering = page.getByTestId('timeline-event-steering');
       await expect(steering).toBeVisible();

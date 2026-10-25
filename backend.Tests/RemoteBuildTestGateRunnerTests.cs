@@ -173,6 +173,27 @@ public sealed class RemoteBuildTestGateRunnerTests
         Assert.Equal(expectedReason, result.CancellationReason);
     }
 
+    [Fact]
+    public async Task Registry_cancellation_is_reported_as_superseded_not_shutdown()
+    {
+        var registry = new TaskGateCancellationRegistry();
+        var request = Request() with { Project = "Fixture", JobId = "integrated" };
+        var transport = new RecordingTransport
+        {
+            Exception = new OperationCanceledException(),
+            OnRun = _ => registry.Cancel("Fixture", "integrated"),
+        };
+
+        var result = await new RemoteBuildTestGateRunner(transport,
+                NullLogger<RemoteBuildTestGateRunner>.Instance, registry)
+            .RunAsync(request, [], null, PostStepMode.Fail, TimeSpan.FromMinutes(1), CancellationToken.None);
+
+        Assert.Equal(BuildTestGateFailureKind.Cancellation, result.FailureKind);
+        Assert.Equal(GateCancellationReasons.Superseded, result.CancellationReason);
+        Assert.Equal(GateCancellationReasons.Superseded, GateCancellationPolicy.Decide(Sha, Sha,
+            TaskStates.AutoReview, TaskStates.AutoReview, false, false, result.CancellationReason));
+    }
+
     [Theory]
     [InlineData(true, GateCancellationReasons.Shutdown)]
     [InlineData(false, GateCancellationReasons.Operator)]
@@ -365,7 +386,8 @@ public sealed class RemoteBuildTestGateRunnerTests
 
     private static BuildTestGateRequest Request() => new("/operator/repository", Sha, "integration-gate");
     private static RemoteGateInvocation Invocation(BuildTestGateRequest request) => new(
-        1, new string('a', 32), new string('b', 64), request, [], null, PostStepMode.Fail, 60, 180);
+        1, new string('a', 32), new string('b', 64), request, [], null, PostStepMode.Fail, 60, 180)
+        { InstallationId = new string('c', 32) };
     private static BuildTestGateResult Passed() => new(BuildTestGateVerdict.Ok, 0, 1, "", "passed", true, false)
     {
         ExpectedSha = Sha, TestedSha = Sha, GateId = PipelineCatalogue.BuildTestGateStepId,

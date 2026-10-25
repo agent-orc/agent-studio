@@ -11,6 +11,8 @@ export type {
   ProjectExpensiveJobsResponse,
   ProjectJobTokenRun,
   ProjectJobTokenDetail,
+  ReviewObservationReport,
+  ReviewObservationAggregate,
   PipelineStepKindKey,
   PipelinePricingGap,
   PipelineKindDayCell,
