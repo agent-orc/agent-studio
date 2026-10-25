@@ -20,7 +20,7 @@ public sealed class ProjectIntegrationViewServiceTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_temp, recursive: true); } catch { }
+        if (Directory.Exists(_temp)) Directory.Delete(_temp, recursive: true);
     }
 
     [Fact]
@@ -351,12 +351,23 @@ public sealed class ProjectIntegrationViewServiceTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit(15_000);
-        return (output, error, process.ExitCode);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        try
+        {
+            var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
+            var error = process.StandardError.ReadToEndAsync(timeout.Token);
+            Task.WhenAll(output, error, process.WaitForExitAsync(timeout.Token))
+                .GetAwaiter().GetResult();
+            return (output.Result, error.Result, process.ExitCode);
+        }
+        catch (OperationCanceledException ex) when (timeout.IsCancellationRequested)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            throw new TimeoutException($"git {string.Join(' ', args)} exceeded two minutes.", ex);
+        }
     }
 }
