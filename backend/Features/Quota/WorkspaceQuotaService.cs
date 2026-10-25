@@ -29,6 +29,8 @@ public sealed record QuotaOverrideAudit(DateTimeOffset At, string WorkspaceId, s
     string Actor, string Reason, DateTime ExpiresAt);
 public sealed record QuotaDeployExecution(string ProjectId, string JobId, string EnvironmentId,
     DateTime StartedAt, DateTime? CompletedAt);
+/// <summary>The unsettled dispatch that owns a hosting slot it reserved; DispatchedAt identifies it.</summary>
+public sealed record QuotaHostingDispatch(string Project, string EnvironmentId, string Workflow, DateTime DispatchedAt);
 
 /// <summary>Workspace and project limits. Usage is projected from the same token and pipeline records as Studio.</summary>
 public sealed class WorkspaceQuotaService
@@ -46,11 +48,12 @@ public sealed class WorkspaceQuotaService
     private sealed record State(Dictionary<string, QuotaLimits> Workspaces,
         Dictionary<string, QuotaLimits> Projects, Dictionary<string, DateTime> Overrides,
         Dictionary<string, string> Environments, List<QuotaOverrideAudit>? Audits = null,
-        List<QuotaDeployExecution>? Deploys = null);
+        List<QuotaDeployExecution>? Deploys = null, Dictionary<string, QuotaHostingDispatch>? Dispatches = null);
 
+    /// <summary>StateUnknown: the settings file was never readable since start, so no limits are known.</summary>
     private sealed record StateView(QuotaLimits? WorkspaceLimits, QuotaLimits? ProjectLimits,
         bool WorkspaceOverride, bool ProjectOverride, IReadOnlyCollection<string> Environments,
-        IReadOnlyList<QuotaDeployExecution> Deploys, string? ReadError);
+        IReadOnlyList<QuotaDeployExecution> Deploys, string? ReadError, bool StateUnknown);
 
     /// <summary>Current-week usage of one project; the trend has one bucket per UTC day.</summary>
     private sealed record ProjectUsage(ProjectRecord Project, QuotaUsage[] Daily,
@@ -78,6 +81,7 @@ public sealed class WorkspaceQuotaService
     private readonly ConcurrentDictionary<string, byte> _unpricedModels = new(StringComparer.OrdinalIgnoreCase);
     private State _state = Empty();
     private string? _stateReadError;
+    private bool _stateKnown;
     private (DateTime WrittenAt, long Length)? _loadedStamp;
 
     public WorkspaceQuotaService(IConfiguration config, TimeProvider clock, WorkspaceRegistry workspaces,
@@ -104,31 +108,44 @@ public sealed class WorkspaceQuotaService
     /// <summary>
     /// The state lives in memory; the file is read again only when its write
     /// time or length changed. An unreadable state file keeps the last good
-    /// state and is reported as meter unavailable.
+    /// state and is reported as meter unavailable. Without a last good state
+    /// (an unreadable file since start) admission refuses and nothing is
+    /// written, so the unknown limits are neither ignored nor overwritten.
     /// </summary>
     private void Reload()
     {
         try
         {
             var file = new FileInfo(_path);
-            if (!file.Exists) return;
+            if (!file.Exists)
+            {
+                _stateKnown |= _stateReadError is null;
+                return;
+            }
             var stamp = (file.LastWriteTimeUtc, file.Length);
             if (_loadedStamp == stamp) return;
             _loadedStamp = stamp;
             var read = JsonSerializer.Deserialize<State>(File.ReadAllText(_path));
             if (read is not null) _state = read;
             _stateReadError = null;
+            _stateKnown = true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
             if (_stateReadError is null)
                 _logger?.LogWarning(ex, "workspace-quota-state-unreadable path={Path}", _path);
-            _stateReadError = "Quota settings could not be read; admission uses the last readable settings.";
+            _stateReadError = _stateKnown
+                ? "Quota settings could not be read; admission uses the last readable settings."
+                : UnknownStateMessage;
         }
     }
 
+    private const string UnknownStateMessage = "Quota settings could not be read and no earlier settings are known. "
+        + "New work waits until an owner repairs the quota settings file.";
+
     private void Save()
     {
+        if (!_stateKnown) throw new InvalidOperationException(UnknownStateMessage);
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
         var temporary = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(_state));
@@ -215,6 +232,7 @@ public sealed class WorkspaceQuotaService
             var key = projectId + "/" + environmentId;
             if (running) _state.Environments[key] = _clock.GetUtcNow().ToString("O");
             else _state.Environments.Remove(key);
+            _state.Dispatches?.Remove(key);
             Save();
         }
     }
@@ -273,7 +291,15 @@ public sealed class WorkspaceQuotaService
         SetEnvironment(project.Id, environmentId, running);
     }
 
-    public void MarkProjectEnvironmentDispatched(string projectName, string environmentId, DateTimeOffset dispatchStartedAt)
+    /// <summary>
+    /// Persists which dispatch owns the slot, so its failure can release the
+    /// slot after a restart. A dispatch that reserved the slot stamps the
+    /// reservation with its start and owns it. A dispatch that took no slot
+    /// keeps the stamp, so the live deployment can still release it; it takes
+    /// over ownership only from an earlier dispatch that is not settled yet.
+    /// </summary>
+    public void RecordProjectEnvironmentDispatch(string projectName, string environmentId, string workflow,
+        DateTimeOffset dispatchStartedAt, bool reserved)
     {
         var project = _projects.FindByIdOrDisplayName(projectName);
         if (project is null) return;
@@ -282,8 +308,44 @@ public sealed class WorkspaceQuotaService
             Reload();
             var key = project.Id + "/" + environmentId;
             if (!_state.Environments.ContainsKey(key)) return;
-            _state.Environments[key] = dispatchStartedAt.ToUniversalTime().ToString("O");
+            var dispatches = _state.Dispatches ?? new(StringComparer.OrdinalIgnoreCase);
+            if (!reserved && !dispatches.ContainsKey(key)) return;
+            if (reserved) _state.Environments[key] = dispatchStartedAt.ToUniversalTime().ToString("O");
+            dispatches[key] = new(project.DisplayName, environmentId, workflow, dispatchStartedAt.UtcDateTime);
+            _state = _state with { Dispatches = dispatches };
             Save();
+        }
+    }
+
+    /// <summary>Unsettled dispatches that own a slot of the environment id, across all projects.</summary>
+    public IReadOnlyList<QuotaHostingDispatch> PendingDispatches(string environmentId)
+    {
+        lock (_gate)
+        {
+            Reload();
+            return (_state.Dispatches ?? []).Values.Where(item => item.EnvironmentId == environmentId).ToList();
+        }
+    }
+
+    /// <summary>
+    /// Settles the dispatch identified by its start. A failed dispatch releases
+    /// the slot; any other dispatch, or the live deployment, leaves it alone.
+    /// </summary>
+    public bool SettleProjectEnvironmentDispatch(string projectName, string environmentId, DateTime dispatchedAt,
+        bool succeeded)
+    {
+        var project = _projects.FindByIdOrDisplayName(projectName);
+        if (project is null) return false;
+        lock (_gate)
+        {
+            Reload();
+            var key = project.Id + "/" + environmentId;
+            if (_state.Dispatches?.GetValueOrDefault(key) is not { } owner
+                || owner.DispatchedAt != dispatchedAt) return false;
+            _state.Dispatches.Remove(key);
+            if (!succeeded) _state.Environments.Remove(key);
+            Save();
+            return true;
         }
     }
 
@@ -386,6 +448,7 @@ public sealed class WorkspaceQuotaService
     private QuotaAdmission Admit(ProjectRecord project, bool hosting)
     {
         var view = View(project.WorkspaceId, project.Id);
+        if (view.StateUnknown) return new(false, view.ReadError, true);
         if (view.WorkspaceLimits is null && view.ProjectLimits is null)
             return new(true, view.ReadError, view.ReadError is not null);
         WorkspaceUsage usage;
@@ -431,6 +494,9 @@ public sealed class WorkspaceQuotaService
         var usage = limited ? Usage(workspaceId) : null;
         QuotaScopeAdmission Scope(ProjectRecord? project, StateView view)
         {
+            if (view.StateUnknown)
+                return new(project?.Id, project?.DisplayName, WorkspaceQuotaPolicy.Blocked, view.ReadError,
+                    false, false, false, true);
             var limits = project is null ? view.WorkspaceLimits : view.ProjectLimits;
             if (limits is null || usage is null)
                 return new(project?.Id, project?.DisplayName, WorkspaceQuotaPolicy.Ok, null, false, true, true, false);
@@ -454,7 +520,7 @@ public sealed class WorkspaceQuotaService
             bool Active(string key) => _state.Overrides.TryGetValue(key, out var expiry) && expiry > now;
             return new(workspaceLimits, projectLimits, Active(workspaceId),
                 projectId is not null && Active(projectId), _state.Environments.Keys.ToList(),
-                (_state.Deploys ?? []).ToList(), _stateReadError);
+                (_state.Deploys ?? []).ToList(), _stateReadError, !_stateKnown);
         }
     }
 

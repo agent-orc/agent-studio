@@ -1089,13 +1089,30 @@ public sealed partial class ProjectEnvironmentService
                     var reserved = false;
                     if (!verified.IsStop && verified.Kind != "preview-remove" && verified.RunbookName is null
                         && !TryAdmitClaim(project, verified, out reserved)) continue;
+                    var jobIndex = state.Jobs.IndexOf(job);
+                    // A later claim can reuse a slot held by an earlier failed job.
+                    // Transfer ownership so settling that older claim cannot free it.
+                    if (!reserved && !job.ReservedSlot && !verified.IsStop && verified.RunbookName is null
+                        && jobIndex > 0)
+                    {
+                        var priorIndex = state.Jobs.FindLastIndex(jobIndex - 1,
+                            item => item.EnvironmentId == job.EnvironmentId && item.ReservedSlot
+                                && item.Status != "healthy");
+                        if (priorIndex >= 0 && !state.Jobs.Skip(priorIndex + 1)
+                                .Take(jobIndex - priorIndex - 1)
+                                .Any(item => item.EnvironmentId == job.EnvironmentId && item.Status == "healthy"))
+                        {
+                            state.Jobs[priorIndex] = state.Jobs[priorIndex] with { ReservedSlot = false };
+                            reserved = true;
+                        }
+                    }
                     var claimed = verified with
                     {
                         Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N"),
                         Claims = job.Claims + 1, ReservedSlot = job.ReservedSlot || reserved,
                         EnvironmentKind = SnapshotKind(verified, state),
                     };
-                    state.Jobs[state.Jobs.IndexOf(job)] = claimed;
+                    state.Jobs[jobIndex] = claimed;
                     Save(project, state);
                     if (!claimed.IsStop && claimed.RunbookName is null)
                         _quota?.RecordDeployStart(project, claimed.Id, claimed.EnvironmentId);
@@ -1106,10 +1123,14 @@ public sealed partial class ProjectEnvironmentService
         }
     }
 
-    /// <summary>Releases reservations for removed environments and expired deploy leases.</summary>
+    /// <summary>
+    /// Reconstructs slots for running declared environments, then settles orphaned
+    /// reservations. This also runs before limits exist so an upgrade cannot admit
+    /// new work ahead of environments that were already running.
+    /// </summary>
     public void ReconcileHostingSlots()
     {
-        if (_quota is null || !_quota.HasLimits()) return;
+        if (_quota is null) return;
         lock (_gate)
         {
             var root = StoreRoot();
@@ -1120,20 +1141,27 @@ public sealed partial class ProjectEnvironmentService
                 var project = Uri.UnescapeDataString(Path.GetFileNameWithoutExtension(file));
                 var state = Load(project);
                 var declarations = Declarations(project);
-                // Preview slots use the job lifecycle; removal reports release them explicitly.
                 if (declarations is not null)
-                    foreach (var environmentId in _quota.ProjectEnvironmentIds(project))
+                {
+                    var held = _quota.ProjectEnvironmentIds(project);
+                    foreach (var environmentId in held)
                         if (environmentId.StartsWith("env:", StringComparison.Ordinal)
-                            && !environmentId.StartsWith("env:preview-", StringComparison.Ordinal)
-                            && declarations.All(item => SlotKey(item.Id) != environmentId))
+                            && declarations.All(item => SlotKey(item.Id) != environmentId)
+                            && !(environmentId.StartsWith("env:preview-", StringComparison.Ordinal)
+                                && IsRunning(state.History, environmentId[4..])))
                             _quota.SetProjectEnvironment(project, environmentId, false);
+                    foreach (var declaration in declarations)
+                        if (IsRunning(state.History, declaration.Id) && !held.Contains(SlotKey(declaration.Id)))
+                            _quota.SetProjectEnvironment(project, SlotKey(declaration.Id), true);
+                }
                 // A report settles its reservation (it clears ReservedSlot), so only a claim that
                 // expired, was lost or was aborted without a report still holds one here.
                 var expired = state.Jobs.Where(job => job.ReservedSlot && job.Status != "healthy"
                     && (job.Status != "claimed" || job.ClaimedAt <= now - LeaseDuration)).ToList();
                 foreach (var job in expired)
                 {
-                    _quota.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
+                    if (!IsRunning(state.History, job.EnvironmentId))
+                        _quota.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
                     _quota.RecordDeployEnd(project, job.Id);
                     state.Jobs[state.Jobs.IndexOf(job)] = job with { ReservedSlot = false };
                 }
@@ -1383,12 +1411,14 @@ public sealed partial class ProjectEnvironmentService
                 Save(project, state);
                 return true;
             }
-            var status = success ? job.IsRollback ? "rolled-back" : "healthy" : "failed";
+            var status = success ? job.Kind == "preview-remove" ? "stopped"
+                : job.IsRollback ? "rolled-back" : "healthy" : "failed";
             state.History.Add(new(job.EnvironmentId, now,
                 new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
             _quota?.RecordDeployEnd(project, job.Id);
             if (success) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), job.Kind != "preview-remove");
-            else if (job.ReservedSlot) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
+            else if (job.ReservedSlot && !IsRunning(state.History, job.EnvironmentId))
+                _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
             if (success || !job.GuidedFailure) ClosePromotionForResult(state, job, success, now);
             // A job already queued for the environment replaces the failed
             // one; a rollback queued behind it would replace a newer release.
@@ -1447,7 +1477,8 @@ public sealed partial class ProjectEnvironmentService
             new(now, status, job.Artifact, job.PreviousArtifact, evidence)));
         _quota?.RecordDeployEnd(project, job.Id);
         if (success) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), true);
-        else if (job.ReservedSlot) _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
+        else if (job.ReservedSlot && !IsRunning(state.History, job.EnvironmentId))
+            _quota?.SetProjectEnvironment(project, SlotKey(job.EnvironmentId), false);
         if (success || !job.GuidedFailure) ClosePromotionForResult(state, job, success, now);
         if (!success && !job.GuidedFailure && !job.IsRollback && job.PreviousArtifact is not null
             && !state.Jobs.Any(item => item.EnvironmentId == job.EnvironmentId && item.Tenant == job.Tenant
@@ -1607,6 +1638,14 @@ public sealed partial class ProjectEnvironmentService
     private static bool HasOpenPromotion(State state, string artifact)
         => state.Promotions.Any(item => item.Artifact == artifact
             && item.Status is not ("rejected" or "failed" or "cancelled"));
+
+    /// <summary>
+    /// A failed redeploy leaves the last healthy deployment running. Only a
+    /// confirmed stop ends that deployment.
+    /// </summary>
+    internal static bool IsRunning(IEnumerable<EnvironmentHistoryRow> history, string environmentId)
+        => history.LastOrDefault(row => row.EnvironmentId == environmentId
+            && row.Item.Status is "healthy" or "rolled-back" or "stopped")?.Item.Status is "healthy" or "rolled-back";
 
     private static bool IsDeclared(IReadOnlyList<EnvironmentDeclaration>? declarations, string environmentId)
         => declarations?.Any(item => item.Id == environmentId) == true;
