@@ -2537,6 +2537,11 @@ public class ProjectRunner
         {
             var info = _scanner.FindJob(jobId, Entry.Path);
             if (info == null) return RunOutcome.Reject(new RunRejection(RunRejectReason.TaskNotFound, "Job not found"));
+            var location = ProjectExecutionPolicy.ResolveExecutionLocation(_projectSettings.Get(ProjectName));
+            if (_networked && location != ExecutionLocations.Local)
+                return RunOutcome.Reject(new RunRejection(
+                    RunRejectReason.RemoteExecutionRequired,
+                    $"{RemoteExecutionRequirement.Code}: Project {ProjectName} is placed at {location}; dispatch its agent run to that runner."));
             if (_networked || WorktreeRunPolicy.RequiresWorktree(info.Mode)
                 && _localCodingAdmission?.AllowsLocalCoding != true)
                 return RunOutcome.Reject(new RunRejection(

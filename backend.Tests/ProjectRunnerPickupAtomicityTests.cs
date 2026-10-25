@@ -121,6 +121,25 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         Assert.True(File.Exists(taskPath));
     }
 
+    [Theory]
+    [InlineData("manual")]
+    [InlineData("continue")]
+    public async Task NetworkedDirectRun_UsesRemotePlacementWithoutStartingHostCli(string entryPoint)
+    {
+        WritePreparationContract();
+        WriteJob(TaskStates.Ready, "remote-only");
+        var cli = new FailingCliService();
+        var runner = BuildRunner(cli, networked: true, executionRunner: "agent-runner-01");
+
+        var outcome = entryPoint == "manual"
+            ? await runner.StartJobManualAsync("remote-only", CancellationToken.None)
+            : await runner.ContinueJobAsync("remote-only", "continue", null, CancellationToken.None);
+
+        Assert.Equal(RunRejectReason.RemoteExecutionRequired, outcome.Rejection?.Reason);
+        Assert.Contains("dispatch its agent run to that runner", outcome.Rejection!.Message);
+        Assert.False(cli.StartCalled);
+    }
+
     [Fact]
     public async Task AutoPickupSpawnFailure_RevertsReady_RemovesLock_AndFreesSlot()
     {
@@ -594,7 +613,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         Action<TaskScannerService>? scannerObserver = null,
         LocalRunClaimAdapter? localRunClaims = null,
         IVisualQaService? visualQa = null,
-        bool networked = false)
+        bool networked = false,
+        string? executionRunner = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -630,6 +650,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         var sessions = new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance);
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        if (executionRunner is not null) settings.SetExecutionRunner(ProjectName, executionRunner);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config, prompts);
         var transitions = new TaskTransitionService(scanner, states, mutations, git, settings, NullLogger<TaskTransitionService>.Instance);
         var chatLog = new OrchestratorChatLog(NullLogger<OrchestratorChatLog>.Instance);

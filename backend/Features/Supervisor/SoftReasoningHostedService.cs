@@ -199,11 +199,12 @@ public sealed class SoftReasoningHostedService : BackgroundService
     /// </summary>
     private async Task<string> InvokeCliAsync(string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
     {
-        var oneShot = _oneShotRegistry?.Get("claude");
+        var cliType = ReviewDecisionOrchestrator.NormalizeReviewCliType(cli);
+        var oneShot = _oneShotRegistry?.Get(cliType);
         if (oneShot != null)
         {
             var r = await oneShot.RunAsync(new AgentStudio.Cli.CliOneShotRequest(
-                CliType: "claude", Model: model, Prompt: prompt)
+                CliType: cliType, Model: model, Prompt: prompt)
             {
                 Timeout = timeout,
                 Source = AdHocUsageSources.SoftReasoning,
@@ -218,8 +219,6 @@ public sealed class SoftReasoningHostedService : BackgroundService
             return CliOneShotCompatibility.ToClaudeResultEnvelope(r, model);
         }
 
-        if (!Path.GetFileNameWithoutExtension(cli).Equals(CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
-            return string.Empty;
         using var workspace = new HostOneShotIsolation.Workspace();
         var psi = new ProcessStartInfo
         {
@@ -233,7 +232,7 @@ public sealed class SoftReasoningHostedService : BackgroundService
         };
         HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model);
 
-        using var p = HostCliSpawnGuard.Start(psi, networked: true, CliTypes.Claude);
+        using var p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_configuration), cliType);
         if (p == null) return string.Empty;
         try
         {

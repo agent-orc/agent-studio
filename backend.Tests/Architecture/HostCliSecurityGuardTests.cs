@@ -35,9 +35,29 @@ public sealed class HostCliSecurityGuardTests
             Assert.True(source.Contains("HostOneShotIsolation.AddClaudeArguments", StringComparison.Ordinal)
                 || source.Contains("AdHocClaudeInvoker.BuildArgs", StringComparison.Ordinal), relative);
             Assert.Contains("HostCliSpawnGuard.Start(psi", source);
-            Assert.Contains("CliTypes.Claude)", source);
+            Assert.True(source.Contains("CliTypes.Claude)", StringComparison.Ordinal)
+                || source.Contains("NormalizeReviewCliType(cli)", StringComparison.Ordinal)
+                || source.Contains("cliType)", StringComparison.Ordinal)
+                || source.Contains("Path.GetFileNameWithoutExtension(cli.Replace", StringComparison.Ordinal), relative);
             Assert.DoesNotContain("ArgumentList.Add(\"--tools\")", source);
             Assert.DoesNotContain("--allowedTools", source);
+        }
+    }
+
+    [Fact]
+    public void Legacy_review_and_supervisor_launchers_use_the_active_security_profile()
+    {
+        var root = RepositoryRoot.Find();
+        foreach (var relative in new[]
+        {
+            "backend/Features/Runner/ReviewDecisionOrchestrator.cs",
+            "backend/Features/Runner/AspectRunnerService.cs",
+            "backend/Features/Supervisor/SoftReasoningHostedService.cs",
+        })
+        {
+            var source = File.ReadAllText(Path.Combine(root, relative));
+            Assert.DoesNotContain("HostCliSpawnGuard.Start(psi, networked: true", source);
+            Assert.Contains("SecurityProfiles.IsNetworked", source);
         }
     }
 

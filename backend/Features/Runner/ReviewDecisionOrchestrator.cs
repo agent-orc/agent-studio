@@ -175,7 +175,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// Args: cliBinary, model, prompt, timeout, ct → captured stdout/stderr.
     /// </summary>
     public Func<string, string, string, TimeSpan, CancellationToken, Task<string>> CliRunner { get; set; }
-        = DefaultRunCliAsync;
 
     internal Func<int, TimeSpan> BuildTestGateRetryBackoff { get; set; }
         = PostProcessingOutcomeTaxonomy.RetryBackoff;
@@ -327,6 +326,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _decisionRequests = decisionRequests;
         _orchestration = orchestration;
         _reviewInputDecisions = reviewInputDecisions;
+        CliRunner = (cli, model, prompt, timeout, ct) =>
+            DefaultRunCliAsync(cli, model, prompt, timeout, ct, SecurityProfiles.IsNetworked(_configuration));
 
         _statusSnapshot.ConfigureEscalationRateAlert(
             _configuration.GetValue(
@@ -352,7 +353,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var cliType = NormalizeReviewCliType(cli);
         var oneShot = _oneShotRegistry?.Get(cliType);
-        if (oneShot == null) return await DefaultRunCliAsync(cli, model, prompt, timeout, ct);
+        if (oneShot == null) return await CliRunner(cli, model, prompt, timeout, ct);
 
         var result = await oneShot.RunAsync(new AgentStudio.Cli.CliOneShotRequest(
             CliType: cliType,
@@ -8366,9 +8367,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         return value.ToLowerInvariant();
     }
 
-    private static async Task<string> DefaultRunCliAsync(string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
+    private static async Task<string> DefaultRunCliAsync(string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct, bool networked)
     {
-        if (NormalizeReviewCliType(cli) != CliTypes.Claude) return string.Empty;
         using var workspace = new HostOneShotIsolation.Workspace();
         var psi = new ProcessStartInfo
         {
@@ -8382,7 +8382,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         };
         HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model);
 
-        using var p = HostCliSpawnGuard.Start(psi, networked: true, CliTypes.Claude);
+        using var p = HostCliSpawnGuard.Start(psi, networked, NormalizeReviewCliType(cli));
         if (p == null) return string.Empty;
         try
         {
