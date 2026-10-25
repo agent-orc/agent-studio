@@ -229,10 +229,18 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   these unfiltered collections. Parked cards, pickup holds, and workspace
   screenshots remain available with `workspace.read`; their handlers filter
   entries by the caller's project bindings before returning them.
+- Project quota snapshots under `/api/workspaces/{workspace}/projects/{project}/quota`
+  and the global auto-review status require `workspace.operate`, because their
+  responses are not project-filtered. Host execution infrastructure, agent-rule
+  paths, ad-hoc usage, and admin configuration are workspace operator reads.
+  Wiki search and steering-doc reads skip links in every path segment so a
+  repository link cannot disclose a file outside that repository. Streamed
+  global search visits only repositories the caller can read.
 - CLI usage, transcripts, working memory, and session state require
   `workspace.operate`. The static catalogues, model list, maintenance model,
   effective mode, and quota strip reads use `workspace.read`. Quota refresh
-  writes still require `workspace.operate`. The interactive CLI `_probe` is
+  writes still require `workspace.operate`. Scoped quota reads omit raw CLI
+  samples, which may include an account address. The interactive CLI `_probe` is
   mapped only in the local profile. A pipeline catalogue request with `projectName` checks
   `project.read` for that project before reading its settings.
 - When `TaskServer:BaseUrl` is configured, `/api/v1` reads pass through the

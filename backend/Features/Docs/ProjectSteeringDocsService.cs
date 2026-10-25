@@ -85,7 +85,7 @@ public class ProjectSteeringDocsService
         if (baseDir == null) return null;
         var full = Path.GetFullPath(Path.Combine(baseDir, relPath));
         var root = Path.GetFullPath(baseDir);
-        if (!IsUnderRoot(root, full)) return null;
+        if (!IsUnderRoot(root, full) || !ProjectDocsService.IsLinkFreePath(root, full)) return null;
         if (!File.Exists(full)) return null;
         // Only allow files that the inventory exposes. Reading arbitrary
         // repository files would turn this into a generic file browser,
@@ -135,7 +135,7 @@ public class ProjectSteeringDocsService
             foreach (var file in files)
             {
                 var rel = NormalizeRel(Path.GetRelativePath(root, file));
-                if (IsAgentDocRelPath(rel)) yield return file;
+                if (IsAgentDocRelPath(rel) && ProjectDocsService.IsLinkFreePath(root, file)) yield return file;
             }
 
             IEnumerable<string> children;
@@ -148,7 +148,8 @@ public class ProjectSteeringDocsService
             foreach (var child in children)
             {
                 var name = Path.GetFileName(child);
-                if (IgnoredDirectoryNames.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
+                if (!ProjectDocsService.IsLinkFreePath(root, child)
+                    || IgnoredDirectoryNames.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
                 {
                     continue;
                 }

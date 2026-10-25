@@ -410,7 +410,7 @@ public class ProjectDocsService
         }
     }
 
-    private static bool IsLinkFreePath(string baseDir, string fullPath)
+    internal static bool IsLinkFreePath(string baseDir, string fullPath)
     {
         var relative = Path.GetRelativePath(baseDir, fullPath);
         if (relative == "." || Path.IsPathRooted(relative)

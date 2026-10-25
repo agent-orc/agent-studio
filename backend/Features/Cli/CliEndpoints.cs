@@ -203,7 +203,10 @@ public static class CliEndpoints
                 is AgentStudio.Security.RequestAccess access
                 && !access.Allows(AgentStudio.Security.IamPermissions.WorkspaceOperate,
                     AgentStudio.Security.PermissionTarget.WorkspaceWide);
-            return Results.Ok(scoped ? quota.GetCached() : quota.GetWithBackgroundRefresh(ct));
+            var report = scoped ? quota.GetCached() : quota.GetWithBackgroundRefresh(ct);
+            return Results.Ok(scoped
+                ? ScopedQuotaProjection.Redact(report)
+                : report);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
         // AGT-3001: recorded series per window plus the burn rate over the last

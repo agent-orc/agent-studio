@@ -66,6 +66,24 @@ public sealed class IamHandlerAccessTests : IDisposable
     }
 
     [Fact]
+    public async Task Project_viewer_cannot_read_workspace_quota_auto_review_or_host_state()
+    {
+        using var factory = BuildFactory();
+        using var viewer = Client(factory, Invite(factory, "collections.viewer",
+            new IamGrantRequest(IamRoles.Viewer, IamScope.ForProject("alpha"))));
+        foreach (var path in new[]
+        {
+            "/api/workspaces/main/projects/beta/quota", "/api/auto-review/status",
+            "/api/system/execution-infrastructure", "/api/agent-rules", "/api/adhoc-usage",
+            "/api/admin/config/orchestrator"
+        })
+        {
+            using var response = await viewer.GetAsync(path);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+    }
+
+    [Fact]
     public async Task A_viewer_of_beta_who_develops_alpha_cannot_write_beta_through_body_addressed_routes()
     {
         using var factory = BuildFactory();

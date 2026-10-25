@@ -307,9 +307,11 @@ public static class RoutePermissionCatalog
         // These collections expose installation-wide prompts, runner identity,
         // recovery and operational records without per-project filtering.
         Add("R", IamPermissions.WorkspaceOperate,
-            "/api/admin/prompts/**", "/api/admin/git-telemetry/**", "/api/clients/**",
+            "/api/admin/prompts/**", "/api/admin/config/**", "/api/admin/git-telemetry/**", "/api/clients/**",
             "/api/watcher/**", "/api/crash-recovery/**", "/api/cause-breakers/**",
-            "/api/workspace/summary", "/api/workspaces/{}/quota/**");
+            "/api/workspace/summary", "/api/workspaces/{}/quota/**",
+            "/api/workspaces/{}/projects/{}/quota", "/api/auto-review/status",
+            "/api/system/execution-infrastructure", "/api/agent-rules", "/api/adhoc-usage/**");
         Add("W", IamPermissions.WorkspaceOperate,
             "/api/cli/quota/refresh/**", "/api/cli/{}/session", "/api/cli/{}/working-memory", "/api/clients/**",
             "/api/crash-recovery/**", "/api/git/branch-sweep/**", "/api/git/cleanup/**", "/api/git/branch-reclaim/**",
