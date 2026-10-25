@@ -2664,7 +2664,7 @@ green delivery can replace an expired preview; the same SHA cannot recreate it.
 
 `.agent-studio/project.yml` schema 1 remains valid for preparation and verification.
 Schema 2 can add `pipeline.build` and `pipeline.test`, `artifacts`,
-`environments`, `lifecycles.standard`, `deploy`, and `variables`. Existing
+`environments`, `lifecycles.standard`, `deploy`, `tenants`, and `variables`. Existing
 `commands` and `testSuites` remain the execution source until the pipeline
 engine is extended.
 Each release hashes these sections at its commit into its process and
@@ -2688,6 +2688,12 @@ in
   and the standard lifecycle.
 - `lifecycles.standard`: Staging is automatic after integration; Production
   requires successful Staging and approval by Owner or Maintainer.
+- `tenants` declare customer installations with a unique portable `name`,
+  optional unique `tags`, and a nonempty list of participating `environments`.
+  Every listed environment must be declared in the project. A tenant in
+  Production must also participate in Staging. Releases snapshot these
+  declarations; the [tenant deployment API contract](../../concepts/deployment-first-class.md#tenant-deployment-api-contract-agt-3261)
+  describes tenant selection and status responses.
 - `deploy` steps in P1 (AGT-3221) run from the release's committed schema 2
   snapshot. `static-site` describes
   copying a static artifact to a `directory` on an SSH `target`. `container`
@@ -2715,7 +2721,14 @@ in
   `approval` stay valid for the pipeline diagram, but a release with these
   step kinds is refused until they have an executor.
 - `variables` hold either a plain `value` or a `secret` name for the secret
-  provider, optionally scoped to `environments`. A plain value is refused as
+  provider, optionally scoped to `environments`, `channels`, `tenants`, and `tenantTags`.
+  Values within one scope list match by OR; nonempty lists of different kinds
+  combine by AND. A matching definition with more scope kinds wins. At the
+  same number of kinds, explicit tenant scope outranks tenant tag, which
+  outranks environment and then channel; smaller lists within a kind win. Validation refuses
+  equally ranked definitions that overlap for a tenant and environment. A
+  deploy job receives resolved plain values and secret reference names from
+  the release snapshot. A plain value is refused as
   `secret-value-inline` in two cases. The first is a sensitive name: its last
   segment (split at `_` and camelCase) is in a curated list (`PASSWORD`,
   `PASSWD`, `PASS`, `PWD`, `PASSPHRASE`, `SECRET`, `TOKEN`, `KEY`, `APIKEY`,
@@ -2764,7 +2777,7 @@ schema 2. After migration, existing JSON declarations are checked for
 divergence; a project may run from schema 2 without JSON. project.yml owns
 hosts, protection, lifecycle, variables and
 SSH steps. Release creation compares the committed JSON declaration's host,
-template, health URL, static directory and secret names with project.yml and
+template, health URL, static directory and unscoped secret names with project.yml and
 refuses divergence. The effective schema 2 definition is stored in the release
 snapshot and copied to each host job. The host checks SSH host keys strictly,
 copies static bundles to a version directory before switching `current`, or
@@ -2801,6 +2814,10 @@ environments:
   - name: staging
   - name: production
     protected: true
+tenants:
+  - name: acme
+    tags: [premium]
+    environments: [staging, production]
 deploy:
   - step: static-site
     artifact: site
@@ -2823,6 +2840,7 @@ variables:
   - name: DATABASE_URL
     secret: DATABASE_URL
     environments: [production]
+    tenantTags: [premium]
 ```
 
 A static deploy example uses a branch pulled by the web target:

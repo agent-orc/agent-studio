@@ -28,6 +28,20 @@
     "interventionTimeoutMinutes": { "type": "integer", "minimum": 1, "maximum": 10080, "default": 60 },
     "secretRefs": { "type": "array", "uniqueItems": true,
       "items": { "type": "string", "pattern": "^[a-z0-9A-Z][a-z0-9A-Z._-]{0,63}$" } },
+    "tenantTargets": {
+      "description": "Physical target and health URL for each tenant that may deploy to this environment. Every tenant target must be isolated from the project target and other tenants.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["destination", "healthUrl"],
+        "properties": {
+          "destination": { "type": "string", "minLength": 1 },
+          "healthUrl": { "type": "string", "format": "uri" }
+        }
+      }
+    },
     "data": {
       "description": "Container data. The database is operator provided through an AGT-3222 secret reference. Named volumes retain identity across releases.",
       "type": "object", "additionalProperties": false,

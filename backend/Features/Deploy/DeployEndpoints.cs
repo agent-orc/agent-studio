@@ -12,8 +12,13 @@ public static class DeployEndpoints
         project.MapGet("/environments", (string projectName, DeployService deploy) =>
             deploy.Environments(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
-        project.MapGet("/status", (string projectName, DeployService deploy) =>
-            deploy.Status(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+        project.MapGet("/tenants", (string projectName, DeployService deploy) =>
+            deploy.Tenants(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
+        project.MapGet("/status", (string projectName, string? tenant, DeployService deploy) =>
+            tenant is not null && deploy.Tenants(projectName)?.All(item => item.Name != tenant) == true
+                ? Results.NotFound(new { error = $"Unknown tenant '{tenant}'." })
+                : deploy.Status(projectName, tenant) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
         project.MapGet("/delivery-lanes", (string projectName, DeployService deploy) =>
             deploy.DeliveryLanes(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
@@ -37,12 +42,12 @@ public static class DeployEndpoints
         project.MapGet("/cards", (string projectName, DeployService deploy) =>
             deploy.Cards(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
-        project.MapGet("/deployments", (string projectName, string? environmentId, DeployService deploy) =>
-            deploy.Deployments(projectName, environmentId) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+        project.MapGet("/deployments", (string projectName, string? environmentId, string? tenant, DeployService deploy) =>
+            deploy.Deployments(projectName, environmentId, tenant) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
-        project.MapGet("/deployments/page", (string projectName, string? environmentId, string? state,
+        project.MapGet("/deployments/page", (string projectName, string? environmentId, string? tenant, string? state,
             DateTime? sinceUtc, int? offset, int? limit, DeployService deploy) =>
-            deploy.DeploymentPage(projectName, environmentId, state, sinceUtc, offset ?? 0, limit ?? 25) is { } value
+            deploy.DeploymentPage(projectName, environmentId, state, sinceUtc, offset ?? 0, limit ?? 25, tenant) is { } value
                 ? Results.Ok(value) : UnknownProject(projectName));
 
         project.MapGet("/deployments/{deploymentId}", (string projectName, string deploymentId, DeployService deploy) =>
@@ -87,18 +92,22 @@ public static class DeployEndpoints
         project.MapPost("/environments/{environmentId}/redeploy", (HttpContext context, string projectName,
             string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
             QuotaRefusable(() => Respond(deploy.Redeploy(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName), request?.GuidedFailure), accepted: true)))
+                Actor(context, projectName), request?.Tenant, request?.GuidedFailure), accepted: true)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapPost("/environments/{environmentId}/rollback", (HttpContext context, string projectName,
             string environmentId, EnvironmentActionRequest? request, DeployService deploy) =>
             QuotaRefusable(() => Respond(deploy.Rollback(projectName, environmentId, request?.Approve == true,
-                Actor(context, projectName), request?.GuidedFailure), accepted: true)))
+                Actor(context, projectName), request?.Tenant, request?.GuidedFailure), accepted: true)))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
-        app.MapGet("/api/deploy/matrix", (HttpContext context, DeployService deploy, ProjectRegistry projects) =>
+        app.MapGet("/api/deploy/matrix", (HttpContext context, string? tenant, DeployService deploy, ProjectRegistry projects) =>
         {
             var matrix = deploy.Matrix();
+            if (tenant is not null)
+                matrix = matrix with { Projects = matrix.Projects.Select(row => row with
+                    { TenantStatuses = row.TenantStatuses.Where(status => status.Tenant == tenant).ToArray() })
+                    .Where(row => row.TenantStatuses.Count > 0).ToArray() };
             return Results.Ok(context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                 ? matrix with
                 {
