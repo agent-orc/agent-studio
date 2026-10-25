@@ -25,7 +25,13 @@ export class ProjectSecretsPageComponent {
   readonly environments = signal<readonly SecretEnvironment[]>([{ id: 'preview', kind: 'preview' }]);
   readonly isProduction = computed(() => this.environments().some(item =>
     item.id === this.environment() && item.kind === 'production'));
-  readonly check = signal<Preflight | null>(null);
+  private readonly preflight = signal<{ project: string; environment: string; result: Preflight } | null>(null);
+  private preflightRequest = 0;
+  readonly check = computed(() => {
+    const preflight = this.preflight();
+    return preflight?.project === this.projectName() && preflight.environment === this.environment()
+      ? preflight.result : null;
+  });
   readonly name = signal('');
   readonly reference = signal('');
   readonly approve = signal(false);
@@ -38,15 +44,19 @@ export class ProjectSecretsPageComponent {
   };
 
   constructor() {
-    effect(() => {
+    effect(onCleanup => {
       const project = this.projectName();
-      this.secrets.environments(project).subscribe(items =>
+      const subscription = this.secrets.environments(project).subscribe(items =>
         this.environments.set([{ id: 'preview', kind: 'preview' }, ...items.filter(item => item.id !== 'preview')]));
+      onCleanup(() => subscription.unsubscribe());
     });
     effect(() => this.refresh(this.projectName(), this.environment()));
   }
 
   selectEnvironment(value: string): void {
+    ++this.preflightRequest;
+    this.preflight.set(null);
+    this.error.set(null);
     this.environment.set(value);
     this.name.set('');
     this.reference.set('');
@@ -58,9 +68,18 @@ export class ProjectSecretsPageComponent {
   }
 
   refresh(project = this.projectName(), environment = this.environment()): void {
+    const request = ++this.preflightRequest;
+    this.preflight.set(null);
+    this.error.set(null);
     this.http.get<Preflight>(this.path(project, environment)).subscribe({
-      next: check => { this.check.set(check); this.error.set(null); },
-      error: error => { this.check.set(null); this.error.set(this.message(error)); },
+      next: check => {
+        if (request !== this.preflightRequest || project !== this.projectName() || environment !== this.environment()) return;
+        this.preflight.set({ project, environment, result: check });
+      },
+      error: error => {
+        if (request !== this.preflightRequest || project !== this.projectName() || environment !== this.environment()) return;
+        this.error.set(this.message(error));
+      },
     });
   }
 

@@ -78,7 +78,12 @@ stop request settles any deploy claim abandoned for fifteen minutes as
 The minute reconciliation frees the slot of a removed declaration and the slot of
 an unsettled claim (lease expired without a report, host lost, or aborted); a
 later claim of that job reserves it again. A settled healthy deploy is never
-released by the reconciliation. Reading the environments changes no slot. A timed promotion
+released by the reconciliation. Reconciliation also reconstructs slots for
+already running declared environments before a new limit admits work, and a
+failed redeploy does not end the previous healthy deployment. A newer claim
+can take over an unsettled reservation from an older failed claim; settling
+the older claim cannot release the new deployment's slot. Reading the
+environments changes no slot. A timed promotion
 that quota refuses stays pending.
 
 Status is derived from tokens and core-hours: `warning` at 80% and `blocked`

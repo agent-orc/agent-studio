@@ -1,3 +1,4 @@
+using AgentStudio.Projects;
 using AgentStudio.Security;
 
 namespace AgentStudio.Quota;
@@ -29,13 +30,24 @@ public static class WorkspaceQuotaEndpoints
             WorkspaceQuotaService quotas) => Owner(context) ? Results.Ok(quotas.Audit(workspaceId, null)) : Results.Forbid())
             .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+        // Running environments get their slots before a new limit can admit work.
         app.MapPut("/api/workspaces/{workspaceId}/quota", (HttpContext context, string workspaceId,
-            QuotaLimits limits, WorkspaceQuotaService quotas) => Set(context, () => quotas.SetLimits(workspaceId, null, limits)))
+            QuotaLimits limits, WorkspaceQuotaService quotas, ProjectEnvironmentService environments) =>
+            Set(context, () =>
+            {
+                environments.ReconcileHostingSlots();
+                quotas.SetLimits(workspaceId, null, limits);
+            }))
             .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
         app.MapPut("/api/workspaces/{workspaceId}/projects/{projectId}/quota", (HttpContext context,
-            string workspaceId, string projectId, QuotaLimits limits, WorkspaceQuotaService quotas) =>
-            Set(context, () => quotas.SetLimits(workspaceId, projectId, limits)))
+            string workspaceId, string projectId, QuotaLimits limits, WorkspaceQuotaService quotas,
+            ProjectEnvironmentService environments) =>
+            Set(context, () =>
+            {
+                environments.ReconcileHostingSlots();
+                quotas.SetLimits(workspaceId, projectId, limits);
+            }))
             .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
         app.MapPost("/api/workspaces/{workspaceId}/quota/override", (HttpContext context,
@@ -63,6 +75,7 @@ public static class WorkspaceQuotaEndpoints
         try { write(); return Results.NoContent(); }
         catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
     }
 
     /// <summary>Attribute non-human calls to the service account that owns the token.</summary>
