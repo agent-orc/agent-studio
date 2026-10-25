@@ -55,6 +55,12 @@ test('workspace deployment matrix filters and opens project deployment in both t
       ready: [], progress: [], humanReview: [], escalated: [],
     });
     if (url.includes('/api/tasks/archive')) return json({ items: [], total: 0, offset: 0, limit: 50 });
+    if (/\/api\/projects\/[^/]+\/workbenches/.test(new URL(url).pathname)) return json({
+      projectName: decodeURIComponent(new URL(url).pathname.split('/')[3]), includesHistory: true, count: 0, items: [],
+    });
+    if (new URL(url).pathname === '/api/workbenches') return json({
+      projectName: null, count: 0, currentCount: 0, historyCount: 0, items: [],
+    });
     if (/\/api\/(?:tasks|jobs)(\?|$)/.test(url)) return json([]);
     if (url.includes('/api/v1/studio/runner/status')) return json({ projects: {} });
     if (url.includes('/api/environment')) return json({ isDev: false, devTools: {} });
