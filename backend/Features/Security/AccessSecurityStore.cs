@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Net;
 
 namespace AgentStudio.Security;
 
@@ -26,6 +27,8 @@ public sealed partial class AccessSecurityStore
     private readonly TimeProvider _clock;
     private readonly object _gate = new();
     private readonly Dictionary<string, LoginAttempt> _clientLoginAttempts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, LoginAttempt> _networkLoginAttempts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, LoginAttempt> _passwordChangeAttempts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LoginAttempt> _usernameLoginAttempts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTime> _recentSuccessfulLogins = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTime> _usernameClientDelays = new(StringComparer.Ordinal);
@@ -35,6 +38,7 @@ public sealed partial class AccessSecurityStore
     private readonly HashSet<string> _clientsHashing = new(StringComparer.Ordinal);
     private DateTime _nextLoginPruneAt = DateTime.MinValue;
     private readonly SemaphoreSlim _passwordHashSlots;
+    private readonly SemaphoreSlim _returningClientHashSlot = new(1, 1);
     private readonly Func<string, string, bool> _verifyPassword;
     private static readonly string DummyPasswordHash = PasswordSecretHasher.HashPassword(PasswordSecretHasher.RandomToken());
     private SecurityState? _state;
@@ -113,12 +117,20 @@ public sealed partial class AccessSecurityStore
         if (clientKey.Length > 64)
             throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
         var loginKey = normalized is null ? null : normalized + "|" + clientKey;
+        var networkKey = SecurityProfiles.IsNetworked(_configuration) ? NetworkThrottleKey(clientKey) : null;
         var overflowDelay = TimeSpan.FromSeconds(_configuration.GetValue("Security:LoginThrottle:UsernameDelaySeconds", 2));
+        bool recentSuccess;
         StudioUser? candidate;
         lock (_gate)
         {
             var now = Now;
             PruneLoginStateLocked(now);
+            recentSuccess = loginKey is not null && _recentSuccessfulLogins.TryGetValue(loginKey, out var lastSuccess)
+                && now - lastSuccess <= RecentSuccessWindow;
+            if (networkKey is not null && !recentSuccess
+                && _networkLoginAttempts.TryGetValue(networkKey, out var networkAttempt)
+                && networkAttempt.LockedUntil > now)
+                throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
             if (_clientLoginAttempts.TryGetValue(clientKey, out var attempt) && attempt.LockedUntil > now)
                 throw new SecurityOperationException(429, "login-throttled", "Too many failed attempts. Try again later.");
             if (normalized is null || !IsValidUsername(normalized))
@@ -126,6 +138,7 @@ public sealed partial class AccessSecurityStore
                 var recorded = RegisterLoginFailureLocked(_clientLoginAttempts, clientKey, now,
                     _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10),
                     TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15)), MaxTrackedClients);
+                RecordNetworkFailureLocked(networkKey, now);
                 throw recorded
                     ? new SecurityOperationException(401, "invalid-credentials", "Username or password is incorrect.")
                     : new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
@@ -179,8 +192,15 @@ public sealed partial class AccessSecurityStore
 
         try
         {
+            // Returning clients have one independent slot even when unknown clients
+            // saturate the general pool. Neither wait holds the state lock.
+            var reserved = false;
             if (!_passwordHashSlots.Wait(0))
-                throw new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
+            {
+                if (!recentSuccess || !_returningClientHashSlot.Wait(TimeSpan.FromSeconds(2)))
+                    throw new SecurityOperationException(429, "login-throttled", "Login is busy. Try again shortly.");
+                reserved = true;
+            }
             bool passwordMatches;
             try
             {
@@ -188,7 +208,7 @@ public sealed partial class AccessSecurityStore
                 passwordMatches = passwordCandidate.Length <= 128 && _verifyPassword(
                     passwordCandidate, candidate?.PasswordHash ?? DummyPasswordHash);
             }
-            finally { _passwordHashSlots.Release(); }
+            finally { if (reserved) _returningClientHashSlot.Release(); else _passwordHashSlots.Release(); }
 
             lock (_gate)
             {
@@ -209,6 +229,7 @@ public sealed partial class AccessSecurityStore
                     if (!clientRecorded)
                         _overflowClientAttempts.RecordFailure(clientKey, clientKey, now, LoginWindow,
                             _configuration.GetValue("Security:LoginThrottle:ClientMaxFailures", 10), overflowDelay, ClientLockout);
+                    RecordNetworkFailureLocked(networkKey, now);
                     if (!usernameRecorded)
                         _overflowUsernameAttempts.RecordFailure(normalized, loginKey!, now, LoginWindow,
                             _configuration.GetValue("Security:LoginThrottle:UsernameMaxFailures", 20), overflowDelay);
@@ -275,23 +296,50 @@ public sealed partial class AccessSecurityStore
     public StudioUser ChangePassword(HumanPrincipal principal, ChangePasswordRequest request)
     {
         ValidatePassword(request.NewPassword, principal.User.Username);
+        StudioUser user;
+        var userId = principal.User.Id;
         lock (_gate)
         {
             var state = StateLocked();
-            var user = state.Users.First(x => x.Id == principal.User.Id);
-            if (!PasswordSecretHasher.VerifyPassword(request.CurrentPassword ?? string.Empty, user.PasswordHash))
-                throw new SecurityOperationException(400, "current-password-invalid", "Current password is incorrect.");
-            var updated = user with
-            {
-                PasswordHash = PasswordSecretHasher.HashPassword(request.NewPassword ?? string.Empty),
-                PasswordChangedAt = Now,
-                MustChangePassword = false
-            };
-            state.Users[state.Users.IndexOf(user)] = updated;
-            state.Sessions.RemoveAll(x => x.UserId == user.Id && x.Id != principal.Session.Id);
-            SaveLocked(state);
-            return updated;
+            user = state.Users.FirstOrDefault(x => x.Id == userId && !x.Disabled)
+                ?? throw new SecurityOperationException(401, "authentication-required", "Sign in again.");
+            if (_passwordChangeAttempts.TryGetValue(userId, out var attempt) && attempt.LockedUntil > Now)
+                throw new SecurityOperationException(429, "password-change-throttled", "Too many failed attempts. Try again later.");
+            if (!_clientsHashing.Add("password-change:" + userId))
+                throw new SecurityOperationException(429, "password-change-throttled", "Password change is busy.");
         }
+        try
+        {
+            var matches = (request.CurrentPassword?.Length ?? 0) <= 128
+                && _verifyPassword(request.CurrentPassword ?? string.Empty, user.PasswordHash);
+            var newHash = matches ? PasswordSecretHasher.HashPassword(request.NewPassword ?? string.Empty) : null;
+            lock (_gate)
+            {
+                var state = StateLocked();
+                var current = state.Users.FirstOrDefault(x => x.Id == userId && !x.Disabled);
+                if (!ReferenceEquals(current, user))
+                    throw new SecurityOperationException(409, "password-changed", "Password changed. Sign in again.");
+                if (!matches)
+                {
+                    RegisterLoginFailureLocked(_passwordChangeAttempts, userId, Now,
+                        _configuration.GetValue("Security:PasswordChange:MaxFailures", 5),
+                        TimeSpan.FromMinutes(_configuration.GetValue("Security:PasswordChange:LockoutMinutes", 15)), MaxTrackedUsernames);
+                    throw new SecurityOperationException(400, "current-password-invalid", "Current password is incorrect.");
+                }
+                _passwordChangeAttempts.Remove(userId);
+                var updated = user with
+                {
+                    PasswordHash = newHash!,
+                    PasswordChangedAt = Now,
+                    MustChangePassword = false
+                };
+                state.Users[state.Users.IndexOf(user)] = updated;
+                state.Sessions.RemoveAll(x => x.UserId == user.Id && x.Id != principal.Session.Id);
+                SaveLocked(state);
+                return updated;
+            }
+        }
+        finally { lock (_gate) _clientsHashing.Remove("password-change:" + userId); }
     }
 
     public IReadOnlyList<StudioUser> ListUsers()
@@ -765,6 +813,24 @@ public sealed partial class AccessSecurityStore
     private TimeSpan LoginWindow => TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:WindowMinutes", 15));
     private TimeSpan ClientLockout => TimeSpan.FromMinutes(_configuration.GetValue("Security:LoginThrottle:ClientLockoutMinutes", 15));
 
+    internal static string? NetworkThrottleKey(string clientKey)
+    {
+        var addressPart = clientKey.EndsWith("/64", StringComparison.Ordinal) ? clientKey[..^3] : clientKey;
+        if (!IPAddress.TryParse(addressPart, out var address)) return null;
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        var bytes = address.GetAddressBytes();
+        if (bytes.Length == 4) return $"{bytes[0]}.{bytes[1]}.{bytes[2]}.0/24";
+        Array.Clear(bytes, 6, 10);
+        return new IPAddress(bytes) + "/48";
+    }
+
+    private void RecordNetworkFailureLocked(string? key, DateTime now)
+    {
+        if (key is null) return;
+        RegisterLoginFailureLocked(_networkLoginAttempts, key, now,
+            _configuration.GetValue("Security:LoginThrottle:NetworkMaxFailures", 40), ClientLockout, MaxTrackedClients);
+    }
+
     private bool RegisterLoginFailureLocked(Dictionary<string, LoginAttempt> attempts, string key, DateTime now,
         int maxFailures, TimeSpan? lockout, int capacity)
     {
@@ -790,6 +856,12 @@ public sealed partial class AccessSecurityStore
         foreach (var key in _usernameLoginAttempts.Where(x => now - x.Value.WindowStartedAt > LoginWindow)
             .Select(x => x.Key).ToArray())
             _usernameLoginAttempts.Remove(key);
+        foreach (var key in _networkLoginAttempts.Where(x => now - x.Value.WindowStartedAt > LoginWindow
+            && (x.Value.LockedUntil is not { } until || until <= now)).Select(x => x.Key).ToArray())
+            _networkLoginAttempts.Remove(key);
+        foreach (var key in _passwordChangeAttempts.Where(x => now - x.Value.WindowStartedAt > LoginWindow
+            && (x.Value.LockedUntil is not { } until || until <= now)).Select(x => x.Key).ToArray())
+            _passwordChangeAttempts.Remove(key);
         foreach (var key in _recentSuccessfulLogins.Where(x => now - x.Value > RecentSuccessWindow)
             .Select(x => x.Key).ToArray())
             _recentSuccessfulLogins.Remove(key);

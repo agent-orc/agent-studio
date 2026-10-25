@@ -11,7 +11,13 @@
     encode zstd gzip
 
     @health path /healthz
-    respond @health 200
+    handle @health {
+        reverse_proxy api:5031 {
+            header_up Host {$STUDIO_DOMAIN}
+            header_down -X-Agent-Studio-Tag
+            header_down -X-Agent-Studio-Commit
+        }
+    }
 
     @api path /api /api/* /hubs /hubs/*
     handle @api {
