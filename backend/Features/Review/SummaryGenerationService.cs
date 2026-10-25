@@ -575,10 +575,11 @@ public sealed class SummaryGenerationService
         // Feed the prompt via stdin instead of a positional `-p <prompt>`
         // argument. See OneShot service for the production path; this
         // fallback is for tests that build the service without DI.
+        using var workspace = new HostOneShotIsolation.Workspace();
         var psi = new ProcessStartInfo
         {
             FileName = GenericCliExecutionService.ResolveExecutable(claudePath),
-            WorkingDirectory = Directory.Exists(workingDirectory) ? workingDirectory : Directory.GetCurrentDirectory(),
+            WorkingDirectory = workspace.Path,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

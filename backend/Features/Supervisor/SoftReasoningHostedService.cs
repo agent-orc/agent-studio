@@ -218,21 +218,20 @@ public sealed class SoftReasoningHostedService : BackgroundService
             return CliOneShotCompatibility.ToClaudeResultEnvelope(r, model);
         }
 
+        if (!Path.GetFileNameWithoutExtension(cli).Equals(CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        using var workspace = new HostOneShotIsolation.Workspace();
         var psi = new ProcessStartInfo
         {
             FileName = cli,
+            WorkingDirectory = workspace.Path,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        psi.ArgumentList.Add("-p");
-        psi.ArgumentList.Add("--output-format");
-        psi.ArgumentList.Add("json");
-        psi.ArgumentList.Add("--model");
-        psi.ArgumentList.Add(model);
-        psi.ArgumentList.Add("--dangerously-skip-permissions");
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model);
 
         using var p = Process.Start(psi);
         if (p == null) return string.Empty;

@@ -665,7 +665,10 @@ unreported claim expires with its lease and is queued again.
 - `backend/Features/Runner/OrchestratorChat.cs` and `OrchestratorRunner.cs`:
   side-sheet chat dispatch. This operating mode accepts the effective model and
   reasoning choice from the live Codex catalogue, executes through the Codex
-  one-shot registry, and rejects non-GPT models without a Claude fallback.
+  one-shot registry, and rejects non-GPT models without a Claude fallback. In
+  the networked profile it never executes Codex on the Studio host: an absent
+  or unreachable assigned runner produces a failed turn with a clear reason.
+  Changing a remotely placed project to local execution requires the Owner.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat

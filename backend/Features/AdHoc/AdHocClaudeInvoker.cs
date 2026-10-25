@@ -36,7 +36,7 @@ public static class AdHocClaudeInvoker
         "-p",
         "--output-format", "json",
         "--model", model,
-        "--dangerously-skip-permissions"
+        "--tools", ""
     };
 
     /// <summary>

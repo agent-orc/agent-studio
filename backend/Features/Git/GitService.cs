@@ -2913,6 +2913,9 @@ public partial class GitService
         if (diff.Length > 60_000) diff = diff[..60_000] + "\n[truncated]";
 
         var intent = ReadTaskIntent(jobId, watchPath);
+        if (SecurityProfiles.IsNetworked(_config))
+            return new GenerateMessageResult(null,
+                "Remote runner required: host Codex commit-message review is disabled in the networked profile.");
         var codexPath = _config["CodexCli:Path"] ?? "codex";
         var model = ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
         var prompt = _prompts.Render(RuntimePromptService.CommitMessage,

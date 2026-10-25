@@ -39,6 +39,10 @@ public sealed class CodexOneShot : ICliOneShot
     {
         ArgumentNullException.ThrowIfNull(request);
         var requestedAt = DateTime.UtcNow;
+        if (SecurityProfiles.IsNetworked(_configuration))
+            return CliOneShotResult.SpawnFailure(
+                "Remote runner required: host Codex one-shot execution is disabled in the networked profile.",
+                requestedAt, DateTime.UtcNow);
         var timeout = request.Timeout ?? DefaultTimeout;
         var executable = GenericCliExecutionService.ResolveExecutable(_configuration["CodexCli:Path"] ?? "codex");
 

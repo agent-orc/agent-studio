@@ -224,10 +224,11 @@ public class PromptEnhancementService
 
         var claudePath = _configuration["ClaudeCli:Path"] ?? "claude";
 
+        using var workspace = new HostOneShotIsolation.Workspace();
         var psi = new ProcessStartInfo
         {
             FileName = GenericCliExecutionService.ResolveExecutable(claudePath),
-            WorkingDirectory = Directory.GetCurrentDirectory(),
+            WorkingDirectory = workspace.Path,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
