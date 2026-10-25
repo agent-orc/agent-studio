@@ -32,7 +32,8 @@ public static class DeployJobReleaseBinding
             || declaration.Destination != job.Destination || declaration.HealthUrl != job.HealthUrl
             || declaration.ContainerPort != job.ContainerPort
             || !declaration.SecretRefs.SequenceEqual(job.SecretRefs, StringComparer.Ordinal)
-            || registry.VerifiedForDeployment(project, record.Release.CommitSha, job.Artifact, job.Template) is null)
+            || ProjectEnvironmentService.ArtifactTemplate(job.Template, job.SshSteps) is not { } artifactTemplate
+            || registry.VerifiedForDeployment(project, record.Release.CommitSha, job.Artifact, artifactTemplate) is null)
             return null;
         return job with { ReleaseId = releaseId };
     }

@@ -167,9 +167,14 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     [Fact]
     public void Lease_renewal_keeps_claim_live_and_old_token_is_fenced_after_reclaim()
     {
-        var (service, repo, _) = Build();
-        var commit = Git(repo, "rev-parse", "HEAD").Trim();
-        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var (service, _, _) = Build();
+        var stage = service.Declarations("demo")!.Single(item => item.Id == "stage") with
+        {
+            Template = "ssh-v2",
+            SshSteps = [new ProjectDeployStep("container", "app", "stage-host", null, null, null,
+                [], ["staging"]) { ComposeFile = "/srv/apps/web/compose.yml", Service = "web" }],
+        };
+        Assert.NotNull(service.QueueDeployment("demo", stage, _artifact, "operator", rollback: false));
         var first = service.Claim("stage-host")!;
 
         _clock.Advance(TimeSpan.FromMinutes(4));
@@ -185,6 +190,40 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
         Assert.NotEqual(first.LeaseToken, restarted.LeaseToken);
         Assert.False(service.RenewClaim("demo", first.Id, first.LeaseToken!));
         Assert.True(service.RenewClaim("demo", restarted.Id, restarted.LeaseToken!));
+    }
+
+    [Fact]
+    public void Legacy_runner_report_is_accepted_after_five_minutes_until_reclaim()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var claimed = service.Claim("stage-host")!;
+        Assert.Empty(claimed.SshSteps);
+        _clock.Advance(TimeSpan.FromMinutes(6));
+
+        Assert.True(service.Report("demo", claimed.Id, new(claimed.LeaseToken!, true, "health-ok")));
+        Assert.Equal("healthy", service.Read("demo")!.Jobs.Single(item => item.Id == claimed.Id).Status);
+    }
+
+    [Fact]
+    public void Reclaim_stops_after_three_claims()
+    {
+        var (service, repo, _) = Build();
+        var commit = Git(repo, "rev-parse", "HEAD").Trim();
+        Assert.True(QueueGateRelease(service, _artifact, commit));
+        var first = service.Claim("stage-host")!;
+        Assert.Equal(1, first.Claims);
+        for (var expected = 2; expected <= 3; expected++)
+        {
+            _clock.Advance(TimeSpan.FromMinutes(5));
+            Assert.Equal(expected, service.Claim("stage-host")!.Claims);
+        }
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        Assert.Null(service.Claim("stage-host"));
+        var failed = service.Read("demo")!.Jobs.Single(item => item.Id == first.Id);
+        Assert.Equal("failed", failed.Status);
+        Assert.Equal("host-lost", failed.Evidence);
     }
 
     [Fact]
