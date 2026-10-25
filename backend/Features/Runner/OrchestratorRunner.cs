@@ -492,7 +492,7 @@ public class OrchestratorRunner
             "-p",                                     // print mode; reads prompt from stdin (no positional arg)
             "--output-format", "json",
             "--model", Quote(modelId),
-            "--dangerously-skip-permissions"
+            "--tools", ""
         };
         if (!string.IsNullOrWhiteSpace(resumeSessionId))
         {

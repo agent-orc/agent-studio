@@ -53,7 +53,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             runner.SetMode("auto-continuous");
             await runner.TickAsync(CancellationToken.None);
             await runner.TickAsync(CancellationToken.None);
-            Assert.Contains("local coding is disabled", runner.GetStatus().LastPickReason);
+            Assert.Contains("local agent execution is disabled", runner.GetStatus().LastPickReason);
             Assert.Single(logger.Entries.Where(entry => entry.Any(item =>
                 item.Key == "{OriginalFormat}"
                 && item.Value?.ToString()?.Contains("auto-pickup-rejected", StringComparison.Ordinal) == true)));
@@ -86,6 +86,58 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         Assert.False(File.Exists(Path.Combine(readyFolder, PickupLockFile.LockFileName)));
         Assert.False(Directory.Exists(Path.Combine(_watchPath, ".git", "worktrees")));
         Assert.Equal(0, runner.GetStatus().OccupiedSlots);
+    }
+
+    [Theory]
+    [InlineData(TaskModes.Planning, "manual")]
+    [InlineData(TaskModes.Research, "continue")]
+    [InlineData(TaskModes.Research, "auto")]
+    public async Task NetworkedAdmission_RejectsReadOnlyModesEvenWhenLocalCodingPolicyAllowsThem(
+        string mode, string entryPoint)
+    {
+        WritePreparationContract();
+        WriteJob(TaskStates.Ready, "remote-only");
+        var taskPath = Path.Combine(_watchPath, TaskStates.Ready, "remote-only", "task.json");
+        var task = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(taskPath))!;
+        task["mode"] = mode;
+        File.WriteAllText(taskPath, task.ToJsonString());
+        var cli = new FailingCliService();
+        var runner = BuildRunner(cli, networked: true);
+
+        if (entryPoint == "auto")
+        {
+            runner.SetMode("auto-continuous");
+            await runner.TickAsync(CancellationToken.None);
+            Assert.Contains("local agent execution is disabled", runner.GetStatus().LastPickReason);
+        }
+        else
+        {
+            var outcome = entryPoint == "manual"
+                ? await runner.StartJobManualAsync("remote-only", CancellationToken.None)
+                : await runner.ContinueJobAsync("remote-only", "continue", null, CancellationToken.None);
+            Assert.Equal(RunRejectReason.RemoteExecutionRequired, outcome.Rejection?.Reason);
+        }
+        Assert.False(cli.StartCalled);
+        Assert.True(File.Exists(taskPath));
+    }
+
+    [Theory]
+    [InlineData("manual")]
+    [InlineData("continue")]
+    public async Task NetworkedDirectRun_UsesRemotePlacementWithoutStartingHostCli(string entryPoint)
+    {
+        WritePreparationContract();
+        WriteJob(TaskStates.Ready, "remote-only");
+        var cli = new FailingCliService();
+        var runner = BuildRunner(cli, networked: true, executionRunner: "agent-runner-01");
+
+        var outcome = entryPoint == "manual"
+            ? await runner.StartJobManualAsync("remote-only", CancellationToken.None)
+            : await runner.ContinueJobAsync("remote-only", "continue", null, CancellationToken.None);
+
+        Assert.Equal(RunRejectReason.RemoteExecutionRequired, outcome.Rejection?.Reason);
+        Assert.Contains("dispatch its agent run to that runner", outcome.Rejection!.Message);
+        Assert.False(cli.StartCalled);
     }
 
     [Fact]
@@ -560,7 +612,9 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         bool allowLocalCoding = true,
         Action<TaskScannerService>? scannerObserver = null,
         LocalRunClaimAdapter? localRunClaims = null,
-        IVisualQaService? visualQa = null)
+        IVisualQaService? visualQa = null,
+        bool networked = false,
+        string? executionRunner = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -596,6 +650,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         var sessions = new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance);
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        if (executionRunner is not null) settings.SetExecutionRunner(ProjectName, executionRunner);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config, prompts);
         var transitions = new TaskTransitionService(scanner, states, mutations, git, settings, NullLogger<TaskTransitionService>.Instance);
         var chatLog = new OrchestratorChatLog(NullLogger<OrchestratorChatLog>.Instance);
@@ -648,7 +703,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             dispatchRejections: dispatchRejections,
             localCodingAdmission: allowLocalCoding ? AllowLocalCodingForTests.Instance : null,
             localRunClaims: localRunClaims,
-            visualQa: visualQa);
+            visualQa: visualQa,
+            networked: networked);
     }
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
