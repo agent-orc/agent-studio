@@ -1,6 +1,5 @@
-import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
-import { HttpErrorResponse } from '@angular/common/http';
+import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { DeferBlockState, TestBed, type ComponentFixture } from '@angular/core/testing';
 import { BehaviorSubject, Subject, map, of, type Observable } from 'rxjs';
@@ -32,9 +31,11 @@ class FakeDeployData {
   readonly actions: string[] = [];
   actionResult = new Subject<unknown>();
   controlledReads = false;
+  controlledReleases = false;
+  readonly releasePageReads: Subject<DeployPanel<unknown>>[] = [];
+  readonly containingReads: Subject<DeployPanel<unknown>>[] = [];
   readonly statusReads: Subject<DeployPanel<unknown>>[] = [];
   readonly deploymentReads: Subject<DeployPanel<unknown>>[] = [];
-  controlledReleases = false;
   readonly releaseReads: { project: string; read: Subject<DeployPanel<unknown>> }[] = [];
   readonly artifactLookups: { project: string; artifact: string; notAfterUtc: string | null; read: Subject<DeployPanel<unknown>> }[] = [];
   readonly runsById = new Map<string, unknown>();
@@ -58,12 +59,29 @@ class FakeDeployData {
     this.requests.push(`releases:${offset}`);
     if (this.controlledReleases) {
       const read = new Subject<DeployPanel<unknown>>();
+      this.releasePageReads.push(read);
       this.releaseReads.push({ project, read });
       return read;
     }
     return this.releasesPanel.pipe(map(panel => panel.status === 'ready'
       ? { status: 'ready', value: { items: (panel.value as unknown[]).slice(offset, offset + 25), total: (panel.value as unknown[]).length, offset, limit: 25 } }
       : panel));
+  }
+  releasePageContaining(_project: string, id: string): Observable<DeployPanel<unknown>> {
+    this.requests.push(`release-containing:${id}`);
+    if (this.controlledReleases) {
+      const read = new Subject<DeployPanel<unknown>>();
+      this.containingReads.push(read);
+      return read;
+    }
+    return this.releasesPanel.pipe(map(panel => {
+      if (panel.status !== 'ready') return panel;
+      const releases = panel.value as { id: string }[];
+      const index = releases.findIndex(item => item.id === id);
+      if (index < 0) return { status: 'error', message: 'The selected release could not be loaded.' };
+      const offset = Math.floor(index / 25) * 25;
+      return { status: 'ready', value: { items: releases.slice(offset, offset + 25), total: releases.length, offset, limit: 25 } };
+    }));
   }
   deploymentPage(_project: string, offset: number, filter?: { environmentId: string; state: string; period: string }): Observable<DeployPanel<unknown>> {
     this.requests.push(`deployments:${offset}:${filter?.environmentId ?? 'all'}`);
@@ -416,6 +434,102 @@ describe('ProjectDeployAreaComponent', () => {
     await click('deploy-releases-next');
     expect(host().querySelectorAll('.releases__row')).toHaveLength(15);
     expect(data.requests).toContain('releases:25');
+  });
+
+  it('opens a marker release through one bounded containing page', async () => {
+    data.serveEverything();
+    const release = deployReleasesFixture()[0];
+    data.releasesPanel.next({ status: 'ready', value: Array.from({ length: 40 }, (_, index) => ({
+      ...release, id: `release-${index}`, version: `version-${index}`,
+      createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    })) });
+    await settle();
+    data.requests.length = 0;
+
+    fixture.componentInstance.openRelease('release-35');
+    await settle();
+
+    expect(data.requests).toEqual(['release-containing:release-35']);
+    expect(fixture.componentInstance.releaseOffset()).toBe(25);
+    expect(host().querySelectorAll('.releases__row')).toHaveLength(15);
+    expect(text('deploy-release-detail')).toContain('version-35');
+  });
+
+  it('reads only the containing page when the Deploy view mounts with an older release target', async () => {
+    data.controlledReleases = true;
+    data.requests.length = 0;
+    const fresh = TestBed.createComponent(ProjectDeployAreaComponent);
+    fresh.componentRef.setInput('projectName', 'Website');
+    fresh.componentRef.setInput('releaseTarget', { project: 'Website', id: 'release-35' });
+    fresh.detectChanges();
+    await fresh.whenStable();
+
+    expect(data.requests.filter(request => request.startsWith('release'))).toEqual(['release-containing:release-35']);
+    expect(data.containingReads).toHaveLength(1);
+    expect(data.containingReads[0].observers).toHaveLength(1);
+    const release = deployReleasesFixture()[0];
+    const page = { items: [{ ...release, id: 'release-35', version: 'older release' }], offset: 25, limit: 25, total: 40 };
+    data.containingReads[0].next({ status: 'ready', value: page });
+    fresh.detectChanges();
+    await fresh.whenStable();
+    expect(fresh.componentInstance.releaseOffset()).toBe(25);
+    expect((fresh.nativeElement as HTMLElement).querySelector('[data-testid="deploy-release-detail"]')?.textContent)
+      .toContain('older release');
+    fresh.destroy();
+  });
+
+  it('opens a new release target on the mounted Deploy view without reloading its other sources', async () => {
+    data.serveEverything();
+    await settle();
+    data.requests.length = 0;
+    fixture.componentRef.setInput('releaseTarget', { project: 'Website', id: 'release-35' });
+    await settle();
+    expect(data.requests).toEqual(['release-containing:release-35']);
+    expect(fixture.componentInstance.highlightedReleaseId()).toBe('release-35');
+    fixture.componentRef.setInput('releaseTarget', { project: 'Other', id: 'release-9' });
+    await settle();
+    expect(data.requests).toEqual(['release-containing:release-35']);
+  });
+
+  it('does not send a project release target to a second mounted Deploy view', async () => {
+    data.controlledReleases = true;
+    const targeted = TestBed.createComponent(ProjectDeployAreaComponent);
+    targeted.componentRef.setInput('projectName', 'Website');
+    targeted.componentRef.setInput('releaseTarget', { project: 'Website', id: 'release-35' });
+    targeted.detectChanges();
+    await targeted.whenStable();
+    const other = TestBed.createComponent(ProjectDeployAreaComponent);
+    other.componentRef.setInput('projectName', 'Website');
+    other.detectChanges();
+    await other.whenStable();
+    expect(data.requests.filter(request => request === 'release-containing:release-35')).toHaveLength(1);
+    expect(targeted.componentInstance.highlightedReleaseId()).toBe('release-35');
+    expect(other.componentInstance.highlightedReleaseId()).toBeNull();
+    targeted.destroy();
+    other.destroy();
+  });
+
+  it('opens an archived marker card by exact key from the Deploy Operations tab', () => {
+    const opened: { jobId: string; watchPath: string }[] = [];
+    fixture.componentInstance.openTask.subscribe(card => opened.push(card));
+    fixture.componentInstance.openCard('CARD-1');
+    const http = TestBed.inject(HttpTestingController);
+    const request = http.expectOne(req => req.url === '/api/tasks/CARD-1/core');
+    expect(request.request.params.get('project')).toBe('Website');
+    request.flush({ id: 'arch-51', key: 'CARD-1', taskKey: 'CARD-1', projectName: 'Website',
+      watchPath: '/tasks/website', state: 'ready' });
+    expect(opened).toEqual([{ jobId: 'arch-51', watchPath: '/tasks/website' }]);
+    http.expectNone(req => req.url === '/api/tasks/archive');
+  });
+
+  it('cancels a pending card lookup when the Deploy view is destroyed', () => {
+    const opened: { jobId: string; watchPath: string }[] = [];
+    fixture.componentInstance.openTask.subscribe(card => opened.push(card));
+    fixture.componentInstance.openCard('CARD-1');
+    const request = TestBed.inject(HttpTestingController).expectOne(req => req.url === '/api/tasks/CARD-1/core');
+    fixture.destroy();
+    expect(request.cancelled).toBe(true);
+    expect(opened).toEqual([]);
   });
 
   it('opens and approves a Production run from status that is beyond the first deployment page', async () => {

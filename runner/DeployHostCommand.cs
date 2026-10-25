@@ -23,6 +23,9 @@ public static class DeployHostCommand
         Dictionary<string, string>? RunbookSecretVariables = null,
         bool IsStop = false, string? RetryStep = null)
     {
+        public string? Tenant { get; init; }
+        public IReadOnlyDictionary<string, string> ResolvedVariables { get; init; } = new Dictionary<string, string>();
+        public IReadOnlyDictionary<string, string> SecretVariableRefs { get; init; } = new Dictionary<string, string>();
         public string Kind { get; init; } = "standard";
         public string? CardKey { get; init; }
         public string? SourceCommit { get; init; }
@@ -39,11 +42,16 @@ public static class DeployHostCommand
     private sealed record Provenance(string Project, string Commit, string Artifact, string Digest,
         string GateRunId, string Template, string BuilderIdentity, string Location, string SourceDigest);
 
+    public static Task<int> RunAsync(string[] args, CancellationToken cancellationToken, HttpClient? transport,
+        Func<string, IReadOnlyList<string>, CancellationToken, Task> runCommand)
+        => RunAsync(args, cancellationToken, transport, sshExecutor: null, checkHealth: null, clock: null,
+            previewZone: null, runCommand: runCommand);
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
         HttpClient? transport = null, SshDeployExecutor? sshExecutor = null,
         Func<string, CancellationToken, Task<bool>>? checkHealth = null, TimeProvider? clock = null,
-        IPreviewRunZone? previewZone = null, string? runbookRoot = null)
+        IPreviewRunZone? previewZone = null, string? runbookRoot = null,
+        Func<string, IReadOnlyList<string>, CancellationToken, Task>? runCommand = null)
     {
         if (args.Length < 4 || args.Length > 5)
         {
@@ -138,7 +146,9 @@ public static class DeployHostCommand
                                 : null;
                             await executor.ExecuteAsync(job.HostId, step, job.Artifact, args[3], variables,
                                 message => AppendLog(client, job, name, message, lease.Token), lease.Token,
-                                bundlePath);
+                                bundlePath, job.Tenant is null ? null : "tenant-" + Convert.ToHexString(
+                                    SHA256.HashData(Encoding.UTF8.GetBytes(job.Project + "|" + job.EnvironmentId + "|" + job.Tenant)))[..16]
+                                    .ToLowerInvariant());
                             if (step.HealthUrl is { } stepHealth)
                             {
                                 using var limit = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
@@ -167,9 +177,19 @@ public static class DeployHostCommand
                     }
                 }
                 else if (job.RetryStep is null && job.Template == "container")
-                    await DeployContainer(job, secretRoot, lease.Token);
+                {
+                    var variables = await ResolveVariables(job, client, lease.Token);
+                    await DeployContainer(job with { ResolvedVariables = variables }, secretRoot, lease.Token,
+                        runCommand is null
+                            ? (executable, commandArgs, ct, allowFailure) => Command(executable, commandArgs, ct, allowFailure)
+                            : (executable, commandArgs, ct, _) => runCommand(executable, commandArgs, ct));
+                }
                 else if (job.RetryStep is null && job.Template == "static")
+                {
+                    if (job.ResolvedVariables.Count > 0 || job.SecretVariableRefs.Count > 0)
+                        throw new InvalidOperationException("Static deployments cannot bind workload variables.");
                     await DeployStatic(job, args[3], lease.Token);
+                }
                 else if (job.RetryStep is not "health") throw new InvalidOperationException("Unknown template or retry step.");
                 evidence = "health-http-failed";
                 var healthUrl = job.SshSteps.Length > 0 && job.RetryStep is null ? null : job.HealthUrl;
@@ -308,7 +328,11 @@ public static class DeployHostCommand
             && job.Project.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')
             ? job.Project
             : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(job.Project)))[..16].ToLowerInvariant();
-        return "deploy-" + projectName + "-" + job.EnvironmentId;
+        if (job.Tenant is not null && (job.Tenant.Length is < 1 or > 64
+            || job.Tenant.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.'))))
+            throw new InvalidOperationException("Invalid tenant name.");
+        return "deploy-" + projectName + "-" + job.EnvironmentId
+            + (job.Tenant is null ? "" : "-" + job.Tenant);
     }
 
     private static async Task RenewWhileRunning(HttpClient client, Job job, TimeProvider clock,
@@ -341,12 +365,10 @@ public static class DeployHostCommand
 
     private static async Task<Dictionary<string, string>> ResolveVariables(Job job, HttpClient client, CancellationToken ct)
     {
-        var resolved = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var variable in job.Variables)
+        var resolved = new Dictionary<string, string>(job.ResolvedVariables, StringComparer.Ordinal);
+        async Task<string> ResolveSecret(string secret)
         {
-            if (variable.Value is { } value) { resolved.Add(variable.Name, value); continue; }
-            if (variable.Secret is null) throw new InvalidDataException("Deploy variable has no source.");
-            var reference = $"secret://{job.Project}/{job.EnvironmentId}/{variable.Secret}";
+            var reference = $"secret://{job.Project}/{job.EnvironmentId}/{secret}";
             using var response = await client.PostAsJsonAsync("api/runner/secrets/resolve", new
             {
                 reference, purpose = "deploy", workload = new
@@ -357,10 +379,19 @@ public static class DeployHostCommand
             response.EnsureSuccessStatusCode();
             using var body = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken: ct);
             if (body is null || !body.RootElement.TryGetProperty("value", out var secretValue)
-                || secretValue.ValueKind != JsonValueKind.String || secretValue.GetString() is not { } secret)
+                || secretValue.ValueKind != JsonValueKind.String || secretValue.GetString() is not { } value)
                 throw new InvalidDataException("Secret provider returned no value.");
-            resolved.Add(variable.Name, secret);
+            return value;
         }
+        foreach (var variable in job.Variables)
+        {
+            if (variable.Value is { } value) { resolved.Add(variable.Name, value); continue; }
+            if (variable.Secret is null) throw new InvalidDataException("Deploy variable has no source.");
+            resolved.Add(variable.Name, await ResolveSecret(variable.Secret));
+        }
+        if (job.SshSteps.Length > 0)
+            foreach (var mapping in job.SecretVariableRefs)
+                resolved.Add(mapping.Key, await ResolveSecret(mapping.Value));
         return resolved;
     }
 
@@ -433,7 +464,8 @@ public static class DeployHostCommand
         File.Move(temporary, link, true);
     }
 
-    private static async Task DeployContainer(Job job, string secretRoot, CancellationToken ct)
+    private static async Task DeployContainer(Job job, string secretRoot, CancellationToken ct,
+        Func<string, IReadOnlyList<string>, CancellationToken, bool, Task> runCommand)
     {
         if (!int.TryParse(job.Destination, out var port) || port is < 1 or > 65535)
             throw new InvalidOperationException("Invalid proxy port.");
@@ -442,25 +474,48 @@ public static class DeployHostCommand
         try
         {
             var lines = new List<string>();
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            void AddVariable(string variableName, string value)
+            {
+                if (variableName.Length == 0 || !(char.IsAsciiLetter(variableName[0]) || variableName[0] == '_')
+                    || variableName.Skip(1).Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch == '_'))
+                    || !names.Add(variableName) || value.Contains('\n') || value.Contains('\r') || value.Contains('\0'))
+                    throw new InvalidOperationException("Invalid or duplicate workload variable.");
+                lines.Add(variableName + "=" + value);
+            }
+            foreach (var variable in job.ResolvedVariables) AddVariable(variable.Key, variable.Value);
+            async Task<string> ReadSecret(string secret)
+            {
+                if (secret.Length == 0 || secret.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.'))
+                    || secret is "." or "..")
+                    throw new InvalidOperationException("Invalid secret reference.");
+                return (await File.ReadAllTextAsync(Path.Combine(secretRoot, secret), ct)).TrimEnd('\r', '\n');
+            }
+            foreach (var mapping in job.SecretVariableRefs)
+            {
+                if (names.Contains(mapping.Key)) continue;
+                AddVariable(mapping.Key, await ReadSecret(mapping.Value));
+            }
             foreach (var secret in job.SecretRefs)
             {
-                if (secret.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.')))
-                    throw new InvalidOperationException("Invalid secret reference.");
-                var value = (await File.ReadAllTextAsync(Path.Combine(secretRoot, secret), ct)).TrimEnd('\r', '\n');
-                if (value.Contains('\n') || value.Contains('\r')) throw new InvalidOperationException("Secret must be single-line.");
-                lines.Add(secret.Replace('-', '_').Replace('.', '_').ToUpperInvariant() + "=" + value);
+                if (job.SecretVariableRefs.Values.Contains(secret, StringComparer.Ordinal)) continue;
+                var variableName = secret.Replace('-', '_').Replace('.', '_').ToUpperInvariant();
+                if (names.Contains(variableName)) continue;
+                AddVariable(variableName, await ReadSecret(secret));
             }
-            await using (var file = File.Create(envFile))
+            var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write,
+                Share = FileShare.None };
+            if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            await using (var file = new FileStream(envFile, options))
             {
-                if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(envFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
                 await using var writer = new StreamWriter(file);
                 foreach (var line in lines) await writer.WriteLineAsync(line.AsMemory(), ct);
             }
-            await Command("docker", ["pull", job.Artifact], ct);
-            await Command("docker", ["rm", "-f", name], ct, allowFailure: true);
+            await runCommand("docker", ["pull", job.Artifact], ct, false);
+            await runCommand("docker", ["rm", "-f", name], ct, true);
             if (job.ContainerPort is < 1 or > 65535) throw new InvalidOperationException("Invalid container port.");
-            await Command("docker", ["run", "-d", "--name", name, "--restart", "unless-stopped",
-                "--publish", $"127.0.0.1:{port}:{job.ContainerPort}", "--env-file", envFile, job.Artifact], ct);
+            await runCommand("docker", ["run", "-d", "--name", name, "--restart", "unless-stopped",
+                "--publish", $"127.0.0.1:{port}:{job.ContainerPort}", "--env-file", envFile, job.Artifact], ct, false);
         }
         finally
         {

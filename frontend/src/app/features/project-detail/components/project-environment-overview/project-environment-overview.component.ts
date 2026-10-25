@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, output, sign
 import type { ProjectEnvironments } from '../../../../models/project-overview.model';
 import { TaskService } from '../../../../services/task.service';
 import { ProjectRunbooksComponent } from '../project-runbooks/project-runbooks';
+import { ProjectOperationsRailComponent } from '../project-operations-rail/project-operations-rail';
 
 type EnvironmentStatus = ProjectEnvironments['environments'][number];
 
@@ -9,7 +10,7 @@ type EnvironmentStatus = ProjectEnvironments['environments'][number];
 @Component({
   selector: 'app-project-environment-overview',
   standalone: true,
-  imports: [ProjectRunbooksComponent],
+  imports: [ProjectRunbooksComponent, ProjectOperationsRailComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './project-environment-overview.component.html',
   styleUrl: './project-environment-overview.component.scss',
@@ -19,6 +20,8 @@ export class ProjectEnvironmentOverviewComponent {
   readonly projectName = input.required<string>();
   readonly heading = input('Operations');
   readonly openDeploy = output<void>();
+  readonly openRelease = output<string>();
+  readonly openTask = output<{ jobId: string; watchPath: string }>();
   readonly environments = signal<readonly EnvironmentStatus[]>([]);
   readonly loading = signal(true);
   readonly failed = signal(false);

@@ -743,6 +743,21 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void Release_navigation_returns_only_the_page_containing_the_selected_release()
+    {
+        var (deploy, _, _) = Build();
+        var firstCommit = Head();
+        var first = CreateRelease(deploy, Artifact('a'), firstCommit);
+        var second = CreateRelease(deploy, Artifact('b'), Commit("second"));
+
+        var page = deploy.ReleasePageContaining("demo", first.Id, 1)!;
+        Assert.Equal((1, 1, 2), (page.Offset, page.Limit, page.Total));
+        Assert.Equal(first.Id, Assert.Single(page.Items).Id);
+        Assert.Equal(second.Id, Assert.Single(deploy.ReleasePageContaining("demo", second.Id, 1)!.Items).Id);
+        Assert.Null(deploy.ReleasePageContaining("demo", "missing", 1));
+    }
+
+    [Fact]
     public void ReleasePage_FindsTheReleaseOfAnArtifactByDigestAndDeployTime()
     {
         var (deploy, _, _) = Build();
@@ -1440,6 +1455,203 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void Hosted_data_binding_survives_release_job_reload()
+    {
+        var (deploy, environments, _) = Build();
+        WriteTenantTargets();
+        var path = Path.Combine(_repo, "docs", "deployments", "environments", "stage.json");
+        var declaration = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        declaration["data"] = JsonSerializer.SerializeToNode(new
+        {
+            database = new { secretRef = "secret://demo/stage/DATABASE_URL", environmentVariable = "DATABASE_URL" },
+            volumes = new[] { new { name = "uploads", mountPath = "/app/uploads" } },
+        });
+        File.WriteAllText(path, declaration.ToJsonString());
+        var release = CreateRelease(deploy, Artifact('a'), Commit("hosted-data-tenant"));
+        var stage = environments.Claim("stage-host", requireVerifiedRelease: true);
+        Assert.NotNull(stage);
+        Assert.Equal(release.Id, stage.ReleaseId);
+        Assert.Contains("DATABASE_URL", stage.SecretRefs);
+        Assert.Equal("uploads", Assert.Single(stage.Data.Volumes).Name);
+    }
+
+    [Fact]
+    public void Automatic_stage_and_approved_production_jobs_bind_release_variables()
+    {
+        var (deploy, environments, _) = Build();
+        WriteEnvironmentSecretRefs("stage", ["provider-entry"]);
+        WriteEnvironmentSecretRefs("production", ["DATABASE_URL", "provider-entry"]);
+        WriteProjectYml("variables:\n  - name: DATABASE_URL\n    secret: DATABASE_URL\n    environments: [production]\n  - name: MODE\n    value: standard\n  - name: API_TOKEN\n    secret: provider-entry\n");
+        var release = CreateRelease(deploy, Artifact('a'), Commit("release-variables"));
+        var stage = environments.Claim("stage-host")!;
+        Assert.Equal("standard", stage.ResolvedVariables["MODE"]);
+        Assert.Equal("provider-entry", stage.SecretVariableRefs["API_TOKEN"]);
+        Assert.Contains("provider-entry", stage.SecretRefs);
+        Assert.True(environments.Report("demo", stage.Id, ReportJob(stage, healthy: true)));
+        deploy.SyncAfterHostCall("demo");
+
+        var waiting = deploy.Deployments("demo", "production")!.Single(item =>
+            item.ReleaseId == release.Id && item.State == DeploymentStates.AwaitingApproval);
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting.Id, Owner).Kind);
+        var production = environments.Claim("prod-host")!;
+        Assert.Equal("standard", production.ResolvedVariables["MODE"]);
+        Assert.Equal("provider-entry", production.SecretVariableRefs["API_TOKEN"]);
+        Assert.Contains("provider-entry", production.SecretRefs);
+    }
+
+    [Fact]
+    public void Tenant_deployments_keep_independent_lifecycle_approval_variables_and_matrix_cells()
+    {
+        var (deploy, environments, _) = Build();
+        WriteTenantTargets();
+        WriteProjectYml("""
+            tenants:
+              - name: acme
+                tags: [premium]
+                environments: [staging, production]
+              - name: beta
+                tags: [standard]
+                environments: [staging, production]
+            variables:
+              - name: DATABASE_URL
+                secret: DATABASE_URL
+                environments: [production]
+              - name: MODE
+                value: base
+              - name: MODE
+                value: premium
+                tenantTags: [premium]
+              - name: MODE
+                value: acme-prod
+                environments: [production]
+                tenants: [acme]
+              - name: API_TOKEN
+                secret: ACME_TOKEN
+                tenants: [acme]
+            """);
+        var release = CreateRelease(deploy, Artifact('a'), Commit("tenants"));
+        Assert.Equal(["acme", "beta"], deploy.Tenants("demo")!.Select(item => item.Name));
+        Assert.Equal(DeployOutcomeKind.Invalid, deploy.RequestDeployment("demo", release.Id,
+            new DeploymentRequest("production") { Tenant = "missing" }, Owner).Kind);
+        Report(deploy, environments, "stage-host", healthy: true);
+
+        var acmeStage = deploy.RequestDeployment("demo", release.Id,
+            new DeploymentRequest("stage") { Tenant = "acme" }, Operator);
+        Assert.Equal(DeploymentStates.Queued, acmeStage.Value?.State);
+        var acmeJob = environments.Claim("stage-host")!;
+        Assert.Equal("acme", acmeJob.Tenant);
+        Assert.Equal("8181", acmeJob.Destination);
+        Assert.Equal("https://acme-stage.example/health", acmeJob.HealthUrl);
+        Assert.Equal("/srv/apps/demo/stage/tenants/acme/compose.yml", Assert.Single(acmeJob.SshSteps).ComposeFile);
+        Assert.Equal(acmeJob.HealthUrl, acmeJob.SshSteps[0].HealthUrl);
+        Assert.Equal("premium", acmeJob.ResolvedVariables["MODE"]);
+        Assert.Equal("ACME_TOKEN", acmeJob.SecretVariableRefs["API_TOKEN"]);
+        Assert.Contains("ACME_TOKEN", acmeJob.SecretRefs);
+        Assert.True(environments.Report("demo", acmeJob.Id, ReportJob(acmeJob, healthy: true)));
+        deploy.SyncAfterHostCall("demo");
+        var acmeProd = deploy.RequestDeployment("demo", release.Id,
+            new DeploymentRequest("production") { Tenant = "acme" }, Operator);
+        Assert.Equal(DeploymentStates.AwaitingApproval, acmeProd.Value?.State);
+        Assert.Equal(DeployOutcomeKind.Conflict, deploy.RequestDeployment("demo", release.Id,
+            new DeploymentRequest("production") { Tenant = "beta" }, Owner).Kind);
+
+        var betaStage = deploy.RequestDeployment("demo", release.Id,
+            new DeploymentRequest("stage") { Tenant = "beta" }, Operator);
+        Assert.Equal(DeploymentStates.Queued, betaStage.Value?.State);
+        var betaJob = environments.Claim("stage-host")!;
+        Assert.Equal("8182", betaJob.Destination);
+        Assert.Equal("https://beta-stage.example/health", betaJob.HealthUrl);
+        Assert.Equal("/srv/apps/demo/stage/tenants/beta/compose.yml", Assert.Single(betaJob.SshSteps).ComposeFile);
+        Assert.Equal(betaJob.HealthUrl, betaJob.SshSteps[0].HealthUrl);
+        Assert.Equal("base", betaJob.ResolvedVariables["MODE"]);
+        Assert.DoesNotContain("API_TOKEN", betaJob.SecretVariableRefs.Keys);
+        Assert.True(environments.Report("demo", betaJob.Id, ReportJob(betaJob, healthy: true)));
+        deploy.SyncAfterHostCall("demo");
+        var betaProd = deploy.RequestDeployment("demo", release.Id,
+            new DeploymentRequest("production") { Tenant = "beta" }, Operator);
+        Assert.Equal(DeploymentStates.AwaitingApproval, betaProd.Value?.State);
+        Assert.Equal(DeployOutcomeKind.Forbidden, deploy.Approve("demo", acmeProd.Value!.Id, Operator).Kind);
+        Assert.Equal(DeploymentStates.Queued, deploy.Approve("demo", acmeProd.Value.Id, Owner).Value?.State);
+        Assert.Equal(DeploymentStates.AwaitingApproval, deploy.DeploymentById("demo", betaProd.Value!.Id)?.State);
+        Assert.Equal("pending", Assert.Single(environments.Read("demo")!.Promotions).Status);
+        var prodJob = environments.Claim("prod-host")!;
+        Assert.Equal("8281", prodJob.Destination);
+        Assert.Equal("/srv/apps/demo/production/tenants/acme/compose.yml", Assert.Single(prodJob.SshSteps).ComposeFile);
+        Assert.Equal(("acme", "acme-prod"), (prodJob.Tenant, prodJob.ResolvedVariables["MODE"]));
+        Assert.Null(prodJob.PreviousArtifact);
+        Assert.True(environments.Report("demo", prodJob.Id, ReportJob(prodJob, healthy: true)));
+        deploy.SyncAfterHostCall("demo");
+        Assert.Equal(DeploymentStates.Queued, deploy.Approve("demo", betaProd.Value.Id, Owner).Value?.State);
+        var betaProdJob = Assert.IsType<DeployJob>(environments.Claim("prod-host"));
+        Assert.Equal("beta", betaProdJob.Tenant);
+        Assert.Equal("8282", betaProdJob.Destination);
+        Assert.Equal("/srv/apps/demo/production/tenants/beta/compose.yml", Assert.Single(betaProdJob.SshSteps).ComposeFile);
+        Assert.Null(betaProdJob.PreviousArtifact);
+        Assert.True(environments.Report("demo", betaProdJob.Id,
+            ReportJob(betaProdJob, healthy: false, "health-http-failed")));
+        deploy.SyncAfterHostCall("demo");
+        Assert.Equal(release.Id, deploy.Status("demo", "acme")!.Single(item => item.Environment.Id == "production").CurrentRelease?.Id);
+        Assert.Null(deploy.Status("demo", "beta")!.Single(item => item.Environment.Id == "production").CurrentRelease);
+        Assert.Equal(EnvironmentHealth.Healthy, deploy.Status("demo", "acme")!.Single(item => item.Environment.Id == "production").Health);
+        Assert.Equal(EnvironmentHealth.Unhealthy, deploy.Status("demo", "beta")!.Single(item => item.Environment.Id == "production").Health);
+        Assert.Equal(4, Assert.Single(deploy.Matrix().Projects).TenantStatuses.Count);
+        Assert.Equal("acme", deploy.Log("demo", acmeProd.Value.Id, null)?.Tenant);
+    }
+
+    [Fact]
+    public void Tenant_deploy_without_a_committed_target_is_refused_before_queuing()
+    {
+        var (deploy, environments, _) = Build();
+        WriteProjectYml("tenants:\n  - name: acme\n    tags: []\n    environments: [staging, production]\n");
+        var release = CreateRelease(deploy, Artifact('a'), Commit("tenant-without-target"));
+        Report(deploy, environments, "stage-host", healthy: true);
+
+        var refused = deploy.RequestDeployment("demo", release.Id,
+            new DeploymentRequest("stage") { Tenant = "acme" }, Operator);
+        Assert.Equal(DeployOutcomeKind.Invalid, refused.Kind);
+        Assert.Contains("no target", refused.Error);
+        Assert.Null(environments.Claim("stage-host"));
+    }
+
+    [Fact]
+    public void Release_rejects_colliding_committed_tenant_targets()
+    {
+        var (deploy, environments, store) = Build();
+        WriteTenantTargets();
+        var path = Path.Combine(_repo, "docs", "deployments", "environments", "stage.json");
+        var declaration = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        declaration["tenantTargets"]!["beta"]!["destination"] = "8181";
+        File.WriteAllText(path, declaration.ToJsonString());
+        var invalidCommit = Commit("colliding-tenant-targets");
+        WriteTenantTargets();
+        WriteReleaseEvidence(Artifact('a'), invalidCommit);
+        Assert.True(environments.RegisterGateArtifact("demo", Artifact('a'), invalidCommit));
+
+        var refused = deploy.CreateRelease("demo", Artifact('a'), invalidCommit, "release-gate");
+        Assert.Equal(DeployOutcomeKind.Invalid, refused.Kind);
+        Assert.Contains("Tenant destinations must be isolated", refused.Error);
+        Assert.Empty(store.ReadReleases("demo"));
+        Assert.Null(environments.Claim("stage-host"));
+    }
+
+    [Fact]
+    public void Release_rejects_an_invalid_committed_tenant_definition_before_staging()
+    {
+        var (deploy, environments, store) = Build();
+        WriteProjectYml("tenants:\n  - name: acme\n    tags: []\n    environments: [unknown]\n");
+        var invalidCommit = Commit("invalid-tenant");
+        WriteProjectYml("tenants:\n  - name: acme\n    tags: []\n    environments: [staging]\n");
+        WriteReleaseEvidence(Artifact('a'), invalidCommit);
+        Assert.True(environments.RegisterGateArtifact("demo", Artifact('a'), invalidCommit));
+
+        var refused = deploy.CreateRelease("demo", Artifact('a'), invalidCommit, "release-gate");
+        Assert.Equal(DeployOutcomeKind.Invalid, refused.Kind);
+        Assert.Contains("tenants[0].environments", refused.Error);
+        Assert.Empty(store.ReadReleases("demo"));
+        Assert.Null(environments.Claim("stage-host"));
+    }
+
+    [Fact]
     public void Release_creation_uses_committed_channel_rules_and_preserves_the_snapshot()
     {
         var (deploy, environments, store) = Build();
@@ -1465,6 +1677,9 @@ public sealed class DeployServiceTests : IDisposable
                 lifecycle: hotfix
                 branchPattern: refs/heads/hotfix/*
             variables:
+              - name: DATABASE_URL
+                secret: DATABASE_URL
+                environments: [production]
               - name: LOG_LEVEL
                 value: debug
                 channels: [hotfix]
@@ -1608,6 +1823,9 @@ public sealed class DeployServiceTests : IDisposable
     public async Task Routes_ServeTheSharedContract()
     {
         Build();
+        WriteTenantTargets();
+        WriteProjectYml("tenants:\n  - name: acme\n    tags: [premium]\n    environments: [staging, production]\n");
+        Commit("tenant-definition");
         var older = Head();
         var commit = Commit("second");
         Card("DEMO-1", commit, title: "Faster page loading");
@@ -1665,6 +1883,10 @@ public sealed class DeployServiceTests : IDisposable
         }
 
         using var status = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/status"));
+        using var tenants = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/tenants"));
+        Assert.Equal("acme", tenants.RootElement[0].GetProperty("name").GetString());
+        using var tenantStatus = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/status?tenant=acme"));
+        Assert.Equal("acme", tenantStatus.RootElement[0].GetProperty("tenant").GetString());
         var staging = status.RootElement[0];
         Assert.Equal("staging", staging.GetProperty("environment").GetProperty("kind").GetString());
         Assert.Equal(0, staging.GetProperty("environment").GetProperty("order").GetInt32());
@@ -1672,6 +1894,10 @@ public sealed class DeployServiceTests : IDisposable
         using var releasePage = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/releases/page?offset=0&limit=1"));
         Assert.Equal(1, releasePage.RootElement.GetProperty("total").GetInt32());
         Assert.Single(releasePage.RootElement.GetProperty("items").EnumerateArray());
+        using var selectedPage = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/demo/deploy/releases/{releaseId}/page?limit=1"));
+        Assert.Equal(0, selectedPage.RootElement.GetProperty("offset").GetInt32());
+        Assert.Equal(releaseId, selectedPage.RootElement.GetProperty("items")[0].GetProperty("id").GetString());
         Assert.Equal("default", releasePage.RootElement.GetProperty("items")[0].GetProperty("channel").GetString());
         using var runPage = JsonDocument.Parse(await client.GetStringAsync(
             "/api/projects/demo/deploy/deployments/page?environmentId=stage&state=queued&offset=0&limit=1"));
@@ -1680,6 +1906,7 @@ public sealed class DeployServiceTests : IDisposable
         Assert.Equal(releaseId, staging.GetProperty("newerRelease").GetProperty("id").GetString());
         Assert.Equal("unknown", staging.GetProperty("health").GetString());
         var run = staging.GetProperty("currentDeployment");
+        Assert.Equal(JsonValueKind.Null, run.GetProperty("tenant").ValueKind);
         Assert.Equal("queued", run.GetProperty("state").GetString());
         foreach (var name in new[] { "id", "releaseId", "environmentId", "startedAtUtc", "finishedAtUtc", "approvedBy", "steps" })
             Assert.True(run.TryGetProperty(name, out _), name);
@@ -1704,11 +1931,18 @@ public sealed class DeployServiceTests : IDisposable
         using var unknown = await client.PostAsJsonAsync("/api/projects/demo/deploy/releases/missing/deployments",
             new DeploymentRequest("stage"));
         Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        using var wrongTenant = await client.PostAsJsonAsync($"/api/projects/demo/deploy/releases/{releaseId}/deployments",
+            new DeploymentRequest("stage") { Tenant = "missing" });
+        Assert.Equal(HttpStatusCode.BadRequest, wrongTenant.StatusCode);
         using var matrix = JsonDocument.Parse(await client.GetStringAsync("/api/deploy/matrix"));
         Assert.Equal("demo", matrix.RootElement.GetProperty("projects")[0].GetProperty("projectId").GetString());
+        Assert.Equal(2, matrix.RootElement.GetProperty("projects")[0].GetProperty("tenantStatuses").GetArrayLength());
+        using var filteredRuns = JsonDocument.Parse(await client.GetStringAsync("/api/projects/demo/deploy/deployments?tenant=acme"));
+        Assert.Empty(filteredRuns.RootElement.EnumerateArray());
         using var log = JsonDocument.Parse(await client.GetStringAsync(
-            run.GetProperty("steps")[0].GetProperty("logRef").GetString()!));
-        Assert.Contains("queued for Stage", log.RootElement.GetProperty("lines")[0].GetProperty("message").GetString());
+            $"/api/projects/demo/deploy/deployments/{run.GetProperty("id").GetString()}/log"));
+        Assert.Contains(log.RootElement.GetProperty("lines").EnumerateArray(), line =>
+            line.GetProperty("message").GetString()!.Contains("queued for Stage", StringComparison.Ordinal));
 
         // Production approval needs a signed-in Owner or Maintainer, also on
         // the local profile: a caller without a session, such as a coding
@@ -1798,7 +2032,7 @@ public sealed class DeployServiceTests : IDisposable
             Directory.Delete(provenanceFile);
             File.Move(provenanceFile + ".backup", provenanceFile);
         }
-        Assert.True(hosts.Report("demo", stage.Id, new(stage.LeaseToken!, true, "health-ok")));
+        Assert.True(hosts.Report("demo", stage.Id, ReportJob(stage, healthy: true)));
         service.SyncAfterHostCall("demo");
         var production = Assert.Single(service.Deployments("demo", "production")!);
         using var agent = factory.CreateClient();
@@ -2054,6 +2288,14 @@ public sealed class DeployServiceTests : IDisposable
         _clock.Advance(TimeSpan.FromMinutes(1));
     }
 
+    private static DeployReportRequest ReportJob(DeployJob job, bool healthy, string? evidence = null)
+    {
+        var steps = job.SshSteps.Select((step, index) =>
+            new DeployStepResult($"deploy[{index}]:{step.Step}", healthy))
+            .Take(healthy ? job.SshSteps.Count : 1).ToArray();
+        return new(job.LeaseToken!, healthy, evidence ?? (healthy ? "health-ok" : "deploy-step-failed"), steps);
+    }
+
     private Release CreateRelease(DeployService deploy, string artifact, string commit)
     {
         WriteReleaseEvidence(artifact, commit);
@@ -2195,12 +2437,36 @@ public sealed class DeployServiceTests : IDisposable
                 guidedFailure, interventionTimeoutMinutes = 23,
             }));
 
+    private void WriteTenantTargets()
+    {
+        foreach (var (environment, acmePort, betaPort) in new[]
+                 { ("stage", "8181", "8182"), ("production", "8281", "8282") })
+        {
+            var path = Path.Combine(_repo, "docs", "deployments", "environments", environment + ".json");
+            var declaration = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            declaration["tenantTargets"] = JsonSerializer.SerializeToNode(new
+            {
+                acme = new { destination = acmePort, healthUrl = $"https://acme-{environment}.example/health" },
+                beta = new { destination = betaPort, healthUrl = $"https://beta-{environment}.example/health" },
+            });
+            File.WriteAllText(path, declaration.ToJsonString());
+        }
+    }
+
+    private void WriteEnvironmentSecretRefs(string environment, IReadOnlyList<string> secretRefs)
+    {
+        var path = Path.Combine(_repo, "docs", "deployments", "environments", environment + ".json");
+        var declaration = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        declaration["secretRefs"] = JsonSerializer.SerializeToNode(secretRefs);
+        File.WriteAllText(path, declaration.ToJsonString());
+    }
+
     private string Head() => Git("rev-parse", "HEAD").Trim();
 
     private void WriteProjectYml(string sections)
     {
         Directory.CreateDirectory(Path.Combine(_repo, ".agent-studio"));
-        File.WriteAllText(Path.Combine(_repo, ".agent-studio", "project.yml"), """
+        var yaml = """
             schemaVersion: 2
             stack: [node]
             toolVersions:
@@ -2240,7 +2506,10 @@ public sealed class DeployServiceTests : IDisposable
               - name: DATABASE_URL
                 secret: DATABASE_URL
                 environments: [production]
-            """ + "\n" + sections);
+            """;
+        if (sections.Split('\n').Any(line => line == "variables:"))
+            yaml = yaml[..yaml.LastIndexOf("\nvariables:", StringComparison.Ordinal)];
+        File.WriteAllText(Path.Combine(_repo, ".agent-studio", "project.yml"), yaml + "\n" + sections);
     }
 
     private void WriteSshProjectYml() => WriteProjectYml(string.Empty);

@@ -3,7 +3,7 @@
     <div>
       <p class="deployment-dashboard__eyebrow">Workspace / Deployments</p>
       <h1 id="deployment-dashboard-title">Deployment dashboard</h1>
-      <p>Releases across projects and environments. <span class="deployment-dashboard__sample">Sample data until deployment API is available</span></p>
+      <p>Releases across projects, environments, and tenants.</p>
     </div>
     <div class="deployment-dashboard__filters">
       <label>Project group
@@ -19,6 +19,12 @@
           @for (environment of environments; track environment.id) { <option [value]="environment.id">{{ environment.name }}</option> }
         </select>
       </label>
+      <label>Tenant
+        <select data-testid="deployment-tenant-filter" [value]="tenantFilter()" (change)="tenantFilter.set($any($event.target).value)">
+          <option value="all">All tenants</option>
+          @for (tenant of tenants(); track tenant) { <option [value]="tenant">{{ tenant }}</option> }
+        </select>
+      </label>
     </div>
   </header>
   <div class="deployment-dashboard__table-wrap">
@@ -29,13 +35,13 @@
       <tbody>
         @for (row of rows(); track row.id) {
           <tr [attr.data-testid]="'deployment-project-' + row.id">
-            <th scope="row"><button type="button" class="deployment-dashboard__project" (click)="openDeployment.emit(row.name)">{{ row.name }}</button></th>
+            <th scope="row"><button type="button" class="deployment-dashboard__project" (click)="openDeployment.emit(row.name)">{{ row.name }} @if (row.tenant) { <span>· {{ row.tenant }}</span> }</button></th>
             @for (environment of visibleEnvironments(); track environment.id) {
               <td>
                 @if (statusFor(row, environment.id); as status) {
                   <button type="button" class="deployment-dashboard__cell"
                           [attr.data-state]="status.currentDeployment?.state ?? 'unknown'"
-                          [attr.aria-label]="row.name + ' ' + environment.name + ' deployment'"
+                          [attr.aria-label]="cellLabel(row, environment.name)"
                           (click)="openDeployment.emit(row.name)">
                     <span class="deployment-dashboard__cell-head">
                       <strong>Release {{ status.currentRelease?.version ?? 'None' }}{{ status.currentRelease?.channel ? ' · ' + status.currentRelease?.channel : '' }}</strong>
@@ -53,13 +59,13 @@
             }
           </tr>
         } @empty {
-          <tr><td [attr.colspan]="visibleEnvironments().length + 1" class="deployment-dashboard__empty">No projects in this group.</td></tr>
+          <tr><td [attr.colspan]="visibleEnvironments().length + 1" class="deployment-dashboard__empty">No deployments for this selection.</td></tr>
         }
       </tbody>
     </table>
   </div>
-  @for (row of rows(); track row.id) {
-    <app-delivery-lanes [project]="row.name" [heading]="row.name + ' delivery'"
+  @for (project of projectNames(); track project) {
+    <app-delivery-lanes [project]="project" [heading]="project + ' delivery'"
       (openDeployment)="openDeployment.emit($event)" (openCard)="openCard.emit($event)" />
   }
 </section>

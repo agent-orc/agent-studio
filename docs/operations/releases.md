@@ -223,7 +223,7 @@ For release CI, green means green:
 - no required test, lint, type-check, build, packaging, checksum, attestation,
   or release step uses `continue-on-error`;
 - shell steps use failing exit codes and pipelines that propagate failure;
-- the production dependency audit blocks known critical runtime advisories;
+- the production dependency audit blocks known high and critical runtime advisories;
 - .NET solution tests, release-topology tests, frontend lint/type-check/unit
   tests, and the production frontend build all block publication;
 - the `Category!=MachineBound` filter is explicit because tests that inspect a

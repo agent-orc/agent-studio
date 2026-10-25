@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, output, signal } from '@angular/core';
 import { ProjectOverlaysService } from '../../state/project-overlays.service';
 import { ModalStackService } from '../../../../services/modal-stack.service';
 import { OrchestratorFeedComponent, PromptAdminPanelComponent } from '../../../orchestrator';
@@ -72,6 +72,12 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 })
 export class ProjectOverlaysComponent {
   readonly overlays = inject(ProjectOverlaysService);
+  readonly selectedRelease = signal<{ project: string; id: string } | null>(null);
+
+  openOperationsRelease(project: string, id: string): void {
+    this.selectedRelease.set({ project, id });
+    this.overlays.setProjectShellRail('deploy');
+  }
 
   // Per-rail follow-up events bubble up to the shell because they
   // trigger create-job-dialog (form state lives there).
@@ -114,6 +120,7 @@ export class ProjectOverlaysComponent {
   }
 
   setProjectShellRail(key: ProjectRailKey): void {
+    this.selectedRelease.set(null);
     this.overlays.setProjectShellRail(key);
   }
 
