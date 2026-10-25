@@ -84,6 +84,9 @@ async function mockApp(page: Page, deploy: DeployMocks): Promise<void> {
   // An empty project list opens the first-run settings over the restored Deploy tab.
   await page.route('**/api/v1/projects', route => route.fulfill(json([project])));
   await page.route(`**/api/projects/${PROJECT}/environments`, route => route.fulfill(json(deploy.environments)));
+  await page.route(`**/api/projects/${PROJECT}/environments/*/volumes`, route => route.fulfill(json({
+    database: null, volumes: [], schedules: [], audit: [], adapterReady: false,
+  })));
   await page.route(`**/api/projects/${PROJECT}/environments/health`, route => answer(route, deploy.health ?? {
     capturedAt: new Date(DEPLOY_FIXTURE_NOW).toISOString(), probeOrigin: 'mock', environments: [],
   }));
@@ -231,6 +234,7 @@ test.describe('Project Deploy area (mocked)', () => {
     const operations = page.getByTestId('project-operations');
     await expect(operations).toContainText('Telemetry is not available yet');
     await expect(operations.getByTestId('operations-dora')).toContainText('0.5 per week');
+    await expect(page.getByTestId('hosted-data-panel')).toContainText('No persistent volumes declared.');
     await operations.getByTestId('operations-search-logs').click();
     await expect(operations.getByTestId('operations-logs-empty')).toBeVisible();
     for (const theme of ['light', 'dark'] as const) {
