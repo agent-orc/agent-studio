@@ -8368,23 +8368,21 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
     private static async Task<string> DefaultRunCliAsync(string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
     {
+        if (NormalizeReviewCliType(cli) != CliTypes.Claude) return string.Empty;
+        using var workspace = new HostOneShotIsolation.Workspace();
         var psi = new ProcessStartInfo
         {
             FileName = cli,
+            WorkingDirectory = workspace.Path,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        psi.ArgumentList.Add("-p");
-        psi.ArgumentList.Add("--output-format");
-        psi.ArgumentList.Add("json");
-        psi.ArgumentList.Add("--model");
-        psi.ArgumentList.Add(model);
-        psi.ArgumentList.Add("--dangerously-skip-permissions");
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model);
 
-        using var p = Process.Start(psi);
+        using var p = HostCliSpawnGuard.Start(psi, networked: true, CliTypes.Claude);
         if (p == null) return string.Empty;
         try
         {

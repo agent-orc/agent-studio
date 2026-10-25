@@ -74,17 +74,23 @@ The claim hold matches the route handed to the runner: a required mechanical
 route, an operator-selected continuation, a provider-refusal sibling, or the
 stored primary. A refused primary does not hide a card using another route.
 
-For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
-denies local coding, `PickupHoldPolicy` projects an unsatisfiable
-`execution-placement` hold. The picker skips it before `RunCliAsync`, records
+For a Ready agent card placed at `local`, `PickupHoldPolicy` projects an
+unsatisfiable `execution-placement` hold when local admission denies its mode.
+The networked profile denies every agent mode. In the local profile,
+`ILocalCodingAdmissionPolicy` still gates modes that need a worktree; planning
+and research keep their existing local admission behavior. The picker skips the
+held card before `RunCliAsync`, records
 the hold reason as `lastPickReason`, and logs one refusal per card and reason
 until the card leaves Ready. The queue-starvation view includes these cards
 even with zero remote slots. Route the project with
 `PUT /api/projects/{projectName}/execution-runner` and a remote runner ID;
 the system does not change placement automatically. The project settings
 projection exposes `localCodingAdmitted` for the placement warning. Explicit
-`POST /api/tasks/{id}/start` checks this refusal before queueing for another
-reason and returns `remote-execution-required` without spawning a CLI.
+`POST /api/tasks/{id}/start` and continuation check this refusal before
+mutating the card and return `remote-execution-required` without spawning a CLI.
+New networked projects without a remote runner start paused. Only the Owner
+may explicitly select local placement in the networked profile, including
+through the project registry update route; local placement remains unrunnable.
 
 Prelaunch infrastructure faults use the per-card fingerprint budget described
 in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infrastructure-failures).
@@ -665,7 +671,10 @@ unreported claim expires with its lease and is queued again.
 - `backend/Features/Runner/OrchestratorChat.cs` and `OrchestratorRunner.cs`:
   side-sheet chat dispatch. This operating mode accepts the effective model and
   reasoning choice from the live Codex catalogue, executes through the Codex
-  one-shot registry, and rejects non-GPT models without a Claude fallback.
+  one-shot registry, and rejects non-GPT models without a Claude fallback. In
+  the networked profile it never executes Codex on the Studio host: an absent
+  or unreachable assigned runner produces a failed turn with a clear reason.
+  Changing a remotely placed project to local execution requires the Owner.
 - `backend/Features/Runner/RemoteChatWorkBroker.cs`,
   `backend/Features/Tasks/LeaseEndpoints.cs`, and
   `runner/RemoteProjectChatRunner.cs`: assignment-aware remote side-sheet chat

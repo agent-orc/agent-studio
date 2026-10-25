@@ -58,6 +58,13 @@ public sealed class ClaudeOneShot : ICliOneShot
     public async Task<CliOneShotResult> RunAsync(CliOneShotRequest request, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (SecurityProfiles.IsNetworked(_configuration)
+            && request.ExtraArgs?.Contains("-r", StringComparer.Ordinal) == true)
+        {
+            var now = DateTime.UtcNow;
+            return CliOneShotResult.SpawnFailure(
+                "Host Claude session resume is disabled in the networked profile.", now, now);
+        }
 
         var cliPath = _configuration["ClaudeCli:Path"] ?? "claude";
         var executable = GenericCliExecutionService.ResolveExecutable(cliPath);
@@ -82,10 +89,11 @@ public sealed class ClaudeOneShot : ICliOneShot
             // result and its callers apply their own fallback policy.
         }
 
+        using var workspace = new HostOneShotIsolation.Workspace();
         var psi = new ProcessStartInfo
         {
             FileName = executable,
-            WorkingDirectory = request.WorkingDirectory ?? Directory.GetCurrentDirectory(),
+            WorkingDirectory = workspace.Path,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -97,14 +105,9 @@ public sealed class ClaudeOneShot : ICliOneShot
         };
         psi.Environment["LC_ALL"] = "C.UTF-8";
         psi.Environment["LANG"] = "C.UTF-8";
-        psi.ArgumentList.Add("-p");
-        psi.ArgumentList.Add("--output-format");
-        psi.ArgumentList.Add("json");
-        psi.ArgumentList.Add("--model");
-        psi.ArgumentList.Add(request.Model);
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, request.Model, request.ExtraArgs);
         foreach (var arg in CodingAgentRunner.Model.CliReasoningFlags.For(CliTypes.Claude, request.Model, request.ThinkingLevel))
             psi.ArgumentList.Add(arg);
-        psi.ArgumentList.Add("--dangerously-skip-permissions");
         var multimodal = request.InlineImages is { Count: > 0 };
         if (multimodal)
         {
@@ -116,10 +119,6 @@ public sealed class ClaudeOneShot : ICliOneShot
             psi.ArgumentList.Add("stream-json");
             psi.ArgumentList.Add("--verbose");
         }
-        if (request.ExtraArgs is { Count: > 0 } extras)
-        {
-            foreach (var arg in extras) psi.ArgumentList.Add(arg);
-        }
 
         var requestedAt = DateTime.UtcNow;
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -129,7 +128,7 @@ public sealed class ClaudeOneShot : ICliOneShot
         Process? p = null;
         try
         {
-            p = Process.Start(psi);
+            p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_configuration), CliTypes.Claude);
             if (p == null)
             {
                 var completedAt = DateTime.UtcNow;
