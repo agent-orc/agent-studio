@@ -45,10 +45,10 @@ internal static class RunnerCapabilityProbe
         // Operator-configured primary and fallback routes are probed even when
         // they are newer than the built-in list or the CLI's own catalogue.
         var providers = CodingCliBinaries(options).Select(item => item.CliType).ToHashSet(StringComparer.Ordinal);
-        return BuiltInModelCandidates(options)
-            .Concat((configured ?? RunnerModelAcceptanceProbe.Shared.ConfiguredModels)
+        return (configured ?? RunnerModelAcceptanceProbe.Shared.ConfiguredModels)
                 .Where(route => providers.Contains(route.Provider)
-                    && RunnerModelAcceptanceProbe.IsProbeableModelId(route.Model)))
+                    && RunnerModelAcceptanceProbe.IsProbeableModelId(route.Model))
+            .Concat(BuiltInModelCandidates(options))
             .Distinct()
             .ToArray();
     }

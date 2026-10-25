@@ -243,15 +243,19 @@ ProviderAuthProbe.Shared.UseRealRequest(
     options.Hostname);
 ProviderAuthProbe.Shared.UseCanaryPermit(client.ReserveProviderCanaryAsync);
 
-// Environment credentials cannot change in this daemon process. When the
-// operator has not supplied a generation label, the process lifetime is the
-// safe cache boundary; a renewed environment login restarts the daemon.
+// An operator-supplied generation labels an environment login. Otherwise the
+// daemon session is the fallback identity; completed device logins invalidate
+// its cached model verdicts, and session-bound ready verdicts are rechecked.
 var environmentCredentialGeneration = $"daemon-session:{Guid.NewGuid():N}";
 string? ModelProbeCredentialGeneration(string provider)
 {
     var credential = ProviderCredentialMonitor.Inspect(provider);
     return credential.CredentialGeneration
-           ?? (credential.EffectiveSource == "environment-file" ? environmentCredentialGeneration : null);
+           // A CLI can authenticate through a store the metadata reader does
+           // not recognize. Keep probing that login instead of advertising
+           // every named model as unknown forever. Session evidence is short
+           // lived in RunnerModelAcceptanceProbe.
+           ?? environmentCredentialGeneration;
 }
 RunnerModelAcceptanceProbe.Shared.Configure(
     async (provider, model, ct) =>

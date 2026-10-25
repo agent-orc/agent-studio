@@ -387,6 +387,8 @@ public sealed class DeviceLoginPoller(TaskServerClient client, Action<string> lo
                     log($"device-login {claim.Provider} credential restored after completion rejection");
                 }
             }
+            if (result.Result == "completed")
+                RunnerModelAcceptanceProbe.Shared.Invalidate(claim.Provider);
             log($"device-login provider={claim.Provider} result={result.Result}");
         }
     }

@@ -582,31 +582,56 @@ public static class V1ReviewPlaneEndpoints
             // Library plans remain immutable. Check their frozen deep-review
             // route against live quota before handing out the lease.
             string? quotaDeferredReason;
+            var missingModelAcceptance = new Dictionary<string, string>(StringComparer.Ordinal);
             if (subjectTask is not null)
                 subject = ApplyQuotaFallbackToAspects(
                     subject,
                     subjectTask,
                     quotaAdmission,
                     quotaAdmissionRecorder,
-                    (provider, model) => registry.AcceptsModel(
-                        runnerId, request.InstanceId, provider, model),
+                    (provider, model) =>
+                    {
+                        var accepted = registry.AcceptsModel(runnerId, request.InstanceId, provider, model);
+                        if (!accepted && !string.IsNullOrWhiteSpace(model))
+                            missingModelAcceptance[Contract.CapabilityProtocol.ModelAcceptance(provider, model)] =
+                                registry.ModelAcceptanceStatus(runnerId, request.InstanceId, provider, model);
+                        return accepted;
+                    },
                     out quotaDeferredReason,
-                    immutablePlan: subject.Plan.Commands.Any(command => command.LibraryStep is not null));
+                    immutablePlan: subject.Plan.Commands.Any(command => command.LibraryStep is not null),
+                    decisionIdentity: review.AttemptId);
             else
                 quotaDeferredReason = null;
             if (!string.IsNullOrWhiteSpace(quotaDeferredReason))
             {
+                var modelAcceptanceDeferred = missingModelAcceptance.Count > 0
+                    && quotaDeferredReason.Contains("not accepted by the claiming host", StringComparison.Ordinal);
                 if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId,
-                    quotaDeferred: true))
+                    quotaDeferred: !modelAcceptanceDeferred))
                 {
                     return Results.Conflict(new Contract.ApiError(
                         "review-quota-defer-failed",
                         "Review quota admission deferred the claim, but its lease could not be relinquished."));
                 }
+                if (modelAcceptanceDeferred)
+                {
+                    var missing = missingModelAcceptance.Keys.Order(StringComparer.Ordinal).ToArray();
+                    var reason = string.Join(", ", missing.Select(key =>
+                        $"{key} {missingModelAcceptance[key]} on the claiming review host"));
+                    Contract.ReviewUnclaimableAttemptDto[] unclaimable =
+                        [new(review.AttemptId, review.TaskKey, review.CreatedAt, missing)];
+                    unclaimableLog.Record(runnerId, unclaimable, reason);
+                    return Results.Ok(new Contract.ReviewClaimResponse(
+                        "empty", Message: reason,
+                        Reason: Contract.ReviewClaimEmptyReasons.UnclaimablePlanRequirements,
+                        MissingCapabilities: missing,
+                        UnclaimableAttempts: unclaimable));
+                }
                 return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
                     Contract.ReviewClaimEmptyReasons.QuotaDeferred,
                     quotaDeferredReason));
             }
+            unclaimableLog.Clear(review.AttemptId);
             var lease = ToLease(authority, review);
             return Results.Ok(new Contract.ReviewClaimResponse(
                 "claimed",
@@ -2501,10 +2526,13 @@ public static class V1ReviewPlaneEndpoints
         QuotaAdmissionRecorder recorder,
         Func<string, string?, bool> modelAccepted,
         out string? deferredReason,
-        bool immutablePlan = false)
+        bool immutablePlan = false,
+        string? decisionIdentity = null)
     {
         var switched = false;
         string? deferred = null;
+        QuotaAdmissionPlan? deferredPlan = null;
+        QuotaAdmissionPlan? launchedPlan = null;
         QuotaAdmissionPlan? lastSwitch = null;
         string? lastPrimaryCli = null;
         string? lastPrimaryModel = null;
@@ -2521,12 +2549,13 @@ public static class V1ReviewPlaneEndpoints
                 OccupiedSlots: 0,
                 ExecutionPath: "remote-review-claim",
                 ModelAccepted: modelAccepted));
-            recorder.EmitAdmissionDecision(task, plan, source: "review-claim");
             if (!plan.ShouldLaunch)
             {
                 deferred ??= plan.Reason;
+                deferredPlan ??= plan;
                 return command;
             }
+            launchedPlan ??= plan;
             if (!plan.IsFallback) return command;
             if (string.Equals(command.Aspect, "deep-review", StringComparison.OrdinalIgnoreCase))
             {
@@ -2553,6 +2582,10 @@ public static class V1ReviewPlaneEndpoints
             };
         }).ToList();
         deferredReason = deferred;
+        if (deferredPlan is not null)
+            recorder.EmitAdmissionDecision(task, deferredPlan, source: "review-claim", decisionIdentity: decisionIdentity);
+        else if (launchedPlan is not null)
+            recorder.EmitAdmissionDecision(task, launchedPlan, source: "review-claim", decisionIdentity: decisionIdentity);
 
         if (!string.IsNullOrWhiteSpace(deferredReason))
         {
@@ -4398,6 +4431,25 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
                 string.Equals(item.Key, key, StringComparison.Ordinal)
                 && item.FreshUntil > _time.GetUtcNow().UtcDateTime
                 && string.Equals(item.AdvertisedStatus, "ready", StringComparison.Ordinal));
+        }
+    }
+
+    public string ModelAcceptanceStatus(string runnerId, string? instanceId, string cliType, string model)
+    {
+        var key = Contract.CapabilityProtocol.ModelAcceptance(cliType, model);
+        lock (_gate)
+        {
+            if (_rejectedModels.ContainsKey($"{runnerId}|{key}")) return "unavailable";
+            if (string.IsNullOrWhiteSpace(instanceId)
+                || !_registrations.TryGetValue(runnerId, out var registration)
+                || !string.Equals(registration.InstanceId, instanceId, StringComparison.Ordinal)
+                || !_capabilityStates.TryGetValue(runnerId, out var state)
+                || !string.Equals(state.InstanceId, instanceId, StringComparison.Ordinal))
+                return "unknown";
+            var capability = state.Capabilities.FirstOrDefault(item =>
+                string.Equals(item.Key, key, StringComparison.Ordinal)
+                && item.FreshUntil > _time.GetUtcNow().UtcDateTime);
+            return capability?.AdvertisedStatus ?? "unknown";
         }
     }
 
