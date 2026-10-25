@@ -72,6 +72,6 @@ jobs:
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
         run: |
-          npm --prefix frontend ci
-          npm --prefix frontend exec -- playwright install --with-deps chromium
+          bash scripts/npm-frontend.sh ci
+          bash scripts/npm-frontend.sh exec -- playwright install --with-deps chromium
           WEBSITE_REUSE_MONOLITH_IMAGE=1 bash scripts/monolith-networked-compose-smoke.sh
