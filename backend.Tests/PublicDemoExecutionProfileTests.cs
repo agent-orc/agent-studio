@@ -227,7 +227,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3239 added the operator candidate verification record on PostStep:
         // it appends immutable integrated-verified evidence after a passed suite.
         // AGT-3274 added the authenticated deploy artifact route on Claim.
-        Assert.Equal(147, routes.Count);
+        // The local-only PTY _probe route is absent from the public-demo route set.
+        Assert.Equal(146, routes.Count);
+        Assert.DoesNotContain(allRoutes, route => route.RoutePattern.RawText == "/api/cli/_probe/{cliType}");
         foreach (var (method, suffix) in new[]
         {
             ("PUT", "/{volume}/schedule"), ("POST", "/{volume}/backups"),
@@ -322,7 +324,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
                 [ExecutionAdmissionPath.Continue] = 31,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
-                [ExecutionAdmissionPath.Preview] = 32,
+                [ExecutionAdmissionPath.Preview] = 31,
                 [ExecutionAdmissionPath.PostStep] = 21,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)

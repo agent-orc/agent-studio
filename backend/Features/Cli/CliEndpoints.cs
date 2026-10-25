@@ -366,6 +366,8 @@ public static class CliEndpoints
         // Spawns the requested CLI in a scratch dir, sends a slash command,
         // waits for output to settle, returns the ANSI-stripped snapshot.
         // Example: /api/cli/_probe/claude?cmd=/usage
+        if (SecurityProfiles.IsLocal(app.Configuration))
+        {
         cliGroup.MapGet("/_probe/{cliType}", async (
             string cliType,
             string? cmd,
@@ -437,6 +439,7 @@ public static class CliEndpoints
                 return Results.Problem(detail: ex.Message, title: "Probe failed");
             }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+        }
     }
 
     private static CliModelRouteView RouteView(ModelEquivalenceRoute route) => new(
