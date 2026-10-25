@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using AgentStudio.Shared;
 
 namespace AgentStudio.Docs;
 
@@ -205,7 +206,7 @@ public class ProjectDocsService
         var full = Path.GetFullPath(Path.Combine(baseDir, SecurityRel, relPath));
         var root = Path.GetFullPath(Path.Combine(baseDir, SecurityRel));
         if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return null;
-        if (!File.Exists(full)) return null;
+        if (!FilesystemPathBoundary.IsRegularFileUnder(baseDir, full)) return null;
         return File.ReadAllText(full);
     }
 
@@ -216,10 +217,12 @@ public class ProjectDocsService
         if (baseDir == null) return false;
         var full = Path.GetFullPath(Path.Combine(baseDir, SecurityRel, relPath));
         var root = Path.GetFullPath(Path.Combine(baseDir, SecurityRel));
-        if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            || !FilesystemPathBoundary.IsPathUnderWithoutLinks(baseDir, full)) return false;
         var dir = Path.GetDirectoryName(full);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        File.WriteAllText(full, content);
+        if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(baseDir, full)) return false;
+        WriteFileAtomically(full, content);
         return true;
     }
 
@@ -228,10 +231,26 @@ public class ProjectDocsService
         var baseDir = ResolveBaseDir(projectName);
         if (baseDir == null) return false;
         var secDir = Path.Combine(baseDir, SecurityRel);
-        Directory.CreateDirectory(secDir);
         var path = Path.Combine(secDir, SecurityStateFile);
-        File.WriteAllText(path, JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }));
+        if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(baseDir, path)) return false;
+        Directory.CreateDirectory(secDir);
+        if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(baseDir, path)) return false;
+        WriteFileAtomically(path, JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true }));
         return true;
+    }
+
+    private static void WriteFileAtomically(string path, string content)
+    {
+        var temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            File.WriteAllText(temp, content);
+            File.Move(temp, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+        }
     }
 
     private static SecurityMeta ReadMeta(string secDir)
@@ -310,7 +329,8 @@ public class ProjectDocsService
         }
 
         var full = ResolveWikiPathUnderRoot(snapshot.WikiDir, normalized);
-        if (full == null || !File.Exists(full))
+        if (full == null || !FilesystemPathBoundary.IsRegularFileUnder(
+                Path.GetDirectoryName(snapshot.WikiDir)!, full))
         {
             var revision = snapshot.Source.Info.ShortCommit is { } shortCommit
                 ? $" at {shortCommit}"
@@ -337,7 +357,9 @@ public class ProjectDocsService
         if (WikiWriteBlockReason(projectName) is { } blocked) return WikiSaveResult.Fail(blocked);
         var full = ResolveWikiPath(projectName, relPath, requireDoc: true, forWrite: true);
         if (full == null) return WikiSaveResult.Fail("Invalid path.");
-        if (!File.Exists(full)) return WikiSaveResult.Fail("File not found.");
+        var wikiDir = Path.GetFullPath(Path.Combine(ResolveBaseDir(projectName)!, WikiRel));
+        if (!FilesystemPathBoundary.IsRegularFileUnder(wikiDir, full))
+            return WikiSaveResult.Fail("File not found or path rejected.");
         var before = File.ReadAllText(full);
         if (string.Equals(before, content, StringComparison.Ordinal))
             return WikiSaveResult.Ok(full, changed: false);
@@ -358,7 +380,8 @@ public class ProjectDocsService
         var ext = Path.GetExtension(relPath);
         if (!WikiAssetContentTypes.TryGetValue(ext, out var contentType)) return null;
         var full = ResolveWikiPath(projectName, relPath, requireDoc: false);
-        if (full == null || !File.Exists(full)) return null;
+        if (full == null || !FilesystemPathBoundary.IsRegularFileUnder(
+                ResolveWikiSource(projectName)!.BaseDir, full)) return null;
         return (full, contentType);
     }
 
@@ -384,7 +407,9 @@ public class ProjectDocsService
         var full = Path.GetFullPath(Path.Combine(root, relPath));
         // Append a separator to the root so "docs-other/" can't satisfy the prefix.
         var rootWithSep = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
-        return full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase) ? full : null;
+        return full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase)
+            && (!forWrite || FilesystemPathBoundary.IsPathUnderWithoutLinks(root, full))
+            ? full : null;
     }
 
     private static string? ResolveWikiPathUnderRoot(string wikiRoot, string relPath)
@@ -2216,7 +2241,7 @@ public class ProjectDocsService
     {
         var empty = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
         var path = Path.Combine(wikiDir, WikiFolderOrderRel.Replace('/', Path.DirectorySeparatorChar));
-        if (!File.Exists(path)) return empty;
+        if (!FilesystemPathBoundary.IsRegularFileUnder(wikiDir, path)) return empty;
         try
         {
             GitProcessTelemetry.RecordFileRead();
@@ -2285,7 +2310,8 @@ public class ProjectDocsService
         var rootWithSep = wikiDir.EndsWith(Path.DirectorySeparatorChar) ? wikiDir : wikiDir + Path.DirectorySeparatorChar;
         if (parent.Length > 0 && !parentFull.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase))
             return WikiMutationResult.Fail("Invalid parent path.");
-        if (!Directory.Exists(parentFull))
+        if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(wikiDir, parentFull)
+            || !Directory.Exists(parentFull))
             return WikiMutationResult.Fail("Parent folder not found.");
         if (orderedNames.Count > 500)
             return WikiMutationResult.Fail("Too many folder names.");
@@ -2321,6 +2347,8 @@ public class ProjectDocsService
         var path = Path.Combine(wikiDir, WikiFolderOrderRel.Replace('/', Path.DirectorySeparatorChar));
         // The order file now lives under docs/app/config/; ensure that
         // code-contract folder exists before the first write in a fresh repo.
+        if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(wikiDir, path))
+            return WikiMutationResult.Fail("Invalid path.");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
         // The docs signature covers the order file, but timestamp resolution can
@@ -2351,7 +2379,8 @@ public class ProjectDocsService
         var rootWithSep = wikiDir.EndsWith(Path.DirectorySeparatorChar) ? wikiDir : wikiDir + Path.DirectorySeparatorChar;
         if (parent.Length > 0 && !parentFull.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase))
             return WikiMutationResult.Fail("Invalid parent path.");
-        if (!Directory.Exists(parentFull))
+        if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(wikiDir, parentFull)
+            || !Directory.Exists(parentFull))
             return WikiMutationResult.Fail("Parent folder not found.");
         if (orderedNames.Count > 500)
             return WikiMutationResult.Fail("Too many file names.");
@@ -2385,6 +2414,8 @@ public class ProjectDocsService
         };
 
         var path = Path.Combine(wikiDir, WikiFolderOrderRel.Replace('/', Path.DirectorySeparatorChar));
+        if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(wikiDir, path))
+            return WikiMutationResult.Fail("Invalid path.");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
         InvalidateWikiContent(projectName);
@@ -2428,6 +2459,9 @@ public class ProjectDocsService
         var full = ResolveWikiPath(projectName, relPath, requireDoc: true, forWrite: true);
         if (full == null) return WikiMutationResult.Fail("Invalid path.");
         if (File.Exists(full)) return WikiMutationResult.Fail("A page with that name already exists.");
+        var wikiDir = Path.GetFullPath(Path.Combine(ResolveBaseDir(projectName)!, WikiRel));
+        if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(wikiDir, full + ".meta.json"))
+            return WikiMutationResult.Fail("Invalid path.");
 
         var dir = Path.GetDirectoryName(full);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
@@ -2438,7 +2472,6 @@ public class ProjectDocsService
         // creation so a hand-authored page is born classified (type = folder
         // default, status = aktuell, analyzedAt = today) rather than surfacing as
         // an "unclassified page" warning on the pulse dashboard.
-        var wikiDir = Path.GetFullPath(Path.Combine(ResolveBaseDir(projectName)!, WikiRel));
         var docsRel = Path.GetRelativePath(wikiDir, full).Replace('\\', '/');
         var title = StripOrderPrefix(Path.GetFileNameWithoutExtension(relPath));
         var companion = new WikiCompanionStore().WriteCreationClassification(
@@ -2458,10 +2491,13 @@ public class ProjectDocsService
         if (status is not ("archived" or "aktuell"))
             return WikiMutationResult.Fail("Status must be 'archived' or 'aktuell'.");
         var full = ResolveWikiDocFullPath(projectName, relPath);
-        if (full == null || !File.Exists(full)) return WikiMutationResult.Fail("Page not found or path rejected.");
+        if (full == null) return WikiMutationResult.Fail("Page not found or path rejected.");
+        var wikiDir = Path.GetFullPath(Path.Combine(ResolveBaseDir(projectName)!, WikiRel));
+        if (!FilesystemPathBoundary.IsRegularFileUnder(wikiDir, full)
+            || !FilesystemPathBoundary.IsPathUnderWithoutLinks(wikiDir, full + ".meta.json"))
+            return WikiMutationResult.Fail("Page not found or path rejected.");
 
         var content = File.ReadAllText(full);
-        var wikiDir = Path.GetFullPath(Path.Combine(ResolveBaseDir(projectName)!, WikiRel));
         var docsRel = Path.GetRelativePath(wikiDir, full).Replace('\\', '/');
         var title = ExtractDocTitle(full, Path.GetExtension(full))
             ?? StripOrderPrefix(Path.GetFileNameWithoutExtension(full));
@@ -3160,13 +3196,16 @@ public class ProjectDocsService
         string? note)
     {
         var target = ResolveWikiDocFullPath(projectName, relPath);
-        if (target == null || !File.Exists(target))
+        if (target == null)
             return WikiMutationResult.Fail("Page not found or path rejected.");
 
         var baseDir = ResolveBaseDir(projectName);
         if (baseDir == null) return WikiMutationResult.Fail("Unknown project.");
+        var wikiDir = Path.GetFullPath(Path.Combine(baseDir, WikiRel));
+        if (!FilesystemPathBoundary.IsRegularFileUnder(wikiDir, target))
+            return WikiMutationResult.Fail("Page not found or path rejected.");
         var homePath = Path.Combine(baseDir, WikiRel, WikiHomeRel.Replace('/', Path.DirectorySeparatorChar));
-        if (!File.Exists(homePath))
+        if (!FilesystemPathBoundary.IsRegularFileUnder(wikiDir, homePath))
             return WikiMutationResult.Fail("Wiki home configuration was not found.");
 
         JsonObject root;

@@ -58,8 +58,8 @@ public sealed class ClaudeOneShot : ICliOneShot
     public async Task<CliOneShotResult> RunAsync(CliOneShotRequest request, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (SecurityProfiles.IsNetworked(_configuration)
-            && request.ExtraArgs?.Contains("-r", StringComparer.Ordinal) == true)
+        var networked = !SecurityProfiles.IsLocal(_configuration);
+        if (networked && request.ExtraArgs?.Contains("-r", StringComparer.Ordinal) == true)
         {
             var now = DateTime.UtcNow;
             return CliOneShotResult.SpawnFailure(
@@ -73,7 +73,7 @@ public sealed class ClaudeOneShot : ICliOneShot
         // CAR owns npm-shim healing for CAR-backed agent runs. One-shot calls
         // do not use CAR yet, so retain their existing best-effort repair until
         // T4 removes this temporary non-agent invocation exception.
-        if (!QuickProbe(executable))
+        if (!QuickProbe(executable, networked))
         {
             _logger.LogWarning(
                 "claude --version failed pre-OneShot at '{Path}'; running rollback NpmShimHealer", executable);
@@ -89,11 +89,11 @@ public sealed class ClaudeOneShot : ICliOneShot
             // result and its callers apply their own fallback policy.
         }
 
-        using var workspace = new HostOneShotIsolation.Workspace();
+        using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;
         var psi = new ProcessStartInfo
         {
             FileName = executable,
-            WorkingDirectory = workspace.Path,
+            WorkingDirectory = networked ? workspace!.Path : request.WorkingDirectory ?? Directory.GetCurrentDirectory(),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -105,7 +105,8 @@ public sealed class ClaudeOneShot : ICliOneShot
         };
         psi.Environment["LC_ALL"] = "C.UTF-8";
         psi.Environment["LANG"] = "C.UTF-8";
-        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, request.Model, request.ExtraArgs);
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, request.Model, request.ExtraArgs,
+            networked: networked);
         foreach (var arg in CodingAgentRunner.Model.CliReasoningFlags.For(CliTypes.Claude, request.Model, request.ThinkingLevel))
             psi.ArgumentList.Add(arg);
         var multimodal = request.InlineImages is { Count: > 0 };
@@ -128,7 +129,7 @@ public sealed class ClaudeOneShot : ICliOneShot
         Process? p = null;
         try
         {
-            p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_configuration), CliTypes.Claude);
+            p = HostCliSpawnGuard.Start(psi, networked, CliTypes.Claude);
             if (p == null)
             {
                 var completedAt = DateTime.UtcNow;
@@ -147,12 +148,15 @@ public sealed class ClaudeOneShot : ICliOneShot
             {
                 if (multimodal)
                 {
-                    var envelope = BuildStreamJsonUserMessage(request.Prompt, request.InlineImages!);
+                    var envelope = BuildStreamJsonUserMessage(
+                        HostOneShotIsolation.PreparePrompt(request.Prompt, networked), request.InlineImages!);
                     await p.StandardInput.WriteAsync(envelope.AsMemory(), effectiveCt).ConfigureAwait(false);
                 }
                 else
                 {
-                    await p.StandardInput.WriteAsync(request.Prompt.AsMemory(), effectiveCt).ConfigureAwait(false);
+                    await p.StandardInput.WriteAsync(
+                        HostOneShotIsolation.PreparePrompt(request.Prompt, networked).AsMemory(), effectiveCt)
+                        .ConfigureAwait(false);
                 }
                 await p.StandardInput.FlushAsync(effectiveCt).ConfigureAwait(false);
             }
@@ -331,11 +335,11 @@ public sealed class ClaudeOneShot : ICliOneShot
     /// 5 seconds. Used as the gate for the pre-spawn heal hook so the heal
     /// is paid for only when the install is actually broken.
     /// </summary>
-    private static bool QuickProbe(string executable)
+    private static bool QuickProbe(string executable, bool networked)
     {
         try
         {
-            using var p = Process.Start(new ProcessStartInfo
+            using var p = HostCliSpawnGuard.Start(new ProcessStartInfo
             {
                 FileName = executable,
                 Arguments = "--version",
@@ -343,7 +347,7 @@ public sealed class ClaudeOneShot : ICliOneShot
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-            });
+            }, networked, CliTypes.Claude);
             if (p is null) return false;
             if (!p.WaitForExit(5000))
             {
@@ -352,8 +356,9 @@ public sealed class ClaudeOneShot : ICliOneShot
             }
             return p.ExitCode == 0;
         }
-        catch
+        catch (Exception ex)
         {
+            SilentCatch.Note(ex, "ClaudeOneShot: version probe failed");
             return false;
         }
     }

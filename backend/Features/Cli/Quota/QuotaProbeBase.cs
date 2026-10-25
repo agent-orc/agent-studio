@@ -24,7 +24,7 @@ public abstract class QuotaProbeBase : IQuotaProbe
         _logger = logger;
         _router = router;
         _env = env;
-        _networked = configuration is not null && SecurityProfiles.IsNetworked(configuration);
+        _networked = configuration is null || !SecurityProfiles.IsLocal(configuration);
     }
 
     public abstract string CliType { get; }

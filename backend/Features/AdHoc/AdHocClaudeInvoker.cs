@@ -25,19 +25,21 @@ namespace AgentStudio.AdHoc;
 /// </summary>
 public static class AdHocClaudeInvoker
 {
+    public static string PreparePrompt(string prompt, bool isolated = true) =>
+        AgentStudio.Cli.HostOneShotIsolation.PreparePrompt(prompt, isolated);
+
     /// <summary>
     /// Argv tail for one-shot Haiku calls that follow the convention
     /// "feed the prompt via stdin, ask for the JSON wrapper". Callers
     /// build the <c>ProcessStartInfo</c> themselves (working directory,
     /// claude path, stdin encoding) and append these arguments.
     /// </summary>
-    public static IReadOnlyList<string> BuildArgs(string model) => new[]
+    public static IReadOnlyList<string> BuildArgs(string model, bool isolated = true)
     {
-        "-p",
-        "--output-format", "json",
-        "--model", model,
-        "--tools", ""
-    };
+        var arguments = new List<string>();
+        AgentStudio.Cli.HostOneShotIsolation.AddClaudeArguments(arguments, model, networked: isolated);
+        return arguments;
+    }
 
     /// <summary>
     /// Parse the raw stdout the subprocess returned. When it is the

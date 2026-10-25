@@ -219,24 +219,27 @@ public sealed class SoftReasoningHostedService : BackgroundService
             return CliOneShotCompatibility.ToClaudeResultEnvelope(r, model);
         }
 
-        using var workspace = new HostOneShotIsolation.Workspace();
+        if (!cliType.Equals(CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        var networked = !SecurityProfiles.IsLocal(_configuration);
+        using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;
         var psi = new ProcessStartInfo
         {
             FileName = cli,
-            WorkingDirectory = workspace.Path,
+            WorkingDirectory = networked ? workspace!.Path : Directory.GetCurrentDirectory(),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model);
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model, networked: networked);
 
-        using var p = HostCliSpawnGuard.Start(psi, SecurityProfiles.IsNetworked(_configuration), cliType);
+        using var p = HostCliSpawnGuard.Start(psi, networked, CliTypes.Claude);
         if (p == null) return string.Empty;
         try
         {
-            await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
+            await p.StandardInput.WriteAsync(HostOneShotIsolation.PreparePrompt(prompt, networked).AsMemory(), ct);
             p.StandardInput.Close();
         }
         catch (Exception __ex) { SilentCatch.Note(__ex, "SoftReasoningHostedService: stdin may already be closed"); /* stdin may already be closed */ }

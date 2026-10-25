@@ -233,6 +233,7 @@ public sealed class GitProjectRepositoryCheckout : IProjectRepositoryCheckout
         start.Environment["GIT_CONFIG_KEY_0"] = "http.https://github.com/.extraheader";
         start.Environment["GIT_CONFIG_VALUE_0"] = "AUTHORIZATION: basic " +
             Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("x-access-token:" + token));
+        AgentStudio.Git.HostGitProcessHardening.Apply(start);
         using var process = Process.Start(start) ?? throw new RepositoryProvisioningException("clone-failed", "Git could not start the checkout. Check the Studio host installation.");
         var error = process.StandardError.ReadToEndAsync(cancellationToken);
         var output = process.StandardOutput.ReadToEndAsync(cancellationToken);

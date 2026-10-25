@@ -181,7 +181,7 @@ public partial class GenericCliExecutionService
                 }
                 CarAfterSpawnForTest?.Invoke(process);
             },
-            networked: SecurityProfiles.IsNetworked(_configuration));
+            networked: !SecurityProfiles.IsLocal(_configuration));
         var options = baseOptions with { Spawner = processSpawner };
 
         var runner = new CliRunner(options, _logger, carLogPaths);

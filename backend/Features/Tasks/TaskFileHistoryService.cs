@@ -1,3 +1,4 @@
+using AgentStudio.Shared;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
@@ -296,6 +297,8 @@ public sealed class TaskFileHistoryService
 
             try
             {
+                if (!FilesystemPathBoundary.IsRegularFileUnder(candidate.RootPath, candidate.LivePath))
+                    return TaskFileLookupResult<TaskFileContent>.Fail(StatusCodes.Status404NotFound, "File could not be read.");
                 var content = File.ReadAllText(candidate.LivePath, Encoding.UTF8);
                 return TaskFileLookupResult<TaskFileContent>.Ok(
                     new TaskFileContent(content, ContentTypeFor(candidate.RequestPath), candidate.RequestPath),
@@ -369,6 +372,7 @@ public sealed class TaskFileHistoryService
             TaskFileSources.Workspace,
             requestPath,
             livePath,
+            jobRoot,
             gitRoot,
             gitPath,
             info.FolderPath);
@@ -395,6 +399,7 @@ public sealed class TaskFileHistoryService
             TaskFileSources.Code,
             requestPath,
             livePath,
+            root,
             gitRoot,
             gitPath,
             info.FolderPath);
@@ -625,6 +630,7 @@ public sealed class TaskFileHistoryService
         string Source,
         string RequestPath,
         string LivePath,
+        string RootPath,
         string? GitRoot,
         string GitPath,
         string JobFolderPath);

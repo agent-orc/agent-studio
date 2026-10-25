@@ -239,7 +239,7 @@ public static class ManagementEndpoints
                     message = "The durable provider renewal could not complete; inspect the operation receipt before retrying." },
                     statusCode: 503);
             }
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapGet("/remote-hosts/provider-auth-renewals/{operationId}", async (
             HttpContext context, string operationId, string? sshTarget,
             IProviderAuthProvisioner provisioner, IProviderRenewalJournal renewal,
@@ -265,7 +265,7 @@ public static class ManagementEndpoints
                 }
             }
             return Results.Ok(await renewal.TryVerifyAsync(receipt, ct));
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapPost("/remote-hosts/{id}/codex-sign-in", (
             HttpContext context,
             IConfiguration configuration) =>
@@ -275,7 +275,7 @@ public static class ManagementEndpoints
             return Results.Json(new { error = "codex-sign-in-moved",
                 message = "Start Codex device login through the runner-polled device-logins route." },
                 statusCode: StatusCodes.Status410Gone);
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapGet("/remote-hosts/{id}/codex-sign-in/{handle}", async (
             HttpContext context,
             string id,
@@ -293,7 +293,7 @@ public static class ManagementEndpoints
                     new { error = "codex-sign-in-session-not-found", message = "The Codex sign-in session was not found for this host." },
                     statusCode: 404)
                 : Results.Ok(status);
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapPost("/remote-hosts/{id}/codex-sign-in/{handle}/cancel", async (
             HttpContext context, string id, string handle, CodexSignInCoordinator coordinator,
             IConfiguration configuration, CancellationToken ct) =>
@@ -302,7 +302,7 @@ public static class ManagementEndpoints
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             var status = await coordinator.CancelAsync(id, handle, ct);
             return status is null ? Results.NotFound() : Results.Ok(status);
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapPost("/remote-hosts/{id}/claude-sign-in", async (
             HttpContext context,
             string id,
@@ -321,7 +321,7 @@ public static class ManagementEndpoints
             {
                 return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.StatusCode);
             }
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapGet("/remote-hosts/{id}/claude-sign-in/{handle}", async (
             HttpContext context,
             string id,
@@ -339,7 +339,7 @@ public static class ManagementEndpoints
                     new { error = "claude-sign-in-session-not-found", message = "The Claude sign-in session was not found for this host." },
                     statusCode: 404)
                 : Results.Ok(status);
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapPost("/remote-hosts/{id}/claude-sign-in/{handle}/cancel", async (
             HttpContext context, string id, string handle, ClaudeSignInCoordinator coordinator,
             IConfiguration configuration, CancellationToken ct) =>
@@ -348,7 +348,7 @@ public static class ManagementEndpoints
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             var status = await coordinator.CancelAsync(id, handle, ct);
             return status is null ? Results.NotFound() : Results.Ok(status);
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapPost("/commands", (HttpContext context, ManagementCommandRequest request, ManagementService service, IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";
