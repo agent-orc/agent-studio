@@ -1,5 +1,5 @@
 import { DatePipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, input, output, signal } from '@angular/core';
 import { EmptyStateComponent } from '../../../../components/empty-state/empty-state.component';
 import { LoadingSurfaceComponent } from '../../../../components/async-feedback';
 import { ProjectDeployReleaseNotesComponent } from '../project-deploy-release-notes/project-deploy-release-notes';
@@ -20,8 +20,11 @@ export class ProjectDeployReleasesComponent {
   readonly now = input.required<number>();
   readonly total = input<number>(0);
   readonly offset = input<number>(0);
+  readonly highlightedReleaseId = input<string | null>(null);
   readonly pageChange = output<number>();
   readonly selectedId = signal<string | null>(null);
+
+  constructor() { effect(() => this.selectedId.set(this.highlightedReleaseId())); }
 
   readonly releases = computed(() => {
     const panel = this.panel();
@@ -34,7 +37,7 @@ export class ProjectDeployReleasesComponent {
     return panel.status === 'error' ? `${panel.message} Environments and history are unaffected; try Refresh.` : '';
   });
   readonly selected = computed<Release | null>(() =>
-    this.releases().find(release => release.id === this.selectedId()) ?? this.releases()[0] ?? null);
+    this.releases().find(release => release.id === (this.selectedId() ?? this.highlightedReleaseId())) ?? this.releases()[0] ?? null);
   readonly liveIn = computed(() => {
     const release = this.selected();
     return release

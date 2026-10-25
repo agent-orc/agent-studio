@@ -7,11 +7,11 @@ COPY frontend/package.json frontend/package-lock.json ./
 # postinstall runs scripts/patch-coding-agent-chat-model-selector.mjs, so the
 # scripts folder must be present in the restore layer already.
 COPY frontend/scripts/ ./scripts/
-RUN npm ci
+RUN corepack npm ci
 COPY frontend/ ./
 # Angular's application builder emits dist/frontend/browser; older layouts
 # emit dist/frontend directly - normalise both into /studio-dist.
-RUN npx ng build frontend \
+RUN corepack npm exec -- ng build frontend \
  && (test -d dist/frontend/browser && mv dist/frontend/browser /studio-dist || mv dist/frontend /studio-dist)
 
 FROM caddy:2-alpine

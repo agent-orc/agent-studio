@@ -36,12 +36,16 @@
             <app-project-deploy-area
               [projectName]="projShell"
               [initialView]="section().deployView"
+              [releaseTarget]="selectedRelease()"
+              (openTask)="openTaskFromProjectShell($event)"
               (openPrompts)="setProjectShellRail('prompts')" />
           }
         }
         @defer (when section().rail === 'operations') {
           @if (section().rail === 'operations') {
-            <app-project-environment-overview [projectName]="projShell" (openDeploy)="setProjectShellRail('deploy')" />
+            <app-project-environment-overview [projectName]="projShell" (openDeploy)="setProjectShellRail('deploy')"
+              (openRelease)="openOperationsRelease(projShell, $event)"
+              (openTask)="openTaskFromProjectShell($event)" />
             <app-project-product-runtime-panel [projectName]="projShell" />
           }
         }

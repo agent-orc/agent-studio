@@ -133,6 +133,12 @@ export class ProjectHubViewComponent {
 
   readonly activeRail = signal<ProjectRailKey>(DEFAULT_PROJECT_RAIL_KEY);
   readonly deployView = signal<DeployView>('overview');
+  readonly selectedRelease = signal<{ project: string; id: string } | null>(null);
+
+  openOperationsRelease(id: string): void {
+    this.setRail('deploy');
+    this.selectedRelease.set({ project: this.projectName(), id });
+  }
 
   constructor() {
     effect(() => {
@@ -154,6 +160,7 @@ export class ProjectHubViewComponent {
   }
 
   setRail(requested: ProjectRailKey): void {
+    this.selectedRelease.set(null);
     const projectName = this.projectName();
     const { rail, deployView } = resolveProjectSection(requested);
     if (rail === 'deploy') this.deployView.set(deployView);
