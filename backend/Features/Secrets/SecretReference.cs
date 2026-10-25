@@ -20,7 +20,7 @@ public sealed record SecretScope
 {
     public const string WorkspaceKey = "workspace";
 
-    private static readonly Regex ProjectPattern = new("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", RegexOptions.Compiled);
+    private static readonly Regex ProjectPattern = new("^[A-Za-z0-9](?:[A-Za-z0-9 ._-]{0,126}[A-Za-z0-9._-])?$", RegexOptions.Compiled);
     private static readonly Regex EnvironmentPattern = new("^[a-z0-9][a-z0-9._-]{0,63}$", RegexOptions.Compiled);
 
     private SecretScope(SecretScopeKind kind, string? project, string? environment)
@@ -54,7 +54,7 @@ public sealed record SecretScope
     public static SecretScope ForProject(string project)
     {
         if (!IsValidProject(project))
-            throw new SecretValidationException("invalid-scope", "Project names use letters, digits, dots, underscores or hyphens and cannot be 'workspace'.");
+            throw new SecretValidationException("invalid-scope", "Project names use letters, digits, internal spaces, dots, underscores or hyphens and cannot be 'workspace'.");
         return new(SecretScopeKind.Project, project, null);
     }
 

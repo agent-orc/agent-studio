@@ -615,3 +615,35 @@ test.describe('Project Deploy area (mocked)', () => {
     await capture(page, 'deploy-history-empty-light');
   });
 });
+
+test('Project Secrets shows approval for a custom-id Production environment and keeps values write-only', async ({ page }) => {
+  const environments = deployEnvironmentsFixture();
+  environments.environments[1].declaration.id = 'live-eu';
+  await openDeploy(page, fullMocks({ environments }));
+  await page.route('**/api/secrets', route => route.fulfill({ json: {
+    store: 'builtin', keySource: 'key-file', canWriteWorkspace: true, secrets: [], unreadable: [],
+  } }));
+  await page.route(/\/api\/projects\/[^/]+\/secret-bindings\/[^/]+$/, async route => {
+    const url = new URL(route.request().url());
+    const environment = url.pathname.split('/')[5];
+    const reference = `secret://${PROJECT}/live-eu/DATABASE_URL`;
+    await route.fulfill({ json: {
+      project: PROJECT, environment, ready: environment !== 'live-eu', bindings: [],
+      missing: environment === 'live-eu'
+        ? [{ name: 'DATABASE_URL', reference, scope: `${PROJECT}/live-eu`, reason: 'not-bound' }] : [],
+    } });
+  });
+  await page.getByTestId('deploy-tab-secrets').click();
+  const secrets = page.getByTestId('project-secrets-page');
+  await expect(secrets).toBeVisible();
+  await secrets.getByTestId('project-secrets-environment').selectOption('live-eu');
+  await expect(secrets.getByTestId('project-secrets-missing')).toContainText('not-bound');
+  await secrets.getByRole('button', { name: 'Bind DATABASE_URL' }).click();
+  await secrets.getByTestId('project-secrets-approve').check();
+  await expect(secrets.getByTestId('project-secrets-reference')).toHaveValue(`secret://${PROJECT}/live-eu/DATABASE_URL`);
+  await expect(secrets.getByTestId('project-secrets-bind')).toBeEnabled();
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await capture(page, `deploy-secrets-${theme}`);
+  }
+});

@@ -85,8 +85,10 @@ deploy declarations, audit entries and logs carry references, never values.
 | Project | `secret://<project>/<name>` | `secret://memowikis/STRIPE_KEY` |
 | Project environment | `secret://<project>/<environment>/<name>` | `secret://memowikis/prod/DATABASE_URL@3` |
 
-`workspace` is reserved and cannot be a project name. Names start with a
-letter and use letters, digits, `.`, `_` or `-`, up to 64 characters.
+`workspace` is reserved and cannot be a project name. Secret names start with a
+letter and use letters, digits, `.`, `_` or `-`, up to 64 characters. Project
+names also allow internal spaces so existing watched projects can use their
+display names as scope keys.
 Deeper scopes inherit and may override. A reference to
 `secret://memowikis/stage/MAIL_KEY` resolves the environment secret, then the
 project secret, then the workspace secret. The first secret that exists
@@ -190,6 +192,78 @@ session never receives a value, in any profile. The response carries
 value. A missing Runner credential returns `401`; a denied or mismatched
 workload lease returns `403` and is audited. An unavailable selected backend
 returns `503` for that resolution without falling back to a parent scope.
+
+## Project environment bindings and delivery (AGT-3246)
+
+The project Deploy area's Secrets view offers Preview plus every declared
+environment. It reuses the provider's write-only add and rotate controls and
+stores only name-to-reference bindings as control metadata. An environment
+declaration's `secretRefs` names must each be bound before its job starts.
+Names are converted to uppercase container variables, with `.` and `-`
+replaced by `_`. Declarations that produce the same variable name are invalid,
+including case-only collisions. The host also rejects older queued jobs with
+colliding names before resolving any value. The resolution audit purpose is
+`deploy:<environment-id>` when it fits the 64-character provider limit;
+longer IDs use `deploy:` followed by a 16-character SHA-256 prefix of the ID.
+An older queued job with a collision reports `secret-reference-collision`.
+The binding may address the environment, its project, or the workspace;
+provider inheritance still chooses the closest existing secret. Preview
+bindings may be prepared before a deploy declaration exists.
+
+`GET /api/projects/{project}/secret-bindings/{environment}` returns bindings
+and a metadata-only preflight. Each missing entry names the reference, scope,
+and reason (`not-bound`, `not-found`, `revoked`, `unreadable`, or
+`approval-required`).
+`PUT /api/projects/{project}/secret-bindings/{environment}/{name}` accepts
+`{ "reference": "secret://...", "approve": true|false }`. Only the current
+Owner or Operator secret-management check may write. A Production binding
+also needs an interactive Owner or project production approver with
+`approve: true`; the binding records that approval. This is the single
+permission seam for AGT-3228 to replace with scope roles.
+The Secrets view uses the environment declaration's `kind` to show the
+Production approval control, even when its ID is not `production` or `prod`.
+
+Bindings are persisted under
+`<TaskRepository>/.security/secret-bindings/<key>.json`, separate from the
+provider's sealed values. `<key>` is the lowercase hexadecimal SHA-256 of
+the project ID, one LF byte, and the environment ID encoded as UTF-8, using
+the IDs passed to the binding service. Each file is a JSON array of
+`{ name, reference, boundBy, boundAt, approvedBy }` records. A rebind replaces
+the record with the same name. The service writes a temporary file in the
+same directory, sets mode 600 on Unix, and atomically replaces the file.
+Missing files mean no bindings. Back up this metadata with `TaskRepository`;
+restoring it alone does not restore the secret values or their key. No value,
+lease token, or resolved version is stored in a binding.
+
+The claim response gives the host only references and preflight problems.
+Health-only retries of an already deployed container skip secret preflight and
+resolution because they run the health check without starting a new container.
+Card preview jobs keep their isolated test-data secret handling in the preview
+run zone and skip project environment binding preflight.
+The host fails a job with missing references before touching its artifact.
+The queue stores the declaration's secret names and environment kind with each
+job. Claim preflight and workload issuance use that snapshot even if the live
+declaration later changes. For older queue records without a kind, promotion
+history supplies stage or production when available; otherwise the job uses
+the production approval rule. A storage or provider error after a claim returns
+the claimed job with `preflight-unavailable` missing references, so the host
+can report a failed deployment without receiving any secret value.
+For a container job it resolves each bound reference over the authenticated
+workload route using the claimed job's lease on the run host. It writes the
+container environment file under Linux `/dev/shm` in a private directory,
+passes that file to Docker, and removes it in `finally`. Values never enter
+the job record, release, image, control-plane deploy log or host error text.
+The existing production deployment approval remains required before the
+Production job is queued. Rotation takes effect on the next deploy.
+
+`agent-host deploy-poll` takes `<server-url> <host-id> <token-file>
+<artifact-store>`. The artifact store remains the fourth argument for static
+deployments. For compatibility, the command also accepts a fifth positional
+argument formerly used as a local secret-store path, but ignores it. Container
+deployments obtain values from `POST /api/runner/secrets/resolve` on the run
+host using the claimed job's lease; a local secret directory is no longer a
+source of deploy values. A claim with missing references reports
+`secret-reference-missing` without resolving values or starting the deploy.
 
 ## Built-in store
 
@@ -360,7 +434,7 @@ and operators can add, rotate and revoke there. Viewers see metadata only.
 
 ## Not in this card
 
-- Delivery of values into deploy steps (IP-7).
+- External store adapters (IP-9).
 - Migrating the Task Server credential registry metadata into this store.
   That registry records custody of host credentials, not values.
 - An OS key store (DPAPI, Keychain, Secret Service) as a KEK source. It can be
