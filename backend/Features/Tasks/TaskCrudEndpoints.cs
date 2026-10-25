@@ -463,6 +463,8 @@ public static class TaskCrudEndpoints
                 }
                 return Results.NotFound();
             }
+            if (!ProjectAccessAuthorization.AllowsTasks(context, [facts.Info.ProjectName], IamPermissions.ProjectRead, projects))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             context.Response.Headers["X-Task-Detail-Freshness"] = facts.Stale ? "stale" : "ready";
             var detail = scanner.GetJobDetailFromInfo(facts.Info);
             // Detail and the Git resource consume the same completed repository

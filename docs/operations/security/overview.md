@@ -313,6 +313,13 @@ through its groups. Code: `backend/Features/Security/Iam/`.
   environment and as Viewer elsewhere. A user who is Product in one project
   and Developer in another project, or Developer of one of its environments,
   therefore meets the Product lane rules in the first.
+- A scoped task request checks every card that its id, key, or legacy 128-byte
+  id prefix can name, including a card selected by `watchPath`. The detail
+  handler checks the resolved card's project again. Create refuses an id that
+  shadows a foreign task or uses another project's short-code key pattern;
+  generated keys skip occupied identities. These checks use resident task
+  facts and create reservations without waiting for a workspace scan on a
+  warm request.
 - Operator authority belongs to Admin and Owner. An `operatorOverride`
   completion needs Admin or Owner on the card's project (else 403
   `operator-authority-required`), and a decision card for `role:operator`

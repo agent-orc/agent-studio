@@ -58,8 +58,8 @@ public sealed class IamHandlerAccessTests : IDisposable
         ThreadPool.GetMaxThreads(out var maximumWorkers, out var maximumIo);
         try
         {
-            Assert.True(ThreadPool.SetMinThreads(4, minimumIo));
-            Assert.True(ThreadPool.SetMaxThreads(16, maximumIo));
+            ThreadPool.SetMinThreads(4, minimumIo);
+            ThreadPool.SetMaxThreads(Math.Min(16, maximumWorkers), maximumIo);
             var requests = Enumerable.Range(0, 12).SelectMany(_ => new[]
             {
                 (Client: owner, Path: "/api/tasks/alpha-card", Expected: HttpStatusCode.OK),
@@ -107,6 +107,88 @@ public sealed class IamHandlerAccessTests : IDisposable
         using var create = await alpha.PostAsJsonAsync("/api/tasks",
             new { id = "beta-card", title = "another shadow", watchPath = ProjectPath("alpha") });
         Assert.Equal(HttpStatusCode.Conflict, create.StatusCode);
+    }
+
+    [Fact]
+    public async Task Legacy_prefix_alias_cannot_select_a_foreign_card_with_watch_path()
+    {
+        var prefix = new string('x', 128);
+        var longId = prefix + "-beta";
+        var foreign = Path.Combine(ProjectPath("beta"), TaskStates.Backlog, longId);
+        Directory.CreateDirectory(foreign);
+        File.WriteAllText(Path.Combine(foreign, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = longId, title = "Foreign long card", state = TaskStates.Backlog, kind = "task", order = 2,
+        }));
+        var local = Path.Combine(ProjectPath("alpha"), TaskStates.Backlog, prefix);
+        Directory.CreateDirectory(local);
+        File.WriteAllText(Path.Combine(local, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = prefix, title = "Local prefix card", state = TaskStates.Backlog, kind = "task", order = 2,
+        }));
+        using var factory = BuildFactory();
+        using var alpha = Client(factory, Invite(factory, "prefix.alpha",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha"))));
+        var url = "/api/tasks/" + prefix + "?watchPath=" + Uri.EscapeDataString(ProjectPath("beta"));
+        using var read = await alpha.GetAsync(url);
+        Assert.Equal(HttpStatusCode.Forbidden, read.StatusCode);
+        using var create = await alpha.PostAsJsonAsync("/api/tasks",
+            new { id = prefix, title = "Alias shadow", watchPath = ProjectPath("alpha") });
+        Assert.Equal(HttpStatusCode.Conflict, create.StatusCode);
+    }
+
+    [Fact]
+    public async Task Foreign_short_code_id_is_rejected_and_minted_key_skips_legacy_collision()
+    {
+        using var factory = BuildFactory();
+        var projects = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>();
+        var alphaProject = projects.List().Single(project => project.DisplayName == "alpha");
+        var betaProject = projects.List().Single(project => project.DisplayName == "beta");
+        var squatted = alphaProject.ShortCode + "-" + alphaProject.NextTaskKeySeq;
+        var folder = Path.Combine(ProjectPath("beta"), TaskStates.Backlog, squatted);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = squatted, title = "Legacy collision", state = TaskStates.Backlog, kind = "task", order = 2,
+        }));
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        index.Invalidate(TaskIndexCache.InvalidationSource.External);
+        index.GetSnapshot();
+        using var owner = Client(factory, Login(factory, "first.owner"));
+        using var rejected = await owner.PostAsJsonAsync("/api/tasks",
+            new { id = betaProject.ShortCode + "-200", title = "Foreign key", watchPath = ProjectPath("alpha") });
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        using var created = await owner.PostAsJsonAsync("/api/tasks",
+            new { title = "Normal alpha card", watchPath = ProjectPath("alpha") });
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        var minted = factory.Services.GetRequiredService<TaskScannerService>().ScanAllJobsWithArchive()
+            .Single(task => task.Title == "Normal alpha card");
+        Assert.Equal(alphaProject.ShortCode + "-" + (alphaProject.NextTaskKeySeq + 1), minted.Key);
+    }
+
+    [Fact]
+    public void Lane_move_skips_a_suffix_that_is_another_projects_identity()
+    {
+        foreach (var (project, state, id) in new[]
+        {
+            ("alpha", TaskStates.Completed, "duplicate"),
+            ("alpha", TaskStates.Archive, "duplicate"),
+            ("beta", TaskStates.Backlog, "duplicate-2"),
+        })
+        {
+            var folder = Path.Combine(ProjectPath(project), state, id);
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+            {
+                id, title = id, state, kind = "task", order = 2,
+            }));
+        }
+        using var factory = BuildFactory();
+        factory.Services.GetRequiredService<TaskIndexCache>().GetSnapshot();
+        var outcome = factory.Services.GetRequiredService<TaskStateMachine>()
+            .MoveJob("duplicate", TaskStates.Archive, ProjectPath("alpha"));
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        Assert.EndsWith("duplicate-3", outcome.NewFolderPath);
     }
 
     [Fact]

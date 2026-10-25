@@ -127,6 +127,12 @@ public class TaskScannerService : ITaskScanner
     /// </summary>
     public void SetIndexCache(TaskIndexCache cache) => _indexCache = cache;
 
+    /// <summary>Resident identity facts for create admission; only a cold index waits for its first publication.</summary>
+    public IReadOnlyList<TaskInfo> GetResidentIdentityFacts()
+        => _indexCache is null || _indexCache.Generation == 0
+            ? ScanAllJobsWithArchive()
+            : _indexCache.GetAllResidentTasks();
+
     private AgentStudio.Runner.MonolithOrchestrationStore? _orchestration;
 
     public void SetOrchestrationStore(AgentStudio.Runner.MonolithOrchestrationStore store)
@@ -241,40 +247,6 @@ public class TaskScannerService : ITaskScanner
     public TaskInfo? FindPublishedJob(string jobId, string? watchPath = null)
         => _indexCache is null ? FindJob(jobId, watchPath)
             : _indexCache.GetDetailFacts(jobId, watchPath).Info;
-
-    /// <summary>
-    /// Resolves an authorization target from one published index generation.
-    /// The identity table is built once per generation, never by walking task
-    /// folders or waiting for a refresh on an HTTP request thread.
-    /// </summary>
-    public static TaskInfo? FindInPublication(TaskIndexPublication publication, string jobId, string? watchPath = null)
-    {
-        var byIdentity = publication.GetOrAddDerived("authorization-task-identities", 1, snapshot =>
-        {
-            var lookup = new Dictionary<string, List<TaskInfo>>(StringComparer.OrdinalIgnoreCase);
-            foreach (var task in snapshot.Live.Concat(snapshot.Archive))
-            {
-                foreach (var identity in new[] { task.Id, task.TaskKey, task.Key }
-                             .Where(value => !string.IsNullOrWhiteSpace(value))
-                             .Distinct(StringComparer.OrdinalIgnoreCase))
-                {
-                    if (!lookup.TryGetValue(identity!, out var matches))
-                        lookup[identity!] = matches = [];
-                    matches.Add(task);
-                }
-            }
-            return lookup;
-        });
-        if (!byIdentity.TryGetValue(jobId, out var candidates)) return null;
-        var matches = string.IsNullOrWhiteSpace(watchPath)
-            ? candidates
-            : candidates.Where(task => WatchPathComparison.PathsEqual(task.WatchPath, watchPath)).ToList();
-        // FindJob prefers the earliest live state for duplicate ids, then the
-        // first archived match. Preserve that ordering for authorization.
-        return matches.Where(task => task.State != TaskStates.Archive)
-                   .OrderBy(task => Array.IndexOf(TaskStates.All, task.State)).FirstOrDefault()
-               ?? matches.FirstOrDefault();
-    }
 
     public void PublishCoreFromKnownFolder(string folder)
     {

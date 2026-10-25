@@ -144,12 +144,40 @@ public sealed class TaskCoreCacheTests : IDisposable
         Assert.True(await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5))));
         try
         {
-            var matches = cache.GetMatchingCoreFacts("shared-id");
-            Assert.Equal(new[] { "alpha", "beta" },
-                matches.Select(task => task.ProjectName).OrderBy(project => project));
+            var trace = TaskSwitchTrace.Begin(null, null);
+            try
+            {
+                var matches = cache.GetMatchingCoreFacts("shared-id");
+                Assert.Equal(new[] { "alpha", "beta" },
+                    matches.Select(task => task.ProjectName).OrderBy(project => project));
+                Assert.NotNull(cache.GetDetailFacts("shared-id", alpha.WatchPath).Info);
+                Assert.Equal(0, trace.WorkspaceScans);
+            }
+            finally { trace.Restore(); }
         }
         finally { release.Set(); }
         await cache.RefreshInFlight!.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public void Legacy_prefix_alias_is_in_the_same_identity_table_as_detail()
+    {
+        var prefix = new string('x', 128);
+        var local = MakeTask(prefix, TaskStates.Backlog) with { ProjectName = "alpha" };
+        var foreign = MakeTask(prefix + "-beta", TaskStates.Ready) with
+        {
+            ProjectName = "beta",
+            FolderPath = Path.Combine(_root, "beta", TaskStates.Ready, prefix + "-beta"),
+            WatchPath = Path.Combine(_root, "beta"),
+        };
+        Directory.CreateDirectory(foreign.FolderPath);
+        File.WriteAllText(Path.Combine(foreign.FolderPath, "task.json"), "{}");
+        var cache = Cache(() => [local, foreign]);
+        cache.GetSnapshot();
+
+        Assert.Equal(new[] { "alpha", "beta" }, cache.GetMatchingCoreFacts(prefix)
+            .Select(task => task.ProjectName).OrderBy(project => project));
+        Assert.Equal("beta", cache.GetDetailFacts(prefix, foreign.WatchPath).Info?.ProjectName);
     }
 
     [Fact]

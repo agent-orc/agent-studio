@@ -210,6 +210,12 @@ public sealed class TaskCoreEndpointTests : IDisposable
         var source = registry.FindByStorageLocation(Jobs)!;
         var target = registry.EnsureProjectForStorage(destination,
             "Destination Project", DefaultWorkspace.Id);
+        var occupiedKey = target.ShortCode + "-1";
+        var occupied = Path.Combine(destination, TaskStates.Ready, occupiedKey);
+        Directory.CreateDirectory(occupied);
+        File.WriteAllText(Path.Combine(occupied, "task.json"),
+            JsonSerializer.Serialize(new { id = occupiedKey, title = "Legacy key collision",
+                state = TaskStates.Ready, order = 1 }));
         await WarmIndexAsync(factory, "AGT-transfer");
 
         using (var move = await client.PostAsJsonAsync(
@@ -228,6 +234,8 @@ public sealed class TaskCoreEndpointTests : IDisposable
             using var body = JsonDocument.Parse(await moved.Content.ReadAsStringAsync());
             Assert.Equal(destination, body.RootElement.GetProperty("info")
                 .GetProperty("watchPath").GetString());
+            Assert.Equal(target.ShortCode + "-2", body.RootElement.GetProperty("info")
+                .GetProperty("key").GetString());
         }
     }
 
