@@ -697,6 +697,10 @@ public sealed class IamHandlerAccessTests : IDisposable
             using var foreign = await client.PostAsync("/api/projects/beta/deploy/deployments/missing/approve", null);
             Assert.Equal(scope.Kind == IamScopeKind.Workspace ? HttpStatusCode.NotFound : HttpStatusCode.Forbidden,
                 foreign.StatusCode);
+            using var runbookApproval = await client.PostAsync("/api/projects/alpha/deploy/runbooks/runs/missing/approve", null);
+            Assert.NotEqual(HttpStatusCode.Forbidden, runbookApproval.StatusCode);
+            using var runbookRejection = await client.PostAsync("/api/projects/alpha/deploy/runbooks/runs/missing/reject", null);
+            Assert.NotEqual(HttpStatusCode.Forbidden, runbookRejection.StatusCode);
         }
         var account = store.CreateServiceAccount(new CreateServiceAccountRequest("approval-bot", null,
             [new IamGrantRequest(IamRoles.Admin, IamScope.ForProject("alpha"))]), ownerId);
@@ -707,6 +711,8 @@ public sealed class IamHandlerAccessTests : IDisposable
         using var refusedPromotion = await service.PostAsJsonAsync("/api/projects/alpha/environments/promotions/approve",
             new { artifact = "missing" });
         Assert.Equal(HttpStatusCode.Forbidden, refusedPromotion.StatusCode);
+        using var refusedRunbookApproval = await service.PostAsync("/api/projects/alpha/deploy/runbooks/runs/missing/approve", null);
+        Assert.Equal(HttpStatusCode.Forbidden, refusedRunbookApproval.StatusCode);
     }
 
     [Fact]
@@ -722,6 +728,10 @@ public sealed class IamHandlerAccessTests : IDisposable
         Assert.NotEqual(HttpStatusCode.Forbidden, alphaRead.StatusCode);
         using var betaRead = await viewer.GetAsync("/api/projects/beta/deploy/status");
         Assert.Equal(HttpStatusCode.Forbidden, betaRead.StatusCode);
+        using var runbookRead = await viewer.GetAsync("/api/projects/alpha/deploy/runbooks");
+        Assert.NotEqual(HttpStatusCode.Forbidden, runbookRead.StatusCode);
+        using var foreignRunbookRead = await viewer.GetAsync("/api/projects/beta/deploy/runbooks");
+        Assert.Equal(HttpStatusCode.Forbidden, foreignRunbookRead.StatusCode);
         foreach (var collection in new[] { "releases", "deployments" })
         {
             using var alphaPage = await viewer.GetAsync($"/api/projects/alpha/deploy/{collection}/page");
@@ -737,6 +747,8 @@ public sealed class IamHandlerAccessTests : IDisposable
         Assert.NotEqual(HttpStatusCode.Forbidden, admitted.StatusCode);
         using var deniedApproval = await developer.PostAsync("/api/projects/alpha/deploy/deployments/missing/approve", null);
         Assert.Equal(HttpStatusCode.Forbidden, deniedApproval.StatusCode);
+        using var deniedRunbookApproval = await developer.PostAsync("/api/projects/alpha/deploy/runbooks/runs/missing/approve", null);
+        Assert.Equal(HttpStatusCode.Forbidden, deniedRunbookApproval.StatusCode);
     }
 
     [Fact]
@@ -765,6 +777,15 @@ public sealed class IamHandlerAccessTests : IDisposable
         using var foreign = await client.PostAsJsonAsync("/api/projects/beta/deploy/releases/missing/deployments",
             new DeploymentRequest("staging-id"));
         Assert.Equal(HttpStatusCode.Forbidden, foreign.StatusCode);
+        using var stageRunbook = await client.PostAsync(
+            "/api/projects/alpha/deploy/environments/staging-id/runbooks/missing/runs", null);
+        Assert.NotEqual(HttpStatusCode.Forbidden, stageRunbook.StatusCode);
+        using var otherRunbook = await client.PostAsync(
+            "/api/projects/alpha/deploy/environments/preview-id/runbooks/missing/runs", null);
+        Assert.Equal(HttpStatusCode.Forbidden, otherRunbook.StatusCode);
+        using var foreignRunbook = await client.PostAsync(
+            "/api/projects/beta/deploy/environments/staging-id/runbooks/missing/runs", null);
+        Assert.Equal(HttpStatusCode.Forbidden, foreignRunbook.StatusCode);
     }
 
     [Fact]
