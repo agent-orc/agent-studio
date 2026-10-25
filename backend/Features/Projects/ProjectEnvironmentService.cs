@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Security.Cryptography;
+using AgentStudio.Secrets;
 using AgentStudio.Deploy;
 using AgentStudio.TaskServer.Contracts;
 
@@ -44,7 +45,10 @@ public sealed record DeployJob(string Id, string Project, string EnvironmentId, 
     string? ReleaseId = null, string? RollbackOfJobId = null,
     bool ReservedSlot = false, bool IsStop = false, bool GuidedFailure = false,
     bool GuidedResolved = false, string? RetryStep = null, string? RetryOfJobId = null,
-    DateTime? FirstClaimedAt = null, RunTargetHosting? Hosting = null)
+    DateTime? FirstClaimedAt = null, RunTargetHosting? Hosting = null,
+    IReadOnlyDictionary<string, string>? SecretBindings = null,
+    IReadOnlyList<MissingSecretReference>? MissingSecretRefs = null,
+    string? EnvironmentKind = null)
 {
     public string? RunbookName { get; init; }
     public string? RunbookRunId { get; init; }
@@ -296,6 +300,10 @@ public sealed partial class ProjectEnvironmentService
             var phase = definition.StandardLifecycle.First(item => item.Phase == environment.Name);
             var variables = definition.Variables.Where(item => item.Environments.Count == 0
                 || item.Environments.Contains(environment.Name, StringComparer.Ordinal)).ToArray();
+            var secretNames = variables.Where(item => item.Secret is not null)
+                .Select(item => item.Secret!).ToArray();
+            if (SecretEnvironmentVariable.HasCollision(secretNames))
+                throw new JsonException($"Schema 2 {environment.Name} has secret refs that map to the same container variable.");
             var id = environment.Name == "staging" ? "stage" : environment.Name;
             var declaration = new EnvironmentDeclaration(id, environment.Name, id, first.Target!,
                 first.HealthUrl ?? "", "ssh-v2",
@@ -324,6 +332,8 @@ public sealed partial class ProjectEnvironmentService
             var secrets = variables.Where(item => item.Secret is not null && item.Tenants.Count == 0
                 && item.TenantTags.Count == 0 && item.Channels.Count == 0)
                 .Select(item => item.Secret!).Order(StringComparer.Ordinal).ToArray();
+            if (SecretEnvironmentVariable.HasCollision(secrets))
+                throw new JsonException($"Schema 2 {name} has secret refs that map to the same container variable.");
             var first = steps.FirstOrDefault();
             if (environment is null || phase is null || first is null || steps.Any(item => item.Target != legacy.TargetHostId)
                 || first.Target != legacy.TargetHostId || legacy.Template != (first.Step == "static-site" ? "static" : "container")
@@ -476,6 +486,8 @@ public sealed partial class ProjectEnvironmentService
         if (!Identifier.IsMatch(id) || !Identifier.IsMatch(host) || kind is not ("stage" or "production" or "preview" or "other")
             || template is not ("container" or "static") || secrets.Any(item => !SecretIdentifier.IsMatch(item)))
             throw new JsonException($"Environment {Path.GetFileName(file)} has invalid identifiers, kind, template or secret refs.");
+        if (SecretEnvironmentVariable.HasCollision(secrets))
+            throw new JsonException($"Environment {Path.GetFileName(file)} has secret refs that map to the same container variable.");
         var destination = Required("destination");
         if (template == "static" && (!Path.IsPathFullyQualified(destination) || destination.Contains("..", StringComparison.Ordinal)))
             throw new JsonException("Static destination must be an absolute path without traversal.");
@@ -767,7 +779,8 @@ public sealed partial class ProjectEnvironmentService
             || string.IsNullOrWhiteSpace(spec.SourceRef) || !Identifier.IsMatch(spec.HostId)
             || !Identifier.IsMatch(spec.CardKey.ToLowerInvariant())
             || spec.Template is not ("static" or "container")
-            || spec.SecretRefs.Any(secret => !SecretIdentifier.IsMatch(secret)))
+            || spec.SecretRefs.Any(secret => !SecretIdentifier.IsMatch(secret))
+            || SecretEnvironmentVariable.HasCollision(spec.SecretRefs))
             throw new ArgumentException("Invalid preview job specification.", nameof(spec));
         lock (_gate)
         {
@@ -777,7 +790,7 @@ public sealed partial class ProjectEnvironmentService
                 "preview-" + spec.CardKey.ToLowerInvariant(), spec.HostId,
                 "source:" + spec.SourceCommit, spec.Template, spec.Destination, spec.Address,
                 spec.SecretRefs, spec.ContainerPort, null, "queued", _clock.GetUtcNow().UtcDateTime,
-                RequestedBy: "card-preview")
+                RequestedBy: "card-preview", EnvironmentKind: "preview")
             {
                 Kind = "preview", CardKey = spec.CardKey, SourceCommit = spec.SourceCommit,
                 SourceRepository = spec.SourceRepository, SourceRef = spec.SourceRef,
@@ -801,7 +814,7 @@ public sealed partial class ProjectEnvironmentService
                 "preview-" + spec.CardKey.ToLowerInvariant(), spec.HostId,
                 "source:" + spec.SourceCommit, spec.Template, spec.Destination, null,
                 [], spec.ContainerPort, null, "queued", _clock.GetUtcNow().UtcDateTime,
-                RequestedBy: "card-preview-cleanup")
+                RequestedBy: "card-preview-cleanup", EnvironmentKind: "preview")
             {
                 Kind = "preview-remove", CardKey = spec.CardKey,
                 SourceCommit = spec.SourceCommit, Address = spec.Address,
@@ -1080,6 +1093,7 @@ public sealed partial class ProjectEnvironmentService
                     {
                         Status = "claimed", ClaimedAt = now, LeaseToken = Guid.NewGuid().ToString("N"),
                         Claims = job.Claims + 1, ReservedSlot = job.ReservedSlot || reserved,
+                        EnvironmentKind = SnapshotKind(verified, state),
                     };
                     state.Jobs[state.Jobs.IndexOf(job)] = claimed;
                     Save(project, state);
@@ -1185,7 +1199,8 @@ public sealed partial class ProjectEnvironmentService
                 return (null, false);
             var verification = job.IsStop || job.RunbookName is not null ? new ReleaseVerification(job)
                 : VerifyRelease(project, job, state, requireVerifiedRelease);
-            var verified = verification.Job;
+            var verified = verification.Job is { } valid
+                ? valid with { EnvironmentKind = SnapshotKind(valid, state) } : null;
             if (verified is null) return (null, verification.Retryable);
             if (verified != job)
             {
@@ -1515,6 +1530,7 @@ public sealed partial class ProjectEnvironmentService
                 Template = deployed.Template, Destination = deployed.Destination,
                 HealthUrl = deployed.HealthUrl, SecretRefs = deployed.SecretRefs, ContainerPort = deployed.ContainerPort,
                 Data = deployed.Data,
+                Kind = SnapshotKind(deployed, state),
                 Hosting = deployed.Hosting ?? current.Hosting,
                 SshSteps = deployed.SshSteps, Variables = deployed.Variables, Artifacts = deployed.Artifacts,
             }
@@ -1595,6 +1611,17 @@ public sealed partial class ProjectEnvironmentService
     private static bool IsDeclared(IReadOnlyList<EnvironmentDeclaration>? declarations, string environmentId)
         => declarations?.Any(item => item.Id == environmentId) == true;
 
+    // Queue files written before EnvironmentKind existed recover it from the
+    // promotion. When there is no reliable snapshot, require production approval.
+    private static string SnapshotKind(DeployJob job, State state)
+    {
+        if (job.EnvironmentKind is not null) return job.EnvironmentKind;
+        if (job.Kind is "preview" or "preview-remove") return "preview";
+        var promotion = state.Promotions.LastOrDefault(item => item.Artifact == job.Artifact);
+        return promotion?.ProductionId == job.EnvironmentId ? "production"
+            : promotion?.StageId == job.EnvironmentId ? "stage" : "production";
+    }
+
     private DeployJob Queue(string project, EnvironmentDeclaration declaration, string artifact, State state,
         bool rollback = false, string? actor = null, string? tenant = null, string? releaseId = null,
         string? rollbackOfJobId = null, string? retryStep = null, string? retryOfJobId = null)
@@ -1613,7 +1640,7 @@ public sealed partial class ProjectEnvironmentService
             _clock.GetUtcNow().UtcDateTime,
             IsRollback: rollback, RequestedBy: actor, ReleaseId: releaseId, RollbackOfJobId: rollbackOfJobId,
             GuidedFailure: declaration.GuidedFailure, RetryStep: retryStep, RetryOfJobId: retryOfJobId,
-            Hosting: declaration.Hosting)
+            Hosting: declaration.Hosting, EnvironmentKind: declaration.Kind)
         { Tenant = tenant, Data = declaration.Data, SshSteps = declaration.SshSteps,
             Variables = declaration.Variables, Artifacts = declaration.Artifacts };
         state.Jobs.Add(job);

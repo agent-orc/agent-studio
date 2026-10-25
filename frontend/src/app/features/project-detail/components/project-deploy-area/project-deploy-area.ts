@@ -12,6 +12,7 @@ import { ProjectEnvironmentOverviewComponent } from '../project-environment-over
 import { ProjectOperationsComponent } from '../project-operations/project-operations';
 import { OperationsCardLookupService } from '../../state/operations-card-lookup.service';
 import { HostedDataPanelComponent } from '../hosted-data-panel/hosted-data-panel';
+import { ProjectSecretsPageComponent } from '../../../secrets/project-secrets-page/project-secrets-page.component';
 import type { EnvironmentHealthResponse } from '../../../environment-health/models/environment-health.model';
 import type { PipelineDefinitionResponse } from '../../services/project-pipeline-definition.service';
 import { ProjectDeployDataService, serverMessage, type DeployPage } from '../../services/project-deploy-data.service';
@@ -34,7 +35,7 @@ import {
   type ArtifactReleaseLookup,
 } from '../../state/deploy-area.model';
 
-export type DeployView = 'overview' | 'releases' | 'pipeline' | 'history' | 'steps' | 'runbooks' | 'operations' | 'tools';
+export type DeployView = 'overview' | 'releases' | 'pipeline' | 'history' | 'steps' | 'runbooks' | 'operations' | 'secrets' | 'tools';
 
 const IDLE: DeployRunActionState = { busy: null, error: null };
 
@@ -45,7 +46,7 @@ const IDLE: DeployRunActionState = { busy: null, error: null };
     ProjectDeployOverviewComponent, ProjectDeployReleasesComponent, ProjectDeployPipelineComponent,
     ProjectDeployHistoryComponent, DeployRunDrawerComponent, ProjectDeploymentPanelComponent,
     ProjectPipelinePanelComponent, EnvironmentHealthPanelComponent, ProjectEnvironmentOverviewComponent,
-    ProjectOperationsComponent, HostedDataPanelComponent,
+    ProjectOperationsComponent, HostedDataPanelComponent, ProjectSecretsPageComponent,
   ],
   templateUrl: './project-deploy-area.html',
   styleUrl: './project-deploy-area.scss',

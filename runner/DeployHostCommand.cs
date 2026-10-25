@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.Secrets;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
@@ -21,7 +22,8 @@ public static class DeployHostCommand
         string? RunbookName = null, string[]? RunbookSteps = null,
         Dictionary<string, string>? RunbookVariables = null,
         Dictionary<string, string>? RunbookSecretVariables = null,
-        bool IsStop = false, string? RetryStep = null)
+        bool IsStop = false, string? RetryStep = null,
+        Dictionary<string, string>? SecretBindings = null, JsonElement[]? MissingSecretRefs = null)
     {
         public string? Tenant { get; init; }
         public IReadOnlyDictionary<string, string> ResolvedVariables { get; init; } = new Dictionary<string, string>();
@@ -41,6 +43,7 @@ public static class DeployHostCommand
     }
     private sealed record Provenance(string Project, string Commit, string Artifact, string Digest,
         string GateRunId, string Template, string BuilderIdentity, string Location, string SourceDigest);
+    private sealed record IssuedSecret(string Value);
 
     public static Task<int> RunAsync(string[] args, CancellationToken cancellationToken, HttpClient? transport,
         Func<string, IReadOnlyList<string>, CancellationToken, Task> runCommand)
@@ -87,11 +90,28 @@ public static class DeployHostCommand
         string? screenshotBase64 = null;
         try
         {
-            if (job.Kind is not ("preview" or "preview-remove") && job.RetryStep is null)
+            if (job.RetryStep is null && job.RunbookName is null)
             {
-                var provenance = await VerifyArtifact(client, job, cancellationToken);
-                if (ArtifactTemplate(job) == "static")
-                    await DownloadArtifact(client, job, provenance, args[3], cancellationToken);
+                if (job.MissingSecretRefs is { Length: > 0 })
+                {
+                    evidence = "secret-reference-missing";
+                    throw new InvalidOperationException("Secret preflight failed.");
+                }
+                if (SecretEnvironmentVariable.HasCollision(job.SecretRefs))
+                {
+                    evidence = "secret-reference-collision";
+                    throw new InvalidOperationException("Secret references map to the same container variable.");
+                }
+                if (job.Kind is not ("preview" or "preview-remove"))
+                {
+                    var provenance = await VerifyArtifact(client, job, cancellationToken);
+                    if (ArtifactTemplate(job) == "static")
+                    {
+                        if (job.SshSteps.Length == 0 && job.SecretRefs.Length > 0)
+                            throw new InvalidOperationException("Static deployment cannot receive secrets.");
+                        await DownloadArtifact(client, job, provenance, args[3], cancellationToken);
+                    }
+                }
             }
             var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
             if (job.RunbookName is not null)
@@ -179,7 +199,7 @@ public static class DeployHostCommand
                 else if (job.RetryStep is null && job.Template == "container")
                 {
                     var variables = await ResolveVariables(job, client, lease.Token);
-                    await DeployContainer(job with { ResolvedVariables = variables }, secretRoot, lease.Token,
+                    await DeployContainer(job with { ResolvedVariables = variables }, client, secretRoot, lease.Token,
                         runCommand is null
                             ? (executable, commandArgs, ct, allowFailure) => Command(executable, commandArgs, ct, allowFailure)
                             : (executable, commandArgs, ct, _) => runCommand(executable, commandArgs, ct));
@@ -368,20 +388,12 @@ public static class DeployHostCommand
         var resolved = new Dictionary<string, string>(job.ResolvedVariables, StringComparer.Ordinal);
         async Task<string> ResolveSecret(string secret)
         {
-            var reference = $"secret://{job.Project}/{job.EnvironmentId}/{secret}";
-            using var response = await client.PostAsJsonAsync("api/runner/secrets/resolve", new
-            {
-                reference, purpose = "deploy", workload = new
-                {
-                    kind = "deploy-job", project = job.Project, jobId = job.Id, leaseToken = job.LeaseToken,
-                },
-            }, ct);
-            response.EnsureSuccessStatusCode();
-            using var body = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken: ct);
-            if (body is null || !body.RootElement.TryGetProperty("value", out var secretValue)
-                || secretValue.ValueKind != JsonValueKind.String || secretValue.GetString() is not { } value)
-                throw new InvalidDataException("Secret provider returned no value.");
-            return value;
+            if (job.SecretBindings is not null && !job.SecretBindings.TryGetValue(secret, out _))
+                throw new InvalidOperationException("Secret binding missing.");
+            var reference = job.SecretBindings is not null
+                ? job.SecretBindings[secret] : $"secret://{job.Project}/{job.EnvironmentId}/{secret}";
+            return await DeployHostCommand.ResolveSecret(client, job.Project, job.EnvironmentId,
+                job.Id, job.LeaseToken, reference, ct);
         }
         foreach (var variable in job.Variables)
         {
@@ -389,7 +401,7 @@ public static class DeployHostCommand
             if (variable.Secret is null) throw new InvalidDataException("Deploy variable has no source.");
             resolved.Add(variable.Name, await ResolveSecret(variable.Secret));
         }
-        if (job.SshSteps.Length > 0)
+        if (job.SshSteps.Length > 0 || job.SecretBindings is not null)
             foreach (var mapping in job.SecretVariableRefs)
                 resolved.Add(mapping.Key, await ResolveSecret(mapping.Value));
         return resolved;
@@ -464,13 +476,20 @@ public static class DeployHostCommand
         File.Move(temporary, link, true);
     }
 
-    private static async Task DeployContainer(Job job, string secretRoot, CancellationToken ct,
+    private static async Task DeployContainer(Job job, HttpClient client, string secretRoot, CancellationToken ct,
         Func<string, IReadOnlyList<string>, CancellationToken, bool, Task> runCommand)
     {
         if (!int.TryParse(job.Destination, out var port) || port is < 1 or > 65535)
             throw new InvalidOperationException("Invalid proxy port.");
         var name = ContainerName(job);
-        var envFile = Path.Combine(Path.GetTempPath(), "deploy-env-" + Guid.NewGuid().ToString("N"));
+        const string memoryRoot = "/dev/shm";
+        if (!OperatingSystem.IsLinux() || !Directory.Exists(memoryRoot))
+            throw new IOException("In-memory secret storage is unavailable.");
+        var envDirectory = Path.Combine(memoryRoot, "deploy-env-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(envDirectory);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(envDirectory,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var envFile = Path.Combine(envDirectory, "environment");
         try
         {
             var lines = new List<string>();
@@ -484,24 +503,40 @@ public static class DeployHostCommand
                 lines.Add(variableName + "=" + value);
             }
             foreach (var variable in job.ResolvedVariables) AddVariable(variable.Key, variable.Value);
-            async Task<string> ReadSecret(string secret)
+            if (job.SecretBindings is not null)
             {
-                if (secret.Length == 0 || secret.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.'))
-                    || secret is "." or "..")
-                    throw new InvalidOperationException("Invalid secret reference.");
-                return (await File.ReadAllTextAsync(Path.Combine(secretRoot, secret), ct)).TrimEnd('\r', '\n');
+                var mappedSecrets = job.SecretVariableRefs.Values.Concat(job.Variables
+                    .Where(item => item.Secret is not null).Select(item => item.Secret!)).ToHashSet(StringComparer.Ordinal);
+                var unmappedSecrets = job.SecretRefs.Where(secret => !mappedSecrets.Contains(secret)).ToArray();
+                var resolved = await ResolveEnvironmentAsync(client, job.Project, job.EnvironmentId, job.Id,
+                    job.LeaseToken, unmappedSecrets, job.SecretBindings, ct);
+                foreach (var line in resolved)
+                {
+                    var separator = line.IndexOf('=');
+                    AddVariable(line[..separator], line[(separator + 1)..]);
+                }
             }
-            foreach (var mapping in job.SecretVariableRefs)
+            else
             {
-                if (names.Contains(mapping.Key)) continue;
-                AddVariable(mapping.Key, await ReadSecret(mapping.Value));
-            }
-            foreach (var secret in job.SecretRefs)
-            {
-                if (job.SecretVariableRefs.Values.Contains(secret, StringComparer.Ordinal)) continue;
-                var variableName = secret.Replace('-', '_').Replace('.', '_').ToUpperInvariant();
-                if (names.Contains(variableName)) continue;
-                AddVariable(variableName, await ReadSecret(secret));
+                async Task<string> ReadSecret(string secret)
+                {
+                    if (secret.Length == 0 || secret.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.'))
+                        || secret is "." or "..")
+                        throw new InvalidOperationException("Invalid secret reference.");
+                    return (await File.ReadAllTextAsync(Path.Combine(secretRoot, secret), ct)).TrimEnd('\r', '\n');
+                }
+                foreach (var mapping in job.SecretVariableRefs)
+                {
+                    if (names.Contains(mapping.Key)) continue;
+                    AddVariable(mapping.Key, await ReadSecret(mapping.Value));
+                }
+                foreach (var secret in job.SecretRefs)
+                {
+                    if (job.SecretVariableRefs.Values.Contains(secret, StringComparer.Ordinal)) continue;
+                    var variableName = SecretEnvironmentVariable.Name(secret);
+                    if (names.Contains(variableName)) continue;
+                    AddVariable(variableName, await ReadSecret(secret));
+                }
             }
             var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write,
                 Share = FileShare.None };
@@ -519,8 +554,42 @@ public static class DeployHostCommand
         }
         finally
         {
-            if (File.Exists(envFile)) File.Delete(envFile);
+            if (Directory.Exists(envDirectory)) Directory.Delete(envDirectory, true);
         }
+    }
+
+    internal static async Task<IReadOnlyList<string>> ResolveEnvironmentAsync(HttpClient client, string project,
+        string environment, string jobId, string leaseToken, IReadOnlyList<string> names,
+        IReadOnlyDictionary<string, string>? bindings, CancellationToken ct)
+    {
+        var lines = new List<string>();
+        if (SecretEnvironmentVariable.HasCollision(names))
+            throw new InvalidOperationException("Secret references map to the same container variable.");
+        foreach (var name in names)
+        {
+            if (name.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.')))
+                throw new InvalidOperationException("Invalid secret reference.");
+            if (bindings is null || !bindings.TryGetValue(name, out var reference))
+                throw new InvalidOperationException("Secret binding missing.");
+            var value = await ResolveSecret(client, project, environment, jobId, leaseToken, reference, ct);
+            if (value.Contains('\n') || value.Contains('\r')) throw new InvalidOperationException("Secret must be single-line.");
+            lines.Add(SecretEnvironmentVariable.Name(name) + "=" + value);
+        }
+        return lines;
+    }
+
+    private static async Task<string> ResolveSecret(HttpClient client, string project, string environment,
+        string jobId, string leaseToken, string reference, CancellationToken ct)
+    {
+        using var response = await client.PostAsJsonAsync("api/runner/secrets/resolve", new
+        {
+            reference, purpose = "deploy:" + (environment.Length <= 57 ? environment
+                : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(environment)))[..16].ToLowerInvariant()),
+            workload = new { kind = "deploy-job", project, jobId, leaseToken },
+        }, ct);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Secret resolution failed.");
+        var issued = await response.Content.ReadFromJsonAsync<IssuedSecret>(cancellationToken: ct);
+        return issued?.Value ?? throw new InvalidOperationException("Secret resolution returned no value.");
     }
 
     private static async Task Command(string executable, IReadOnlyList<string> args, CancellationToken ct, bool allowFailure = false)

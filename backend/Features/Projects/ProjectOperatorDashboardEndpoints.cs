@@ -1,5 +1,6 @@
 using AgentStudio.Deploy;
 using AgentStudio.Security;
+using AgentStudio.Secrets;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Projects;
@@ -111,20 +112,21 @@ public static class ProjectOperatorDashboardEndpoints
             return Results.Ok(new { suffixes });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
-        app.MapPost("/api/deploy/jobs/claim", (HttpContext context, DeployClaimRequest request,
-            ProjectEnvironmentService environments, DeployService deploy, RunbookService runbooks, IConfiguration configuration) =>
+        app.MapPost("/api/deploy/jobs/claim", async (HttpContext context, DeployClaimRequest request,
+            ProjectEnvironmentService environments, DeployService deploy, RunbookService runbooks,
+            ProjectSecretBindings bindings,
+            IConfiguration configuration, CancellationToken ct) =>
         {
             if (SecurityProfiles.IsNetworked(configuration) &&
                 (context.Items[AccessSecurityMiddleware.RunnerPrincipalItem] is not RunnerPrincipal principal
                  || principal.RunnerId != request.HostId))
                 return Results.Forbid();
             var job = environments.Claim(request.HostId, requireVerifiedRelease: true);
-            if (job is not null)
+            return await CompleteClaimAsync(job, project =>
             {
-                deploy.SyncAfterHostCall(job.Project);
-                runbooks.SyncAfterHostCall(job.Project);
-            }
-            return Results.Ok(job);
+                deploy.SyncAfterHostCall(project);
+                runbooks.SyncAfterHostCall(project);
+            }, bindings, ct);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         app.MapPost("/api/deploy/jobs/{project}/{jobId}/report", (string project, string jobId,
@@ -249,6 +251,38 @@ public static class ProjectOperatorDashboardEndpoints
             var item = evidence.Acknowledge(projectName, itemId);
             return item is null ? Results.NotFound() : Results.Ok(item);
         });
+    }
+
+    internal static async Task<IResult> CompleteClaimAsync(DeployJob? job, Action<string> sync,
+        ProjectSecretBindings bindings, CancellationToken ct)
+    {
+        if (job is null) return Results.Ok(job);
+        try
+        {
+            sync(job.Project);
+            if (job.SecretRefs.Count == 0 || job.RetryStep == "health" || job.RunbookName is not null
+                || job.Kind is "preview" or "preview-remove") return Results.Ok(job);
+            var check = await bindings.CheckAsync(job.Project, job.EnvironmentId, job.SecretRefs,
+                job.EnvironmentKind ?? "production", ct);
+            return Results.Ok(job with
+            {
+                SecretBindings = check.Bindings.ToDictionary(item => item.Name, item => item.Reference, StringComparer.Ordinal),
+                MissingSecretRefs = check.Missing,
+            });
+        }
+        catch (Exception)
+        {
+            // The lease is already claimed. Return a reportable, unusable job
+            // without exposing provider or storage exception text to the host.
+            var names = job.SecretRefs.Count == 0 ? ["deploy-preflight"] : job.SecretRefs;
+            return Results.Ok(job with
+            {
+                SecretBindings = null,
+                MissingSecretRefs = names.Select(name => new MissingSecretReference(name,
+                    "secret://" + job.Project + "/" + job.EnvironmentId + "/" + name,
+                    job.Project + "/" + job.EnvironmentId, "preflight-unavailable")).ToArray(),
+            });
+        }
     }
 
     // Results.Forbid() needs an authentication scheme; Runner credentials are

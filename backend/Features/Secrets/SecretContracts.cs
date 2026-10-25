@@ -3,6 +3,7 @@ namespace AgentStudio.Secrets;
 public sealed record PutSecretRequest(string? Name, string? Value);
 public sealed record RotateSecretRequest(string? Value);
 public sealed record RevokeSecretRequest(int? Version);
+public sealed record BindProjectSecretRequest(string? Reference, bool Approve = false);
 
 /// <summary>Metadata a person may see. There is no value field on any human-facing response.</summary>
 public sealed record SecretMetadataResponse(
