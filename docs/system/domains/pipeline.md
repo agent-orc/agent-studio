@@ -104,6 +104,17 @@ gate started, or a delivery published while it waited, records
 `gate-result-superseded` on the live card and cannot apply its failure step or
 move the card. With guarded delivery on, the acceptance worker leaves a
 completed card in place when an older gate failure arrives.
+The merge gate also checks completion and publication before settling a verdict
+and again inside its publication fence. It captures whether the delivery was
+already published before verification began; that existing publication cannot
+make this attempt's gate result stale, including when the local merge reports a
+fresh outcome for a patch-equivalent delivery. A publication that appears during
+verification supersedes the result.
+An unavailable initial publication fetch leaves the baseline unknown until a
+successful pre-gate check. Only confirmed absence can make later containment
+new publication. A stale verdict restores each advanced local integration ref
+unless origin contains that exact commit; an equivalent tree does not preserve
+an unpublished local merge.
 Local aspect review also checks the captured subject after its asynchronous
 verdict and grade work. A superseded review records `review-result-superseded`
 with the original aspect statuses and leaves the newer round alone.
