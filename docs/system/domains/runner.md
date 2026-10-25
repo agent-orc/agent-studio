@@ -70,6 +70,9 @@ A refused model stays held until the same runner instance advertises it as not
 ready and then advertises a ready verdict with a larger runner-local probe
 sequence. Runner and server clock order never clears the hold. A refused
 fallback does not hold the card once quota admission can use its primary route.
+The claim hold matches the route handed to the runner: a required mechanical
+route, an operator-selected continuation, a provider-refusal sibling, or the
+stored primary. A refused primary does not hide a card using another route.
 
 For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
 denies local coding, `PickupHoldPolicy` projects an unsatisfiable
