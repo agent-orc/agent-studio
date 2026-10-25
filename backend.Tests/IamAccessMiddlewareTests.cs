@@ -56,6 +56,60 @@ public sealed class IamAccessMiddlewareTests : IDisposable
     }
 
     [Fact]
+    public async Task Scoped_task_authorization_does_not_wait_for_a_blocked_index_refresh()
+    {
+        var developer = Invite("refresh.developer",
+            new IamGrantRequest(IamRoles.Developer, IamScope.ForProject("alpha")));
+        var watchPath = Path.Combine(_root, "alpha");
+        var folder = Path.Combine(watchPath, TaskStates.Backlog, "alpha-card");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), "{}");
+        var card = new TaskInfo
+        {
+            Id = "alpha-card", Key = "AL-1", TaskKey = TaskIdentity.CreateKey(watchPath, "alpha-card"),
+            WatchPath = watchPath, FolderPath = folder, ProjectName = "alpha",
+            Title = "Alpha card", State = TaskStates.Backlog,
+            EnteredLaneAt = _clock.GetUtcNow().UtcDateTime,
+        };
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var calls = 0;
+        var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, _config);
+        var scanner = new TaskScannerService(_config, NullLogger<TaskScannerService>.Instance, summary);
+        var index = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, _config, () =>
+        {
+            if (Interlocked.Increment(ref calls) > 1)
+            {
+                entered.Set();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
+            }
+            return [card];
+        }, timeProvider: _clock);
+        scanner.SetIndexCache(index);
+        index.GetSnapshot();
+        index.Invalidate(TaskIndexCache.InvalidationSource.External);
+        index.GetMatchingCoreFacts(card.Id);
+        Assert.True(await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5))));
+        try
+        {
+            var trace = TaskSwitchTrace.Begin(null, null);
+            try
+            {
+                var read = Invoke("GET", "/api/tasks/{jobId}", "/api/tasks/alpha-card",
+                    developer, scanner, index);
+                var write = Invoke("PUT", "/api/tasks/{jobId}/title", "/api/tasks/alpha-card/title",
+                    developer, scanner, index);
+                var outcomes = await Task.WhenAll(read, write).WaitAsync(TimeSpan.FromSeconds(2));
+                Assert.All(outcomes, outcome => Assert.True(outcome.Called));
+                Assert.Equal(0, trace.WorkspaceScans);
+            }
+            finally { trace.Restore(); }
+        }
+        finally { release.Set(); }
+        await index.RefreshInFlight!.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task An_environment_approver_approves_production_and_cannot_release_or_edit()
     {
         var approver = Invite("release.approver",
@@ -424,12 +478,13 @@ public sealed class IamAccessMiddlewareTests : IDisposable
         return new SignedIn(login.User.Id, login.SessionToken, login.CsrfToken);
     }
 
-    private Task<Outcome> Invoke(string method, string pattern, string path, SignedIn user)
+    private Task<Outcome> Invoke(string method, string pattern, string path, SignedIn user,
+        TaskScannerService? scanner = null, TaskIndexCache? index = null)
         => Run(method, pattern, path, context =>
         {
             context.Request.Headers.Cookie = new StringValues($"{AccessSecurityStore.SessionCookieName}={user.SessionToken}");
             context.Request.Headers["X-CSRF-Token"] = new StringValues(user.CsrfToken);
-        });
+        }, scanner: scanner, index: index);
 
     private Task<Outcome> InvokeBearer(string method, string pattern, string path, string token)
         => Run(method, pattern, path, Bearer(token));
@@ -450,11 +505,12 @@ public sealed class IamAccessMiddlewareTests : IDisposable
 
     private async Task<Outcome> Run(
         string method, string pattern, string path, Action<HttpContext> authenticate,
-        IConfiguration? configuration = null, object[]? metadata = null)
+        IConfiguration? configuration = null, object[]? metadata = null,
+        TaskScannerService? scanner = null, TaskIndexCache? index = null)
     {
         var called = false;
         var middleware = new AccessSecurityMiddleware(_ => { called = true; return Task.CompletedTask; },
-            configuration ?? _config, _store, clock: _clock);
+            configuration ?? _config, _store, scanner: scanner, clock: _clock, taskIndex: index);
         var context = new DefaultHttpContext();
         context.Request.Method = method;
         context.Request.Path = path;
