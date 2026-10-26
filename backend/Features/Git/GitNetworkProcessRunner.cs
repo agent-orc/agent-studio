@@ -437,6 +437,7 @@ internal static class HostGitProcessHardening
 {
     internal static void Apply(ProcessStartInfo startInfo)
     {
+        SelectBareRepository(startInfo);
         if (startInfo.Environment.TryGetValue("GIT_CONFIG_COUNT", out var raw)
             && int.TryParse(raw, out var previous)
             && previous >= 3
@@ -469,4 +470,28 @@ internal static class HostGitProcessHardening
         }
         startInfo.Environment["GIT_CONFIG_COUNT"] = count.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
+
+    private static void SelectBareRepository(ProcessStartInfo startInfo)
+    {
+        var args = startInfo.ArgumentList;
+        if (args.Any(arg => arg == "--git-dir" || arg.StartsWith("--git-dir=", StringComparison.Ordinal)))
+            return;
+
+        var directory = string.IsNullOrWhiteSpace(startInfo.WorkingDirectory)
+            ? Environment.CurrentDirectory : Path.GetFullPath(startInfo.WorkingDirectory);
+        for (var index = 0; index + 1 < args.Count; index++)
+        {
+            if (args[index] != "-C") continue;
+            directory = Path.GetFullPath(args[++index], directory);
+        }
+        if (IsBareRepository(directory)) args.Insert(0, "--git-dir=" + directory);
+    }
+
+    internal static bool IsBareRepository(string directory)
+        => Directory.Exists(directory)
+           && File.Exists(Path.Combine(directory, "HEAD"))
+           && Directory.Exists(Path.Combine(directory, "objects"))
+           && Directory.Exists(Path.Combine(directory, "refs"))
+           && !Directory.Exists(Path.Combine(directory, ".git"))
+           && !File.Exists(Path.Combine(directory, ".git"));
 }
