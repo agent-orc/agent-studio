@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.Json;
 using AgentStudio.Pipeline;
 using Microsoft.Extensions.Configuration;
@@ -488,6 +489,68 @@ public sealed class RemoteGateBundleTests
 
 public sealed class RemoteGateBareSourceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Worker_clones_bundle_and_checks_out_exact_subject_under_hardened_git(bool useCache)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "remote-gate-worker-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var source = Path.Combine(root, "source");
+            var runId = Guid.NewGuid().ToString("N");
+            var run = Path.Combine(root, runId);
+            Directory.CreateDirectory(run);
+            Git(root, "init", "-q", source);
+            Git(source, "config", "user.email", "gate@example.invalid");
+            Git(source, "config", "user.name", "Gate Test");
+            File.WriteAllText(Path.Combine(source, "subject.txt"), "exact subject");
+            Git(source, "add", ".");
+            Git(source, "commit", "-qm", "subject");
+            var sha = Git(source, "rev-parse", "HEAD").Trim();
+            Git(source, "branch", "gate-subject");
+            var bundle = Path.Combine(run, "source.bundle");
+            Git(source, "bundle", "create", bundle, "refs/heads/gate-subject");
+
+            string? cache = null;
+            if (useCache)
+            {
+                cache = Path.Combine(root, "cache", new string('a', 64));
+                Directory.CreateDirectory(Path.GetDirectoryName(cache)!);
+                Git(root, "clone", "--bare", "--quiet", source, cache);
+            }
+            var digest = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(bundle)));
+            var request = new BuildTestGateRequest("source.git", sha, "remote-worker")
+            {
+                SubjectRef = "refs/heads/gate-subject",
+                InfrastructureTimeout = TimeSpan.FromSeconds(30),
+                RequiredTestLevel = TestExecutionLevels.BuildOnly,
+            };
+            var invocation = new RemoteGateInvocation(1, runId, digest, request, null,
+                new BuildProfile { BuildCmds = [$"test \"$(git rev-parse HEAD)\" = \"{sha}\""] },
+                PostStepMode.Fail, 60, 120) { CachePath = cache };
+            var requestPath = Path.Combine(run, "request.json");
+            await File.WriteAllTextAsync(requestPath,
+                JsonSerializer.Serialize(invocation, RemoteBuildTestGateRunner.Json));
+
+            Assert.Equal(0, await RemoteGateWorker.RunAsync(requestPath,
+                runnerFactory: logger => new BuildTestGateRunner(
+                    logger, BuildTestMachineGateMode.BypassForHermeticTest,
+                    Path.Combine(root, "preparation-cache"))));
+
+            var response = JsonSerializer.Deserialize<RemoteGateResponse>(
+                await File.ReadAllTextAsync(Path.Combine(run, "response.json")),
+                RemoteBuildTestGateRunner.Json)!;
+            Assert.True(response.Result.Verdict == BuildTestGateVerdict.Ok,
+                response.Result.Reason + "\n" + response.Result.Output);
+            Assert.Equal(sha, response.Result.TestedSha);
+            Assert.Equal(sha, response.Result.ExpectedSha);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Fact]
     public async Task Hardened_git_reads_the_bare_gate_source_repository()
     {

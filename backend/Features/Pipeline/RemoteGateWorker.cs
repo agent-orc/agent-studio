@@ -15,7 +15,8 @@ public static class RemoteGateWorker
     internal static readonly TimeSpan HeartbeatPollInterval = TimeSpan.FromSeconds(2);
 
     public static async Task<int> RunAsync(string requestPath,
-        Action<string>? progress = null, CancellationToken shutdown = default)
+        Action<string>? progress = null, CancellationToken shutdown = default,
+        Func<ILogger<BuildTestGateRunner>, BuildTestGateRunner>? runnerFactory = null)
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -120,7 +121,8 @@ public static class RemoteGateWorker
                 await RemoteGateProcess.RunAsync("git", ["clone", "--bare", "--quiet", bundle, repository],
                     directory, request.InfrastructureTimeout, lifetime.Token);
             }
-            var runner = new BuildTestGateRunner(logging.CreateLogger<BuildTestGateRunner>());
+            var runnerLogger = logging.CreateLogger<BuildTestGateRunner>();
+            var runner = runnerFactory?.Invoke(runnerLogger) ?? new BuildTestGateRunner(runnerLogger);
             var previousArtifactDirectory = GateArtifactOutput.Current;
             GateArtifactOutput.Current = artifactDirectory;
             try

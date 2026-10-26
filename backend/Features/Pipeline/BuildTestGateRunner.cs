@@ -2038,10 +2038,6 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        // Host Git hardening sets safe.bareRepository=explicit. The remote gate
-        // worker's source.git is bare, so it must be named explicitly instead of
-        // being discovered from the working directory.
-        if (IsBareRepository(workingDirectory)) psi.ArgumentList.Add("--git-dir=" + workingDirectory);
         foreach (var arg in args) psi.ArgumentList.Add(arg);
         var result = await GitNetworkProcessRunner.RunAsync(
             psi,
@@ -2057,11 +2053,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
     }
 
     internal static bool IsBareRepository(string directory)
-        => File.Exists(Path.Combine(directory, "HEAD"))
-           && Directory.Exists(Path.Combine(directory, "objects"))
-           && Directory.Exists(Path.Combine(directory, "refs"))
-           && !Directory.Exists(Path.Combine(directory, ".git"))
-           && !File.Exists(Path.Combine(directory, ".git"));
+        => AgentStudio.Git.HostGitProcessHardening.IsBareRepository(directory);
 
     internal sealed record GitCommandResult(
         int? ExitCode,
