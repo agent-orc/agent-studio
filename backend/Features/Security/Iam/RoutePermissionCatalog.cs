@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
@@ -70,7 +71,11 @@ public static class RoutePermissionCatalog
     private static readonly IReadOnlyList<Rule> Rules = Build();
     private static readonly HashSet<string> CachedMethods = new(StringComparer.Ordinal)
         { "GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE" };
-    private static readonly ConcurrentDictionary<(Endpoint Endpoint, string Method), RequiredPermissionMetadata?> Cache = new();
+    // Endpoints can retain their request delegates and the application service
+    // provider. A static dictionary with Endpoint keys retains every disposed
+    // test host for the lifetime of the process.
+    private sealed record CachedResolution(RequiredPermissionMetadata? Permission);
+    private static readonly ConditionalWeakTable<Endpoint, ConcurrentDictionary<string, CachedResolution>> Cache = new();
 
     /// <summary>
     /// The endpoint's declared permission for a method. Only the standard
@@ -80,7 +85,8 @@ public static class RoutePermissionCatalog
     {
         var normalized = method.ToUpperInvariant();
         return CachedMethods.Contains(normalized)
-            ? Cache.GetOrAdd((endpoint, normalized), key => ResolveUncached(key.Endpoint, key.Method))
+            ? Cache.GetValue(endpoint, static _ => new ConcurrentDictionary<string, CachedResolution>(StringComparer.Ordinal))
+                .GetOrAdd(normalized, key => new CachedResolution(ResolveUncached(endpoint, key))).Permission
             : ResolveUncached(endpoint, normalized);
     }
 

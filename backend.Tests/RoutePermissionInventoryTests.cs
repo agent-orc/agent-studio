@@ -1,4 +1,5 @@
 using AgentStudio.Security;
+using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Routing;
@@ -257,6 +258,36 @@ public sealed class RoutePermissionInventoryTests : IDisposable
 
         Assert.Null(RoutePermissionCatalog.Resolve(endpoint, "X-" + Guid.NewGuid().ToString("N")));
         Assert.Equal(IamPermissions.ProjectRead, RoutePermissionCatalog.Resolve(endpoint, "get")?.Permission);
+    }
+
+    [Fact]
+    public void Resolving_a_route_does_not_retain_its_disposed_host_delegate()
+    {
+        var (endpoint, delegateOwner) = ResolveTemporaryRoute();
+
+        for (var attempt = 0; attempt < 10 && (endpoint.IsAlive || delegateOwner.IsAlive); attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
+
+        Assert.False(endpoint.IsAlive, "The route permission cache retained an endpoint after its host was released.");
+        Assert.False(delegateOwner.IsAlive, "The route permission cache retained the endpoint's request delegate owner.");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (WeakReference Endpoint, WeakReference DelegateOwner) ResolveTemporaryRoute()
+    {
+        var owner = new object();
+        var endpoint = new RouteEndpoint(context =>
+        {
+            GC.KeepAlive(owner);
+            return Task.CompletedTask;
+        }, Microsoft.AspNetCore.Routing.Patterns.RoutePatternFactory.Parse("/api/tasks/{jobId}"),
+            0, Microsoft.AspNetCore.Http.EndpointMetadataCollection.Empty, null);
+        Assert.Equal(IamPermissions.ProjectRead, RoutePermissionCatalog.Resolve(endpoint, "GET")?.Permission);
+        return (new WeakReference(endpoint), new WeakReference(owner));
     }
 
     [Fact]
