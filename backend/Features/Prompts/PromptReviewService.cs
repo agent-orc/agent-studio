@@ -242,6 +242,7 @@ public sealed partial class PromptReviewService
             start.ArgumentList.Add("--");
             start.ArgumentList.Add("prompts/runtime");
 
+            AgentStudio.Git.HostGitProcessHardening.Apply(start);
             using var process = Process.Start(start);
             if (process is null) return result;
             var stdout = process.StandardOutput.ReadToEnd();

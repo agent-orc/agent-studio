@@ -171,6 +171,11 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
         Assert.Contains(SalvageSha, prompt);
         Assert.Contains("run timeout", prompt);
         Assert.Contains("results/status.md", prompt);
+        Assert.Contains("merge the current integration branch", prompt);
+        Assert.DoesNotContain("rebase onto", prompt);
+        var pickupBase = ContinuationBaseStore.ConsumeForClaim(queued.FolderPath);
+        Assert.Equal($"refs/heads/{SalvageBranch}", pickupBase?.Ref);
+        Assert.Equal(SalvageSha, pickupBase?.CommitSha);
 
         // Same model as the timed-out round, clean context.
         Assert.Equal("claude", queued.CliType);

@@ -1522,6 +1522,8 @@ public sealed partial class AttemptAuthorityService
             review.State = AttemptLifecycleState.Pending;
             if (quotaDeferred)
                 _quotaDeferredReviews[review.AttemptId] = _utcNow().AddMinutes(1);
+            else
+                _quotaDeferredReviews.Remove(review.AttemptId);
             PersistLocked();
             return true;
         }

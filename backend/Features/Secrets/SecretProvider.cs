@@ -138,11 +138,11 @@ public sealed class SecretProvider : ISecretProvider
         return bytes;
     }
 
-    /// <summary>Workloads only resolve. Every change to a secret is attributed to a human.</summary>
+    /// <summary>Workloads only resolve. Management writes retain their human or service-account actor.</summary>
     private static void RequireHuman(SecretActor actor, string action)
     {
-        if (actor.Kind != SecretActorKind.Human || string.IsNullOrWhiteSpace(actor.Id))
-            throw new SecretAccessDeniedException("human-required", $"Only a signed-in person may {action} a secret.");
+        if (actor.Kind is not (SecretActorKind.Human or SecretActorKind.ServiceAccount) || string.IsNullOrWhiteSpace(actor.Id))
+            throw new SecretAccessDeniedException("human-required", $"A signed-in person or service account is required to {action} a secret.");
     }
 
     private Task<T> AuditedAsync<T>(string action, SecretReference reference, SecretActor actor, string? purpose,

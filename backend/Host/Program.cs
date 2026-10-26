@@ -75,6 +75,7 @@ builder.Services.AddHostedService<OrchestrationEngineReadinessService>();
 builder.Services.AddSingleton<EngineApplierEffectProbe>();
 builder.Services.AddHostedService<EngineApplierCanaryService>();
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
+builder.Services.AddSingleton<NetworkedLoginAddressHealth>();
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -373,6 +374,7 @@ builder.Services.AddSingleton<ISecretStore>(sp => sp.GetRequiredService<ScopedSe
 builder.Services.AddSingleton<SecretAuditLog>();
 builder.Services.AddSingleton<SecretValueScrubber>();
 builder.Services.AddSingleton<ISecretProvider, SecretProvider>();
+builder.Services.AddSingleton<ProjectSecretBindings>();
 builder.Services.AddSingleton<ISecretWorkloadLeases, SecretWorkloadLeases>();
 builder.Services.AddSingleton<ManagementService>();
 builder.Services.AddSingleton<IProviderAuthProvisioner, SshProviderAuthProvisioner>();
@@ -555,9 +557,23 @@ builder.Services.AddSingleton<AgentStudio.Publishing.IPublishEnvironmentReconcil
 builder.Services.AddHostedService<AgentStudio.Publishing.PublishEnvironmentReconciliationService>();
 builder.Services.AddSingleton<ProjectDeploymentSummaryService>();
 builder.Services.AddSingleton<ProjectEnvironmentService>();
+builder.Services.AddSingleton<IHostedVolumeBackupEngine>(sp =>
+    sp.GetRequiredService<IConfiguration>()["HostedData:LocalVolumeRoot"] is { Length: > 0 } root
+        ? new LocalHostedVolumeBackupEngine(root, Path.Combine(
+            sp.GetRequiredService<IConfiguration>()["TaskRepository"] ?? throw new InvalidOperationException("TaskRepository is required."),
+            "hosted-volume-archives"), sp.GetRequiredService<ILogger<LocalHostedVolumeBackupEngine>>(),
+            sp.GetRequiredService<TimeProvider>())
+        : new UnboundHostedVolumeBackupEngine());
+builder.Services.AddSingleton<HostedVolumeBackupService>();
+if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
+    builder.Services.AddHostedService<HostedVolumeBackupWorker>();
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
+builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
+    AgentStudio.Projects.UnavailableOperationsTelemetryReader>();
+builder.Services.AddSingleton<AgentStudio.Projects.ProjectOperationsService>();
 builder.Services.AddSingleton<AgentStudio.Deploy.CardPreviewService>();
 if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") && !builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<AgentStudio.Deploy.CardPreviewSweep>();
@@ -935,6 +951,7 @@ builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchIntegrationRes
         1, 24 * 60))));
 builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();
+builder.Services.AddSingleton<AgentStudio.Tokens.TokenAnalysisService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,
     AgentStudio.Pipeline.RemoteRequiredLintScssRunner>();
 builder.Services.AddHttpClient<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
@@ -1057,8 +1074,12 @@ builder.Services.AddSingleton<BranchSweepService>();
 builder.Services.AddSingleton<BranchReclaimTriggerService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<GitBranchRetentionHostedService>();
-// Slice P (ASS-1663): build-profile onboarding validation dry-run.
-builder.Services.AddSingleton<IBuildCommandRunner, RemoteRequiredBuildCommandRunner>();
+// Keep host validation available for the trusted local profile. Networked and
+// public-demo profiles must never run delivered build commands in the API.
+builder.Services.AddSingleton<IBuildCommandRunner>(sp =>
+    SecurityProfiles.IsLocal(sp.GetRequiredService<IConfiguration>())
+        ? new ProcessBuildCommandRunner()
+        : new RemoteRequiredBuildCommandRunner());
 builder.Services.AddSingleton<BuildProfileValidationService>();
 // Completed-job auto-push runs off the request path: TaskTransitionService
 // enqueues here on the move to 6-completed (instant), CompletedPushWorker
@@ -1374,7 +1395,16 @@ if (connectorProfile)
     builder.ConfigureConnectorProfile();
 
 hostTimeline.Checkpoint("entryToBuild");
+// Short-lived test hosts must not leave HttpClientFactory handler-expiry timers
+// behind after their service providers have been disposed.
+if (builder.Environment.IsEnvironment("Test"))
+    builder.Services.ConfigureAll<Microsoft.Extensions.Http.HttpClientFactoryOptions>(options =>
+        options.HandlerLifetime = Timeout.InfiniteTimeSpan);
+
 var app = builder.Build();
+// Test-host overrides and deployment configuration are final only after Build().
+// Reject a mistyped public-edge setting before the host accepts requests.
+_ = SecurityProfiles.PublicCloudflareEdgeEnabled(app.Configuration);
 hostTimeline.Checkpoint("build");
 hostTimeline.Attach(app.Services);
 // Capture the secrets key-encryption key now, before any hosted service starts
@@ -1431,7 +1461,15 @@ var publishedArtifactSha = app.Services.GetRequiredService<PublishedArtifactSha>
 app.Use(async (context, next) =>
 {
     if (publishedArtifactSha is not null && context.Request.Path.StartsWithSegments("/api"))
-        context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
+        context.Response.OnStarting(() =>
+        {
+            if ((!networkedSecurityProfile && !publicDemoExecutionProfile)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.HumanPrincipalItem)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.RunnerPrincipalItem)
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.ServiceAccountPrincipalItem))
+                context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
+            return Task.CompletedTask;
+        });
     await next(context);
 });
 // An explicitly selected standalone Task Server owns task data. Legacy task
@@ -2170,7 +2208,6 @@ taskRunner.OnRunnerStatusChanged += (projectName, status) =>
 app.MapAllEndpoints();
 app.MapConversationEndpoints();
 app.MapHub<TaskHub>("/hubs/jobs");
-ApiTokenRouteScopes.Declare(app);
 PublicDemoExecutionRouteInventory.ValidateStartup(
     app,
     app.Services.GetRequiredService<StartupExecutionAdmission>());

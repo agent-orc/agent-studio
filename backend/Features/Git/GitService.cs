@@ -352,6 +352,7 @@ public sealed record RemoteDeliveryCommitRange(
     /// <summary>True when the repository actively contradicts the claimed delivery.</summary>
     public bool IsDisproved =>
         Verification is DeliveryVerificationStatus.ShaMismatch
+            or DeliveryVerificationStatus.BaseNotAncestor
             or DeliveryVerificationStatus.RefMissing
             or DeliveryVerificationStatus.CommitMissing;
 }
@@ -2912,6 +2913,9 @@ public partial class GitService
         if (diff.Length > 60_000) diff = diff[..60_000] + "\n[truncated]";
 
         var intent = ReadTaskIntent(jobId, watchPath);
+        if (!SecurityProfiles.IsLocal(_config))
+            return new GenerateMessageResult(null,
+                "Remote runner required: host Codex commit-message review is disabled in the networked profile.");
         var codexPath = _config["CodexCli:Path"] ?? "codex";
         var model = ModelFamilyResolver.Resolve(ModelFamilies.GptMini);
         var prompt = _prompts.Render(RuntimePromptService.CommitMessage,
@@ -2950,7 +2954,7 @@ public partial class GitService
         var sw = Stopwatch.StartNew();
         try
         {
-            using var p = Process.Start(psi)!;
+            using var p = HostCliSpawnGuard.Start(psi, !SecurityProfiles.IsLocal(_config), CliTypes.Codex)!;
             await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
             p.StandardInput.Close();
             var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);
@@ -4809,7 +4813,7 @@ public partial class GitService
             if (ancestorCode != 0)
                 return Failed(
                     $"Fenced delivery base {AbbreviateSha(baseSha)} is not an ancestor of result {AbbreviateSha(tip)}: {ancestorError.Trim()}",
-                    DeliveryVerificationStatus.ShaMismatch);
+                    DeliveryVerificationStatus.BaseNotAncestor);
 
             var integrationBranch = TaskIntegrationBranch.NormalizeRef(recordedIntegrationBranch);
             if (integrationBranch is null)
@@ -5266,9 +5270,10 @@ public partial class GitService
         return new(IntegrationBranchSyncOutcome.UpToDate);
     }
 
-    /// <summary>Checks a delivery against the freshly fetched publication, not the developer checkout.</summary>
+    /// <summary>Checks a delivery against freshly fetched publication; exactCommit requires commit ancestry.</summary>
     public PublishedDeliveryContainment CheckPublishedDelivery(
-        string repoRoot, string branch, string deliverySha, CancellationToken cancellationToken = default)
+        string repoRoot, string branch, string deliverySha, CancellationToken cancellationToken = default,
+        bool exactCommit = false)
     {
         if (!ReviewSubjectStore.IsValidResultSha(deliverySha)) return PublishedDeliveryContainment.Unavailable;
         var fetched = FetchIntegrationBranch(repoRoot, branch, cancellationToken);
@@ -5276,7 +5281,9 @@ public partial class GitService
             return PublishedDeliveryContainment.Unavailable;
         var published = GetBranchTip(repoRoot, $"refs/remotes/origin/{branch}");
         if (published is null) return PublishedDeliveryContainment.Unavailable;
-        return IsDeliveryPublished(repoRoot, deliverySha, published)
+        return (exactCommit
+            ? IsAncestor(repoRoot, deliverySha, published)
+            : IsDeliveryPublished(repoRoot, deliverySha, published))
             ? PublishedDeliveryContainment.Contained
             : PublishedDeliveryContainment.Missing;
     }
@@ -8632,7 +8639,7 @@ public partial class GitService
             // we can get without an unreliable PID/window-title scan.
             psi.ArgumentList.Add("-r");
             psi.ArgumentList.Add(root);
-            using var p = Process.Start(psi);
+            using var p = HostCliSpawnGuard.Start(psi, !SecurityProfiles.IsLocal(_config));
             return p != null;
         }
         catch (Exception ex)

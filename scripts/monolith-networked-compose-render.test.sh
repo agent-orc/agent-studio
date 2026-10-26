@@ -34,6 +34,7 @@ render_setup() {
 render_setup public
 render_setup cloudflare --cloudflare
 render_setup direct --cloudflare --allow-direct-origin
+render_setup private --private
 
 mkdir -p "$work/invalid"
 cp -a "$stack/." "$work/invalid/stack"
@@ -44,6 +45,16 @@ if PATH="$work/bin:$PATH" bash "$work/invalid/stack/setup.sh" --allow-direct-ori
 fi
 if [ -e "$work/invalid/stack/.env" ]; then
   echo 'setup.sh wrote .env after rejecting its flags' >&2
+  exit 1
+fi
+if STUDIO_PUBLIC_CLOUDFLARE_EDGE=yes PATH="$work/bin:$PATH" \
+  bash "$work/invalid/stack/setup.sh" 0.0.0-test studio.example.test "$work/invalid/data" 2> "$work/invalid-flag.log"; then
+  echo 'setup.sh accepted a non-boolean public edge flag' >&2
+  exit 1
+fi
+grep -q 'must be exactly true or false' "$work/invalid-flag.log"
+if [ -e "$work/invalid/stack/.env" ]; then
+  echo 'setup.sh wrote .env after rejecting the public edge flag' >&2
   exit 1
 fi
 
@@ -67,20 +78,25 @@ def mounts(service):
     return {volume['target']: volume['source'] for volume in service['volumes']}
 
 expected = {
-    'public': ('Caddyfile.public', 'false'),
-    'cloudflare': ('Caddyfile.cloudflare', 'false'),
-    'direct': ('Caddyfile.cloudflare', 'true'),
+    'public': ('Caddyfile.public', 'false', 'true', 'on-failure'),
+    'cloudflare': ('Caddyfile.cloudflare', 'false', 'true', 'on-failure'),
+    'direct': ('Caddyfile.cloudflare', 'true', 'true', 'on-failure'),
+    'private': ('Caddyfile.private', 'false', 'false', 'unless-stopped'),
 }
-for name, (caddyfile, allow_direct) in expected.items():
+for name, (caddyfile, allow_direct, public_edge, restart_policy) in expected.items():
     rendered = model(name)
     env = env_file(name)
     assert env['STUDIO_CADDYFILE'] == './' + caddyfile, (name, env)
     assert env['STUDIO_CLOUDFLARE_ALLOW_DIRECT'] == allow_direct, (name, env)
+    assert env['STUDIO_PUBLIC_CLOUDFLARE_EDGE'] == public_edge, (name, env)
+    assert env['STUDIO_RESTART_POLICY'] == restart_policy, (name, env)
     edge = rendered['services']['edge']
+    assert all(rendered['services'][service]['restart'] == restart_policy
+               for service in ('api', 'frontend', 'edge')), (name, rendered['services'])
     edge_mounts = mounts(edge)
     assert edge_mounts['/etc/caddy/Caddyfile'].endswith('/' + caddyfile), (name, edge_mounts)
     assert edge_mounts['/etc/caddy/cloudflare-ips.caddy'].endswith('/cloudflare-ips.caddy'), (name, edge_mounts)
-    assert '/etc/caddy/cloudflare-origin-pull-ca.pem' not in edge_mounts, (name, edge_mounts)
+    assert edge_mounts['/etc/caddy/origin-pull'].endswith('/origin-pull'), (name, edge_mounts)
     assert edge['environment']['STUDIO_CLOUDFLARE_ALLOW_DIRECT'] == allow_direct, (name, edge['environment'])
     assert edge['networks']['website']['ipv4_address'] == '172.30.83.2', edge['networks']
     frontend = rendered['services']['frontend']
@@ -88,9 +104,30 @@ for name, (caddyfile, allow_direct) in expected.items():
     assert frontend['networks']['website']['ipv4_address'] == '172.30.83.3', frontend['networks']
     api = rendered['services']['api']
     assert api['environment']['Security__TrustedProxyAddresses'] == '172.30.83.3,172.30.83.2', api['environment']
+    assert api['environment']['Security__PublicCloudflareEdge'] == public_edge, api['environment']
     assert 'ports' not in api and 'ports' not in frontend, 'only the edge may publish ports'
-print('Compose render passed for the public, Cloudflare and Cloudflare direct-access modes.')
+print('Compose render passed for public, Cloudflare, direct-access and private modes.')
 PY
+
+# Compose must refuse an installation whose security mode was never selected.
+grep -v '^STUDIO_PUBLIC_CLOUDFLARE_EDGE=' "$work/public/stack/.env" > "$work/missing-edge.env"
+if env -u STUDIO_PUBLIC_CLOUDFLARE_EDGE docker compose \
+  --project-directory "$work/public/stack" -f "$work/public/stack/compose.yaml" \
+  --env-file "$work/missing-edge.env" config > /dev/null 2>&1; then
+  echo 'Compose accepted a missing public edge flag' >&2
+  exit 1
+fi
+
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -keyout "$work/cloudflare/data/origin-pull/test-ca.key" \
+  -out "$work/cloudflare/data/origin-pull/ca.pem" \
+  -subj '/CN=studio-test-ca' > /dev/null 2>&1
+bash "$work/cloudflare/stack/check-edge-config.sh" "$stack" > /dev/null
+sed -i 's|STUDIO_PUBLIC_CLOUDFLARE_EDGE=true|STUDIO_PUBLIC_CLOUDFLARE_EDGE=false|' "$work/cloudflare/stack/.env"
+if bash "$work/cloudflare/stack/check-edge-config.sh" "$stack" > /dev/null 2>&1; then
+  echo 'Public edge check accepted a disabled Cloudflare login boundary' >&2
+  exit 1
+fi
 
 # Adapting proves the Caddyfiles parse and shows what the edge trusts.
 # adapt <Caddyfile> [allow-direct] [output name]
@@ -137,15 +174,21 @@ assert site.get('trusted_proxies_strict') == 1, site
 config = json.dumps(site)
 assert '{http.vars.trusted_proxy}' in config and '{env.STUDIO_CLOUDFLARE_ALLOW_DIRECT}' in config, config
 
-# Origin authentication is owned by AGT-3298. Both edge modes preserve the
-# same trusted proxy range and have no client certificate policy yet.
-assert not any(policy.get('client_authentication') for policy in site.get('tls_connection_policies', [])), site
+def requires_origin_pull(server):
+    return any(policy.get('client_authentication') == {
+        'ca': {'pem_files': ['/etc/caddy/origin-pull/ca.pem'], 'provider': 'file'},
+        'mode': 'require_and_verify',
+    } for policy in server.get('tls_connection_policies', []))
+
+assert requires_origin_pull(site), site
 direct = next(server for server in adapted('Caddyfile.cloudflare-direct').values() if ':443' in server['listen'])
-assert not any(policy.get('client_authentication') for policy in direct.get('tls_connection_policies', [])), direct
+assert requires_origin_pull(direct), direct
 assert direct['trusted_proxies'] == site['trusted_proxies'], direct
 
 public = next(server for server in adapted('Caddyfile.public').values() if ':443' in server['listen'])
 assert public['trusted_proxies'] == {'source': 'static', 'ranges': listed}, public
+assert public['client_ip_headers'] == ['CF-Connecting-IP'], public
+assert requires_origin_pull(public), public
 public_matchers = re.findall(r'@cloudflare remote_ip (.+)', open(os.path.join(os.path.dirname(ranges_file), 'Caddyfile.public'), encoding='utf-8').read())
 assert len(public_matchers) == 1 and public_matchers[0].split() == listed, public_matchers
 for server in adapted('Caddyfile.private').values():

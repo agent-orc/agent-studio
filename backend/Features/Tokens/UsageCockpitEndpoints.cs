@@ -100,8 +100,10 @@ public static class UsageCockpitEndpoints
                             Warning = "The project ledger could not be read." }));
                 }
             }
-            // Workspace-scoped one-shot usage has no project attribution. It is a
-            // visible child, never a hidden addition to the workspace total.
+            // Workspace-scoped one-shot usage lands on its project when the row
+            // names one (bus project, ad-hoc project tag, or owning job;
+            // TokenUsageAttribution). The rest is a visible child, never a
+            // hidden addition to the workspace total.
             try
             {
                 var root = configuration["TaskRepository"];
@@ -112,18 +114,23 @@ public static class UsageCockpitEndpoints
                 var unassignedCount = 0;
                 var canAssignUnattributed = workspace.IsDefault
                     && (human is null || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User));
+                var jobOwners = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
                 foreach (var message in messages)
                 {
                     var entry = BusTokenEntryConverter.ToEntry(message);
-                    if (string.IsNullOrWhiteSpace(message.Project))
+                    var attribution = TokenUsageAttribution.Resolve(message.Project, message.Tags, message.JobId,
+                        name => MatchProject(allProjects, name)?.Id,
+                        jobId => JobOwner(scanner, allProjects, jobOwners, jobId));
+                    if (attribution.ProjectId is null)
                     {
+                        // A row naming a project outside this workspace is not ours.
+                        if (!string.IsNullOrWhiteSpace(message.Project)) continue;
                         if (canAssignUnattributed) unattributed.Add(entry);
                         else unassignedCount++;
                         continue;
                     }
                     var project = visibleProjects.FirstOrDefault(project =>
-                        string.Equals(project.Id, message.Project, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(project.DisplayName, message.Project, StringComparison.OrdinalIgnoreCase));
+                        string.Equals(project.Id, attribution.ProjectId, StringComparison.OrdinalIgnoreCase));
                     if (project is null) continue;
                     var index = costInputs.FindIndex(input => input.ProjectId == project.Id);
                     var current = costInputs[index];
@@ -225,6 +232,29 @@ public static class UsageCockpitEndpoints
                 chatWork.GetUsage().Concat(localChatWork.GetUsage())
                     .Where(row => visibleNames.Contains(row.ProjectName)).ToArray()));
         });
+    }
+
+    internal static ProjectRecord? MatchProject(IReadOnlyList<ProjectRecord> projects, string name)
+        => projects.FirstOrDefault(project =>
+            string.Equals(project.Id, name, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(project.DisplayName, name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Id of the project that owns <paramref name="jobId"/>, memoized per request.</summary>
+    internal static string? JobOwner(TaskScannerService scanner, IReadOnlyList<ProjectRecord> projects,
+        Dictionary<string, string?> memo, string jobId)
+    {
+        if (memo.TryGetValue(jobId, out var known)) return known;
+        string? owner = null;
+        var task = scanner.FindJob(jobId);
+        if (task is not null)
+        {
+            owner = projects.FirstOrDefault(project =>
+                    !string.IsNullOrWhiteSpace(project.StorageLocation)
+                    && WatchPathComparison.PathsEqual(project.StorageLocation, task.WatchPath))?.Id
+                ?? MatchProject(projects, task.ProjectName)?.Id;
+        }
+        memo[jobId] = owner;
+        return owner;
     }
 
     internal static (T? Value, UsageSourceState State) TryRead<T>(Func<T> read, DateTime now) where T : class

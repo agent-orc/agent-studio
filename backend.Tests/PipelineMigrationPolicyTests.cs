@@ -111,8 +111,9 @@ public sealed class PipelineMigrationPolicyTests
 
         var changed = ProjectEnvironmentService.ApplyDefinition(
             [files[0] with { Declaration = Staging with { Destination = "/srv/www/other" } }, files[1]], yaml);
-        Assert.Contains("diverges", changed[0].Error);
-        Assert.Null(changed[0].Declaration);
+        var brokenStage = Assert.Single(changed, item => item.EnvironmentId == Staging.Id);
+        Assert.Contains("diverges", brokenStage.Error);
+        Assert.Null(brokenStage.Declaration);
     }
 
     [Fact]

@@ -26,7 +26,15 @@ For a container, `destination` is the local port behind the existing reverse
 proxy. For a static site, it is the served release directory; the proxy serves
 its `current` symlink. Static artifacts are tar or tar.gz files in the deploy
 host's artifact cache after download from the built-in registry, named by their
-SHA-256 digest.
+SHA-256 digest. An environment can declare `tenantTargets` keyed by tenant name. Each entry
+requires a `destination` and `healthUrl`; container destinations are distinct
+local proxy ports, and static destinations are disjoint absolute directories.
+Tenant targets cannot share the project target. A tenant deploy with no target
+in the release's committed environment declaration is refused before a job is
+queued. The host uses the tenant's destination, a tenant-specific container
+name, and that tenant's health URL. For schema 2 SSH steps, the host uses a
+tenant directory under the step's static directory or compose file parent,
+and a distinct Compose project name.
 
 After the full gate passes and the release is pushed, the promotion script can
 submit the measured package digest or the gate-built image's registry digest
@@ -154,18 +162,19 @@ stays the only executor; releases and runs describe and steer it.
 - **Release.** A green gate release (`POST /api/deploy/gate-releases`, or the
   operator route `POST /api/projects/{project}/environments/releases`) records an
   immutable release: version `yyyy.MM.dd.N`, commit, artifact digests, a process
-  version (hash of the project.yml schema 2 artifacts, lifecycles, channels and
-  deploy steps at the release commit plus the environment declarations), a
-  variables version (hash of the project.yml schema 2 `variables` section at the
-  release commit, where a secret counts only by name, environment protection,
-  and secret reference names per environment), the
-  cards it adds, and exactly one channel. Schema 2 `channels` select a named
+  version (hash of the project.yml schema 2 artifacts, lifecycles, channels,
+  deploy steps and tenants at the release commit plus the environment
+  declarations, including tenant targets), a variables version (hash of the
+  project.yml schema 2 `variables` and tenant declarations, where a secret
+  counts only by name, and the environment protection and secret reference
+  names), the cards it adds, and exactly one channel. Schema 2 `channels` select a named
   lifecycle using `versionRules.prereleaseTag` and/or
   `versionRules.branchPattern`; exactly one
   channel has `default: true` as the fallback. The release request may supply
   `versionTag`, `branch`, and `channel`; Owner or Maintainer can override rule
-  matching. Rule refusals name the rule. Variables may add `channels` alongside
-  `environments`; both scopes must match and the most specific scope wins.
+  matching. Rule refusals name the rule. Variables may add `channels`,
+  `environments`, `tenants`, and `tenantTags`; scopes of different kinds must
+  all match and the most specific scope wins.
   A named lifecycle's approval list is checked against the caller's resolved
   Owner or Maintainer role.
   Each release is one write-once file under
@@ -197,7 +206,8 @@ stays the only executor; releases and runs describe and steer it.
   `"reason":"superseded"`, logs that 409 and continues; any other refusal,
   including every other 409, stops it with exit code 9. A
   declaration snapshot that git cannot read completely also answers 409;
-  invalid input, including a malformed committed declaration, answers 400.
+  invalid input, including a malformed committed declaration or an invalid
+  committed project.yml, answers 400 before a release or Staging job is stored.
 - **Declaration snapshot.** The release file stores the effective schema 2
   definition and environment declarations as committed at the release commit.
   Every deploy job of the release, redeploy and rollback included, uses that
@@ -211,9 +221,9 @@ stays the only executor; releases and runs describe and steer it.
   so the host rejects that old step; create a new release with the new target
   before deploying there. The environment must still be declared; a release
   without a snapshot for an environment cannot be deployed there. Automatic
-  and history rollbacks of the
-  host queue repeat the declaration the artifact last deployed healthy with, on
-  the currently declared host. A job queued before the host moved stays with the
+  and history rollbacks of the host queue repeat the declaration the artifact
+  last deployed healthy with, on the currently declared host. A job queued
+  before the host moved stays with the
   old host; cancel it and deploy again.
 - **Standard lifecycle.** Staging deploys automatically after integration.
   Production needs a successful Staging run of the same release and approval by
@@ -222,6 +232,18 @@ stays the only executor; releases and runs describe and steer it.
   Studio session in every profile; on the local profile a mutation counts the
   session only with its CSRF token. A caller without a session, such as a coding
   agent on the local API, is `local-operator` and never approves.
+- **Tenant lifecycle.** A project.yml schema 2 tenant has a unique name, optional
+  tags and a nonempty list of participating environments. Production
+  participation requires Staging. An explicit tenant deploy uses the tenant
+  declarations and variables captured in that release. Staging success,
+  current release, approval, redeploy and rollback are evaluated for that
+  tenant. Runs without a tenant keep the project-level lifecycle, including the
+  automatic Staging run after integration. The host deploy queue remains shared
+  by tenants of an environment, so another queued or running run can block a
+  tenant's request or approval.
+  The dashboard health for a tenant comes from that tenant's latest succeeded
+  or failed run in each environment, including the host's target-specific health
+  result; another tenant's run cannot change that health cell.
 - **One environment, one direction.** A request or an approval is refused while
   another run is queued or running in the environment. The automatic Staging
   run after integration does not ask the lifecycle: it queues behind the runs
@@ -272,13 +294,41 @@ stays the only executor; releases and runs describe and steer it.
 - **Audit.** Every release, request, approval, rejection, cancellation and host
   transition appends an entry to `audit.jsonl` next to the runs.
 
+### Tenant deployment API contract (AGT-3261)
+
+Routes below use `/api/projects/{projectName}/deploy` as their base. JSON uses
+camel-case names. A tenant name is the exact, case-sensitive name declared in
+project.yml schema 2. Omitting `tenant` on a mutation selects the project-level
+run; omitting it on a read retains the project-level response or unfiltered
+history shown below.
+
+| Route | Tenant contract |
+|---|---|
+| `GET /tenants` | Returns the project's current valid tenant definitions as `{name, tags, environments}[]`; if the current project.yml is unavailable or invalid, uses the newest release snapshot. Unknown project returns 404. |
+| `GET /status?tenant={name}` | Returns one `EnvironmentStatus` per environment in which that tenant participates. Each status has `tenant`, `environment`, `currentRelease`, `currentDeployment`, `newerRelease`, `cardsSinceLastDeploy` and `health`. With no tenant query, returns project-level statuses with `tenant: null`. An unknown tenant returns 404. |
+| `GET /deployments?environmentId={id}&tenant={name}` | Returns runs matching both optional filters, newest first. An unknown tenant yields an empty list. `GET /deployments/page` adds optional `state`, `sinceUtc`, `offset` and `limit` filters and returns `{items, offset, limit, total}` for the filtered set. Limit is clamped to 1 through 50. |
+| `GET /deployments/{id}` and `GET /deployments/{id}/log?step={name}` | The deployment has a nullable `tenant` field. The log response has `{deploymentId, tenant, lines}`; `step` filters lines only. A missing deployment returns 404. |
+| `POST /releases/{id}/deployments` | Body `{environmentId, approve, tenant?, guidedFailure?}` selects a tenant for that release. The tenant must participate in the target environment in the release snapshot; invalid participation returns 400. Production needs successful Staging for the same release and tenant, then Owner or Maintainer approval. A queued or waiting response is a `Deployment` with its `tenant`. |
+| `POST /deployments/{id}/approve`, `/reject`, `/cancel` and `/intervention` | Address the run by id and use its stored tenant. Approval reevaluates that tenant's lifecycle facts and may set `guidedFailure`; intervention resolves a failed guided step. The response carries the run's `tenant`. |
+| `POST /environments/{id}/redeploy` and `POST /environments/{id}/rollback` | Optional body `{approve, tenant?, guidedFailure?}` selects that tenant's current or previous successful release. The resulting run carries the tenant. Approval and shared host occupancy rules still apply. |
+
+`GET /releases`, `/releases/page`, `/releases/{id}`, `/environments` and
+`/audit` retain their existing project-level responses. A release detail's
+deployment list can include runs from several tenants. `GET /api/deploy/matrix`
+returns `{environmentKinds, projects}`. Each project row retains `statuses`
+for project-level cells and adds `tenantStatuses`, with an `EnvironmentStatus`
+per participating tenant and environment. Optional `?tenant={name}` keeps only
+matching `tenantStatuses` and drops rows without one; project access filtering
+still applies. The workspace dashboard uses these statuses to show each
+tenant's current release, deployment age, state and health.
+
 Routes, under `/api/projects/{project}/deploy`: `GET environments`, `status`
 (one EnvironmentStatus per environment), `releases`, `releases/{id}`,
 `releases/{id}/notes`, `cards`, `deployments[?environmentId=]`,
 `deployments/{id}`, `deployments/{id}/log[?step=]` and `audit`;
-`POST releases/{id}/deployments` (`{environmentId, approve}`),
+`POST releases/{id}/deployments` (`{environmentId, approve, tenant?, guidedFailure?}`),
 `deployments/{id}/approve`, `deployments/{id}/reject`, `deployments/{id}/cancel`,
-`environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve}`).
+`environments/{id}/redeploy` and `environments/{id}/rollback` (`{approve, tenant?, guidedFailure?}`).
 `GET /api/deploy/matrix` returns the workspace dashboard rows, filtered to the
 caller's projects. `GET /api/deploy/cards` returns card environment badges across
 the caller's projects. The project-scoped `cards` route returns the same badges
@@ -302,8 +352,13 @@ principal and host id are the same enrolled `runner_<id>` value. Schema 2
 secret variables resolve through the secret provider under the claimed job's
 lease. Legacy template `secretRefs` use a local directory of host-held files.
 Secret values do not enter job state or audit history. The claim response
-carries names only; the secret resolution response returns a value to the
-authorized host for execution.
+carries resolved plain values and `secretVariableRefs`
+(variable name to provider entry name), never secret values. The secret
+resolution response returns a value to the authorized host for execution.
+The host applies the mapping to the workload variable name; a provider entry
+may have a different name. Legacy container jobs can read host-held secret
+files and write a private temporary Docker environment file. Static jobs
+reject workload variables because they have no runtime environment.
 The managed `remote-runner-onboard.sh --role deploy` path installs the separate
 `agent-runner-deploy.service` and generated `deploy.env` for the host.
 

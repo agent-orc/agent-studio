@@ -1,7 +1,7 @@
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { DeferBlockBehavior, DeferBlockState, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
-import { of } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 import { AuthSessionState, type AuthStatus } from '../../../services/auth.service';
 import { SecretsService, type SecretMetadata, type SecretOverview } from '../secrets.service';
@@ -30,7 +30,7 @@ async function setup(role: 'owner' | 'viewer' = 'owner') {
   });
   const service = {
     overview, state: signal('ready'), error: signal<string | null>(null), load: vi.fn(),
-    environments: vi.fn(() => of(['stage', 'prod'])),
+    environments: vi.fn((project: string) => of(project ? ['stage', 'prod'] : [])),
     add: vi.fn(() => of(secret('workspace', 'NEW_KEY'))),
     rotate: vi.fn(() => of(secret('workspace', 'MAIL_KEY'))),
     revoke: vi.fn(() => of(secret('workspace', 'MAIL_KEY'))),
@@ -52,6 +52,22 @@ async function setup(role: 'owner' | 'viewer' = 'owner') {
 }
 
 describe('SecretsPanelComponent', () => {
+  it('cancels the prior environment lookup when the selected project changes', async () => {
+    const { fixture, service } = await setup();
+    const oldEnvironments = new Subject<string[]>();
+    service.environments.mockImplementation(project =>
+      project === 'first' ? oldEnvironments : of(['stage']));
+
+    fixture.componentInstance.selectProject('first');
+    fixture.detectChanges();
+    expect(oldEnvironments.observed).toBe(true);
+
+    fixture.componentInstance.selectProject('second');
+    fixture.detectChanges();
+    expect(oldEnvironments.observed).toBe(false);
+    expect(service.environments).toHaveBeenCalledWith('second');
+  });
+
   it('lists the secrets of the selected scope with versions and metadata', async () => {
     const { fixture, service, element } = await setup();
     expect(element.querySelectorAll('[data-testid="secrets-row"]')).toHaveLength(1);

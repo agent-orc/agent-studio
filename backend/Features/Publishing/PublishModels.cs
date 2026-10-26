@@ -88,9 +88,6 @@ public record PublishWorkflowRun
     public string? Url { get; init; }
     public DateTime TriggeredAt { get; init; }
     public string? Error { get; init; }
-    /// <summary>True when this dispatch took a free hosting slot; only then may its failure release it.</summary>
-    [System.Text.Json.Serialization.JsonIgnore]
-    public bool ReservedHostingSlot { get; init; }
 }
 
 public record PublishPackageRequest(string TargetId, string Version);

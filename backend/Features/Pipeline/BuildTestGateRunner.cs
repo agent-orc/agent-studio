@@ -2024,7 +2024,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         return result.ExitCode == 0 ? result.StandardOutput.Trim() : null;
     }
 
-    private static async Task<GitCommandResult> RunGitAsync(
+    internal static async Task<GitCommandResult> RunGitAsync(
         string workingDirectory,
         IReadOnlyList<string> args,
         TimeSpan timeout,
@@ -2052,7 +2052,10 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             result.FailureKind);
     }
 
-    private sealed record GitCommandResult(
+    internal static bool IsBareRepository(string directory)
+        => AgentStudio.Git.HostGitProcessHardening.IsBareRepository(directory);
+
+    internal sealed record GitCommandResult(
         int? ExitCode,
         string StandardOutput,
         string StandardError,

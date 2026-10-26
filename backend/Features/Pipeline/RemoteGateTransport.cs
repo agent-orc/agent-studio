@@ -151,7 +151,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             var knownTips = new List<string>();
             await Ssh(options, local, "umask 077; mkdir -p -- " + Quote(options.Root + "/cache")
                 + "; git init --bare --quiet -- " + Quote(cache)
-                + "; git -C " + Quote(cache) + " for-each-ref --sort=-committerdate --count=16 --format='%(objectname)' refs/heads/gate-cache",
+                + "; git --git-dir=" + Quote(cache) + " for-each-ref --sort=-committerdate --count=16 --format='%(objectname)' refs/heads/gate-cache",
                 infra, ct, line => { if (Regex.IsMatch(line, "^[0-9a-f]{40}([0-9a-f]{24})?$")) knownTips.Add(line); });
             var includedTips = new List<string>();
             // Only exclude cache tips that are ancestors of this exact subject.
@@ -676,6 +676,7 @@ internal static class RemoteGateProcess
             RedirectStandardOutput = true, RedirectStandardError = true,
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
+        if (fileName == "git") AgentStudio.Git.HostGitProcessHardening.Apply(start);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
         bounded.CancelAfter(timeout);
         using var process = Process.Start(start) ?? throw new IOException(fileName + " did not start.");

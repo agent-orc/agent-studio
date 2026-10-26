@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
 
 using Xunit;
 
@@ -51,12 +52,47 @@ public sealed class ProjectUrlProcessServiceTests : IDisposable
     [Fact]
     public void BuildStartInfo_DetachesTheCommandFromInteractiveInput()
     {
-        var info = ProjectUrlProcessService.BuildStartInfo("echo ready", _root);
+        var info = ProjectUrlProcessService.BuildStartInfo("echo ready", _root, isolated: true);
 
         Assert.True(info.CreateNoWindow);
         Assert.True(info.RedirectStandardInput);
         Assert.True(info.RedirectStandardOutput);
         Assert.True(info.RedirectStandardError);
+    }
+
+    [Fact]
+    public void BuildStartInfo_PassesOnlyProcessBootstrapVariables()
+    {
+        var info = ProjectUrlProcessService.BuildStartInfo("echo ready", _root, isolated: true);
+
+        Assert.All(info.Environment.Keys, key => Assert.Contains(key,
+            new[] { "PATH", "SystemRoot", "ComSpec", "PATHEXT", "TMPDIR", "TEMP", "TMP" }));
+        Assert.DoesNotContain("HOME", info.Environment.Keys);
+        Assert.DoesNotContain("GIT_CONFIG_COUNT", info.Environment.Keys);
+        Assert.DoesNotContain("AGENT_STUDIO_GITHUB_PROVISIONING_TOKEN", info.Environment.Keys);
+    }
+
+    [Fact]
+    public void BuildStartInfo_LocalProfilePreservesHome()
+    {
+        var info = ProjectUrlProcessService.BuildStartInfo("echo ready", _root);
+
+        info.Environment.TryGetValue("HOME", out var home);
+        Assert.Equal(Environment.GetEnvironmentVariable("HOME"), home);
+    }
+
+    [Fact]
+    public void MissingProfileConfigurationDefaultsToIsolatedStartRules()
+    {
+        using var defaultService = new ProjectUrlProcessService(
+            NullLogger<ProjectUrlProcessService>.Instance, new PassiveHttpClientFactory());
+        var local = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Security:Profile"] = "local" }).Build();
+        using var localService = new ProjectUrlProcessService(
+            NullLogger<ProjectUrlProcessService>.Instance, new PassiveHttpClientFactory(), configuration: local);
+
+        Assert.True(defaultService.IsHostIsolated);
+        Assert.False(localService.IsHostIsolated);
     }
 
     [Fact]

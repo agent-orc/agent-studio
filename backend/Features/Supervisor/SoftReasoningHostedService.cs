@@ -199,11 +199,12 @@ public sealed class SoftReasoningHostedService : BackgroundService
     /// </summary>
     private async Task<string> InvokeCliAsync(string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
     {
-        var oneShot = _oneShotRegistry?.Get("claude");
+        var cliType = ReviewDecisionOrchestrator.NormalizeReviewCliType(cli);
+        var oneShot = _oneShotRegistry?.Get(cliType);
         if (oneShot != null)
         {
             var r = await oneShot.RunAsync(new AgentStudio.Cli.CliOneShotRequest(
-                CliType: "claude", Model: model, Prompt: prompt)
+                CliType: cliType, Model: model, Prompt: prompt)
             {
                 Timeout = timeout,
                 Source = AdHocUsageSources.SoftReasoning,
@@ -218,27 +219,27 @@ public sealed class SoftReasoningHostedService : BackgroundService
             return CliOneShotCompatibility.ToClaudeResultEnvelope(r, model);
         }
 
+        if (!cliType.Equals(CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        var networked = !SecurityProfiles.IsLocal(_configuration);
+        using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;
         var psi = new ProcessStartInfo
         {
             FileName = cli,
+            WorkingDirectory = networked ? workspace!.Path : Directory.GetCurrentDirectory(),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        psi.ArgumentList.Add("-p");
-        psi.ArgumentList.Add("--output-format");
-        psi.ArgumentList.Add("json");
-        psi.ArgumentList.Add("--model");
-        psi.ArgumentList.Add(model);
-        psi.ArgumentList.Add("--dangerously-skip-permissions");
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model, networked: networked);
 
-        using var p = Process.Start(psi);
+        using var p = HostCliSpawnGuard.Start(psi, networked, CliTypes.Claude);
         if (p == null) return string.Empty;
         try
         {
-            await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
+            await p.StandardInput.WriteAsync(HostOneShotIsolation.PreparePrompt(prompt, networked).AsMemory(), ct);
             p.StandardInput.Close();
         }
         catch (Exception __ex) { SilentCatch.Note(__ex, "SoftReasoningHostedService: stdin may already be closed"); /* stdin may already be closed */ }

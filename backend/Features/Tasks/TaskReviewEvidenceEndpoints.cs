@@ -33,7 +33,9 @@ public static class TaskReviewEvidenceEndpoints
             if (string.IsNullOrWhiteSpace(body.Comment) || body.Comment.Length > 4000
                 || string.IsNullOrWhiteSpace(body.PreviewId) || body.PreviewId.Length > 200)
                 return Results.BadRequest(new { error = "A preview id and a comment of up to 4000 characters are required." });
-            var actor = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+            var actor = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account
+                ? TimelineActors.ServiceAccount(account.AccountId)
+                : context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
                 ? TimelineActors.Human(human.User.Id)
                 : TimelineActors.Human(context.Items["ClientId"] as string ?? string.Empty);
             var recorded = timeline.Append(info.FolderPath, new TimelineEvent

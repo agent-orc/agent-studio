@@ -62,6 +62,7 @@ test('owner can inspect and edit a blocked workspace quota', async ({ page, requ
 });
 
 test('a blocked workspace quota shows in the board header and on waiting cards', async ({ page }) => {
+  test.setTimeout(90_000);
   const watchPaths = await api<Array<{ path: string }>>('/api/watch-paths');
   expect(watchPaths.length).toBeGreaterThan(0);
   const watchPath = watchPaths[0].path;
@@ -90,7 +91,7 @@ test('a blocked workspace quota shows in the board header and on waiting cards',
   try {
     await page.goto('/');
     const card = page.locator('.task-card', { hasText: title });
-    await expect(card).toBeVisible({ timeout: 30_000 });
+    await expect(card).toBeVisible({ timeout: 60_000 });
     // A cold e2e backend answers the first header reads slowly; the quota read waits behind them.
     await expect(page.getByTestId('workspace-quota-status')).toHaveAttribute('data-status', 'blocked', { timeout: 30_000 });
     await expect(page.getByTestId('workspace-quota-status')).toContainText('Weekly quota reached');

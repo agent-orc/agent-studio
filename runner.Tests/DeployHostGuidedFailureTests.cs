@@ -32,7 +32,8 @@ public sealed class DeployHostGuidedFailureTests
             {
                 id = "retry-job", project = "demo", environmentId = "stage", hostId = "stage-host",
                 artifact = "artifact-unavailable", template = "container", destination = "invalid-port",
-                healthUrl = $"http://127.0.0.1:{port}/", secretRefs = Array.Empty<string>(),
+                healthUrl = $"http://127.0.0.1:{port}/", secretRefs = new[] { "DB-URL", "DB.URL" },
+                missingSecretRefs = new[] { new { name = "DB-URL", reason = "not-bound" } },
                 containerPort = 8080, previousArtifact = (string?)null, status = "claimed",
                 leaseToken = "lease-" + Guid.NewGuid().ToString("N"), retryStep = "health",
             });

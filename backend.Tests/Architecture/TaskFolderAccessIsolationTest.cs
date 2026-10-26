@@ -116,6 +116,10 @@ public class TaskFolderAccessIsolationTest
             ["backend/Features/Management/ManagementService.cs"] =
                 "Deletes isolated restore-verification staging outside the task store, never task folders.",
 
+            // One-shot Claude removes only its GUID-named scratch folder under the system temp root, never a job folder.
+            ["backend/Features/Cli/Routing/OneShot/HostOneShotIsolation.cs"] =
+                "Deletes only a temporary one-shot folder under the system temp root, never a job folder.",
+
             // AGT-3175 rolls back a project created from a template: the fresh
             // checkout never held job folders and is removed with the remote repository.
             ["backend/Features/Registry/ProjectRepositoryProvisioning.cs"] =
@@ -159,6 +163,8 @@ public class TaskFolderAccessIsolationTest
             // projects back into backend/ (the scan covers them again):
             ["backend/Features/Cli/Execution/NpmShimHealer.cs"] =
                 "Temporary legacy/OneShot npm staging cleanup under the user npm directory, not the job-folder tree; removed in AGT-2373.",
+            ["backend/Features/Projects/HostedData/HostedVolumeBackupEngine.cs"] =
+                "AGT-3248 stages, swaps and prunes hosted-app volume backup and restore directories under the hosted data root, never a lane or task folder.",
             ["backend/Features/Secrets/BuiltIn/BuiltInSecretStore.cs"] =
                 "AGT-3222 removes a revoked or replaced secret item directory under the secret store root (tombstone move, then delete), never a lane or task folder.",
             ["backend/Features/Cli/Execution/RunLogStore.cs"] =

@@ -169,10 +169,21 @@ public class CliInvocationCentralizationGuardTests
             + "AGT-2373 keeps only Antigravity's bounded --version availability probe here; card runs "
             + "use CAR and this file no longer constructs their argv."),
 
+        new("backend/Features/Cli/Execution/HostCliSpawnGuard.cs",
+            DocumentedException
+            + "AGT-2373 bounds non-card host launches; AGT-3303 centralizes them here. In the "
+            + "networked profile it permits only isolated, tool-free Claude calls and never starts a "
+            + "card run. AGT-3171 removes "
+            + "this host exception when Stage 2 moves provider launches into per-job isolation."),
+
         new("backend/Features/Cli/Execution/NpmShimHealer.cs",
             DocumentedException
             + "The non-agent ClaudeOneShot alone retains this repair helper. CAR owns repair "
             + "for card runs; AGT-2373 removed the local rollback path."),
+
+        new("backend/Features/Cli/Execution/HostCliSpawnGuard.cs",
+            DocumentedException
+            + "AGT-2373 retains this host spawn boundary to validate provider arguments and isolation before process start."),
 
         new("backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs",
             DocumentedException

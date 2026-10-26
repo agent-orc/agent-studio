@@ -1,0 +1,64 @@
+// Shared flat-surface controls of the Access area (admin design guideline).
+@mixin controls {
+  h3, h4, p { margin: 0; }
+  h3 { color: var(--studio-fg-strong); font-size: 0.9rem; }
+  h4 { color: var(--studio-fg-strong); font-size: 0.8rem; }
+  .access-hint { color: var(--studio-fg-dim); font-size: 0.78rem; }
+  .access-error { color: var(--severity-high); font-size: 0.78rem; }
+  label { display: flex; flex-direction: column; gap: 2px; color: var(--studio-fg-dim); font-size: 0.72rem; }
+  input, select {
+    min-height: var(--studio-row-min-h-interactive);
+    padding: 0 var(--studio-spacing-2);
+    border: 1px solid var(--studio-border-strong);
+    border-radius: 4px;
+    background: var(--studio-bg-surface);
+    color: var(--studio-fg);
+    font: inherit;
+    font-size: 0.8rem;
+  }
+  button {
+    min-height: var(--studio-row-min-h-interactive);
+    padding: 0 var(--studio-spacing-3);
+    border: 1px solid var(--studio-accent);
+    border-radius: 4px;
+    background: var(--studio-accent);
+    color: var(--studio-on-accent);
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+  button:disabled { cursor: not-allowed; opacity: 0.55; }
+  button.access-secondary { border-color: var(--studio-border-strong); background: transparent; color: var(--studio-fg); }
+  button.access-quiet { min-height: auto; padding: 2px var(--studio-spacing-2); border-color: transparent; background: transparent; color: var(--studio-fg-dim); }
+  button.access-quiet:hover:not(:disabled) { background: var(--studio-bg-hover); color: var(--studio-fg); }
+  .access-row { display: flex; flex-wrap: wrap; align-items: end; gap: var(--studio-spacing-2); }
+  .access-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px var(--studio-spacing-2);
+    border-radius: 999px;
+    background: var(--studio-bg-selected);
+    color: var(--studio-fg-strong);
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
+  .access-badge[data-tone='owner'] { background: var(--studio-card-attention-bg); }
+  .access-badge[data-tone='muted'] { background: var(--studio-surface-muted); color: var(--studio-fg-dim); }
+  .access-secret {
+    padding: var(--studio-spacing-2);
+    border-radius: 4px;
+    background: var(--studio-surface-muted);
+    color: var(--studio-fg-strong);
+    font-family: var(--studio-mono);
+    font-size: 0.75rem;
+    word-break: break-all;
+  }
+}
+
+@mixin table {
+  table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+  th { padding: var(--studio-spacing-1) var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border-strong); color: var(--studio-fg-dim); font-weight: 500; text-align: left; }
+  td { padding: var(--studio-row-pad-block) var(--studio-spacing-2); border-bottom: 1px solid var(--studio-border); color: var(--studio-fg); vertical-align: middle; }
+  td.access-actions { text-align: right; white-space: nowrap; }
+  .access-numeric { font-variant-numeric: tabular-nums; }
+}

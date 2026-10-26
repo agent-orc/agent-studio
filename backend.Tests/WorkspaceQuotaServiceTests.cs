@@ -198,6 +198,65 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
     }
 
     [Fact]
+    public void Unreadable_state_keeps_the_last_good_limits_and_fails_closed_without_them()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "state"), "State", workspace.Id, _clock);
+        Directory.CreateDirectory(project.StorageLocation);
+        var quota = services.GetRequiredService<WorkspaceQuotaService>();
+        quota.SetLimits(workspace.Id, null, new QuotaLimits(0, null, null));
+        File.WriteAllText(Path.Combine(_root, ".metadata", "workspace-quotas.json"), "{broken");
+
+        var kept = quota.Admit(project.Id);
+        var fresh = ActivatorUtilities.CreateInstance<WorkspaceQuotaService>(services).Admit(project.Id);
+
+        Assert.False(kept.Allowed);
+        Assert.False(fresh.Allowed);
+        Assert.True(fresh.MeterUnavailable);
+        Assert.Contains("could not be read", fresh.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Restart_with_a_corrupt_settings_file_refuses_work_and_keeps_the_file_until_it_is_repaired()
+    {
+        Directory.CreateDirectory(_root);
+        using var factory = Factory();
+        var services = factory.Services;
+        var workspace = services.GetRequiredService<WorkspaceRegistry>().EnsureDefaultWorkspace(_clock);
+        var project = services.GetRequiredService<ProjectRegistry>().EnsureProjectForStorage(
+            Path.Combine(_root, "restart"), "Restart", workspace.Id, _clock);
+        Directory.CreateDirectory(project.StorageLocation);
+        services.GetRequiredService<WorkspaceQuotaService>()
+            .SetLimits(workspace.Id, null, new QuotaLimits(1000, null, null));
+        var path = Path.Combine(_root, ".metadata", "workspace-quotas.json");
+        var good = File.ReadAllText(path);
+        File.WriteAllText(path, "{broken");
+
+        var restarted = ActivatorUtilities.CreateInstance<WorkspaceQuotaService>(services);
+
+        Assert.True(restarted.HasLimits());
+        var coding = restarted.Admit(project.Id);
+        Assert.False(coding.Allowed);
+        Assert.True(coding.MeterUnavailable);
+        Assert.Contains("no earlier settings are known", coding.Message, StringComparison.Ordinal);
+        Assert.False(restarted.Admit(project.Id, hosting: true).Allowed);
+        Assert.Throws<InvalidOperationException>(() => restarted.ReserveProjectEnvironment(project.Id, "website"));
+        var board = restarted.BoardAdmission(workspace.Id);
+        Assert.False(board.Workspace.CodingAllowed);
+        Assert.All(board.Projects, scope => Assert.False(scope.CodingAllowed));
+        // A write would replace the unknown limits with empty ones.
+        Assert.Throws<InvalidOperationException>(() => restarted.SetEnvironment(project.Id, "website", false));
+        Assert.Equal("{broken", File.ReadAllText(path));
+
+        File.WriteAllText(path, good);
+        Assert.True(restarted.Admit(project.Id).Allowed);
+    }
+
+    [Fact]
     public void Unreadable_state_keeps_the_last_good_limits_and_reports_the_meter()
     {
         Directory.CreateDirectory(_root);
@@ -215,7 +274,7 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
         var fresh = ActivatorUtilities.CreateInstance<WorkspaceQuotaService>(services).Admit(project.Id);
 
         Assert.False(kept.Allowed);
-        Assert.True(fresh.Allowed);
+        Assert.False(fresh.Allowed);
         Assert.True(fresh.MeterUnavailable);
         Assert.Contains("could not be read", fresh.Message, StringComparison.Ordinal);
     }
@@ -261,9 +320,10 @@ public sealed class WorkspaceQuotaServiceTests : IDisposable
         Assert.Equal(1, quota.Snapshot(workspace.Id).Usage.HostingSlots);
         Assert.Equal([projects.FindByIdOrDisplayName(admitted.Single())!.DisplayName], quota.RunningWebsiteProjects());
         Assert.Equal(_clock.GetUtcNow(), quota.ProjectEnvironmentReservedAt(admitted.Single(), "website"));
+        var reservedAt = quota.ProjectEnvironmentReservedAt(admitted.Single(), "website");
         _clock.Advance(TimeSpan.FromMinutes(1));
-        quota.MarkProjectEnvironmentDispatched(admitted.Single(), "website", _clock.GetUtcNow());
-        Assert.Equal(_clock.GetUtcNow(), quota.ProjectEnvironmentReservedAt(admitted.Single(), "website"));
+        Assert.False(quota.ReserveProjectEnvironment(admitted.Single(), "website"));
+        Assert.Equal(reservedAt, quota.ProjectEnvironmentReservedAt(admitted.Single(), "website"));
         quota.SetEnvironment(admitted.Single(), "website", false);
         Assert.Equal(0, quota.Snapshot(workspace.Id).Usage.HostingSlots);
         Assert.Empty(quota.RunningWebsiteProjects());

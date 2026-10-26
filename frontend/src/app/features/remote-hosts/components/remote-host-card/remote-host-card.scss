@@ -106,12 +106,12 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.host__load { gap: var(--studio-spacing-2); }
+.host__load { gap: var(--studio-spacing-2); min-width: 0; }
 .host__load-track {
   position: relative;
-  width: 44px;
+  width: 44px; min-width: 0;
   height: 4px;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   overflow: hidden;
   border-radius: 999px;
   background: var(--studio-border);

@@ -4,8 +4,11 @@ using System.Text.Json;
 using AgentStudio.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -220,7 +223,7 @@ public sealed class RemoteRunDispositionEndpointTests : IDisposable
     {
         foreach (var state in TaskStates.All)
             Directory.CreateDirectory(Path.Combine(WatchPath, state));
-        return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        return new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
             builder.ConfigureAppConfiguration((_, configuration) =>
@@ -231,6 +234,9 @@ public sealed class RemoteRunDispositionEndpointTests : IDisposable
                     ["WatchPaths:0:Path"] = WatchPath,
                     ["WatchPaths:0:RootPath"] = WatchPath,
                 }));
+            // This fixture drives the liveness sweep explicitly. No periodic
+            // worker may move its claimed card between that sweep and the read.
+            builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>());
         });
     }
 

@@ -1,0 +1,14 @@
+@use '../../access-controls' as access;
+
+:host { display: block; min-width: 0; }
+@include access.controls;
+@include access.table;
+.bindings { display: flex; flex-direction: column; gap: var(--studio-spacing-3); }
+.bindings__scope { display: flex; flex-direction: column; gap: var(--studio-spacing-1); }
+.bindings__scope table { table-layout: fixed; }
+.bindings__scope th:nth-child(1) { width: 34%; }
+.bindings__scope th:nth-child(2), .bindings__scope th:nth-child(4) { width: 18%; }
+.bindings__scope th:nth-child(5) { width: 10%; }
+.bindings__scope h4 { display: flex; align-items: baseline; gap: var(--studio-spacing-2); }
+.bindings__add { display: flex; flex-direction: column; gap: var(--studio-spacing-2); padding-top: var(--studio-spacing-2); border-top: 1px solid var(--studio-border); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

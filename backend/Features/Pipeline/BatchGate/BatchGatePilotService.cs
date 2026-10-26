@@ -52,6 +52,7 @@ public sealed partial class BatchGatePilotService
     /// <summary>Coordinator lease renewal cadence; well inside the two-minute grant.</summary>
     internal TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(30);
     internal bool WaitForFlightsInTick { get; set; }
+    internal Action? AfterAssemblyForTesting { get; set; }
 
     /// <summary>Per-task gate starts per review generation before GateInfra (D8).</summary>
     internal const int FallbackGateStartBudget = 2;
@@ -1145,6 +1146,7 @@ public sealed partial class BatchGatePilotService
             }
             var assembly = new BatchGateAssembler(_store, _git, repo, _time)
                 .Assemble(manifest.BatchId, lease.Fence);
+            AfterAssemblyForTesting?.Invoke();
             if (!RouteEnabled())
             {
                 AbandonRollback();

@@ -20,6 +20,7 @@ import {
 } from '../../../project-detail';
 import { ProjectDetailComponent } from '../../../project-detail/lazy';
 import { ProjectTokenUsagePanelComponent } from '../../../project-token-usage';
+import { TokenAnalysisViewComponent } from '../../../token-analysis';
 import { ProjectCycleTimePanelComponent } from '../../../project-cycle-time';
 import { PromptAdminPanelComponent } from '../../../orchestrator';
 import { WorkspaceScreenshotsComponent } from '../../../screenshots';
@@ -92,6 +93,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
     SecurityPanelComponent,
     UxuiPanelComponent,
     ProjectTokenUsagePanelComponent,
+    TokenAnalysisViewComponent,
     ProjectCycleTimePanelComponent,
     ProjectObservabilityPanelComponent,
     ProjectProductRuntimePanelComponent,
@@ -131,6 +133,12 @@ export class ProjectHubViewComponent {
 
   readonly activeRail = signal<ProjectRailKey>(DEFAULT_PROJECT_RAIL_KEY);
   readonly deployView = signal<DeployView>('overview');
+  readonly selectedRelease = signal<{ project: string; id: string } | null>(null);
+
+  openOperationsRelease(id: string): void {
+    this.setRail('deploy');
+    this.selectedRelease.set({ project: this.projectName(), id });
+  }
 
   constructor() {
     effect(() => {
@@ -152,6 +160,7 @@ export class ProjectHubViewComponent {
   }
 
   setRail(requested: ProjectRailKey): void {
+    this.selectedRelease.set(null);
     const projectName = this.projectName();
     const { rail, deployView } = resolveProjectSection(requested);
     if (rail === 'deploy') this.deployView.set(deployView);

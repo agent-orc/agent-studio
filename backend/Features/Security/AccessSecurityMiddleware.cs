@@ -1,24 +1,37 @@
+using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.Primitives;
 
 namespace AgentStudio.Security;
 
-/// <summary>Fail-closed authentication and project-scoped human authorization.</summary>
+/// <summary>
+/// Fail-closed authentication and project-scoped authorization. Every human
+/// and service-account request must hold the named permission its route
+/// declares (<see cref="RoutePermissionCatalog"/>) through a role binding that
+/// covers the addressed scope. Handlers then see a per-request projected
+/// principal, never the persisted legacy summary.
+/// </summary>
 public sealed class AccessSecurityMiddleware
 {
     public const string HumanPrincipalItem = "AccessSecurity.HumanPrincipal";
     public const string RunnerPrincipalItem = "AccessSecurity.RunnerPrincipal";
-    public const string ApiTokenPrincipalItem = "AccessSecurity.ApiTokenPrincipal";
+    public const string ServiceAccountPrincipalItem = "AccessSecurity.ServiceAccountPrincipal";
+    /// <summary>The <see cref="RequestAccess"/> captured with the request's permission decision.</summary>
+    public const string RequestAccessItem = "AccessSecurity.RequestAccess";
     public const string AttributionClientIdItem = "AccessSecurity.AttributionClientId";
+    private const string TaskResolutionItem = "AccessSecurity.TaskResolution";
+    private const string SkipTaskResolutionItem = "AccessSecurity.SkipTaskResolution";
 
     private readonly RequestDelegate _next;
     private readonly IConfiguration _configuration;
     private readonly AccessSecurityStore _store;
     private readonly TaskScannerService? _scanner;
+    private readonly TaskIndexCache? _taskIndex;
     private readonly RunLeaseService? _leases;
     private readonly AgentStudio.Registry.ProjectRegistry? _projects;
     private readonly TimelineLog? _timeline;
     private readonly TimeProvider _clock;
     private readonly AgentStudio.Registry.ProjectUrlPreviewAccess _previewAccess;
+    private readonly AgentStudio.Projects.ProjectEnvironmentService? _environments;
     private readonly ILogger<AccessSecurityMiddleware>? _logger;
 
     public AccessSecurityMiddleware(
@@ -31,19 +44,33 @@ public sealed class AccessSecurityMiddleware
         TimelineLog? timeline = null,
         TimeProvider? clock = null,
         AgentStudio.Registry.ProjectUrlPreviewAccess? previewAccess = null,
-        ILogger<AccessSecurityMiddleware>? logger = null)
+        AgentStudio.Projects.ProjectEnvironmentService? environments = null,
+        ILogger<AccessSecurityMiddleware>? logger = null,
+        TaskIndexCache? taskIndex = null)
     {
         _next = next;
         _configuration = configuration;
         _store = store;
         _scanner = scanner;
+        _taskIndex = taskIndex;
         _leases = leases;
         _projects = projects;
         _timeline = timeline;
         _clock = clock ?? TimeProvider.System;
         _previewAccess = previewAccess ?? new AgentStudio.Registry.ProjectUrlPreviewAccess(TimeProvider.System);
+        _environments = environments;
         _logger = logger;
     }
+
+    /// <summary>
+    /// Who a handler attributes an action to: <c>service-account:&lt;id&gt;</c> for a
+    /// service account or API token, the user id for a signed-in human, and
+    /// <paramref name="fallback"/> without a principal (local profile).
+    /// </summary>
+    public static string ActorId(HttpContext context, string fallback)
+        => context.Items[ServiceAccountPrincipalItem] is ServiceAccountPrincipal account ? account.ActorId
+            : context.Items[HumanPrincipalItem] is HumanPrincipal human ? human.User.Id
+            : fallback;
 
     public async Task InvokeAsync(HttpContext context)
     {
@@ -112,11 +139,12 @@ public sealed class AccessSecurityMiddleware
         // credential store; the upstream remains fail-closed and authoritative.
         // The skip holds only when routing selected the proxy endpoint and the
         // Authorization header is one well-formed bearer; any other shape falls
-        // through to local authentication.
+        // through to local authentication. Studio's own API-token and
+        // service-account bearers (api.*, sat.*) never take the skip.
         var presentedBearer = ReadBearer(context.Request.Headers.Authorization.FirstOrDefault());
         if (IsProxiedTaskServerPlane(context, path)
             && IsWellFormedBearer(context.Request.Headers.Authorization)
-            && presentedBearer?.StartsWith("api.", StringComparison.Ordinal) != true)
+            && !AccessSecurityStore.IsServiceAccountBearer(presentedBearer))
         {
             await _next(context);
             return;
@@ -157,7 +185,7 @@ public sealed class AccessSecurityMiddleware
         var human = _store.AuthenticateSession(sessionToken);
         var bearer = presentedBearer;
         var runner = _store.AuthenticateRunner(bearer);
-        var apiToken = human is null ? _store.AuthenticateApiToken(bearer) : null;
+        var serviceAccount = human is null && runner is null ? _store.AuthenticateServiceAccount(bearer) : null;
         if (HttpMethods.IsGet(context.Request.Method)
             && path.StartsWith("/api/quota/admission/", StringComparison.OrdinalIgnoreCase))
         {
@@ -186,12 +214,39 @@ public sealed class AccessSecurityMiddleware
             context.Items[RunnerPrincipalItem] = runner;
             context.Items["ClientId"] = runner.RunnerId;
         }
+        if (serviceAccount is null)
+        {
+            await AuthorizeAsync(context, path, human, runner, null);
+            return;
+        }
 
+        // Every call a service-account or API-token bearer makes is audited,
+        // refused calls included.
+        context.Items[ServiceAccountPrincipalItem] = serviceAccount;
+        context.Items["ClientId"] = serviceAccount.ActorId;
+        var faulted = false;
+        try
+        {
+            await AuthorizeAsync(context, path, null, null, serviceAccount);
+        }
+        catch
+        {
+            faulted = true;
+            throw;
+        }
+        finally
+        {
+            _store.AppendServiceAccountAudit(serviceAccount, context.Request.Method, path,
+                faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode);
+        }
+    }
+
+    private async Task AuthorizeAsync(
+        HttpContext context, string path, HumanPrincipal? human, RunnerPrincipal? runner, ServiceAccountPrincipal? serviceAccount)
+    {
         if (IsOpenAuth(path))
         {
             await _next(context);
-            if (apiToken is not null)
-                _store.AppendApiTokenAudit(apiToken.Token, context.Request.Method, path, context.Response.StatusCode);
             return;
         }
 
@@ -207,21 +262,14 @@ public sealed class AccessSecurityMiddleware
         if (path.Equals("/api/clients/register", StringComparison.OrdinalIgnoreCase))
         {
             await Reject(context, 404, "registration-disabled", "Open client registration is disabled in the networked profile.");
-            if (apiToken is not null)
-                _store.AppendApiTokenAudit(apiToken.Token, context.Request.Method, path, context.Response.StatusCode);
             return;
         }
 
         if (path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase))
         {
-            if (human is null)
-            {
-                await Reject(context, 401, "authentication-required", "An authenticated Studio session is required for event streams.");
-                if (apiToken is not null)
-                    _store.AppendApiTokenAudit(apiToken.Token, context.Request.Method, path, context.Response.StatusCode);
-                return;
-            }
+            if (human is null) { await Reject(context, 401, "authentication-required", "An authenticated Studio session is required for event streams."); return; }
             if (human.User.MustChangePassword) { await Reject(context, 403, "password-change-required", "Change the temporary password before continuing."); return; }
+            if (!await HumanPermissionAllowed(context, human, path)) return;
             await _next(context);
             return;
         }
@@ -236,6 +284,7 @@ public sealed class AccessSecurityMiddleware
         {
             if (human is not null && !human.User.MustChangePassword)
             {
+                if (!await HumanPermissionAllowed(context, human, path)) return;
                 await _next(context);
                 return;
             }
@@ -262,19 +311,22 @@ public sealed class AccessSecurityMiddleware
         // original versioned route as a fallback so only those client reads
         // gain a Runner scope, not other legacy /api/tasks/{id} reads.
         var originalPath = context.Items[AgentStudio.Host.StudioV1LegacyRouteAlias.OriginalPathItem] as string;
+        var productTaskFileRead = human is not null
+            && ContributorAccessPolicy.IsProductSession(human.User)
+            && IsRunnerTaskFileRead(context.Request.Method, path);
+        if (productTaskFileRead
+            && !ContributorAccessPolicy.Allows(context.Request.Method, path, null, false))
+        {
+            await Reject(context, 403, "role-denied", "The Product role cannot read this file.");
+            return;
+        }
         var requiredRunnerScope = RequiredRunnerScope(context.Request.Method, path)
             ?? (originalPath is null ? null : RequiredRunnerScope(context.Request.Method, NormalizePath(originalPath)));
         if (requiredRunnerScope is not null
-            && (human is null || !(IsHumanSessionRead(context.Request.Method, path)
+            && (human is null || !(productTaskFileRead || IsHumanSessionRead(context.Request.Method, path)
                 || originalPath is not null && IsHumanSessionRead(context.Request.Method, NormalizePath(originalPath)))))
         {
-            if (runner is null)
-            {
-                await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required.");
-                if (apiToken is not null)
-                    _store.AppendApiTokenAudit(apiToken.Token, context.Request.Method, path, context.Response.StatusCode);
-                return;
-            }
+            if (runner is null) { await Reject(context, 401, "runner-authentication-required", "A Runner service credential is required."); return; }
             if (!runner.Scopes.Contains(requiredRunnerScope)) { await Reject(context, 403, "runner-scope-denied", $"Runner credential lacks '{requiredRunnerScope}'."); return; }
             if (path.StartsWith("/api/v1/runners/", StringComparison.OrdinalIgnoreCase)
                 && !path["/api/v1/runners/".Length..].Split('/')[0].Equals(runner.RunnerId, StringComparison.Ordinal))
@@ -298,70 +350,9 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
-        if (apiToken is not null)
+        if (serviceAccount is not null)
         {
-            context.Items[ApiTokenPrincipalItem] = apiToken;
-            context.Items["ClientId"] = $"api:{apiToken.Token.Id}";
-            var faulted = false;
-            try
-            {
-                if (path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase)
-                    || path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase))
-                {
-                    await Reject(context, 403, "token-route-denied", "API tokens cannot call access administration or Task Server routes.");
-                    return;
-                }
-                if (apiToken.User.Role == StudioRoles.Viewer
-                    && !HttpMethods.IsGet(context.Request.Method)
-                    && !HttpMethods.IsHead(context.Request.Method)
-                    && !HttpMethods.IsOptions(context.Request.Method)
-                    && !IsReadOnlyPost(context.Request.Method, path))
-                {
-                    await Reject(context, 403, "role-denied", "Viewer role is read-only.");
-                    return;
-                }
-                if (await RejectedByRoleRequirement(context, apiToken.User.Role)) return;
-                if (!TokenWriteRouteAllowed(context.Request, path))
-                {
-                    await Reject(context, 403, "project-scope-denied", "A project-scoped token cannot mutate installation-wide settings.");
-                    return;
-                }
-                var declaredScope = context.GetEndpoint()?.Metadata.GetMetadata<ApiTokenRouteScope>()?.Scope
-                    ?? ProjectRouteScope.WorkspaceWide;
-                if (declaredScope is not (ProjectRouteScope.Addressed or ProjectRouteScope.DeferredToHandler)
-                    && !apiToken.Token.Projects.Contains(ProjectAccessAuthorization.AllProjectsGrant, StringComparer.Ordinal))
-                {
-                    await Reject(context, 403, "project-scope-denied", "This token requires a workspace scope for this route.");
-                    return;
-                }
-                if (!ProjectAllowed(apiToken.User, context.Request, path))
-                {
-                    await Reject(context, 403, "project-scope-denied", "This token is not scoped to the requested project.");
-                    return;
-                }
-                // Collection handlers already filter by HumanPrincipalItem. A
-                // synthetic session lets the same project checks use the token's
-                // fixed role and grants, without granting a browser session.
-                var synthetic = new StudioSession
-                {
-                    Id = $"api:{apiToken.Token.Id}", UserId = apiToken.User.Id,
-                    TokenHash = string.Empty, CsrfHash = string.Empty,
-                    CreatedAt = apiToken.Token.CreatedAt, LastSeenAt = apiToken.Token.LastUsedAt ?? apiToken.Token.CreatedAt,
-                    ExpiresAt = apiToken.Token.ExpiresAt, AbsoluteExpiresAt = apiToken.Token.ExpiresAt
-                };
-                context.Items[HumanPrincipalItem] = new HumanPrincipal(apiToken.User, synthetic);
-                await _next(context);
-            }
-            catch
-            {
-                faulted = true;
-                throw;
-            }
-            finally
-            {
-                _store.AppendApiTokenAudit(apiToken.Token, context.Request.Method, path,
-                    faulted ? StatusCodes.Status500InternalServerError : context.Response.StatusCode);
-            }
+            await AuthorizeServiceAccount(context, serviceAccount, path);
             return;
         }
 
@@ -384,41 +375,82 @@ public sealed class AccessSecurityMiddleware
             return;
         }
 
-        if (path.StartsWith("/api/auth/users", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/auth/invitations", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/auth/runners", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/auth/runner-enrollments", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/auth/api-tokens", StringComparison.OrdinalIgnoreCase))
-        {
-            if (human.User.Role != StudioRoles.Owner) { await Reject(context, 403, "owner-required", "Owner role is required."); return; }
-        }
-        if (await RejectedByRoleRequirement(context, human.User.Role)) return;
+        var safeMethod = IsSafe(context.Request.Method, path);
+        if (context.GetEndpoint() is { } endpoint)
+            await AuthorizeHuman(context, human, endpoint, path, safeMethod);
+        else
+            await AuthorizeUnroutedHuman(context, human, path, safeMethod);
+    }
 
-        var safeMethod = HttpMethods.IsGet(context.Request.Method)
-                         || HttpMethods.IsHead(context.Request.Method)
-                         || HttpMethods.IsOptions(context.Request.Method)
-                         || IsReadOnlyPost(context.Request.Method, path);
-        if (!safeMethod)
+    /// <summary>
+    /// A signed-in human on a routed endpoint. The route's named permission
+    /// is decided against the user's role bindings; the request then carries
+    /// a projected principal (role and projects for this route only) and the
+    /// captured <see cref="RequestAccess"/>, so no handler authorizes through
+    /// the persisted legacy summary.
+    /// </summary>
+    private async Task AuthorizeHuman(HttpContext context, HumanPrincipal human, Endpoint endpoint, string path, bool safeMethod)
+    {
+        if (RoutePermissionCatalog.IsMethodRejection(endpoint))
         {
-            var selfServiceAuthMutation = path is "/api/auth/logout" or "/api/auth/change-password";
-            if (human.User.Role == StudioRoles.Viewer && !selfServiceAuthMutation) { await Reject(context, 403, "role-denied", "Viewer role is read-only."); return; }
-            if (!_store.ValidateCsrf(human.Session, context.Request.Headers["X-CSRF-Token"].FirstOrDefault()))
+            await _next(context);
+            return;
+        }
+        var required = RoutePermissionCatalog.Resolve(endpoint, context.Request.Method);
+        if (required is null)
+        {
+            await Reject(context, 403, "permission-undeclared", "This route declares no permission.");
+            return;
+        }
+        if (IamPermissions.IsUnbound(required.Permission))
+        {
+            if (!safeMethod && !_store.ValidateCsrf(human.Session, context.Request.Headers["X-CSRF-Token"].FirstOrDefault()))
             {
                 await Reject(context, 403, "csrf-invalid", "A valid CSRF token is required for browser mutations.");
                 return;
             }
+            await _next(context);
+            return;
         }
 
-        if (human.User.Role == StudioRoles.Contributor)
+        var (subject, bindings) = _store.PrincipalBindings(IamPrincipalKind.User, human.User.Id);
+        context.Items[SkipTaskResolutionItem] = WorkspaceBindingsDecide(subject, bindings);
+        var target = await TargetAsync(context, path, required, safeMethod);
+        var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
+        var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
+        if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return;
+        // A caller with no binding at all on what the request addresses is
+        // refused as a non-member, not as a read-only or Product role.
+        if (decision.ScopeDenied
+            && !PermissionEvaluator.Evaluate(IamPermissions.ProjectRead, subject, bindings, target, SameProject).Allowed)
+        {
+            await RejectPermission(context, decision, required.Permission);
+            return;
+        }
+        if (!safeMethod && projected.LegacyRole == StudioRoles.Viewer
+            && required.Permission != IamPermissions.EnvironmentProductionDeployApprove)
+        {
+            await Reject(context, 403, "role-denied", "Viewer role is read-only.");
+            return;
+        }
+        if (!safeMethod && !_store.ValidateCsrf(human.Session, context.Request.Headers["X-CSRF-Token"].FirstOrDefault()))
+        {
+            await Reject(context, 403, "csrf-invalid", "A valid CSRF token is required for browser mutations.");
+            return;
+        }
+
+        // The Product allowlist applies wherever Contributor is the strongest
+        // role on what the request addresses.
+        var productRole = projected.Role == IamRoles.Contributor;
+        if (productRole)
         {
             var card = path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
-                ? _scanner?.FindJob(Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]))
+                && IsParameterSegment(endpoint, 2)
+                ? await FindTaskAsync(context, Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]))
                 : null;
             var productionApproval = card is not null
-                && human.User.ProductionApprovalProjects.Any(project =>
-                    string.Equals(project, card.ProjectName, StringComparison.OrdinalIgnoreCase)
-                    || (_projects?.FindByIdOrDisplayName(project)?.StorageLocation is { } location
-                        && AgentStudio.Shared.WatchPathComparison.PathsEqual(location, card.WatchPath)));
+                && PermissionEvaluator.Evaluate(IamPermissions.EnvironmentProductionDeployApprove, subject, bindings,
+                    PermissionTarget.ForProject(card.ProjectName, LegacyRoleMapping.ProductionEnvironment), SameProject).Allowed;
             if (!ContributorAccessPolicy.Allows(context.Request.Method, path, card?.State, productionApproval))
             {
                 await Reject(context, 403, "role-denied", "The Product role cannot perform this action.");
@@ -426,20 +458,22 @@ public sealed class AccessSecurityMiddleware
             }
         }
 
-        if (!ProjectAllowed(human.User, context.Request, path))
+        if (!decision.Allowed)
         {
-            await Reject(context, 403, "project-scope-denied", "This account is not a member of the requested project.");
+            await RejectPermission(context, decision, required.Permission);
             return;
         }
 
+        context.Items[HumanPrincipalItem] = new HumanPrincipal(ProjectedUser(human.User, projected, subject, bindings), human.Session);
+        context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject, projected.Role);
         await _next(context);
-        if (human.User.Role == StudioRoles.Contributor
+        if (productRole
             && !safeMethod && context.Response.StatusCode is >= 200 and < 400
             && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
             && _timeline is not null)
         {
             var taskId = Uri.UnescapeDataString(path["/api/tasks/".Length..].Split('/', 2)[0]);
-            var updated = _scanner?.FindJob(taskId);
+            var updated = _scanner?.FindPublishedJob(taskId);
             if (updated is not null)
                 _timeline.Append(updated.FolderPath, new TimelineEvent
                 {
@@ -450,6 +484,278 @@ public sealed class AccessSecurityMiddleware
                 });
         }
     }
+
+    /// <summary>
+    /// A request routing did not match executes no endpoint handler. Later
+    /// middleware may still answer it, so it keeps the legacy checks against
+    /// the persisted, downgrade-safe summary, which never exceeds the bindings.
+    /// </summary>
+    private async Task AuthorizeUnroutedHuman(HttpContext context, HumanPrincipal human, string path, bool safeMethod)
+    {
+        if (path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase) && !IsSelfServiceAuth(path)
+            && human.User.Role != StudioRoles.Owner)
+        {
+            await Reject(context, 403, "owner-required", "Owner role is required.");
+            return;
+        }
+        if (!safeMethod)
+        {
+            if (human.User.Role == StudioRoles.Viewer && !IsSelfServiceAuth(path)) { await Reject(context, 403, "role-denied", "Viewer role is read-only."); return; }
+            if (!_store.ValidateCsrf(human.Session, context.Request.Headers["X-CSRF-Token"].FirstOrDefault()))
+            {
+                await Reject(context, 403, "csrf-invalid", "A valid CSRF token is required for browser mutations.");
+                return;
+            }
+        }
+        if (human.User.Role == StudioRoles.Contributor && !ContributorAccessPolicy.Allows(context.Request.Method, path, null, false))
+        {
+            await Reject(context, 403, "role-denied", "The Product role cannot perform this action.");
+            return;
+        }
+        if (!await ProjectAllowedAsync(human.User, context, path))
+        {
+            await Reject(context, 403, "project-scope-denied", "This account is not a member of the requested project.");
+            return;
+        }
+        await _next(context);
+    }
+
+    /// <summary>
+    /// The named-permission check for a signed-in human on hub and protocol
+    /// routes, which need no CSRF token. A request without a routed endpoint
+    /// cannot execute a handler and is left to the 404 path.
+    /// </summary>
+    private async Task<bool> HumanPermissionAllowed(HttpContext context, HumanPrincipal human, string path)
+    {
+        var endpoint = context.GetEndpoint();
+        if (endpoint is null || RoutePermissionCatalog.IsMethodRejection(endpoint)) return true;
+        var required = RoutePermissionCatalog.Resolve(endpoint, context.Request.Method);
+        if (required is null)
+        {
+            await Reject(context, 403, "permission-undeclared", "This route declares no permission.");
+            return false;
+        }
+        var (subject, bindings) = _store.PrincipalBindings(IamPrincipalKind.User, human.User.Id);
+        var target = await TargetAsync(context, path, required, safeMethod: true);
+        var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
+        var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
+        if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return false;
+        if (!decision.Allowed)
+        {
+            await RejectPermission(context, decision, required.Permission);
+            return false;
+        }
+        context.Items[HumanPrincipalItem] = new HumanPrincipal(ProjectedUser(human.User, projected, subject, bindings), human.Session);
+        context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject, projected.Role);
+        return true;
+    }
+
+    /// <summary>
+    /// Service accounts and migrated API tokens authenticate with a bearer and
+    /// need no CSRF token. They act only through their own role bindings, never
+    /// on access administration or the versioned Task Server plane; an
+    /// unaddressed route needs a workspace binding. Handlers see a synthetic
+    /// principal <c>service-account:&lt;id&gt;</c> projected like a human's, so collection
+    /// filters and attribution apply unchanged.
+    /// </summary>
+    private async Task AuthorizeServiceAccount(HttpContext context, ServiceAccountPrincipal account, string path)
+    {
+        if (path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase))
+        {
+            await Reject(context, 403, "token-route-denied", "Service accounts and API tokens cannot call access administration or Task Server routes.");
+            return;
+        }
+        var endpoint = context.GetEndpoint();
+        if (endpoint is not null && RoutePermissionCatalog.IsMethodRejection(endpoint))
+        {
+            await _next(context);
+            return;
+        }
+        var required = endpoint is null ? null : RoutePermissionCatalog.Resolve(endpoint, context.Request.Method);
+        if (required is null)
+        {
+            await Reject(context, 403, "permission-undeclared", "This route declares no permission.");
+            return;
+        }
+        if (required.Permission == IamPermissions.SelfSession)
+        {
+            await Reject(context, 403, "human-session-required", "A service account has no Studio session.");
+            return;
+        }
+        var safeMethod = IsSafe(context.Request.Method, path);
+        var (subject, bindings) = _store.PrincipalBindings(IamPrincipalKind.ServiceAccount, account.AccountId);
+        context.Items[SkipTaskResolutionItem] = (safeMethod || account.Origin != ServiceAccountOrigins.ApiToken)
+            && WorkspaceBindingsDecide(subject, bindings);
+        var target = await TargetAsync(context, path, required, safeMethod);
+        var decision = PermissionEvaluator.Evaluate(required.Permission, subject, bindings, target, SameProject);
+        var projected = PermissionEvaluator.Project(required.Permission, subject, bindings, target, SameProject);
+        if (await RejectedByRoleRequirement(context, projected.LegacyRole)) return;
+        if (!decision.Allowed)
+        {
+            await RejectPermission(context, decision, required.Permission);
+            return;
+        }
+        if (!safeMethod && projected.LegacyRole == StudioRoles.Viewer)
+        {
+            await Reject(context, 403, "role-denied", "Viewer role is read-only.");
+            return;
+        }
+        // An API token (AGT-3186) writes only project-addressed routes, even
+        // with a workspace binding; an Access-area service account may hold
+        // installation-wide writes through its own bindings.
+        if (!safeMethod && account.Origin == ServiceAccountOrigins.ApiToken
+            && target.Scope is not (ProjectRouteScope.Addressed or ProjectRouteScope.DeferredToHandler))
+        {
+            await Reject(context, 403, "project-scope-denied", "An API token cannot mutate installation-wide settings.");
+            return;
+        }
+        var now = _clock.GetUtcNow().UtcDateTime;
+        var user = new StudioUser
+        {
+            Id = account.ActorId, Username = account.ActorId, DisplayName = account.AccountName,
+            Role = projected.LegacyRole, Projects = projected.Projects, PasswordHash = string.Empty,
+            CreatedAt = now, PasswordChangedAt = now,
+        };
+        var session = new StudioSession
+        {
+            Id = account.ActorId, UserId = account.ActorId, TokenHash = string.Empty, CsrfHash = string.Empty,
+            CreatedAt = now, LastSeenAt = now, ExpiresAt = now, AbsoluteExpiresAt = now,
+        };
+        context.Items[HumanPrincipalItem] = new HumanPrincipal(user, session);
+        context.Items[RequestAccessItem] = new RequestAccess(subject, bindings, required.Permission, SameProject, projected.Role);
+        await _next(context);
+    }
+
+    private static StudioUser ProjectedUser(
+        StudioUser user, ProjectedAccess projected, IamSubject subject, IReadOnlyList<RoleBinding> bindings)
+        => user with
+        {
+            Role = projected.LegacyRole,
+            Projects = projected.Projects,
+            ProductionApprovalProjects = PermissionEvaluator
+                .GrantingBindings(IamPermissions.EnvironmentProductionDeployApprove, subject, bindings, LegacyRoleMapping.ProductionEnvironment)
+                .Select(binding => binding.Scope.Project).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+        };
+
+    /// <summary>
+    /// The address the permission is evaluated for. An unaddressed write
+    /// needs a workspace binding (review item 1) unless the route declares
+    /// that its handler checks every project it touches.
+    /// </summary>
+    private async Task<PermissionTarget> TargetAsync(HttpContext context, string path, RequiredPermissionMetadata required, bool safeMethod)
+    {
+        var endpoint = context.GetEndpoint();
+        var address = path.StartsWith("/api/secrets/workspace", StringComparison.OrdinalIgnoreCase)
+            ? ProjectRouteAddress.WorkspaceWide
+            : await ResolveRouteAddressAsync(context, path, endpoint);
+        var scope = address.Scope == ProjectRouteScope.Unaddressed && !safeMethod && !required.ProjectBindingsSuffice
+            ? ProjectRouteScope.WorkspaceWide
+            : address.Scope;
+        var environmentId = required.EnvironmentRouteValue is { } key
+            ? RouteValue(context, path, endpoint, key)
+            : required.EnvironmentBodyField is { } field
+                ? await BodyEnvironmentIdAsync(context.Request, field)
+                : null;
+        var environment = required.Environment ?? ResolveEnvironmentKey(address, environmentId);
+        return new PermissionTarget(scope, address.Projects, environment, context.Request.Query["project"].FirstOrDefault());
+    }
+
+    private static async Task<string?> BodyEnvironmentIdAsync(HttpRequest request, string field)
+    {
+        request.EnableBuffering();
+        try
+        {
+            using var document = await System.Text.Json.JsonDocument.ParseAsync(request.Body,
+                cancellationToken: request.HttpContext.RequestAborted);
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            foreach (var property in document.RootElement.EnumerateObject())
+                if (string.Equals(property.Name, field, StringComparison.OrdinalIgnoreCase))
+                    return property.Value.ValueKind == System.Text.Json.JsonValueKind.String
+                        ? property.Value.GetString() : null;
+            return null;
+        }
+        catch (System.Text.Json.JsonException exception)
+        {
+            SilentCatch.Note(exception, "AccessSecurityMiddleware: invalid environment request body");
+            return null;
+        }
+        finally
+        {
+            request.Body.Position = 0;
+        }
+    }
+
+    /// <summary>
+    /// The canonical key (<see cref="IamEnvironments"/>) of the environment id
+    /// a route names, read from the addressed project's declarations. An id
+    /// the project does not declare resolves to no environment, so only
+    /// workspace and project bindings can grant the request.
+    /// </summary>
+    private string? ResolveEnvironmentKey(ProjectRouteAddress address, string? environmentId)
+    {
+        if (_environments is null || string.IsNullOrWhiteSpace(environmentId)
+            || address.Scope != ProjectRouteScope.Addressed || address.Projects is not [{ } project]
+            || string.IsNullOrWhiteSpace(project))
+            return null;
+        try
+        {
+            return IamEnvironments.ForDeclaration(_environments.Declarations(project), environmentId);
+        }
+        catch (Exception exception) when (exception is System.Text.Json.JsonException or IOException or UnauthorizedAccessException
+                                          or KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            // An unreadable declaration resolves to no environment: the
+            // request then needs a workspace or project binding (fail closed).
+            SilentCatch.Note(exception, "AccessSecurityMiddleware: environment declaration unreadable");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// A route value of the matched endpoint, read from the routing result or,
+    /// when routing left none, from the path segment its pattern names.
+    /// </summary>
+    private static string? RouteValue(HttpContext context, string path, Endpoint? endpoint, string key)
+    {
+        if (context.Request.RouteValues[key]?.ToString() is { Length: > 0 } routed) return routed;
+        if (endpoint is not RouteEndpoint route) return null;
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var patternSegments = route.RoutePattern.PathSegments;
+        for (var index = 0; index < patternSegments.Count && index < segments.Length; index++)
+            if (patternSegments[index].Parts is [RoutePatternParameterPart parameter]
+                && string.Equals(parameter.Name, key, StringComparison.OrdinalIgnoreCase))
+                return Uri.UnescapeDataString(segments[index]);
+        return null;
+    }
+
+    /// <summary>
+    /// True when the matched route's pattern has a literal segment at
+    /// <paramref name="index"/>, so the path segment there is no resource id.
+    /// </summary>
+    private static bool IsLiteralSegment(Endpoint? endpoint, int index)
+        => endpoint is RouteEndpoint route
+           && route.RoutePattern.PathSegments.Count > index
+           && route.RoutePattern.PathSegments[index].Parts is [RoutePatternLiteralPart];
+
+    /// <summary>
+    /// True when the matched route's pattern has a parameter segment at
+    /// <paramref name="index"/>.
+    /// </summary>
+    private static bool IsParameterSegment(Endpoint? endpoint, int index)
+        => endpoint is RouteEndpoint route
+           && route.RoutePattern.PathSegments.Count > index
+           && route.RoutePattern.PathSegments[index].Parts is [RoutePatternParameterPart];
+
+    private static bool IsSafe(string method, string path)
+        => HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method)
+           || IsReadOnlyPost(method, path);
+
+    private static bool IsSelfServiceAuth(string path)
+        => path is "/api/auth/logout" or "/api/auth/change-password" or "/api/auth/session";
+
+    private bool SameProject(string bound, string requested)
+        => ProjectAccessAuthorization.SameProject(bound, requested, _projects);
 
     private static string? RequiredRunnerScope(string method, string path)
     {
@@ -585,6 +891,7 @@ public sealed class AccessSecurityMiddleware
 
     private static bool IsHealth(string path)
         => path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/healthz/container", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/drain", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase);
     private static bool IsTelemetryIntake(string method, string path)
@@ -659,35 +966,26 @@ public sealed class AccessSecurityMiddleware
     private static string? ReadBearer(string? authorization)
         => authorization?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true ? authorization[7..].Trim() : null;
 
-    private bool ProjectAllowed(StudioUser user, HttpRequest request, string path)
+    private async Task<bool> ProjectAllowedAsync(StudioUser user, HttpContext context, string path)
     {
         if (ProjectAccessAuthorization.HasUnrestrictedProjectAccess(user)) return true;
         return ProjectScopePolicy.Allows(
-            ResolveRouteAddress(request, path),
-            request.Query["project"].FirstOrDefault(),
+            await ResolveRouteAddressAsync(context, path, context.GetEndpoint()),
+            context.Request.Query["project"].FirstOrDefault(),
             project => ProjectAccessAuthorization.Allows(user, project, _projects));
-    }
-
-    private bool TokenWriteRouteAllowed(HttpRequest request, string path)
-    {
-        if (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)
-            || HttpMethods.IsOptions(request.Method) || IsReadOnlyPost(request.Method, path))
-            return true;
-        var route = ResolveRouteAddress(request, path);
-        // The task creation handler validates its body project before writing.
-        // Deferred task handlers validate every affected task. An unaddressed
-        // installation mutation has no project to authorize against.
-        return route.Scope is ProjectRouteScope.Addressed or ProjectRouteScope.DeferredToHandler
-               || (HttpMethods.IsPost(request.Method) && path.Equals("/api/tasks", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
     /// Derives the project(s) a request addresses from its route or addressed
     /// task. <c>?project=</c> is read here only where the query is itself the
-    /// task address (<c>/core</c>); everywhere else it can only narrow.
+    /// task address (<c>/core</c>); everywhere else it can only narrow. The
+    /// matched <paramref name="endpoint"/>'s pattern decides whether a path
+    /// segment is a resource id or a literal route name; without one (an
+    /// unrouted request) the path alone decides.
     /// </summary>
-    private ProjectRouteAddress ResolveRouteAddress(HttpRequest request, string path)
+    private async ValueTask<ProjectRouteAddress> ResolveRouteAddressAsync(HttpContext context, string path, Endpoint? endpoint = null)
     {
+        var request = context.Request;
         if (path.Equals("/api/workspace/tokens/timeline", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/api/workspace/tokens/timeline/cached", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/api/workspace/tokens/expensive-jobs", StringComparison.OrdinalIgnoreCase)
@@ -724,17 +1022,31 @@ public sealed class AccessSecurityMiddleware
             // the colon is the project, never the task or workbench key. Read
             // the prefix only at the start of the context key: a task key can
             // itself contain text such as "project:mine".
-            var context = path.StartsWith("/api/orchestrator/context/", StringComparison.OrdinalIgnoreCase)
+            var contextKey = path.StartsWith("/api/orchestrator/context/", StringComparison.OrdinalIgnoreCase)
                 ? path["/api/orchestrator/context/".Length..]
                 : path.StartsWith("/api/orchestrator/sessions/", StringComparison.OrdinalIgnoreCase)
                     ? path["/api/orchestrator/sessions/".Length..]
                     : null;
-            if (context is null) return ProjectRouteAddress.WorkspaceWide;
+            if (contextKey is null) return ProjectRouteAddress.WorkspaceWide;
             foreach (var prefix in new[] { "project:", "task:", "workbench:" })
-                if (context.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                    return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(context[prefix.Length..].Split('/', 2)[0]));
+                if (contextKey.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(contextKey[prefix.Length..].Split('/', 2)[0]));
             return ProjectRouteAddress.WorkspaceWide;
         }
+        // The task collection filters per task; creation checks its body
+        // project against the route's permission in the handler.
+        if (path.Equals("/api/tasks", StringComparison.OrdinalIgnoreCase))
+            return ProjectRouteAddress.DeferredToHandler;
+        // Report, supervisor, bus, and runtime routes name their project in the
+        // segment after the area (/api/drift/{project}/...); their literal
+        // routes, such as /api/drift/actions/code-pattern-drift, stay unaddressed.
+        if ((path.StartsWith("/api/analysis/", StringComparison.OrdinalIgnoreCase)
+             || path.StartsWith("/api/drift/", StringComparison.OrdinalIgnoreCase)
+             || path.StartsWith("/api/supervisor/", StringComparison.OrdinalIgnoreCase)
+             || path.StartsWith("/api/bus/", StringComparison.OrdinalIgnoreCase)
+             || path.StartsWith("/api/runtime/", StringComparison.OrdinalIgnoreCase))
+            && IsParameterSegment(endpoint, 2))
+            return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(path.Split('/', StringSplitOptions.RemoveEmptyEntries)[2]));
         if (path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase))
         {
             var taskId = path["/api/tasks/".Length..].Split('/', 2)[0];
@@ -746,11 +1058,26 @@ public sealed class AccessSecurityMiddleware
             // project from the literal path segment.
             if (taskId is "reorder" or "batch-move" or "reference-status" or "archive")
                 return ProjectRouteAddress.DeferredToHandler;
+            // A literal route under /api/tasks/ names no task: the board and
+            // other collection reads (grouped, code-review/defaults,
+            // commit-owner/{sha}) filter their payload per task, and the
+            // orphan-folder cleanup is an installation-wide operation.
+            if (IsLiteralSegment(endpoint, 2))
+                return taskId.Equals("orphan-folder", StringComparison.OrdinalIgnoreCase)
+                    ? ProjectRouteAddress.WorkspaceWide
+                    : ProjectRouteAddress.Unaddressed;
             // Every other /api/tasks/{id}/... route is single-task addressed. A
             // scoped account may act only on a task whose project it belongs to. If
-            // that project cannot be resolved (unknown id or the scanner is
-            // unavailable), fail closed rather than allow the request through.
-            return ProjectRouteAddress.Addressed(ResolveTaskProjects(Uri.UnescapeDataString(taskId), request));
+            // that project cannot be resolved (unknown id or unavailable
+            // scanner), only a workspace binding can reach the handler's 404.
+            if (context.Items[SkipTaskResolutionItem] is true)
+                return ProjectRouteAddress.WorkspaceWide;
+            var identity = Uri.UnescapeDataString(taskId);
+            if (_taskIndex is null && endpoint is null)
+                // Unrouted requests cannot execute an endpoint handler. Keep
+                // their legacy scope check for direct middleware fixtures.
+                return ProjectRouteAddress.Addressed(_scanner?.FindPublishedJob(identity)?.ProjectName);
+            return ProjectRouteAddress.Addressed(ResolveTaskProjects(identity));
         }
         return ProjectRouteAddress.Unaddressed;
     }
@@ -777,32 +1104,54 @@ public sealed class AccessSecurityMiddleware
     }
 
     /// <summary>
-    /// Every project a single-task handler could act on: the unscoped lookup
-    /// plus the lookups scoped by <c>?project=</c> and <c>?watchPath=</c>, the
-    /// way task handlers resolve their scope. A query value therefore cannot
-    /// steer authorization towards a member project while the handler acts on
-    /// a foreign task.
+    /// Every project a single-task handler could act on, including collisions
+    /// between ids and keys. A query value cannot select one permitted match
+    /// while the handler resolves another project's card.
     /// </summary>
-    private string?[] ResolveTaskProjects(string taskId, HttpRequest request)
+    private string?[] ResolveTaskProjects(string taskId)
     {
-        var task = _scanner?.FindJob(taskId);
-        if (task is null) return [null];
-        var projects = new List<string?> { task.ProjectName };
-        var watchPath = request.Query["watchPath"].FirstOrDefault();
-        var scopes = new[]
-        {
-            watchPath,
-            _projects is null ? null : AgentStudio.Tasks.TaskEndpointHelpers.ResolveWatchPath(_projects, request.Query["project"].FirstOrDefault(), watchPath),
-        };
-        foreach (var scope in scopes.Where(scope => !string.IsNullOrWhiteSpace(scope)).Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            var scoped = _scanner!.FindJob(taskId, scope);
-            if (scoped is not null) projects.Add(scoped.ProjectName);
-        }
-        return [.. projects];
+        // Route handlers may resolve a colliding id by a different ordering or
+        // by an explicit watch path. Every matching project must authorize it.
+        var matches = _taskIndex?.GetMatchingCoreFacts(taskId);
+        if (matches is null) return [null];
+        return matches.Count == 0 ? new string?[] { null }
+            : matches.Select(task => (string?)task.ProjectName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    /// <summary>Applies the route's declared <see cref="StudioRoleRequirement"/>, if any.</summary>
+    private static bool WorkspaceBindingsDecide(IamSubject subject, IReadOnlyList<RoleBinding> bindings)
+    {
+        var own = bindings.Where(binding => PermissionEvaluator.AppliesTo(binding, subject)).ToArray();
+        return own.Any(binding => binding.Role == IamRoles.Owner && binding.Scope.Kind == IamScopeKind.Workspace)
+            || own.Length > 0 && own.All(binding => binding.Scope.Kind == IamScopeKind.Workspace);
+    }
+
+    private async ValueTask<TaskInfo?> FindTaskAsync(HttpContext context, string taskId, string? watchPath = null)
+    {
+        if (_scanner is null) return null;
+        if (context.Items[TaskResolutionItem] is not Dictionary<(string, string?), TaskInfo?> resolved)
+            context.Items[TaskResolutionItem] = resolved = [];
+        var key = (taskId, watchPath);
+        if (resolved.TryGetValue(key, out var task)) return task;
+        task = _taskIndex is null
+            ? _scanner.FindPublishedJob(taskId, watchPath)
+            : _taskIndex.GetDetailFacts(taskId, watchPath).Info;
+        resolved[key] = task;
+        return task;
+    }
+
+    /// <summary>
+    /// A refused permission decision: <c>project-scope-denied</c> when a binding
+    /// grants the permission outside the addressed scope, else <c>permission-denied</c>.
+    /// </summary>
+    private static Task RejectPermission(HttpContext context, PermissionDecision decision, string permission)
+        => Reject(context, 403, decision.ScopeDenied ? "project-scope-denied" : "permission-denied",
+            decision.Reason ?? $"'{permission}' is required.");
+
+    /// <summary>
+    /// Applies the route's declared <see cref="StudioRoleRequirement"/>, if any,
+    /// to the role projected for this request, so a refused Owner route keeps
+    /// its <c>owner-required</c> answer.
+    /// </summary>
     private static async Task<bool> RejectedByRoleRequirement(HttpContext context, string role)
     {
         var requirement = context.GetEndpoint()?.Metadata.GetMetadata<StudioRoleRequirement>();
@@ -821,9 +1170,14 @@ public sealed class AccessSecurityMiddleware
         string message,
         string? loginUrl = null)
     {
-        // A refused write on a secret route never reaches the secret provider; audit it with the person behind it.
-        if (status == StatusCodes.Status403Forbidden && context.Items[HumanPrincipalItem] is HumanPrincipal human)
-            AgentStudio.Secrets.SecretEndpoints.AuditRefusedWrite(context, AgentStudio.Secrets.SecretActor.Human(human.User.Username), code);
+        // A refused write never reaches the provider. Preserve the real actor in its audit.
+        if (status == StatusCodes.Status403Forbidden)
+        {
+            if (context.Items[ServiceAccountPrincipalItem] is ServiceAccountPrincipal account)
+                AgentStudio.Secrets.SecretEndpoints.AuditRefusedWrite(context, AgentStudio.Secrets.SecretActor.ServiceAccount(account.AccountId), code);
+            else if (context.Items[HumanPrincipalItem] is HumanPrincipal human)
+                AgentStudio.Secrets.SecretEndpoints.AuditRefusedWrite(context, AgentStudio.Secrets.SecretActor.Human(human.User.Username), code);
+        }
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/json";
         context.Response.Headers.CacheControl = "no-store";

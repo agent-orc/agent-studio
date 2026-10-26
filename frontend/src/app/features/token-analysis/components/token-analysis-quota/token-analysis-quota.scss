@@ -1,0 +1,85 @@
+@use '../../token-analysis' as ta;
+
+:host { display: block; min-width: 0; }
+.qc { @include ta.panel; }
+.qc__head { @include ta.panel-head; }
+.qc__legend { @include ta.legend; }
+.qc__swatch { @include ta.swatch; }
+.qc__num { @include ta.numeric; text-align: right; }
+.qc__empty { margin: 0; color: var(--studio-fg-muted); font-size: 0.78rem; }
+
+.qc__plot {
+  position: relative;
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- plot height, not spacing */
+  height: 96px;
+  padding-left: var(--studio-spacing-6);
+  border-bottom: 1px solid var(--studio-border);
+  background:
+    linear-gradient(var(--studio-border-muted), var(--studio-border-muted)) 0 0 / 100% 1px no-repeat,
+    linear-gradient(var(--studio-border-muted), var(--studio-border-muted)) 0 50% / 100% 1px no-repeat;
+}
+
+.qc__axis {
+  @include ta.numeric;
+  position: absolute;
+  left: 0;
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.qc__axis--top { top: 0; }
+.qc__axis--mid { top: calc(50% - 5px); }
+
+.qc__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.qc__line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.qc__table-wrap { overflow-x: auto; }
+
+.qc__table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--studio-fg);
+  font-size: 0.72rem;
+
+  caption {
+    margin-bottom: var(--studio-spacing-1);
+    color: var(--studio-fg-dim);
+    font-weight: 600;
+    text-align: left;
+  }
+
+  th,
+  td {
+    padding: var(--studio-spacing-1) var(--studio-spacing-2);
+    border-bottom: 1px solid var(--studio-border-muted);
+    white-space: nowrap;
+  }
+
+  th {
+    color: var(--studio-fg-muted);
+    font-weight: 600;
+    text-align: left;
+  }
+}
+
+.qc__row--open td { color: var(--studio-fg-dim); }
+
+.qc__badge {
+  padding: 0 var(--studio-spacing-1);
+  border: 1px solid var(--studio-border);
+  border-radius: 4px;
+  color: var(--studio-fg-muted);
+  font-size: 0.66rem;
+}

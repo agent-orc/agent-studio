@@ -70,12 +70,14 @@ public static class TaskServerPlaneProxy
                 "/api/v1/{**path}",
                 ["GET", "HEAD", "OPTIONS"],
                 ForwardAsync)
-                .WithMetadata(TaskServerPlaneProxyEndpoint.Instance);
+                .WithMetadata(TaskServerPlaneProxyEndpoint.Instance)
+                .RequirePermissions(IamPermissions.WorkspaceRead, IamPermissions.WorkspaceOperate);
             var unsafeProxy = app.MapMethods(
                 "/api/v1/{**path}",
                 ["POST", "PUT", "PATCH", "DELETE"],
                 ForwardAsync)
-                .WithMetadata(TaskServerPlaneProxyEndpoint.Instance);
+                .WithMetadata(TaskServerPlaneProxyEndpoint.Instance)
+                .RequirePermissions(IamPermissions.WorkspaceRead, IamPermissions.WorkspaceOperate);
             unsafeProxy.Add(endpoint =>
             {
                 endpoint.Metadata.Add(new ExecutionRouteMetadata(ExecutionAdmissionPath.PostStep));
@@ -90,7 +92,8 @@ public static class TaskServerPlaneProxy
             "/api/v1/{**path}",
             ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
             ForwardAsync)
-            .WithMetadata(TaskServerPlaneProxyEndpoint.Instance);
+            .WithMetadata(TaskServerPlaneProxyEndpoint.Instance)
+            .RequirePermissions(IamPermissions.WorkspaceRead, IamPermissions.WorkspaceOperate);
         return true;
     }
 
@@ -192,15 +195,15 @@ public static class TaskServerPlaneProxy
 
     /// <summary>
     /// The Studio role this edge authenticated, forwarded so the Task Server can scope
-    /// credential metadata (I8). The networked profile uses the signed-in human; the local
+    /// credential metadata (I8). The networked profile derives it from the principal's role
+    /// bindings (<see cref="RequestAccess.TaskServerRole"/>), never the legacy summary; the local
     /// profile mirrors the loopback local-default operator of the local management routes.
     /// </summary>
     internal static string? ActingRole(HttpContext context, IConfiguration configuration)
     {
         if (SecurityProfiles.IsNetworked(configuration))
-            return context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
-                   && StudioRoles.IsValid(human.User.Role)
-                ? human.User.Role
+            return context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access
+                ? access.TaskServerRole()
                 : null;
         if (!SecurityProfiles.IsLocal(configuration)) return null;
         var remote = context.Connection.RemoteIpAddress;

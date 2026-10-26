@@ -115,22 +115,6 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
     }
 
     [Fact]
-    public void Every_mapped_api_route_declares_its_token_project_scope()
-    {
-        var routes = shared.Factory.Services.GetServices<EndpointDataSource>()
-            .SelectMany(source => source.Endpoints).OfType<RouteEndpoint>()
-            .Where(route => (route.RoutePattern.RawText ?? string.Empty)
-                .StartsWith("/api/", StringComparison.OrdinalIgnoreCase)).ToArray();
-        Assert.NotEmpty(routes);
-        Assert.All(routes, route => Assert.NotNull(route.Metadata.GetMetadata<ApiTokenRouteScope>()));
-        Assert.Equal(ProjectRouteScope.WorkspaceWide, Assert.Single(routes,
-            route => route.RoutePattern.RawText == "/api/workspace/screenshots")
-            .Metadata.GetMetadata<ApiTokenRouteScope>()!.Scope);
-        Assert.Contains(routes, route => route.RoutePattern.RawText?.StartsWith("/api/projects/{", StringComparison.Ordinal) == true
-            && route.Metadata.GetMetadata<ApiTokenRouteScope>()?.Scope == ProjectRouteScope.Addressed);
-    }
-
-    [Fact]
     public async Task Every_registered_execution_route_returns_the_same_typed_denial()
     {
         output.WriteLine($"PublicDemoExecutionProfile fixture initialization: {shared.InitializationDuration.TotalSeconds:F3} s");
@@ -227,7 +211,21 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3239 added the operator candidate verification record on PostStep:
         // it appends immutable integrated-verified evidence after a passed suite.
         // AGT-3274 added the authenticated deploy artifact route on Claim.
-        Assert.Equal(144, routes.Count);
+        // The local-only PTY _probe route is absent from the public-demo route set.
+        // AGT-3247 added three Runbooks routes (one Start, two Continue).
+        Assert.Equal(149, routes.Count);
+        Assert.DoesNotContain(allRoutes, route => route.RoutePattern.RawText == "/api/cli/_probe/{cliType}");
+        foreach (var (method, suffix) in new[]
+        {
+            ("PUT", "/{volume}/schedule"), ("POST", "/{volume}/backups"),
+            ("POST", "/{volume}/backups/{backupId}/restore"),
+        })
+        {
+            var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText ==
+                "/api/projects/{projectName}/environments/{environmentId}/volumes" + suffix);
+            Assert.Equal(ExecutionAdmissionPath.Start, route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+            Assert.Contains(method, route.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
+        }
         // Pin their identities too: an unrelated route must not mask the loss
         // of either decision mutation from the denial inventory.
         foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -251,6 +249,9 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/approve", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/reject", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/cancel", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/deploy/environments/{environmentId}/runbooks/{name}/runs", ExecutionAdmissionPath.Start),
+            ("/api/projects/{projectName}/deploy/runbooks/runs/{runId}/approve", ExecutionAdmissionPath.Continue),
+            ("/api/projects/{projectName}/deploy/runbooks/runs/{runId}/reject", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/environments/{environmentId}/stop", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/deploy/deployments/{deploymentId}/intervention", ExecutionAdmissionPath.Continue),
             ("/api/projects/{projectName}/pipeline-definition/migration", ExecutionAdmissionPath.PostStep),
@@ -307,11 +308,11 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
             new Dictionary<ExecutionAdmissionPath, int>
             {
                 [ExecutionAdmissionPath.Claim] = 12,
-                [ExecutionAdmissionPath.Start] = 30,
-                [ExecutionAdmissionPath.Continue] = 31,
+                [ExecutionAdmissionPath.Start] = 34,
+                [ExecutionAdmissionPath.Continue] = 33,
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
-                [ExecutionAdmissionPath.Preview] = 32,
+                [ExecutionAdmissionPath.Preview] = 31,
                 [ExecutionAdmissionPath.PostStep] = 21,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)

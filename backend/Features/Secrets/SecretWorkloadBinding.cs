@@ -4,7 +4,8 @@ using AgentStudio.Security;
 namespace AgentStudio.Secrets;
 
 /// <summary>A claimed deploy job with a live lease.</summary>
-public sealed record DeployJobLease(string JobId, string Project, string EnvironmentId, string HostId, IReadOnlyList<string> SecretRefs);
+public sealed record DeployJobLease(string JobId, string Project, string EnvironmentId, string HostId,
+    IReadOnlyList<string> SecretRefs, IReadOnlyDictionary<string, string>? SecretBindings = null);
 
 /// <summary>A task run with a live lease.</summary>
 public sealed record TaskRunLease(string TaskKey, string Project, string RunnerId, string LeaseId);
@@ -16,12 +17,15 @@ public interface ISecretWorkloadLeases
     TaskRunLease? FindLiveTaskRun(string taskKey);
 }
 
-public sealed class SecretWorkloadLeases(ProjectEnvironmentService environments, RunLeaseService leases, TaskScannerService scanner)
+public sealed class SecretWorkloadLeases(ProjectEnvironmentService environments, RunLeaseService leases,
+    TaskScannerService scanner, ProjectSecretBindings bindings)
     : ISecretWorkloadLeases
 {
     public DeployJobLease? FindClaimedDeployJob(string project, string jobId, string leaseToken)
         => environments.FindClaimedJob(project, jobId, leaseToken) is { } job
-            ? new DeployJobLease(job.Id, job.Project, job.EnvironmentId, job.HostId, job.SecretRefs)
+            ? new DeployJobLease(job.Id, job.Project, job.EnvironmentId, job.HostId, job.SecretRefs,
+                bindings.ApprovedReferences(job.Project, job.EnvironmentId, job.SecretRefs,
+                    job.EnvironmentKind ?? "production"))
             : null;
 
     public TaskRunLease? FindLiveTaskRun(string taskKey)
@@ -70,7 +74,8 @@ public static class SecretWorkloadBinding
                 return Denied("workload-lease-invalid", "No claimed deploy job matches this lease.");
             if (!string.Equals(job.HostId, runner.RunnerId, StringComparison.Ordinal))
                 return Denied("workload-identity-denied", "The deploy job is claimed by another host.");
-            return (new SecretWorkload(SecretWorkload.DeployJob, runner.RunnerId, job.Project, job.EnvironmentId, job.SecretRefs),
+            return (new SecretWorkload(SecretWorkload.DeployJob, runner.RunnerId, job.Project, job.EnvironmentId,
+                    job.SecretRefs, job.SecretBindings),
                 SecretAccessDecision.Allow);
         }
 

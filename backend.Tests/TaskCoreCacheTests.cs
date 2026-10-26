@@ -116,6 +116,71 @@ public sealed class TaskCoreCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task Identity_lookup_returns_all_matches_while_workspace_refresh_is_blocked()
+    {
+        var alpha = MakeTask("shared-id", TaskStates.Backlog) with { ProjectName = "alpha" };
+        var beta = MakeTask("beta-card", TaskStates.Ready) with
+        {
+            Key = "shared-id", ProjectName = "beta", FolderPath = Path.Combine(_root, "beta", TaskStates.Ready, "beta-card"),
+            WatchPath = Path.Combine(_root, "beta"),
+        };
+        Directory.CreateDirectory(beta.FolderPath);
+        File.WriteAllText(Path.Combine(beta.FolderPath, "task.json"), "{}");
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var calls = 0;
+        var cache = Cache(() =>
+        {
+            if (Interlocked.Increment(ref calls) > 1)
+            {
+                entered.Set();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
+            }
+            return [alpha, beta];
+        });
+        cache.GetSnapshot();
+        cache.Invalidate(TaskIndexCache.InvalidationSource.External);
+        Assert.Equal(2, cache.GetMatchingCoreFacts("shared-id").Count);
+        Assert.True(await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5))));
+        try
+        {
+            var trace = TaskSwitchTrace.Begin(null, null);
+            try
+            {
+                var matches = cache.GetMatchingCoreFacts("shared-id");
+                Assert.Equal(new[] { "alpha", "beta" },
+                    matches.Select(task => task.ProjectName).OrderBy(project => project));
+                Assert.NotNull(cache.GetDetailFacts("shared-id", alpha.WatchPath).Info);
+                Assert.Equal(0, trace.WorkspaceScans);
+            }
+            finally { trace.Restore(); }
+        }
+        finally { release.Set(); }
+        await cache.RefreshInFlight!.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public void Legacy_prefix_alias_is_in_the_same_identity_table_as_detail()
+    {
+        var prefix = new string('x', 128);
+        var local = MakeTask(prefix, TaskStates.Backlog) with { ProjectName = "alpha" };
+        var foreign = MakeTask(prefix + "-beta", TaskStates.Ready) with
+        {
+            ProjectName = "beta",
+            FolderPath = Path.Combine(_root, "beta", TaskStates.Ready, prefix + "-beta"),
+            WatchPath = Path.Combine(_root, "beta"),
+        };
+        Directory.CreateDirectory(foreign.FolderPath);
+        File.WriteAllText(Path.Combine(foreign.FolderPath, "task.json"), "{}");
+        var cache = Cache(() => [local, foreign]);
+        cache.GetSnapshot();
+
+        Assert.Equal(new[] { "alpha", "beta" }, cache.GetMatchingCoreFacts(prefix)
+            .Select(task => task.ProjectName).OrderBy(project => project));
+        Assert.Equal("beta", cache.GetDetailFacts(prefix, foreign.WatchPath).Info?.ProjectName);
+    }
+
+    [Fact]
     public async Task ConcurrentMutationPublication_WinsAgainstAnOlderScan()
     {
         var task = MakeTask("AGT-4", "2-ready");

@@ -9,6 +9,8 @@ using Microsoft.AspNetCore.Routing.Matching;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Http;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
@@ -145,6 +147,20 @@ public sealed class TestHostFactoryTests : IDisposable
         Assert.True(probe.Built);
         var response = await http.GetAsync("/api/v1/protocol");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Sequential_plain_test_hosts_do_not_start_http_handler_expiry_timers()
+    {
+        for (var host = 0; host < 2; host++)
+        {
+            await using var factory = Configure(new WebApplicationFactory<Program>());
+            var options = factory.Services.GetRequiredService<IOptionsMonitor<HttpClientFactoryOptions>>()
+                .Get("secret-external");
+            Assert.Equal(Timeout.InfiniteTimeSpan, options.HandlerLifetime);
+            using var client = factory.Services.GetRequiredService<IHttpClientFactory>()
+                .CreateClient("secret-external");
+        }
     }
 
     [Fact]

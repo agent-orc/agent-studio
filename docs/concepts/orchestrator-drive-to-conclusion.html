@@ -386,6 +386,13 @@
       </thead>
       <tbody>
         <tr>
+          <td>2026-10-20</td>
+          <td><code>AGT-3245</code>, <code>AGT-3246</code>, <code>AGT-3227</code><br><span class="small">salvage-base-delivery-refusal (fix <code>AGT-3257</code>)</span></td>
+          <td>Codex attempts ended Unknown or were interrupted after publishing salvage. Their next deliveries were refused because the fenced base was the earlier salvage commit but the result did not contain it. Terminal at discovery: delivery refused, with the cards escalated and the good new work stranded.</td>
+          <td>The timeout continuation saved only an instruction to fetch salvage and let the runner start from the integration branch. A missing or moved salvage ref also fell back to that branch. The instruction to rebase could remove the salvage commit from a result that had started on it.</td>
+          <td>The claim now carries the salvage SHA as a required worktree base, and its prompt instructs a merge of the current integration branch. A result whose history still omits its fenced base returns to Ready with an automatic continuation naming both commits and starting from the refused result. The fence continues to withhold the completion stamp until ancestry is proven.</td>
+        </tr>
+        <tr>
           <td>2026-10-04</td>
           <td><code>AGT-3010</code><br><span class="small">superseded-brief-remote-delivery (also AGT-2748, AGT-2795, AGT-2793, AGT-2807)</span></td>
           <td>No CLI crashed. An operator moved a running remote card from Progress to Backlog, edited its brief, and returned it to Ready. The old fenced run kept working and later delivered into Auto Review.</td>
@@ -2618,7 +2625,9 @@
             continuation round per delivery generation; <code>RunTimeoutContinuationService</code> appends the finishing
             instruction to <code>prompt.md</code>, saves the matching steer intent, pins a clean CLI context, returns the
             card to the front of <span class="lane">2-ready</span> under the completing attempt's authority write, and
-            records <code>continuation_round_started reason=run-timeout-with-salvage</code>. A second timeout in the same
+            records <code>continuation_round_started reason=run-timeout-with-salvage</code>. AGT-3257 also makes the
+            salvaged ref and SHA the next claim's required worktree base, and merges current integration history
+            without rewriting the salvage commit. A second timeout in the same
             generation reaches <span class="lane">5e-escalated</span> exactly as before, now with the salvage ref, the
             salvage SHA, and the spent round count in the escalation summary. The run timeout itself is unchanged.
             Registered as <code>completion.run-timeout-salvage-continuation</code> in the loop inventory.

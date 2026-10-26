@@ -1,0 +1,75 @@
+<section class="tt" data-testid="token-analysis-card-table" aria-labelledby="tt-title">
+  <header class="tt__head">
+    <h3 id="tt-title">Cards</h3>
+    <p>{{ cards().length }} cards · {{ fmt(totals().tokens) }} tokens · {{ usd(totals().cost) }} theoretical</p>
+  </header>
+  <div class="tt__scroll">
+    <table class="tt__table">
+      <thead>
+        <tr>
+          <th scope="col">Card</th>
+          <th scope="col">Outcome</th>
+          <th scope="col" class="tt__num">Rounds</th>
+          <th scope="col" class="tt__split">Split</th>
+          @for (kind of kinds(); track kind) { <th scope="col" class="tt__num tt__kind">{{ kindLabel(kind) }}</th> }
+          <th scope="col" class="tt__meta">Model</th>
+          <th scope="col" class="tt__meta">Reasoning</th>
+          <th scope="col" class="tt__meta">CLI</th>
+          <th scope="col" class="tt__meta">Host</th>
+          <th scope="col" class="tt__num">Tokens</th>
+          <th scope="col" class="tt__num">Cost</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (row of visible(); track row.id) {
+          <tr [class.tt__row--selected]="row.id === selectedId()" [class.tt__row--rest]="!row.card"
+              [attr.data-testid]="row.card ? 'token-analysis-row-' + row.label : 'token-analysis-row-rest'">
+            <th scope="row" class="tt__card">
+              @if (row.card) {
+                <button type="button" class="tt__open" [attr.aria-pressed]="row.id === selectedId()"
+                        (click)="cardSelect.emit(row.id)" [appTooltip]="row.project + ' · ' + row.lane">
+                  <span class="tt__key">{{ row.label }}</span><span class="tt__title">{{ row.title }}</span>
+                </button>
+              } @else {
+                <span class="tt__rest-label"><span class="tt__key">{{ row.label }}</span><span class="tt__title">{{ row.title }}</span></span>
+              }
+            </th>
+            <td>
+              @if (row.outcome) { <span class="tt__badge">{{ row.outcome }}</span> }
+              @if (row.inFlight) { <span class="tt__badge tt__badge--live">in flight</span> }
+            </td>
+            <td class="tt__num">{{ row.rounds ?? '' }}</td>
+            <td class="tt__split">
+              <span class="tt__bar" aria-hidden="true">
+                @for (part of row.split; track part.kind) {
+                  <span [style.flex-grow]="part.value" [style.background]="part.color"></span>
+                }
+              </span>
+            </td>
+            @for (value of row.kinds; track $index) { <td class="tt__num tt__kind">{{ value > 0 ? fmt(value) : '' }}</td> }
+            <td class="tt__meta">{{ row.model }}</td>
+            <td class="tt__meta">{{ row.level }}</td>
+            <td class="tt__meta">{{ row.cli }}</td>
+            <td class="tt__meta">{{ row.host }}</td>
+            <td class="tt__num tt__strong">{{ fmt(row.total) }}</td>
+            <td class="tt__num">{{ usd(row.cost) }}@if (!row.costComplete) {<span [appTooltip]="'Some models have no list price'">*</span>}</td>
+          </tr>
+        }
+      </tbody>
+      <tfoot>
+        <tr>
+          <th scope="row" colspan="4">Sum of all rows</th>
+          @for (value of totals().kinds; track $index) { <td class="tt__num tt__kind">{{ fmt(value) }}</td> }
+          <td colspan="4" class="tt__meta"></td>
+          <td class="tt__num tt__strong" data-testid="token-analysis-table-total">{{ fmt(totals().tokens) }}</td>
+          <td class="tt__num">{{ usd(totals().cost) }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  @if (rows().length > visible().length) {
+    <button type="button" class="tt__more" data-testid="token-analysis-table-more" (click)="showAll()">
+      Show all {{ rows().length }} rows
+    </button>
+  }
+</section>

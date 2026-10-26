@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 /**
  * Settings panel — Appearance (Theme) + Layout (Activity bar) segmented
@@ -15,6 +17,30 @@ import { test, expect } from '@playwright/test';
  * gives each test a fresh context, so no explicit cleanup is required.
  */
 test.describe('Settings — Appearance/Layout segmented toggles', () => {
+  test('System theme follows OS changes at desktop and phone widths', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('atp.studio.theme', 'system'));
+    const output = process.env.JOB_RESULTS_DIR ?? 'test-results';
+    mkdirSync(output, { recursive: true });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.emulateMedia({ colorScheme: 'dark' });
+      await page.goto('/#/workspace/settings/appearance');
+      if (width === 390) {
+        await page.getByTestId('studio-ab-explorer').click();
+        await expect(page.getByTestId('studio-sidebar')).toBeHidden();
+      }
+      const appearance = page.getByTestId('appearance-settings');
+      await appearance.scrollIntoViewIfNeeded();
+      await expect(appearance).toBeInViewport();
+      await expect(page.locator('html')).toHaveAttribute('data-studio-theme', 'dark');
+      await expect(page.getByTestId('settings-theme-system')).toHaveAttribute('aria-pressed', 'true');
+      await page.screenshot({ path: join(output, `appearance-system-${width}-dark.png`), animations: 'disabled' });
+      await page.emulateMedia({ colorScheme: 'light' });
+      await expect(page.locator('html')).toHaveAttribute('data-studio-theme', 'light');
+      await page.screenshot({ path: join(output, `appearance-system-${width}-light.png`), animations: 'disabled' });
+    }
+  });
+
   test('Theme toggle: labelled group, single pressed option, flips the document theme', async ({ page }) => {
     await page.addInitScript(() => {
       try { localStorage.setItem('atp.studio.theme', 'light'); } catch { /* ignore */ }

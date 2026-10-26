@@ -66,7 +66,7 @@ public static class DeploymentReconciler
         var linked = runs.Where(item => item.JobId is not null).Select(item => item.JobId!)
             .Concat(runs.SelectMany(item => item.PriorJobIds)).ToHashSet(StringComparer.Ordinal);
         // A stop job ends an environment; it is not a deployment of a release.
-        foreach (var job in input.Jobs.Where(item => !item.IsStop && !linked.Contains(item.Id)).OrderBy(item => item.CreatedAt))
+        foreach (var job in input.Jobs.Where(item => !item.IsStop && item.RunbookName is null && !linked.Contains(item.Id)).OrderBy(item => item.CreatedAt))
         {
             if (!environments.TryGetValue(job.EnvironmentId, out var environment)) continue;
             if (job.RetryOfJobId is { } priorId)
@@ -98,6 +98,7 @@ public static class DeploymentReconciler
             if (release is null) continue;
             var actor = job.RequestedBy ?? LifecycleActor;
             var waiting = job.IsRollback ? null : runs.LastOrDefault(item => item.EnvironmentId == environment.Id
+                && item.Tenant == job.Tenant
                 && item.ReleaseId == release.Id && item.JobId is null && item.State == DeploymentStates.AwaitingApproval
                 && item.Trigger == DeploymentTriggers.Deploy);
             if (waiting is not null)
@@ -132,7 +133,7 @@ public static class DeploymentReconciler
                 .FirstOrDefault(item => item.Id == environment.Id)?.InterventionTimeoutMinutes ?? 60;
             var run = new DeploymentRecord
             {
-                Id = job.Id, ReleaseId = release.Id, EnvironmentId = environment.Id,
+                Id = job.Id, ReleaseId = release.Id, EnvironmentId = environment.Id, Tenant = job.Tenant,
                 State = DeploymentStates.Queued, Trigger = trigger,
                 DeployStep = DeployStepNames.ForTemplate(job.Template), NeedsApproval = needsApproval,
                 SshStepNames = job.SshSteps.Select((step, index) => $"deploy[{index}]:{step.Step}").ToArray(),
@@ -173,7 +174,7 @@ public static class DeploymentReconciler
                 continue;
             // Any run for this release here since staging turned healthy answers
             // the promotion already, including a cancelled one.
-            if (runs.Any(item => item.EnvironmentId == environment.Id && item.ReleaseId == release.Id
+            if (runs.Any(item => item.EnvironmentId == environment.Id && item.Tenant is null && item.ReleaseId == release.Id
                     && (DeploymentStates.IsActive(item.State) || item.CreatedAtUtc >= promotion.StageHealthyAt)))
                 continue;
             var target = record.Environments.FirstOrDefault(item => item.Id == environment.Id);

@@ -28,6 +28,7 @@ public sealed class PickupHoldSweep
     private readonly AttemptAuthorityService? _attemptAuthority;
     private readonly TaskRunnerService? _runners;
     private readonly ILocalCodingAdmissionPolicy? _localCodingAdmission;
+    private readonly IConfiguration? _configuration;
 
     public PickupHoldSweep(
         TaskScannerService scanner,
@@ -36,7 +37,8 @@ public sealed class PickupHoldSweep
         TimeProvider? clock = null,
         AttemptAuthorityService? attemptAuthority = null,
         TaskRunnerService? runners = null,
-        ILocalCodingAdmissionPolicy? localCodingAdmission = null)
+        ILocalCodingAdmissionPolicy? localCodingAdmission = null,
+        IConfiguration? configuration = null)
     {
         _scanner = scanner;
         _projectSettings = projectSettings;
@@ -45,6 +47,7 @@ public sealed class PickupHoldSweep
         _attemptAuthority = attemptAuthority;
         _runners = runners;
         _localCodingAdmission = localCodingAdmission;
+        _configuration = configuration;
     }
 
     /// <summary>
@@ -93,9 +96,10 @@ public sealed class PickupHoldSweep
                 Rejection: task.RemoteDispatchRejection,
                 NowUtc: now,
                 ExecutionLocation: ProjectExecutionPolicy.ResolveExecutionLocation(_projectSettings.Get(task.ProjectName)),
-                AllowsLocalCoding: (_runners?.AllowsLocalCoding
-                    ?? _localCodingAdmission?.AllowsLocalCoding) == true,
-                SuggestedRemoteRunnerId: _runners?.SuggestedRemoteRunnerId));
+                AllowsLocalCoding: (_configuration is null || !SecurityProfiles.IsNetworked(_configuration))
+                    && (_runners?.AllowsLocalCoding ?? _localCodingAdmission?.AllowsLocalCoding) == true,
+                SuggestedRemoteRunnerId: _runners?.SuggestedRemoteRunnerId,
+                DenyAllLocalRuns: _configuration is not null && SecurityProfiles.IsNetworked(_configuration)));
             if (hold == null) continue;
 
             held.Add(new HeldPickupCard(

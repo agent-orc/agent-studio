@@ -484,16 +484,13 @@ public class OrchestratorRunner
     /// embedding multi-KB markdown into a Windows command line is the bug
     /// class this rewrite exists to prevent.
     /// </summary>
-    public static (List<string> Args, string ModelId) BuildArgs(string? model, string? resumeSessionId)
+    public static (List<string> Args, string ModelId) BuildArgs(
+        string? model, string? resumeSessionId, bool networked = true)
     {
         var modelId = string.IsNullOrWhiteSpace(model) ? DefaultModel : model!.Trim();
-        var args = new List<string>
-        {
-            "-p",                                     // print mode; reads prompt from stdin (no positional arg)
-            "--output-format", "json",
-            "--model", Quote(modelId),
-            "--dangerously-skip-permissions"
-        };
+        var args = new List<string>();
+        AgentStudio.Cli.HostOneShotIsolation.AddClaudeArguments(args, modelId,
+            networked: networked);
         if (!string.IsNullOrWhiteSpace(resumeSessionId))
         {
             args.Add("-r");

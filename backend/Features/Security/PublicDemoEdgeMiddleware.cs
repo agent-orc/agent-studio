@@ -160,6 +160,7 @@ public sealed class PublicDemoEdgeMiddleware(
 
     private static bool IsHealthCheck(string path)
         => path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/healthz/container", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/drain", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/healthz/orchestration-engine", StringComparison.OrdinalIgnoreCase);
 

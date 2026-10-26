@@ -23,7 +23,10 @@ public static class BatchMoveEndpoints
                     item.JobId,
                     string.IsNullOrWhiteSpace(item.WatchPath) ? null : item.WatchPath)?.ProjectName)
                 .ToArray();
-            if (!ProjectAccessAuthorization.AllowsTasks(context, projectNames, projects))
+            // Permission-aware per task: the Product role never batch-moves,
+            // also not where the caller holds a stronger role elsewhere.
+            if (!ProjectAccessAuthorization.AllowsTasks(context, projectNames, IamPermissions.ProjectCardsWrite, projects)
+                || projectNames.Any(project => ProjectAccessAuthorization.IsProductRoleIn(context, project)))
             {
                 return Results.Json(
                     new { error = "project-scope-denied", message = "This account is not a member of every task in the batch." },
@@ -35,7 +38,9 @@ public static class BatchMoveEndpoints
             var job = jobs.Enqueue(
                 req.Items,
                 projectNames,
-                TimelineActors.Human(clientId ?? string.Empty));
+                context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account
+                    ? TimelineActors.ServiceAccount(account.AccountId)
+                    : TimelineActors.Human(clientId ?? string.Empty));
             return Results.Accepted($"/api/tasks/batch-move/{job.Id}", job);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 

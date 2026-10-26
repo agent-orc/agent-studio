@@ -26,6 +26,21 @@ public sealed class GlobalSearchWikiTests : IDisposable
         Assert.True(item.IsWiki);
     }
 
+    [Fact]
+    public async Task Stream_does_not_name_projects_outside_the_access_filter()
+    {
+        Write("architecture.md", "# Architecture map\n");
+        var events = new List<GlobalSearchStreamEvent>();
+        await foreach (var frame in Build().StreamAsync("architecture",
+                           new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "commits" },
+                           20, CancellationToken.None, _ => false))
+            events.Add(frame);
+
+        var progress = Assert.IsType<GlobalSearchProgressFrame>(events.Single(frame => frame.Event == "progress").Payload);
+        Assert.Equal(0, progress.Total);
+        Assert.DoesNotContain(events, frame => frame.Event == "repository");
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_root, true); } catch { /* best-effort cleanup */ }

@@ -93,6 +93,8 @@ public sealed class TaskIntegrationStatusService
     private int _computationCount;
     private int _lookupCount;
 
+    internal Func<TaskInfo, TaskIntegrationStatus?>? TestStatusOverride { get; set; }
+
     public TaskIntegrationStatusService(
         GitService git,
         ProjectSettingsService settings,
@@ -164,6 +166,11 @@ public sealed class TaskIntegrationStatusService
         var origins = new Dictionary<string, string?>(FileSystemPathComparer.Instance);
         foreach (var job in jobs.Where(job => !deliveredOnly || DeliveredLanes.Contains(job.State)))
         {
+            if (TestStatusOverride?.Invoke(job) is { } testStatus)
+            {
+                result[job.TaskKey] = testStatus;
+                continue;
+            }
             var groups = BuildRepositoryGroups(job, origins);
             // AGT-2856: a card without an attributed commit is answered from its
             // project's primary repository, so that repository must be resolved

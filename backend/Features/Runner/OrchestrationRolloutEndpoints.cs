@@ -37,8 +37,10 @@ public static class OrchestrationRolloutEndpoints
                 && context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal
                     { User.Role: StudioRoles.Owner })
                 return Results.StatusCode(403);
-            var actor = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
-                ? human.User.Username : "local-operator";
+            var actor = context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is null
+                && context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                    ? human.User.Username
+                    : AccessSecurityMiddleware.ActorId(context, "local-operator");
             if (forced)
                 logger.LogWarning("orchestration-profile-engine-forced profile={Profile} actor={Actor} reason={Reason}",
                     profile, actor, request.Reason);

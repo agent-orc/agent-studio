@@ -69,7 +69,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
         var hold = detail.RootElement.GetProperty("info").GetProperty("pickupHold");
         Assert.Equal(PickupHoldMechanisms.ExecutionPlacement, hold.GetProperty("mechanism").GetString());
         Assert.Equal(PickupHoldClassifications.Unsatisfiable, hold.GetProperty("classification").GetString());
-        Assert.Contains("local coding is disabled", hold.GetProperty("reason").GetString());
+        Assert.Contains("local agent execution is disabled", hold.GetProperty("reason").GetString());
         var resolution = Assert.Single(hold.GetProperty("resolutions").EnumerateArray());
         Assert.Equal(PickupHoldResolutionKinds.RouteToRemoteRunner, resolution.GetProperty("kind").GetString());
         Assert.Contains("PUT /api/projects/hold-app/execution-runner", resolution.GetProperty("detail").GetString());
@@ -90,7 +90,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
         using var startBody = JsonDocument.Parse(await start.Content.ReadAsStringAsync());
         Assert.True(startBody.RootElement.TryGetProperty("code", out var code), startBody.RootElement.ToString());
         Assert.Equal(RemoteExecutionRequirement.Code, code.GetString());
-        Assert.Contains("coding execution is disabled", startBody.RootElement.GetProperty("error").GetString());
+        Assert.Contains("local agent execution is disabled", startBody.RootElement.GetProperty("error").GetString());
     }
 
     [Fact]

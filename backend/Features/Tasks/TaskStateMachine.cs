@@ -46,6 +46,7 @@ public class TaskStateMachine
     private readonly TaskIntegrationStatusService? _integrationStatus;
     private readonly AgentStudio.Runner.AttemptAuthorityService? _attemptAuthority;
     private readonly AgentStudio.Pipeline.TaskGateCancellationRegistry? _gateCancellation;
+    private readonly TaskMutationService? _mutations;
     private readonly bool _guardedDelivery;
 
     public TaskStateMachine(
@@ -59,7 +60,8 @@ public class TaskStateMachine
         TaskIntegrationStatusService? integrationStatus = null,
         IConfiguration? configuration = null,
         AgentStudio.Runner.AttemptAuthorityService? attemptAuthority = null,
-        AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null)
+        AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null,
+        TaskMutationService? mutations = null)
     {
         _scanner = scanner;
         _logger = logger;
@@ -74,6 +76,7 @@ public class TaskStateMachine
         _integrationStatus = integrationStatus;
         _attemptAuthority = attemptAuthority;
         _gateCancellation = gateCancellation;
+        _mutations = mutations;
         _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
 
@@ -328,7 +331,19 @@ public class TaskStateMachine
         // transient divergence warning on the next scan.
         if (Directory.Exists(targetDir))
         {
-            targetSlug = LaneSlug.EnsureUnique(recheck.WatchPath, jobFolderName);
+            var identities = _scanner.GetResidentIdentityFacts()
+                .Where(other => !WatchPathComparison.PathsEqual(other.FolderPath, recheck.FolderPath))
+                .SelectMany(other => new[] { other.Id, other.Key, other.TaskKey, TaskCoreRecord.Limit(other.Id, 128) })
+                .Where(identity => !string.IsNullOrWhiteSpace(identity))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            for (var suffix = 2; ; suffix++)
+            {
+                var candidate = $"{jobFolderName}-{suffix}";
+                if (identities.Contains(candidate) || _mutations?.IsReservedIdentity(candidate) == true
+                    || LaneSlug.IsTaken(recheck.WatchPath, candidate)) continue;
+                targetSlug = candidate;
+                break;
+            }
             targetDir = Path.Combine(recheck.WatchPath, targetState, targetSlug);
             _logger.LogWarning(
                 "move-slug-deduped jobId={JobId} targetState={State} baseSlug={BaseSlug} resolvedSlug={ResolvedSlug}",
@@ -1056,6 +1071,11 @@ public class TaskStateMachine
         // fresh destination key before touching the source. The monotonic
         // counter may advance on a failed attempt, which is intentional: keys
         // are never re-used.
+        var existingAliases = _scanner.GetResidentIdentityFacts()
+            .Where(task => !WatchPathComparison.PathsEqual(task.FolderPath, recheck.FolderPath))
+            .SelectMany(task => new[] { task.Id, task.Key, task.TaskKey, TaskCoreRecord.Limit(task.Id, 128) })
+            .Where(identity => !string.IsNullOrWhiteSpace(identity))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         string destinationKey;
         int destinationNumber;
         string targetDir;
@@ -1065,7 +1085,7 @@ public class TaskStateMachine
             destinationKey = $"{destinationProject.ShortCode}-{destinationSeq}";
             TaskStorageLayout.TryParseKeyNumber(destinationKey, out destinationNumber);
             targetDir = TaskStorageLayout.JobDir(canonicalTarget, destinationNumber, destinationKey);
-        } while (Directory.Exists(targetDir));
+        } while (Directory.Exists(targetDir) || existingAliases.Contains(destinationKey));
 
         var operationId = Guid.NewGuid().ToString("N");
         var sourceParent = Path.GetDirectoryName(recheck.FolderPath)!;
