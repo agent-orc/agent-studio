@@ -313,7 +313,7 @@ public sealed class RoutePermissionInventoryTests : IDisposable
 
     private WebApplicationFactory<Program> Factory(string profile, string? taskServer)
     {
-        var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        var factory = new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>

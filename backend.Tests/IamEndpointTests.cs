@@ -214,7 +214,7 @@ public sealed class IamEndpointTests : IDisposable
     }
 
     private WebApplicationFactory<Program> BuildFactory(string profile = SecurityProfiles.Networked, TimeProvider? clock = null)
-        => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        => new TestHostFactory().WithWebHostBuilder(builder =>
     {
         builder.UseEnvironment("Test");
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>

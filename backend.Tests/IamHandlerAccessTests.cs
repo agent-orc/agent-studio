@@ -1000,7 +1000,7 @@ public sealed class IamHandlerAccessTests : IDisposable
             }));
             File.WriteAllText(Path.Combine(card, "prompt.md"), "Fixture card.");
         }
-        var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        var factory = new TestHostFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
