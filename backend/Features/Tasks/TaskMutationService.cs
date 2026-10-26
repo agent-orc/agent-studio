@@ -41,6 +41,8 @@ public class TaskMutationService
     private readonly LaneMutexRegistry _laneMutex;
     private readonly ConcurrentDictionary<string, HashSet<string>> _reservedJobIds =
         new(FileSystemPathComparer.Instance);
+    private readonly Lock _createIdentityLock = new();
+    private readonly Dictionary<string, int> _lastCreateOrder = new(FileSystemPathComparer.Instance);
 
     /// <summary>
     /// Atomic-write boundary for task-key sweeps and decision-content writes.
@@ -162,20 +164,6 @@ public class TaskMutationService
         var normalized = ModelMetadataRegistry.ResolveThinkingLevel(info.CliType, info.Model, thinkingLevel);
         TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevel", normalized ?? "", _logger);
         TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevelExplicit", !string.IsNullOrWhiteSpace(thinkingLevel), _logger);
-        return Updated(info);
-    }
-
-    /// <summary>
-    /// Epics assignment way 2 (post-hoc): attach this task to a parent epic, or
-    /// detach it (<paramref name="epicId"/> null/empty clears the link). Writes
-    /// the <c>epicId</c> field on task.json via the mutation layer (API-only
-    /// job-folder rule, ADR-0024). Returns false when the task is not found.
-    /// </summary>
-    public bool SetJobEpic(string jobId, string? epicId, string? watchPath = null)
-    {
-        var info = _scanner.FindJob(jobId, watchPath);
-        if (info == null) return false;
-        TaskJsonFile.UpdateField(info.FolderPath, "epicId", epicId ?? "", _logger);
         return Updated(info);
     }
 
@@ -502,10 +490,13 @@ public class TaskMutationService
 
             var isRemoteAttempt = participantId.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
                 StringComparison.Ordinal);
+            var isReviewAttempt = participantId.StartsWith("support:remote-review:", StringComparison.Ordinal);
             var retained = (persisted?.Entries ?? [])
                 .Where(entry => !string.Equals(entry.ParticipantId, participantId, StringComparison.Ordinal)
                     && !(isRemoteAttempt &&
-                        (entry.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false)))
+                        (entry.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false))
+                    && !(isReviewAttempt &&
+                        (entry.ParticipantId?.StartsWith(participantId + ":step:", StringComparison.Ordinal) ?? false)))
                 .ToList();
             var recorded = retained
                 .Where(entry => TokenLedgerDuplicates.UsageIdentity(entry) is not null)
@@ -522,8 +513,10 @@ public class TaskMutationService
             {
                 var entry = source with
                 {
-                    ParticipantId = isRemoteAttempt &&
-                        (source.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false)
+                    ParticipantId = ((isRemoteAttempt &&
+                        (source.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false))
+                        || (isReviewAttempt &&
+                        (source.ParticipantId?.StartsWith(participantId + ":step:", StringComparison.Ordinal) ?? false)))
                         ? source.ParticipantId : participantId,
                 };
                 var identity = isRemoteAttempt ? TokenLedgerDuplicates.UsageIdentity(entry) : null;
@@ -883,6 +876,14 @@ public class TaskMutationService
         string folderPath,
         TaskIntegrationRecord record)
     {
+        if (string.IsNullOrWhiteSpace(folderPath)) return new IntegrationRecordWriteResult(false, false);
+        lock (TaskJsonFile.SyncRoot(folderPath))
+            return AppendIntegrationRecordLocked(folderPath, record);
+    }
+
+    private IntegrationRecordWriteResult AppendIntegrationRecordLocked(
+        string folderPath, TaskIntegrationRecord record)
+    {
         if (!Directory.Exists(folderPath)
             || string.IsNullOrWhiteSpace(record.Id)
             || !IntegrationRecordClasses.All.Contains(record.Classification, StringComparer.Ordinal))
@@ -910,18 +911,28 @@ public class TaskMutationService
                 }
             }
 
-            if (records.Any(existing => string.Equals(
-                    existing.Id,
-                    record.Id,
-                    StringComparison.OrdinalIgnoreCase)))
+            if (record.Id.StartsWith("operator-candidate-", StringComparison.Ordinal))
             {
-                return new IntegrationRecordWriteResult(true, false);
+                var subject = ReviewSubjectStore.Read(folderPath);
+                if (!string.Equals(subject?.ResultSha, record.SourceSha, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(subject?.RunAttemptId, record.DeliveryEpoch, StringComparison.Ordinal))
+                    return new IntegrationRecordWriteResult(false, false, true);
+            }
+
+            var existing = records.FirstOrDefault(item => string.Equals(
+                item.Id, record.Id, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+            {
+                if (record.Id.StartsWith("operator-candidate-", StringComparison.Ordinal)
+                    && !OperatorCandidateEvidenceMatches(existing, record))
+                    return new IntegrationRecordWriteResult(false, false, true);
+                return new IntegrationRecordWriteResult(true, false, PersistedRecord: existing);
             }
 
             records.Add(record);
             TaskJsonFile.UpdateFieldOrThrow(folderPath, "integrationRecords", records);
             Updated(folderPath);
-            return new IntegrationRecordWriteResult(true, true);
+            return new IntegrationRecordWriteResult(true, true, PersistedRecord: record);
         }
         catch (Exception ex)
         {
@@ -930,9 +941,33 @@ public class TaskMutationService
         }
     }
 
+    private static bool OperatorCandidateEvidenceMatches(TaskIntegrationRecord existing, TaskIntegrationRecord proposed)
+        => existing.Classification == proposed.Classification
+           && existing.Version == proposed.Version
+           && existing.IntegrationBranch == proposed.IntegrationBranch
+           && existing.IntegrationSha == proposed.IntegrationSha
+           && existing.SourceSha == proposed.SourceSha
+           && existing.DeliveryEpoch == proposed.DeliveryEpoch
+           && existing.VerificationHost == proposed.VerificationHost
+           && existing.SuiteSummary == proposed.SuiteSummary
+           && existing.LogHash == proposed.LogHash
+           && existing.VerificationStartedAtUtc == proposed.VerificationStartedAtUtc
+           && existing.VerificationEndedAtUtc == proposed.VerificationEndedAtUtc
+           && existing.Evidence == proposed.Evidence
+           && existing.VerificationSuites.SequenceEqual(proposed.VerificationSuites);
+
     /// <summary>Removes evidence staged for an operator move that was refused.</summary>
     public bool RemoveIntegrationRecordOnFolder(string folderPath, string recordId)
     {
+        lock (TaskJsonFile.SyncRoot(folderPath))
+            return RemoveIntegrationRecordLocked(folderPath, recordId);
+    }
+
+    private bool RemoveIntegrationRecordLocked(string folderPath, string recordId)
+    {
+        // Operator candidate receipts are final evidence, never staged move
+        // evidence. The rollback path must not erase them.
+        if (recordId.StartsWith("operator-candidate-", StringComparison.Ordinal)) return false;
         var path = Path.Combine(folderPath, "task.json");
         if (!File.Exists(path)) return false;
         try
@@ -1257,7 +1292,8 @@ public class TaskMutationService
             return (true, null);
         try
         {
-            new AtomicJsonFileWriter().ReplaceExisting(jsonPath, originalJson);
+            TaskJsonFile.RestoreFieldsFromSnapshot(info.FolderPath, originalJson,
+                "kind", "decision", "noBranchExpected", "requiresIntegration");
             _scanner.InvalidateCache();
             _scanner.PublishCoreFromFolder(info.FolderPath, info.WatchPath, info.ProjectName, info.State);
             return (false, $"Decision migration failed; the original lane and card were restored: {moved.Message ?? moved.Status.ToString()}.");
@@ -1435,7 +1471,8 @@ public class TaskMutationService
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
-        TaskJsonFile.UpdateField(info.FolderPath, "released", released, _logger);
+        if (!TaskJsonFile.UpdateField(info.FolderPath, "released", released, _logger))
+            return false;
         var dependents = ReleaseGatedDependentKeys(info);
         _timeline?.Append(
             info.FolderPath,
@@ -1467,7 +1504,7 @@ public class TaskMutationService
         if (string.IsNullOrWhiteSpace(info.Key)) return [];
         try
         {
-            return _scanner.GetReferenceIndex()
+            return _scanner.GetCoreReferenceIndex()
                 .Dependents(info.Key, TaskReferenceKinds.DependsOn)
                 .Where(link => link.ReleaseGate && !string.IsNullOrWhiteSpace(link.SourceKey))
                 .Select(link => link.SourceKey!)
@@ -1882,28 +1919,81 @@ public class TaskMutationService
             : req.Id;
         if (string.IsNullOrEmpty(baseSlug)) return null;
 
-        var taskKey = MintTaskKey(entry.Path);
-        var storageId = taskKey ?? baseSlug;
-        TaskStorageLayout.TryParseKeyNumber(storageId, out var storageNumber);
-
-        // Root-cause fix for duplicate-slug folders: the external id must be
-        // unique across the project even though it is no longer the physical
-        // folder name. Reserve the resolved id + create the jobs/<bucket>/<key>
-        // folder under the lane mutex so concurrent creates cannot pick the
-        // same external id or storage id.
+        string? taskKey;
+        string storageId;
+        int storageNumber;
         string jobId;
         string jobDir;
+        int resolvedOrder;
+        // An id or key is accepted by the same unscoped task routes. Reserve
+        // all aliases across projects before creating a folder, so one project
+        // cannot shadow another project's card during authorization.
+        // Capture resident identities before the create lock. A refresh may be
+        // running, but creates must not queue behind a workspace scan.
+        var jobs = _scanner.GetResidentIdentityFacts();
         using (_laneMutex.Acquire(entry.Path))
         {
-            jobId = EnsureUniqueJobId(entry.Path, baseSlug);
-            jobDir = TaskStorageLayout.JobDir(entry.Path, storageNumber, storageId);
-            for (var suffix = 2; Directory.Exists(jobDir); suffix++)
+            lock (_createIdentityLock)
             {
-                storageId = $"{taskKey ?? baseSlug}-{suffix}";
+                taskKey = MintTaskKey(entry.Path, jobs);
+                var used = jobs
+                    .SelectMany(job => new[] { job.Id, job.Key, job.TaskKey, TaskCoreRecord.Limit(job.Id, 128) })
+                    .Where(identity => !string.IsNullOrWhiteSpace(identity))
+                    .Select(identity => identity!)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var foreign = jobs
+                    .Where(job => !WatchPathComparison.PathsEqual(job.WatchPath, entry.Path))
+                    .SelectMany(job => new[] { job.Id, job.Key, job.TaskKey, TaskCoreRecord.Limit(job.Id, 128) })
+                    .Where(identity => !string.IsNullOrWhiteSpace(identity))
+                    .Select(identity => identity!)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var reserved in _reservedJobIds.Values)
+                    used.UnionWith(reserved);
+                foreach (var (path, reserved) in _reservedJobIds)
+                    if (!WatchPathComparison.PathsEqual(path, entry.Path)) foreign.UnionWith(reserved);
+                var matchesForeignKeyPattern = _projectRegistry.List().Any(project =>
+                    !WatchPathComparison.PathsEqual(project.StorageLocation, entry.Path)
+                    && TaskKeyNumbers.TryParse(baseSlug, project.ShortCode, out _));
+                if (!string.IsNullOrWhiteSpace(req.Id)
+                    && (foreign.Contains(baseSlug)
+                        || foreign.Contains(TaskCoreRecord.Limit(baseSlug, 128)!)
+                        || matchesForeignKeyPattern))
+                    return null;
+                // A title-derived slug is free to take a suffix even when its
+                // first spelling resembles another project's task key.
+                if (matchesForeignKeyPattern) used.Add(baseSlug);
+                if (taskKey is not null)
+                {
+                    var project = _projectRegistry.FindByStorageLocation(entry.Path)!;
+                    while (used.Contains(taskKey)
+                        || (TaskStorageLayout.TryParseKeyNumber(taskKey, out var candidateNumber)
+                            && Directory.Exists(TaskStorageLayout.JobDir(entry.Path, candidateNumber, taskKey))))
+                        taskKey = $"{project.ShortCode}-{_projectRegistry.IssueNextTaskKey(project.Id)}";
+                }
+
+                jobId = EnsureUniqueJobId(entry.Path, baseSlug, used);
+                if (taskKey is not null)
+                    _reservedJobIds.GetOrAdd(entry.Path, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase))
+                        .Add(taskKey);
+                storageId = taskKey ?? baseSlug;
                 TaskStorageLayout.TryParseKeyNumber(storageId, out storageNumber);
                 jobDir = TaskStorageLayout.JobDir(entry.Path, storageNumber, storageId);
+                for (var suffix = 2; Directory.Exists(jobDir); suffix++)
+                {
+                    storageId = $"{taskKey ?? baseSlug}-{suffix}";
+                    TaskStorageLayout.TryParseKeyNumber(storageId, out storageNumber);
+                    jobDir = TaskStorageLayout.JobDir(entry.Path, storageNumber, storageId);
+                }
+                Directory.CreateDirectory(jobDir);
+                var orderKey = entry.Path + "::" + targetState;
+                var residentMax = jobs
+                    .Where(job => WatchPathComparison.PathsEqual(job.WatchPath, entry.Path)
+                        && job.State == targetState)
+                    .Select(job => (int?)job.Order).Max() ?? 0;
+                var nextOrder = Math.Max(residentMax, _lastCreateOrder.GetValueOrDefault(orderKey)) + 10;
+                resolvedOrder = req.Order != 999 ? req.Order : nextOrder;
+                _lastCreateOrder[orderKey] = Math.Max(residentMax, resolvedOrder);
             }
-            Directory.CreateDirectory(jobDir);
         }
         if (!string.Equals(jobId, baseSlug, StringComparison.Ordinal))
         {
@@ -1911,17 +2001,6 @@ public class TaskMutationService
                 "job-slug-deduped baseSlug={BaseSlug} resolvedSlug={ResolvedSlug} watchPath={WatchPath} targetState={TargetState}",
                 baseSlug, jobId, entry.Path, targetState);
         }
-
-        // Land new jobs at the bottom of their target lane so the visible order
-        // in the UI matches the backend pickup order (OrderBy(Order) ascending).
-        // Falling back to the request's default (999) collides every new job on
-        // the same key, so tie-break would depend on filesystem scan order and
-        // the user has no way to predict which one runs next.
-        var existingMaxOrder = _scanner.ScanAllJobs()
-            .Where(j => WatchPathComparison.PathsEqual(j.WatchPath, entry.Path) && j.State == targetState)
-            .Select(j => (int?)j.Order)
-            .Max();
-        var resolvedOrder = req.Order != 999 ? req.Order : (existingMaxOrder ?? 0) + 10;
 
         var ownerClientId = !string.IsNullOrWhiteSpace(req.OwnerClientId)
             ? req.OwnerClientId!
@@ -1984,11 +2063,8 @@ public class TaskMutationService
         jobJson["thinkingLevelExplicit"] = req.ThinkingLevelExplicit ?? !string.IsNullOrWhiteSpace(req.ThinkingLevel);
         if (!string.IsNullOrWhiteSpace(effectiveCliType))
             jobJson["cliType"] = effectiveCliType;
-        // Epics: card kind (task|epic) + optional parent epic (assignment way 1,
-        // at create time). kind is always written so a fresh task.json is explicit.
+        // Keep the normalized card kind explicit in new task metadata.
         jobJson["kind"] = TaskKinds.Normalize(req.Kind);
-        if (!string.IsNullOrWhiteSpace(req.EpicId))
-            jobJson["epicId"] = req.EpicId;
         if (req.Dossier is { Path.Length: > 0 })
             jobJson["dossier"] = req.Dossier;
         // Execution mode (coding|planning|research) + web-access. mode is always
@@ -2082,7 +2158,7 @@ public class TaskMutationService
         // the new card within ~1s instead of waiting for the next board poll.
         // Resolve the just-written TaskInfo so the bridge can ship the canonical
         // row; on the rare miss the bridge falls back to a bulk re-pull.
-        var created = _scanner.FindJob(jobId, entry.Path);
+        var created = _scanner.FindPublishedJob(jobId, entry.Path);
         _notifier.PublishCreated(created?.ProjectName ?? string.Empty, jobId, entry.Path);
         return jobId;
     }
@@ -2157,14 +2233,10 @@ public class TaskMutationService
         return true;
     }
 
-    private string EnsureUniqueJobId(string watchPath, string baseSlug)
+    private string EnsureUniqueJobId(string watchPath, string baseSlug, HashSet<string> used)
     {
-        var used = _scanner.ScanAllJobsWithArchive()
-            .Where(j => WatchPathComparison.PathsEqual(j.WatchPath, watchPath))
-            .Select(j => j.Id)
-            .ToHashSet(StringComparer.Ordinal);
-        var reserved = _reservedJobIds.GetOrAdd(watchPath, _ => new HashSet<string>(StringComparer.Ordinal));
-        used.UnionWith(reserved);
+        var reserved = _reservedJobIds.GetOrAdd(watchPath,
+            _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
         if (!used.Contains(baseSlug))
         {
             reserved.Add(baseSlug);
@@ -2173,12 +2245,16 @@ public class TaskMutationService
         for (var suffix = 2; ; suffix++)
         {
             var candidate = $"{baseSlug}-{suffix}";
-            if (!used.Contains(candidate))
-            {
-                reserved.Add(candidate);
-                return candidate;
-            }
+            if (used.Contains(candidate)) continue;
+            reserved.Add(candidate);
+            return candidate;
         }
+    }
+
+    internal bool IsReservedIdentity(string identity)
+    {
+        lock (_createIdentityLock)
+            return _reservedJobIds.Values.Any(reserved => reserved.Contains(identity));
     }
 
     public bool UpdateJobFile(string jobId, string fileName, string content, string? watchPath = null)
@@ -2435,6 +2511,7 @@ public class TaskMutationService
 
             File.Delete(stash);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
             return PendingIntentAcknowledgeResult.Consumed;
         }
         catch (Exception ex)
@@ -2477,6 +2554,7 @@ public class TaskMutationService
             if (File.Exists(canonical)) File.Delete(canonical);
             if (File.Exists(stash)) File.Delete(stash);
             _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(jobFolder);
             return true;
         }
         catch (Exception ex)
@@ -2560,7 +2638,11 @@ public class TaskMutationService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info is null || info.ModelExplicit || info.ThinkingLevelExplicit) return false;
         var written = TaskJsonFile.UpdateField(info.FolderPath, "thinkingLevel", level, _logger);
-        if (written) _scanner.InvalidateCache();
+        if (written)
+        {
+            _scanner.InvalidateCache();
+            _scanner.PublishCoreFromKnownFolder(info.FolderPath);
+        }
         return written;
     }
 
@@ -2671,6 +2753,7 @@ public class TaskMutationService
                 TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevel", thinkingLevel, _logger);
 
             count++;
+            _scanner.PublishCoreFromKnownFolder(job.FolderPath);
             _logger.LogInformation(
                 "backfill-agent-defaults jobId={JobId} owner={Owner} agent={Agent} cliType={CliType} model={Model} thinkingLevel={ThinkingLevel}",
                 job.Id, ownerId, cliType ?? job.Agent, cliType, model, thinkingLevel);
@@ -2712,6 +2795,7 @@ public class TaskMutationService
                 TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevel", resolved, _logger);
                 TaskJsonFile.UpdateField(job.FolderPath, "thinkingLevelExplicit", false, _logger);
                 touched++;
+                _scanner.PublishCoreFromKnownFolder(job.FolderPath);
             }
         }
         if (touched > 0) _scanner.InvalidateCache();
@@ -2724,24 +2808,20 @@ public class TaskMutationService
     /// registry has no record for this path (non-fatal; the job will
     /// simply have <c>key: null</c>).
     ///
-    /// <para>Before issuing, the per-project counter floor is re-derived
-    /// from the keys actually present on disk. The in-memory
-    /// <c>NextTaskKeySeq</c> is the fast path, but it can be rewound under
-    /// the registry (e.g. a second backend sharing this workspace persists
-    /// a stale snapshot, clobbering the live counter). Deriving the floor
-    /// from disk on every mint makes the on-disk keys the source of truth,
-    /// so a rewound counter can never re-issue a key that is already in
-    /// use. This closed the bug where ASS-594/598 (and a contiguous band
-    /// around them) were each minted onto two different tasks.</para>
+    /// <para>Before issuing, the per-project counter floor is derived from
+    /// resident card keys. Create admission then skips every occupied id,
+    /// key, legacy prefix, and storage folder while holding its identity
+    /// reservation lock. The full workspace scan, if needed to warm a cold
+    /// index, finishes before that lock is taken.</para>
     /// </summary>
-    private string? MintTaskKey(string watchPath)
+    private string? MintTaskKey(string watchPath, IReadOnlyList<TaskInfo>? residentJobs = null)
     {
         try
         {
             var project = _projectRegistry.FindByStorageLocation(watchPath);
             if (project == null) return null;
 
-            var floor = HighestExistingKeyNumber(project.Id, project.ShortCode) + 1;
+            var floor = HighestExistingKeyNumber(project.Id, project.ShortCode, residentJobs) + 1;
             _projectRegistry.EnsureTaskKeyFloor(project.Id, floor);
 
             var seq = _projectRegistry.IssueNextTaskKey(project.Id);
@@ -2755,15 +2835,17 @@ public class TaskMutationService
     }
 
     /// <summary>
-    /// Highest numeric tail among the keys currently on disk for the
+    /// Highest numeric tail among the known keys for the
     /// project identified by <paramref name="projectId"/> /
     /// <paramref name="shortCode"/>. Returns 0 when the project has no
-    /// keyed tasks yet. Reads from the (cached) scanner snapshot.
+    /// keyed tasks yet. Create passes the resident core facts; legacy callers
+    /// use the scanner snapshot.
     /// </summary>
-    private int HighestExistingKeyNumber(string projectId, string shortCode)
+    private int HighestExistingKeyNumber(string projectId, string shortCode,
+        IReadOnlyList<TaskInfo>? residentJobs = null)
     {
         var max = 0;
-        foreach (var job in _scanner.ScanAllJobs())
+        foreach (var job in residentJobs ?? _scanner.ScanAllJobs())
         {
             if (string.IsNullOrWhiteSpace(job.Key)) continue;
             var owner = _projectRegistry.FindByStorageLocation(job.WatchPath);
@@ -2822,6 +2904,7 @@ public class TaskMutationService
             // must never do is report a backfill that did not happen.
             if (!TaskJsonFile.UpdateField(job.FolderPath, "key", key, _logger, _keyFileWriter)) continue;
             stamped++;
+            _scanner.PublishCoreFromKnownFolder(job.FolderPath);
         }
 
         if (stamped > 0) _scanner.InvalidateCache();
@@ -2901,6 +2984,7 @@ public class TaskMutationService
                     continue;
                 }
                 rekeyed++;
+                _scanner.PublishCoreFromKnownFolder(ordered[i].FolderPath);
                 _logger.LogInformation(
                     "task-key-dedup project={ProjectId} oldKey={OldKey} newKey={NewKey} jobId={JobId} keeper={KeeperId}",
                     projectId, oldKey, newKey, ordered[i].Id, keeper.Id);
@@ -2937,7 +3021,8 @@ public enum PendingIntentAcknowledgeResult
     HistoryWriteFailed,
 }
 
-public sealed record IntegrationRecordWriteResult(bool Succeeded, bool Appended);
+public sealed record IntegrationRecordWriteResult(
+    bool Succeeded, bool Appended, bool Conflict = false, TaskIntegrationRecord? PersistedRecord = null);
 
 public sealed record CommitSupersessionWriteResult(bool Succeeded, int MarkedCommits);
 

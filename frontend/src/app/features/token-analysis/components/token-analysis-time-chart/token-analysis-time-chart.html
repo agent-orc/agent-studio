@@ -1,0 +1,33 @@
+<section class="tc" data-testid="token-analysis-time-chart" aria-labelledby="tc-title">
+  <header class="tc__head">
+    <h3 id="tc-title">Tokens over time by model and reasoning level</h3>
+    <p>UTC days</p>
+  </header>
+  <ul class="tc__legend" aria-label="Model and reasoning level">
+    @for (series of chart().series; track series.key) {
+      <li><span class="tc__swatch" [style.background]="series.color"></span>{{ series.label }}</li>
+    }
+    @if (hasIncomplete()) {
+      <li data-testid="token-analysis-incomplete-legend"><span class="tc__swatch tc__swatch--incomplete"></span>Incomplete: day still open or runs in flight</li>
+    }
+  </ul>
+  <div class="tc__plot" role="img" [attr.aria-label]="'Daily tokens, peak ' + fmt(max())">
+    <span class="tc__axis tc__axis--top">{{ fmt(max()) }}</span>
+    <span class="tc__axis tc__axis--mid">{{ fmt(max() / 2) }}</span>
+    <div class="tc__columns">
+      @for (column of columns(); track column.day) {
+        <div class="tc__column" [class.tc__column--incomplete]="column.incomplete" [appTooltip]="column.tip"
+             [attr.data-day]="column.day" [attr.data-incomplete]="column.incomplete ? 'true' : null">
+          <div class="tc__stack" [style.height]="height(column.total)">
+            @for (segment of column.segments; track segment.key) {
+              <span class="tc__segment" [style.flex-grow]="segment.value" [style.background]="segment.color"></span>
+            }
+          </div>
+        </div>
+      }
+    </div>
+  </div>
+  <div class="tc__ticks" aria-hidden="true">
+    @for (tick of ticks(); track tick) { <span>{{ tick }}</span> }
+  </div>
+</section>

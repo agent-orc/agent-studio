@@ -282,12 +282,6 @@ public static class ProjectSettingsEndpoints
                     codingEmergencyLimitSource = defaults.ResolveCodingEmergencyLimit(kv.Key).Source,
                     chatMetadataEnabled = kv.Value.ChatMetadataEnabled,
                     orchestratorThinkingLevel = kv.Value.OrchestratorThinkingLevel,
-                    // Epic decomposition (planning) run knobs (way 3): null
-                    // model means "use the epic card's own model"; subTasksToReady
-                    // null/false lands generated sub-tasks in 0-backlog.
-                    epicPlanningModel = kv.Value.EpicPlanningModel,
-                    epicPlanningThinkingLevel = kv.Value.EpicPlanningThinkingLevel,
-                    epicSubTasksToReady = kv.Value.EpicSubTasksToReady ?? false,
                     intakeEnabled = kv.Value.IntakeEnabled,
                     autonomyLevel = kv.Value.AutonomyLevel,
                     waitOnQuotaEnabled = kv.Value.WaitOnQuotaEnabled,
@@ -374,10 +368,12 @@ public static class ProjectSettingsEndpoints
         // The Settings panel reads this to render one control per step
         // without hardcoding the step list on the frontend.
         app.MapGet("/api/projects/pipeline-catalogue", (
+            HttpContext context,
             string? projectName,
             string? pipelineType,
             ProjectSettingsService settings,
-            TaskScannerService scanner) =>
+            TaskScannerService scanner,
+            ProjectRegistry projects) =>
         {
             if (!string.IsNullOrWhiteSpace(pipelineType) && !PipelineTypes.IsValid(pipelineType))
                 return Results.BadRequest(new { error = $"Unknown pipeline type '{pipelineType}'" });
@@ -389,6 +385,8 @@ public static class ProjectSettingsEndpoints
             {
                 project = scanner.GetWatchPaths().FirstOrDefault(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
                 if (project is null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+                if (!ProjectAccessAuthorization.AllowsTasks(context, [project.Name], IamPermissions.ProjectRead, projects))
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
                 projectSettings = PipelineTypeSettings.ForType(settings.Get(projectName.Trim()), type);
                 repositoryPath = string.IsNullOrWhiteSpace(project.RepositoryPath) ? project.RootPath : project.RepositoryPath;
             }
@@ -965,7 +963,7 @@ public static class ProjectSettingsEndpoints
         // and the canonical pickupMode + executionLocation pair.
         app.MapPut("/api/projects/{projectName}/execution-runner", (string projectName, SetExecutionRunnerRequest req,
             ProjectSettingsService settings, TaskScannerService scanner, ClientIdentityStore clients,
-            TaskRunnerService runners) =>
+            TaskRunnerService runners, HttpContext context, IConfiguration configuration) =>
         {
             var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
@@ -1006,6 +1004,16 @@ public static class ProjectSettingsEndpoints
                         && req.RemoteExecutionEnabled != false)
                         pickupMode ??= PickupModes.Auto;
                 }
+
+                var currentLocation = ProjectExecutionPolicy.ResolveExecutionLocation(settings.Get(projectName));
+                var targetLocation = req.RemoteExecutionEnabled == false
+                    ? ExecutionLocations.Local
+                    : executionLocation ?? currentLocation;
+                var role = (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role;
+                if (!ProjectExecutionSecurityPolicy.MaySelectLocation(
+                        SecurityProfiles.IsNetworked(configuration), role, currentLocation, targetLocation))
+                    return Results.Json(new { code = "owner-required", error = "Only the Owner can turn off remote execution in the networked profile." },
+                        statusCode: StatusCodes.Status403Forbidden);
 
                 settings.SetExecutionSettings(
                     projectName,
@@ -1127,7 +1135,7 @@ public static class ProjectSettingsEndpoints
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             var profile = settings.Get(projectName).BuildProfile;
             return Results.Ok(new { profile, pickupAllowed = BuildProfileGate.AllowsAutoPickup(profile) });
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
 
         app.MapPut("/api/projects/{projectName}/test-execution", (string projectName, TestExecutionPolicy req, ProjectSettingsService settings, TaskScannerService scanner) =>
         {
@@ -1226,6 +1234,22 @@ public static class ProjectSettingsEndpoints
                 return Results.NotFound(new { error = $"Batch member '{taskKey}' was not found." });
             return Results.Accepted(value: new { accepted = true });
         });
+        // AGT-3219: cards escalated for a machine gate queue overrun, and their one-step release.
+        app.MapGet("/api/projects/{projectName}/batch-gate/queue-stalls", (string projectName,
+            BatchGatePilotService pilot, TaskScannerService scanner) =>
+            scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
+                ? Results.Ok(pilot.QueueStallReport(projectName))
+                : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
+        app.MapPost("/api/projects/{projectName}/batch-gate/queue-stalls/release", async (
+            string projectName, HttpContext context, BatchGatePilotService pilot, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (string.IsNullOrWhiteSpace(context.Request.Headers["X-Client-Id"]))
+                return Results.BadRequest(new { error = "X-Client-Id is required.", field = "X-Client-Id" });
+            return Results.Ok(await pilot.ReleaseQueueStalledAsync(projectName,
+                AgentStudio.Tasks.TaskCrudEndpoints.OperatorActor(context), context.RequestAborted));
+        });
 
         app.MapGet("/api/projects/{projectName}/gate-result-cache", (
             string projectName, TaskScannerService scanner) =>
@@ -1262,14 +1286,16 @@ public static class ProjectSettingsEndpoints
             settings.SetBuildProfile(projectName, null);
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             return Results.Ok(new { cleared = true });
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
 
         // POST runs the validation dry-run (install + build in the project's
         // checkout). On green the profile flips to pipeline-ready and the runner
         // may auto-pick the project; on red it lands in validation-failed with a
         // recorded reason. Synchronous: the caller waits for the verdict.
-        app.MapPost("/api/projects/{projectName}/build-profile/validate", async (string projectName, ProjectSettingsService settings, TaskScannerService scanner, BuildProfileValidationService validator, CancellationToken ct) =>
+        app.MapPost("/api/projects/{projectName}/build-profile/validate", async (string projectName, ProjectSettingsService settings, TaskScannerService scanner, BuildProfileValidationService validator, IConfiguration configuration, CancellationToken ct) =>
         {
+            if (SecurityProfiles.IsNetworked(configuration))
+                return Results.Conflict(new { error = RemoteExecutionRequirement.Code, message = RemoteExecutionRequirement.Message });
             var entry = scanner.GetWatchPaths().FirstOrDefault(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (entry is null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
 
@@ -1295,7 +1321,7 @@ public static class ProjectSettingsEndpoints
                 profile,
                 pickupAllowed = BuildProfileGate.AllowsAutoPickup(profile),
             });
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+        }).RequireStudioRole(StudioRoles.Owner).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
         // The orchestrator's model can be tuned per project. Defaults to
         // Opus when null. This is the only knob today; per-call overrides
@@ -1322,18 +1348,6 @@ public static class ProjectSettingsEndpoints
             var resolved = defaults.ResolveCodingEmergencyLimit(projectName);
             return Results.Ok(new { codingEmergencyLimitSeconds = request.Seconds,
                 effectiveSeconds = resolved.Seconds, source = resolved.Source });
-        });
-
-        // Epic decomposition (planning) run knobs (way 3): the model that
-        // authors the sub-task list and whether generated sub-tasks land in
-        // 2-ready instead of 0-backlog. Null fields leave that knob untouched.
-        app.MapPut("/api/projects/{projectName}/epic-planning", (string projectName, SetEpicPlanningRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
-        {
-            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
-            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
-
-            settings.SetEpicPlanning(projectName, req.Model, req.ThinkingLevel, req.SubTasksToReady);
-            return Results.Ok(settings.Get(projectName));
         });
 
         // ADR-0026: per-project autonomy slider for the orchestrator-prep

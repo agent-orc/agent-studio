@@ -62,23 +62,5 @@ for (const theme of ['dark', 'light']) {
 }
 await dismissMenu();
 
-// Epic menus: right-click the second card (epic).
-async function openEpicMenu() {
-  // The delete row keeps the stable id `delete-task` on every card; only the
-  // label switches to "Delete epic" for an epic card.
-  const epicCard = page.locator('app-task-card').nth(1).locator('[data-testid="task-card"]');
-  await epicCard.click({ button: 'right' });
-  await page.getByTestId('card-ctx-panel').waitFor({ state: 'visible', timeout: 5000 });
-  await page.getByTestId('card-ctx-item-delete-task').waitFor({ state: 'visible', timeout: 5000 });
-}
-
-for (const theme of ['dark', 'light']) {
-  await setTheme(theme);
-  await openEpicMenu();
-  const epicLabel = await page.getByTestId('card-ctx-item-delete-task').innerText();
-  console.log(`[${theme}] epic delete row label:`, JSON.stringify(epicLabel));
-  await shot(`card-context-delete-epic-${theme}--mocked.png`);
-}
-
 await browser.close();
 console.log('DONE');

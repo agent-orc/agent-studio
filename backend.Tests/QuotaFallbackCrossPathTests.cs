@@ -67,18 +67,19 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
             .AddInMemoryCollection(new Dictionary<string, string?> { ["TaskRepository"] = _workspace })
             .Build();
         var store = new QuotaCacheStore(config, NullLogger<QuotaCacheStore>.Instance);
+        var now = DateTime.UtcNow;
         store.Write([
             new QuotaSnapshot
             {
                 CliType = cliType,
-                FetchedAt = DateTime.UtcNow,
+                FetchedAt = now,
                 Windows =
                 [
                     new QuotaWindow
                     {
                         Label = "5-hour",
                         UsedPct = usedPct,
-                        ResetAt = DateTime.UtcNow.Add(resetIn),
+                        ResetAt = now.Add(resetIn),
                     },
                 ],
             },
@@ -264,12 +265,43 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
             http, reviewRunnerId, usesDurableTaskServer: true, options: options, runnerInstanceId: instanceId);
         await client.EnsureCompatibleAsync(CancellationToken.None);
         await client.RegisterAsync("quota fallback review host", "review-executor", CancellationToken.None);
+        var observedAt = DateTime.UtcNow;
+        var reviewCapabilities = await http.PutAsJsonAsync(
+            $"/api/v1/runners/{reviewRunnerId}/capabilities",
+            new Contract.CapabilityAdvertisementRequest(
+                reviewRunnerId, instanceId, Contract.CapabilityProtocol.CurrentSchemaVersion,
+                observedAt, 180, observedAt.Ticks,
+                [new Contract.AdvertisedCapabilityDto(
+                    Contract.CapabilityProtocol.ModelAcceptance(expectedCli, expectedModel),
+                    "model-acceptance", "unknown")]));
+        reviewCapabilities.EnsureSuccessStatusCode();
+
+        var unverified = await client.ClaimReviewAsync(
+            new Contract.ReviewClaimRequest(reviewRunnerId, instanceId, 120, AvailableSlots: 1),
+            CancellationToken.None);
+        var expectedKey = Contract.CapabilityProtocol.ModelAcceptance(expectedCli, expectedModel);
+        Assert.Equal("empty", unverified.Status);
+        Assert.Equal(Contract.ReviewClaimEmptyReasons.UnclaimablePlanRequirements, unverified.Reason);
+        Assert.Contains(expectedKey, unverified.MissingCapabilities!);
+        Assert.Contains($"{expectedKey} unknown", unverified.Message, StringComparison.Ordinal);
+        Assert.Equal(attemptId, Assert.Single(unverified.UnclaimableAttempts!).AttemptId);
+        var queue = factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>().Refresh();
+        Assert.Contains($"{expectedKey} unknown", queue.UnclaimableReason, StringComparison.Ordinal);
+
+        reviewCapabilities = await http.PutAsJsonAsync(
+            $"/api/v1/runners/{reviewRunnerId}/capabilities",
+            new Contract.CapabilityAdvertisementRequest(
+                reviewRunnerId, instanceId, Contract.CapabilityProtocol.CurrentSchemaVersion,
+                observedAt.AddSeconds(1), 180, observedAt.Ticks + 1,
+                [new Contract.AdvertisedCapabilityDto(expectedKey, "model-acceptance", "ready")]));
+        reviewCapabilities.EnsureSuccessStatusCode();
 
         var claim = await client.ClaimReviewAsync(
             new Contract.ReviewClaimRequest(reviewRunnerId, instanceId, 120, AvailableSlots: 1),
             CancellationToken.None);
 
         Assert.Equal("claimed", claim.Status);
+        Assert.Null(factory.Services.GetRequiredService<ReviewClaimUnclaimableLog>().Latest(attemptId));
         Assert.NotNull(claim.Subject);
         var returnedAspect = Assert.Single(
             claim.Subject!.Plan.Commands, c => Contract.ReviewCommandKinds.IsAgent(c.ExecutionKind));
@@ -321,6 +353,7 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
 
     private static async Task<string> RegisterCodingRunnerAsync(RClient client, HttpClient http)
     {
+        var observedAt = DateTime.UtcNow;
         var clientId = await client.RegisterAsync(ProjectName, "service", CancellationToken.None);
         var instanceId = $"{Environment.MachineName}:{Environment.ProcessId}";
         var registration = await http.PutAsJsonAsync(
@@ -346,11 +379,20 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
             capabilities.Add(new Contract.AdvertisedCapabilityDto(
                 Contract.CapabilityProtocol.ProviderAuthentication(cliType), "provider-auth", "ready"));
         }
+        foreach (var (provider, model) in new[]
+                 {
+                     (CliTypes.Claude, ModelIds.ClaudeOpus5),
+                     (CliTypes.Claude, ModelIds.ClaudeSonnet5),
+                     (CliTypes.Codex, ModelIds.Gpt56Sol),
+                 })
+            capabilities.Add(new Contract.AdvertisedCapabilityDto(
+                Contract.CapabilityProtocol.ModelAcceptance(provider, model),
+                "model-acceptance", "ready"));
         var advertised = await http.PutAsJsonAsync(
             $"/api/v1/runners/{RunnerId}/capabilities",
             new Contract.CapabilityAdvertisementRequest(
                 RunnerId, instanceId, Contract.CapabilityProtocol.CurrentSchemaVersion,
-                DateTime.UtcNow, 180, DateTime.UtcNow.Ticks, capabilities));
+                observedAt, 180, observedAt.Ticks, capabilities));
         advertised.EnsureSuccessStatusCode();
         return clientId;
     }

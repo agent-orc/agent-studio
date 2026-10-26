@@ -32,6 +32,7 @@ public sealed class AspectRunnerService
 {
     private readonly RuntimePromptService _prompts;
     private readonly ILogger<AspectRunnerService> _logger;
+    private readonly IConfiguration? _configuration;
 
     /// <summary>
     /// CLI runner injection point. Tests substitute a deterministic stub
@@ -41,7 +42,6 @@ public sealed class AspectRunnerService
     /// constructor; tests can still overwrite the property directly.
     /// </summary>
     public Func<string, string, string, string, TimeSpan, CancellationToken, Task<string>> CliRunner { get; set; }
-        = DefaultRunCliAsync;
 
     private Func<string, string, string, string, string?, TimeSpan, string, CancellationToken, Task<string>>? _thinkingAwareCliRunner;
 
@@ -64,7 +64,8 @@ public sealed class AspectRunnerService
         AdHocUsageRecorder? usage = null,
         CliOneShotRegistry? oneShotRegistry = null,
         PipelineExecutionLog? pipelineLog = null,
-        FileGenerationIndex? fileGenerationIndex = null)
+        FileGenerationIndex? fileGenerationIndex = null,
+        IConfiguration? configuration = null)
     {
         _prompts = prompts;
         _logger = logger;
@@ -72,6 +73,8 @@ public sealed class AspectRunnerService
         _oneShotRegistry = oneShotRegistry;
         _pipelineLog = pipelineLog;
         _fileGenerationIndex = fileGenerationIndex;
+        _configuration = configuration;
+        CliRunner = DefaultRunCliAsync;
 
         // Wire production CLI invocation to the OneShot service so prompts
         // travel via stdin (the failure mode this fix exists to prevent
@@ -87,7 +90,7 @@ public sealed class AspectRunnerService
     private async Task<string> RunViaOneShotAsync(string aspectId, string cli, string model, string prompt, string? thinkingLevel, TimeSpan timeout, string jobFolderPath, CancellationToken ct)
     {
         var oneShot = _oneShotRegistry?.Get(cli);
-        if (oneShot == null) return await DefaultRunCliAsync(aspectId, cli, model, prompt, timeout, ct);
+        if (oneShot == null) return await CliRunner(aspectId, cli, model, prompt, timeout, ct);
 
         var result = await oneShot.RunAsync(new CliOneShotRequest(
             CliType: cli,
@@ -475,6 +478,8 @@ public sealed class AspectRunnerService
                 Kind = StepKind.Aspect,
                 Model = callUsage?.Model ?? model,
                 ThinkingLevel = callUsage?.ThinkingLevel ?? thinkingLevel,
+                ReviewedResultSha = inputs.ReviewedResultSha,
+                ExecutionAttemptId = inputs.ReviewRoundId,
                 ModelSource = modelSource,
                 EvidenceRef = $"aspect-{def.Id}.md",
                 // An infra crash (dead reviewer, no verdict after the retry) is a
@@ -491,6 +496,13 @@ public sealed class AspectRunnerService
                 CacheCreationTokens = spentCacheCreation,
                 InputIncludesCached = callUsage?.InputIncludesCached,
                 Verdict = verdict.IsInfraFailure ? "environmental" : AspectVerdictParsing.StatusToken(verdict.Status),
+                ReviewFindings = verdict.IsInfraFailure ? null : verdict.Status switch
+                {
+                    AspectStatus.Block => new AgentStudio.Review.ReviewFindingCounts(Blocker: 1),
+                    AspectStatus.Concerns => new AgentStudio.Review.ReviewFindingCounts(Major: 1),
+                    _ => new AgentStudio.Review.ReviewFindingCounts(),
+                },
+                ReviewCli = cliBinary,
                 Reason = verdict.IsInfraFailure
                     ? "aspect-runner-infra-crash"
                     : ok ? null : "aspect-runner-exception",
@@ -516,7 +528,8 @@ public sealed class AspectRunnerService
         AspectRunInputs inputs,
         string model,
         string? promptOverride = null,
-        string? pipelineStepId = null)
+        string? pipelineStepId = null,
+        IReadOnlyDictionary<string, string?>? extraValues = null)
     {
         if (!string.IsNullOrWhiteSpace(promptOverride))
         {
@@ -549,6 +562,9 @@ public sealed class AspectRunnerService
                 ? ReviewCardMode.Describe(null)
                 : inputs.CardMode
         };
+        if (extraValues is not null)
+            foreach (var (key, value) in extraValues)
+                values[key] = value;
         try
         {
             return _prompts.Render(
@@ -653,8 +669,11 @@ public sealed class AspectRunnerService
             sw.Stop();
             var durationMs = sw.ElapsedMilliseconds;
             var parsed = AdHocClaudeInvoker.ParseOrFallback(rawResponse, model);
-            AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.ReviewDecision, model, parsed.Usage,
-                durationMs, ok: true, project: inputs.Project, jobId: inputs.JobId);
+            AdHocClaudeInvoker.Record(_usage, $"aspect-{def.Id}", model, parsed.Usage,
+                durationMs, ok: true, project: inputs.Project, jobId: inputs.JobId,
+                thinkingLevel: thinkingLevel,
+                participantId: string.IsNullOrWhiteSpace(inputs.ReviewAttemptId) ? null
+                    : $"support:review-attempt:{inputs.ReviewAttemptId}:step:aspect-{def.Id}");
             return (parsed.Text, true, parsed.Usage, durationMs);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -747,30 +766,30 @@ public sealed class AspectRunnerService
     /// pattern; we removed the previous <c>-p &lt;prompt&gt;</c> argv path
     /// that caused the 2026-05-11 empty-reply incident.
     /// </summary>
-    private static async Task<string> DefaultRunCliAsync(
+    private async Task<string> DefaultRunCliAsync(
         string aspectId, string cli, string model, string prompt, TimeSpan timeout, CancellationToken ct)
     {
+        if (!Path.GetFileNameWithoutExtension(cli.Replace('\\', '/')).Equals(CliTypes.Claude, StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+        var networked = _configuration is null || !SecurityProfiles.IsLocal(_configuration);
+        using var workspace = networked ? new HostOneShotIsolation.Workspace() : null;
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = cli,
+            WorkingDirectory = networked ? workspace!.Path : Directory.GetCurrentDirectory(),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        psi.ArgumentList.Add("-p");
-        psi.ArgumentList.Add("--output-format");
-        psi.ArgumentList.Add("json");
-        psi.ArgumentList.Add("--model");
-        psi.ArgumentList.Add(model);
-        psi.ArgumentList.Add("--dangerously-skip-permissions");
+        HostOneShotIsolation.AddClaudeArguments(psi.ArgumentList, model, networked: networked);
 
-        using var p = System.Diagnostics.Process.Start(psi);
+        using var p = HostCliSpawnGuard.Start(psi, networked, CliTypes.Claude);
         if (p == null) return string.Empty;
         try
         {
-            await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
+            await p.StandardInput.WriteAsync(HostOneShotIsolation.PreparePrompt(prompt, networked).AsMemory(), ct);
             p.StandardInput.Close();
         }
         catch (Exception __ex) { SilentCatch.Note(__ex, "AspectRunnerService: CLI may have closed stdin already"); /* CLI may have closed stdin already */ }
@@ -824,6 +843,7 @@ public sealed record AspectRunInputs(
     string DiffSummary,
     string StatusSummary)
 {
+    public string? ReviewAttemptId { get; init; }
     /// <summary>
     /// Inventory of the job's <c>results/</c> folder (file list + short
     /// excerpts). Completes the evidence source so a reviewer never reads an
@@ -845,6 +865,10 @@ public sealed record AspectRunInputs(
     /// authoritative over broader Dossier or wishlist text in the task body.
     /// </summary>
     public string AcceptanceScope { get; init; } = string.Empty;
+
+    /// <summary>Exact frozen delivery checked by this local aspect, when available.</summary>
+    public string? ReviewedResultSha { get; init; }
+    public string? ReviewRoundId { get; init; }
 }
 
 /// <summary>

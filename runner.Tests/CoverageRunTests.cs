@@ -37,7 +37,7 @@ public sealed class CoverageRunTests : IDisposable
             Assert.Contains("--collect \"Code Coverage;Format=Cobertura\"", suite.Command, StringComparison.Ordinal);
             Assert.Contains("--results-directory coverage/dotnet/", suite.Command, StringComparison.Ordinal);
         });
-        Assert.Equal("npm --prefix frontend run test:release", suites.Single(suite => suite.Id == "frontend-coverage").Command);
+        Assert.Equal("bash scripts/npm-frontend.sh run test:release", suites.Single(suite => suite.Id == "frontend-coverage").Command);
     }
 
     [Fact]

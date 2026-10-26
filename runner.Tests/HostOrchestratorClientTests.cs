@@ -529,7 +529,7 @@ public sealed class HostOrchestratorClientTests
             BackendName = "test",
             GitRemote = "/tmp/origin.git",
             WorkDir = "/tmp/runner-work",
-            StateDir = "/tmp/runner-state",
+            StateDir = Path.Combine(Path.GetTempPath(), $"host-orchestrator-{Guid.NewGuid():N}"),
             BaseBranch = "develop",
             ClaudeCliBin = "codex",
             TtlSeconds = 120,

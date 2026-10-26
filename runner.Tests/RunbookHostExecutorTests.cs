@@ -48,6 +48,78 @@ public sealed class RunbookHostExecutorTests
             new Dictionary<string, string>(), [], "/tmp", "/tmp", CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData("LD_PRELOAD")]
+    [InlineData("PATH")]
+    [InlineData("BASH_ENV")]
+    public async Task Refuses_variables_that_control_the_loader_or_shell_before_starting_a_script(string name)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "runbook-reserved-" + Guid.NewGuid().ToString("N"));
+        var scripts = Path.Combine(root, "scripts", "demo");
+        Directory.CreateDirectory(scripts);
+        var marker = Path.Combine(root, "started");
+        File.WriteAllText(Path.Combine(scripts, "backup.sh"), $"printf 'started' > '{marker}'\n");
+        File.WriteAllText(Path.Combine(root, name.ToLowerInvariant()), "/tmp/preload.so");
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => RunbookHostExecutor.ExecuteAsync(
+                "demo", "stage", "8081", ["backup"], new Dictionary<string, string> { [name] = "/tmp/preload.so" },
+                new Dictionary<string, string>(), [], Path.Combine(root, "scripts"), root, CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => RunbookHostExecutor.ExecuteAsync(
+                "demo", "stage", "8081", ["backup"], new Dictionary<string, string>(),
+                new Dictionary<string, string> { [name] = name.ToLowerInvariant() }, [],
+                Path.Combine(root, "scripts"), root, CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => RunbookHostExecutor.ExecuteAsync(
+                "demo", "stage", "8081", ["backup"], new Dictionary<string, string>(),
+                new Dictionary<string, string>(), [name.ToLowerInvariant()],
+                Path.Combine(root, "scripts"), root, CancellationToken.None));
+            Assert.False(File.Exists(marker), "The script started with a reserved variable.");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public async Task Host_cancellation_kills_a_new_session_child_that_holds_output_and_keeps_writing()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "runbook-session-" + Guid.NewGuid().ToString("N"));
+        var scripts = Path.Combine(root, "scripts", "demo");
+        Directory.CreateDirectory(scripts);
+        var ready = Path.Combine(root, "child-pid");
+        var marker = Path.Combine(root, "child-writes");
+        File.WriteAllText(Path.Combine(scripts, "backup.sh"),
+            "setsid sh -c 'printf \"%s\" \"$$\" > \"$READY\"; while :; do printf x >> \"$MARKER\"; sleep 0.05; done' &\nwait\n");
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var execution = RunbookHostExecutor.ExecuteAsync("demo", "stage", "8081", ["backup"],
+                new Dictionary<string, string> { ["READY"] = ready, ["MARKER"] = marker },
+                new Dictionary<string, string>(), [], Path.Combine(root, "scripts"), root, cancellation.Token);
+            for (var attempt = 0; attempt < 250 && !(File.Exists(ready) && File.Exists(marker)); attempt++)
+                await Task.Delay(20);
+            Assert.True(File.Exists(ready) && File.Exists(marker), "The child did not start writing.");
+            var childId = int.Parse(File.ReadAllText(ready), CultureInfo.InvariantCulture);
+            // Field 6 of /proc/<pid>/stat is the session id: the child leads its own session.
+            var stat = File.ReadAllText($"/proc/{childId}/stat");
+            var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+            Assert.Equal(childId, int.Parse(fields[3], CultureInfo.InvariantCulture));
+
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution.WaitAsync(TimeSpan.FromSeconds(10)));
+            var written = new FileInfo(marker).Length;
+            await Task.Delay(500);
+            Assert.Equal(written, new FileInfo(marker).Length);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            Directory.Delete(root, true);
+        }
+    }
+
     [Fact]
     public async Task Host_cancellation_kills_the_script_and_its_child_before_it_can_write()
     {

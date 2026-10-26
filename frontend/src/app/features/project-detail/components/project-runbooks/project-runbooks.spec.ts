@@ -11,16 +11,16 @@ describe('ProjectRunbooksComponent', () => {
       provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
     ] }).compileComponents();
     const fixture = TestBed.createComponent(ProjectRunbooksComponent);
-    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.componentRef.setInput('projectName', 'runbooks');
     fixture.componentRef.setInput('environmentId', 'production');
     fixture.componentRef.setInput('environmentKind', 'production');
     fixture.detectChanges();
     const http = TestBed.inject(HttpTestingController);
-    http.expectOne('/api/projects/demo/deploy/runbooks').flush([
+    http.expectOne('/api/projects/runbooks/deploy/runbooks').flush([
       { name: 'backup', steps: ['backup'], environments: ['production'] },
       { name: 'stage-only', steps: ['restart'], environments: ['staging'] },
     ]);
-    http.expectOne(request => request.url.endsWith('/runbooks/runs') && request.params.get('environmentId') === 'production').flush([
+    http.expectOne(request => request.url === '/api/projects/runbooks/deploy/runbooks/runs' && request.params.get('environmentId') === 'production').flush([
       { id: 'run-1', name: 'backup', state: 'awaiting-approval', requestedBy: 'operator', approvedBy: null, steps: [] },
     ]);
     fixture.detectChanges();
@@ -43,7 +43,7 @@ describe('ProjectRunbooksComponent', () => {
     http.expectOne('/api/projects/runbooks/deploy/runbooks').flush([
       { name: 'backup', steps: ['backup'], environments: ['production'] },
     ]);
-    const history = () => http.expectOne(request => request.url.endsWith('/runbooks/runs')
+    const history = () => http.expectOne(request => request.url === '/api/projects/runbooks/deploy/runbooks/runs'
       && request.params.get('environmentId') === 'production');
     history().flush([]);
     fixture.detectChanges();

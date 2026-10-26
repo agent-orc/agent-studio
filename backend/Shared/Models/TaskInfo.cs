@@ -4,8 +4,13 @@ namespace AgentStudio.Shared;
 
 public record TaskInfo
 {
+    [JsonIgnore] internal long TaskJsonLength { get; init; } = -1;
+    [JsonIgnore] internal long TaskJsonWriteTicks { get; init; }
+    [JsonIgnore] internal string TokenReceiptStamp { get; init; } = "none";
     public string Id { get; init; } = "";
     public string TaskKey { get; init; } = "";
+    /// <summary>Current card preview, projected from its sidecar rather than task.json.</summary>
+    public TaskPreview? Preview { get; init; }
     /// <summary>
     /// Stable Linear-style reference key minted from the project's prefix
     /// plus a monotonic counter (<c>ATP-130</c>, <c>RB-42</c>). Unique
@@ -100,17 +105,9 @@ public record TaskInfo
     /// </summary>
     public CauseWaitStatus? CauseWait { get; init; }
     /// <summary>
-    /// Card kind: <c>task</c> (default, a runnable unit of work) or <c>epic</c>
-    /// (a container grouping sub-tasks under one overarching goal). An epic is
-    /// not code-executed itself; only its sub-tasks run through the pipeline.
+    /// Card kind: <c>task</c> (default) or <c>decision</c>.
     /// </summary>
     public string Kind { get; init; } = TaskKinds.Task;
-    /// <summary>
-    /// Parent epic id when this task is a sub-task of an epic, else null. Set at
-    /// create time, by the post-hoc assign endpoint, or by an epic's
-    /// decomposition run.
-    /// </summary>
-    public string? EpicId { get; init; }
     /// <summary>Primary Dossier; other Dossiers remain ordinary reference links.</summary>
     public TaskDossier? Dossier { get; init; }
     /// <summary>
@@ -551,7 +548,7 @@ public record TaskInfo
     /// and whether the spawn contract is satisfied. Folded on by
     /// <c>TaskEndpointHelpers.WithRuntime</c> only for planning-mode tasks (two
     /// small sidecar reads, gated so the perf contract holds); null on every
-    /// coding / research / epic card. Never persisted to <c>task.json</c>. Drives
+    /// coding / research card. Never persisted to <c>task.json</c>. Drives
     /// the "spawnt: AGT-xxxx" chips, the "no follow-up cards" warning, and the
     /// accept-dialog guard against the AGT-1915 trap.
     /// </summary>

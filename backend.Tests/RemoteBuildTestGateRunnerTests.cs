@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.Json;
 using AgentStudio.Pipeline;
 using Microsoft.Extensions.Configuration;
@@ -171,6 +172,27 @@ public sealed class RemoteBuildTestGateRunnerTests
         Assert.Equal(1, transport.Calls);
         Assert.Equal(BuildTestGateFailureKind.Cancellation, result.FailureKind);
         Assert.Equal(expectedReason, result.CancellationReason);
+    }
+
+    [Fact]
+    public async Task Registry_cancellation_is_reported_as_superseded_not_shutdown()
+    {
+        var registry = new TaskGateCancellationRegistry();
+        var request = Request() with { Project = "Fixture", JobId = "integrated" };
+        var transport = new RecordingTransport
+        {
+            Exception = new OperationCanceledException(),
+            OnRun = _ => registry.Cancel("Fixture", "integrated"),
+        };
+
+        var result = await new RemoteBuildTestGateRunner(transport,
+                NullLogger<RemoteBuildTestGateRunner>.Instance, registry)
+            .RunAsync(request, [], null, PostStepMode.Fail, TimeSpan.FromMinutes(1), CancellationToken.None);
+
+        Assert.Equal(BuildTestGateFailureKind.Cancellation, result.FailureKind);
+        Assert.Equal(GateCancellationReasons.Superseded, result.CancellationReason);
+        Assert.Equal(GateCancellationReasons.Superseded, GateCancellationPolicy.Decide(Sha, Sha,
+            TaskStates.AutoReview, TaskStates.AutoReview, false, false, result.CancellationReason));
     }
 
     [Theory]
@@ -365,7 +387,8 @@ public sealed class RemoteBuildTestGateRunnerTests
 
     private static BuildTestGateRequest Request() => new("/operator/repository", Sha, "integration-gate");
     private static RemoteGateInvocation Invocation(BuildTestGateRequest request) => new(
-        1, new string('a', 32), new string('b', 64), request, [], null, PostStepMode.Fail, 60, 180);
+        1, new string('a', 32), new string('b', 64), request, [], null, PostStepMode.Fail, 60, 180)
+        { InstallationId = new string('c', 32) };
     private static BuildTestGateResult Passed() => new(BuildTestGateVerdict.Ok, 0, 1, "", "passed", true, false)
     {
         ExpectedSha = Sha, TestedSha = Sha, GateId = PipelineCatalogue.BuildTestGateStepId,
@@ -442,6 +465,120 @@ public sealed class RemoteGateBundleTests
             Git(root, "clone", "--bare", cache, restored);
             Git(restored, "fetch", incremental, "refs/heads/gate-subject:refs/heads/gate-subject");
             Assert.Equal(expectedSha, Git(restored, "rev-parse", "refs/heads/gate-subject").Trim());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static string Git(string cwd, params string[] args)
+    {
+        using var process = new Process();
+        process.StartInfo = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
+        process.Start();
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0) throw new InvalidOperationException(error);
+        return output;
+    }
+}
+
+public sealed class RemoteGateBareSourceTests
+{
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Worker_clones_bundle_and_checks_out_exact_subject_under_hardened_git(bool useCache)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "remote-gate-worker-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var source = Path.Combine(root, "source");
+            var runId = Guid.NewGuid().ToString("N");
+            var run = Path.Combine(root, runId);
+            Directory.CreateDirectory(run);
+            Git(root, "init", "-q", source);
+            Git(source, "config", "user.email", "gate@example.invalid");
+            Git(source, "config", "user.name", "Gate Test");
+            File.WriteAllText(Path.Combine(source, "subject.txt"), "exact subject");
+            Git(source, "add", ".");
+            Git(source, "commit", "-qm", "subject");
+            var sha = Git(source, "rev-parse", "HEAD").Trim();
+            Git(source, "branch", "gate-subject");
+            var bundle = Path.Combine(run, "source.bundle");
+            Git(source, "bundle", "create", bundle, "refs/heads/gate-subject");
+
+            string? cache = null;
+            if (useCache)
+            {
+                cache = Path.Combine(root, "cache", new string('a', 64));
+                Directory.CreateDirectory(Path.GetDirectoryName(cache)!);
+                Git(root, "clone", "--bare", "--quiet", source, cache);
+            }
+            var digest = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(bundle)));
+            var request = new BuildTestGateRequest("source.git", sha, "remote-worker")
+            {
+                SubjectRef = "refs/heads/gate-subject",
+                InfrastructureTimeout = TimeSpan.FromSeconds(30),
+                RequiredTestLevel = TestExecutionLevels.BuildOnly,
+            };
+            var invocation = new RemoteGateInvocation(1, runId, digest, request, null,
+                new BuildProfile { BuildCmds = [$"test \"$(git rev-parse HEAD)\" = \"{sha}\""] },
+                PostStepMode.Fail, 60, 120) { CachePath = cache };
+            var requestPath = Path.Combine(run, "request.json");
+            await File.WriteAllTextAsync(requestPath,
+                JsonSerializer.Serialize(invocation, RemoteBuildTestGateRunner.Json));
+
+            Assert.Equal(0, await RemoteGateWorker.RunAsync(requestPath,
+                runnerFactory: logger => new BuildTestGateRunner(
+                    logger, BuildTestMachineGateMode.BypassForHermeticTest,
+                    Path.Combine(root, "preparation-cache"))));
+
+            var response = JsonSerializer.Deserialize<RemoteGateResponse>(
+                await File.ReadAllTextAsync(Path.Combine(run, "response.json")),
+                RemoteBuildTestGateRunner.Json)!;
+            Assert.True(response.Result.Verdict == BuildTestGateVerdict.Ok,
+                response.Result.Reason + "\n" + response.Result.Output);
+            Assert.Equal(sha, response.Result.TestedSha);
+            Assert.Equal(sha, response.Result.ExpectedSha);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Hardened_git_reads_the_bare_gate_source_repository()
+    {
+        // Deploy 24 regression: host Git hardening sets safe.bareRepository=explicit,
+        // and every remote gate failed with "cannot use bare repository source.git".
+        var root = Path.Combine(Path.GetTempPath(), "remote-gate-bare-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var source = Path.Combine(root, "source");
+            var bare = Path.Combine(root, "source.git");
+            Git(root, "init", "-q", source);
+            Git(source, "config", "user.email", "gate@example.invalid");
+            Git(source, "config", "user.name", "Gate Test");
+            File.WriteAllText(Path.Combine(source, "base.txt"), "gate subject");
+            Git(source, "add", ".");
+            Git(source, "commit", "-qm", "subject");
+            var sha = Git(source, "rev-parse", "HEAD").Trim();
+            Git(root, "clone", "--bare", "--quiet", source, bare);
+
+            Assert.True(BuildTestGateRunner.IsBareRepository(bare));
+            Assert.False(BuildTestGateRunner.IsBareRepository(source));
+            var probe = await BuildTestGateRunner.RunGitAsync(
+                bare, ["cat-file", "-e", sha + "^{commit}"], TimeSpan.FromSeconds(30), CancellationToken.None);
+            Assert.True(probe.ExitCode == 0, probe.StandardError);
+            var worktree = await BuildTestGateRunner.RunGitAsync(
+                source, ["rev-parse", "HEAD"], TimeSpan.FromSeconds(30), CancellationToken.None);
+            Assert.Equal(sha, worktree.StandardOutput.Trim());
         }
         finally { Directory.Delete(root, recursive: true); }
     }

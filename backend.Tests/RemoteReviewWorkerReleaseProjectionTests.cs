@@ -125,6 +125,59 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
     }
 
     [Fact]
+    public void Deep_review_receipt_and_finding_are_visible_beside_aspect_steps()
+    {
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var task = Job();
+        var started = new DateTime(2026, 9, 18, 8, 10, 0, DateTimeKind.Utc);
+        var decision = new Contract.DeepReviewDecisionDto("deep-review-123", "active", true,
+            true, "gpt-6-sol", "xhigh", ["critical-touched-area"]);
+        var attempt = Attempt();
+        attempt = attempt with
+        {
+            Subject = attempt.Subject with
+            {
+                Plan = new Contract.ReviewPlanDto([], [], DeepReviewDecision: decision),
+            },
+        };
+        var report = Report(null) with
+        {
+            Outcome = "ProductFailure",
+            Commands =
+            [
+                new Contract.ReviewCommandEvidenceDto(
+                    "post-deep-review", "deep-review", "codex", [], new string('a', 40),
+                    new string('a', 40), new string('b', 40), started, started.AddMinutes(1), 0, null,
+                    new string('c', 64), new string('d', 64),
+                    ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
+                    AttemptId: attempt.AttemptId, Model: "gpt-6-sol", ThinkingLevel: "xhigh",
+                    InputTokens: 500, OutputTokens: 100),
+            ],
+            Verdicts =
+            [
+                new Contract.ReviewVerdictDto("deep-review", "block", "RemoteAspectVerdict",
+                    "Lease check is missing.", "backend/Lease.cs", "Missing fence validation."),
+            ],
+        };
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Workspace:Root"] = _root }).Build();
+        var projector = new RemotePipelineReviewEvidenceProjector(TokenTestServices.Pricing(), pipeline,
+            timeline, new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
+            new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration));
+
+        projector.Project(task, attempt, report, "remote-review-grade-review-attempt-1.md", started.AddMinutes(2));
+
+        var rows = pipeline.Read(task.FolderPath)!.Steps;
+        Assert.Equal("selected", Assert.Single(rows, row => row.StepId == "post-deep-review-decision").Verdict);
+        var reviewStep = Assert.Single(rows, row => row.StepId == "post-deep-review");
+        Assert.Equal("block", reviewStep.Verdict);
+        Assert.Equal(500, reviewStep.InputTokens);
+        Assert.True(File.Exists(Path.Combine(task.FolderPath, "aspect-deep-review.md")));
+        Assert.True(File.Exists(Path.Combine(task.FolderPath, "aspect-deep-review.json")));
+    }
+
+    [Fact]
     public void Remote_aspect_command_failure_remains_a_failed_step_with_its_block_verdict()
     {
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);

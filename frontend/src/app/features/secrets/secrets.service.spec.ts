@@ -29,6 +29,19 @@ describe('SecretsService', () => {
     expect(secretScopeRoute('memowikis/stage')).toBe('/api/projects/memowikis/environments/stage/secrets');
   });
 
+  it('keeps declaration kind when loading environment choices', () => {
+    const service = TestBed.inject(SecretsService);
+    const http = TestBed.inject(HttpTestingController);
+    let declarations: readonly { id: string; kind: string }[] = [];
+    service.environments('memowikis').subscribe(items => declarations = items);
+    http.expectOne('/api/projects/memowikis/environments').flush({ environments: [
+      { declaration: { id: 'stage', kind: 'stage' } },
+      { declaration: { id: 'live-eu', kind: 'production' } },
+    ] });
+    expect(declarations).toEqual([{ id: 'stage', kind: 'stage' }, { id: 'live-eu', kind: 'production' }]);
+    http.verify();
+  });
+
   it('sends values only in write requests and merges the returned metadata', () => {
     const service = TestBed.inject(SecretsService);
     const http = TestBed.inject(HttpTestingController);

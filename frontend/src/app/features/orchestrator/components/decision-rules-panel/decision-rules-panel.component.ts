@@ -5,7 +5,7 @@ import type { RegistryWorkspaceListItem } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
 
 /** Triggers a live decision path reads; the API refuses any other trigger. */
-export const DECISION_RULE_TRIGGERS = ['step-transition', 'CodingCompletion', 'capacity-check'] as const;
+export const DECISION_RULE_TRIGGERS = ['step-transition', 'CodingCompletion', 'capacity-check', 'deep-review'] as const;
 
 interface Rule {
   id: string;
@@ -15,6 +15,7 @@ interface Rule {
   candidateActions: string[];
   autonomyClass: string;
   model: string | null;
+  thinkingLevel?: string | null;
   missingDataBehavior: string;
   freshnessMinutes: number;
 }
@@ -164,7 +165,7 @@ export class DecisionRulesPanelComponent implements OnInit {
     this.rules.update(rows => [...rows, {
       id: '', trigger: 'capacity-check', factId: '', warningThreshold: null,
       candidateActions: ['observe'], autonomyClass: 'A1', model: null,
-      missingDataBehavior: 'ask', freshnessMinutes: 60,
+      thinkingLevel: null, missingDataBehavior: 'ask', freshnessMinutes: 60,
     }]);
   }
 

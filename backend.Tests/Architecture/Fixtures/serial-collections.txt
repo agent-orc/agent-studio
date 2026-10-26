@@ -41,6 +41,9 @@ member UpdateServiceSerialCollection UpdateServiceRestartIdentityDrillTests
 collection RealTaskServerSerialCollection its members start a real task-server.dll child process, which starved for CPU and timed out inside the parallel run (AGT-3140).
 member RealTaskServerSerialCollection ConnectorNegativeMatrixTests
 
+collection IamAuthorizationBurstCollection its member caps the process-wide ThreadPool worker count while checking concurrent authorization requests.
+member IamAuthorizationBurstCollection IamHandlerAccessTests
+
 process-start backend.Tests/TempRootBootstrap.cs the module initializer removes the launcher's listener configuration once, before any test runs.
 
 environment-baseline backend.Tests/BackendCrashSurfaceTests.cs 2

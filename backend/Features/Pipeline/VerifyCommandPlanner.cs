@@ -430,6 +430,7 @@ internal static class TrackedRepositoryFiles
                 CreateNoWindow = true,
             };
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
+            AgentStudio.Git.HostGitProcessHardening.Apply(start);
             using var process = Process.Start(start);
             if (process is null) return false;
             output = process.StandardOutput.ReadToEnd();

@@ -65,8 +65,6 @@ public sealed class RemoteReviewDaemon
             idleWatchdog.AbortToken);
         shutdown = daemonStop.Token;
         using var auxiliaryStop = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
-        var deviceLoginPoll = new RunnerDeviceLoginAgent(_options, _client, _log)
-            .PollAsync(auxiliaryStop.Token);
         var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log)
             .PollAsync(auxiliaryStop.Token);
         var repositoryProbePoll = new RunnerProjectRepositoryProbe(_options, _client,
@@ -99,6 +97,26 @@ public sealed class RemoteReviewDaemon
         HostTelemetrySample? latestTelemetry = null;
         var nextSlotHygieneLog = DateTime.MinValue;
         var nextSlotReconciliation = DateTime.MinValue;
+
+        void StartModelAcceptanceProbe()
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await RunnerModelAcceptanceProbe.Shared.RefreshAsync(
+                        RunnerCapabilityProbe.ModelCandidates(_options), shutdown);
+                }
+                catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+                {
+                    _log("model acceptance probe stopped with the review daemon");
+                }
+                catch (Exception exception)
+                {
+                    _log($"model acceptance probe failed: {exception.Message}");
+                }
+            }, shutdown);
+        }
 
         // AGT-2820: the workspaces this daemon still owns, in the shape the
         // orphan sweep compares against. A durable worker survives a daemon
@@ -405,6 +423,7 @@ public sealed class RemoteReviewDaemon
 
             var capabilityGeneration = DateTime.UtcNow.Ticks;
             await AdvertiseCapabilitiesWithControlAsync(capabilityGeneration, shutdown);
+            StartModelAcceptanceProbe();
 
             var nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
             var admissionClosed = false;
@@ -539,6 +558,7 @@ public sealed class RemoteReviewDaemon
                         await RunnerCapabilityProbe.RefreshDueCanariesAsync(_options, _client, _log, shutdown);
                         var generation = ++capabilityGeneration;
                         await AdvertiseCapabilitiesWithControlAsync(generation, shutdown);
+                        StartModelAcceptanceProbe();
                         observedServer = true;
                         nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
                         // The concurrent control observer may have acknowledged a
@@ -748,7 +768,6 @@ public sealed class RemoteReviewDaemon
 
         state.Flush();
         auxiliaryStop.Cancel();
-        await deviceLoginPoll;
         await gitSetupPoll;
         await repositoryProbePoll;
         if (active.Count > 0)

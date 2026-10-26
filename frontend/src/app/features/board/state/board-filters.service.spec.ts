@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
@@ -6,6 +6,7 @@ import { provideZonelessChangeDetection } from '@angular/core';
 import { BoardFiltersService } from './board-filters.service';
 import { TaskService } from '../../../services/task.service';
 import type { GroupedJobs, TaskInfo } from '../../../models/task.model';
+import { CardDeploymentService } from '../../deployments/services/card-deployment.service';
 
 /**
  * Regression test for the cross-project counter "leak": ensure that
@@ -51,6 +52,44 @@ function makeGrouped(jobs: TaskInfo[]): GroupedJobs {
     archive: byState('7-archive'),
   } as unknown as GroupedJobs;
 }
+
+describe('BoardFiltersService environment state', () => {
+  it('filters Staging without Production and round-trips the facet in the URL', () => {
+    localStorage.clear();
+    history.replaceState(null, '', '/#/board');
+    const states = new Map<string, { staging: boolean; production: boolean }>([
+      ['stage', { staging: true, production: false }],
+      ['prod', { staging: true, production: true }],
+      ['new', { staging: false, production: false }],
+    ]);
+    const observe = vi.fn();
+    TestBed.configureTestingModule({
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(),
+        { provide: CardDeploymentService, useValue: {
+          observe,
+          inEnvironment: (task: TaskInfo, kind: 'staging' | 'production') => states.get(task.id)?.[kind] ?? false,
+          badges: (task: TaskInfo) => states.has(task.id) ? [{ state: 'not-deployed' }] : [],
+        } }],
+    });
+    const jobs = TestBed.inject(TaskService);
+    const filters = TestBed.inject(BoardFiltersService);
+    jobs.grouped.set(makeGrouped([
+      makeJob('stage', 'Demo', '2-ready'), makeJob('prod', 'Demo', '2-ready'),
+      makeJob('new', 'Demo', '2-ready'), makeJob('unconfigured', 'Other', '2-ready'),
+    ]));
+
+    filters.setEnvironmentFilter('staging-only');
+    expect(observe).toHaveBeenCalledOnce();
+    expect(filters.filteredGrouped().ready.map(task => task.id)).toEqual(['stage']);
+    expect(window.location.hash).toContain('environment%3Astaging-only');
+    filters.setEnvironmentFilter('not-production');
+    expect(observe).toHaveBeenCalledTimes(2);
+    expect(filters.filteredGrouped().ready.map(task => task.id)).toEqual(['stage', 'new']);
+    expect(filters.activeFilterPills().at(-1)?.label).toBe('Not yet in Production');
+    filters.clearAllFilters();
+    expect(filters.environmentFilter()).toBe('all');
+  });
+});
 
 describe('BoardFiltersService project selection', () => {
   let svc: BoardFiltersService;

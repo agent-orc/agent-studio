@@ -73,12 +73,6 @@ removed before retrying the same marker.
      --tag "release/$(date -u +%Y%m%d-%H%M%SZ)"
    ```
 
-   After any operator candidate push that advances `develop`, open Project
-   Settings and use **Sync checkout** when the observed checkout is behind.
-   The action fetches origin and fast-forwards only a clean checkout. If the
-   checkout is dirty or locked, resolve that condition first. This also applies
-   when a candidate is pushed outside the promotion train.
-
    The command supplies a tagger identity for the annotated marker and does not
    depend on the host's Git identity. Override the defaults when an operator or
    automation-specific identity is required:
@@ -114,6 +108,57 @@ removed before retrying the same marker.
    **Agent Studio was updated – reload to continue** when they next receive an
    API response or reconnect to SignalR. Use Reload in that notice to load the
    new frontend; unsent composer drafts persist per tab.
+
+### Recording verified operator candidates
+
+After any operator candidate push that advances `develop`, open Project
+Settings and use **Sync checkout** when the observed checkout is behind. The
+action fetches origin and fast-forwards only a clean checkout. If the checkout
+is dirty or locked, resolve that condition first. This also applies when a
+candidate is pushed outside the promotion train.
+
+After the verification host passes the full suite and the candidate is
+published to `develop`, record its evidence for every covered card. Use an
+Operator API token with the all-projects (`*`) grant; a coding agent or Runner
+credential cannot post this evidence. The summary file is JSON with the
+published candidate SHA, card keys, verification host, suite commands and
+totals, UTC start and end times, and the verification log path:
+
+```json
+{
+  "candidateSha": "0123456789abcdef0123456789abcdef01234567",
+  "cards": ["AGT-3166", "AGT-3171"],
+  "verificationHost": "gate-host-01",
+  "suites": [
+    {"command": "dotnet test agent-taskboard.sln", "passed": 1200, "failed": 0, "skipped": 4},
+    {"command": "npm --prefix frontend run test:ci", "passed": 230, "failed": 0, "skipped": 0}
+  ],
+  "startedAtUtc": "2026-10-20T09:00:00Z",
+  "endedAtUtc": "2026-10-20T09:40:00Z",
+  "logFile": "verification.log"
+}
+```
+
+```sh
+STUDIO_OPERATOR_TOKEN=<operator-token> python3 scripts/record-operator-candidate.py \
+  verification-summary.json --url https://studio.example --project AGT
+```
+
+The script computes the log SHA-256 and posts the summary. The route checks
+that origin can be fetched and the candidate is an ancestor of the refreshed
+published integration branch. It checks that each
+card's reviewed delivery is an ancestor or patch-equivalent. It returns a
+reason for each refused card. Successful card records and their timeline
+audit events are append-only; reposting identical evidence is a no-op, even
+when a different authorized operator posts it. The original record and actor
+remain unchanged. A changed summary for the same candidate and delivery is
+refused, including when two posts race. Patch-equivalent records bind the reviewed result and
+attempt. The board and reconciliation check later commit attribution against
+the recorded candidate tree, so a late attribution does not change the
+immutable receipt. A missing timeline audit event is repaired on the exact
+record-bearing card when Studio restarts, including archived cards. The repair
+checks the full timeline even when the event has fallen beyond the regular
+16 MB read tail. Lane moves and audit repair share the project lane mutex.
 
 ### Detached launch
 
@@ -163,9 +208,10 @@ not publish versioned binaries. It runs, in order:
    exists, `OrchestratorApi.csproj` requires its NuGet lock file, and a locked
    restore does not rewrite it;
 2. .NET solution restore: restores `agent-taskboard.sln` with `--locked-mode`;
-3. Frontend dependency install: installs dependencies with `npm ci`;
-4. Production dependency audit: checks production dependencies for critical
-   vulnerabilities;
+3. Frontend dependency install: installs dependencies with the npm 11.21.1
+   version declared by `frontend/package.json` via Corepack;
+4. Production dependency audit: checks production dependencies for high and
+   critical vulnerabilities;
 5. Release shell contract tests: runs the release scripts test suite, including
    promotion and deploy-watcher tests;
 6. .NET Release build: builds the solution in Release configuration without
@@ -401,6 +447,33 @@ container target, pass `--deploy-image-ref <registry tag>` and
 `--deploy-dockerfile <relative path>`; the train builds and pushes that image
 from the gated checkout and records the returned registry digest. A prebuilt
 image with a matching revision label does not qualify.
+
+### Release evidence and registry handoff
+
+The backend reads five files from
+`<Deploy:ReleaseEvidenceRoot>/<candidate sha>/` when the build job calls
+`POST /api/deploy/gate-releases`. They must describe the same candidate:
+
+| File | Required evidence |
+|---|---|
+| `release.tar.gz` and `release.sha256` | The archive hashes to the 64-character lowercase SHA-256 in the digest file. |
+| `full-gate.log` | Contains the exact line `PROMOTION_FULL_GATE=passed`. |
+| `promotion-record.json` | `status=promoted`, `gate=passed`, `candidateSha=<candidate sha>`, `atomicPush=true`, and `releasePackage.status=written` with `releasePackage.sha256` equal to `release.sha256`. Its `gateRunId` is the release tag recorded as provenance. |
+| `deploy-artifact.json` | `project`, `commit`, `artifact`, and `sourceSha256` match the request and package digest. For a static package, `artifact` is `release-package@sha256:<package digest>`; for a container it is the pushed image reference with its registry digest. |
+
+The train writes `deploy-artifact.json` and copies the final promotion record
+after packaging. It then sends JSON `{ "project": "...", "artifact": "...",
+"commit": "<candidate sha>" }` with its `runner.release` service credential.
+The backend also requires that commit on the project's integration branch.
+Only this credential can push into the release registry. The backend takes
+`builderIdentity` from the authenticated runner ID, not from the JSON body.
+A successful request returns `202` with the release and queues Staging;
+invalid or unverified evidence returns `400`. A release superseded by a newer
+commit returns `409`
+with `"reason":"superseded"`; the train logs that one response and treats
+other refusals as failures. The operator release route can select only a
+previously registered digest for the exact commit, so it cannot supply missing
+build evidence. See the [registry and leased transfer contract](../concepts/deployment-first-class.md#release-artifact-registry-ip-d3-a).
 
 ## Branch reclaim after promotion
 

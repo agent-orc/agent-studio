@@ -177,7 +177,7 @@ if [ "$install_frontend" -eq 1 ]; then
   fi
 
   log "Installing frontend dependencies"
-  npm --prefix "$stable_checkout/frontend" install
+  bash "$stable_checkout/scripts/npm-frontend.sh" install
 
   # postinstall patches coding-agent-chat in place. Angular's Vite optimizer
   # does not include those resulting bytes in its cache key, so any prebundle

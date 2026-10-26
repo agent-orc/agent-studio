@@ -16,9 +16,11 @@ public static class DeployApprovalAuthority
     public static DeployActor Resolve(StudioUser? user, string project)
     {
         if (user is null) return new(LocalOperator, false);
-        var approver = !user.Disabled && !user.MustChangePassword && (user.Role == StudioRoles.Owner
-            || user.ProductionApprovalProjects.Any(grant => string.Equals(grant, project, StringComparison.OrdinalIgnoreCase)));
-        return new(user.Id, approver);
+        var active = !user.Disabled && !user.MustChangePassword;
+        var role = !active ? null : user.Role == StudioRoles.Owner ? "Owner"
+            : user.ProductionApprovalProjects.Any(grant => string.Equals(grant, project, StringComparison.OrdinalIgnoreCase))
+                ? "Maintainer" : null;
+        return new(user.Id, role is not null, role);
     }
 
     /// <summary>

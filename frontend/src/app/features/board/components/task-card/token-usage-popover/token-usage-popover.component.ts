@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angu
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import type { TaskInfo } from '../../../../../models/task.model';
 import { TaskService } from '../../../../../services/task.service';
+import { tokenAnalysisCardHash } from '../../../../token-analysis/token-analysis-navigation.util';
 import type { TaskTokenBubble } from '../task-card-view-model';
 import { formatTokens } from '../task-card-view-model';
 import { buildTypeBreakdown, type TypeBreakdownRow } from './token-usage-popover.util';
@@ -41,6 +42,12 @@ export class TaskTokenUsagePopoverComponent {
 
   formatTokens(n: number): string {
     return formatTokens(n);
+  }
+
+  /** Link to the card's token drill-down in the workspace token analysis (AGT-3267). */
+  analysisHref(): string {
+    const job = this.job();
+    return tokenAnalysisCardHash('', job.projectName, job.id);
   }
 
   ensureTypeBreakdownLoaded(): void {

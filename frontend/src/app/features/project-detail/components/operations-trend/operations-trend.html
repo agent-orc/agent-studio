@@ -1,0 +1,15 @@
+<figure class="trend" [attr.aria-label]="label() + ' trend with deploy markers'">
+  <figcaption>{{ label() }}</figcaption>
+  <svg viewBox="0 0 500 80" role="img" [attr.aria-label]="label() + ' trend with deploy and rollback markers'" preserveAspectRatio="none">
+    @for (marker of positions(); track marker.id) {
+      <g class="trend__marker-link" role="link" tabindex="0" [attr.aria-label]="'Open release for ' + marker.title"
+        (click)="openRelease.emit(marker.releaseId)" (keydown)="onMarkerKeydown($event, marker.releaseId)">
+        <line class="trend__marker-hit" [attr.x1]="marker.x" [attr.x2]="marker.x" y1="4" y2="76" />
+        <line class="trend__marker" [attr.x1]="marker.x" [attr.x2]="marker.x" y1="4" y2="76">
+        <title>{{ marker.title }}</title>
+        </line>
+      </g>
+    }
+    @for (segment of segments(); track $index) { <polyline class="trend__line" [attr.points]="segment" /> }
+  </svg>
+</figure>

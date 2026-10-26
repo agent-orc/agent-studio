@@ -24,6 +24,7 @@ public sealed class GitWorkspace
     private readonly long? _fencingToken;
     private readonly string? _continuationBaseRef;
     private readonly string? _continuationBaseSha;
+    private readonly string? _continuationBaseReason;
     private readonly bool _continuationBaseRequired;
     private string? _preparedIntegrationBranch;
     private string? _startedHead;
@@ -75,9 +76,8 @@ public sealed class GitWorkspace
             ? null
             : sourceRunAttemptId.Trim();
         _fencingToken = fencingToken;
-        // A continuation round is only continuing something when it knows both
-        // halves of the pair; half a reference would silently start the round on
-        // the integration branch and lose the rescued work again.
+        // A continuation round must have both halves of its base. A missing or
+        // moved salvage cannot silently become a new run on the integration branch.
         var continuationBranch = string.IsNullOrWhiteSpace(continuationBaseRef)
             ? null
             : ToBranchName(continuationBaseRef);
@@ -85,12 +85,11 @@ public sealed class GitWorkspace
             ? null
             : continuationBaseSha.Trim();
         var continuationComplete = continuationBranch is not null && continuationSha is not null;
-        // AGT-3056: a review fix round exists to continue the graded delivery.
-        // Its base is never swapped for the integration branch, and a half
-        // reference keeps its known half for the typed failure.
-        _continuationBaseRequired = ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
-        _continuationBaseRef = continuationComplete || _continuationBaseRequired ? continuationBranch : null;
+        _continuationBaseRequired = continuationBranch is not null || continuationSha is not null
+            || ContinuationBaseReasons.IsReviewFixRound(continuationBaseReason);
+        _continuationBaseRef = _continuationBaseRequired ? continuationBranch : null;
         _continuationBaseSha = continuationComplete ? continuationSha : null;
+        _continuationBaseReason = continuationBaseReason;
     }
 
     public string ProjectCachePath => CachePathForProject(_options.WorkDir, _projectId);
@@ -291,7 +290,7 @@ public sealed class GitWorkspace
             // AGT-2870: a continuation round starts on the salvage its previous
             // round left behind, so the rescued work is in the checkout before
             // the agent reads its finishing instruction. The integration branch
-            // resolved above stays the rebase target.
+            // resolved above is merged without rewriting the salvage commit.
             var continuation = await ResolveContinuationBaseAsync(ct);
             if (continuation is not null) branch = continuation.Branch;
             var authoritativeBase = continuation?.CommitSha
@@ -301,6 +300,34 @@ public sealed class GitWorkspace
             _log($"worktree-authoritative-base branch=refs/heads/{branch} sha={authoritativeBase} path={RepoPath}");
             _log($"git worktree add {RepoPath} on {_workBranch} from refs/heads/{branch} at {ShortSha(authoritativeBase)}");
             await Git(["worktree", "add", "-B", _workBranch, RepoPath, authoritativeBase], SharedRepoPath, ct);
+
+            if (continuation is not null
+                && !ContinuationBaseReasons.IsReviewFixRound(_continuationBaseReason))
+            {
+                var integrationHead = await FetchRemoteBranchHeadAsync(requestedBase, ct)
+                    ?? throw new InvalidOperationException($"Integration branch 'origin/{requestedBase}' disappeared during preparation.");
+                if (!await IsAncestorAsync(integrationHead, authoritativeBase, ct))
+                {
+                    var merged = await ProjectGitAsync([
+                        "-c", "user.name=Agent Studio Runner",
+                        "-c", "user.email=runner@agent-studio.invalid",
+                        "merge", "--no-ff", "--no-edit", $"origin/{requestedBase}"
+                    ], RepoPath, ct);
+                    if (merged.Success)
+                    {
+                        _log($"worktree-continuation-merged salvageSha={continuation.CommitSha} integrationSha={integrationHead} path={RepoPath}");
+                    }
+                    else
+                    {
+                        var abort = await ProjectGitAsync(["merge", "--abort"], RepoPath, ct);
+                        if (!abort.Success)
+                            throw new InvalidOperationException(
+                                $"Continuation merge failed and could not be aborted: {abort.StdErr.Trim()}");
+                        _log($"worktree-continuation-merge-deferred salvageSha={continuation.CommitSha} " +
+                            $"integrationSha={integrationHead} error={OneLine(merged.StdErr)}; agent must resolve the merge");
+                    }
+                }
+            }
 
             _startedFromSalvage = continuation is not null
                 || string.Equals(branch, _workBranch, StringComparison.Ordinal);
@@ -317,12 +344,9 @@ public sealed class GitWorkspace
 
     /// <summary>
     /// The continuation base this claim was given, resolved against origin, or
-    /// null when the claim named none. A ref that disappeared or moved is
-    /// reported and skipped rather than failing the round: the card's prompt
-    /// still names the salvage, and a round on the integration branch is a
-    /// worse outcome than no round at all only if it is silent. A review fix
-    /// round's base is required instead: any of those cases throws
-    /// <see cref="ContinuationBaseUnavailableException"/> (AGT-3056).
+    /// null when the claim named none. A supplied base is required: a missing
+    /// or moved ref fails preparation before an agent can start from unrelated
+    /// integration history.
     /// </summary>
     private async Task<SalvageContinuationBase?> ResolveContinuationBaseAsync(CancellationToken ct)
     {
@@ -518,58 +542,6 @@ public sealed class GitWorkspace
     private static bool SameRemote(string actual, string expected) =>
         string.Equals(actual.Trim().TrimEnd('/'), expected.Trim().TrimEnd('/'), StringComparison.Ordinal);
 
-    /// <summary>
-    /// Prepare a detached, disposable checkout for an Epic planning run. No
-    /// task branch is created or resumed and teardown never commits or pushes.
-    /// </summary>
-    public async Task<string> PrepareReadOnlyAsync(CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(_gitRemote))
-            throw MissingRepositoryUrl();
-
-        Directory.CreateDirectory(ProjectCachePath);
-        Directory.CreateDirectory(Path.Combine(ProjectCachePath, "worktrees"));
-        await GitMetadataGate.WaitAsync(ct);
-        try
-        {
-            var existingClone = Directory.Exists(Path.Combine(SharedRepoPath, ".git"));
-            if (!existingClone)
-                await Git(["clone", _gitRemote, SharedRepoPath], ProjectCachePath, ct);
-            await ConfigureOriginAsync(ct);
-            if (existingClone)
-            {
-                await Git(["fetch", "origin", "--prune"], SharedRepoPath, ct);
-            }
-
-            if (Directory.Exists(RepoPath))
-            {
-                if (!File.Exists(Path.Combine(RepoPath, ".git")))
-                    await QuarantineBrokenWorktreeAsync(ct);
-                else
-                {
-                    await WorktreeProcessReaper.ReapAsync(RepoPath, _log, ct);
-                    await Git(["worktree", "remove", "--force", RepoPath], SharedRepoPath, ct);
-                }
-            }
-            await TryGit(["worktree", "prune"], SharedRepoPath, ct);
-
-            var requested = string.IsNullOrWhiteSpace(_options.Branch) ? _baseBranch : _options.Branch!;
-            var branch = await BranchExistsOnOrigin(requested, ct)
-                ? requested
-                : await OriginDefaultBranch(ct) ?? _baseBranch;
-            await UpdateStableCheckoutAsync(branch, ct);
-            _log($"git worktree add --detach {RepoPath} from origin/{branch} for read-only Epic planning");
-            await Git(["worktree", "add", "--detach", RepoPath, $"origin/{branch}"], SharedRepoPath, ct);
-            var head = (await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim();
-            WriteWorktreeLease(head);
-            return branch;
-        }
-        finally
-        {
-            GitMetadataGate.Release();
-        }
-    }
-
     private async Task ConfigureOriginAsync(CancellationToken ct)
     {
         var fetchUrl = _gitRemote
@@ -594,32 +566,6 @@ public sealed class GitWorkspace
                 $"Project '{_projectId ?? "unknown"}' is not remote-capable because its registry has no repository URL.")
             : new InvalidOperationException(
                 "The one-shot run has no repositoryUrl and RUNNER_GIT_REMOTE is not configured as a fallback.");
-
-    /// <summary>
-    /// Remove a planning checkout without salvage. Returns true when the agent
-    /// changed tracked or untracked product-source files, which invalidates the
-    /// planning result but is never committed or pushed.
-    /// </summary>
-    public async Task<bool> TeardownReadOnlyAsync(CancellationToken ct)
-    {
-        await GitMetadataGate.WaitAsync(ct);
-        try
-        {
-            if (!Directory.Exists(RepoPath)) return false;
-            var status = (await Git(["status", "--porcelain=v1", "--untracked-files=all"], RepoPath, ct)).StdOut;
-            var mutated = !string.IsNullOrWhiteSpace(status);
-            _log($"epic-planning-checkout-teardown path={RepoPath} sourceMutated={mutated}");
-            await WorktreeProcessReaper.ReapAsync(RepoPath, _log, ct);
-            await Git(["worktree", "remove", "--force", RepoPath], SharedRepoPath, ct);
-            await TryGit(["worktree", "prune"], SharedRepoPath, ct);
-            DeleteWorktreeLease();
-            return mutated;
-        }
-        finally
-        {
-            GitMetadataGate.Release();
-        }
-    }
 
     private async Task QuarantineBrokenWorktreeAsync(CancellationToken ct)
     {
@@ -879,6 +825,80 @@ public sealed class GitWorkspace
             quarantine,
             ct);
 
+    /// <summary>Preserves legacy repository reports in the card artifact folder.</summary>
+    public async Task CaptureLegacyRepositoryReportsAsync(CancellationToken ct)
+    {
+        if (!UsesLegacyRepositoryReports()) return;
+        foreach (var (relativePath, artifactName) in new[]
+        {
+            ("status.md", "legacy-repository-status.md"),
+            ("results/status.md", "legacy-repository-results-status.md")
+        })
+        {
+            var source = Path.Combine(RepoPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(source)) continue;
+
+            var dirty = await ProjectGitAsync(
+                ["status", "--porcelain=v1", "--", relativePath], RepoPath, ct);
+            var changedInHistory = false;
+            if (!string.IsNullOrWhiteSpace(BaseSha))
+            {
+                var history = await ProjectGitAsync(
+                    ["diff", "--name-only", BaseSha!, "HEAD", "--", relativePath], RepoPath, ct);
+                changedInHistory = history.Success && !string.IsNullOrWhiteSpace(history.StdOut);
+            }
+            if (!changedInHistory && dirty.Success && string.IsNullOrWhiteSpace(dirty.StdOut)) continue;
+
+            try
+            {
+                var results = Path.Combine(_options.WorkDir, "tasks", _safeTaskKey, "results");
+                Directory.CreateDirectory(results);
+                var content = await File.ReadAllBytesAsync(source, ct);
+                const int reportLimit = 16 * 1024;
+                byte[] preserved;
+                if (content.Length <= reportLimit) preserved = content;
+                else
+                {
+                    var firstEnd = reportLimit / 2;
+                    while (firstEnd > 0 && (content[firstEnd] & 0xC0) == 0x80) firstEnd--;
+                    var endStart = content.Length - reportLimit / 2;
+                    while (endStart < content.Length && (content[endStart] & 0xC0) == 0x80) endStart++;
+                    preserved = [.. content[..firstEnd], .. content[endStart..]];
+                }
+                await File.WriteAllBytesAsync(Path.Combine(results, artifactName), preserved, ct);
+                _log($"legacy-repository-report-preserved task={_safeTaskKey} artifact=results/{artifactName}");
+            }
+            catch (Exception ex)
+            {
+                throw new IOException(
+                    $"Could not preserve legacy repository report '{relativePath}' for task '{_safeTaskKey}'.",
+                    ex);
+            }
+        }
+    }
+
+    private bool UsesLegacyRepositoryReports()
+        => File.Exists(Path.Combine(RepoPath, ".agent-studio", "legacy-status-reports"));
+
+    private async Task RestoreLegacyRepositoryReportsAsync(CancellationToken ct)
+    {
+        foreach (var relativePath in new[] { "status.md", "results/status.md" })
+        {
+            var tracked = (await Git(["ls-files", "--cached", "--", relativePath], RepoPath, ct))
+                .StdOut.Trim();
+            if (string.IsNullOrEmpty(tracked))
+            {
+                var path = Path.Combine(RepoPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
+                if (File.Exists(path)) File.Delete(path);
+            }
+            else
+            {
+                await Git(["restore", "--source=HEAD", "--staged", "--worktree", "--", relativePath],
+                    RepoPath, ct);
+            }
+        }
+    }
+
     private async Task<WorktreeTeardownResult> SecureAsync(
         string outcome,
         string? sourceRunAttemptId,
@@ -904,13 +924,26 @@ public sealed class GitWorkspace
             return WorktreeTeardownResult.NoResult;
         }
 
-        var status = (await Git(["status", "--porcelain=v1", "--untracked-files=all"], RepoPath, ct)).StdOut;
+        var reportPathsEnabled = UsesLegacyRepositoryReports();
+        if (reportPathsEnabled)
+        {
+            await CaptureLegacyRepositoryReportsAsync(ct);
+            // Keep report edits out of the product commit, including staged edits.
+            await Git(["reset", "-q", "HEAD", "--", "status.md", "results/status.md"], RepoPath, ct);
+        }
+        var statusArgs = new List<string> { "status", "--porcelain=v1", "--untracked-files=all", "--", "." };
+        if (reportPathsEnabled)
+            statusArgs.AddRange([":(exclude)status.md", ":(exclude)results/status.md"]);
+        var status = (await Git(statusArgs, RepoPath, ct)).StdOut;
         var wasDirty = !string.IsNullOrWhiteSpace(status);
         _log($"worktree-salvage-status path={RepoPath} dirty={wasDirty} outcome={outcome}");
 
         if (wasDirty)
         {
-            await Git(["add", "--all"], RepoPath, ct);
+            var addArgs = new List<string> { "add", "--all", "--", "." };
+            if (reportPathsEnabled)
+                addArgs.AddRange([":(exclude)status.md", ":(exclude)results/status.md"]);
+            await Git(addArgs, RepoPath, ct);
             if (await ScanStagedDiffAsync(ct) is { } cause)
                 throw new WorktreeSalvageException(RepoPath, _workBranch,
                     new InvalidOperationException(cause.Summary),
@@ -922,6 +955,11 @@ public sealed class GitWorkspace
             ], RepoPath, ct);
             _log($"worktree-salvage-commit-created path={RepoPath} outcome={outcome}");
         }
+
+        // Durable handoff checks the entire worktree. Remove only the report
+        // copies already preserved on the card, leaving all other edits intact.
+        if (reportPathsEnabled)
+            await RestoreLegacyRepositoryReportsAsync(ct);
 
         var head = (await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim();
         var salvageBranch = quarantine

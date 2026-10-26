@@ -32,6 +32,7 @@ export interface ProviderAuthBadge {
   expiryLabel: string | null;
   limitedUntil: string | null;
   history: readonly CapabilityRecoveryEvent[];
+  acceptedModels?: readonly string[];
 }
 
 export function providerSignInLabel(badge: ProviderAuthBadge): string | null {
@@ -88,7 +89,10 @@ export interface CodexSignInTarget {
   baselineAdvertisedAt: string | null;
 }
 
-export interface CodexSignInStartResponse {
+/** Providers the one Task Server device sign-in service runs on an execution host. */
+export type DeviceLoginProvider = 'codex' | 'claude';
+
+export interface DeviceLoginStartResponse {
   handle: string;
   state: 'queued' | 'running' | 'completed' | 'failed';
   verificationUrl: string | null;
@@ -97,7 +101,7 @@ export interface CodexSignInStartResponse {
   expiresAt: string;
 }
 
-export interface CodexSignInStatusResponse {
+export interface DeviceLoginStatusResponse {
   handle: string;
   state: 'queued' | 'running' | 'completed' | 'failed';
   detail: string | null;
@@ -147,7 +151,7 @@ export function providerAuthBadgesForSnapshot(
   const providers = providerNames(snapshot.capabilities);
   return providers.map(provider => {
     const capability = snapshot.capabilities.find(item => item.key === `${PROVIDER_AUTH_PREFIX}${provider}`);
-    return badgeFromCapability(
+    const badge = badgeFromCapability(
       provider,
       capability,
       snapshot.runnerId,
@@ -158,6 +162,15 @@ export function providerAuthBadgesForSnapshot(
       snapshot.lastSeenAt,
       nowMs,
     );
+    const prefix = `model-acceptance:${provider}:`;
+    return {
+      ...badge,
+      acceptedModels: snapshot.capabilities
+        .filter(item => item.key.startsWith(prefix)
+          && item.advertisedStatus === 'ready' && item.isFresh)
+        .map(item => item.key.slice(prefix.length))
+        .sort(),
+    };
   });
 }
 

@@ -48,6 +48,8 @@ public sealed record BuildTestGateRequest(
     bool RequireExactSubject = true)
 {
     public bool DisableVerdictCache { get; init; }
+    /// <summary>True when the exact delivery was integrated before this gate began.</summary>
+    public bool DeliveryIntegratedAtStart { get; init; }
     public string GateId { get; init; } = PipelineCatalogue.BuildTestGateStepId;
     public string? Project { get; init; }
     public string? WatchPath { get; init; }
@@ -196,6 +198,8 @@ public sealed record BuildTestGateResult(
     bool RanBackendBuild,
     bool RanFrontendBuild)
 {
+    /// <summary>Executor core allocation for quota metering. Null means one legacy core.</summary>
+    public int? GrantedCores { get; init; }
     public GateVerdictSource VerdictSource { get; init; } = GateVerdictSource.Executed;
     public string? GateProfileDigest { get; init; }
     public int? PipelineDefinitionVersion { get; init; }
@@ -212,6 +216,8 @@ public sealed record BuildTestGateResult(
     public string GateId { get; init; } = PipelineCatalogue.BuildTestGateStepId;
     public string? Repository { get; init; }
     public string? ExpectedSha { get; init; }
+    /// <summary>Whether the delivery was integrated before this gate started.</summary>
+    public bool DeliveryIntegratedAtStart { get; init; }
     public string? TestedSha { get; init; }
     public string? AttemptChainId { get; init; }
     public string? Executor { get; init; }
@@ -2018,7 +2024,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         return result.ExitCode == 0 ? result.StandardOutput.Trim() : null;
     }
 
-    private static async Task<GitCommandResult> RunGitAsync(
+    internal static async Task<GitCommandResult> RunGitAsync(
         string workingDirectory,
         IReadOnlyList<string> args,
         TimeSpan timeout,
@@ -2046,7 +2052,10 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             result.FailureKind);
     }
 
-    private sealed record GitCommandResult(
+    internal static bool IsBareRepository(string directory)
+        => AgentStudio.Git.HostGitProcessHardening.IsBareRepository(directory);
+
+    internal sealed record GitCommandResult(
         int? ExitCode,
         string StandardOutput,
         string StandardError,

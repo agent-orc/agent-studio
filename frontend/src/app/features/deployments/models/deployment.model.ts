@@ -3,7 +3,7 @@ export interface Environment {
   projectId: string;
   name: string;
   order: number;
-  kind: 'staging' | 'production';
+  kind: 'staging' | 'production' | 'preview';
 }
 
 export interface Release {
@@ -38,6 +38,7 @@ export interface Deployment {
   finishedAtUtc: string | null;
   approvedBy: string | null;
   steps: DeploymentStep[];
+  tenant?: string | null;
 }
 
 export interface EnvironmentStatus {
@@ -47,4 +48,5 @@ export interface EnvironmentStatus {
   newerRelease: Release | null;
   cardsSinceLastDeploy: string[];
   health: 'healthy' | 'unhealthy' | 'unknown';
+  tenant?: string | null;
 }

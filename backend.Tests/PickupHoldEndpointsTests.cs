@@ -69,7 +69,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
         var hold = detail.RootElement.GetProperty("info").GetProperty("pickupHold");
         Assert.Equal(PickupHoldMechanisms.ExecutionPlacement, hold.GetProperty("mechanism").GetString());
         Assert.Equal(PickupHoldClassifications.Unsatisfiable, hold.GetProperty("classification").GetString());
-        Assert.Contains("local coding is disabled", hold.GetProperty("reason").GetString());
+        Assert.Contains("local agent execution is disabled", hold.GetProperty("reason").GetString());
         var resolution = Assert.Single(hold.GetProperty("resolutions").EnumerateArray());
         Assert.Equal(PickupHoldResolutionKinds.RouteToRemoteRunner, resolution.GetProperty("kind").GetString());
         Assert.Contains("PUT /api/projects/hold-app/execution-runner", resolution.GetProperty("detail").GetString());
@@ -90,7 +90,7 @@ public sealed class PickupHoldEndpointsTests : IDisposable
         using var startBody = JsonDocument.Parse(await start.Content.ReadAsStringAsync());
         Assert.True(startBody.RootElement.TryGetProperty("code", out var code), startBody.RootElement.ToString());
         Assert.Equal(RemoteExecutionRequirement.Code, code.GetString());
-        Assert.Contains("coding execution is disabled", startBody.RootElement.GetProperty("error").GetString());
+        Assert.Contains("local agent execution is disabled", startBody.RootElement.GetProperty("error").GetString());
     }
 
     [Fact]
@@ -180,20 +180,18 @@ public sealed class PickupHoldEndpointsTests : IDisposable
         WriteJob(_libWatch, TaskStates.Archive, "parity-suite", "AGT-2372");
         WriteJob(_appWatch, TaskStates.Ready, "duplicate-cli-paths", "AGT-2373",
             dependsOn: "AGT-2372", releaseGate: true, enteredLaneAt: "2026-08-11T09:00:00Z");
-        WriteJob(_libWatch, TaskStates.Ready, "container", "LIB-7",
-            kind: "epic", enteredLaneAt: "2026-09-10T09:00:00Z");
         WriteJob(_appWatch, TaskStates.Ready, "workable", "APP-9");
 
         using var factory = BuildFactory();
         using var client = factory.CreateClient();
         using var doc = JsonDocument.Parse(await client.GetStringAsync("/api/pickup-holds"));
 
-        Assert.Equal(2, doc.RootElement.GetProperty("total").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("total").GetInt32());
         Assert.Equal(1, doc.RootElement.GetProperty("unsatisfiable").GetInt32());
         var keys = doc.RootElement.GetProperty("items").EnumerateArray()
             .Select(item => item.GetProperty("key").GetString())
             .ToArray();
-        Assert.Equal(new[] { "AGT-2373", "LIB-7" }, keys);
+        Assert.Equal(new[] { "AGT-2373" }, keys);
 
         using var filtered = JsonDocument.Parse(
             await client.GetStringAsync("/api/pickup-holds?unsatisfiableOnly=true"));

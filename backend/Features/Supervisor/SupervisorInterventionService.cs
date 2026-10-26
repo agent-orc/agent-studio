@@ -218,7 +218,7 @@ public sealed class SupervisorInterventionService
 
     private TaskInfo? SafeFindJob(string jobId)
     {
-        try { return _jobScanner.FindJob(jobId); }
+        try { return _jobScanner.FindPublishedJob(jobId); }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "SupervisorInterventionService FindJob failed for {JobId}", jobId);

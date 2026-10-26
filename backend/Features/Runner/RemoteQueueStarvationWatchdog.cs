@@ -47,7 +47,8 @@ public static class RemoteQueueStarvationPolicy
         Func<string, ProjectSettings> projectSettings,
         TaskReferenceIndex references,
         IEnumerable<ClientIdentity> runners,
-        bool allowsLocalCoding = false)
+        bool allowsLocalCoding = false,
+        bool denyAllLocalRuns = false)
     {
         var liveRunners = runners
             .Where(runner => string.Equals(
@@ -75,7 +76,8 @@ public static class RemoteQueueStarvationPolicy
                 var settings = projectSettings(task.ProjectName);
                 var location = ProjectExecutionPolicy.ResolveExecutionLocation(settings);
                 return (location != ExecutionLocations.Local
-                        || (!allowsLocalCoding && WorktreeRunPolicy.RequiresWorktree(task.Mode, false)))
+                        || !allowsLocalCoding
+                           && (denyAllLocalRuns || WorktreeRunPolicy.RequiresWorktree(task.Mode)))
                        && ProjectExecutionPolicy.AllowsAutomaticPickup(settings)
                        && AgentTypes.IsAutoPickupEligible(task.Agent)
                        && !TaskSlugs.IsHumanDecisionNeeded(task.Id)
@@ -98,7 +100,7 @@ public static class RemoteQueueStarvationPolicy
                 projectSettings(task.ProjectName).BuildProfile),
                 LocalPlacementBlocked: ProjectExecutionPolicy.ResolveExecutionLocation(projectSettings(task.ProjectName))
                     == ExecutionLocations.Local && !allowsLocalCoding
-                    && WorktreeRunPolicy.RequiresWorktree(task.Mode, false)))
+                    && (denyAllLocalRuns || WorktreeRunPolicy.RequiresWorktree(task.Mode))))
             .Where(candidate => !candidate.Gate.AllowsPickup
                            || candidate.LocalPlacementBlocked
                            || candidate.Task.RemoteDispatchRejection is not null
@@ -116,7 +118,7 @@ public static class RemoteQueueStarvationPolicy
                 BlockReasonCode = candidate.LocalPlacementBlocked ? RemoteExecutionRequirement.Code
                     : candidate.Gate.AllowsPickup ? null : "build-profile-gate",
                 BlockReason = candidate.LocalPlacementBlocked
-                    ? $"Project {candidate.Task.ProjectName} is placed at local execution, but local coding is disabled on this orchestrator."
+                    ? $"Project {candidate.Task.ProjectName} is placed at local execution, but local agent execution is disabled on this orchestrator."
                     : candidate.Gate.AllowsPickup ? null : candidate.Gate.Reason,
             })
             .ToList();
@@ -254,7 +256,8 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
             _settings.Get,
             snapshot.References,
             _clients.ListAll(),
-            _runner?.AllowsLocalCoding == true);
+            _runner?.AllowsLocalCoding == true,
+            SecurityProfiles.IsNetworked(_configuration));
 
         lock (_gate)
         {

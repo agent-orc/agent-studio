@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.Registry;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AgentStudio.Supervisor;
@@ -29,10 +30,13 @@ public static class SupervisorEndpoints
             string project,
             InterventionRequest body,
             SupervisorInterventionService svc,
+            TaskIndexCache index,
+            ProjectRegistry registry,
             CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(body.JobId)) return Results.BadRequest(new { error = "jobId required" });
             if (string.IsNullOrWhiteSpace(body.Reason)) return Results.BadRequest(new { error = "reason required" });
+            if (!JobInProject(index, registry, project, body.JobId!)) return JobNotInProject();
             await svc.CancelRunAsync(project, body.JobId!, body.Reason!, SupervisorSource.User, ct);
             return Results.Ok(new { ok = true });
         });
@@ -53,10 +57,13 @@ public static class SupervisorEndpoints
             string project,
             InterventionRequest body,
             SupervisorInterventionService svc,
+            TaskIndexCache index,
+            ProjectRegistry registry,
             CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(body.JobId)) return Results.BadRequest(new { error = "jobId required" });
             if (string.IsNullOrWhiteSpace(body.Reason)) return Results.BadRequest(new { error = "reason required" });
+            if (!JobInProject(index, registry, project, body.JobId!)) return JobNotInProject();
             await svc.ForceFailAsync(project, body.JobId!, body.Reason!, SupervisorSource.User, ct);
             return Results.Ok(new { ok = true });
         });
@@ -115,6 +122,23 @@ public static class SupervisorEndpoints
             return Results.Ok(new { advisories, interventions });
         });
     }
+
+    /// <summary>
+    /// The intervention service stops the run its job id names anywhere in the
+    /// workspace, while the route authorizes only its project. A job outside
+    /// that project, or an unknown one, is refused before any intervention
+    /// record is written.
+    /// </summary>
+    private static bool JobInProject(TaskIndexCache index, ProjectRegistry registry, string project, string jobId)
+    {
+        var matches = index.GetMatchingCoreFacts(jobId);
+        return matches.Count > 0 && matches.All(job =>
+            !string.IsNullOrWhiteSpace(job.ProjectName)
+            && ProjectAccessAuthorization.SameProject(job.ProjectName, project, registry));
+    }
+
+    private static IResult JobNotInProject()
+        => Results.NotFound(new { error = "job-not-in-project", message = "The job is not a card of this project." });
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 

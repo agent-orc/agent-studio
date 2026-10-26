@@ -1,5 +1,6 @@
-:host { display: block; }
+:host { display: block; min-width: 0; container: environment-header / inline-size; }
 .rh__head { display: flex; align-items: center; gap: var(--studio-spacing-4); margin-bottom: var(--studio-spacing-3); }
+.rh__intro { flex: 1 1 0; min-width: 0; }
 .rh__title { margin: 0 0 var(--studio-spacing-1); font-size: 18px; font-weight: 700; color: var(--studio-fg-strong); }
 .rh__subtitle { margin: 0; font-size: 12px; color: var(--studio-fg-dim); line-height: 1.45; }
 .rh__actions { margin-left: auto; display: flex; gap: var(--studio-spacing-2); }
@@ -14,7 +15,8 @@
 .rh__refresh:disabled { opacity: 0.6; cursor: not-allowed; }
 .rh__refresh:focus-visible, .rh__add:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
 @media (max-width: 1100px) { .rh__view-switch button:last-child { display: none; } }
-@media (max-width: 760px) {
+@container environment-header (max-width: 760px) {
   .rh__head { align-items: flex-start; flex-wrap: wrap; }
-  .rh__actions { margin-left: 0; flex-wrap: wrap; }
+  .rh__intro { flex-basis: 100%; }
+  .rh__actions { flex: 1 1 100%; min-width: 0; margin-left: 0; flex-wrap: wrap; }
 }

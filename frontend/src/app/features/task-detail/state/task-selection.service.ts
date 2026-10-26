@@ -350,24 +350,18 @@ export class TaskSelectionService {
    */
   peersForLane(state: string): TaskInfo[] {
     const g = this.boardFilters.filteredGrouped();
-    // Epics are containers, not board work-items, so the flat lane board hides
-    // them (board `excludeEpics`, wired into `displayGrouped`). The pager must
-    // drop them too or its "N / M" total would exceed the lane-count badge and
-    // Prev/Next could surface an epic that has no card in the lane.
-    const tasksOnly = (jobs?: TaskInfo[]): TaskInfo[] =>
-      (jobs ?? []).filter((t) => t.kind !== 'epic');
     switch (state) {
-      case TaskState.Backlog:          return tasksOnly(g.backlog);
-      case TaskState.Preparation:      return tasksOnly(g.preparation);
-      case TaskState.OrchestratorPrep: return tasksOnly(g.orchestratorPrep);
-      case TaskState.Ready:            return tasksOnly(g.ready);
-      case TaskState.Progress:         return tasksOnly(g.progress);
-      case TaskState.FailedPickup:     return tasksOnly(g.failedPickup);
-      case TaskState.AutoReview:       return tasksOnly(g.autoReview);
-      case TaskState.HumanReview:      return tasksOnly(g.humanReview);
-      case TaskState.Escalated:        return tasksOnly(g.escalated);
-      case TaskState.Completed:        return tasksOnly(g.completed);
-      case TaskState.Archive:          return tasksOnly(g.archive);
+      case TaskState.Backlog:          return g.backlog ?? [];
+      case TaskState.Preparation:      return g.preparation ?? [];
+      case TaskState.OrchestratorPrep: return g.orchestratorPrep ?? [];
+      case TaskState.Ready:            return g.ready ?? [];
+      case TaskState.Progress:         return g.progress ?? [];
+      case TaskState.FailedPickup:     return g.failedPickup ?? [];
+      case TaskState.AutoReview:       return g.autoReview ?? [];
+      case TaskState.HumanReview:      return g.humanReview ?? [];
+      case TaskState.Escalated:        return g.escalated ?? [];
+      case TaskState.Completed:        return g.completed ?? [];
+      case TaskState.Archive:          return g.archive ?? [];
       default:                       return [];
     }
   }

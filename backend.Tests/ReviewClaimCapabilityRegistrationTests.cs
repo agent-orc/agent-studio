@@ -11,6 +11,7 @@ using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
+using AgentStudio.Cli;
 using AgentStudio.Pipeline;
 using Contract = AgentStudio.TaskServer.Contracts;
 using RunnerOptions = Runner::AgentRunner.RunnerOptions;
@@ -95,6 +96,33 @@ public sealed class ReviewClaimCapabilityRegistrationTests : IDisposable
         Assert.Contains("toolchain:custom", registered);
         Assert.Contains(Contract.CapabilityProtocol.Node, registered);
         Assert.DoesNotContain(Contract.CapabilityProtocol.DotNet, registered);
+    }
+
+    [Fact]
+    public void Capability_routes_include_pending_aspect_pins_and_active_deep_review()
+    {
+        var authority = NewAuthority();
+        var plan = new Contract.ReviewPlanDto(
+            [new Contract.ReviewCommandDto("aspect-code-quality", "code-quality", "claude", [],
+                ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
+                CliType: "claude", Model: "claude-opus-5-5", ThinkingLevel: "high")],
+            ["code-quality"]);
+        CreatePendingReviewAttempt(authority, "AGT-2", new string('2', 40), plan);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["DeepReview:Mode"] = "active" }).Build();
+
+        var routes = V1ReviewPlaneEndpoints.ReviewConfiguredModelRoutes(
+            authority.ListPendingReviewAttempts(), configuration,
+            [new CliModelRouteProfile
+            {
+                CliType = "claude", PrimaryModel = "claude-opus-5-5",
+                FallbackCliType = "codex", FallbackModel = "gpt-6.3-sol",
+            }]);
+
+        Assert.Contains(new Contract.ConfiguredModelRouteDto("claude", "claude-opus-5-5"), routes);
+        Assert.Contains(new Contract.ConfiguredModelRouteDto("codex", "gpt-6-sol"), routes);
+        Assert.Contains(new Contract.ConfiguredModelRouteDto("codex", "gpt-6.3-sol"), routes);
+        Assert.True(routes.Count <= 4);
     }
 
     // ---- (d) contract: registration is a superset of every emitted key ------
@@ -196,7 +224,7 @@ public sealed class ReviewClaimCapabilityRegistrationTests : IDisposable
     }
 
     [Fact]
-    public void Unclaimable_log_repeats_an_attempt_only_after_an_hour()
+    public void Unclaimable_log_repeats_an_attempt_only_after_its_reason_changes()
     {
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 9, 27, 15, 8, 0, TimeSpan.Zero));
         var logs = new CapturingLoggerProvider();
@@ -208,12 +236,15 @@ public sealed class ReviewClaimCapabilityRegistrationTests : IDisposable
         time.Advance(TimeSpan.FromMinutes(59));
         Assert.Equal(0, log.Record("reviewer", attempts));
         time.Advance(TimeSpan.FromMinutes(1));
-        Assert.Equal(1, log.Record("reviewer", attempts));
+        Assert.Equal(0, log.Record("another-reviewer", attempts));
+        Assert.Equal(1, log.Record("reviewer", attempts, "model-acceptance:claude:claude-opus-5-5 unknown"));
+        Assert.Equal(0, log.Record("another-reviewer", attempts, "model-acceptance:claude:claude-opus-5-5 unknown"));
+        Assert.Equal("model-acceptance:claude:claude-opus-5-5 unknown", log.Latest("review-1")!.Reason);
         Assert.Equal([Contract.CapabilityProtocol.Node], log.Latest("review-1")!.MissingCapabilities);
     }
 
     [Fact]
-    public void Concurrent_unclaimable_records_log_once_per_attempt_per_interval()
+    public void Concurrent_unclaimable_records_log_once_per_attempt_and_state()
     {
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 9, 27, 15, 8, 0, TimeSpan.Zero));
         var logs = new CapturingLoggerProvider();
@@ -226,10 +257,43 @@ public sealed class ReviewClaimCapabilityRegistrationTests : IDisposable
         Assert.Equal(1, recorded);
         Assert.Single(logs.Messages, message => message.Contains("review-claim-unclaimable", StringComparison.Ordinal));
 
-        time.Advance(ReviewClaimUnclaimableLog.LogInterval);
+        time.Advance(TimeSpan.FromHours(1));
         Parallel.For(0, 64, _ => Interlocked.Add(ref recorded, log.Record("reviewer", attempts)));
+        Assert.Equal(1, recorded);
+
+        Parallel.For(0, 64, _ => Interlocked.Add(ref recorded,
+            log.Record("reviewer", attempts, "model-acceptance:claude:claude-opus-5-5 unknown")));
         Assert.Equal(2, recorded);
         Assert.Equal(2, logs.Messages.Count(message => message.Contains("review-claim-unclaimable", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void Review_quota_admission_logs_once_per_attempt_and_decision_change()
+    {
+        SeedTask("AGT-10");
+        var logs = new CapturingLoggerProvider();
+        using var factory = BuildFactory(logs);
+        using var http = factory.CreateClient();
+        var info = factory.Services.GetRequiredService<TaskScannerService>().FindJob("AGT-10", _watchPath)!;
+        var recorder = factory.Services.GetRequiredService<QuotaAdmissionRecorder>();
+        var waiting = new QuotaAdmissionPlan(
+            QuotaAdmissionOutcome.Wait, "claude", "claude-opus-5-5", "high", false,
+            "waiting: model is not accepted by the claiming host", null, null);
+        var ready = waiting with
+        {
+            Outcome = QuotaAdmissionOutcome.LaunchPrimary,
+            Reason = "launch: quota ok",
+        };
+
+        recorder.EmitAdmissionDecision(info, waiting, "review-claim", "attempt-1");
+        recorder.EmitAdmissionDecision(info, waiting, "review-claim", "attempt-1");
+        recorder.EmitAdmissionDecision(info, waiting, "review-claim", "attempt-2");
+        recorder.EmitAdmissionDecision(info, ready, "review-claim", "attempt-1");
+        recorder.EmitAdmissionDecision(info, waiting, "review-claim", "attempt-1");
+
+        var admissionMessages = logs.Messages.Where(message =>
+            message.Contains("cli_quota_admission_decision source=\"review-claim\"", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(4, admissionMessages.Length);
     }
 
     // ---- stagnation policy matrix -----------------------------------------
@@ -413,7 +477,11 @@ public sealed class ReviewClaimCapabilityRegistrationTests : IDisposable
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
-                builder.ConfigureLogging(logging => logging.AddProvider(logs));
+                builder.ConfigureLogging(logging =>
+                {
+                    logging.SetMinimumLevel(LogLevel.Information);
+                    logging.AddProvider(logs);
+                });
                 builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
                     new Dictionary<string, string?>
                     {

@@ -3,7 +3,6 @@ using System.Diagnostics;
 using AgentStudio.TaskServer.Contracts;
 
 using Xunit;
-using Xunit.Abstractions;
 using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
@@ -497,7 +496,7 @@ public sealed class VerifyCommandPlannerTests : IDisposable
             c.Kind == VerifyCommandKind.Test && c.Command.Contains("OrchestratorApi.Tests.csproj", StringComparison.Ordinal));
         // frontend/package.json declares build/test/lint scripts.
         Assert.Contains(plan.Commands, c =>
-            c.Kind == VerifyCommandKind.Build && c.Command == "npm --prefix frontend run build");
+            c.Kind == VerifyCommandKind.Build && c.Command == "bash scripts/npm-frontend.sh run build");
     }
 
     private static string? FindRepoRoot()
@@ -541,32 +540,26 @@ public sealed class VerifyCommandPlannerTests : IDisposable
 /// end-to-end command loop driven through the build-profile override (trivial
 /// shell commands so the test needs no real toolchain).
 /// </summary>
-// MachineBound 22.07.: instanziiert einen echten BuildTestGateRunner und nimmt den
-// maschinenweiten Lock %TEMP%\agentstudio-build-test-gate.lock - laeuft die Suite IM
-// Gate, haelt das Gate den Lock bereits -> 15s-SLA -> Timeout/Collision -> Gate-Fail
-// (Selbstblockade). Klassenweit, weil jede Methode denselben Runner/Lock beruehrt.
 // ProcessEnvironmentSerial: CommandExecution_DoesNotHandTheHostListenerConfigurationToTheChild
 // sets ASPNETCORE_URLS, which a connector booting at the same time reads as its listener.
-[Trait("Category", "MachineBound")]
 [Collection(ProcessEnvironmentSerialCollection.Name)]
 public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
 {
     private readonly string _root;
-    private readonly BuildTestGateRunner _runner = new(NullLogger<BuildTestGateRunner>.Instance);
-    private readonly ITestOutputHelper _output;
+    private readonly BuildTestGateRunner _runner;
+    private readonly BuildTestGateRunner _sharedRunner = new(NullLogger<BuildTestGateRunner>.Instance);
 
-    public BuildTestGateRunnerBehaviorTests(ITestOutputHelper output)
+    public BuildTestGateRunnerBehaviorTests()
     {
-        _output = output;
         _root = Path.Combine(Path.GetTempPath(), "verify-runner-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_root);
+        _runner = new BuildTestGateRunner(NullLogger<BuildTestGateRunner>.Instance,
+            BuildTestMachineGateMode.BypassForHermeticTest,
+            Path.Combine(_root, "preparation-cache"));
     }
 
     public void Dispose()
     {
-        TestTempRoot.TryDelete(GateDependencyCacheSession.CachePath(
-            BuildTestGateRunner.ReviewWorkspaceRoot,
-            _root));
         TestTempRoot.TryDelete(_root);
     }
 
@@ -578,6 +571,11 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
             new BuildTestGateRequest(_root, null, "test", RequireExactSubject: false),
             changedFiles, profile, mode, TimeSpan.FromSeconds(30), CancellationToken.None);
 
+    private Task<BuildTestGateResult> RunShared(BuildProfile? profile)
+        => _sharedRunner.RunAsync(
+            new BuildTestGateRequest(_root, null, "test", RequireExactSubject: false),
+            null, profile, PostStepMode.Fail, TimeSpan.FromSeconds(30), CancellationToken.None);
+
     [Fact]
     public async Task ModeOff_Skips()
     {
@@ -587,11 +585,11 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
     }
 
     [Fact]
-    public async Task NoCodeDiff_Skips()
+    public async Task NoCodeDiffWithoutCommands_IsNotApplicable()
     {
         var r = await Run(profile: null, changedFiles: ["docs/note.md", "README.md"]);
-        Assert.Equal(BuildTestGateVerdict.Skipped, r.Verdict);
-        Assert.Equal("no code diff", r.Reason);
+        Assert.Equal(BuildTestGateVerdict.NotApplicable, r.Verdict);
+        Assert.Equal("no verify commands derivable", r.Reason);
     }
 
     [Fact]
@@ -606,6 +604,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task HealthObserverFailure_DoesNotFailGateOrRetainMachineLock()
     {
         var runner = new BuildTestGateRunner(
@@ -764,7 +763,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
     }
 
     [Fact]
-    public async Task ExactSubjectNodeFixture_ReusesDependenciesAndAngularCacheOnSecondRun()
+    public async Task ExactSubjectNodeFixture_PreparesEachIsolatedWorkspace()
     {
         WriteFixtureFile("package.json", """
             {
@@ -803,6 +802,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
         {
             RequiredTestLevel = TestExecutionLevels.BuildOnly,
             InfrastructureTimeout = TimeSpan.FromSeconds(30),
+            DisableVerdictCache = true,
         };
         var first = await _runner.RunAsync(
             request,
@@ -838,25 +838,21 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
                 Assert.Equal("npm run build", build.Command);
                 Assert.Equal(0, build.ExitCode);
             });
-        var secondBuild = Assert.Single(second.Processes);
+        Assert.Equal("preparation", second.Processes[0].Phase);
+        Assert.Equal("npm ci", second.Processes[0].Command);
+        var secondBuild = second.Processes[1];
         Assert.Equal("verification", secondBuild.Phase);
-        Assert.Contains("angular-cache=hit", secondBuild.StandardOutput);
+        Assert.Contains("angular-cache=miss", secondBuild.StandardOutput);
         Assert.Contains(second.DependencyCache, cache =>
-            cache.State == "hit"
-            && cache.Reason == "lock-unchanged"
-            && !cache.InstallRan);
-        Assert.True(
-            second.DurationMs < first.DurationMs,
-            $"Expected warm gate to be faster; cold={first.DurationMs}ms warm={second.DurationMs}ms.");
-        _output.WriteLine(
-            $"dependency-cache benchmark coldMs={first.DurationMs} warmMs={second.DurationMs} " +
-            $"savedMs={first.DurationMs - second.DurationMs}");
+            cache.State == "miss"
+            && cache.Reason == "deps-dir-missing"
+            && cache.InstallRan);
         Assert.NotEqual(first.Workspace, second.Workspace);
         Assert.True(Directory.Exists(BuildTestGateRunner.NpmCachePath));
     }
 
     [Fact]
-    public async Task ExactSubjectNodeFixture_LockfileChangeForcesReinstall()
+    public async Task ExactSubjectNodeFixture_LockfileChangeRunsInstallForNewSubject()
     {
         WriteFixtureFile("package.json", """
             {
@@ -883,17 +879,17 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
         var changed = await RunExactNodeGate(changedSha);
 
         Assert.Contains(first.DependencyCache, cache => cache.State == "miss" && cache.InstallRan);
-        Assert.Contains(warm.DependencyCache, cache => cache.State == "hit" && !cache.InstallRan);
+        Assert.Contains(warm.DependencyCache, cache => cache.State == "miss" && cache.InstallRan);
         Assert.Contains(changed.DependencyCache, cache =>
             cache.State == "miss"
-            && cache.Reason == "lock-changed"
+            && cache.Reason == "deps-dir-missing"
             && cache.InstallRan);
         Assert.Contains(changed.Processes, process =>
             process.Phase == "preparation" && process.Command == "npm ci");
     }
 
     [Fact]
-    public async Task ExactSubjectNodeFixture_TornVerifiedCacheIsEvictedAndRerunFromScratch()
+    public async Task ExactSubjectNodeFixture_NewWorkspaceInstallsDependenciesBeforeBuild()
     {
         WriteFixtureFile("package.json", """
             {
@@ -914,43 +910,18 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
 
         var seeded = await RunExactNodeGate(sha);
         Assert.Equal(BuildTestGateVerdict.Ok, seeded.Verdict);
-        var cacheContent = Path.Combine(
-            GateDependencyCacheSession.CachePath(BuildTestGateRunner.ReviewWorkspaceRoot, _root),
-            "content");
-        var cachedNodeModules = Path.Combine(cacheContent, "node_modules");
-        Directory.Delete(cachedNodeModules, recursive: true);
-        var angularEsbuild = Path.Combine(
-            cachedNodeModules, "@angular", "build", "src", "tools", "esbuild");
-        Directory.CreateDirectory(angularEsbuild);
-        File.WriteAllText(
-            Path.Combine(angularEsbuild, "javascript-transformer.js"),
-            "module.exports = require('./javascript-transformer-worker');");
-
         var replay = await RunExactNodeGate(sha);
 
         Assert.Equal(BuildTestGateVerdict.Ok, replay.Verdict);
         Assert.Equal(BuildTestGateFailureKind.None, replay.FailureKind);
-        Assert.NotNull(replay.DependencyCacheDecision);
-        Assert.True(replay.DependencyCacheDecision!.Restored);
-        Assert.True(replay.DependencyCacheDecision.Evicted);
-        Assert.True(replay.DependencyCacheDecision.ReranFromScratch);
-        Assert.True(replay.DependencyCacheDecision.SavedVerified);
-        Assert.Equal(3, replay.Processes.Count);
-        Assert.Equal(BuildTestGateFailureKind.Environment,
-            BuildTestGateRunner.ClassifyFailure(replay.Processes[0]));
-        Assert.Equal("preparation", replay.Processes[1].Phase);
-        Assert.Equal("npm ci", replay.Processes[1].Command);
-        Assert.Equal(0, replay.Processes[2].ExitCode);
-        Assert.Contains("dependency-cache evicted, rerun from scratch", replay.Output);
-        Assert.Contains("restored=yes", replay.Reason);
-        Assert.Contains("evicted=yes", replay.Reason);
-        _output.WriteLine("WEB-19 replay gate log:");
-        _output.WriteLine(replay.Output);
-        _output.WriteLine("Card gate line: " + replay.Reason);
+        Assert.Collection(replay.Processes,
+            install => { Assert.Equal("preparation", install.Phase); Assert.Equal("npm ci", install.Command); },
+            build => { Assert.Equal("verification", build.Phase); Assert.Equal(0, build.ExitCode); });
+        Assert.NotEqual(seeded.Workspace, replay.Workspace);
     }
 
     [Fact]
-    public async Task ExactSubjectNodeFixture_CodeFailureAfterCleanRetryRemainsCodeAndIsNotSaved()
+    public async Task ExactSubjectNodeFixture_CodeFailureAfterInstallRemainsCode()
     {
         WriteFixtureFile("package.json", """
             {
@@ -967,38 +938,15 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
         WriteFixtureFile("package-lock.json", NodeFixtureLock("1.0.0"));
         var sha = InitializeGitRepository();
 
-        // Seed a structurally valid cache independently of the deliberately red
-        // build, then prove the cached failure receives exactly one clean retry.
-        var cacheWorkspace = Path.Combine(_root, "seed-cache");
-        Directory.CreateDirectory(Path.Combine(cacheWorkspace, "node_modules", "fixture-dep"));
-        File.Copy(Path.Combine(_root, "fixture-dep", "index.js"),
-            Path.Combine(cacheWorkspace, "node_modules", "fixture-dep", "index.js"));
-        File.Copy(Path.Combine(_root, "package-lock.json"),
-            Path.Combine(cacheWorkspace, "package-lock.json"));
-        var scope = new ReviewDependencyScopeDto("", ["package-lock.json"]);
-        DependencyPreparationState.Stamp(
-            cacheWorkspace,
-            DependencyPreparationState.ComputeLockHash(cacheWorkspace, scope.Lockfiles));
-        var cacheParent = Path.Combine(
-            BuildTestGateRunner.ReviewWorkspaceRoot,
-            BuildTestGateRunner.DependencyCacheDirectoryName);
-        var seedSession = DependencyCacheSession.Create(
-            cacheParent, _root, cacheWorkspace, [scope]);
-        Assert.Contains(seedSession.SaveVerified(), message => message.Contains("state=committed"));
-
         var result = await RunExactNodeGate(sha);
 
         Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
         Assert.Equal(BuildTestGateFailureKind.Code, result.FailureKind);
-        Assert.True(result.DependencyCacheDecision!.ReranFromScratch);
-        Assert.True(result.DependencyCacheDecision.Evicted);
-        Assert.False(result.DependencyCacheDecision.SavedVerified);
-        Assert.Equal(3, result.Processes.Count);
-        Assert.Equal(2, result.Processes.Count(process => process.Phase == "verification"));
-        Assert.Contains("from-scratch rerun also failed", result.Reason);
-        Assert.False(Directory.Exists(Path.Combine(
-            GateDependencyCacheSession.CachePath(BuildTestGateRunner.ReviewWorkspaceRoot, _root),
-            "content")));
+        Assert.Equal(2, result.Processes.Count);
+        Assert.Equal("preparation", result.Processes[0].Phase);
+        Assert.Equal(0, result.Processes[0].ExitCode);
+        Assert.Equal("verification", result.Processes[1].Phase);
+        Assert.Equal(7, result.Processes[1].ExitCode);
     }
 
     [Fact]
@@ -1072,6 +1020,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
             });
     }
 
+    [Trait("Category", "MachineBound")]
     [Fact]
     public async Task ThreeParallelExactSubjectGatesSerializeUseDistinctWorkspacesAndCleanEachOne()
     {
@@ -1080,11 +1029,12 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
         {
             BuildCmds = ["sleep 1"],
         };
-        var tasks = Enumerable.Range(1, 3).Select(index => _runner.RunAsync(
+        var tasks = Enumerable.Range(1, 3).Select(index => _sharedRunner.RunAsync(
             new BuildTestGateRequest(_root, sha, $"executor-{index}")
             {
                 AttemptChainId = $"attempt-{index}",
                 InfrastructureTimeout = TimeSpan.FromSeconds(15),
+                DisableVerdictCache = true,
             },
             changedFiles: null,
             profile,
@@ -1150,7 +1100,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
     public async Task MachineGateWaitIsBoundedByExplicitQueueWaitTimeout()
     {
         const string activeFile = "machine-gate-sla-active.tmp";
-        var leader = Run(new BuildProfile
+        var leader = RunShared(new BuildProfile
         {
             BuildCmds = [$"touch {activeFile}; sleep 2; rm -f {activeFile}"],
         });
@@ -1164,7 +1114,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
         // out. (AGT-2182 fix: the DEFAULT budget derives run-timeout+infra so a card
         // queued behind a real 15-25 min gate does NOT time out - see the sibling
         // QueuedGateWaitsThroughLongLeader... test.)
-        var follower = await _runner.RunAsync(
+        var follower = await _sharedRunner.RunAsync(
             new BuildTestGateRequest(_root, null, "bounded", RequireExactSubject: false)
             {
                 QueueWaitTimeout = TimeSpan.FromMilliseconds(100),
@@ -1193,7 +1143,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
         // against the run timeout, not the infra SLA. Before the fix the 100 ms infra
         // SLA also bounded the queue wait, so this follower escalated as Timeout.
         const string activeFile = "queue-budget-active.tmp";
-        var leader = Run(new BuildProfile
+        var leader = RunShared(new BuildProfile
         {
             BuildCmds = [$"touch {activeFile}; sleep 2; rm -f {activeFile}"],
         });
@@ -1202,7 +1152,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
             await Task.Delay(25);
         Assert.True(File.Exists(activePath));
 
-        var follower = await _runner.RunAsync(
+        var follower = await _sharedRunner.RunAsync(
             new BuildTestGateRequest(_root, null, "queued", RequireExactSubject: false)
             {
                 // Short infra SLA, but no explicit queue cap: the derived budget is
@@ -1222,9 +1172,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
         Assert.Equal(BuildTestGateVerdict.Ok, (await leader).Verdict);
     }
 
-    // MachineBound: exercises a real Bash process and the machine-wide gate while
-    // retaining enough output to overflow the bounded display ring.
-    [Trait("Category", "MachineBound")]
+    // The hermetic gate retains enough real Bash output to overflow the bounded display ring.
     [Fact]
     public async Task LateLockEvidenceSurvivesRingBufferAndTimeoutTestNameIsNotMisclassified()
     {
@@ -1250,6 +1198,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
     // the fix end-to-end here would acquire the real machine-wide gate lock, which on
     // a busy host contends with the operator's live gates and flakes.
 
+    [Trait("Category", "MachineBound")]
     [Fact]
     public async Task ConcurrentRuns_ForSameRepository_DoNotOverlapCommands()
     {
@@ -1258,13 +1207,13 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
         var holdCommand = $"touch {activeFile}; sleep 2; rm -f {activeFile}";
         var probeCommand = $"if [ -e {activeFile} ]; then touch {overlapFile}; fi";
 
-        var first = Run(new BuildProfile { BuildCmds = [holdCommand] });
+        var first = RunShared(new BuildProfile { BuildCmds = [holdCommand] });
         var activePath = Path.Combine(_root, activeFile);
         for (var i = 0; i < 100 && !File.Exists(activePath); i++)
             await Task.Delay(25);
         Assert.True(File.Exists(activePath), "The first gate command did not enter its critical section.");
 
-        var second = Run(new BuildProfile { BuildCmds = [probeCommand] });
+        var second = RunShared(new BuildProfile { BuildCmds = [probeCommand] });
         var results = await Task.WhenAll(first, second);
 
         Assert.All(results, result => Assert.Equal(BuildTestGateVerdict.Ok, result.Verdict));
@@ -1272,7 +1221,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
             "Two verification command loops ran concurrently in the same repository.");
     }
 
-    // MachineBound 19.07.: TCS/Cancellation-Timing flakt unter Parallellast im Karten-Gate.
+    // Cancellation and host-load timing depend on the shared machine gate.
     [Trait("Category", "MachineBound")]
     [Fact]
     public async Task CancellationDuringHostLoadWait_ReleasesRepositoryAdmission()
@@ -1301,7 +1250,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
         Assert.Equal(BuildTestGateVerdict.Ok, followup.Verdict);
     }
 
-    // MachineBound 19.07.: Queue-Cancellation-Timing flakt unter Parallellast im Karten-Gate.
+    // Queue cancellation timing depends on the shared machine gate.
     [Trait("Category", "MachineBound")]
     [Fact]
     public async Task CancellationWhileQueued_DoesNotOpenAdmissionForAnotherRun()
@@ -1311,21 +1260,21 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
         var holdCommand = $"touch {activeFile}; sleep 2; rm -f {activeFile}";
         var probeCommand = $"if [ -e {activeFile} ]; then touch {overlapFile}; fi";
 
-        var leader = Run(new BuildProfile { BuildCmds = [holdCommand] });
+        var leader = RunShared(new BuildProfile { BuildCmds = [holdCommand] });
         var activePath = Path.Combine(_root, activeFile);
         for (var i = 0; i < 100 && !File.Exists(activePath); i++)
             await Task.Delay(25);
         Assert.True(File.Exists(activePath), "The leader gate did not enter its critical section.");
 
         using var queuedCancellation = new CancellationTokenSource();
-        var queued = _runner.RunAsync(
+        var queued = _sharedRunner.RunAsync(
             new BuildTestGateRequest(_root, null, "test", RequireExactSubject: false),
             changedFiles: null, new BuildProfile { BuildCmds = ["exit 0"] },
             PostStepMode.Fail, TimeSpan.FromSeconds(30), queuedCancellation.Token);
         queuedCancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await queued);
 
-        var follower = Run(new BuildProfile { BuildCmds = [probeCommand] });
+        var follower = RunShared(new BuildProfile { BuildCmds = [probeCommand] });
         var results = await Task.WhenAll(leader, follower);
 
         Assert.All(results, result => Assert.Equal(BuildTestGateVerdict.Ok, result.Verdict));
@@ -1378,6 +1327,7 @@ public sealed class BuildTestGateRunnerBehaviorTests : IDisposable
             {
                 RequiredTestLevel = TestExecutionLevels.BuildOnly,
                 InfrastructureTimeout = TimeSpan.FromSeconds(30),
+                DisableVerdictCache = true,
             },
             changedFiles: null,
             profile: null,

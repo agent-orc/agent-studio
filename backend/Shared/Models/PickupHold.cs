@@ -14,9 +14,6 @@ public static class PickupHoldMechanisms
     /// <summary>A remote runner refused the offered card and recorded why.</summary>
     public const string DispatchRejection = "dispatch-rejection";
 
-    /// <summary>An epic container came to rest in a pickup lane. Epics never execute.</summary>
-    public const string EpicContainer = "epic-container";
-
     /// <summary>The card crashed fast and is serving its exponential cooldown.</summary>
     public const string CrashBackoff = "crash-backoff";
 
@@ -58,9 +55,6 @@ public static class PickupHoldResolutionKinds
 
     /// <summary>Re-offer the card so a healthy runner can claim it.</summary>
     public const string RetryDispatch = "retry-dispatch";
-
-    /// <summary>Decompose the epic; its sub-tasks are what execute.</summary>
-    public const string DecomposeEpic = "decompose-epic";
 
     /// <summary>Wait out the cooldown, or start the run by hand.</summary>
     public const string WaitOutBackoff = "wait-out-backoff";
@@ -173,7 +167,8 @@ public readonly record struct PickupHoldFacts(
     DateTime NowUtc,
     string? ExecutionLocation = null,
     bool AllowsLocalCoding = false,
-    string? SuggestedRemoteRunnerId = null);
+    string? SuggestedRemoteRunnerId = null,
+    bool DenyAllLocalRuns = false);
 
 /// <summary>
 /// Pure policy: is this card held in its pickup lane, and by what.
@@ -222,16 +217,6 @@ public static class PickupHoldPolicy
                 "This card is a fixture, which exists for tests and is never executed.",
                 laneEntry, facts.NowUtc, unsatisfiable: false);
 
-        if (TaskKinds.IsEpic(task.Kind))
-            return Hold(
-                PickupHoldMechanisms.EpicContainer,
-                "This is an epic container. Epics hold sub-tasks and never execute themselves.",
-                laneEntry, facts.NowUtc, unsatisfiable: false,
-                new PickupHoldResolution(
-                    PickupHoldResolutionKinds.DecomposeEpic,
-                    "Decompose the epic",
-                    "Plan the epic so its sub-tasks carry the work, then move the container out of the pickup lane."));
-
         if (TaskSlugs.IsHumanDecisionNeeded(task.Id))
             return Hold(
                 PickupHoldMechanisms.PickupPolicy,
@@ -267,14 +252,14 @@ public static class PickupHoldPolicy
 
         if (string.Equals(facts.ExecutionLocation, ExecutionLocations.Local, StringComparison.OrdinalIgnoreCase)
             && !facts.AllowsLocalCoding
-            && AgentStudio.Runner.WorktreeRunPolicy.RequiresWorktree(task.Mode, isEpicPlanningRun: false))
+            && (facts.DenyAllLocalRuns || AgentStudio.Runner.WorktreeRunPolicy.RequiresWorktree(task.Mode)))
         {
             var destination = string.IsNullOrWhiteSpace(facts.SuggestedRemoteRunnerId)
                 ? "<runner-id>"
                 : facts.SuggestedRemoteRunnerId;
             return Hold(
                 PickupHoldMechanisms.ExecutionPlacement,
-                $"Project {task.ProjectName} is placed at local execution, but local coding is disabled on this orchestrator.",
+                $"Project {task.ProjectName} is placed at local execution, but local agent execution is disabled on this orchestrator.",
                 laneEntry, facts.NowUtc, unsatisfiable: true,
                 new PickupHoldResolution(
                     PickupHoldResolutionKinds.RouteToRemoteRunner,

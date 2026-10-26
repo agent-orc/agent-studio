@@ -15,6 +15,7 @@ Everything below was verified against this repository's actual scripts and sourc
 | Git Bash | `bash --version` | Ships with [Git for Windows](https://git-scm.com/download/win). Agents and the repo's own scripts never use PowerShell for these tasks - see [AGENTS.md](../../../AGENTS.md) "Agent shell policy". `api.ps1` exists for manual, human, interactive use only. |
 | .NET SDK 10 | `dotnet --version` -> `10.x` | Backend is `backend/OrchestratorApi.csproj`. |
 | Node.js 22 | `node --version` -> `v22.x` | Pinned in CI ([.github/workflows/release.yml](../../../.github/workflows/release.yml)). A newer LTS will often work but isn't the tested baseline. |
+| Corepack | `corepack --version` | Runs the npm version declared by `frontend/package.json`. |
 | Claude Code CLI | `claude --version` | `npm install -g @anthropic-ai/claude-code`. See "Claude Code login" below - this step has a real gotcha. |
 | Codex / Copilot / Gemini CLI (optional) | - | Only needed if you plan to run tasks through that CLI. Full install + quirks per CLI: [onboard-an-agent-cli.md](./onboard-an-agent-cli.md) (includes the load-bearing **Codex-on-Windows sandbox** setting). |
 
@@ -64,10 +65,14 @@ Edit `appsettings.Local.json` (gitignored, per-checkout) and set at least:
 
 ```sh
 cd ../frontend   # agent-orchestrator/frontend
-npm ci
+corepack npm ci
 ```
 
-Use `npm ci` so the source checkout matches the committed lock file.
+Use `corepack npm ci` so the source checkout matches the committed lock file
+with npm 11.21.1. Generate `frontend/package-lock.json` with
+`corepack npm install` from `frontend/`. Repository automation uses
+`scripts/npm-frontend.sh` to select this version even when the host's default
+`npm` is older.
 
 ### 2.4 Start the backend
 

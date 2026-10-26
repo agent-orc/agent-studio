@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Options;
 
@@ -312,11 +313,16 @@ public static class TaskServerEndpoints
             => await InvokeNullableAsync(() => store.GetTaskHistoryAsync(projectId, taskIdentity, after ?? 0, ct)));
         api.MapPost("/projects/{projectId}/tasks", async (
             HttpContext context, string projectId, CreateTaskRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeAsync(() => store.CreateTaskAsync(projectId, request, Actor(context), ct), StatusCodes.Status201Created))
+            => StudioProductSession.IsProduct(context) && !StudioProductSession.AllowsCreate(request.State)
+                ? StudioProductSession.Denied()
+                : await CreateTaskAsync(context, request.CompatibilityFields,
+                    () => store.CreateTaskAsync(projectId, request, Actor(context), ct)))
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         api.MapPut("/projects/{projectId}/tasks/{taskIdentity}", async (
             HttpContext context, string projectId, string taskIdentity, UpdateTaskRequest request, TaskServerStore store, CancellationToken ct)
-            => await InvokeNullableAsync(() => store.UpdateTaskAsync(projectId, taskIdentity, request, Actor(context), ct)))
+            => await StudioProductSession.AllowsUpdateAsync(context, store, projectId, taskIdentity, request, ct)
+                ? await InvokeNullableAsync(() => store.UpdateTaskAsync(projectId, taskIdentity, request, Actor(context), ct))
+                : StudioProductSession.Denied())
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
         var runners = api.MapGroup("/runners")
@@ -1153,6 +1159,18 @@ public static class TaskServerEndpoints
         fullBackups.MapPost("/{backupId}/restore", async (
             HttpContext context, string backupId, FullBackupManagementService fullBackup, CancellationToken ct)
             => await InvokeAsync(() => fullBackup.RestoreAsync(backupId, Actor(context), ct)));
+    }
+
+    internal static Task<IResult> CreateTaskAsync<T>(
+        HttpContext context, Dictionary<string, JsonElement>? compatibilityFields, Func<Task<T>> create)
+    {
+        if (compatibilityFields?.Keys.Any(key =>
+            string.Equals(key, "epicId", StringComparison.OrdinalIgnoreCase)) == true)
+        {
+            context.Response.Headers["Deprecation"] = "true";
+            context.Response.Headers.Warning = "299 - \"epicId is deprecated and ignored\"";
+        }
+        return InvokeAsync(create, StatusCodes.Status201Created);
     }
 
     internal static string Actor(HttpContext context)

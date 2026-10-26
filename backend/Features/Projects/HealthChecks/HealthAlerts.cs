@@ -38,9 +38,9 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
             }
             else
             {
-                var slug = $"health-{environment.Id}-{incident.StartedAt:yyyyMMddHHmm}";
+                var slug = $"health-{environment.Id}-{incident.StartedAt:yyyyMMddHHmmss}";
                 // A tick that created the card but crashed before saving the id finds it by slug.
-                var cardId = scanner.FindJob(slug, watchPath)?.Id ?? mutations.CreateJob(new CreateTaskRequest
+                var cardId = OpenCard(slug, watchPath)?.Id ?? mutations.CreateJob(new CreateTaskRequest
                 {
                     Id = slug,
                     Title = $"Health incident: {environment.Name} is failing",
@@ -90,17 +90,22 @@ public sealed class HealthAlerts(TaskScannerService scanner, TaskMutationService
     public EnvironmentIncident ReportRecovered(string project, EnvironmentIncident incident,
         IReadOnlyList<HealthIncident> checks)
     {
-        if (incident.RecoveryReported || incident.EndedAt is not { } ended) return incident;
+        if ((incident.RecoveryReported && incident.RecoveryCommentReported != false)
+            || incident.EndedAt is not { } ended) return incident;
         var watchPath = WatchPath(project);
         if (watchPath is null) return incident;
         var duration = Duration(ended - incident.StartedAt);
         var removed = checks.Count > 0 && checks.All(check => check.EndReason == "check-removed");
         var how = removed ? "closed because its failing checks were removed from the declaration" : "recovered";
         var probes = checks.Sum(check => check.FailedProbes);
-        if (Card(project, incident.CardId) is { } card)
-            Comment(card, $"Environment {how} {Stamp(ended)} after {duration}; {probes} failed probes since "
-                + $"{Stamp(incident.StartedAt)}. {string.Join(" ", checks.Select(Ended))}", incident, null, "recovered");
-        var raised = activity.Append(watchPath, new OrchestratorLogEntry
+        if (incident.RecoveryCommentReported != true)
+        {
+            var card = Card(project, incident.CardId);
+            incident = incident with { RecoveryCommentReported = card is null || Comment(card,
+                $"Environment {how} {Stamp(ended)} after {duration}; {probes} failed probes since "
+                + $"{Stamp(incident.StartedAt)}. {string.Join(" ", checks.Select(Ended))}", incident, null, "recovered") };
+        }
+        var raised = incident.RecoveryReported || activity.Append(watchPath, new OrchestratorLogEntry
         {
             Ts = clock.GetUtcNow().UtcDateTime,
             Kind = OrchestratorLogKinds.Observation,

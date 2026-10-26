@@ -1,0 +1,58 @@
+<div class="runners" data-testid="access-runners">
+  @if (access.runnersError(); as message) { <p class="access-error" role="alert" data-testid="access-runners-error">{{ message }}</p> }
+  @if (code(); as value) {
+    <div class="runners__issued" data-testid="access-enrollment-code" role="status">
+      <p>Copy this enrollment code now. It is shown once and works for a single runner.</p>
+      <p class="access-secret">{{ value }}</p>
+      <div class="access-row"><button type="button" class="access-secondary" (click)="code.set(null)">Done</button></div>
+    </div>
+  }
+  <div class="access-row">
+    <label>Runner name
+      <input data-testid="access-enrollment-name" [value]="name()" (input)="name.set($any($event.target).value)" />
+    </label>
+    <label>Identity
+      <select (change)="setKind($any($event.target).value)">
+        <option value="runner" [selected]="kind() === 'runner'">Coding and review</option>
+        <option value="orchestrator" [selected]="kind() === 'orchestrator'">Orchestration engine</option>
+      </select>
+    </label>
+    <button type="button" data-testid="access-enrollment-create" [disabled]="!name().trim() || access.busy()" (click)="create()">Create code</button>
+  </div>
+  @if (access.enrollments().length) {
+    <table data-testid="access-enrollments">
+      <thead><tr><th scope="col">Enrollment</th><th scope="col">Expires</th><th scope="col">Status</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+      <tbody>
+        @for (enrollment of access.enrollments(); track enrollment.id) {
+          <tr>
+            <td>{{ enrollment.name }}</td>
+            <td class="access-numeric">{{ time(enrollment.expiresAt) }}</td>
+            <td><span class="access-badge" [attr.data-tone]="open(enrollment) ? null : 'muted'">{{ status(enrollment) }}</span></td>
+            <td class="access-actions">
+              @if (open(enrollment)) { <button type="button" class="access-quiet" [disabled]="access.busy()" (click)="revokeEnrollment(enrollment)">Revoke code</button> }
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+  <h4>Enrolled runners</h4>
+  <table data-testid="access-enrolled-runners">
+    <thead><tr><th scope="col">Runner</th><th scope="col">Identity</th><th scope="col">Credentials</th><th scope="col">Status</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+    <tbody>
+      @for (runner of access.runners(); track runner.id) {
+        <tr [attr.data-testid]="'access-runner-' + runner.id">
+          <td>{{ runner.name }}</td>
+          <td class="access-hint">{{ runner.id }}</td>
+          <td class="access-numeric">{{ activeCredentials(runner) }}</td>
+          <td><span class="access-badge" [attr.data-tone]="runner.revokedAt ? 'muted' : null">{{ runner.revokedAt ? 'Revoked' : 'Active' }}</span></td>
+          <td class="access-actions">
+            @if (!runner.revokedAt) { <button type="button" class="access-quiet" [disabled]="access.busy()" (click)="revokeRunner(runner)">Revoke runner</button> }
+          </td>
+        </tr>
+      } @empty {
+        <tr><td colspan="5" class="access-hint">No runner is enrolled.</td></tr>
+      }
+    </tbody>
+  </table>
+</div>

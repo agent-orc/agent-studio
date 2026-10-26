@@ -212,9 +212,7 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
                 OldestPendingAttemptId = claimActivity.OldestPendingAttemptId,
                 OldestPendingTaskKey = claimActivity.OldestPendingTaskKey,
                 OldestPendingAttemptCreatedAt = claimActivity.OldestPendingCreatedAt,
-                UnclaimableReason = unclaimable is null
-                    ? null
-                    : AgentStudio.TaskServer.Contracts.ReviewClaimEmptyReasons.UnclaimablePlanRequirements,
+                UnclaimableReason = unclaimable?.Reason,
                 UnclaimableMissingCapabilities = unclaimable?.MissingCapabilities,
                 DrainRatePerMinute = throughput.DrainRatePerMinute,
                 MedianReviewDurationMs = throughput.MedianDurationMs,

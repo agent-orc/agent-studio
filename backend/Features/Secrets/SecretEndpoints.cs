@@ -1,4 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
+using AgentStudio.Diagnostics;
+using AgentStudio.Projects;
+using AgentStudio.Deploy;
 using AgentStudio.Registry;
 
 namespace AgentStudio.Secrets;
@@ -19,6 +22,7 @@ public static class SecretEndpoints
     public static void MapSecretEndpoints(this WebApplication app)
     {
         app.MapGet("/api/secrets", (HttpContext context, ISecretProvider secrets, ISecretStore store,
+            SecretBackendSettings backends, ScopedSecretStore routed,
             IKeyEncryptionKeySource keys, AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry,
             CancellationToken ct) => Run(async () =>
         {
@@ -32,7 +36,39 @@ public static class SecretEndpoints
                 .Where(item => caller.CanSee(SecretScope.TryParse(item.Scope, out var claimed) ? claimed : SecretScope.Workspace))
                 .Select(UnreadableSecretResponse.From).ToList();
             return Results.Ok(new SecretOverviewResponse(store.StoreId, keys.Describe(),
-                caller.CanWrite(SecretScope.Workspace).Allowed, visible, unreadable));
+                caller.CanWrite(SecretScope.Workspace).Allowed, visible, unreadable,
+                backends.All().Where(item => caller.CanSee(SecretScope.Parse(item.Scope))).ToList(),
+                (await routed.HealthAsync(ct)).Where(item => caller.CanSee(SecretScope.Parse(item.Scope))).ToList()));
+        }));
+
+        app.MapPut("/api/secrets/backends", (SecretBackendBinding binding, HttpContext context,
+            SecretBackendSettings backends, SecretAuditLog audit, TimeProvider clock,
+            AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry, CancellationToken ct) => Run(async () =>
+        {
+            var scope = SecretScope.Parse(binding.Scope);
+            // Backend URLs receive installation-held credentials. Only an actor with
+            // workspace-wide write rights may change them, even for a project scope.
+            var actor = Caller.From(context, security, configuration, registry).RequireWrite(SecretScope.Workspace, context);
+            try
+            {
+                await backends.SaveAsync(binding, ct);
+                audit.Append(new SecretAuditEntry
+                {
+                    At = clock.GetUtcNow().UtcDateTime, Action = "backend-select", Actor = actor.ToString(),
+                    Scope = scope.Key, Reference = "secret://" + scope.Key + "/", Outcome = "ok"
+                });
+                return Results.Ok(binding);
+            }
+            catch (Exception ex)
+            {
+                audit.Append(new SecretAuditEntry
+                {
+                    At = clock.GetUtcNow().UtcDateTime, Action = "backend-select", Actor = actor.ToString(),
+                    Scope = scope.Key, Reference = "secret://" + scope.Key + "/",
+                    Outcome = ex is SecretValidationException invalid ? "failed:" + invalid.Code : "failed:error"
+                });
+                throw;
+            }
         }));
 
         app.MapGet("/api/secrets/audit", (string? scope, int? limit, HttpContext context, ISecretProvider secrets,
@@ -53,6 +89,31 @@ public static class SecretEndpoints
             route => SecretScope.ForProject(Route(route, "project")));
         MapScope(app.MapGroup("/api/projects/{project}/environments/{environment}/secrets"),
             route => SecretScope.ForEnvironment(Route(route, "project"), Route(route, "environment")));
+
+        app.MapGet("/api/projects/{project}/secret-bindings/{environment}", async (
+            string project, string environment, HttpContext context, ProjectSecretBindings bindings,
+            AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry, CancellationToken ct) =>
+            await Run(async () =>
+            {
+                Caller.From(context, security, configuration, registry)
+                    .RequireSee(SecretScope.ForEnvironment(project, environment));
+                return Results.Ok(await bindings.CheckAsync(project, environment, ct));
+            }));
+
+        app.MapPut("/api/projects/{project}/secret-bindings/{environment}/{name}", (
+            string project, string environment, string name, BindProjectSecretRequest request, HttpContext context,
+            ProjectSecretBindings bindings, AccessSecurityStore security, IConfiguration configuration, ProjectRegistry registry) =>
+            Run(() =>
+            {
+                var scope = SecretScope.ForEnvironment(project, environment);
+                var caller = Caller.From(context, security, configuration, registry);
+                caller.RequireWrite(scope, context, name);
+                var approver = DeployApprovalAuthority.Resolve(
+                    DeployApprovalAuthority.SignedInUser(context, security), project);
+                var approvedBy = request.Approve && approver.IsApprover ? approver.Id : null;
+                return Task.FromResult<IResult>(Results.Ok(bindings.Bind(project, environment, name,
+                    request.Reference ?? string.Empty, caller.Actor.ToString(), approvedBy)));
+            }));
 
         app.MapPost(ResolvePath, (ResolveSecretRequest request, HttpContext context, AccessSecurityStore security,
             ISecretProvider secrets, ISecretWorkloadLeases leases, SecretAuditLog audit, TimeProvider clock,
@@ -213,6 +274,7 @@ public static class SecretEndpoints
         catch (CallerUnauthenticatedException ex) { return Error(StatusCodes.Status401Unauthorized, "authentication-required", ex.Message); }
         catch (SecretValidationException ex) { return Error(StatusCodes.Status400BadRequest, ex.Code, ex.Message); }
         catch (SecretKeyUnavailableException ex) { return Error(StatusCodes.Status503ServiceUnavailable, "secret-key-unavailable", ex.Message); }
+        catch (SecretBackendException ex) { return Error(StatusCodes.Status503ServiceUnavailable, ex.Code, ex.Message); }
         catch (SecretIntegrityException) { return Error(StatusCodes.Status500InternalServerError, "secret-integrity-failed", "A stored secret failed its integrity check."); }
     }
 
@@ -233,12 +295,17 @@ public static class SecretEndpoints
     {
         private readonly StudioUser? _user;
         private readonly ProjectRegistry _registry;
+        private readonly RequestAccess? _access;
+        private readonly ProjectEnvironmentService? _environments;
 
-        private Caller(SecretActor actor, StudioUser? user, ProjectRegistry registry)
+        private Caller(SecretActor actor, StudioUser? user, ProjectRegistry registry,
+            RequestAccess? access, ProjectEnvironmentService? environments)
         {
             Actor = actor;
             _user = user;
             _registry = registry;
+            _access = access;
+            _environments = environments;
         }
 
         public SecretActor Actor { get; }
@@ -249,17 +316,20 @@ public static class SecretEndpoints
         {
             if (SecurityProfiles.IsPublicDemo(configuration))
                 throw new SecretAccessDeniedException("public-demo-denied", "Secrets are not available in the public demo.");
-            var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal
-                        ?? security.AuthenticateSession(
-                            context.Request.Cookies[AccessSecurityStore.SessionCookieName]
-                            ?? context.Request.Cookies[AccessSecurityStore.InsecureSessionCookieName], touch: false);
-            if (human is not null) return new Caller(SecretActor.Human(human.User.Username), human.User, registry);
-            if (SecurityProfiles.IsLocal(configuration)) return new Caller(SecretActor.Human(LocalOperator), null, registry);
+            var access = context.Items[AccessSecurityMiddleware.RequestAccessItem] as RequestAccess;
+            var environments = context.RequestServices.GetService<ProjectEnvironmentService>();
+            if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account)
+                return new Caller(SecretActor.ServiceAccount(account.AccountId), null, registry, access, environments);
+            var human = AccessSecurityEndpoints.FindHuman(context, security, touch: false);
+            if (human is not null) return new Caller(SecretActor.Human(human.User.Username), human.User, registry, access, environments);
+            if (SecurityProfiles.IsLocal(configuration)) return new Caller(SecretActor.Human(LocalOperator), null, registry, null, environments);
             throw new CallerUnauthenticatedException();
         }
 
         public bool CanSee(SecretScope scope)
-            => SecretManagementPolicy.CanSeeMetadata(scope, Unrestricted, Member);
+            => _access is not null
+                ? _access.Allows(IamPermissions.SecretsRead, Target(scope))
+                : SecretManagementPolicy.CanSeeMetadata(scope, Unrestricted, Member);
 
         public void RequireSee(SecretScope scope)
         {
@@ -268,7 +338,28 @@ public static class SecretEndpoints
         }
 
         public SecretAccessDecision CanWrite(SecretScope scope)
-            => SecretManagementPolicy.CanWrite(Role, Unrestricted, scope, scope.Project is not null && Member(scope.Project));
+            => _access is not null
+                ? _access.Allows(IamPermissions.SecretsWrite, Target(scope))
+                    ? SecretAccessDecision.Allow
+                    : SecretAccessDecision.Deny("project-scope-denied", "This account cannot write secrets in this scope.")
+                : SecretManagementPolicy.CanWrite(Role, Unrestricted, scope, scope.Project is not null && Member(scope.Project));
+
+        private PermissionTarget Target(SecretScope scope) => scope.Kind == SecretScopeKind.Workspace
+            ? PermissionTarget.WorkspaceWide
+            : PermissionTarget.ForProject(scope.Project, EnvironmentKey(scope));
+
+        private string? EnvironmentKey(SecretScope scope)
+        {
+            if (scope.Kind != SecretScopeKind.Environment || _environments is null) return null;
+            try { return IamEnvironments.ForDeclaration(_environments.Declarations(scope.Project!), scope.Environment); }
+            catch (Exception exception) when (exception is System.Text.Json.JsonException or IOException
+                                              or UnauthorizedAccessException or KeyNotFoundException
+                                              or InvalidOperationException or FormatException)
+            {
+                SilentCatch.Note(exception, "SecretEndpoints: environment declaration unreadable");
+                return null;
+            }
+        }
 
         /// <summary>A refused write never reaches the provider, so it is audited here.</summary>
         public SecretActor RequireWrite(SecretScope scope, HttpContext context, string? name = null, int? version = null)

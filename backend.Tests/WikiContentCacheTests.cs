@@ -42,6 +42,127 @@ public sealed class WikiContentCacheTests : IDisposable
     }
 
     [Fact]
+    public void Wiki_file_read_refuses_delivered_symlink_outside_docs()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var outside = Path.Combine(Path.GetTempPath(), "wiki-outside-" + Guid.NewGuid().ToString("N") + ".md");
+        File.WriteAllText(outside, "private content");
+        try
+        {
+            File.CreateSymbolicLink(Path.Combine(_root, "docs", "leak.md"), outside);
+            File.CreateSymbolicLink(Path.Combine(_root, "docs", "leak.png"), outside);
+            var security = Path.Combine(_root, "docs", "operations", "security");
+            Directory.CreateDirectory(security);
+            File.CreateSymbolicLink(Path.Combine(security, "leak.md"), outside);
+            Assert.Null(_docs.ReadWikiFile(ProjectName, "leak.md"));
+            Assert.Null(_docs.ReadWikiAsset(ProjectName, "leak.png"));
+            Assert.Null(_docs.ReadSecurityFile(ProjectName, "leak.md"));
+        }
+        finally
+        {
+            File.Delete(outside);
+        }
+    }
+
+    [Fact]
+    public void Wiki_mutations_refuse_delivered_directory_symlink()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var outside = Directory.CreateDirectory(Path.Combine(
+            Path.GetTempPath(), "wiki-write-outside-" + Guid.NewGuid().ToString("N"))).FullName;
+        var outsidePage = Path.Combine(outside, "page.md");
+        File.WriteAllText(outsidePage, "# Outside\n");
+        try
+        {
+            Directory.CreateSymbolicLink(Path.Combine(_root, "docs", "linked"), outside);
+
+            Assert.False(_docs.WriteWikiFile(ProjectName, "linked/page.md", "changed").Success);
+            Assert.False(_docs.SetWikiClassificationStatus(
+                ProjectName, "linked/page.md", "archived", new WikiCompanionStore()).Success);
+            Assert.False(_docs.CreateWikiPage(ProjectName, "linked/new.md", "new").Success);
+            Assert.Null(_docs.ResolveWikiNodeFullPath(ProjectName, "linked/page.md"));
+            Assert.Equal("# Outside\n", File.ReadAllText(outsidePage));
+            Assert.False(File.Exists(outsidePage + ".meta.json"));
+            Assert.False(File.Exists(Path.Combine(outside, "new.md")));
+        }
+        finally
+        {
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Security_writes_refuse_delivered_file_and_directory_links()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var outside = Directory.CreateDirectory(Path.Combine(
+            Path.GetTempPath(), "security-write-outside-" + Guid.NewGuid().ToString("N"))).FullName;
+        var outsideFile = Path.Combine(outside, "settings.json");
+        File.WriteAllText(outsideFile, "private content");
+        try
+        {
+            var security = Directory.CreateDirectory(Path.Combine(
+                _root, "docs", "operations", "security")).FullName;
+            File.CreateSymbolicLink(Path.Combine(security, "notes.md"), outsideFile);
+            File.CreateSymbolicLink(Path.Combine(security, "state.json"), outsideFile);
+            Directory.CreateSymbolicLink(Path.Combine(security, "linked"), outside);
+
+            Assert.False(_docs.WriteSecurityFile(ProjectName, "notes.md", "changed"));
+            Assert.False(_docs.WriteSecurityFile(ProjectName, "linked/new.md", "changed"));
+            Assert.False(_docs.WriteSecurityMeta(ProjectName, new SecurityMeta(null, null, "changed")));
+            Assert.Equal("private content", File.ReadAllText(outsideFile));
+            Assert.False(File.Exists(Path.Combine(outside, "new.md")));
+        }
+        finally
+        {
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Wiki_classification_refuses_delivered_companion_symlink()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var outside = Path.Combine(Path.GetTempPath(),
+            "wiki-companion-outside-" + Guid.NewGuid().ToString("N") + ".json");
+        File.WriteAllText(outside, "private content");
+        try
+        {
+            var companion = Path.Combine(_root, "docs", "guide", "start.md.meta.json");
+            File.CreateSymbolicLink(companion, outside);
+
+            Assert.False(_docs.SetWikiClassificationStatus(
+                ProjectName, "guide/start.md", "archived", new WikiCompanionStore()).Success);
+            Assert.Equal("private content", File.ReadAllText(outside));
+        }
+        finally
+        {
+            File.Delete(outside);
+        }
+    }
+
+    [Fact]
+    public void Wiki_order_refuses_delivered_config_directory_symlink()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var outside = Directory.CreateDirectory(Path.Combine(
+            Path.GetTempPath(), "wiki-order-outside-" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            var app = Directory.CreateDirectory(Path.Combine(_root, "docs", "app")).FullName;
+            Directory.CreateSymbolicLink(Path.Combine(app, "config"), outside);
+
+            Assert.False(_docs.SetWikiFolderOrder(ProjectName, "", ["guide"]).Success);
+            Assert.False(_docs.SetWikiFileOrder(ProjectName, "guide", ["start.md"]).Success);
+            Assert.False(File.Exists(Path.Combine(outside, "wiki-order.json")));
+        }
+        finally
+        {
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Preload_FillsOnce_AndAllWikiReadersShareTheSnapshot()
     {
         Assert.True(_cache.Preload(ProjectName));

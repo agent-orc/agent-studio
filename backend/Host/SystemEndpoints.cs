@@ -250,13 +250,28 @@ public static class SystemEndpoints
             return Results.Ok();
         });
 
-        app.MapGet("/healthz", (HttpContext context, PublishedArtifactSha published) =>
+        app.MapGet("/healthz", (HttpContext context, PublishedArtifactSha published,
+            IConfiguration configuration, AgentStudio.Security.NetworkedLoginAddressHealth loginAddressHealth) =>
         {
             var identity = ReadBuildIdentity();
             context.Response.Headers["X-Agent-Studio-Tag"] = identity.Tag;
             if (published.Value is not null)
                 context.Response.Headers["X-Agent-Studio-Commit"] = published.Value;
-            return Results.Ok("ok");
+            IResult result = AgentStudio.Security.SecurityProfiles.IsNetworked(configuration) && !loginAddressHealth.Healthy
+                ? Results.Problem("A login resolved to a trusted proxy or private address.", statusCode: 503)
+                : Results.Ok("ok");
+            return result;
+        });
+
+        // Docker probes the loopback listener so a private login diagnostic does
+        // not hold the dependent frontend and edge containers unhealthy.
+        app.MapGet("/healthz/container", (HttpContext context) =>
+        {
+            IResult result = System.Net.IPAddress.IsLoopback(
+                context.Connection.RemoteIpAddress ?? System.Net.IPAddress.None)
+                ? Results.Ok("ok")
+                : Results.NotFound();
+            return result;
         });
 
         // External stable-process watchdogs consult this immediately before a

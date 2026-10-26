@@ -1,0 +1,71 @@
+@use '../../token-analysis' as ta;
+
+:host { display: block; min-width: 0; }
+.kb { @include ta.panel; }
+.kb__head { @include ta.panel-head; }
+.kb__legend { @include ta.legend; }
+.kb__swatch { @include ta.swatch; }
+
+.kb__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kb__row {
+  display: grid;
+  grid-template-columns: minmax(64px, 96px) minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: var(--studio-spacing-2);
+  border-radius: 4px;
+}
+
+.kb__row--selected { background: var(--studio-bg-selected); }
+
+.kb__label {
+  overflow: hidden;
+  padding: var(--studio-spacing-1);
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--studio-fg);
+  font: inherit;
+  font-size: 0.74rem;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.kb__label:hover { background: var(--studio-bg-hover); }
+.kb__label:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 1px; }
+.kb__track { display: block; min-width: 0; }
+
+.kb__stack {
+  display: flex;
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- 2px surface gap between chart fills */
+  gap: 2px;
+  /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- bar thickness, not spacing */
+  height: 14px;
+  min-width: 2px;
+}
+
+.kb__segment {
+  flex-basis: 0;
+  min-width: 2px;
+  height: 100%;
+}
+
+.kb__segment:first-child { border-radius: 4px 0 0 4px; }
+.kb__segment:last-child { border-radius: 0 4px 4px 0; }
+.kb__segment:only-child { border-radius: 4px; }
+
+.kb__total {
+  @include ta.numeric;
+  color: var(--studio-fg-dim);
+  font-size: 0.72rem;
+  text-align: right;
+}

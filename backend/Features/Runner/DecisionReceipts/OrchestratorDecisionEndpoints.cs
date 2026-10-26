@@ -246,6 +246,10 @@ public static class OrchestratorDecisionEndpoints
     {
         var receipt = AuthorizedReceipt(context, receiptId, store, projects);
         if (receipt is null) return Results.NotFound();
+        if (receipt.Scope.ProjectId is { } receiptProject
+            && !ProjectAccessAuthorization.AllowsTasks(context, [receiptProject],
+                IamPermissions.ProjectRunsOperate, projects))
+            return Results.NotFound();
         // AGT-3147: a pending remote decision Stop can be lost on lease release
         // or takeover. Keep the action unavailable until every attempt exit
         // applies the card hold before another claim can begin.

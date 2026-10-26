@@ -168,6 +168,8 @@ public static class TaskIntegrationRecordAppendPolicy
             return new(false, false, "A request body is required.");
 
         var id = request.Id.Trim();
+        if (id.StartsWith("operator-candidate-", StringComparison.Ordinal))
+            return new(false, false, "The operator-candidate- record ID prefix is reserved.");
         if (id.Length is < 3 or > 96 || !IsRecordId(id))
             return new(false, false, "id must be 3-96 lowercase letters, digits, or hyphens.");
 
@@ -247,8 +249,12 @@ internal static class TaskIntegrationRecordAddressResolver
         TaskScannerService scanner,
         string address,
         string? watchPath)
+        => Resolve(scanner.ScanAllJobsRaw(), address, watchPath);
+
+    public static TaskIntegrationRecordAddressResolution Resolve(
+        IEnumerable<TaskInfo> snapshot, string address, string? watchPath)
     {
-        var candidates = scanner.ScanAllJobsRaw()
+        var candidates = snapshot
             .Where(task => string.IsNullOrWhiteSpace(watchPath)
                 || WatchPathComparison.PathsEqual(task.WatchPath, watchPath))
             .ToList();

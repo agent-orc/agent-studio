@@ -7,7 +7,9 @@ using System.Text.Json;
 using AgentStudio.OrchestrationDecisions;
 using AgentStudio.Runner;
 using AgentStudio.Security;
+using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -29,6 +31,83 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
 {
     private readonly string _workspace = Path.Combine(Path.GetTempPath(),
         "monolith-orchestration-endpoints-" + Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task Operator_move_supersedes_open_review_occurrence_and_clears_claim_wait()
+    {
+        const string project = "agent-runner-01";
+        const string card = "AGT-REVIEW-FIX-ROUND";
+        var projectPath = Path.Combine(_workspace, "projects", project);
+        foreach (var state in TaskStates.All)
+            Directory.CreateDirectory(Path.Combine(projectPath, state));
+        var cardFolder = Path.Combine(projectPath, TaskStates.AutoReview, card);
+        Directory.CreateDirectory(cardFolder);
+        File.WriteAllText(Path.Combine(cardFolder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = card, title = "Review fix round", state = TaskStates.AutoReview,
+            order = 1, agent = "codex", kind = TaskKinds.Task,
+        }));
+        File.WriteAllText(Path.Combine(cardFolder, "prompt.md"), "Fix review findings.");
+        File.WriteAllText(Path.Combine(cardFolder, "status.md"), "Review result.");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 21, 0, 45, 0, TimeSpan.Zero));
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["WatchPaths:0:Name"] = project,
+                    ["WatchPaths:0:Path"] = projectPath,
+                    ["WatchPaths:0:RootPath"] = projectPath,
+                    ["WatchPaths:0:RepositoryPath"] = projectPath,
+                    ["DeliveryChain:Guarded"] = "false",
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(clock);
+            });
+        });
+        using var client = factory.CreateClient();
+        var store = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var run = store.Create(project, card, OrchestrationStage.ReviewDecision,
+            "{\"reviewOutcome\":\"Pass\"}", "review:fix-round", TaskStates.AutoReview,
+            "review_attempt", 3, 4);
+        EngineDecisionWaitMarker.Write(cardFolder, run.RunId);
+        var claim = store.Claim(new("engine_one", "instance_one",
+            [OrchestrationStage.ReviewDecision]));
+        await Assert.ThrowsAsync<InvalidDataException>(() => store.CompleteAsync(run.RunId,
+            new("engine_one", "instance_one", claim.Lease!.LeaseId, claim.Lease.Fence,
+                OrchestrationStage.ReviewDecision, OrchestrationAction.Continue,
+                "{\"decision\":\"DegradeWithFollowUp\"}", "bad-review-receipt"), default));
+        Assert.Equal("applying", store.Get(run.RunId)!.Status);
+        scanner.InvalidateCache();
+        Assert.True(scanner.FindJob(card, projectPath)!.WaitingForEngineDecision);
+
+        var moved = await factory.Services.GetRequiredService<TaskTransitionService>()
+            .MoveAsync(card, TaskStates.Ready, projectPath, cause: "human:operator",
+                reason: "Operator requested a fix round.");
+
+        Assert.Equal(MoveJobStatus.Success, moved.Status);
+        Assert.Equal("cancelled", store.Get(run.RunId)!.Status);
+        Assert.Equal("empty", store.Claim(new("engine_one", "instance_one",
+            [OrchestrationStage.ReviewDecision])).Status);
+        var ready = scanner.FindJob(card, projectPath)!;
+        Assert.Equal(TaskStates.Ready, ready.State);
+        Assert.False(ready.WaitingForEngineDecision);
+        Assert.Null(EngineDecisionWaitMarker.Read(ready.FolderPath));
+        var audit = Assert.Single(factory.Services.GetRequiredService<TimelineLog>()
+            .ReadAll(ready.FolderPath), entry => entry.Kind == TimelineEventKinds.OrchestrationDecisionSuperseded);
+        Assert.Equal(run.RunId, audit.Details!["orchestrationRunId"]);
+        Assert.Equal(TaskStates.Ready, audit.Details["observedState"]);
+        Assert.Equal("cancelled", new MonolithOrchestrationStore(
+            Path.Combine(_workspace, ".orchestration-occurrences"), clock,
+            factory.Services.GetRequiredService<IMonolithOrchestrationApplier>())
+            .Get(run.RunId)!.Status);
+    }
 
     [Fact]
     public async Task Scoped_engine_client_negotiates_claims_and_applies_a_review_decision_once()
@@ -99,11 +178,12 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, true)]
     public async Task Engine_switch_holds_coding_and_review_reports_until_each_decision_is_applied(
-        bool acceptReview, bool rejectSettlement)
+        bool acceptReview, bool rejectSettlement, bool inconclusive)
     {
         const string project = "agent-runner-01";
         const string card = "AGT-ENGINE-HANDOFF";
@@ -121,6 +201,7 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
         {
             id = card, title = "Engine handoff", state = TaskStates.Progress,
             order = 1, agent = "claude", kind = TaskKinds.Task,
+            requiresIntegration = inconclusive,
         }));
         File.WriteAllText(Path.Combine(cardFolder, "prompt.md"), "Build and verify.");
         File.WriteAllText(Path.Combine(cardFolder, "status.md"), "Result: pending.");
@@ -140,7 +221,7 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
                     ["Runner:RunLiveness:Enabled"] = "false",
                     ["Runner:ReviewInfrastructureRetry:Enabled"] = "false",
                     ["Supervisor:StuckResumeWindowMinutes"] = "0",
-                    ["DeliveryChain:Guarded"] = "false",
+                    ["DeliveryChain:Guarded"] = inconclusive ? "true" : "false",
                     ["Orchestration:Transitions:CodingCompletion"] = "Engine",
                     ["Orchestration:Transitions:ReviewReport"] = "Engine",
                 }));
@@ -217,7 +298,8 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
             HostId: reviewLease.HostId, AttemptId: reviewLease.AttemptId,
             LibraryStep: command.LibraryStep)).ToArray();
         var report = new ReviewReportRequest(reviewRunnerId, reviewInstance,
-            reviewLease.LeaseId, reviewLease.Fence, "engine-review-report", "Pass", null,
+            reviewLease.LeaseId, reviewLease.Fence, "engine-review-report",
+            inconclusive ? "Inconclusive" : "Pass", null,
             "Code quality found an actionable concern.",
             new ReviewWorkspaceProofDto(subject.RepositoryId, resultSha, resultSha,
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", false, false,
@@ -248,9 +330,10 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
         var reported = await review.ReportReviewAsync(reviewClaim.Attempt!.AttemptId,
             report, CancellationToken.None);
         Assert.Equal(TaskStates.AutoReview, reported.TaskState);
-        Assert.Contains(ReviewRoundBudgetStore.Read(
-                Path.Combine(projectPath, TaskStates.AutoReview, card)).Rounds,
-            round => round.AttemptId == reviewClaim.Attempt.AttemptId);
+        if (!inconclusive)
+            Assert.Contains(ReviewRoundBudgetStore.Read(
+                    Path.Combine(projectPath, TaskStates.AutoReview, card)).Rounds,
+                round => round.AttemptId == reviewClaim.Attempt.AttemptId);
         var pending = Assert.Single(store.List(project, "pending"));
         Assert.NotEqual(codingRun.RunId, pending.RunId);
         EngineDecisionWaitMarker.Clear(Path.Combine(projectPath, TaskStates.AutoReview, card), pending.RunId);
@@ -270,6 +353,29 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
             new ContinuationBase(subject.ResultRef, resultSha, reviewClaim.Attempt.AttemptId));
         var reviewStage = await fakeEngine.Claim();
         Assert.Equal(pending.RunId, reviewStage.Run!.RunId);
+        if (inconclusive)
+        {
+            var guardedFolder = Path.Combine(projectPath, TaskStates.AutoReview, card);
+            var statusPath = Path.Combine(guardedFolder, "status.md");
+            var scaffold = "<!-- agent-studio:result-scaffold -->\n# Status\n\n- Result: Inconclusive\n";
+            File.WriteAllText(statusPath, scaffold);
+            var outcomeJson = JsonSerializer.Serialize(new { transition = reviewDecision });
+            var guardProbe = new CompleteOrchestrationStageRequest(engine.Runner.Id, "instance",
+                reviewStage.Lease!.LeaseId, reviewStage.Lease.Fence,
+                OrchestrationStage.ReviewDecision, OrchestrationAction.Continue,
+                outcomeJson, "guard-probe");
+            var guardedOccurrence = store.GetOccurrence(pending.RunId)! with { Profile = "GuardProbe" };
+            await Assert.ThrowsAsync<OrchestrationApplicationRefusedException>(() =>
+                factory.Services.GetRequiredService<IMonolithOrchestrationApplier>()
+                    .ApplyAsync(guardedOccurrence, guardProbe, CancellationToken.None));
+            Assert.Equal(scaffold, File.ReadAllText(statusPath));
+            Assert.False(File.Exists(Path.Combine(guardedFolder, ResultVersionStore.CurrentMetadataPath)));
+            Assert.False(Directory.Exists(Path.Combine(guardedFolder, "results", "history")));
+            Assert.Equal(TaskStates.AutoReview, factory.Services.GetRequiredService<TaskScannerService>()
+                .FindJob(card, projectPath)!.State);
+            Assert.Equal(LifecyclePhases.Integrating, factory.Services.GetRequiredService<TaskScannerService>()
+                .FindJob(card, projectPath)!.Phase);
+        }
         Assert.Equal("completed", (await fakeEngine.Complete(reviewStage,
             acceptReview ? OrchestrationAction.Continue : OrchestrationAction.Reissue,
             JsonSerializer.Serialize(new { transition = reviewDecision }))).Status);
@@ -277,10 +383,28 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
             acceptReview ? TaskStates.HumanReview : TaskStates.Ready, card);
         Assert.True(Directory.Exists(destination));
         Assert.Null(EngineDecisionWaitMarker.Read(destination));
+        if (inconclusive)
+        {
+            var statusPath = Path.Combine(destination, "status.md");
+            var metadataPath = Path.Combine(destination, ResultVersionStore.CurrentMetadataPath);
+            var status = File.ReadAllBytes(statusPath);
+            var metadata = File.ReadAllBytes(metadataPath);
+            var history = Directory.EnumerateFiles(Path.Combine(destination, "results", "history"),
+                "status.md", SearchOption.AllDirectories).ToArray();
+            Assert.Single(history);
+            await store.RecoverApplyingAsync(CancellationToken.None);
+            factory.Services.GetServices<IHostedService>()
+                .OfType<MonolithOrchestrationRecoveryService>().Single().RecoverOnce();
+            Assert.Equal(status, File.ReadAllBytes(statusPath));
+            Assert.Equal(metadata, File.ReadAllBytes(metadataPath));
+            Assert.Equal(history, Directory.EnumerateFiles(Path.Combine(destination, "results", "history"),
+                "status.md", SearchOption.AllDirectories).ToArray());
+        }
         if (acceptReview)
         {
             Assert.Contains(ReviewDecisionLog.ReadAll(_workspace, project), record =>
-                record.JobId == card && record.Kind == ReviewDecisionKind.AcceptAsDone
+                record.JobId == card && record.Kind == (inconclusive
+                    ? ReviewDecisionKind.Escalate : ReviewDecisionKind.AcceptAsDone)
                 && record.FailureKind == $"remote-review-park:{reviewClaim.Attempt.AttemptId}");
         }
         else
@@ -326,6 +450,7 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
                 }));
             builder.ConfigureTestServices(services =>
             {
+                services.RemoveAll<IHostedService>();
                 services.RemoveAll<TimeProvider>();
                 services.AddSingleton<TimeProvider>(clock);
             });
@@ -340,8 +465,8 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
             store.CancelUnactivated(prepared.RunId, "review-settlement-rejected");
         clock.Advance(TimeSpan.FromSeconds(31));
 
-        factory.Services.GetServices<IHostedService>()
-            .OfType<MonolithOrchestrationRecoveryService>().Single().RecoverOnce();
+        ActivatorUtilities.CreateInstance<MonolithOrchestrationRecoveryService>(factory.Services)
+            .RecoverOnce();
 
         Assert.Equal("cancelled", store.Get(prepared.RunId)!.Status);
         Assert.Null(EngineDecisionWaitMarker.Read(cardFolder));
@@ -403,6 +528,74 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
         Assert.Equal(scans, index.Misses);
     }
 
+    [Fact]
+    public async Task Refused_application_alerts_once_and_idle_recovery_leaves_card_files_unchanged()
+    {
+        const string project = "agent-runner-01";
+        const string card = "AGT-REFUSED-APPLICATION";
+        var projectPath = Path.Combine(_workspace, "projects", project);
+        var folder = Path.Combine(projectPath, TaskStates.AutoReview, card);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = card, title = "Refused decision", state = TaskStates.AutoReview,
+            order = 1, agent = "codex", kind = TaskKinds.Task,
+        }));
+        File.WriteAllText(Path.Combine(folder, "prompt.md"), "Review the delivery.");
+        var statusPath = Path.Combine(folder, "status.md");
+        File.WriteAllText(statusPath, "<!-- agent-studio:result-scaffold -->\n# Status\n");
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Test");
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["TaskRepository"] = _workspace,
+                    ["WatchPaths:0:Name"] = project,
+                    ["WatchPaths:0:Path"] = projectPath,
+                    ["WatchPaths:0:RootPath"] = projectPath,
+                    ["WatchPaths:0:RepositoryPath"] = projectPath,
+                }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IHostedService>();
+                services.RemoveAll<IMonolithOrchestrationApplier>();
+                services.AddSingleton<IMonolithOrchestrationApplier>(
+                    new RefusingApplier("IntegrationFailed integration-pending"));
+            });
+        });
+        using var client = factory.CreateClient();
+        var store = factory.Services.GetRequiredService<MonolithOrchestrationStore>();
+        var run = store.Create(project, card, OrchestrationStage.ReviewDecision,
+            "{\"reviewOutcome\":\"Inconclusive\"}", "refused-review", TaskStates.AutoReview,
+            "review-attempt", 1, 1, profile: "ReviewReport");
+        EngineDecisionWaitMarker.Write(folder, run.RunId);
+        var claim = store.Claim(new("engine", "instance", [OrchestrationStage.ReviewDecision]));
+        var completion = new CompleteOrchestrationStageRequest("engine", "instance",
+            claim.Lease!.LeaseId, claim.Lease.Fence, OrchestrationStage.ReviewDecision,
+            OrchestrationAction.Continue, "{}", "refused-completion");
+        Assert.Equal("failed", (await store.CompleteAsync(run.RunId, completion, default)).Status);
+        var recovery = ActivatorUtilities.CreateInstance<MonolithOrchestrationRecoveryService>(factory.Services);
+        recovery.AlertFailedApplications();
+        var fileSnapshot = Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
+            .ToDictionary(path => Path.GetRelativePath(folder, path), File.ReadAllBytes);
+        recovery.AlertFailedApplications();
+        recovery.RecoverOnce();
+        await store.RecoverApplyingAsync(default);
+        Assert.Equal("failed", (await store.CompleteAsync(run.RunId, completion, default)).Status);
+
+        Assert.Null(EngineDecisionWaitMarker.Read(folder));
+        Assert.Equal(fileSnapshot.Keys.Order(), Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(folder, path)).Order());
+        foreach (var (path, bytes) in fileSnapshot)
+            Assert.Equal(bytes, File.ReadAllBytes(Path.Combine(folder, path)));
+        Assert.False(File.Exists(Path.Combine(folder, ResultVersionStore.CurrentMetadataPath)));
+        Assert.False(Directory.Exists(Path.Combine(folder, "results", "history")));
+        var alerts = factory.Services.GetRequiredService<OrchestratorLog>().Read(projectPath)
+            .Where(entry => entry.Topic == "engine-decision-application-refused:" + run.RunId).ToArray();
+        Assert.Contains("IntegrationFailed integration-pending", Assert.Single(alerts).Reasoning);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_workspace)) Directory.Delete(_workspace, recursive: true);
@@ -440,5 +633,12 @@ public sealed class MonolithOrchestrationEndpointTests : IDisposable
             Count++;
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class RefusingApplier(string reason) : IMonolithOrchestrationApplier
+    {
+        public Task ApplyAsync(MonolithOrchestrationOccurrence occurrence,
+            CompleteOrchestrationStageRequest completion, CancellationToken ct)
+            => throw new OrchestrationApplicationRefusedException(reason);
     }
 }

@@ -100,7 +100,8 @@ public sealed class SummaryGenerationService
     public async Task<ResultFinalizationOutcome> FinalizeAsync(
         TaskInfo info,
         TerminalRunOutcome? runOutcome = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? resultSha = null)
     {
         var maxAttempts = Math.Clamp(
             _configuration.GetValue(
@@ -113,7 +114,7 @@ public sealed class SummaryGenerationService
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             attempts = attempt;
-            await GenerateAsync(info, runOutcome, ct);
+            await GenerateAsync(info, runOutcome, ct, resultSha);
             var state = GetState(info.TaskKey);
             var statusPath = Path.Combine(info.FolderPath, "status.md");
             var statusMarkdown = File.Exists(statusPath)
@@ -173,7 +174,8 @@ public sealed class SummaryGenerationService
             error);
     }
 
-    public async Task GenerateAsync(TaskInfo info, TerminalRunOutcome? runOutcome, CancellationToken ct = default)
+    public async Task GenerateAsync(TaskInfo info, TerminalRunOutcome? runOutcome,
+        CancellationToken ct = default, string? resultSha = null)
     {
         var key = info.TaskKey;
         var runIndex = _fileGenerationIndex?.CurrentRunIndex(info.FolderPath);
@@ -242,6 +244,8 @@ public sealed class SummaryGenerationService
             }
 
             summary = ApplyProtocolImageReferences(summary, rawLog, info.FolderPath, out var appendedImageCount);
+            summary = AppendImmutableResultSha(
+                summary, resultSha ?? ReviewSubjectStore.Read(info.FolderPath)?.ResultSha);
             if (appendedImageCount > 0)
             {
                 _logger.LogInformation("Summary protocol image references appended for {JobId}: {ImageCount} references",
@@ -571,10 +575,11 @@ public sealed class SummaryGenerationService
         // Feed the prompt via stdin instead of a positional `-p <prompt>`
         // argument. See OneShot service for the production path; this
         // fallback is for tests that build the service without DI.
+        using var workspace = new HostOneShotIsolation.Workspace();
         var psi = new ProcessStartInfo
         {
             FileName = GenericCliExecutionService.ResolveExecutable(claudePath),
-            WorkingDirectory = Directory.Exists(workingDirectory) ? workingDirectory : Directory.GetCurrentDirectory(),
+            WorkingDirectory = workspace.Path,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -584,17 +589,18 @@ public sealed class SummaryGenerationService
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8
         };
-        foreach (var arg in AdHocClaudeInvoker.BuildArgs(model)) psi.ArgumentList.Add(arg);
+        var isolated = !SecurityProfiles.IsLocal(_configuration);
+        foreach (var arg in AdHocClaudeInvoker.BuildArgs(model, isolated)) psi.ArgumentList.Add(arg);
 
         try
         {
-            using var p = Process.Start(psi);
+            using var p = HostCliSpawnGuard.Start(psi, !SecurityProfiles.IsLocal(_configuration), CliTypes.Claude);
             if (p == null) return SummaryModelResult.Failure(model, "Process.Start returned null", startedAt, DateTime.UtcNow, sw.ElapsedMilliseconds);
 
             // Write the prompt up front, then close stdin so Claude can finalise
             // the request. WriteAsync is awaited so the OS pipe buffer can drain
             // before we move on to reading stdout.
-            await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
+            await p.StandardInput.WriteAsync(AdHocClaudeInvoker.PreparePrompt(prompt, isolated).AsMemory(), ct);
             p.StandardInput.Close();
 
             var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);
@@ -709,6 +715,15 @@ public sealed class SummaryGenerationService
         {
             _logger.LogWarning(ex, "Failed to validate status.md image references for {JobId}", info.Id);
         }
+    }
+
+    /// <summary>Records the immutable delivery identity on the card's Result document.</summary>
+    public static string AppendImmutableResultSha(string markdown, string? resultSha)
+    {
+        if (!ReviewSubjectStore.IsValidResultSha(resultSha)) return markdown;
+        var line = $"- Immutable result SHA: `{resultSha}`";
+        if (markdown.Contains(line, StringComparison.Ordinal)) return markdown;
+        return markdown.TrimEnd('\r', '\n') + "\n\n" + line + "\n";
     }
 
     public static string ApplyOutcomeResultLine(string markdown, string protocolResult)

@@ -34,10 +34,11 @@ export class AppearanceSettingsComponent {
   private readonly panelState = inject(StudioPanelStateService);
   readonly uiPrefs = inject(UiPreferencesService);
 
-  readonly theme = this.themeService.theme;
+  readonly theme = this.themeService.preference;
   readonly activityBarSide = this.panelState.activityBarSide;
 
-  readonly themeOptions: readonly SegmentedOption<'dark' | 'light'>[] = [
+  readonly themeOptions: readonly SegmentedOption<'system' | 'dark' | 'light'>[] = [
+    { value: 'system', label: 'System', testid: 'settings-theme-system' },
     { value: 'dark', label: 'Dark', testid: 'settings-theme-dark' },
     { value: 'light', label: 'Light', testid: 'settings-theme-light' },
   ];
@@ -54,7 +55,7 @@ export class AppearanceSettingsComponent {
     { value: 'closed', label: 'Keep closed', testid: 'settings-project-chat-entry-closed' },
   ];
 
-  setTheme(value: 'dark' | 'light'): void {
+  setTheme(value: 'system' | 'dark' | 'light'): void {
     this.themeService.set(value);
   }
 

@@ -74,7 +74,7 @@ public sealed class ProjectUrlPreviewProxyTests
             await result.ExecuteAsync(context);
 
             Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-            Assert.Equal("sandbox allow-scripts; form-action 'none'",
+            Assert.Equal("sandbox allow-scripts; form-action 'none'; frame-ancestors 'self'",
                 context.Response.Headers.ContentSecurityPolicy.ToString());
             Assert.DoesNotContain("allow-same-origin", context.Response.Headers.ContentSecurityPolicy.ToString());
         }

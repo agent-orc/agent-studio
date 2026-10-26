@@ -221,7 +221,27 @@ public record ProjectsFile
     public int Version { get; init; } = 1;
     public int NextProjectIdSeq { get; init; } = 1;
     public List<ProjectRecord> Projects { get; init; } = [];
+    public List<ProjectRepositoryAuditEvent> RepositoryAudit { get; init; } = [];
+    public List<ProjectStartRuleAuditEvent> StartRuleAudit { get; init; } = [];
 }
+
+public sealed record ProjectStartRuleAuditEvent(DateTime Timestamp, string ProjectId,
+    string ActorId, string Actor, string UrlId, string? BeforeDigest, string? AfterDigest);
+
+public sealed record ProjectRepositoryAuditEvent(
+    DateTime Timestamp,
+    string ProjectId,
+    string ActorId,
+    string Actor,
+    string? PreviousRepositoryUrl,
+    string? RepositoryUrl)
+{
+    public IReadOnlyList<ProjectRepositoryCandidateAudit> CandidatesBefore { get; init; } = [];
+    public IReadOnlyList<ProjectRepositoryCandidateAudit> CandidatesAfter { get; init; } = [];
+}
+
+public sealed record ProjectRepositoryCandidateAudit(
+    string Id, string Label, string Url, int SortOrder, string? StartRuleDigest);
 
 /// <summary>
 /// Well-known constants for the F45 default workspace.

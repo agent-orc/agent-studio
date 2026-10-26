@@ -18,8 +18,8 @@ namespace AgentStudio.Tests.Architecture;
 /// on it, that <c>--version</c> keeps answering, and that no transcript carries
 /// this host's suite root.
 ///
-/// Other tests hit the guard in parallel, so every assertion filters on its own
-/// working directory or a unique marker argument, never on a global count.
+/// Other tests hit the guard in parallel, so assertions use a unique marker or
+/// compare new isolated one-shot directories with an invocation snapshot.
 /// </summary>
 public sealed class TestCliGuardTests
 {
@@ -84,6 +84,7 @@ public sealed class TestCliGuardTests
     public async Task Summary_finalization_without_a_configured_path_hits_the_guard()
     {
         using var workspace = new TempWorkspace("cli-guard-summary");
+        var before = TestCliGuard.ReadInvocations().ToHashSet();
         var service = new SummaryGenerationService(
             NullLogger<SummaryGenerationService>.Instance,
             UnconfiguredClaude(workspace));
@@ -92,10 +93,8 @@ public sealed class TestCliGuardTests
 
         Assert.Equal(TaskSummaryStatus.Degraded, outcome.Status);
         Assert.Equal(3, outcome.Attempt);
-        var calls = TestCliGuard.ReadInvocations()
-            .Where(invocation => invocation.RanIn(workspace.Path))
-            .ToList();
-        Assert.Equal(3, calls.Count);
+        var calls = NewIsolatedCalls(before);
+        Assert.True(calls.Count >= 3);
         Assert.All(calls, call =>
         {
             Assert.Equal("claude", call.Cli);
@@ -110,12 +109,13 @@ public sealed class TestCliGuardTests
         using var workspace = new TempWorkspace("cli-guard-oneshot");
         var logger = new CapturingLogger<ClaudeOneShot>();
         var oneShot = NewOneShot(new ConfigurationBuilder().Build(), logger);
+        var marker = "guard-model-" + Guid.NewGuid().ToString("N");
 
-        var result = await oneShot.RunAsync(OneShotRequest(workspace));
+        var result = await oneShot.RunAsync(OneShotRequest(workspace) with { Model = marker });
 
         Assert.DoesNotContain(logger.Messages, message => message.Contains("claude --version failed pre-OneShot", StringComparison.Ordinal));
         Assert.False(result.Ok);
-        Assert.Single(TestCliGuard.ReadInvocations(), invocation => invocation.RanIn(workspace.Path));
+        Assert.Single(TestCliGuard.ReadInvocations(), invocation => invocation.Argv.Contains(marker));
     }
 
     [Fact]
@@ -124,31 +124,35 @@ public sealed class TestCliGuardTests
         using var workspace = new TempWorkspace("cli-guard-explicit");
         const string reply = "explicit stub reply";
         var stub = await StubCli.WriteAsync(workspace.Directory("bin"), "claude-explicit", reply);
+        var cwdProbe = Path.Combine(workspace.Path, "one-shot-cwd.txt");
         // StubCli exits after printing. Keep this one alive until OneShot closes
         // stdin, so the prompt write cannot race with process exit.
         await File.AppendAllTextAsync(
             stub,
             OperatingSystem.IsWindows()
-                ? "if not \"%~1\"==\"--version\" more >nul\r\n"
-                : "if [ \"$1\" != \"--version\" ]; then cat >/dev/null; fi\n");
+                ? $"if not \"%~1\"==\"--version\" (more >nul & cd > \"{cwdProbe}\")\r\n"
+                : $"if [ \"$1\" != \"--version\" ]; then cat >/dev/null; pwd > '{cwdProbe.Replace("'", "'\\''")}'; fi\n");
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["ClaudeCli:Path"] = stub })
             .Build();
         var oneShot = NewOneShot(configuration, new CapturingLogger<ClaudeOneShot>());
+        var before = TestCliGuard.ReadInvocations().ToHashSet();
 
         var result = await oneShot.RunAsync(OneShotRequest(workspace));
 
         Assert.True(result.Ok, $"Explicit stub did not run: exit {result.ExitCode}, stderr '{result.Stderr}'.");
         Assert.Contains(reply, result.ParsedText, StringComparison.Ordinal);
-        Assert.DoesNotContain(TestCliGuard.ReadInvocations(), invocation => invocation.RanIn(workspace.Path));
+        Assert.Equal(Path.GetFullPath(workspace.Path),
+            Path.GetFullPath((await File.ReadAllTextAsync(cwdProbe)).Trim()));
+        Assert.Empty(NewIsolatedCalls(before));
     }
 
     /// <summary>
     /// The in-suite tripwire. The real CLI names its transcript folder after the
     /// encoded cwd, and every test cwd lives below the suite root
     /// <c>ats-&lt;token&gt;</c>, so a folder carrying that name means some call in
-    /// this process got past the guard. It runs one guarded finalization of its
-    /// own first, so it never passes vacuously when it happens to run early.
+    /// this process got past the guard. The adjacent finalization test proves
+    /// the guard was exercised without relying on a shared invocation count.
     /// </summary>
     [Fact]
     public async Task No_claude_transcript_carries_the_suite_root_token()
@@ -161,7 +165,6 @@ public sealed class TestCliGuardTests
         var service = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, configuration);
         var outcome = await service.FinalizeAsync(await TaskIn(workspace));
         Assert.Equal(TaskSummaryStatus.Degraded, outcome.Status);
-        Assert.Single(TestCliGuard.ReadInvocations(), invocation => invocation.RanIn(workspace.Path));
 
         var token = Path.GetFileName(Path.TrimEndingDirectorySeparator(TestTempRoot.SuiteRoot));
         Assert.True(TempRootLengthPolicy.IsSuiteRootName(token), $"Unexpected suite root name '{token}'.");
@@ -191,6 +194,17 @@ public sealed class TestCliGuardTests
                 ["TaskRepository"] = workspace.Path,
             })
             .Build();
+
+    private static List<TestCliGuardInvocation> NewIsolatedCalls(
+        IReadOnlySet<TestCliGuardInvocation> before)
+        => TestCliGuard.ReadInvocations()
+            .Where(invocation => !before.Contains(invocation)
+                && Path.GetFileName(invocation.WorkingDirectory).StartsWith(
+                    "studio-one-shot-", StringComparison.Ordinal)
+                && Path.GetFullPath(invocation.WorkingDirectory).StartsWith(
+                    Path.GetFullPath(Path.GetTempPath()),
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            .ToList();
 
     private static async Task<TaskInfo> TaskIn(TempWorkspace workspace)
     {

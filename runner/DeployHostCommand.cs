@@ -6,22 +6,55 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.Secrets;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
 /// <summary>Host-local executor for claimable deploy jobs. No agent CLI is involved.</summary>
 public static class DeployHostCommand
 {
+    private sealed class RetryableRegistryException : Exception;
     private sealed record Claim(string HostId);
     private sealed record Job(string Id, string Project, string EnvironmentId, string HostId,
         string Artifact, string Template, string Destination, string? HealthUrl,
         string[] SecretRefs, int ContainerPort, string? PreviousArtifact, string Status, string LeaseToken,
         string? RunbookName = null, string[]? RunbookSteps = null,
         Dictionary<string, string>? RunbookVariables = null,
-        Dictionary<string, string>? RunbookSecretVariables = null);
+        Dictionary<string, string>? RunbookSecretVariables = null,
+        bool IsStop = false, string? RetryStep = null,
+        Dictionary<string, string>? SecretBindings = null, JsonElement[]? MissingSecretRefs = null)
+    {
+        public string? Tenant { get; init; }
+        public IReadOnlyDictionary<string, string> ResolvedVariables { get; init; } = new Dictionary<string, string>();
+        public IReadOnlyDictionary<string, string> SecretVariableRefs { get; init; } = new Dictionary<string, string>();
+        public string Kind { get; init; } = "standard";
+        public string? CardKey { get; init; }
+        public string? SourceCommit { get; init; }
+        public string? SourceRepository { get; init; }
+        public string? SourceRef { get; init; }
+        public string? ArtifactPath { get; init; }
+        public string? Dockerfile { get; init; }
+        public string? Address { get; init; }
+        public string[] BuildCommands { get; init; } = [];
+        public ProjectDeployStep[] SshSteps { get; init; } = [];
+        public ProjectVariableDefinition[] Variables { get; init; } = [];
+        public ProjectArtifactDefinition[] Artifacts { get; init; } = [];
+    }
+    private sealed record Provenance(string Project, string Commit, string Artifact, string Digest,
+        string GateRunId, string Template, string BuilderIdentity, string Location, string SourceDigest);
+    private sealed record IssuedSecret(string Value);
+
+    public static Task<int> RunAsync(string[] args, CancellationToken cancellationToken, HttpClient? transport,
+        Func<string, IReadOnlyList<string>, CancellationToken, Task> runCommand)
+        => RunAsync(args, cancellationToken, transport, sshExecutor: null, checkHealth: null, clock: null,
+            previewZone: null, runCommand: runCommand);
 
     public static async Task<int> RunAsync(string[] args, CancellationToken cancellationToken,
-        HttpClient? transport = null, string? runbookRoot = null)
+        HttpClient? transport = null, SshDeployExecutor? sshExecutor = null,
+        Func<string, CancellationToken, Task<bool>>? checkHealth = null, TimeProvider? clock = null,
+        IPreviewRunZone? previewZone = null, string? runbookRoot = null,
+        Func<string, IReadOnlyList<string>, CancellationToken, Task>? runCommand = null)
     {
         if (args.Length < 4 || args.Length > 5)
         {
@@ -36,44 +69,358 @@ public static class DeployHostCommand
         claimed.EnsureSuccessStatusCode();
         var job = await claimed.Content.ReadFromJsonAsync<Job>(cancellationToken);
         if (job is null) return 0;
+        using var lease = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var leaseLost = false;
+        var renewal = RenewWhileRunning(client, job, clock ?? TimeProvider.System, () =>
+        {
+            leaseLost = true;
+            lease.Cancel();
+        }, lease.Token);
+        if (job.IsStop)
+        {
+            var stopped = await StopEnvironment(client, job, lease.Token);
+            lease.Cancel();
+            await renewal;
+            return leaseLost ? 1 : stopped;
+        }
         var evidence = "deploy-step-failed";
         var healthy = false;
         IReadOnlyList<RunbookHostStepResult> runbookResults = [];
+        var stepResults = new List<object>();
+        string? screenshotBase64 = null;
         try
         {
+            if (job.RetryStep is null && job.RunbookName is null)
+            {
+                if (job.MissingSecretRefs is { Length: > 0 })
+                {
+                    evidence = "secret-reference-missing";
+                    throw new InvalidOperationException("Secret preflight failed.");
+                }
+                if (SecretEnvironmentVariable.HasCollision(job.SecretRefs))
+                {
+                    evidence = "secret-reference-collision";
+                    throw new InvalidOperationException("Secret references map to the same container variable.");
+                }
+                if (job.Kind is not ("preview" or "preview-remove"))
+                {
+                    var provenance = await VerifyArtifact(client, job, cancellationToken);
+                    if (ArtifactTemplate(job) == "static")
+                    {
+                        if (job.SshSteps.Length == 0 && job.SecretRefs.Length > 0)
+                            throw new InvalidOperationException("Static deployment cannot receive secrets.");
+                        await DownloadArtifact(client, job, provenance, args[3], cancellationToken);
+                    }
+                }
+            }
             var secretRoot = args.Length == 5 ? args[4] : "/etc/agent-host/secrets";
             if (job.RunbookName is not null)
             {
                 var result = await RunbookHostExecutor.ExecuteAsync(job.Project, job.EnvironmentId,
                     job.Destination, job.RunbookSteps ?? [], job.RunbookVariables ?? [],
                     job.RunbookSecretVariables ?? [], job.SecretRefs,
-                    runbookRoot ?? "/etc/agent-host/runbooks", secretRoot, cancellationToken);
+                    runbookRoot ?? "/etc/agent-host/runbooks", secretRoot, lease.Token);
                 runbookResults = result.Steps;
                 healthy = result.Success;
+            }
+            else if (job.Kind is "preview" or "preview-remove")
+            {
+                if (previewZone is null)
+                {
+                    throw new InvalidOperationException("Preview run zone is not configured for this deploy host.");
+                }
+                if (job.CardKey is null || job.SourceCommit is null || job.Address is null
+                    || job.SourceRepository is null || job.SourceRef is null)
+                    throw new InvalidDataException("Preview job has no card, repository, commit, ref, or address.");
+                var preview = new PreviewRunZoneJob(job.Project, job.CardKey, job.SourceCommit,
+                    job.SourceRepository, job.SourceRef, job.Address, job.Template, job.Destination,
+                    job.ArtifactPath, job.Dockerfile, job.BuildCommands, job.SecretRefs, job.ContainerPort);
+                if (job.Kind == "preview-remove")
+                {
+                    await previewZone.RemoveAsync(preview, lease.Token);
+                    healthy = true;
+                }
+                else
+                {
+                    var result = await previewZone.DeployAsync(preview, lease.Token);
+                    healthy = result.Healthy && result.ScreenshotPng is { Length: > 0 };
+                    screenshotBase64 = healthy ? Convert.ToBase64String(result.ScreenshotPng!) : null;
+                }
                 evidence = healthy ? "health-ok" : "deploy-step-failed";
             }
-            else if (job.Template == "container")
-                await DeployContainer(job, secretRoot, cancellationToken);
-            else if (job.Template == "static")
-                await DeployStatic(job, args[3], cancellationToken);
-            else throw new InvalidOperationException("Unknown template.");
-            if (job.RunbookName is null)
+            else
             {
+                if (job.RetryStep is null && job.SshSteps.Length > 0)
+                {
+                    var executor = sshExecutor ?? new SshDeployExecutor();
+                    for (var index = 0; index < job.SshSteps.Length; index++)
+                    {
+                        var step = job.SshSteps[index];
+                        var name = $"deploy[{index}]:{step.Step}";
+                        try
+                        {
+                            var variables = await ResolveVariables(job, client, lease.Token);
+                            var bundlePath = step.Step == "static-site"
+                                ? job.Artifacts.FirstOrDefault(item => item.Name == step.Artifact && item.Type == "static")?.Path
+                                    ?? throw new InvalidDataException("Static artifact is missing from the release snapshot.")
+                                : null;
+                            await executor.ExecuteAsync(job.HostId, step, job.Artifact, args[3], variables,
+                                message => AppendLog(client, job, name, message, lease.Token), lease.Token,
+                                bundlePath, job.Tenant is null ? null : "tenant-" + Convert.ToHexString(
+                                    SHA256.HashData(Encoding.UTF8.GetBytes(job.Project + "|" + job.EnvironmentId + "|" + job.Tenant)))[..16]
+                                    .ToLowerInvariant());
+                            if (step.HealthUrl is { } stepHealth)
+                            {
+                                using var limit = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
+                                using var timeout = (clock ?? TimeProvider.System).CreateTimer(_ => limit.Cancel(), null,
+                                    TimeSpan.FromSeconds(step.HealthTimeoutSeconds ?? 60), Timeout.InfiniteTimeSpan);
+                                var passed = false;
+                                try { passed = await (checkHealth ?? CheckHealth)(stepHealth, limit.Token); }
+                                catch (OperationCanceledException) when (!lease.IsCancellationRequested) { passed = false; }
+                                if (!passed)
+                                {
+                                    evidence = "health-http-failed";
+                                    throw new InvalidOperationException("Step health check failed.");
+                                }
+                            }
+                            stepResults.Add(new { name, succeeded = true });
+                        }
+                        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException
+                            or InvalidOperationException or HttpRequestException or System.ComponentModel.Win32Exception)
+                        {
+                            stepResults.Add(new { name, succeeded = false });
+                            var detail = new string($"Step failed: {ex.GetType().Name}: {ex.Message}"
+                                .Where(ch => !char.IsControl(ch)).ToArray());
+                            await AppendLog(client, job, name, detail[..Math.Min(detail.Length, 480)], lease.Token);
+                            throw;
+                        }
+                    }
+                }
+                else if (job.RetryStep is null && job.Template == "container")
+                {
+                    var variables = await ResolveVariables(job, client, lease.Token);
+                    await DeployContainer(job with { ResolvedVariables = variables }, client, secretRoot, lease.Token,
+                        runCommand is null
+                            ? (executable, commandArgs, ct, allowFailure) => Command(executable, commandArgs, ct, allowFailure)
+                            : (executable, commandArgs, ct, _) => runCommand(executable, commandArgs, ct));
+                }
+                else if (job.RetryStep is null && job.Template == "static")
+                {
+                    if (job.ResolvedVariables.Count > 0 || job.SecretVariableRefs.Count > 0)
+                        throw new InvalidOperationException("Static deployments cannot bind workload variables.");
+                    await DeployStatic(job, args[3], lease.Token);
+                }
+                else if (job.RetryStep is not "health") throw new InvalidOperationException("Unknown template or retry step.");
                 evidence = "health-http-failed";
-                healthy = job.HealthUrl is null || await CheckHealth(job.HealthUrl, cancellationToken);
+                var healthUrl = job.SshSteps.Length > 0 && job.RetryStep is null ? null : job.HealthUrl;
+                using var healthLimit = CancellationTokenSource.CreateLinkedTokenSource(lease.Token);
+                using var legacyTimeout = (clock ?? TimeProvider.System).CreateTimer(_ => healthLimit.Cancel(), null,
+                    TimeSpan.FromSeconds(60), Timeout.InfiniteTimeSpan);
+                try { healthy = healthUrl is null || await (checkHealth ?? CheckHealth)(healthUrl, healthLimit.Token); }
+                catch (OperationCanceledException) when (!lease.IsCancellationRequested) { healthy = false; }
                 if (healthy) evidence = "health-ok";
             }
         }
+        catch (RetryableRegistryException)
+        {
+            // Keep the claim for a later lease retry. No bytes were deployed.
+            lease.Cancel();
+            await renewal;
+            return 0;
+        }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
-            or HttpRequestException or System.ComponentModel.Win32Exception)
+            or HttpRequestException or System.ComponentModel.Win32Exception or OperationCanceledException
+            or KeyNotFoundException or JsonException)
         {
             Console.Error.WriteLine($"Deploy job {job.Id} failed: {ex.GetType().Name}");
         }
+        lease.Cancel();
+        await renewal;
+        if (leaseLost) return 1;
         using var report = await client.PostAsJsonAsync(
             $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/report",
-            new { job.LeaseToken, Healthy = healthy, Evidence = evidence, RunbookResults = runbookResults }, cancellationToken);
+            new { job.LeaseToken, Healthy = healthy, Evidence = evidence, Steps = stepResults,
+                ScreenshotBase64 = screenshotBase64, RunbookResults = runbookResults }, cancellationToken);
         report.EnsureSuccessStatusCode();
         return healthy ? 0 : 1;
+    }
+
+    private static string ArtifactUrl(Job job)
+        => $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/artifact";
+
+    private static string? ArtifactTemplate(Job job)
+        => job.Template == "ssh-v2" ? job.SshSteps.FirstOrDefault()?.Step switch
+        {
+            "container" => "container",
+            "static-site" => "static",
+            _ => null,
+        } : job.Template;
+
+    private static HttpRequestMessage ArtifactRequest(Job job, bool content)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, ArtifactUrl(job) + (content ? "?content=1" : ""));
+        request.Headers.Add("X-Deploy-Lease", job.LeaseToken);
+        return request;
+    }
+
+    private static async Task<Provenance> VerifyArtifact(HttpClient client, Job job, CancellationToken ct)
+    {
+        using var request = ArtifactRequest(job, content: false);
+        using var response = await client.SendAsync(request, ct);
+        EnsureArtifactAvailable(response);
+        var record = await response.Content.ReadFromJsonAsync<Provenance>(cancellationToken: ct);
+        if (record is null || record.Project != job.Project || record.Artifact != job.Artifact
+            || record.Template != ArtifactTemplate(job) || string.IsNullOrWhiteSpace(record.Commit)
+            || string.IsNullOrWhiteSpace(record.GateRunId) || string.IsNullOrWhiteSpace(record.BuilderIdentity)
+            || !job.Artifact.EndsWith("@sha256:" + record.Digest, StringComparison.Ordinal)
+            || record.Location != (ArtifactTemplate(job) == "static" ? "built-in" : "external"))
+            throw new InvalidDataException("Artifact provenance does not match the deploy job.");
+        return record;
+    }
+
+    private static async Task DownloadArtifact(HttpClient client, Job job, Provenance record,
+        string artifactStore, CancellationToken ct)
+    {
+        Directory.CreateDirectory(artifactStore);
+        var target = Path.Combine(artifactStore, record.Digest);
+        if (File.Exists(target))
+        {
+            await using var existing = File.OpenRead(target);
+            if (Convert.ToHexString(await SHA256.HashDataAsync(existing, ct)).Equals(record.Digest,
+                    StringComparison.OrdinalIgnoreCase)) return;
+        }
+        using var request = ArtifactRequest(job, content: true);
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        EnsureArtifactAvailable(response);
+        var temporary = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await using (var output = File.Create(temporary))
+                await response.Content.CopyToAsync(output, ct);
+            await using var stream = File.OpenRead(temporary);
+            if (!Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).Equals(record.Digest,
+                    StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Artifact digest mismatch.");
+            File.Move(temporary, target, true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    private static void EnsureArtifactAvailable(HttpResponseMessage response)
+    {
+        if (response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+            throw new RetryableRegistryException();
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>Stops the environment on this host and acknowledges it, so the server releases its slot.</summary>
+    private static async Task<int> StopEnvironment(HttpClient client, Job job, CancellationToken ct)
+    {
+        var stopped = false;
+        try
+        {
+            if (job.Template == "container")
+                await Command("docker", ["rm", "-f", ContainerName(job)], ct);
+            else if (job.Template == "static")
+            {
+                if (!Path.IsPathFullyQualified(job.Destination) || job.Destination.Contains("..", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Invalid destination.");
+                var link = Path.Combine(job.Destination, "current");
+                if (File.Exists(link) || Directory.Exists(link)) File.Delete(link);
+            }
+            else throw new InvalidOperationException("Unknown template.");
+            stopped = true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+            or System.ComponentModel.Win32Exception)
+        {
+            Console.Error.WriteLine($"Stop job {job.Id} failed: {ex.GetType().Name}");
+        }
+        using var report = await client.PostAsJsonAsync(
+            $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/report",
+            new { job.LeaseToken, Healthy = stopped, Evidence = stopped ? "stop-ok" : "stop-failed" }, ct);
+        report.EnsureSuccessStatusCode();
+        return stopped ? 0 : 1;
+    }
+
+    private static string ContainerName(Job job)
+    {
+        var projectName = job.Project.Length <= 64
+            && job.Project.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')
+            ? job.Project
+            : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(job.Project)))[..16].ToLowerInvariant();
+        if (job.Tenant is not null && (job.Tenant.Length is < 1 or > 64
+            || job.Tenant.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.'))))
+            throw new InvalidOperationException("Invalid tenant name.");
+        return "deploy-" + projectName + "-" + job.EnvironmentId
+            + (job.Tenant is null ? "" : "-" + job.Tenant);
+    }
+
+    private static async Task RenewWhileRunning(HttpClient client, Job job, TimeProvider clock,
+        Action onLost, CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), clock);
+        var lastSuccess = clock.GetUtcNow();
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(15));
+                try
+                {
+                    using var response = await client.PostAsJsonAsync(
+                        $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/renew",
+                        new { job.LeaseToken }, timeout.Token);
+                    if (response.StatusCode == System.Net.HttpStatusCode.Conflict) { onLost(); return; }
+                    if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return;
+                    if (response.IsSuccessStatusCode) { lastSuccess = clock.GetUtcNow(); continue; }
+                }
+                catch (HttpRequestException) when (!ct.IsCancellationRequested) { }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                if (clock.GetUtcNow() - lastSuccess >= TimeSpan.FromMinutes(4)) { onLost(); return; }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+    }
+
+    private static async Task<Dictionary<string, string>> ResolveVariables(Job job, HttpClient client, CancellationToken ct)
+    {
+        var resolved = new Dictionary<string, string>(job.ResolvedVariables, StringComparer.Ordinal);
+        async Task<string> ResolveSecret(string secret)
+        {
+            if (job.SecretBindings is not null && !job.SecretBindings.TryGetValue(secret, out _))
+                throw new InvalidOperationException("Secret binding missing.");
+            var reference = job.SecretBindings is not null
+                ? job.SecretBindings[secret] : $"secret://{job.Project}/{job.EnvironmentId}/{secret}";
+            return await DeployHostCommand.ResolveSecret(client, job.Project, job.EnvironmentId,
+                job.Id, job.LeaseToken, reference, ct);
+        }
+        foreach (var variable in job.Variables)
+        {
+            if (variable.Value is { } value) { resolved.Add(variable.Name, value); continue; }
+            if (variable.Secret is null) throw new InvalidDataException("Deploy variable has no source.");
+            resolved.Add(variable.Name, await ResolveSecret(variable.Secret));
+        }
+        if (job.SshSteps.Length > 0 || job.SecretBindings is not null)
+            foreach (var mapping in job.SecretVariableRefs)
+                resolved.Add(mapping.Key, await ResolveSecret(mapping.Value));
+        return resolved;
+    }
+
+    private static async Task AppendLog(HttpClient client, Job job, string step, string message, CancellationToken ct)
+    {
+        try
+        {
+            using var response = await client.PostAsJsonAsync(
+                $"api/deploy/jobs/{Uri.EscapeDataString(job.Project)}/{Uri.EscapeDataString(job.Id)}/log",
+                new { job.LeaseToken, Step = step, Message = message }, ct);
+            if (!response.IsSuccessStatusCode)
+                Console.Error.WriteLine($"Deploy job {job.Id} step log was not accepted: {(int)response.StatusCode}.");
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested && ex is (HttpRequestException or TaskCanceledException))
+        {
+            Console.Error.WriteLine($"Deploy job {job.Id} step log could not be sent.");
+        }
     }
 
     private static async Task DeployStatic(Job job, string artifactStore, CancellationToken ct)
@@ -129,43 +476,120 @@ public static class DeployHostCommand
         File.Move(temporary, link, true);
     }
 
-    private static async Task DeployContainer(Job job, string secretRoot, CancellationToken ct)
+    private static async Task DeployContainer(Job job, HttpClient client, string secretRoot, CancellationToken ct,
+        Func<string, IReadOnlyList<string>, CancellationToken, bool, Task> runCommand)
     {
         if (!int.TryParse(job.Destination, out var port) || port is < 1 or > 65535)
             throw new InvalidOperationException("Invalid proxy port.");
-        var projectName = job.Project.Length <= 64
-            && job.Project.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_')
-            ? job.Project
-            : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(job.Project)))[..16].ToLowerInvariant();
-        var name = "deploy-" + projectName + "-" + job.EnvironmentId;
-        var envFile = Path.Combine(Path.GetTempPath(), "deploy-env-" + Guid.NewGuid().ToString("N"));
+        var name = ContainerName(job);
+        const string memoryRoot = "/dev/shm";
+        if (!OperatingSystem.IsLinux() || !Directory.Exists(memoryRoot))
+            throw new IOException("In-memory secret storage is unavailable.");
+        var envDirectory = Path.Combine(memoryRoot, "deploy-env-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(envDirectory);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(envDirectory,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var envFile = Path.Combine(envDirectory, "environment");
         try
         {
             var lines = new List<string>();
-            foreach (var secret in job.SecretRefs)
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            void AddVariable(string variableName, string value)
             {
-                if (secret.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.')))
-                    throw new InvalidOperationException("Invalid secret reference.");
-                var value = (await File.ReadAllTextAsync(Path.Combine(secretRoot, secret), ct)).TrimEnd('\r', '\n');
-                if (value.Contains('\n') || value.Contains('\r')) throw new InvalidOperationException("Secret must be single-line.");
-                lines.Add(secret.Replace('-', '_').Replace('.', '_').ToUpperInvariant() + "=" + value);
+                if (variableName.Length == 0 || !(char.IsAsciiLetter(variableName[0]) || variableName[0] == '_')
+                    || variableName.Skip(1).Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch == '_'))
+                    || !names.Add(variableName) || value.Contains('\n') || value.Contains('\r') || value.Contains('\0'))
+                    throw new InvalidOperationException("Invalid or duplicate workload variable.");
+                lines.Add(variableName + "=" + value);
             }
-            await using (var file = File.Create(envFile))
+            foreach (var variable in job.ResolvedVariables) AddVariable(variable.Key, variable.Value);
+            if (job.SecretBindings is not null)
             {
-                if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(envFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                var mappedSecrets = job.SecretVariableRefs.Values.Concat(job.Variables
+                    .Where(item => item.Secret is not null).Select(item => item.Secret!)).ToHashSet(StringComparer.Ordinal);
+                var unmappedSecrets = job.SecretRefs.Where(secret => !mappedSecrets.Contains(secret)).ToArray();
+                var resolved = await ResolveEnvironmentAsync(client, job.Project, job.EnvironmentId, job.Id,
+                    job.LeaseToken, unmappedSecrets, job.SecretBindings, ct);
+                foreach (var line in resolved)
+                {
+                    var separator = line.IndexOf('=');
+                    AddVariable(line[..separator], line[(separator + 1)..]);
+                }
+            }
+            else
+            {
+                async Task<string> ReadSecret(string secret)
+                {
+                    if (secret.Length == 0 || secret.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.'))
+                        || secret is "." or "..")
+                        throw new InvalidOperationException("Invalid secret reference.");
+                    return (await File.ReadAllTextAsync(Path.Combine(secretRoot, secret), ct)).TrimEnd('\r', '\n');
+                }
+                foreach (var mapping in job.SecretVariableRefs)
+                {
+                    if (names.Contains(mapping.Key)) continue;
+                    AddVariable(mapping.Key, await ReadSecret(mapping.Value));
+                }
+                foreach (var secret in job.SecretRefs)
+                {
+                    if (job.SecretVariableRefs.Values.Contains(secret, StringComparer.Ordinal)) continue;
+                    var variableName = SecretEnvironmentVariable.Name(secret);
+                    if (names.Contains(variableName)) continue;
+                    AddVariable(variableName, await ReadSecret(secret));
+                }
+            }
+            var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write,
+                Share = FileShare.None };
+            if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            await using (var file = new FileStream(envFile, options))
+            {
                 await using var writer = new StreamWriter(file);
                 foreach (var line in lines) await writer.WriteLineAsync(line.AsMemory(), ct);
             }
-            await Command("docker", ["pull", job.Artifact], ct);
-            await Command("docker", ["rm", "-f", name], ct, allowFailure: true);
+            await runCommand("docker", ["pull", job.Artifact], ct, false);
+            await runCommand("docker", ["rm", "-f", name], ct, true);
             if (job.ContainerPort is < 1 or > 65535) throw new InvalidOperationException("Invalid container port.");
-            await Command("docker", ["run", "-d", "--name", name, "--restart", "unless-stopped",
-                "--publish", $"127.0.0.1:{port}:{job.ContainerPort}", "--env-file", envFile, job.Artifact], ct);
+            await runCommand("docker", ["run", "-d", "--name", name, "--restart", "unless-stopped",
+                "--publish", $"127.0.0.1:{port}:{job.ContainerPort}", "--env-file", envFile, job.Artifact], ct, false);
         }
         finally
         {
-            if (File.Exists(envFile)) File.Delete(envFile);
+            if (Directory.Exists(envDirectory)) Directory.Delete(envDirectory, true);
         }
+    }
+
+    internal static async Task<IReadOnlyList<string>> ResolveEnvironmentAsync(HttpClient client, string project,
+        string environment, string jobId, string leaseToken, IReadOnlyList<string> names,
+        IReadOnlyDictionary<string, string>? bindings, CancellationToken ct)
+    {
+        var lines = new List<string>();
+        if (SecretEnvironmentVariable.HasCollision(names))
+            throw new InvalidOperationException("Secret references map to the same container variable.");
+        foreach (var name in names)
+        {
+            if (name.Any(ch => !(char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.')))
+                throw new InvalidOperationException("Invalid secret reference.");
+            if (bindings is null || !bindings.TryGetValue(name, out var reference))
+                throw new InvalidOperationException("Secret binding missing.");
+            var value = await ResolveSecret(client, project, environment, jobId, leaseToken, reference, ct);
+            if (value.Contains('\n') || value.Contains('\r')) throw new InvalidOperationException("Secret must be single-line.");
+            lines.Add(SecretEnvironmentVariable.Name(name) + "=" + value);
+        }
+        return lines;
+    }
+
+    private static async Task<string> ResolveSecret(HttpClient client, string project, string environment,
+        string jobId, string leaseToken, string reference, CancellationToken ct)
+    {
+        using var response = await client.PostAsJsonAsync("api/runner/secrets/resolve", new
+        {
+            reference, purpose = "deploy:" + (environment.Length <= 57 ? environment
+                : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(environment)))[..16].ToLowerInvariant()),
+            workload = new { kind = "deploy-job", project, jobId, leaseToken },
+        }, ct);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Secret resolution failed.");
+        var issued = await response.Content.ReadFromJsonAsync<IssuedSecret>(cancellationToken: ct);
+        return issued?.Value ?? throw new InvalidOperationException("Secret resolution returned no value.");
     }
 
     private static async Task Command(string executable, IReadOnlyList<string> args, CancellationToken ct, bool allowFailure = false)
@@ -184,20 +608,22 @@ public static class DeployHostCommand
     private static async Task<bool> CheckHealth(string url, CancellationToken ct)
     {
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        for (var attempt = 0; attempt < 5; attempt++)
+        while (true)
         {
             try
             {
                 using var response = await client.GetAsync(url, ct);
                 if (response.IsSuccessStatusCode) return true;
             }
-            catch (HttpRequestException)
+            catch (HttpRequestException) when (!ct.IsCancellationRequested)
             {
-                await Task.Delay(TimeSpan.FromSeconds(2), ct);
-                continue;
+                // A transient transport failure gets another probe within the outer health budget.
+            }
+            catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // The per-request timeout expired; the outer health budget still controls the job.
             }
             await Task.Delay(TimeSpan.FromSeconds(2), ct);
         }
-        return false;
     }
 }

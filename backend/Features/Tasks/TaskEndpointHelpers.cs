@@ -242,7 +242,8 @@ internal static class TaskEndpointHelpers
                 NowUtc: DateTime.UtcNow,
                 ExecutionLocation: runners.ResolvePlacement(job.ProjectName),
                 AllowsLocalCoding: runners.AllowsLocalCoding,
-                SuggestedRemoteRunnerId: runners.SuggestedRemoteRunnerId))
+                SuggestedRemoteRunnerId: runners.SuggestedRemoteRunnerId,
+                DenyAllLocalRuns: runners.DenyAllLocalRuns))
             : null;
         return job with
         {
@@ -295,7 +296,7 @@ internal static class TaskEndpointHelpers
     /// </summary>
     internal static PlanningSpawnSummary? BuildPlanningSpawnSummary(TaskInfo job)
     {
-        if (!PlanningCompletionGate.Applies(job.Mode) && !TaskKinds.IsEpic(job.Kind)) return null;
+        if (!PlanningCompletionGate.Applies(job.Mode)) return null;
         if (string.IsNullOrWhiteSpace(job.FolderPath)) return new PlanningSpawnSummary();
 
         var spawned = SpawnedTaskLedger.Read(job.FolderPath)
@@ -392,11 +393,9 @@ internal static class TaskEndpointHelpers
     /// that actually carry dependsOn edges. Resolution is <b>archive-inclusive</b>
     /// (a dependency is fulfilled when its target reaches 6-completed OR
     /// 7-archive, and the board snapshot omits archive), so the key index is
-    /// read from the archive-inclusive snapshot's published reference index.
+    /// read from the archive-inclusive resident core reference index.
     /// Cards without dependencies are skipped, keeping the common case free.
-    /// A board read passes the graph of its pinned generation as
-    /// <paramref name="references"/> (AGT-3088), so building the body never
-    /// re-enters the index.
+    /// Target publications reach this graph before a background board rescan.
     /// </summary>
     /// <summary>
     /// The registered client a board read is made for, or null for an
@@ -410,18 +409,16 @@ internal static class TaskEndpointHelpers
         IEnumerable<TaskInfo> jobs,
         TaskScannerService scanner,
         IEnumerable<TaskInfo>? eligibleWaiters = null,
-        AttemptAuthorityService? attemptAuthority = null,
-        TaskReferenceIndex? references = null)
+        AttemptAuthorityService? attemptAuthority = null)
     {
         var snapshot = jobs as IReadOnlyCollection<TaskInfo> ?? jobs.ToList();
         var withDeps = snapshot.Where(j => j.References?.DependsOn.Count > 0).ToList();
         var humanReview = snapshot.Where(j => j.State == TaskStates.HumanReview).ToList();
         if (withDeps.Count == 0 && humanReview.Count == 0) return new();
 
-        // The archive-inclusive index is built once per snapshot generation
-        // (AGT-2342 reference-index cache); keys are globally unique across
-        // projects, so this resolves cross-project targets too.
-        var index = references ?? scanner.GetReferenceIndex();
+        // Dependency targets come from the read-after-write core graph. A
+        // target publish must be visible even while the board scan is pending.
+        var index = scanner.GetCoreReferenceIndex();
         var eligibleKeys = (eligibleWaiters ?? snapshot)
             .Where(j => !string.IsNullOrWhiteSpace(j.Key))
             .Select(j => j.Key!)

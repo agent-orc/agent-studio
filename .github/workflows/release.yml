@@ -89,7 +89,7 @@ jobs:
 
       - name: Audit production dependencies
         working-directory: frontend
-        run: npm audit --omit=dev --audit-level=critical
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Build .NET solution
         run: dotnet build agent-taskboard.sln --configuration Release --no-restore
@@ -264,6 +264,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'orchestrator-engine win-x64 publish failed.' }
           dotnet publish studio-bff/StudioBff.csproj @common --output artifacts/publish/studio-bff
           if ($LASTEXITCODE -ne 0) { throw 'studio-bff win-x64 publish failed.' }
+          dotnet publish backend/OrchestratorApi.csproj @common --output artifacts/publish/studio-backend
+          if ($LASTEXITCODE -ne 0) { throw 'studio backend win-x64 publish failed.' }
           dotnet publish setup/AgentOrchestratorSetup.csproj @common --output artifacts/publish/setup
           if ($LASTEXITCODE -ne 0) { throw 'agent-studio-setup win-x64 publish failed.' }
           dotnet publish runner/AgentRunner.csproj @common --output artifacts/publish/agent-host
@@ -338,12 +340,16 @@ jobs:
           $archive = [IO.Compression.ZipFile]::OpenRead("windows-package/agent-orchestrator-$env:VERSION-win-x64.zip")
           try {
             $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\\', '/') })
-            foreach ($file in @('agent-studio-setup.exe', 'agent-host.exe', 'task-server.exe', 'orchestrator-engine.exe', 'studio/browser/index.html')) {
+            foreach ($file in @('agent-studio-setup.exe', 'agent-host.exe', 'task-server.exe', 'orchestrator-engine.exe', 'OrchestratorApi.exe', 'browser/index.html')) {
               if (-not ($names -contains "agent-orchestrator-$env:VERSION-win-x64/$file")) { throw "Windows package lacks $file" }
             }
           } finally {
             $archive.Dispose()
           }
+
+      - name: Test Windows native setup and archive contract
+        shell: pwsh
+        run: dotnet test setup.Tests/AgentOrchestratorSetup.Tests.csproj --filter "FullyQualifiedName~WindowsNativeSetupTests" --logger "console;verbosity=minimal"
 
       - name: Upload Windows release artifact
         uses: actions/upload-artifact@v4

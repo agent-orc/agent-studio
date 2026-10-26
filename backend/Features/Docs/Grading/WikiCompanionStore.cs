@@ -131,11 +131,12 @@ public sealed class WikiCompanionStore
 
         lock (GateFor(companionAbs))
         {
+            EnsureSafeCompanion(wikiDir, companionAbs);
             JsonObject root = ReadExistingRoot(companionAbs)
                 ?? BuildMinimalCompanion(docsRelPath, title, iso, (JsonObject)fingerprint.DeepClone(), run);
             root["grading"] = grading;
             _agentReads.MoveLegacyFromCompanion(wikiDir, docsRelPath, root);
-            return WriteRootAtomically(companionAbs, root);
+            return WriteRootAtomically(wikiDir, companionAbs, root);
         }
     }
 
@@ -156,6 +157,7 @@ public sealed class WikiCompanionStore
 
         lock (GateFor(companionAbs))
         {
+            EnsureSafeCompanion(wikiDir, companionAbs);
             var root = ReadExistingRoot(companionAbs)
                 ?? BuildCreationCompanion(docsRelPath, title, content, iso);
 
@@ -178,7 +180,7 @@ public sealed class WikiCompanionStore
                 classification["type"] = defaultType;
 
             _agentReads.MoveLegacyFromCompanion(wikiDir, docsRelPath, root);
-            return WriteRootAtomically(companionAbs, root);
+            return WriteRootAtomically(wikiDir, companionAbs, root);
         }
     }
 
@@ -200,6 +202,7 @@ public sealed class WikiCompanionStore
         var iso = nowUtc.ToString("o");
         lock (GateFor(companionAbs))
         {
+            EnsureSafeCompanion(wikiDir, companionAbs);
             var root = ReadExistingRoot(companionAbs)
                 ?? BuildCreationCompanion(docsRelPath, title, content, iso);
 
@@ -218,15 +221,22 @@ public sealed class WikiCompanionStore
             classification["status"] = status;
             classification["analyzedAt"] = iso[..10];
             _agentReads.MoveLegacyFromCompanion(wikiDir, docsRelPath, root);
-            return WriteRootAtomically(companionAbs, root);
+            return WriteRootAtomically(wikiDir, companionAbs, root);
         }
     }
 
     private static object GateFor(string path) =>
         WriteGates.GetOrAdd(Path.GetFullPath(path), _ => new object());
 
-    private static WikiCompanionWriteResult WriteRootAtomically(string companionAbs, JsonObject root)
+    private static void EnsureSafeCompanion(string wikiDir, string companionAbs)
     {
+        if (!FilesystemPathBoundary.IsPathUnderWithoutLinks(wikiDir, companionAbs))
+            throw new IOException("Companion path is outside the wiki root or is a link.");
+    }
+
+    private static WikiCompanionWriteResult WriteRootAtomically(string wikiDir, string companionAbs, JsonObject root)
+    {
+        EnsureSafeCompanion(wikiDir, companionAbs);
         var serialized = root.ToJsonString(WriteOpts) + "\n";
         var changed = !File.Exists(companionAbs)
             || !string.Equals(File.ReadAllText(companionAbs), serialized, StringComparison.Ordinal);

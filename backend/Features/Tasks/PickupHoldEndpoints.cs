@@ -21,12 +21,17 @@ public static class PickupHoldEndpoints
     public static void MapPickupHoldEndpoints(this WebApplication app)
     {
         app.MapGet("/api/pickup-holds", (
+            HttpContext context,
+            ProjectRegistry registry,
             PickupHoldSweep sweep,
             string? project,
             bool? unsatisfiableOnly,
             CancellationToken ct) =>
         {
             var items = sweep.Sweep(ct).AsEnumerable();
+
+            if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
+                items = items.Where(item => ProjectAccessAuthorization.Allows(human.User, item.ProjectName, registry));
 
             if (!string.IsNullOrWhiteSpace(project))
                 items = items.Where(item =>

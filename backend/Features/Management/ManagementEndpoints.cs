@@ -41,7 +41,11 @@ public static class ManagementEndpoints
 
     public static void MapManagementEndpoints(this WebApplication app)
     {
-        app.MapGet("/recovery", () => Results.Content(RecoveryConsole.Html, "text/html"));
+        app.MapGet("/recovery", (HttpContext context) =>
+        {
+            context.Response.Headers.ContentSecurityPolicy = RecoveryConsole.ContentSecurityPolicy;
+            return Results.Content(RecoveryConsole.Html, "text/html");
+        });
         var group = app.MapGroup("/api/v1/management");
         group.MapGet("/status", (HttpContext context, ManagementService service, IConfiguration configuration) =>
         {
@@ -235,7 +239,7 @@ public static class ManagementEndpoints
                     message = "The durable provider renewal could not complete; inspect the operation receipt before retrying." },
                     statusCode: 503);
             }
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapGet("/remote-hosts/provider-auth-renewals/{operationId}", async (
             HttpContext context, string operationId, string? sshTarget,
             IProviderAuthProvisioner provisioner, IProviderRenewalJournal renewal,
@@ -261,7 +265,7 @@ public static class ManagementEndpoints
                 }
             }
             return Results.Ok(await renewal.TryVerifyAsync(receipt, ct));
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapPost("/remote-hosts/{id}/codex-sign-in", (
             HttpContext context,
             IConfiguration configuration) =>
@@ -271,7 +275,7 @@ public static class ManagementEndpoints
             return Results.Json(new { error = "codex-sign-in-moved",
                 message = "Start Codex device login through the runner-polled device-logins route." },
                 statusCode: StatusCodes.Status410Gone);
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapGet("/remote-hosts/{id}/codex-sign-in/{handle}", async (
             HttpContext context,
             string id,
@@ -289,7 +293,7 @@ public static class ManagementEndpoints
                     new { error = "codex-sign-in-session-not-found", message = "The Codex sign-in session was not found for this host." },
                     statusCode: 404)
                 : Results.Ok(status);
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapPost("/remote-hosts/{id}/codex-sign-in/{handle}/cancel", async (
             HttpContext context, string id, string handle, CodexSignInCoordinator coordinator,
             IConfiguration configuration, CancellationToken ct) =>
@@ -298,7 +302,7 @@ public static class ManagementEndpoints
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             var status = await coordinator.CancelAsync(id, handle, ct);
             return status is null ? Results.NotFound() : Results.Ok(status);
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapPost("/remote-hosts/{id}/claude-sign-in", async (
             HttpContext context,
             string id,
@@ -317,7 +321,7 @@ public static class ManagementEndpoints
             {
                 return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.StatusCode);
             }
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapGet("/remote-hosts/{id}/claude-sign-in/{handle}", async (
             HttpContext context,
             string id,
@@ -335,7 +339,7 @@ public static class ManagementEndpoints
                     new { error = "claude-sign-in-session-not-found", message = "The Claude sign-in session was not found for this host." },
                     statusCode: 404)
                 : Results.Ok(status);
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapPost("/remote-hosts/{id}/claude-sign-in/{handle}/cancel", async (
             HttpContext context, string id, string handle, ClaudeSignInCoordinator coordinator,
             IConfiguration configuration, CancellationToken ct) =>
@@ -344,7 +348,7 @@ public static class ManagementEndpoints
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             var status = await coordinator.CancelAsync(id, handle, ct);
             return status is null ? Results.NotFound() : Results.Ok(status);
-        });
+        }).RequireStudioRole(StudioRoles.Owner);
         group.MapPost("/commands", (HttpContext context, ManagementCommandRequest request, ManagementService service, IConfiguration configuration) =>
         {
             context.Response.Headers.CacheControl = "no-store";
@@ -425,6 +429,15 @@ public static class ManagementEndpoints
 
 internal static class RecoveryConsole
 {
+    /// <summary>
+    /// The console is one constant page with an inline script and inline
+    /// handlers, so it needs <c>'unsafe-inline'</c>. It may call only the
+    /// Studio API; no other content can load into it (AGT-3230).
+    /// </summary>
+    public const string ContentSecurityPolicy =
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; " +
+        "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+
     public const string Html = """
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Task Server recovery</title><style>

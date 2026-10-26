@@ -48,10 +48,32 @@ export interface SecretOverview {
   canWriteWorkspace: boolean;
   secrets: readonly SecretMetadata[];
   unreadable: readonly UnreadableSecret[];
+  backends: readonly SecretBackendBinding[];
+  backendHealth: readonly SecretBackendHealth[];
+}
+
+export interface SecretBackendBinding {
+  scope: string;
+  kind: 'builtin' | 'vault' | 'onepassword';
+  url: string;
+  mount: string | null;
+  vaultId: string | null;
+  credentialReference: string | null;
+  credentialEnvironmentVariable: string | null;
+  ttlSeconds: number;
+}
+
+export interface SecretBackendHealth {
+  scope: string;
+  kind: string;
+  state: 'healthy' | 'unavailable';
+  reason: string | null;
 }
 
 /** `workspace`, `<project>` or `<project>/<environment>`. */
 export type SecretScopeKey = string;
+
+export interface SecretEnvironment { id: string; kind: string }
 
 /** Route prefix of one scope, matching the backend scope groups. */
 export function secretScopeRoute(scope: SecretScopeKey): string {
@@ -93,14 +115,14 @@ export class SecretsService {
     });
   }
 
-  /** Environment ids a project declares, for the scope picker. */
-  environments(project: string): Observable<readonly string[]> {
+  /** Declaration kind determines whether a binding needs production approval. */
+  environments(project: string): Observable<readonly SecretEnvironment[]> {
     if (!this.http) return of([]);
-    return this.http.get<{ environments: readonly { declaration: { id: string } }[] }>(
+    return this.http.get<{ environments: readonly { declaration: SecretEnvironment }[] }>(
       `/api/projects/${encodeURIComponent(project)}/environments`,
     ).pipe(
-      map(response => response.environments.map(item => item.declaration.id)),
-      catchError(() => of([] as readonly string[])),
+      map(response => response.environments.map(item => item.declaration)),
+      catchError(() => of([] as readonly SecretEnvironment[])),
     );
   }
 
@@ -116,6 +138,17 @@ export class SecretsService {
   revoke(scope: SecretScopeKey, name: string, version: number | null): Observable<SecretMetadata> {
     return this.mutate(this.http!.post<SecretMetadata>(
       `${secretScopeRoute(scope)}/${encodeURIComponent(name)}/revoke`, { version }));
+  }
+
+  selectBackend(binding: SecretBackendBinding): Observable<SecretBackendBinding> {
+    this.error.set(null);
+    return this.http!.put<SecretBackendBinding>('/api/secrets/backends', binding).pipe(
+      map(saved => { this.load(); return saved; }),
+      catchError((error: unknown) => {
+        this.error.set(messageOf(error));
+        throw error;
+      }),
+    );
   }
 
   private mutate(request: Observable<SecretMetadata>): Observable<SecretMetadata> {

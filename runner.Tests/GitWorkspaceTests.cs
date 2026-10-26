@@ -1,6 +1,7 @@
 using AgentRunner;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentRunner.Tests;
@@ -321,6 +322,62 @@ public sealed class GitWorkspaceTests : IDisposable
             (await GitAsync(_origin, "log", "-1", "--format=%s", $"refs/heads/{result.Branch}")).StdOut);
     }
 
+    [Fact]
+    public async Task Teardown_preserves_root_status_as_card_artifact_without_committing_it()
+    {
+        await SeedOriginAsync(legacyReports: true);
+        var workspace = CreateWorkspace();
+        await workspace.PrepareAsync(CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(workspace.RepoPath, "status.md"), "card result\n");
+        await File.WriteAllTextAsync(Path.Combine(workspace.RepoPath, "feature.txt"), "feature\n");
+
+        var result = await workspace.TeardownAsync("Done", CancellationToken.None);
+
+        Assert.True(result.SecuredWork);
+        Assert.Equal("card result\n", await File.ReadAllTextAsync(
+            Path.Combine(_workDir, "tasks", "AGT-2147", "results", "legacy-repository-status.md")));
+        Assert.Equal("feature", (await GitAsync(_origin,
+            "show", $"refs/heads/{result.Branch}:feature.txt")).StdOut);
+        var report = await RunGitAsync(_origin, "show", $"refs/heads/{result.Branch}:status.md");
+        Assert.False(report.Success);
+    }
+
+    [Fact]
+    public async Task Teardown_limits_and_replaces_the_legacy_report_artifact()
+    {
+        await SeedOriginAsync(legacyReports: true);
+        var workspace = CreateWorkspace();
+        await workspace.PrepareAsync(CancellationToken.None);
+        var report = Path.Combine(workspace.RepoPath, "status.md");
+        var artifact = Path.Combine(_workDir, "tasks", "AGT-2147", "results",
+            "legacy-repository-status.md");
+        await File.WriteAllTextAsync(report, "first entry\n" + new string('é', 10_000) + "first tail");
+        await workspace.CaptureLegacyRepositoryReportsAsync(CancellationToken.None);
+        Assert.True(new FileInfo(artifact).Length <= 16 * 1024);
+        Assert.EndsWith("first tail", await File.ReadAllTextAsync(artifact));
+        Assert.StartsWith("first entry\n", await File.ReadAllTextAsync(artifact));
+
+        await File.WriteAllTextAsync(report, "second round\n");
+        await workspace.CaptureLegacyRepositoryReportsAsync(CancellationToken.None);
+        Assert.Equal("second round\n", await File.ReadAllTextAsync(artifact));
+    }
+
+    [Fact]
+    public async Task Teardown_keeps_root_status_as_content_without_project_opt_in()
+    {
+        await SeedOriginAsync();
+        var workspace = CreateWorkspace();
+        await workspace.PrepareAsync(CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(workspace.RepoPath, "status.md"), "product content\n");
+
+        var result = await workspace.TeardownAsync("Done", CancellationToken.None);
+
+        Assert.Equal("product content", (await GitAsync(_origin,
+            "show", $"refs/heads/{result.Branch}:status.md")).StdOut);
+        Assert.False(File.Exists(Path.Combine(_workDir, "tasks", "AGT-2147", "results",
+            "legacy-repository-status.md")));
+    }
+
     [Theory]
     [InlineData("runner/runner-test/AGT-2147", true)]
     [InlineData("runner/runner-test/AGT-2147-collision-local-remote", true)]
@@ -531,6 +588,37 @@ public sealed class GitWorkspaceTests : IDisposable
             expectedDigest,
             CancellationToken.None);
 
+        Assert.False(Directory.Exists(workspace.RepoPath));
+    }
+
+    [Fact]
+    public async Task Durable_handoff_cleans_preserved_report_edits_before_teardown()
+    {
+        await SeedOriginAsync(legacyReports: true, trackedReport: true);
+        const string runId = "run_dirty_report";
+        var workspace = CreateWorkspace(sourceRunAttemptId: runId, fencingToken: 19);
+        await workspace.PrepareAsync(CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(workspace.RepoPath, "status.md"), "card result\n");
+        Directory.CreateDirectory(Path.Combine(workspace.RepoPath, "results"));
+        await File.WriteAllTextAsync(Path.Combine(workspace.RepoPath, "results", "status.md"), "extra report\n");
+        await File.WriteAllTextAsync(Path.Combine(workspace.RepoPath, "feature.txt"), "feature\n");
+        await GitAsync(workspace.RepoPath, "add", "status.md");
+
+        var secured = await workspace.SecureForHandoffAsync("Done", runId, CancellationToken.None);
+
+        Assert.Equal("base report\n", await File.ReadAllTextAsync(Path.Combine(workspace.RepoPath, "status.md")));
+        Assert.False(File.Exists(Path.Combine(workspace.RepoPath, "results", "status.md")));
+        Assert.Equal("", (await GitAsync(workspace.RepoPath, "status", "--porcelain")).StdOut);
+        Assert.Equal("card result\n", await File.ReadAllTextAsync(Path.Combine(
+            _workDir, "tasks", "AGT-2147", "results", "legacy-repository-status.md")));
+        Assert.Equal("extra report\n", await File.ReadAllTextAsync(Path.Combine(
+            _workDir, "tasks", "AGT-2147", "results", "legacy-repository-results-status.md")));
+        var digest = new string('a', 64);
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 21, 0, 0, 0, TimeSpan.Zero));
+        var now = clock.GetUtcNow().UtcDateTime;
+        await workspace.TeardownAfterHandoffAsync(secured,
+            new ResultHandoffAck(runId, 5, digest, "acknowledged", now, now.AddDays(30), false),
+            runId, digest, CancellationToken.None);
         Assert.False(Directory.Exists(workspace.RepoPath));
     }
 
@@ -846,12 +934,11 @@ public sealed class GitWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task A_salvage_base_that_moved_keeps_todays_start_on_the_integration_branch()
+    public async Task A_salvage_base_that_moved_refuses_to_start_on_the_integration_branch()
     {
         await SeedOriginAsync();
         var (resultRef, reviewedSha) = await PublishReviewedResultAsync("salvaged.txt", "salvage");
         await PublishRemoteCommitAsync(resultRef["refs/heads/".Length..], "moved.txt", "moved", "move the ref");
-        var mainTip = (await GitAsync(_origin, "rev-parse", "refs/heads/main")).StdOut;
 
         var continuation = CreateWorkspace(
             sourceRunAttemptId: "run_next",
@@ -859,9 +946,45 @@ public sealed class GitWorkspaceTests : IDisposable
             continuationBaseRef: resultRef,
             continuationBaseSha: reviewedSha,
             continuationBaseReason: "lost-worker-with-salvage");
-        await continuation.PrepareAsync(CancellationToken.None);
+        var failure = await Assert.ThrowsAsync<ContinuationBaseUnavailableException>(
+            () => continuation.PrepareAsync(CancellationToken.None));
+        Assert.Equal(ContinuationBaseUnavailableException.Moved, failure.ReasonCode);
+        Assert.Equal(reviewedSha, failure.ExpectedSha);
+        Assert.False(Directory.Exists(continuation.RepoPath));
+    }
 
-        Assert.Equal(mainTip, (await GitAsync(continuation.RepoPath, "rev-parse", "HEAD")).StdOut);
+    [Fact]
+    public async Task AGT_3245_unknown_salvage_starts_the_next_fenced_attempt_and_survives_develop_merge()
+    {
+        await SeedOriginAsync();
+        var first = CreateWorkspace(sourceRunAttemptId: "run_3245_first", fencingToken: 1);
+        await first.PrepareAsync(CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(first.RepoPath, "salvaged.txt"), "earlier work");
+        var salvage = await first.TeardownAsync("Unknown", "run_3245_first", CancellationToken.None);
+        Assert.NotNull(salvage.CommitSha);
+        var developTip = await PublishRemoteCommitAsync("main", "new-develop.txt", "current develop", "advance develop");
+
+        var second = CreateWorkspace(
+            sourceRunAttemptId: "run_3245_second",
+            fencingToken: 2,
+            continuationBaseRef: $"refs/heads/{salvage.Branch}",
+            continuationBaseSha: salvage.CommitSha,
+            continuationBaseReason: "run-timeout-with-salvage");
+        await second.PrepareAsync(CancellationToken.None);
+        var preparedBase = (await GitAsync(second.RepoPath, "rev-parse", "HEAD")).StdOut;
+        Assert.Equal(preparedBase, second.BaseSha);
+        Assert.Equal("earlier work", await File.ReadAllTextAsync(Path.Combine(second.RepoPath, "salvaged.txt")));
+        Assert.Equal("current develop", await File.ReadAllTextAsync(Path.Combine(second.RepoPath, "new-develop.txt")));
+        Assert.True((await RunGitAsync(second.RepoPath, "merge-base", "--is-ancestor",
+            salvage.CommitSha!, preparedBase)).Success);
+        Assert.True((await RunGitAsync(second.RepoPath, "merge-base", "--is-ancestor",
+            developTip, preparedBase)).Success);
+        var result = await second.TeardownAsync("Done", "run_3245_second", CancellationToken.None);
+        Assert.Equal(preparedBase, second.BaseSha);
+        Assert.True((await RunGitAsync(_origin, "merge-base", "--is-ancestor",
+            salvage.CommitSha!, result.ResultSha!)).Success);
+        Assert.True((await RunGitAsync(_origin, "merge-base", "--is-ancestor",
+            developTip, result.ResultSha!)).Success);
     }
 
     [Fact]
@@ -1087,13 +1210,21 @@ public sealed class GitWorkspaceTests : IDisposable
         return refs.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList();
     }
 
-    private async Task SeedOriginAsync()
+    private async Task SeedOriginAsync(bool legacyReports = false, bool trackedReport = false)
     {
         Directory.CreateDirectory(_root);
         var seed = Path.Combine(_root, "seed");
         await GitAsync(_root, "init", "--bare", _origin);
         await GitAsync(_root, "init", seed);
         await File.WriteAllTextAsync(Path.Combine(seed, "README.md"), "seed");
+        if (legacyReports)
+        {
+            Directory.CreateDirectory(Path.Combine(seed, ".agent-studio"));
+            await File.WriteAllTextAsync(Path.Combine(seed, ".agent-studio", "legacy-status-reports"),
+                "enabled\n");
+        }
+        if (trackedReport)
+            await File.WriteAllTextAsync(Path.Combine(seed, "status.md"), "base report\n");
         await GitAsync(seed, "add", "--all");
         await GitAsync(seed, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
             "commit", "-m", "seed");

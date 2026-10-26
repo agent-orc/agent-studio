@@ -224,10 +224,11 @@ public class PromptEnhancementService
 
         var claudePath = _configuration["ClaudeCli:Path"] ?? "claude";
 
+        using var workspace = new HostOneShotIsolation.Workspace();
         var psi = new ProcessStartInfo
         {
             FileName = GenericCliExecutionService.ResolveExecutable(claudePath),
-            WorkingDirectory = Directory.GetCurrentDirectory(),
+            WorkingDirectory = workspace.Path,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -237,15 +238,16 @@ public class PromptEnhancementService
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8
         };
-        foreach (var arg in AdHocClaudeInvoker.BuildArgs(model)) psi.ArgumentList.Add(arg);
+        var isolated = !SecurityProfiles.IsLocal(_configuration);
+        foreach (var arg in AdHocClaudeInvoker.BuildArgs(model, isolated)) psi.ArgumentList.Add(arg);
 
         var sw = Stopwatch.StartNew();
         try
         {
-            using var p = Process.Start(psi);
+            using var p = HostCliSpawnGuard.Start(psi, !SecurityProfiles.IsLocal(_configuration), CliTypes.Claude);
             if (p == null) return (false, null, "Process.Start returned null");
 
-            await p.StandardInput.WriteAsync(prompt.AsMemory(), ct);
+            await p.StandardInput.WriteAsync(AdHocClaudeInvoker.PreparePrompt(prompt, isolated).AsMemory(), ct);
             p.StandardInput.Close();
 
             var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);

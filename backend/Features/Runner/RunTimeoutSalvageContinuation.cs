@@ -18,9 +18,8 @@ namespace AgentStudio.Runner;
 /// </param>
 /// <param name="StartsFromSalvage">
 /// Whether the next round's worktree is prepared on the salvage commit instead
-/// of the integration branch. Timeouts keep their AGT-2861 behaviour and start
-/// on the integration branch, because their agent is alive to fetch the ref
-/// itself; a lost worker's round starts on the rescued work.
+/// of the integration branch. A finishing round must carry the previous work
+/// into its checkout before the agent starts.
 /// </param>
 public sealed record RunContinuationCause(
     string Reason,
@@ -30,13 +29,16 @@ public sealed record RunContinuationCause(
     string? Evidence = null,
     bool StartsFromSalvage = false)
 {
+    public const string FenceRefusalReason = "fenced-delivery-base-refused";
+
     /// <summary>AGT-2861: the run hit its timeout with a salvaged worktree.</summary>
     public static RunContinuationCause Timeout(string? reportedReason)
         => new(
             RunTimeoutSalvageContinuationPolicy.ContinuationReason,
             "remote-run-timeout-continuation",
             $"hit the run timeout{ReportedOutcome(reportedReason)}",
-            "timeout");
+            "timeout",
+            StartsFromSalvage: true);
 
     /// <summary>AGT-2870: the detached worker died before it recorded a result.</summary>
     public static RunContinuationCause WorkerLost(string? reportedReason, string? crashLine)
@@ -46,6 +48,15 @@ public sealed record RunContinuationCause(
             $"lost its worker process before it recorded a result{ReportedOutcome(reportedReason)}",
             "loss",
             ComposeEvidence(crashLine),
+            StartsFromSalvage: true);
+
+    public static RunContinuationCause FencedDeliveryRefusal(string baseSha, string resultSha)
+        => new(
+            FenceRefusalReason,
+            "remote-fenced-delivery-continuation",
+            "published a result without its fenced base in the history",
+            "delivery refusal",
+            $"The previous salvage base is {baseSha}; the refused result is {resultSha}.",
             StartsFromSalvage: true);
 
     public string Describe() => Ending;
@@ -143,15 +154,17 @@ public sealed class RunTimeoutContinuationService
             ReviewDecisionLog.ReadAll(workspace, task.ProjectName),
             _timeline.ReadAll(task.FolderPath), task.Id,
             CardRoundBudget.ResolveAllowed(_configuration));
-        if (cardBudget.Exhausted)
+        var fencedRefusal = cause?.Reason == RunContinuationCause.FenceRefusalReason;
+        if (cardBudget.Exhausted && !fencedRefusal)
             return Failed($"Automatic round budget spent ({cardBudget.Used} of {cardBudget.Allowed}).");
         var epoch = OperatorReviewRequeueService.ReadEpoch(task.FolderPath);
-        var round = CountAutomaticRounds(task) + 1;
+        var round = fencedRefusal ? 1 : CountAutomaticRounds(task) + 1;
         cause ??= RunContinuationCause.Timeout(reportedReason);
         var prompt = BuildPrompt(task, salvage, cause);
         var promptPath = Path.Combine(task.FolderPath, "prompt.md");
         var previousPrompt = File.Exists(promptPath) ? File.ReadAllText(promptPath) : null;
         var previousContextMode = task.ContextMode;
+        var previousBase = ContinuationBaseStore.Read(task.FolderPath);
 
         // The prompt note and the intent are written before the lane move so a
         // claim can never observe the card in Ready without its finishing
@@ -167,7 +180,10 @@ public sealed class RunTimeoutContinuationService
             activeJobId: null,
             watchPath: task.WatchPath);
         if (intent is null)
+        {
+            _mutations.RestorePromptOnFolder(task.FolderPath, previousPrompt);
             return Failed("The continuation intent could not be persisted.");
+        }
 
         // A salvaged worktree leaves no resumable session behind, so the round
         // starts from a clean CLI context rather than whatever the previous one
@@ -179,14 +195,20 @@ public sealed class RunTimeoutContinuationService
         // prepared on the rescued commit.
         if (cause.StartsFromSalvage)
         {
-            ContinuationBaseStore.Save(task.FolderPath, new ContinuationBaseRecord(
+            if (!ContinuationBaseStore.Save(task.FolderPath, new ContinuationBaseRecord(
                 salvage.Branch.StartsWith("refs/heads/", StringComparison.Ordinal)
                     ? salvage.Branch
                     : $"refs/heads/{salvage.Branch}",
                 salvage.CommitSha,
                 cause.Reason,
                 attemptId,
-                DateTime.UtcNow));
+                DateTime.UtcNow)))
+            {
+                _mutations.DiscardPendingIntent(task.FolderPath);
+                _mutations.RestorePromptOnFolder(task.FolderPath, previousPrompt);
+                _mutations.RestoreContextModeOnFolder(task.FolderPath, previousContextMode);
+                return Failed("The salvage checkout base could not be persisted.");
+            }
         }
 
         var move = await _transitions.MoveAsync(
@@ -201,6 +223,11 @@ public sealed class RunTimeoutContinuationService
             transitionDetail: cause.Reason);
         if (move.Status != MoveJobStatus.Success)
         {
+            if (cause.StartsFromSalvage)
+            {
+                if (previousBase is null) ContinuationBaseStore.Clear(task.FolderPath);
+                else ContinuationBaseStore.Save(task.FolderPath, previousBase);
+            }
             _mutations.DiscardPendingIntent(task.FolderPath);
             if (!_mutations.RestorePromptOnFolder(task.FolderPath, previousPrompt))
             {
@@ -271,6 +298,15 @@ public sealed class RunTimeoutContinuationService
         RunSalvageReference salvage,
         RunContinuationCause cause)
     {
+        if (cause.Reason == RunContinuationCause.FenceRefusalReason)
+            return "## STEER\n\n"
+                + $"Automatic continuation for {task.Key ?? task.Id}. "
+                + $"{cause.Evidence} The worktree starts from the refused result "
+                + $"'{salvage.Branch}' at {salvage.CommitSha}. "
+                + "Merge the previous salvage base commit into this result, then merge the current "
+                + "integration branch. Keep both histories and resolve conflicts without dropping work. "
+                + "Verify both named commits are ancestors of the final result, build, run focused tests, "
+                + "write results/status.md, and deliver.";
         var evidence = string.IsNullOrWhiteSpace(cause.Evidence)
             ? string.Empty
             : $"{cause.Evidence!.Trim()} ";
@@ -280,7 +316,7 @@ public sealed class RunTimeoutContinuationService
             + $"Your previous round {cause.Describe()}; the worktree was salvaged as "
             + $"'{salvage.Branch}' at {salvage.CommitSha}. The work exists, it only lacks its finishing round. "
             + evidence
-            + $"Fetch '{salvage.Branch}', continue from {salvage.CommitSha}, and finish: rebase onto the current "
+            + $"Continue from '{salvage.Branch}' at {salvage.CommitSha}, and finish: merge the current "
             + "integration branch, resolve every conflict conservatively without dropping the salvaged changes, "
             + "build, run the tests that cover the touched code, write results/status.md, and deliver. "
             + $"Budget your time: this is the last automatic round, so a second {cause.RepeatNoun} parks the card for an operator.";

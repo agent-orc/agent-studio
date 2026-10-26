@@ -16,16 +16,18 @@ public class PickupHoldPolicyTests
     private static readonly DateTime MonthAgo = Now.AddDays(-34);
 
     [Theory]
-    [InlineData("local", false, TaskModes.Coding, true)]
-    [InlineData("local", false, TaskModes.Research, false)]
-    [InlineData("remote-01", false, TaskModes.Coding, false)]
-    [InlineData("local", true, TaskModes.Coding, false)]
+    [InlineData("local", false, false, TaskModes.Coding, true)]
+    [InlineData("local", false, false, TaskModes.Research, false)]
+    [InlineData("local", false, true, TaskModes.Research, true)]
+    [InlineData("local", false, true, TaskModes.Planning, true)]
+    [InlineData("remote-01", false, true, TaskModes.Coding, false)]
+    [InlineData("local", true, false, TaskModes.Coding, false)]
     public void PlacementHold_MatchesLocalCodingAdmission(
-        string location, bool admitted, string mode, bool expectedHold)
+        string location, bool admitted, bool networked, string mode, bool expectedHold)
     {
         var card = Card() with { Mode = mode };
         var hold = PickupHoldPolicy.Evaluate(new PickupHoldFacts(
-            card, null, false, null, null, Now, location, admitted, "remote-01"));
+            card, null, false, null, null, Now, location, admitted, "remote-01", networked));
 
         Assert.Equal(expectedHold, hold is not null);
         if (!expectedHold) return;
@@ -346,15 +348,6 @@ public class PickupHoldPolicyTests
             rejection: new RemoteDispatchRejection { Code = "capability-mismatch", RunnerName = "r1" });
 
         Assert.Equal(PickupHoldMechanisms.DependencyGate, hold!.Mechanism);
-    }
-
-    [Fact]
-    public void EpicInAPickupLane_IsAContainerHold()
-    {
-        var hold = Evaluate(Card(kind: TaskKinds.Epic));
-
-        Assert.Equal(PickupHoldMechanisms.EpicContainer, hold!.Mechanism);
-        Assert.Equal(PickupHoldResolutionKinds.DecomposeEpic, Assert.Single(hold.Resolutions).Kind);
     }
 
     [Fact]

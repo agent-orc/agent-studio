@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -22,8 +23,12 @@ public sealed class ApiTokenAccessTests : IDisposable
             ["PROJ-002"], _clock.GetUtcNow().UtcDateTime.AddDays(1)), owner.Id);
 
         Assert.StartsWith("api.", made.Secret, StringComparison.Ordinal);
-        Assert.Equal("api:" + made.Token.Id, store.AuthenticateApiToken(made.Secret)?.User.Id);
-        Assert.Equal("PROJ-002", Assert.Single(store.AuthenticateApiToken(made.Secret)!.User.Projects));
+        // An API token is a service account with one token (AGT-3228).
+        var principal = store.AuthenticateServiceAccount(made.Secret);
+        Assert.Equal(("service-account:sa_" + made.Token.Id, made.Token.Id), (principal?.ActorId, principal?.TokenId));
+        Assert.Equal("PROJ-002", Assert.Single(store.ListApiTokens().Single(token => token.Id == made.Token.Id).Projects));
+        Assert.Equal(IamRoles.Admin, Assert.Single(store.ReadIamSnapshot().Bindings,
+            binding => binding.PrincipalId == principal!.AccountId).Role);
         Assert.DoesNotContain(made.Secret, File.ReadAllText(Path.Combine(store.SecurityFolder, "access-state.json")), StringComparison.Ordinal);
         var listed = Assert.Single(store.ListApiTokens());
         Assert.DoesNotContain(made.Secret, JsonSerializer.Serialize(new ApiTokenResponse(listed.Id, listed.Name,
@@ -31,11 +36,32 @@ public sealed class ApiTokenAccessTests : IDisposable
             listed.LastUsedAt, listed.RevokedAt)), StringComparison.Ordinal);
 
         store.RevokeApiToken(made.Token.Id);
-        Assert.Null(store.AuthenticateApiToken(made.Secret));
+        Assert.Null(store.AuthenticateServiceAccount(made.Secret));
         var second = store.CreateApiToken(new CreateApiTokenRequest("short lived", StudioRoles.Viewer,
             ["PROJ-002"], _clock.GetUtcNow().UtcDateTime.AddMinutes(1)), owner.Id);
         _clock.Advance(TimeSpan.FromMinutes(2));
-        Assert.Null(store.AuthenticateApiToken(second.Secret));
+        Assert.Null(store.AuthenticateServiceAccount(second.Secret));
+    }
+
+    [Fact]
+    public async Task Api_token_cannot_use_the_quota_admission_route_and_overrides_name_the_service_account()
+    {
+        var (store, configuration) = NewStore();
+        var owner = store.Bootstrap(new BootstrapRequest("owner", "correct horse battery staple!", "Owner")).User;
+        var token = store.CreateApiToken(new CreateApiTokenRequest("automation", StudioRoles.Operator,
+            [ProjectAccessAuthorization.AllProjectsGrant], _clock.GetUtcNow().UtcDateTime.AddDays(1)), owner.Id);
+        var called = 0;
+        var middleware = new AccessSecurityMiddleware(context => { called++; context.Response.StatusCode = 204; return Task.CompletedTask; },
+            configuration, store);
+
+        var admission = await Invoke(middleware, "GET", "/api/quota/admission/mine", token.Secret);
+
+        Assert.Equal(403, admission.Response.StatusCode);
+        Assert.Equal(0, called);
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] = store.AuthenticateServiceAccount(token.Secret);
+        Assert.Equal("service-account:sa_" + token.Token.Id, AgentStudio.Quota.WorkspaceQuotaEndpoints.Actor(context));
+        Assert.False(AgentStudio.Quota.WorkspaceQuotaEndpoints.Owner(context));
     }
 
     [Fact]
@@ -51,16 +77,16 @@ public sealed class ApiTokenAccessTests : IDisposable
         var middleware = new AccessSecurityMiddleware(context => { called++; context.Response.StatusCode = 204; return Task.CompletedTask; },
             configuration, store);
 
-        var allowed = await Invoke(middleware, "POST", "/api/projects/mine/settings", operatorToken.Secret);
+        var allowed = await Invoke(middleware, "PUT", "/api/projects/mine/settings", operatorToken.Secret);
         Assert.Equal(204, allowed.Response.StatusCode);
-        Assert.Equal("api:" + operatorToken.Token.Id, allowed.Items["ClientId"]);
+        Assert.Equal("service-account:sa_" + operatorToken.Token.Id, allowed.Items["ClientId"]);
         Assert.Equal(StudioRoles.Operator,
             (allowed.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role);
         var foreign = await Invoke(middleware, "GET", "/api/projects/foreign", operatorToken.Secret);
         Assert.Equal(403, foreign.Response.StatusCode);
         var globalMutation = await Invoke(middleware, "POST", "/api/settings", operatorToken.Secret);
         Assert.Equal(403, globalMutation.Response.StatusCode);
-        var viewerMutation = await Invoke(middleware, "POST", "/api/projects/mine/settings", viewerToken.Secret);
+        var viewerMutation = await Invoke(middleware, "PUT", "/api/projects/mine/settings", viewerToken.Secret);
         Assert.Equal(403, viewerMutation.Response.StatusCode);
         var admin = await Invoke(middleware, "GET", "/api/auth/users", operatorToken.Secret);
         Assert.Equal(403, admin.Response.StatusCode);
@@ -75,7 +101,7 @@ public sealed class ApiTokenAccessTests : IDisposable
         Assert.All(audit, row => Assert.DoesNotContain(operatorToken.Secret, row, StringComparison.Ordinal));
         Assert.All(audit, row => Assert.DoesNotContain(viewerToken.Secret, row, StringComparison.Ordinal));
         Assert.Contains(audit, row => row.Contains($"\"tokenId\":\"{operatorToken.Token.Id}\"", StringComparison.Ordinal)
-            && row.Contains($"\"actor\":\"api:{operatorToken.Token.Id}\"", StringComparison.Ordinal));
+            && row.Contains($"\"actor\":\"service-account:sa_{operatorToken.Token.Id}\"", StringComparison.Ordinal));
         Assert.Contains(audit, row => row.Contains("\"status\":204", StringComparison.Ordinal));
         Assert.Contains(audit, row => row.Contains("\"status\":403", StringComparison.Ordinal));
     }
@@ -94,6 +120,10 @@ public sealed class ApiTokenAccessTests : IDisposable
         Assert.Equal(200, projectWrite.Response.StatusCode);
         var installationWrite = await Invoke(middleware, "PUT", "/api/settings/cli", token.Secret);
         Assert.Equal(403, installationWrite.Response.StatusCode);
+        // Even a routed installation-wide write the workspace binding grants
+        // stays closed to an API token.
+        var workspaceWrite = await Invoke(middleware, "PUT", "/api/workspaces/main/autonomy", token.Secret);
+        Assert.Equal(403, workspaceWrite.Response.StatusCode);
         Assert.Equal(1, called);
     }
 
@@ -169,6 +199,12 @@ public sealed class ApiTokenAccessTests : IDisposable
         return (new AccessSecurityStore(configuration, NullLogger<AccessSecurityStore>.Instance, _clock), configuration);
     }
 
+    /// <summary>
+    /// Routed requests carry a real route pattern so the declared permission
+    /// resolves; <c>/api/projects/mine/*</c> is the project settings route and
+    /// <c>/api/workspace*</c> routes are mapped as literals. Anything else has
+    /// no endpoint, which a bearer principal may never pass.
+    /// </summary>
     private static async Task<DefaultHttpContext> Invoke(AccessSecurityMiddleware middleware, string method, string path,
         string token, string query = "", bool declareProjectScope = true)
     {
@@ -178,9 +214,16 @@ public sealed class ApiTokenAccessTests : IDisposable
         context.Request.Path = path;
         context.Request.QueryString = new QueryString(query);
         context.Request.Headers.Authorization = "Bearer " + token;
-        if (declareProjectScope && path.StartsWith("/api/projects/mine/", StringComparison.Ordinal))
-            context.SetEndpoint(new Endpoint(_ => Task.CompletedTask,
-                new EndpointMetadataCollection(new ApiTokenRouteScope(ProjectRouteScope.Addressed)), path));
+        var pattern = path switch
+        {
+            "/api/projects/mine/settings" => "/api/projects/{projectName}/settings",
+            "/api/workspaces/main/autonomy" => "/api/workspaces/{id}/autonomy",
+            _ when path.StartsWith("/api/workspace/", StringComparison.Ordinal) => path,
+            _ => null,
+        };
+        if (declareProjectScope && pattern is not null)
+            context.SetEndpoint(new RouteEndpoint(_ => Task.CompletedTask, RoutePatternFactory.Parse(pattern), 0,
+                new EndpointMetadataCollection(new HttpMethodMetadata([method])), pattern));
         context.Response.Body = new MemoryStream();
         await middleware.InvokeAsync(context);
         return context;

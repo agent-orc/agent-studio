@@ -47,6 +47,10 @@ jobs:
           bash scripts/compose-smoke-version.test.sh
           bash scripts/container-image-contracts.test.sh
           bash scripts/docker-scenario-images.test.sh
+          bash scripts/monolith-networked-compose-render.test.sh
+          bash scripts/monolith-networked-edge.test.sh
+          bash scripts/monolith-networked-ca.test.sh
+          bash scripts/monolith-networked-firewall.test.sh
 
       - name: Build, start, and verify onboarding stack
         run: scripts/compose-smoke-test.sh
@@ -60,10 +64,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+      - name: Verify the Studio server move procedure
+        run: |
+          node --test scripts/migration/move-studio-to-server.test.mjs scripts/migration/relocate-workspace-paths.test.mjs
+          sh scripts/migration/move-studio-to-server.test.sh
       - name: Open the website board in Chromium
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
         run: |
-          npm --prefix frontend ci
-          npm --prefix frontend exec -- playwright install --with-deps chromium
+          bash scripts/npm-frontend.sh ci
+          bash scripts/npm-frontend.sh exec -- playwright install --with-deps chromium
           WEBSITE_REUSE_MONOLITH_IMAGE=1 bash scripts/monolith-networked-compose-smoke.sh

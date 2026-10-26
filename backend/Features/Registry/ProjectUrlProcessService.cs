@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using AgentStudio.Security;
 
 namespace AgentStudio.Registry;
 
@@ -68,6 +69,17 @@ public sealed record ProjectUrlDiagnostic
     public DateTimeOffset CheckedAt { get; init; } = DateTimeOffset.UtcNow;
 }
 
+public interface IProjectUrlProcessStopper
+{
+    ProjectUrlProcessSnapshot? Stop(string projectId, string urlId);
+}
+
+public interface IProjectUrlProcessStarter
+{
+    ProjectUrlProcessSnapshot StartWithReadiness(ProjectRecord project, ProjectUrlRecord url);
+    ProjectUrlDiagnostic? Latest(ProjectRecord project, ProjectUrlRecord url);
+}
+
 /// <summary>
 /// Owns the dev-server processes launched for project URLs. Sessions remain
 /// observable after the initiating request finishes, can be stopped explicitly,
@@ -81,7 +93,7 @@ public sealed record ProjectUrlDiagnostic
 /// validation whose evidence (exit code, output tails) is redacted before it
 /// leaves the host.</para>
 /// </summary>
-public sealed class ProjectUrlProcessService : IDisposable
+public sealed class ProjectUrlProcessService : IProjectUrlProcessStarter, IProjectUrlProcessStopper, IDisposable
 {
     private const int MaxOutputLines = 1000;
     internal const int OutputTailLimit = 8_192;
@@ -94,19 +106,23 @@ public sealed class ProjectUrlProcessService : IDisposable
     private readonly ILogger<ProjectUrlProcessService> _logger;
     private readonly IHttpClientFactory _httpFactory;
     private readonly IProjectUrlPortInspector _portInspector;
+    private readonly bool _isHostIsolated;
     private readonly ConcurrentDictionary<string, Session> _sessions = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ProjectUrlDiagnostic> _latest = new(StringComparer.Ordinal);
     private readonly object _lifecycleGate = new();
     private int _disposed;
+    internal bool IsHostIsolated => _isHostIsolated;
 
     public ProjectUrlProcessService(
         ILogger<ProjectUrlProcessService> logger,
         IHttpClientFactory httpFactory,
-        IProjectUrlPortInspector? portInspector = null)
+        IProjectUrlPortInspector? portInspector = null,
+        IConfiguration? configuration = null)
     {
         _logger = logger;
         _httpFactory = httpFactory;
         _portInspector = portInspector ?? new ProjectUrlPortInspector();
+        _isHostIsolated = configuration is null || !SecurityProfiles.IsLocal(configuration);
     }
 
     /// <summary>
@@ -160,7 +176,7 @@ public sealed class ProjectUrlProcessService : IDisposable
 
             var process = new Process
             {
-                StartInfo = BuildStartInfo(rule.Command, cwd),
+                StartInfo = BuildStartInfo(rule.Command, cwd, _isHostIsolated),
                 EnableRaisingEvents = true,
             };
             var session = new Session(project.Id, url.Id, rule.Command, cwd, process);
@@ -762,7 +778,7 @@ public sealed class ProjectUrlProcessService : IDisposable
             ? session.LastOutputUtc
             : DateTime.UtcNow;
 
-    internal static ProcessStartInfo BuildStartInfo(string command, string cwd)
+    internal static ProcessStartInfo BuildStartInfo(string command, string cwd, bool isolated = false)
     {
         var psi = new ProcessStartInfo
         {
@@ -773,6 +789,15 @@ public sealed class ProjectUrlProcessService : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        // Shared profiles keep the API's credentials and service configuration
+        // out of repository start rules. Local keeps its normal shell environment.
+        if (isolated)
+        {
+            psi.Environment.Clear();
+            foreach (var name in new[] { "PATH", "SystemRoot", "ComSpec", "PATHEXT", "TMPDIR", "TEMP", "TMP" })
+                if (Environment.GetEnvironmentVariable(name) is { Length: > 0 } value)
+                    psi.Environment[name] = value;
+        }
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             psi.FileName = "cmd.exe";

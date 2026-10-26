@@ -175,7 +175,7 @@ public sealed partial class TaskServerStore
         if (template is null) return;
         var normalized = outcome.Trim().ToLowerInvariant() is "noop" or "no-op"
             ? CompletionOutcomeKinds.NoOp : CompletionOutcomeKinds.Done;
-        if (!TransitionDecisionPolicy.CreateReview(false, normalized, verifiedDelivery: true, reportOnly: false))
+        if (!TransitionDecisionPolicy.CreateReview(normalized, verifiedDelivery: true, reportOnly: false))
             return;
         var codingHost = Convert.ToString(await ScalarAsync(connection, """
             SELECT COALESCE(r.coding_host_id, runner.host_id)

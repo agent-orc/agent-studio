@@ -318,7 +318,7 @@ export class RemoteHostCardComponent {
   }
 
   openSignIn(badge: ProviderAuthBadge): void {
-    if (badge.provider === 'codex') this.codexSignIn.open(signInTarget(badge, this.host().address));
+    if (badge.provider === 'codex') this.codexSignIn.open({ ...signInTarget(badge, this.host().address), runnerId: this.host().clientId || badge.runnerId });
     else if (badge.provider === 'claude') this.claudeSignIn.open(claudeSignInTarget(badge, this.host().address));
   }
 

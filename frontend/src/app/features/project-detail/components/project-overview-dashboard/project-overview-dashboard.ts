@@ -23,6 +23,7 @@ import { ProjectVisualEvidenceQueueComponent } from '../project-visual-evidence-
 import type { ProjectRailKey } from '../project-shell/project-shell.config';
 import { WikiLiveRefreshService } from '../../services/wiki-live-refresh.service';
 import { mergeRecentWikiFeed } from './project-overview-wiki-feed';
+import { ReviewStatisticsComponent } from '../../../tokens/components/review-statistics/review-statistics';
 
 /** Operator-first Project Overview. Every block is a compact projection of an
  * existing detail truth; it owns no task, URL, deployment, or Wiki mutation. */
@@ -34,6 +35,7 @@ import { mergeRecentWikiFeed } from './project-overview-wiki-feed';
     ProjectPublishPanelComponent,
     ProjectOverviewUrlsComponent,
     ProjectVisualEvidenceQueueComponent,
+    ReviewStatisticsComponent,
   ],
   providers: [WikiLiveRefreshService],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -45,13 +47,11 @@ export class ProjectOverviewDashboardComponent {
   readonly openRail = output<ProjectRailKey>();
   readonly openTask = output<{ jobId: string; watchPath: string }>();
   readonly openUrlPreview = output<{ id: string }>();
-
   private readonly tasks = inject(TaskService);
   private readonly docs = inject(ProjectDocsService);
   private readonly git = inject(ProjectGitService);
   private readonly wikiLiveRefresh = inject(WikiLiveRefreshService);
   private refreshGeneration = 0;
-
   readonly tokenUsage = signal<ProjectTokenUsageSummary | null>(null);
   readonly throughput = signal<ProjectThroughputSummary | null>(null);
   readonly deployment = signal<ProjectDeploymentSummary | null>(null);

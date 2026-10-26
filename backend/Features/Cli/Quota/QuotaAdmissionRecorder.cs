@@ -46,19 +46,20 @@ public sealed class QuotaAdmissionRecorder
     /// De-duplicated per job so a runner that re-polls the same deferred card
     /// does not spam its timeline.
     /// </summary>
-    public void EmitAdmissionDecision(TaskInfo info, QuotaAdmissionPlan plan, string source)
+    public void EmitAdmissionDecision(
+        TaskInfo info, QuotaAdmissionPlan plan, string source, string? decisionIdentity = null)
     {
         var warning = plan.ProjectionWarning;
         var logLevel = warning is null ? LogLevel.Information : LogLevel.Warning;
-        _logger.Log(
-            logLevel,
-            "cli_quota_admission_decision source={Source} jobId={JobId} project={Project} outcome={Outcome} cli={Cli} model={Model} isFallback={IsFallback} reason={Reason}",
-            source, info.Id, info.ProjectName, plan.Outcome, plan.CliType, plan.Model ?? "<default>", plan.IsFallback, plan.Reason);
-
         var key = $"{source}|{plan.Outcome}|{plan.CliType}|{plan.Model}|{plan.ThinkingLevel}|{plan.Reason}|{plan.BetterCandidates?.EvidenceSnapshot}";
-        var jobKey = $"{info.WatchPath}|{info.Id}";
-        if (_lastDecisionByJob.TryGetValue(jobKey, out var prev) && prev == key) return;
-        _lastDecisionByJob[jobKey] = key;
+        var jobKey = $"{info.WatchPath}|{info.Id}|{decisionIdentity}";
+        var changed = TryReserveDecision(jobKey, key);
+        if (source != "review-claim" || changed)
+            _logger.Log(
+                logLevel,
+                "cli_quota_admission_decision source={Source} jobId={JobId} project={Project} outcome={Outcome} cli={Cli} model={Model} isFallback={IsFallback} reason={Reason}",
+                source, info.Id, info.ProjectName, plan.Outcome, plan.CliType, plan.Model ?? "<default>", plan.IsFallback, plan.Reason);
+        if (!changed) return;
 
         // Keep every admission boundary in the durable decision log. The
         // usage report uses the latest boundary for a job to determine whether
@@ -98,6 +99,20 @@ public sealed class QuotaAdmissionRecorder
                     ? string.Empty
                     : JsonSerializer.Serialize(plan.ModelFallback),
             });
+    }
+
+    private bool TryReserveDecision(string jobKey, string decision)
+    {
+        while (true)
+        {
+            if (!_lastDecisionByJob.TryGetValue(jobKey, out var previous))
+            {
+                if (_lastDecisionByJob.TryAdd(jobKey, decision)) return true;
+                continue;
+            }
+            if (previous == decision) return false;
+            if (_lastDecisionByJob.TryUpdate(jobKey, decision, previous)) return true;
+        }
     }
 
     internal static string SerializeCandidates(BetterCandidateNote? note)

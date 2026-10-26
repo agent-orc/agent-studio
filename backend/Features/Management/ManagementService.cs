@@ -314,6 +314,7 @@ public sealed class ManagementService
                     TaskJsonFile.RemoveField(card.FolderPath, "completionClaim",
                         Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
                     _scanner.InvalidateCache();
+                    _scanner.PublishCoreFromKnownFolder(card.FolderPath);
                     blocked.Add(new { taskKey = card.TaskKey, reason = outcome.Status.ToString() });
                 }
             }

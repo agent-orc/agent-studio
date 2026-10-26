@@ -1,0 +1,4 @@
+@if (quota(); as quota) {
+  <span class="workspace-quota-banner" role="status" data-testid="workspace-quota-status"
+        [attr.data-status]="quota.status">{{ quota.message }}</span>
+}

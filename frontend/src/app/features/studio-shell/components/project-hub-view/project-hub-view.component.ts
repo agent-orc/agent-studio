@@ -1,9 +1,7 @@
 import { ChangeDetectionStrategy, Component, effect, inject, input, output, signal } from '@angular/core';
 import {
   ProjectShellComponent,
-  ProjectDetailComponent,
   ProjectOverviewDashboardComponent,
-  ProjectDeployAreaComponent,
   ProjectEnvironmentOverviewComponent,
   ProjectSettingsPanelComponent,
   SecurityPanelComponent,
@@ -20,7 +18,9 @@ import {
   ProjectTestRunsPanelComponent,
   OwnershipMappingPanelComponent,
 } from '../../../project-detail';
+import { ProjectDetailComponent } from '../../../project-detail/lazy';
 import { ProjectTokenUsagePanelComponent } from '../../../project-token-usage';
+import { TokenAnalysisViewComponent } from '../../../token-analysis';
 import { ProjectCycleTimePanelComponent } from '../../../project-cycle-time';
 import { PromptAdminPanelComponent } from '../../../orchestrator';
 import { WorkspaceScreenshotsComponent } from '../../../screenshots';
@@ -30,7 +30,8 @@ import {
   ProjectRailKey,
   resolveProjectSection,
 } from '../../../project-detail/components/project-shell/project-shell.config';
-import type { DeployView } from '../../../project-detail/components/project-deploy-area/project-deploy-area';
+// Imported directly, not through the barrel, so the @defer block keeps the Deploy area out of the initial bundle.
+import { ProjectDeployAreaComponent, type DeployView } from '../../../project-detail/components/project-deploy-area/project-deploy-area';
 import { ProjectOverlaysService } from '../../../project-detail/state/project-overlays.service';
 import { StudioTabStateService } from '../../services/studio-tab-state.service';
 import type { WikiTabNavigationRequest, WikiTabTarget } from '../../studio-shell.types';
@@ -92,6 +93,7 @@ const RAILS_WITH_CUSTOM_PANEL: ReadonlySet<ProjectRailKey> = new Set<ProjectRail
     SecurityPanelComponent,
     UxuiPanelComponent,
     ProjectTokenUsagePanelComponent,
+    TokenAnalysisViewComponent,
     ProjectCycleTimePanelComponent,
     ProjectObservabilityPanelComponent,
     ProjectProductRuntimePanelComponent,
@@ -131,6 +133,12 @@ export class ProjectHubViewComponent {
 
   readonly activeRail = signal<ProjectRailKey>(DEFAULT_PROJECT_RAIL_KEY);
   readonly deployView = signal<DeployView>('overview');
+  readonly selectedRelease = signal<{ project: string; id: string } | null>(null);
+
+  openOperationsRelease(id: string): void {
+    this.setRail('deploy');
+    this.selectedRelease.set({ project: this.projectName(), id });
+  }
 
   constructor() {
     effect(() => {
@@ -152,6 +160,7 @@ export class ProjectHubViewComponent {
   }
 
   setRail(requested: ProjectRailKey): void {
+    this.selectedRelease.set(null);
     const projectName = this.projectName();
     const { rail, deployView } = resolveProjectSection(requested);
     if (rail === 'deploy') this.deployView.set(deployView);

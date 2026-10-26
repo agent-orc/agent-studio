@@ -352,6 +352,25 @@ public sealed class RemoteRunnerDaemon
             }
         }
         SweepBuildNodesIfDue();
+        void StartModelAcceptanceProbe()
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await RunnerModelAcceptanceProbe.Shared.RefreshAsync(
+                        RunnerCapabilityProbe.ModelCandidates(_options), shutdown);
+                }
+                catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+                {
+                    _log("model acceptance probe stopped with the daemon");
+                }
+                catch (Exception exception)
+                {
+                    _log($"model acceptance probe failed: {exception.Message}");
+                }
+            }, shutdown);
+        }
         var capabilityGeneration = DateTime.UtcNow.Ticks;
         var telemetry = new HostTelemetrySampler();
         // Claim admission and salvage deletion share this gate. A claim is
@@ -405,6 +424,7 @@ public sealed class RemoteRunnerDaemon
             TimeSpan.FromSeconds(_options.ServerRequestTimeoutSeconds),
             _log,
             shutdown);
+        if (_options.Role == "coding") StartModelAcceptanceProbe();
         if (!gitCapability.CanPush)
         {
             // Diagnosis only: read-only admission is already decided above, so a
@@ -455,7 +475,6 @@ public sealed class RemoteRunnerDaemon
         var decisionPoll = new OrchestratorDecisionJobAdmission(_options, _client, _log).PollAsync(shutdown);
         var repositoryProbePoll = new RunnerProjectRepositoryProbe(_options, _client,
             new PlatformRepositoryGitProof(_ => null, _options.StateDir), _log).PollAsync(shutdown);
-        var deviceLoginPoll = new RunnerDeviceLoginAgent(_options, _client, _log).PollAsync(shutdown);
         var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log).PollAsync(shutdown);
         while (!shutdown.IsCancellationRequested)
         {
@@ -577,6 +596,7 @@ public sealed class RemoteRunnerDaemon
                         TimeSpan.FromSeconds(_options.ServerRequestTimeoutSeconds),
                         _log,
                         shutdown);
+                    if (_options.Role == "coding") StartModelAcceptanceProbe();
                     nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
                 }
                 // Record the attempt before entering any claim-path HTTP call.
@@ -948,7 +968,6 @@ public sealed class RemoteRunnerDaemon
         await interactivePoll;
         await decisionPoll;
         await repositoryProbePoll;
-        await deviceLoginPoll;
         await gitSetupPoll;
         await salvageSweep;
         try { await interactiveChat.DrainAsync(); }

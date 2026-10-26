@@ -117,11 +117,33 @@ public sealed class ContinueModeGuardServiceTests : IDisposable
         Assert.Contains(RemoteExecutionRequirement.Code, ex.Message);
     }
 
+    [Theory]
+    [InlineData(TaskModes.Planning)]
+    [InlineData(TaskModes.Research)]
+    public async Task ReadOnlyCard_LocalStartAndContinueAreRefusedBeforeMutation(string mode)
+    {
+        WriteJob("read-only-card", TaskStates.Progress, mode: mode);
+        var harness = Build(networked: true);
+        var promptPath = Path.Combine(_watchPath, TaskStates.Progress, "read-only-card", "prompt.md");
+        var before = File.ReadAllText(promptPath);
+
+        var start = await Assert.ThrowsAsync<TaskOperationException>(() =>
+            harness.Service.StartJobAsync("read-only-card", _watchPath));
+        var continuation = await Assert.ThrowsAsync<TaskOperationException>(() =>
+            harness.Service.ContinueJobAsync("read-only-card", "Summarize findings.", _watchPath));
+
+        Assert.Equal(400, start.Status);
+        Assert.Contains(RemoteExecutionRequirement.Code, start.Message);
+        Assert.Equal(400, continuation.Status);
+        Assert.Contains(RemoteExecutionRequirement.Code, continuation.Message);
+        Assert.Equal(before, File.ReadAllText(promptPath));
+    }
+
     // ── fixture ───────────────────────────────────────────────────────────────
 
     private sealed record Harness(TaskRunnerService Service, TaskScannerService Scanner);
 
-    private Harness Build()
+    private Harness Build(bool networked = false)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -130,6 +152,7 @@ public sealed class ContinueModeGuardServiceTests : IDisposable
             ["WatchPaths:0:RootPath"] = _workspaceRoot,
             ["WatchPaths:0:RepositoryPath"] = _workspaceRoot,
             ["TaskRepository"] = _workspaceRoot,
+            ["Security:Profile"] = networked ? "networked" : "local",
             ["Runner:Id"] = "test-backend@test-host",
             ["Runner:FollowUpStartWindowMs"] = "0",
         }).Build();

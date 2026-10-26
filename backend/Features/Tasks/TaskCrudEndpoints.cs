@@ -142,7 +142,7 @@ public static class TaskCrudEndpoints
                 var tokenLookup = BuildTokenLookup(raw, tokens);
                 var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
                 var dependencyLookups = BuildDependencyGraphLookups(raw, scanner,
-                    attemptAuthority: attemptAuthority, references: publication?.References);
+                    attemptAuthority: attemptAuthority);
                 var gitLookup = gitProjection.ReadCacheOnly(raw);
                 var liveLookup = liveStatus.BuildLookup(raw);
                 var reviewQueue = attemptAuthority.ReadReviewQueue();
@@ -196,8 +196,8 @@ public static class TaskCrudEndpoints
                 includeNested: true);
 
             // AGT-3088: the read takes one already published index generation
-            // and pins it, so every nested index read below - the reference
-            // graph, the runner status the validator and the live-status strip
+            // and pins it for board cards and runner status. Dependency targets
+            // use the separately published core graph; the live-status strip
             // read, the generation folded into the tag - answers from that one
             // generation and none of them refreshes on this thread. A dirty
             // index starts a background refresh; only a cold start or this
@@ -242,7 +242,7 @@ public static class TaskCrudEndpoints
                 var tokenLookup = BuildTokenLookup(raw, tokens);
                 var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
                 var dependencyLookups = BuildDependencyGraphLookups(raw, scanner,
-                    attemptAuthority: attemptAuthority, references: publication?.References);
+                    attemptAuthority: attemptAuthority);
                 var gitLookup = gitProjection.ReadCacheOnly(raw);
                 var liveLookup = liveStatus.BuildLookup(raw);
                 var reviewQueue = attemptAuthority.ReadReviewQueue();
@@ -448,30 +448,52 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
+        group.MapGet("/{jobId}", async (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, TaskIndexCache index, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, TaskTokenUsageCache tokenCache, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail",
                 loggerFactory.CreateLogger("TaskDetail"), includeNested: true);
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            var detail = scanner.GetJobDetail(jobId, watchPath);
-            if (detail is null) return Results.NotFound();
+            var facts = await index.GetDetailFactsAsync(jobId, watchPath, context.RequestAborted);
+            if (facts.Info is null)
+            {
+                if (facts.Warming)
+                {
+                    context.Response.Headers["X-Task-Detail-Freshness"] = "warming";
+                    return Results.Accepted(value: new { state = "warming", reason = "task-index-warming" });
+                }
+                return Results.NotFound();
+            }
+            if (!ProjectAccessAuthorization.AllowsTasks(context, [facts.Info.ProjectName], IamPermissions.ProjectRead, projects))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            context.Response.Headers["X-Task-Detail-Freshness"] = facts.Stale ? "stale" : "ready";
+            var detail = scanner.GetJobDetailFromInfo(facts.Info);
             // Detail and the Git resource consume the same completed repository
             // snapshot. A stale result for an older task attempt is withheld.
             var gitFacts = TaskSwitchTrace.Run("index.lookup", () => gitProjection.ReadTask(detail.Info).Data);
             if (gitFacts?.ReconstructedCommits is { } commits)
                 detail = detail with { Info = detail.Info with { Commits = commits.ToList() } };
-            var tokenLookup = TaskSwitchTrace.Run("tokens", () => BuildTokenLookup(new[] { detail.Info }, tokens));
+            // The ledger fold runs only in the usage resource or a background
+            // warm. Legacy detail consumers retain the last cached summary.
+            var tokenSummary = tokenCache.GetCached(detail.Info, out var tokenReady);
+            context.Response.Headers["X-Task-Token-Freshness"] = tokenReady ? "ready" : "warming";
+            IReadOnlyDictionary<string, TaskTokenSummary>? tokenLookup = tokenSummary is null
+                ? null : new Dictionary<string, TaskTokenSummary> { [detail.Info.TaskKey] = tokenSummary };
             var verdictLookup = TaskSwitchTrace.Run("runtime", () => BuildOrchestratorVerdictLookup(new[] { detail.Info }, configuration));
-            var eligibleWaiters = ProjectAccessAuthorization
-                .FilterTasks(context, scanner.ScanAllJobs(), projects)
-                .Where(job => !job.Fixture);
-            var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority));
+            var needsDependencyProjection = detail.Info.References.DependsOn.Count > 0
+                || detail.Info.State == TaskStates.HumanReview;
+            var eligibleWaiters = needsDependencyProjection
+                ? ProjectAccessAuthorization.FilterTasks(context, index.GetResidentTasks(), projects)
+                    .Where(job => !job.Fixture)
+                : Enumerable.Empty<TaskInfo>();
+            var dependencyLookups = TaskSwitchTrace.Run("dependencies", () => BuildDependencyGraphLookups(
+                new[] { detail.Info }, scanner, eligibleWaiters, attemptAuthority));
             var withRuntime = WithRuntime(pricing, detail, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters);
             withRuntime = TaskSwitchTrace.Run("runtime", () => withRuntime with
             {
                 Info = betterCandidates.Attach(withRuntime.Info, projectSettings.Get(withRuntime.Info.ProjectName)),
             });
-            var liveLookup = TaskSwitchTrace.Run("runtime", () => liveStatus.BuildLookup(new[] { withRuntime.Info }));
+            var liveLookup = TaskSwitchTrace.Run("runtime", () => liveStatus.BuildLookup(
+                new[] { withRuntime.Info }, publishedRunnerStatus: true));
             if (liveLookup.TryGetValue(withRuntime.Info.TaskKey, out var currentLiveStatus))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { LiveStatus = currentLiveStatus } };
             if (gitFacts is not null)
@@ -753,7 +775,7 @@ public static class TaskCrudEndpoints
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
+            if (ContributorAccessPolicy.IsProductSession(ctx)
                 && !ContributorAccessPolicy.AllowsTransition(scanner.FindJob(jobId, watchPath)?.State,
                     req.TargetState, req.OperatorOverride, req.ArchiveOverride))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
@@ -765,6 +787,9 @@ public static class TaskCrudEndpoints
             // It needs a written reason, checked here at the boundary.
             if (req.OperatorOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
                 return Results.BadRequest(new { error = OverrideReasonRequired });
+            if (req.OperatorOverride && !ProjectAccessAuthorization.HasOperatorAuthority(ctx))
+                return Results.Json(new { error = "operator-authority-required", message = OperatorAuthorityRequired },
+                    statusCode: StatusCodes.Status403Forbidden);
             if (req.ArchiveOverride && req.TargetState != TaskStates.Archive)
                 return Results.BadRequest(new { error = "archiveOverride is valid only for a move to 7-archive." });
             if (req.ArchiveOverride && (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal owner
@@ -792,7 +817,7 @@ public static class TaskCrudEndpoints
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
-            if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
+            if (ContributorAccessPolicy.IsProductSession(ctx)
                 && !ContributorAccessPolicy.AllowsTransition(scanner.FindJob(jobId, watchPath)?.State,
                     req.TargetState, req.OperatorOverride, req.ArchiveOverride))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
@@ -804,6 +829,9 @@ public static class TaskCrudEndpoints
             // It needs a written reason, checked here at the boundary.
             if (req.OperatorOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
                 return Results.BadRequest(new { error = OverrideReasonRequired });
+            if (req.OperatorOverride && !ProjectAccessAuthorization.HasOperatorAuthority(ctx))
+                return Results.Json(new { error = "operator-authority-required", message = OperatorAuthorityRequired },
+                    statusCode: StatusCodes.Status403Forbidden);
             if (req.ArchiveOverride && req.TargetState != TaskStates.Archive)
                 return Results.BadRequest(new { error = "archiveOverride is valid only for a move to 7-archive." });
             if (req.ArchiveOverride && (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal owner
@@ -871,6 +899,7 @@ public static class TaskCrudEndpoints
                     $"Operator chose {req.Decision} for run {offer.AttemptId} delivered against an older brief.",
                     offer.AttemptId,
                     details: new Dictionary<string, string> { ["decision"] = req.Decision });
+                scanner.PublishCoreFromKnownFolder(folder);
                 scanner.InvalidateCache();
                 return MoveResult(moved);
             }
@@ -981,13 +1010,31 @@ public static class TaskCrudEndpoints
             IConfiguration configuration,
             CancellationToken ct) =>
         {
-            if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal { User.Role: StudioRoles.Contributor }
-                && req.TargetState is not (null or TaskStates.Backlog or TaskStates.Ready))
-                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            if (req.CompatibilityFields?.Keys.Any(key =>
+                string.Equals(key, "epicId", StringComparison.OrdinalIgnoreCase)) == true)
+            {
+                ctx.Response.Headers["Deprecation"] = "true";
+                ctx.Response.Headers.Warning = "299 - \"epicId is deprecated and ignored\"";
+            }
+            // The Product role's lane and run-control limits apply per project:
+            // a Developer binding elsewhere does not lift them here.
+            var requestedProject = string.IsNullOrWhiteSpace(req.Project) ? req.WatchPath : req.Project;
+            var productUser = ProjectAccessAuthorization.IsProductRoleIn(ctx, requestedProject)
+                ? (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User
+                : null;
+            if (productUser is not null)
+            {
+                var effectiveState = string.IsNullOrWhiteSpace(req.TargetState)
+                    ? TaskKinds.IsDecision(req.Kind) ? TaskStates.Preparation : TaskStates.Backlog
+                    : req.TargetState;
+                if (effectiveState is not (TaskStates.Backlog or TaskStates.Ready))
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                req = ContributorAccessPolicy.ForProductCreate(req, productUser.Id);
+            }
             if (string.IsNullOrWhiteSpace(req.Title))
                 return Results.BadRequest("Title is required");
             if (req.Kind is not null && !TaskKinds.All.Contains(req.Kind.Trim(), StringComparer.OrdinalIgnoreCase))
-                return Results.BadRequest(new { error = "kind must be task, epic, or decision." });
+                return Results.BadRequest(new { error = "kind must be task or decision." });
             if (TaskKinds.IsDecision(req.Kind))
             {
                 var errors = DecisionCardPolicy.ValidateContent(req.Decision);
@@ -1005,8 +1052,7 @@ public static class TaskCrudEndpoints
             // attribution header must never override the authenticated user.
             if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
             {
-                var requestedProject = string.IsNullOrWhiteSpace(req.Project) ? req.WatchPath : req.Project;
-                if (!ProjectAccessAuthorization.Allows(human.User, requestedProject, projects))
+                if (!ProjectAccessAuthorization.AllowsTasks(ctx, [requestedProject], IamPermissions.ProjectCardsWrite, projects))
                     return Results.Json(new { error = "project-scope-denied", message = "This account is not a member of the requested project." }, statusCode: StatusCodes.Status403Forbidden);
                 req = req with { OwnerClientId = human.User.Id };
             }
@@ -1038,6 +1084,9 @@ public static class TaskCrudEndpoints
                         routing = resolvedRouting,
                     });
                 }
+                if (productUser is not null
+                    && !ProjectAccessAuthorization.Allows(productUser, resolvedRouting.StorageProjectId, projects))
+                    return Results.Json(new { error = "project-scope-denied", message = "This account is not a member of the destination project." }, statusCode: StatusCodes.Status403Forbidden);
                 if (!string.IsNullOrWhiteSpace(req.RequestedTaskPrefix)
                     && !string.Equals(req.RequestedTaskPrefix, resolvedRouting.AllowedTicketPrefix, StringComparison.OrdinalIgnoreCase))
                 {
@@ -1048,6 +1097,13 @@ public static class TaskCrudEndpoints
                     });
                 }
 
+                // Routing may move the card to another project; that one must
+                // grant the same permission and lane limit.
+                if (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal
+                    && (!ProjectAccessAuthorization.AllowsTasks(ctx, [resolvedRouting.StorageProjectId], IamPermissions.ProjectCardsWrite, projects)
+                        || (ProjectAccessAuthorization.IsProductRoleIn(ctx, resolvedRouting.StorageProjectId)
+                            && req.TargetState is not (null or TaskStates.Backlog or TaskStates.Ready))))
+                    return Results.Json(new { error = "project-scope-denied", message = "This account cannot create cards in the routed project." }, statusCode: StatusCodes.Status403Forbidden);
                 var prompt = AppendDeliveryAcceptanceCriteria(req.PromptMarkdown, resolvedRouting);
                 req = req with
                 {
@@ -1117,10 +1173,11 @@ public static class TaskCrudEndpoints
             // project-scope enforcement to here. A scoped non-owner human may only
             // reorder tasks inside its own projects; resolve every affected task's
             // project and fail closed on any that is out of scope or unresolvable.
-            if (!ProjectAccessAuthorization.AllowsTasks(
-                    ctx,
-                    jobs.Select(j => scanner.FindJob(j.JobId, string.IsNullOrWhiteSpace(j.WatchPath) ? null : j.WatchPath)?.ProjectName),
-                    projects))
+            var reorderProjects = jobs
+                .Select(j => scanner.FindJob(j.JobId, string.IsNullOrWhiteSpace(j.WatchPath) ? null : j.WatchPath)?.ProjectName)
+                .ToList();
+            if (!ProjectAccessAuthorization.AllowsTasks(ctx, reorderProjects, IamPermissions.ProjectCardsWrite, projects)
+                || reorderProjects.Any(project => ProjectAccessAuthorization.IsProductRoleIn(ctx, project)))
                 return Results.Json(
                     new { error = "project-scope-denied", message = "This account is not a member of every task in the reorder set." },
                     statusCode: StatusCodes.Status403Forbidden);
@@ -1190,7 +1247,7 @@ public static class TaskCrudEndpoints
             return Results.Ok(new { priority = req.Priority, position });
         });
 
-        group.MapPost("/{jobId}/change-project", (string jobId, string? project, string? watchPath, ChangeProjectRequest req, TaskStateMachine states, AgentStudio.Registry.ProjectRegistry projects) =>
+        group.MapPost("/{jobId}/change-project", (string jobId, string? project, string? watchPath, ChangeProjectRequest req, HttpContext ctx, TaskStateMachine states, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             // The target project is likewise addressable by a path-free handle;
@@ -1198,6 +1255,12 @@ public static class TaskCrudEndpoints
             var targetWatchPath = ResolveWatchPath(projects, req.TargetProject, req.TargetWatchPath);
             if (string.IsNullOrWhiteSpace(targetWatchPath))
                 return Results.BadRequest("A valid target project is required");
+            var target = projects.FindByStorageLocation(targetWatchPath);
+            if (target is null)
+                return Results.BadRequest("A registered target project is required");
+            if (!ProjectAccessAuthorization.AllowsTasks(ctx, [target.Id], IamPermissions.ProjectCardsWrite, projects)
+                || ProjectAccessAuthorization.IsProductRoleIn(ctx, target.Id))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             var success = states.ChangeProject(jobId, targetWatchPath, watchPath);
             return success ? Results.Ok() : Results.BadRequest("Failed to change project");
         });
@@ -1226,17 +1289,6 @@ public static class TaskCrudEndpoints
             if (req.UseOwnSession.HasValue)
                 mutations.SetJobUseOwnSession(jobId, req.UseOwnSession.Value, watchPath);
             return Results.Ok();
-        });
-
-        // Epics assignment way 2 (post-hoc): attach/detach a task to a parent epic.
-        // Body { epicId }: null or empty detaches. (Way 1 is CreateTaskRequest.EpicId
-        // at create time; way 3 is an epic's decomposition run creating sub-tasks
-        // with epicId via the create path.)
-        group.MapPut("/{jobId}/epic", (string jobId, string? project, string? watchPath, SetJobEpicRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
-        {
-            watchPath = ResolveWatchPath(projects, project, watchPath);
-            var ok = mutations.SetJobEpic(jobId, req?.EpicId, watchPath);
-            return ok ? Results.Ok() : Results.NotFound();
         });
 
         group.MapPut("/{jobId}/dossier", (string jobId, string? project, string? watchPath,
@@ -1297,7 +1349,7 @@ public static class TaskCrudEndpoints
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             return DecisionResult(await decisions.DecideAsync(jobId, watchPath, req, DecisionActor(ctx), ct,
-                (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role));
+                ProjectAccessAuthorization.DecisionRole(ctx)));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         group.MapPost("/{jobId}/decision/reopen", async (HttpContext ctx, string jobId, string? project, string? watchPath,
@@ -1306,7 +1358,7 @@ public static class TaskCrudEndpoints
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             return DecisionResult(await decisions.ReopenAsync(jobId, watchPath, req, DecisionActor(ctx), ct,
-                (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role));
+                ProjectAccessAuthorization.DecisionRole(ctx)));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         // Operator-run one-off conversion. The prompt digest makes a reviewed
@@ -1533,6 +1585,9 @@ public static class TaskCrudEndpoints
         + $"{CompletionContractPolicy.MinimumOverrideReasonLength} characters. It is stored on the "
         + "card and shown wherever the card claims completion.";
 
+    internal static readonly string OperatorAuthorityRequired =
+        "operatorOverride needs the Admin or Owner role in this project.";
+
     private static async Task<IResult> MoveOperatorWithRunIntentAsync(
         string jobId, string? watchPath, MoveJobRequest request, HttpContext context,
         TaskTransitionService transitions, TaskScannerService scanner, RunLeaseService leases,
@@ -1587,6 +1642,8 @@ public static class TaskCrudEndpoints
 
     internal static string OperatorActor(HttpContext context)
     {
+        if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account)
+            return TimelineActors.ServiceAccount(account.AccountId);
         if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
             return TimelineActors.Human(human.User.DisplayName);
         var clientId = context.Items["ClientId"] as string

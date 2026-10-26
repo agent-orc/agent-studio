@@ -1,7 +1,7 @@
 <div class="uhp" data-testid="usage-hover-panel">
   <app-header-quota (cliSelected)="select($event)" />
   <button type="button" class="uhp__chat-trigger" data-testid="usage-chat-trigger"
-          [attr.aria-expanded]="chatUsageOpen()" (click)="toggleChatUsage()">
+          aria-label="Chat usage" [attr.aria-expanded]="chatUsageOpen()" (click)="toggleChatUsage()">
     Chat usage
   </button>
   @if (chatUsageOpen()) {

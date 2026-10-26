@@ -45,7 +45,11 @@ export type WorkspaceSettingsSection =
   | 'tokens'
   | 'screenshots';
 
-export type WorkspaceTokenUsagePage = 'workspace' | 'claude' | 'codex';
+/** Card token analysis page (AGT-3267); written once so the route never drifts. */
+const TOKEN_ANALYSIS_ROUTE = '/workspace/settings/tokens/analysis';
+const TOKEN_USAGE_ROUTE = /^\/workspace(?:\/settings)?\/tokens(?:\/(?:claude|codex))?$/;
+
+export type WorkspaceTokenUsagePage = 'workspace' | 'analysis' | 'claude' | 'codex';
 
 /**
  * Shell-feature service: open/close state + URL-hash sync for the consolidated
@@ -208,13 +212,8 @@ export class WorkspaceOverlaysService {
   }
 
   private sectionForRoute(route: string): WorkspaceSettingsSection | null {
+    if (route === TOKEN_ANALYSIS_ROUTE || TOKEN_USAGE_ROUTE.test(route)) return 'tokens';
     switch (route) {
-      case '/workspace/tokens': return 'tokens';
-      case '/workspace/tokens/claude': return 'tokens';
-      case '/workspace/tokens/codex': return 'tokens';
-      case '/workspace/settings/tokens': return 'tokens';
-      case '/workspace/settings/tokens/claude': return 'tokens';
-      case '/workspace/settings/tokens/codex': return 'tokens';
       case '/workspace/screenshots': return 'screenshots';
       case '/workspace/settings/screenshots': return 'screenshots';
       case '/workspace/settings/caps':
@@ -248,12 +247,10 @@ export class WorkspaceOverlaysService {
   }
 
   private tokenUsagePageForRoute(route: string): WorkspaceTokenUsagePage {
-    if (route === '/workspace/tokens/claude' || route === '/workspace/settings/tokens/claude') {
-      return 'claude';
-    }
-    if (route === '/workspace/tokens/codex' || route === '/workspace/settings/tokens/codex') {
-      return 'codex';
-    }
+    // Only routes accepted by sectionForRoute reach this method.
+    if (route === TOKEN_ANALYSIS_ROUTE) return 'analysis';
+    if (route.endsWith('/claude')) return 'claude';
+    if (route.endsWith('/codex')) return 'codex';
     return 'workspace';
   }
 
@@ -302,15 +299,9 @@ export class WorkspaceOverlaysService {
     '/workspace/settings/project-sources',
     '/workspace/settings/orchestrator',
     '/workspace/settings/working-memory',
-    '/workspace/settings/tokens',
-    '/workspace/settings/tokens/claude',
-    '/workspace/settings/tokens/codex',
     '/workspace/settings/screenshots',
     '/workspace/caps',
     '/workspace/prompts',
-    '/workspace/tokens',
-    '/workspace/tokens/claude',
-    '/workspace/tokens/codex',
     '/workspace/screenshots',
     // Retired aliases stay here so a stale summary route still clears on close.
     '/workspace/summary',
@@ -330,7 +321,8 @@ export class WorkspaceOverlaysService {
   /** Remove an own route segment, keeping foreign segments (e.g. filters). */
   private clearOwnHash(): void {
     const route = routeSegmentOf(window.location.hash);
-    if (route && this.ownRoutes.has(route)) {
+    if (route && (this.ownRoutes.has(route)
+      || route === TOKEN_ANALYSIS_ROUTE || TOKEN_USAGE_ROUTE.test(route))) {
       const target = withRouteSegment(window.location.hash, null);
       try {
         history.replaceState(null, '', window.location.pathname + window.location.search + target);

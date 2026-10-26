@@ -12,7 +12,13 @@ namespace AgentStudio.Deploy;
 /// these declarations, so a later change in the working tree cannot alter
 /// what the release deploys.
 /// </summary>
-public sealed record ReleaseRecord(Release Release, IReadOnlyList<EnvironmentDeclaration> Environments);
+public sealed record ReleaseRecord(Release Release, IReadOnlyList<EnvironmentDeclaration> Environments,
+    IReadOnlyDictionary<string, string>? CardTitles = null)
+{
+    public IReadOnlyList<ProjectLifecyclePhase> Lifecycle { get; init; } = [];
+    public IReadOnlyList<ProjectTenantDefinition> Tenants { get; init; } = [];
+    public IReadOnlyList<ProjectVariableDefinition> Variables { get; init; } = [];
+}
 
 /// <summary>Release identity, numbering and snapshot versions. Pure.</summary>
 public static class ReleaseSnapshot
@@ -47,11 +53,18 @@ public static class ReleaseSnapshot
         {
             artifacts = definition?.Artifacts,
             lifecycle = definition?.StandardLifecycle,
+            lifecycles = definition?.Lifecycles,
+            channels = definition?.Channels,
             deploy = definition?.Deploy,
+            tenants = definition?.Tenants,
             environments = declarations.OrderBy(item => item.Id, StringComparer.Ordinal).Select(item => new
             {
                 item.Id, item.Kind, item.TargetHostId, item.Address, item.Template, item.Destination,
-                item.HealthUrl, item.Approval, item.ContainerPort,
+                item.HealthUrl, item.Approval, item.ContainerPort, item.Protected, item.Automatic, item.Requires,
+                item.SshSteps,
+                tenantTargets = item.TenantTargets.OrderBy(target => target.Key, StringComparer.Ordinal)
+                    .Select(target => new { target.Key, target.Value.Destination, target.Value.HealthUrl }),
+                volumes = item.Data.Volumes.OrderBy(volume => volume.Name, StringComparer.Ordinal),
             }),
         });
 
@@ -68,10 +81,19 @@ public static class ReleaseSnapshot
             variables = (definition?.Variables ?? []).OrderBy(item => item.Name, StringComparer.Ordinal).Select(item => new
             {
                 item.Name, item.Value, item.Secret, environments = item.Environments.Order(StringComparer.Ordinal),
+                channels = item.Channels.Order(StringComparer.Ordinal),
+                tenants = item.Tenants.Order(StringComparer.Ordinal), tenantTags = item.TenantTags.Order(StringComparer.Ordinal),
             }),
+            tenants = (definition?.Tenants ?? []).OrderBy(item => item.Name, StringComparer.Ordinal).Select(item => new
+            {
+                item.Name, tags = item.Tags.Order(StringComparer.Ordinal),
+                environments = item.Environments.Order(StringComparer.Ordinal),
+            }),
+            protection = declarations.OrderBy(item => item.Id, StringComparer.Ordinal)
+                .Select(item => new { item.Id, item.Protected, item.Automatic, item.Requires }),
             environments = declarations.OrderBy(item => item.Id, StringComparer.Ordinal).Select(item => new
             {
-                item.Id, secretRefs = item.SecretRefs.Order(StringComparer.Ordinal),
+                item.Id, secretRefs = item.SecretRefs.Order(StringComparer.Ordinal), item.Data.Database,
             }),
         });
 

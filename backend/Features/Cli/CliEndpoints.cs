@@ -54,10 +54,26 @@ public static class CliEndpoints
             };
         });
 
-        cliGroup.MapGet("/{cliType}/models", async (string cliType, bool? refresh, CliRouter router, CancellationToken ct) =>
+        cliGroup.MapGet("/{cliType}/models", async (HttpContext context, string cliType, bool? refresh, CliRouter router, CancellationToken ct) =>
         {
             if (!CliTypes.IsValid(cliType))
                 return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
+            var scoped = context.Items[AgentStudio.Security.AccessSecurityMiddleware.RequestAccessItem]
+                is AgentStudio.Security.RequestAccess access
+                && !access.Allows(AgentStudio.Security.IamPermissions.WorkspaceOperate,
+                    AgentStudio.Security.PermissionTarget.WorkspaceWide);
+            if (scoped)
+            {
+                if (refresh == true) return Results.StatusCode(StatusCodes.Status403Forbidden);
+                // A project member receives a static catalogue. Even a normal
+                // model lookup may start a CLI probe when its cache is cold.
+                return Results.Ok(cliType.ToLowerInvariant() switch
+                {
+                    "codex" => CodexModelDiscovery.FallbackCatalog("scoped-registry"),
+                    "claude" => ClaudeModelDiscovery.FallbackCatalog("scoped-registry"),
+                    _ => new CliModelCatalog { Models = [], Source = "scoped-registry", FetchedAt = DateTime.UtcNow },
+                });
+            }
             try
             {
                 var catalog = await router.Get(cliType).GetModelCatalogAsync(refresh ?? false, ct);
@@ -181,9 +197,16 @@ public static class CliEndpoints
         });
 
         // ── Quota: per-CLI subscription quota for the right-hand sidesheet ──
-        cliGroup.MapGet("/quota", (QuotaService quota, CancellationToken ct) =>
+        cliGroup.MapGet("/quota", (HttpContext context, QuotaService quota, CancellationToken ct) =>
         {
-            return Results.Ok(quota.GetWithBackgroundRefresh(ct));
+            var scoped = context.Items[AgentStudio.Security.AccessSecurityMiddleware.RequestAccessItem]
+                is AgentStudio.Security.RequestAccess access
+                && !access.Allows(AgentStudio.Security.IamPermissions.WorkspaceOperate,
+                    AgentStudio.Security.PermissionTarget.WorkspaceWide);
+            var report = scoped ? quota.GetCached() : quota.GetWithBackgroundRefresh(ct);
+            return Results.Ok(scoped
+                ? ScopedQuotaProjection.Redact(report)
+                : report);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
         // AGT-3001: recorded series per window plus the burn rate over the last
@@ -366,71 +389,75 @@ public static class CliEndpoints
         // Spawns the requested CLI in a scratch dir, sends a slash command,
         // waits for output to settle, returns the ANSI-stripped snapshot.
         // Example: /api/cli/_probe/claude?cmd=/usage
-        cliGroup.MapGet("/_probe/{cliType}", async (
-            string cliType,
-            string? cmd,
-            string? followUp,
-            int? settleMs,
-            int? followUpSettleMs,
-            CliRouter router,
-            CliEnvironment env,
-            CancellationToken ct) =>
+        if (SecurityProfiles.IsLocal(app.Configuration))
         {
-            if (!CliTypes.IsValid(cliType))
-                return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
-            var slashCmd = string.IsNullOrWhiteSpace(cmd) ? "/usage" : cmd!;
-            var settle = settleMs ?? 2500;
-
-            var cli = router.Get(cliType);
-            var (available, _, resolvedPath) = cli.TestCliPath();
-            if (!available)
-                return Results.BadRequest(new { error = $"{cliType} CLI not available" });
-
-            var scratch = Path.Combine(Path.GetTempPath(), "agent-taskboard-probe", cliType);
-            Directory.CreateDirectory(scratch);
-            try { env.EnsureFolderTrusted(scratch); env.EnsureTerminalSetupAcknowledged("vscode", "vscode-insiders", "windows-terminal"); } catch (Exception __ex) { SilentCatch.Note(__ex, "CliEndpoints:178"); }
-
-            try
+            cliGroup.MapGet("/_probe/{cliType}", async (
+                string cliType,
+                string? cmd,
+                string? followUp,
+                int? settleMs,
+                int? followUpSettleMs,
+                CliRouter router,
+                CliEnvironment env,
+                CancellationToken ct) =>
             {
-                await using var pty = await PtySession.SpawnAsync(
-                    app: resolvedPath,
-                    cwd: scratch,
-                    extraEnv: CliEnvironment.ProbeEnvironment(),
-                    ct: ct);
-                await pty.WaitForIdleAsync(idleMs: 1500, timeoutMs: 8000, ct);
-                // For Claude/Codex confirm trust prompt first.
-                if (cliType is "claude" or "codex")
+                if (!CliTypes.IsValid(cliType))
+                    return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
+                var slashCmd = string.IsNullOrWhiteSpace(cmd) ? "/usage" : cmd!;
+                var settle = settleMs ?? 2500;
+
+                var cli = router.Get(cliType);
+                var (available, _, resolvedPath) = cli.TestCliPath();
+                if (!available)
+                    return Results.BadRequest(new { error = $"{cliType} CLI not available" });
+
+                var scratch = Path.Combine(Path.GetTempPath(), "agent-taskboard-probe", cliType);
+                Directory.CreateDirectory(scratch);
+                try { env.EnsureFolderTrusted(scratch); env.EnsureTerminalSetupAcknowledged("vscode", "vscode-insiders", "windows-terminal"); } catch (Exception __ex) { SilentCatch.Note(__ex, "CliEndpoints:178"); }
+
+                try
                 {
-                    await pty.SendKeysAsync("1<Enter>", ct);
+                    await using var pty = await PtySession.SpawnAsync(
+                        app: resolvedPath,
+                        cwd: scratch,
+                        extraEnv: CliEnvironment.ProbeEnvironment(),
+                        ct: ct,
+                        networked: false);
                     await pty.WaitForIdleAsync(idleMs: 1500, timeoutMs: 8000, ct);
+                    // For Claude/Codex confirm trust prompt first.
+                    if (cliType is "claude" or "codex")
+                    {
+                        await pty.SendKeysAsync("1<Enter>", ct);
+                        await pty.WaitForIdleAsync(idleMs: 1500, timeoutMs: 8000, ct);
+                    }
+                    var preLen = pty.SnapshotStripped().Length;
+                    await pty.SendKeysAsync(slashCmd + "<Enter>", ct);
+                    await pty.WaitForIdleAsync(idleMs: settle, timeoutMs: 12000, ct);
+                    if (!string.IsNullOrEmpty(followUp))
+                    {
+                        await pty.SendKeysAsync(followUp, ct);
+                        await pty.WaitForIdleAsync(idleMs: followUpSettleMs ?? 2000, timeoutMs: 10000, ct);
+                    }
+                    var snap = pty.SnapshotStripped();
+                    try { await pty.SendKeysAsync("<Esc>", ct); } catch (Exception __ex) { SilentCatch.Note(__ex, "CliEndpoints:199"); }
+                    try { await pty.SendKeysAsync("<Esc>", ct); } catch (Exception __ex) { SilentCatch.Note(__ex, "CliEndpoints:200"); }
+                    return Results.Ok(new
+                    {
+                        cliType,
+                        command = slashCmd,
+                        followUp,
+                        resolvedPath,
+                        preCharCount = preLen,
+                        snapshotLength = snap.Length,
+                        snapshot = snap
+                    });
                 }
-                var preLen = pty.SnapshotStripped().Length;
-                await pty.SendKeysAsync(slashCmd + "<Enter>", ct);
-                await pty.WaitForIdleAsync(idleMs: settle, timeoutMs: 12000, ct);
-                if (!string.IsNullOrEmpty(followUp))
+                catch (Exception ex)
                 {
-                    await pty.SendKeysAsync(followUp, ct);
-                    await pty.WaitForIdleAsync(idleMs: followUpSettleMs ?? 2000, timeoutMs: 10000, ct);
+                    return Results.Problem(detail: ex.Message, title: "Probe failed");
                 }
-                var snap = pty.SnapshotStripped();
-                try { await pty.SendKeysAsync("<Esc>", ct); } catch (Exception __ex) { SilentCatch.Note(__ex, "CliEndpoints:199"); }
-                try { await pty.SendKeysAsync("<Esc>", ct); } catch (Exception __ex) { SilentCatch.Note(__ex, "CliEndpoints:200"); }
-                return Results.Ok(new
-                {
-                    cliType,
-                    command = slashCmd,
-                    followUp,
-                    resolvedPath,
-                    preCharCount = preLen,
-                    snapshotLength = snap.Length,
-                    snapshot = snap
-                });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem(detail: ex.Message, title: "Probe failed");
-            }
-        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+            }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+        }
     }
 
     private static CliModelRouteView RouteView(ModelEquivalenceRoute route) => new(
@@ -480,7 +507,6 @@ public static class CliEndpoints
         foreach (var settings in projectSettings.GetAll().Values)
         {
             Add(settings.OrchestratorModel, settings.OrchestratorThinkingLevel, null);
-            Add(settings.EpicPlanningModel, settings.EpicPlanningThinkingLevel, null);
             if (settings.PipelineSteps is not null)
                 foreach (var step in settings.PipelineSteps.Values)
                     Add(step.Model, step.ThinkingLevel, step.CliType);

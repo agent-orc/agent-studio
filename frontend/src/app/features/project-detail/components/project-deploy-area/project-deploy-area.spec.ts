@@ -1,15 +1,17 @@
-import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
-import { HttpErrorResponse } from '@angular/common/http';
+import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { DeferBlockState, TestBed, type ComponentFixture } from '@angular/core/testing';
-import { BehaviorSubject, Subject, map, type Observable } from 'rxjs';
+import { BehaviorSubject, Subject, map, of, type Observable } from 'rxjs';
 import { vi } from 'vitest';
 import { ProjectDeployAreaComponent } from './project-deploy-area';
 import { ProjectDeployDataService } from '../../services/project-deploy-data.service';
 import { DEPLOY_CLOCK, type DeployPanel } from '../../state/deploy-area.model';
 import {
+  ARTIFACT_B,
   DEPLOY_FIXTURE_NOW,
+  RELEASE_2,
+  RELEASE_3,
   deployDeploymentsFixture,
   deployEnvironmentsFixture,
   deployReleasesFixture,
@@ -29,8 +31,14 @@ class FakeDeployData {
   readonly actions: string[] = [];
   actionResult = new Subject<unknown>();
   controlledReads = false;
+  controlledReleases = false;
+  readonly releasePageReads: Subject<DeployPanel<unknown>>[] = [];
+  readonly containingReads: Subject<DeployPanel<unknown>>[] = [];
   readonly statusReads: Subject<DeployPanel<unknown>>[] = [];
   readonly deploymentReads: Subject<DeployPanel<unknown>>[] = [];
+  readonly releaseReads: { project: string; read: Subject<DeployPanel<unknown>> }[] = [];
+  readonly artifactLookups: { project: string; artifact: string; notAfterUtc: string | null; read: Subject<DeployPanel<unknown>> }[] = [];
+  readonly runsById = new Map<string, unknown>();
 
   environments(project: string): Observable<DeployPanel<unknown>> { this.requests.push(`environments:${project}`); return this.environmentsPanel; }
   statuses(): Observable<DeployPanel<unknown>> {
@@ -41,12 +49,39 @@ class FakeDeployData {
     return read;
   }
   releases(): Observable<DeployPanel<unknown>> { return this.releasesPanel; }
+  releaseNotes(_project: string, id: string): Observable<DeployPanel<unknown>> {
+    const release = deployReleasesFixture().find(item => item.id === id);
+    return of(release ? { status: 'ready', value: { releaseId: id, version: release.version, preview: true,
+      notes: release.cardKeys.map(cardKey => ({ cardKey, text: `Delivered ${cardKey}` })) } } : { status: 'unavailable' });
+  }
   deployments(): Observable<DeployPanel<unknown>> { this.requests.push('deployments'); return this.deploymentsPanel; }
-  releasePage(_project: string, offset: number): Observable<DeployPanel<unknown>> {
+  releasePage(project: string, offset: number): Observable<DeployPanel<unknown>> {
     this.requests.push(`releases:${offset}`);
+    if (this.controlledReleases) {
+      const read = new Subject<DeployPanel<unknown>>();
+      this.releasePageReads.push(read);
+      this.releaseReads.push({ project, read });
+      return read;
+    }
     return this.releasesPanel.pipe(map(panel => panel.status === 'ready'
       ? { status: 'ready', value: { items: (panel.value as unknown[]).slice(offset, offset + 25), total: (panel.value as unknown[]).length, offset, limit: 25 } }
       : panel));
+  }
+  releasePageContaining(_project: string, id: string): Observable<DeployPanel<unknown>> {
+    this.requests.push(`release-containing:${id}`);
+    if (this.controlledReleases) {
+      const read = new Subject<DeployPanel<unknown>>();
+      this.containingReads.push(read);
+      return read;
+    }
+    return this.releasesPanel.pipe(map(panel => {
+      if (panel.status !== 'ready') return panel;
+      const releases = panel.value as { id: string }[];
+      const index = releases.findIndex(item => item.id === id);
+      if (index < 0) return { status: 'error', message: 'The selected release could not be loaded.' };
+      const offset = Math.floor(index / 25) * 25;
+      return { status: 'ready', value: { items: releases.slice(offset, offset + 25), total: releases.length, offset, limit: 25 } };
+    }));
   }
   deploymentPage(_project: string, offset: number, filter?: { environmentId: string; state: string; period: string }): Observable<DeployPanel<unknown>> {
     this.requests.push(`deployments:${offset}:${filter?.environmentId ?? 'all'}`);
@@ -62,6 +97,16 @@ class FakeDeployData {
       if (filter?.state && filter.state !== 'all') items = items.filter(item => item.state === filter.state);
       return { status: 'ready', value: { items: items.slice(offset, offset + 25), total: items.length, offset, limit: 25 } };
     }));
+  }
+  releaseForArtifact(project: string, artifact: string, notAfterUtc: string | null): Observable<DeployPanel<unknown>> {
+    const read = new Subject<DeployPanel<unknown>>();
+    this.artifactLookups.push({ project, artifact, notAfterUtc, read });
+    return read;
+  }
+  deployment(_project: string, id: string): Observable<DeployPanel<unknown>> {
+    this.requests.push(`deployment:${id}`);
+    const run = this.runsById.get(id);
+    return new BehaviorSubject<DeployPanel<unknown>>(run ? { status: 'ready', value: run } : { status: 'error', message: `Unknown deployment '${id}'.` });
   }
   pipeline(): Observable<DeployPanel<unknown>> { return this.pipelinePanel; }
   health(): Observable<DeployPanel<unknown>> { return this.healthPanel; }
@@ -226,6 +271,30 @@ describe('ProjectDeployAreaComponent', () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  it('opens status-card runs when newer deployments fill the loaded pages', async () => {
+    data.serveEverything();
+    const other = deployDeploymentsFixture()[0];
+    data.deploymentsPanel.next({ status: 'ready', value: Array.from({ length: 30 }, (_, index) => ({
+      ...other, id: `run-other-${index}`, environmentId: 'other',
+      createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    })) });
+    await settle();
+
+    expect(fixture.componentInstance.runs().some(run => run.id === 'run-c-stage-redeploy')).toBe(false);
+    expect(fixture.componentInstance.historyRuns().some(run => run.id === 'run-c-production')).toBe(false);
+
+    (host().querySelector('[aria-label="Open last run for Staging"]') as HTMLButtonElement).click();
+    await settle();
+    expect(text('deploy-run-drawer')).toContain('Redeploy to Staging');
+    expect(data.requests).toContain('log:run-c-stage-redeploy');
+
+    await click('sidesheet-close');
+    await click('deploy-environment-review-approval');
+    expect(text('deploy-run-drawer')).toContain('Deploy to Production');
+    expect(byTestId('deploy-run-approve')).not.toBeNull();
+    expect(data.requests).toContain('log:run-c-production');
+  });
+
   it('opens a run from the history table and marks its row', async () => {
     data.serveEverything();
     await settle();
@@ -367,6 +436,201 @@ describe('ProjectDeployAreaComponent', () => {
     expect(data.requests).toContain('releases:25');
   });
 
+  it('opens a marker release through one bounded containing page', async () => {
+    data.serveEverything();
+    const release = deployReleasesFixture()[0];
+    data.releasesPanel.next({ status: 'ready', value: Array.from({ length: 40 }, (_, index) => ({
+      ...release, id: `release-${index}`, version: `version-${index}`,
+      createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    })) });
+    await settle();
+    data.requests.length = 0;
+
+    fixture.componentInstance.openRelease('release-35');
+    await settle();
+
+    expect(data.requests).toEqual(['release-containing:release-35']);
+    expect(fixture.componentInstance.releaseOffset()).toBe(25);
+    expect(host().querySelectorAll('.releases__row')).toHaveLength(15);
+    expect(text('deploy-release-detail')).toContain('version-35');
+  });
+
+  it('reads only the containing page when the Deploy view mounts with an older release target', async () => {
+    data.controlledReleases = true;
+    data.requests.length = 0;
+    const fresh = TestBed.createComponent(ProjectDeployAreaComponent);
+    fresh.componentRef.setInput('projectName', 'Website');
+    fresh.componentRef.setInput('releaseTarget', { project: 'Website', id: 'release-35' });
+    fresh.detectChanges();
+    await fresh.whenStable();
+
+    expect(data.requests.filter(request => request.startsWith('release'))).toEqual(['release-containing:release-35']);
+    expect(data.containingReads).toHaveLength(1);
+    expect(data.containingReads[0].observers).toHaveLength(1);
+    const release = deployReleasesFixture()[0];
+    const page = { items: [{ ...release, id: 'release-35', version: 'older release' }], offset: 25, limit: 25, total: 40 };
+    data.containingReads[0].next({ status: 'ready', value: page });
+    fresh.detectChanges();
+    await fresh.whenStable();
+    expect(fresh.componentInstance.releaseOffset()).toBe(25);
+    expect((fresh.nativeElement as HTMLElement).querySelector('[data-testid="deploy-release-detail"]')?.textContent)
+      .toContain('older release');
+    fresh.destroy();
+  });
+
+  it('opens a new release target on the mounted Deploy view without reloading its other sources', async () => {
+    data.serveEverything();
+    await settle();
+    data.requests.length = 0;
+    fixture.componentRef.setInput('releaseTarget', { project: 'Website', id: 'release-35' });
+    await settle();
+    expect(data.requests).toEqual(['release-containing:release-35']);
+    expect(fixture.componentInstance.highlightedReleaseId()).toBe('release-35');
+    fixture.componentRef.setInput('releaseTarget', { project: 'Other', id: 'release-9' });
+    await settle();
+    expect(data.requests).toEqual(['release-containing:release-35']);
+  });
+
+  it('does not send a project release target to a second mounted Deploy view', async () => {
+    data.controlledReleases = true;
+    const targeted = TestBed.createComponent(ProjectDeployAreaComponent);
+    targeted.componentRef.setInput('projectName', 'Website');
+    targeted.componentRef.setInput('releaseTarget', { project: 'Website', id: 'release-35' });
+    targeted.detectChanges();
+    await targeted.whenStable();
+    const other = TestBed.createComponent(ProjectDeployAreaComponent);
+    other.componentRef.setInput('projectName', 'Website');
+    other.detectChanges();
+    await other.whenStable();
+    expect(data.requests.filter(request => request === 'release-containing:release-35')).toHaveLength(1);
+    expect(targeted.componentInstance.highlightedReleaseId()).toBe('release-35');
+    expect(other.componentInstance.highlightedReleaseId()).toBeNull();
+    targeted.destroy();
+    other.destroy();
+  });
+
+  it('opens an archived marker card by exact key from the Deploy Operations tab', () => {
+    const opened: { jobId: string; watchPath: string }[] = [];
+    fixture.componentInstance.openTask.subscribe(card => opened.push(card));
+    fixture.componentInstance.openCard('CARD-1');
+    const http = TestBed.inject(HttpTestingController);
+    const request = http.expectOne(req => req.url === '/api/tasks/CARD-1/core');
+    expect(request.request.params.get('project')).toBe('Website');
+    request.flush({ id: 'arch-51', key: 'CARD-1', taskKey: 'CARD-1', projectName: 'Website',
+      watchPath: '/tasks/website', state: 'ready' });
+    expect(opened).toEqual([{ jobId: 'arch-51', watchPath: '/tasks/website' }]);
+    http.expectNone(req => req.url === '/api/tasks/archive');
+  });
+
+  it('cancels a pending card lookup when the Deploy view is destroyed', () => {
+    const opened: { jobId: string; watchPath: string }[] = [];
+    fixture.componentInstance.openTask.subscribe(card => opened.push(card));
+    fixture.componentInstance.openCard('CARD-1');
+    const request = TestBed.inject(HttpTestingController).expectOne(req => req.url === '/api/tasks/CARD-1/core');
+    fixture.destroy();
+    expect(request.cancelled).toBe(true);
+    expect(opened).toEqual([]);
+  });
+
+  it('opens and approves a Production run from status that is beyond the first deployment page', async () => {
+    data.serveEverything();
+    const runs = deployDeploymentsFixture();
+    const stage = runs.find(run => run.id === 'run-c-stage')!;
+    const newer = Array.from({ length: 30 }, (_, index) => ({
+      ...stage, id: `run-stage-${index}`, createdAtUtc: new Date(DEPLOY_FIXTURE_NOW - index * 60_000).toISOString(),
+    }));
+    data.deploymentsPanel.next({ status: 'ready', value: [...newer, ...runs] });
+    await settle();
+    expect(fixture.componentInstance.runs().some(run => run.id === 'run-c-production')).toBe(false);
+
+    await click('deploy-environment-review-approval');
+    expect(text('deploy-run-drawer')).toContain('Production');
+    expect(data.requests).not.toContain('deployment:run-c-production');
+    await click('deploy-run-approve');
+    expect(window.confirm).toHaveBeenCalledWith('Approve Production run run-c-production?');
+    expect(data.actions).toEqual(['approve:run-c-production']);
+  });
+
+  it('reads a selected run by id when no page or status contains it, and refreshes it after an action', async () => {
+    data.serveEverything();
+    const old = { ...deployDeploymentsFixture()[1], id: 'run-old-production', createdAtUtc: '2026-09-01T10:00:00Z' };
+    data.runsById.set(old.id, old);
+    await settle();
+    fixture.componentInstance.openRun(old.id);
+    await settle();
+
+    expect(data.requests).toContain(`deployment:${old.id}`);
+    expect(fixture.componentInstance.selectedRun()?.id).toBe(old.id);
+    data.runsById.set(old.id, { ...old, state: 'succeeded', approvedBy: 'local.owner' });
+    data.requests.length = 0;
+    await click('deploy-run-approve');
+    data.actionResult.next(old);
+    await settle();
+    expect(data.actions).toEqual([`approve:${old.id}`]);
+    expect(data.requests).toContain(`deployment:${old.id}`);
+    expect(fixture.componentInstance.selectedRun()?.state).toBe('succeeded');
+
+    fixture.componentInstance.openRun('run-missing');
+    await settle();
+    expect(byTestId('deploy-run-drawer')).toBeNull();
+    expect(text('deploy-source-notices')).toContain("Deploy run: Unknown deployment 'run-missing'.");
+  });
+
+  it('resolves a host artifact that status does not name with one bounded lookup', async () => {
+    data.serveEverything();
+    const environments = deployEnvironmentsFixture();
+    environments.environments[1].deployedArtifact = ARTIFACT_B;
+    environments.environments[1].history.unshift({ at: '2026-10-19T11:30:00Z', status: 'healthy', artifact: ARTIFACT_B,
+      previousArtifact: null, evidence: 'host-migration' });
+    data.environmentsPanel.next({ status: 'ready', value: environments });
+    data.releasesPanel.next({ status: 'ready', value: [RELEASE_3] });
+    await settle();
+
+    expect(data.artifactLookups.map(item => [item.artifact, item.notAfterUtc])).toEqual([[ARTIFACT_B, '2026-10-19T11:30:00Z']]);
+    expect(text('deploy-environment-production')).toContain('Looking up the release record');
+    data.artifactLookups[0].read.next({ status: 'ready', value: RELEASE_2 });
+    await settle();
+    expect(text('deploy-environment-production')).toContain(`Release ${RELEASE_2.version}`);
+    await click('deploy-refresh');
+    expect(data.artifactLookups).toHaveLength(1);
+  });
+
+  it('never shows the previous project releases or lookups under a new project, even when they answer late', async () => {
+    data.serveEverything();
+    data.controlledReleases = true;
+    data.releaseReads.length = 0;
+    fixture.componentInstance.refresh();
+    await settle();
+    data.releaseReads[0].read.next({ status: 'ready', value: { items: deployReleasesFixture(), offset: 0, limit: 25, total: 3 } });
+    await settle();
+    await click('deploy-tab-releases');
+    expect(host().querySelectorAll('.releases__row')).toHaveLength(3);
+    const environments = deployEnvironmentsFixture();
+    environments.environments[1].deployedArtifact = ARTIFACT_B;
+    data.environmentsPanel.next({ status: 'ready', value: environments });
+    await settle();
+    const websiteLookup = data.artifactLookups.at(-1)!;
+
+    fixture.componentInstance.show('overview');
+    fixture.componentRef.setInput('projectName', 'Intranet');
+    await settle();
+    expect(fixture.componentInstance.releasePanel().status).toBe('loading');
+    expect(fixture.componentInstance.releaseTotal()).toBe(0);
+    // The previous project's reads answer after the switch.
+    data.releaseReads[0].read.next({ status: 'ready', value: { items: deployReleasesFixture(), offset: 0, limit: 25, total: 3 } });
+    websiteLookup.read.next({ status: 'ready', value: RELEASE_2 });
+    await settle();
+    expect(fixture.componentInstance.releasePanel().status).toBe('loading');
+    expect([...fixture.componentInstance.artifactReleases().values()].map(panel => panel.status)).not.toContain('ready');
+    await click('deploy-tab-releases');
+    expect(host().querySelectorAll('.releases__row')).toHaveLength(0);
+    expect(data.releaseReads.at(-1)!.project).toBe('Intranet');
+
+    data.releaseReads.at(-1)!.read.next({ status: 'ready', value: { items: [RELEASE_3], offset: 0, limit: 25, total: 1 } });
+    await settle();
+    expect(host().querySelectorAll('.releases__row')).toHaveLength(1);
+  });
+
   it('clears server history filters when leaving History so the reopened controls match the data', async () => {
     data.serveEverything();
     await settle();
@@ -392,12 +656,19 @@ describe('ProjectDeployAreaComponent', () => {
     expect(host().querySelector('app-project-deployment-panel')).not.toBeNull();
   });
 
-  it('marks the active tab for assistive technology and keeps P2 tabs disabled', async () => {
+  it('marks the active tab for assistive technology and keeps only P2 placeholders disabled', async () => {
     await click('deploy-tab-history');
 
     expect(byTestId('deploy-tab-history')?.getAttribute('aria-current')).toBe('page');
     expect(byTestId('deploy-tab-overview')?.getAttribute('aria-current')).toBeNull();
     const disabled = Array.from(host().querySelectorAll('.deploy-tabs button:disabled')).map(button => button.textContent?.trim());
-    expect(disabled).toEqual(['Variables · P2', 'Runbooks · P2']);
+    expect(disabled).toEqual(['Variables · P2']);
+    const runbooksTab = byTestId('deploy-tab-runbooks') as HTMLButtonElement;
+    expect(runbooksTab.disabled).toBe(false);
+    await click('deploy-tab-runbooks');
+    expect(runbooksTab.getAttribute('aria-current')).toBe('page');
+    expect(byTestId('deploy-tab-history')?.getAttribute('aria-current')).toBeNull();
+    expect(host().querySelector('app-project-environment-overview')).not.toBeNull();
+    expect(host().textContent).toContain('Runbooks and their history by environment.');
   });
 });
