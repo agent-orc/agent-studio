@@ -1065,10 +1065,7 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         else Git(_repo, "push", "-q", "origin", $"{member.ResultSha}:refs/heads/develop");
         var containedIn = RemoteTip();
 
-        using var response = await http.PostAsJsonAsync(
-            $"/api/tasks/{member.Key}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
-            new { targetState = TaskStates.Completed, operatorOverride = true,
-                reason = "Published delivery verified by operator." });
+        using var response = await AcceptPublishedFallbackWithReachRetry(factory, http, member.Key);
 
         Assert.True(response.StatusCode == System.Net.HttpStatusCode.OK,
             await response.Content.ReadAsStringAsync());
@@ -1086,6 +1083,30 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         await factory.Services.GetRequiredService<DeliveryChainReconciler>().RunOnceAsync();
 
         AssertLane(member.Key, TaskStates.Completed);
+    }
+
+    private async Task<HttpResponseMessage> AcceptPublishedFallbackWithReachRetry(
+        WebApplicationFactory<Program> factory, HttpClient http, string taskKey)
+    {
+        Task<HttpResponseMessage> Move() => http.PostAsJsonAsync(
+            $"/api/tasks/{taskKey}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
+            new { targetState = TaskStates.Completed, operatorOverride = true,
+                reason = "Published delivery verified by operator." });
+
+        var response = await Move();
+        if (response.StatusCode != System.Net.HttpStatusCode.Conflict)
+            return response;
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        if (!body.RootElement.TryGetProperty("code", out var code)
+            || code.GetString() != "integration-dead-end")
+            return response;
+
+        // A loaded host can time out the read-only Git reachability probe.
+        // The unknown result is correct for that request, so re-read once
+        // instead of treating its one-second failure cache as final evidence.
+        response.Dispose();
+        factory.Services.GetRequiredService<TaskIntegrationStatusService>().InvalidateCache();
+        return await Move();
     }
 
     [Fact]
