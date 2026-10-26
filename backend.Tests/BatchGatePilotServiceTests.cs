@@ -1065,6 +1065,27 @@ public sealed partial class BatchGatePilotServiceTests : IDisposable
         else Git(_repo, "push", "-q", "origin", $"{member.ResultSha}:refs/heads/develop");
         var containedIn = RemoteTip();
 
+        if (patchEquivalent)
+            Assert.Equal(Git(_repo, "show", $"{member.ResultSha}:docs/fallback-contained.md"),
+                Git(_repo, "show", $"{containedIn}:docs/fallback-contained.md"));
+        else
+            Git(_origin, "merge-base", "--is-ancestor", member.ResultSha, "refs/heads/develop");
+
+        // This test exercises fallback-marker repair. The published graph was
+        // verified above; supply that containment fact so the unrelated Git
+        // reachability projection cannot time out under suite load.
+        factory.Services.GetRequiredService<TaskIntegrationStatusService>().TestStatusOverride = job =>
+            job.Id == member.Key
+                ? new TaskIntegrationStatus
+                {
+                    Status = IntegrationStatuses.Integrated,
+                    Sha = containedIn[..7],
+                    IntegrationBranch = "develop",
+                    TargetRefFingerprint = containedIn,
+                    Detail = "Published fixture delivery.",
+                }
+                : null;
+
         using var response = await http.PostAsJsonAsync(
             $"/api/tasks/{member.Key}/move?watchPath={Uri.EscapeDataString(_watchPath)}",
             new { targetState = TaskStates.Completed, operatorOverride = true,
