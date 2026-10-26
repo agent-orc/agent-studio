@@ -485,3 +485,55 @@ public sealed class RemoteGateBundleTests
         return output;
     }
 }
+
+public sealed class RemoteGateBareSourceTests
+{
+    [Fact]
+    public async Task Hardened_git_reads_the_bare_gate_source_repository()
+    {
+        // Deploy 24 regression: host Git hardening sets safe.bareRepository=explicit,
+        // and every remote gate failed with "cannot use bare repository source.git".
+        var root = Path.Combine(Path.GetTempPath(), "remote-gate-bare-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var source = Path.Combine(root, "source");
+            var bare = Path.Combine(root, "source.git");
+            Git(root, "init", "-q", source);
+            Git(source, "config", "user.email", "gate@example.invalid");
+            Git(source, "config", "user.name", "Gate Test");
+            File.WriteAllText(Path.Combine(source, "base.txt"), "gate subject");
+            Git(source, "add", ".");
+            Git(source, "commit", "-qm", "subject");
+            var sha = Git(source, "rev-parse", "HEAD").Trim();
+            Git(root, "clone", "--bare", "--quiet", source, bare);
+
+            Assert.True(BuildTestGateRunner.IsBareRepository(bare));
+            Assert.False(BuildTestGateRunner.IsBareRepository(source));
+            var probe = await BuildTestGateRunner.RunGitAsync(
+                bare, ["cat-file", "-e", sha + "^{commit}"], TimeSpan.FromSeconds(30), CancellationToken.None);
+            Assert.True(probe.ExitCode == 0, probe.StandardError);
+            var worktree = await BuildTestGateRunner.RunGitAsync(
+                source, ["rev-parse", "HEAD"], TimeSpan.FromSeconds(30), CancellationToken.None);
+            Assert.Equal(sha, worktree.StandardOutput.Trim());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static string Git(string cwd, params string[] args)
+    {
+        using var process = new Process();
+        process.StartInfo = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
+        process.Start();
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0) throw new InvalidOperationException(error);
+        return output;
+    }
+}
