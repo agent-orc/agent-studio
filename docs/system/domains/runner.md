@@ -57,11 +57,20 @@ results are audited with actor, host, provider and outcome, without the code.
 Timeout and cancel clear the instructions. Each runner keeps its own native credential store; neither
 Task Server nor Studio distributes ChatGPT login files.
 
-The coding host also probes the small set of primary and fallback model ids
-with a real request in an isolated scratch context. It adds the valid model ids
-the server returns as operator-configured quota routes or ready-card models in
-the capability response. Each verdict is bound to
+Coding and review hosts probe routed model ids with a real request in an
+isolated scratch context. Coding routes include configured primary and fallback
+models and ready-card pins. Review routes include the configured aspect default,
+active deep-review default, pinned models in pending review plans, and quota
+fallback routes for the CLIs those plans use. The
+built-in catalogue is used only when the server supplies no route. Each verdict is bound to
 the local credential generation and advertised as `model-acceptance:<provider>:<model>`.
+When a CLI authenticates through a store without readable generation metadata,
+the probe uses the daemon session as its generation and rechecks accepted models
+every 6 hours. Inconclusive verdicts retry after 10 minutes. The daemon starts
+the probe after receiving server routes in its first capability response.
+A completed host device login invalidates that provider's cached model verdicts
+before the next advertisement; an in-flight probe from the old login cannot
+restore them.
 The quota view lists accepted models by host. A launch-time model refusal with
 no salvage marks that host model unavailable and puts the card back in Ready.
 Task Server claims and work-permit offers and acceptances require fresh
@@ -73,6 +82,12 @@ fallback does not hold the card once quota admission can use its primary route.
 The claim hold matches the route handed to the runner: a required mechanical
 route, an operator-selected continuation, a provider-refusal sibling, or the
 stored primary. A refused primary does not hide a card using another route.
+
+A review claim with a named model waits for a fresh ready acceptance verdict
+from that review executor. An unknown or unavailable verdict names the model
+capability in the unclaimable response and in the auto-review queue's oldest
+pending reason. The lane-drain alarm repeats that reason. Claim deferral logs
+only when the attempt's reason changes, and the observation clears on claim.
 
 For a Ready agent card placed at `local`, `PickupHoldPolicy` projects an
 unsatisfiable `execution-placement` hold when local admission denies its mode.

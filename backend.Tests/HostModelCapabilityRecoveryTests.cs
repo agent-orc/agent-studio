@@ -1,5 +1,7 @@
 using AgentStudio.Cli;
 using AgentStudio.Runner;
+using AgentStudio.Shared;
+using AgentStudio.Tasks;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 using Contract = AgentStudio.TaskServer.Contracts;
@@ -92,5 +94,16 @@ public sealed class HostModelCapabilityRecoveryTests
                 new Contract.ConfiguredModelRouteDto("codex", "gpt-6.3-sol"),
             ],
             routes);
+    }
+
+    [Fact]
+    public void Coding_routes_include_ready_card_pins_outside_the_builtin_catalogue()
+    {
+        var routes = V1ReviewPlaneEndpoints.CodingConfiguredModelRoutes(
+            [],
+            [new TaskInfo { State = TaskStates.Ready, CliType = "codex", Model = "gpt-6.3-sol" },
+             new TaskInfo { State = TaskStates.Completed, CliType = "claude", Model = "claude-old" }]);
+
+        Assert.Equal([new Contract.ConfiguredModelRouteDto("codex", "gpt-6.3-sol")], routes);
     }
 }
