@@ -273,7 +273,27 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
                 observedAt, 180, observedAt.Ticks,
                 [new Contract.AdvertisedCapabilityDto(
                     Contract.CapabilityProtocol.ModelAcceptance(expectedCli, expectedModel),
-                    "model-acceptance", "ready")]));
+                    "model-acceptance", "unknown")]));
+        reviewCapabilities.EnsureSuccessStatusCode();
+
+        var unverified = await client.ClaimReviewAsync(
+            new Contract.ReviewClaimRequest(reviewRunnerId, instanceId, 120, AvailableSlots: 1),
+            CancellationToken.None);
+        var expectedKey = Contract.CapabilityProtocol.ModelAcceptance(expectedCli, expectedModel);
+        Assert.Equal("empty", unverified.Status);
+        Assert.Equal(Contract.ReviewClaimEmptyReasons.UnclaimablePlanRequirements, unverified.Reason);
+        Assert.Contains(expectedKey, unverified.MissingCapabilities!);
+        Assert.Contains($"{expectedKey} unknown", unverified.Message, StringComparison.Ordinal);
+        Assert.Equal(attemptId, Assert.Single(unverified.UnclaimableAttempts!).AttemptId);
+        var queue = factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>().Refresh();
+        Assert.Contains($"{expectedKey} unknown", queue.UnclaimableReason, StringComparison.Ordinal);
+
+        reviewCapabilities = await http.PutAsJsonAsync(
+            $"/api/v1/runners/{reviewRunnerId}/capabilities",
+            new Contract.CapabilityAdvertisementRequest(
+                reviewRunnerId, instanceId, Contract.CapabilityProtocol.CurrentSchemaVersion,
+                observedAt.AddSeconds(1), 180, observedAt.Ticks + 1,
+                [new Contract.AdvertisedCapabilityDto(expectedKey, "model-acceptance", "ready")]));
         reviewCapabilities.EnsureSuccessStatusCode();
 
         var claim = await client.ClaimReviewAsync(
@@ -281,6 +301,7 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
             CancellationToken.None);
 
         Assert.Equal("claimed", claim.Status);
+        Assert.Null(factory.Services.GetRequiredService<ReviewClaimUnclaimableLog>().Latest(attemptId));
         Assert.NotNull(claim.Subject);
         var returnedAspect = Assert.Single(
             claim.Subject!.Plan.Commands, c => Contract.ReviewCommandKinds.IsAgent(c.ExecutionKind));

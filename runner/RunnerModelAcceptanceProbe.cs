@@ -14,6 +14,7 @@ internal sealed class RunnerModelAcceptanceProbe
     private readonly object _sync = new();
     private readonly SemaphoreSlim _refresh = new(1, 1);
     private readonly Dictionary<string, ModelVerdict> _verdicts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _invalidationSequences = new(StringComparer.Ordinal);
     private Func<string, string, CancellationToken, Task<ProcessResult>>? _launch;
     private Func<string, string?> _generation = _ => null;
     private Func<DateTimeOffset> _clock = () => DateTimeOffset.UtcNow;
@@ -21,12 +22,11 @@ internal sealed class RunnerModelAcceptanceProbe
     // Causal order for the server: a verdict written after the server saw a
     // non-ready entry carries a larger sequence than that entry did.
     private long _sequence;
-    private const int MaxConfiguredModels = 16;
     private static readonly Regex ProbeableModelId = new(
         @"^[A-Za-z0-9](?:[A-Za-z0-9._\-\[\]]{0,79})$",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-    /// <summary>Operator-configured routes beyond the built-in candidate list.</summary>
+    /// <summary>Models currently reachable through configured routes or review plans.</summary>
     internal IReadOnlyList<(string Provider, string Model)> ConfiguredModels
     {
         get { lock (_sync) return _configured; }
@@ -39,7 +39,6 @@ internal sealed class RunnerModelAcceptanceProbe
             .Where(route => route.Provider is not null && IsProbeableModelId(route.Model))
             .Select(route => (route.Provider!, route.Model!))
             .Distinct()
-            .Take(MaxConfiguredModels)
             .ToArray();
         lock (_sync) _configured = accepted;
     }
@@ -59,6 +58,7 @@ internal sealed class RunnerModelAcceptanceProbe
             _generation = generation;
             _clock = clock ?? (() => DateTimeOffset.UtcNow);
             _verdicts.Clear();
+            _invalidationSequences.Clear();
         }
     }
 
@@ -95,6 +95,17 @@ internal sealed class RunnerModelAcceptanceProbe
                 ++_sequence);
     }
 
+    internal void Invalidate(string provider)
+    {
+        var prefix = $"model-acceptance:{provider.Trim().ToLowerInvariant()}:";
+        lock (_sync)
+        {
+            foreach (var key in _verdicts.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
+                _verdicts.Remove(key);
+            _invalidationSequences[provider] = ++_sequence;
+        }
+    }
+
     internal async Task RefreshAsync(
         IEnumerable<(string Provider, string Model)> candidates, CancellationToken ct)
     {
@@ -115,8 +126,12 @@ internal sealed class RunnerModelAcceptanceProbe
                     generation = _generation(provider);
                     cached = _verdicts.TryGetValue(CapabilityProtocol.ModelAcceptance(provider, model), out var prior)
                         && prior.Generation == generation
-                        && (prior.Status != "unknown"
-                            || _clock() - prior.ObservedAt < TimeSpan.FromMinutes(10));
+                        && (prior.Status == "unavailable"
+                            || _clock() - prior.ObservedAt < (prior.Status == "ready"
+                                ? generation?.StartsWith("daemon-session:", StringComparison.Ordinal) == true
+                                    ? TimeSpan.FromHours(6)
+                                    : TimeSpan.MaxValue
+                                : TimeSpan.FromMinutes(10)));
                 }
                 if (cached || launch is null || generation is null) continue;
                 ProcessResult result;
@@ -141,6 +156,7 @@ internal sealed class RunnerModelAcceptanceProbe
                 lock (_sync)
                 {
                     if (_generation(provider) != generation) continue;
+                    if (_invalidationSequences.GetValueOrDefault(provider) > started) continue;
                     // A launch rejection recorded while this probe ran is newer
                     // evidence; the probe result must not overwrite it.
                     if (_verdicts.TryGetValue(CapabilityProtocol.ModelAcceptance(provider, model), out var newer)

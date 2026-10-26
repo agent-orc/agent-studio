@@ -99,11 +99,33 @@ public sealed class RunnerModelAcceptanceProbeTests
 
         var candidates = RunnerCapabilityProbe.ModelCandidates(options, probe.ConfiguredModels);
 
+        Assert.Equal(("codex", "gpt-6.2-sol"), candidates[0]);
+        Assert.Equal(("claude", "claude-opus-6[1m]"), candidates[1]);
         Assert.Contains(("codex", "gpt-6.2-sol"), candidates);
         Assert.Contains(("claude", "claude-opus-6[1m]"), candidates);
-        Assert.Contains(("codex", "gpt-6-sol"), candidates);
+        Assert.Equal(2, candidates.Count);
         Assert.DoesNotContain(candidates, item => item.Model.Contains("escape", StringComparison.Ordinal)
                                                   || item.Model.Contains(' ') || item.Provider == "gemini");
+    }
+
+    [Fact]
+    public void Review_daemon_with_default_routes_probes_only_routed_models()
+    {
+        var options = new RunnerOptions
+        {
+            ServerUrl = "http://127.0.0.1:5031",
+            RunnerId = "review-a",
+            RunnerName = "review-a",
+            Hostname = "host-a",
+            BackendName = "test",
+            Role = "review",
+            WorkDir = Path.GetTempPath(),
+            BaseBranch = "main",
+        };
+        (string Provider, string Model)[] routes =
+            [("codex", "gpt-5.4-mini"), ("codex", "gpt-6-sol")];
+
+        Assert.Equal(routes, RunnerCapabilityProbe.ModelCandidates(options, routes));
     }
 
     [Fact]
@@ -126,5 +148,68 @@ public sealed class RunnerModelAcceptanceProbeTests
         now = now.AddMinutes(11);
         await probe.RefreshAsync([("codex", "gpt-6-sol")], CancellationToken.None);
         Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task Session_bound_ready_verdict_is_rechecked_after_six_hours()
+    {
+        var now = DateTimeOffset.UnixEpoch.AddHours(1);
+        var calls = 0;
+        var probe = new RunnerModelAcceptanceProbe();
+        probe.Configure((_, _, _) =>
+        {
+            calls++;
+            return Task.FromResult(new ProcessResult(0, "OK", ""));
+        }, _ => "daemon-session:test", () => now);
+
+        await probe.RefreshAsync([("claude", "claude-opus-5-5")], CancellationToken.None);
+        Assert.Equal("ready", Assert.Single(probe.Snapshot("claude", ["claude-opus-5-5"])).Status);
+        now = now.AddHours(6).AddMinutes(-1);
+        await probe.RefreshAsync([("claude", "claude-opus-5-5")], CancellationToken.None);
+        Assert.Equal(1, calls);
+        now = now.AddMinutes(1);
+        await probe.RefreshAsync([("claude", "claude-opus-5-5")], CancellationToken.None);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task Completed_login_invalidates_a_ready_model_verdict()
+    {
+        var probe = new RunnerModelAcceptanceProbe();
+        var calls = 0;
+        probe.Configure((_, _, _) =>
+        {
+            calls++;
+            return Task.FromResult(new ProcessResult(0, "OK", ""));
+        }, _ => "daemon-session:test");
+
+        await probe.RefreshAsync([("claude", "claude-opus-5-5")], CancellationToken.None);
+        Assert.Equal("ready", Assert.Single(probe.Snapshot("claude", ["claude-opus-5-5"])).Status);
+        probe.Invalidate("claude");
+        Assert.Equal("unknown", Assert.Single(probe.Snapshot("claude", ["claude-opus-5-5"])).Status);
+        await probe.RefreshAsync([("claude", "claude-opus-5-5")], CancellationToken.None);
+        Assert.Equal("ready", Assert.Single(probe.Snapshot("claude", ["claude-opus-5-5"])).Status);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task Login_change_during_a_probe_discards_the_old_login_result()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<ProcessResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probe = new RunnerModelAcceptanceProbe();
+        probe.Configure(async (_, _, _) =>
+        {
+            started.SetResult();
+            return await release.Task;
+        }, _ => "daemon-session:test");
+
+        var refresh = probe.RefreshAsync([("claude", "claude-opus-5-5")], CancellationToken.None);
+        await started.Task;
+        probe.Invalidate("claude");
+        release.SetResult(new ProcessResult(0, "OK", ""));
+        await refresh;
+
+        Assert.Equal("unknown", Assert.Single(probe.Snapshot("claude", ["claude-opus-5-5"])).Status);
     }
 }

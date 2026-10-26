@@ -371,7 +371,6 @@ public sealed class RemoteRunnerDaemon
                 }
             }, shutdown);
         }
-        if (_options.Role is "coding" or "review") StartModelAcceptanceProbe();
         var capabilityGeneration = DateTime.UtcNow.Ticks;
         var telemetry = new HostTelemetrySampler();
         // Claim admission and salvage deletion share this gate. A claim is
@@ -425,6 +424,7 @@ public sealed class RemoteRunnerDaemon
             TimeSpan.FromSeconds(_options.ServerRequestTimeoutSeconds),
             _log,
             shutdown);
+        if (_options.Role == "coding") StartModelAcceptanceProbe();
         if (!gitCapability.CanPush)
         {
             // Diagnosis only: read-only admission is already decided above, so a
@@ -571,7 +571,6 @@ public sealed class RemoteRunnerDaemon
                 }
                 if (DateTime.UtcNow >= nextCapabilityAdvertisement)
                 {
-                    if (_options.Role is "coding" or "review") StartModelAcceptanceProbe();
                     await RunnerCapabilityProbe.RefreshDueCanariesAsync(_options, _client, _log, shutdown);
                     var capabilityTelemetry = TakeTelemetry();
                     var generation = ++capabilityGeneration;
@@ -597,6 +596,7 @@ public sealed class RemoteRunnerDaemon
                         TimeSpan.FromSeconds(_options.ServerRequestTimeoutSeconds),
                         _log,
                         shutdown);
+                    if (_options.Role == "coding") StartModelAcceptanceProbe();
                     nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
                 }
                 // Record the attempt before entering any claim-path HTTP call.

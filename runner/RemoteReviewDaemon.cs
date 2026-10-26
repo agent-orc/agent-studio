@@ -98,6 +98,26 @@ public sealed class RemoteReviewDaemon
         var nextSlotHygieneLog = DateTime.MinValue;
         var nextSlotReconciliation = DateTime.MinValue;
 
+        void StartModelAcceptanceProbe()
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await RunnerModelAcceptanceProbe.Shared.RefreshAsync(
+                        RunnerCapabilityProbe.ModelCandidates(_options), shutdown);
+                }
+                catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+                {
+                    _log("model acceptance probe stopped with the review daemon");
+                }
+                catch (Exception exception)
+                {
+                    _log($"model acceptance probe failed: {exception.Message}");
+                }
+            }, shutdown);
+        }
+
         // AGT-2820: the workspaces this daemon still owns, in the shape the
         // orphan sweep compares against. A durable worker survives a daemon
         // restart on purpose, so it must never be reaped for having been
@@ -403,6 +423,7 @@ public sealed class RemoteReviewDaemon
 
             var capabilityGeneration = DateTime.UtcNow.Ticks;
             await AdvertiseCapabilitiesWithControlAsync(capabilityGeneration, shutdown);
+            StartModelAcceptanceProbe();
 
             var nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
             var admissionClosed = false;
@@ -537,6 +558,7 @@ public sealed class RemoteReviewDaemon
                         await RunnerCapabilityProbe.RefreshDueCanariesAsync(_options, _client, _log, shutdown);
                         var generation = ++capabilityGeneration;
                         await AdvertiseCapabilitiesWithControlAsync(generation, shutdown);
+                        StartModelAcceptanceProbe();
                         observedServer = true;
                         nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
                         // The concurrent control observer may have acknowledged a
