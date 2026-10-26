@@ -1376,6 +1376,12 @@ if (connectorProfile)
     builder.ConfigureConnectorProfile();
 
 hostTimeline.Checkpoint("entryToBuild");
+// Short-lived test hosts must not leave HttpClientFactory handler-expiry timers
+// behind after their service providers have been disposed.
+if (builder.Environment.IsEnvironment("Test"))
+    builder.Services.ConfigureAll<Microsoft.Extensions.Http.HttpClientFactoryOptions>(options =>
+        options.HandlerLifetime = Timeout.InfiniteTimeSpan);
+
 var app = builder.Build();
 // Test-host overrides and deployment configuration are final only after Build().
 // Reject a mistyped public-edge setting before the host accepts requests.
@@ -1441,7 +1447,7 @@ app.Use(async (context, next) =>
             if ((!networkedSecurityProfile && !publicDemoExecutionProfile)
                 || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.HumanPrincipalItem)
                 || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.RunnerPrincipalItem)
-                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.ApiTokenPrincipalItem))
+                || context.Items.ContainsKey(AgentStudio.Security.AccessSecurityMiddleware.ServiceAccountPrincipalItem))
                 context.Response.Headers["X-Agent-Studio-Commit"] = publishedArtifactSha;
             return Task.CompletedTask;
         });
@@ -2183,7 +2189,6 @@ taskRunner.OnRunnerStatusChanged += (projectName, status) =>
 app.MapAllEndpoints();
 app.MapConversationEndpoints();
 app.MapHub<TaskHub>("/hubs/jobs");
-ApiTokenRouteScopes.Declare(app);
 PublicDemoExecutionRouteInventory.ValidateStartup(
     app,
     app.Services.GetRequiredService<StartupExecutionAdmission>());

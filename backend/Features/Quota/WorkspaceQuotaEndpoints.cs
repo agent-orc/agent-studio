@@ -28,6 +28,7 @@ public static class WorkspaceQuotaEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
         app.MapGet("/api/workspaces/{workspaceId}/quota/audit", (HttpContext context, string workspaceId,
             WorkspaceQuotaService quotas) => Owner(context) ? Results.Ok(quotas.Audit(workspaceId, null)) : Results.Forbid())
+            .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
         // Running environments get their slots before a new limit can admit work.
         app.MapPut("/api/workspaces/{workspaceId}/quota", (HttpContext context, string workspaceId,
@@ -37,6 +38,7 @@ public static class WorkspaceQuotaEndpoints
                 environments.ReconcileHostingSlots();
                 quotas.SetLimits(workspaceId, null, limits);
             }))
+            .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
         app.MapPut("/api/workspaces/{workspaceId}/projects/{projectId}/quota", (HttpContext context,
             string workspaceId, string projectId, QuotaLimits limits, WorkspaceQuotaService quotas,
@@ -46,14 +48,17 @@ public static class WorkspaceQuotaEndpoints
                 environments.ReconcileHostingSlots();
                 quotas.SetLimits(workspaceId, projectId, limits);
             }))
+            .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
         app.MapPost("/api/workspaces/{workspaceId}/quota/override", (HttpContext context,
             string workspaceId, QuotaOverrideRequest request, WorkspaceQuotaService quotas) =>
             Set(context, () => quotas.Override(workspaceId, null, Actor(context), request.Reason)))
+            .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
         app.MapPost("/api/workspaces/{workspaceId}/projects/{projectId}/quota/override", (HttpContext context,
             string workspaceId, string projectId, QuotaOverrideRequest request, WorkspaceQuotaService quotas) =>
             Set(context, () => quotas.Override(workspaceId, projectId, Actor(context), request.Reason)))
+            .RequirePermission(IamPermissions.WorkspaceAdminister)
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
     }
 
@@ -73,14 +78,15 @@ public static class WorkspaceQuotaEndpoints
         catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
     }
 
-    /// <summary>An API token acts as its owner but is audited under its own token id.</summary>
+    /// <summary>Attribute non-human calls to the service account that owns the token.</summary>
     internal static string Actor(HttpContext context)
-        => context.Items[AccessSecurityMiddleware.ApiTokenPrincipalItem] is ApiTokenPrincipal token
-            ? "api:" + token.Token.Id
+        => context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account
+            ? account.ActorId
             : (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Id
               ?? "local-owner";
 
-    private static bool Owner(HttpContext context)
-        => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal principal
-           || principal.User.Role == StudioRoles.Owner;
+    internal static bool Owner(HttpContext context)
+        => context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is null
+           && (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal principal
+               || principal.User.Role == StudioRoles.Owner);
 }

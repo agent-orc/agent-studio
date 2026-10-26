@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using System.Net;
 using System.Text.Json;
 
@@ -160,6 +161,33 @@ public sealed class FailureInterventionTests : IDisposable
         Assert.Contains(second.Key!, reportLine);
         WriteEvidenceSnapshots(
             item, followUp, firstRoundTrip, followUpTimeline, originTimeline, originPipeline, feed, reportLine);
+    }
+
+    [Fact]
+    public async Task Same_intervention_title_creates_a_follow_up_in_a_second_project()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 26, 9, 0, 0, TimeSpan.Zero));
+        var secondProject = Path.Combine(_root, "projects", "second");
+        var (scanner, mutations, service, _, _, _) = Build(includeSecondProject: true, time: clock);
+        var first = CreateOrigin(scanner, mutations, "First broken run");
+        var secondId = mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Second broken run", WatchPath = secondProject,
+            TargetState = TaskStates.AutoReview, PromptMarkdown = "Recorded failure.",
+        });
+        var second = scanner.FindJob(Assert.IsType<string>(secondId), secondProject)!;
+        var evidence = new FailureCommandEvidence("ToolUnavailable", "ReviewInfra", 1, 4000,
+            "model unavailable", "model unavailable");
+
+        var firstResult = await service.RaiseAsync(first, evidence);
+        var secondResult = await service.RaiseAsync(second, evidence);
+
+        Assert.True(firstResult.Created);
+        Assert.True(secondResult.Created);
+        var firstCard = scanner.FindJob(firstResult.Intervention.FollowUpTaskId, _project)!;
+        var secondCard = scanner.FindJob(secondResult.Intervention.FollowUpTaskId, secondProject)!;
+        Assert.Equal(firstCard.Title, secondCard.Title);
+        Assert.Equal(firstCard.Id + "-2", secondCard.Id);
     }
 
     [Fact]
@@ -400,7 +428,8 @@ public sealed class FailureInterventionTests : IDisposable
 
     private (TaskScannerService Scanner, TaskMutationService Mutations, FailureInterventionService Service,
         OrchestratorLog Log, TimelineLog Timeline, PipelineExecutionLog Pipeline) Build(
-        AgentStudio.Persistence.IAtomicJsonFileWriter? fileWriter = null)
+        AgentStudio.Persistence.IAtomicJsonFileWriter? fileWriter = null,
+        bool includeSecondProject = false, TimeProvider? time = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -408,11 +437,16 @@ public sealed class FailureInterventionTests : IDisposable
             ["WatchPaths:0:Name"] = "demo",
             ["WatchPaths:0:Path"] = _project,
             ["WatchPaths:0:RootPath"] = _project,
+            ["WatchPaths:1:Name"] = includeSecondProject ? "second" : null,
+            ["WatchPaths:1:Path"] = includeSecondProject ? Path.Combine(_root, "projects", "second") : null,
+            ["WatchPaths:1:RootPath"] = includeSecondProject ? Path.Combine(_root, "projects", "second") : null,
         }).Build();
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
         var registry = new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance);
-        registry.EnsureProjectForStorage(_project, "demo", DefaultWorkspace.Id);
+        registry.EnsureProjectForStorage(_project, "demo", DefaultWorkspace.Id, time);
+        if (includeSecondProject)
+            registry.EnsureProjectForStorage(Path.Combine(_root, "projects", "second"), "second", DefaultWorkspace.Id, time);
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var mutations = new TaskMutationService(scanner,
             new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance), registry,
@@ -424,7 +458,8 @@ public sealed class FailureInterventionTests : IDisposable
         var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var service = new FailureInterventionService(mutations, scanner, timeline, log,
             NullLogger<FailureInterventionService>.Instance, prompts, pipelineLog: pipeline,
-            decisionRequests: new DecisionCardRequests(scanner, mutations, NullLogger<DecisionCardRequests>.Instance));
+            decisionRequests: new DecisionCardRequests(scanner, mutations, NullLogger<DecisionCardRequests>.Instance),
+            time: time);
         return (scanner, mutations, service, log, timeline, pipeline);
     }
 

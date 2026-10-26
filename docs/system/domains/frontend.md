@@ -826,6 +826,18 @@ occur. It is not a claim about tunnel transfer time.
   summary. It does not own project onboarding or a project-source catalogue.
   Legacy CLI-admin and usage links resolve to the CLI Management section at
   `#/workspace/settings/caps`.
+- The Access destination at `#/workspace/settings/access`
+  (`frontend/src/app/features/access/`) is the one Access area. It shows users
+  with their role bindings, groups, service accounts (API tokens included, as
+  service accounts with one `api.` token), role bindings per scope, runner
+  enrollments, and enrolled runners from `GET /api/auth/iam`,
+  `/api/auth/runner-enrollments`, and `/api/auth/runners`. It invites through
+  the existing `POST /api/auth/invitations` with one initial binding, resets
+  passwords, disables users with a `{ disabled }` PUT that leaves bindings
+  alone, shows a service-account token or enrollment code once, and reloads
+  after every change. Expiry math reads the injectable `ACCESS_CLOCK`. The
+  rights model is described in
+  [docs/operations/security/overview.md](../../operations/security/overview.md).
 - The Retention destination at `#/workspace/settings/retention` owns the
   versioned workspace rule table, dry-run and explicit apply reports, run
   history, and full-backup controls. Project Settings mounts the same rule

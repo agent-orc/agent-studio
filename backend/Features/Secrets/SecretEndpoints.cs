@@ -1,4 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
+using AgentStudio.Diagnostics;
+using AgentStudio.Projects;
 using AgentStudio.Deploy;
 using AgentStudio.Registry;
 
@@ -293,12 +295,17 @@ public static class SecretEndpoints
     {
         private readonly StudioUser? _user;
         private readonly ProjectRegistry _registry;
+        private readonly RequestAccess? _access;
+        private readonly ProjectEnvironmentService? _environments;
 
-        private Caller(SecretActor actor, StudioUser? user, ProjectRegistry registry)
+        private Caller(SecretActor actor, StudioUser? user, ProjectRegistry registry,
+            RequestAccess? access, ProjectEnvironmentService? environments)
         {
             Actor = actor;
             _user = user;
             _registry = registry;
+            _access = access;
+            _environments = environments;
         }
 
         public SecretActor Actor { get; }
@@ -309,14 +316,20 @@ public static class SecretEndpoints
         {
             if (SecurityProfiles.IsPublicDemo(configuration))
                 throw new SecretAccessDeniedException("public-demo-denied", "Secrets are not available in the public demo.");
+            var access = context.Items[AccessSecurityMiddleware.RequestAccessItem] as RequestAccess;
+            var environments = context.RequestServices.GetService<ProjectEnvironmentService>();
+            if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account)
+                return new Caller(SecretActor.ServiceAccount(account.AccountId), null, registry, access, environments);
             var human = AccessSecurityEndpoints.FindHuman(context, security, touch: false);
-            if (human is not null) return new Caller(SecretActor.Human(human.User.Username), human.User, registry);
-            if (SecurityProfiles.IsLocal(configuration)) return new Caller(SecretActor.Human(LocalOperator), null, registry);
+            if (human is not null) return new Caller(SecretActor.Human(human.User.Username), human.User, registry, access, environments);
+            if (SecurityProfiles.IsLocal(configuration)) return new Caller(SecretActor.Human(LocalOperator), null, registry, null, environments);
             throw new CallerUnauthenticatedException();
         }
 
         public bool CanSee(SecretScope scope)
-            => SecretManagementPolicy.CanSeeMetadata(scope, Unrestricted, Member);
+            => _access is not null
+                ? _access.Allows(IamPermissions.SecretsRead, Target(scope))
+                : SecretManagementPolicy.CanSeeMetadata(scope, Unrestricted, Member);
 
         public void RequireSee(SecretScope scope)
         {
@@ -325,7 +338,28 @@ public static class SecretEndpoints
         }
 
         public SecretAccessDecision CanWrite(SecretScope scope)
-            => SecretManagementPolicy.CanWrite(Role, Unrestricted, scope, scope.Project is not null && Member(scope.Project));
+            => _access is not null
+                ? _access.Allows(IamPermissions.SecretsWrite, Target(scope))
+                    ? SecretAccessDecision.Allow
+                    : SecretAccessDecision.Deny("project-scope-denied", "This account cannot write secrets in this scope.")
+                : SecretManagementPolicy.CanWrite(Role, Unrestricted, scope, scope.Project is not null && Member(scope.Project));
+
+        private PermissionTarget Target(SecretScope scope) => scope.Kind == SecretScopeKind.Workspace
+            ? PermissionTarget.WorkspaceWide
+            : PermissionTarget.ForProject(scope.Project, EnvironmentKey(scope));
+
+        private string? EnvironmentKey(SecretScope scope)
+        {
+            if (scope.Kind != SecretScopeKind.Environment || _environments is null) return null;
+            try { return IamEnvironments.ForDeclaration(_environments.Declarations(scope.Project!), scope.Environment); }
+            catch (Exception exception) when (exception is System.Text.Json.JsonException or IOException
+                                              or UnauthorizedAccessException or KeyNotFoundException
+                                              or InvalidOperationException or FormatException)
+            {
+                SilentCatch.Note(exception, "SecretEndpoints: environment declaration unreadable");
+                return null;
+            }
+        }
 
         /// <summary>A refused write never reaches the provider, so it is audited here.</summary>
         public SecretActor RequireWrite(SecretScope scope, HttpContext context, string? name = null, int? version = null)

@@ -130,10 +130,13 @@ public static class WorkspaceEndpoints
         // optional projectFilter (project display name) narrows the
         // result. Drives the "Visual evidence" reel overlay.
         group.MapGet("/screenshots",
-            (int? windowHours, string? projectFilter, ScreenshotIndexService screenshots) =>
+            (HttpContext context, int? windowHours, string? projectFilter,
+                ScreenshotIndexService screenshots, ProjectRegistry registry) =>
             {
                 var hours = Math.Max(1, windowHours ?? 72);
-                var entries = screenshots.ListWorkspaceScreenshots(hours, projectFilter);
+                var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
+                var entries = screenshots.ListWorkspaceScreenshots(hours, projectFilter)
+                    .Where(entry => human is null || ProjectAccessAuthorization.Allows(human.User, entry.ProjectName, registry));
                 return Results.Ok(new WorkspaceScreenshotsResponse
                 {
                     WindowHours = hours,

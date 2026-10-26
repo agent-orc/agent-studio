@@ -133,16 +133,16 @@ public static class AccessSecurityEndpoints
         auth.MapPost("/users", (CreateUserRequest request, HttpContext context, AccessSecurityStore store) =>
             Execute(() =>
             {
-                RequireOwner(context, store);
-                var result = store.CreateUser(request);
+                var owner = RequireOwner(context, store);
+                var result = store.CreateUser(request, owner.User.Id);
                 return Results.Ok(new { user = ToResponse(result.User), temporaryPassword = result.TemporaryPassword, mustChangePassword = true });
             }));
 
         auth.MapPost("/invitations", (InviteUserRequest request, HttpContext context, AccessSecurityStore store) =>
             Execute(() =>
             {
-                RequireOwner(context, store);
-                var invitation = store.InviteUser(request);
+                var owner = RequireOwner(context, store);
+                var invitation = store.InviteUser(request, owner.User.Id);
                 return Results.Ok(new
                 {
                     user = ToResponse(invitation.User),
@@ -208,8 +208,8 @@ public static class AccessSecurityEndpoints
         auth.MapDelete("/api-tokens/{id}", (string id, HttpContext context, AccessSecurityStore store) =>
             Execute(() =>
             {
-                RequireOwner(context, store);
-                store.RevokeApiToken(id);
+                var owner = RequireOwner(context, store);
+                store.RevokeApiToken(id, owner.User.Id);
                 return Results.NoContent();
             }));
 
@@ -269,9 +269,11 @@ public static class AccessSecurityEndpoints
                 store.RevokeRunner(id);
                 return Results.NoContent();
             }));
+
+        app.MapIamEndpoints();
     }
 
-    private static IResult Execute(Func<IResult> operation)
+    internal static IResult Execute(Func<IResult> operation)
     {
         try { return operation(); }
         catch (SecurityOperationException ex) { return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.Status); }
@@ -281,7 +283,7 @@ public static class AccessSecurityEndpoints
         => new(token.Id, token.Name, token.Role, token.Projects, token.CreatedBy,
             token.CreatedAt, token.ExpiresAt, token.LastUsedAt, token.RevokedAt);
 
-    private static HumanPrincipal RequireHuman(HttpContext context, AccessSecurityStore store)
+    internal static HumanPrincipal RequireHuman(HttpContext context, AccessSecurityStore store)
         => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal
            ?? store.AuthenticateSession(ReadSessionToken(context))
            ?? throw new SecurityOperationException(401, "authentication-required", "A human session is required.");
@@ -335,7 +337,7 @@ public static class AccessSecurityEndpoints
             SHA256.HashData(Encoding.UTF8.GetBytes(expected)));
     }
 
-    private static AuthUserResponse ToResponse(StudioUser user)
+    internal static AuthUserResponse ToResponse(StudioUser user)
         => new(user.Id, user.Username, user.DisplayName, user.Role, user.Projects, user.Disabled, user.MustChangePassword,
             user.ProductionApprovalProjects);
 

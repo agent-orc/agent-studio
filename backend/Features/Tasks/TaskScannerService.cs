@@ -127,6 +127,12 @@ public class TaskScannerService : ITaskScanner
     /// </summary>
     public void SetIndexCache(TaskIndexCache cache) => _indexCache = cache;
 
+    /// <summary>Resident identity facts for create admission; only a cold index waits for its first publication.</summary>
+    public IReadOnlyList<TaskInfo> GetResidentIdentityFacts()
+        => _indexCache is null || _indexCache.Generation == 0
+            ? ScanAllJobsWithArchive()
+            : _indexCache.GetAllResidentTasks();
+
     private AgentStudio.Runner.MonolithOrchestrationStore? _orchestration;
 
     public void SetOrchestrationStore(AgentStudio.Runner.MonolithOrchestrationStore store)

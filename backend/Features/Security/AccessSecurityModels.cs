@@ -148,11 +148,24 @@ public sealed record RunnerEnrollment
 
 public sealed record SecurityState
 {
+    /// <summary>
+    /// Rights-model schema. 0 is the legacy role-per-user state; loading it
+    /// migrates every user to role bindings (see <see cref="LegacyRoleMapping"/>).
+    /// </summary>
+    public int IamVersion { get; set; }
     public List<StudioUser> Users { get; init; } = [];
     public List<StudioInvitation> Invitations { get; init; } = [];
     public List<StudioSession> Sessions { get; init; } = [];
     public List<RunnerServiceIdentity> Runners { get; init; } = [];
     public List<RunnerEnrollment> Enrollments { get; init; } = [];
+    public List<StudioGroup> Groups { get; init; } = [];
+    public List<RoleBinding> RoleBindings { get; init; } = [];
+    public List<ServiceAccount> ServiceAccounts { get; init; } = [];
+    /// <summary>
+    /// API tokens as AGT-3186 stored them. Loading migrates them into
+    /// <see cref="ServiceAccounts"/> (same token id and secret hash), so the
+    /// list stays empty in a current state file.
+    /// </summary>
     public List<StudioApiToken> ApiTokens { get; init; } = [];
     public List<TelemetryIngestToken> TelemetryIngestTokens { get; init; } = [];
 }
@@ -223,9 +236,13 @@ public sealed record AuthUserResponse(string Id, string Username, string Display
 public sealed record BootstrapRequest(string Username, string Password, string? DisplayName, string? BootstrapCode = null);
 public sealed record LoginRequest(string Username, string Password);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
-public sealed record CreateUserRequest(string Username, string DisplayName, string Role, IReadOnlyList<string>? Projects, string? TemporaryPassword);
+public sealed record CreateUserRequest(string Username, string DisplayName, string Role, IReadOnlyList<string>? Projects, string? TemporaryPassword, IReadOnlyList<IamGrantRequest>? Bindings = null);
 public sealed record UpdateUserRequest(string? DisplayName, string? Role, IReadOnlyList<string>? Projects, bool? Disabled, IReadOnlyList<string>? ProductionApprovalProjects = null);
-public sealed record InviteUserRequest(string Username, string DisplayName, string Role, IReadOnlyList<string>? Projects);
+/// <summary>
+/// <see cref="Bindings"/>, when present, replaces the legacy <see cref="Role"/>
+/// and <see cref="Projects"/> pair with explicit role bindings.
+/// </summary>
+public sealed record InviteUserRequest(string Username, string DisplayName, string Role, IReadOnlyList<string>? Projects, IReadOnlyList<IamGrantRequest>? Bindings = null);
 public sealed record AcceptInvitationRequest(string Token, string NewPassword);
 public sealed record PasswordResetRequest(string? TemporaryPassword);
 public sealed record RunnerEnrollmentRequest(string Name, IReadOnlyList<string>? Scopes, DateTime? ExpiresAt, DateTime? CredentialExpiresAt);

@@ -54,10 +54,26 @@ public static class CliEndpoints
             };
         });
 
-        cliGroup.MapGet("/{cliType}/models", async (string cliType, bool? refresh, CliRouter router, CancellationToken ct) =>
+        cliGroup.MapGet("/{cliType}/models", async (HttpContext context, string cliType, bool? refresh, CliRouter router, CancellationToken ct) =>
         {
             if (!CliTypes.IsValid(cliType))
                 return Results.BadRequest(new { error = $"Unknown cliType '{cliType}'" });
+            var scoped = context.Items[AgentStudio.Security.AccessSecurityMiddleware.RequestAccessItem]
+                is AgentStudio.Security.RequestAccess access
+                && !access.Allows(AgentStudio.Security.IamPermissions.WorkspaceOperate,
+                    AgentStudio.Security.PermissionTarget.WorkspaceWide);
+            if (scoped)
+            {
+                if (refresh == true) return Results.StatusCode(StatusCodes.Status403Forbidden);
+                // A project member receives a static catalogue. Even a normal
+                // model lookup may start a CLI probe when its cache is cold.
+                return Results.Ok(cliType.ToLowerInvariant() switch
+                {
+                    "codex" => CodexModelDiscovery.FallbackCatalog("scoped-registry"),
+                    "claude" => ClaudeModelDiscovery.FallbackCatalog("scoped-registry"),
+                    _ => new CliModelCatalog { Models = [], Source = "scoped-registry", FetchedAt = DateTime.UtcNow },
+                });
+            }
             try
             {
                 var catalog = await router.Get(cliType).GetModelCatalogAsync(refresh ?? false, ct);
@@ -181,9 +197,16 @@ public static class CliEndpoints
         });
 
         // ── Quota: per-CLI subscription quota for the right-hand sidesheet ──
-        cliGroup.MapGet("/quota", (QuotaService quota, CancellationToken ct) =>
+        cliGroup.MapGet("/quota", (HttpContext context, QuotaService quota, CancellationToken ct) =>
         {
-            return Results.Ok(quota.GetWithBackgroundRefresh(ct));
+            var scoped = context.Items[AgentStudio.Security.AccessSecurityMiddleware.RequestAccessItem]
+                is AgentStudio.Security.RequestAccess access
+                && !access.Allows(AgentStudio.Security.IamPermissions.WorkspaceOperate,
+                    AgentStudio.Security.PermissionTarget.WorkspaceWide);
+            var report = scoped ? quota.GetCached() : quota.GetWithBackgroundRefresh(ct);
+            return Results.Ok(scoped
+                ? ScopedQuotaProjection.Redact(report)
+                : report);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
         // AGT-3001: recorded series per window plus the burn rate over the last

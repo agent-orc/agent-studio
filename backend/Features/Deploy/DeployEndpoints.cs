@@ -112,9 +112,20 @@ public static class DeployEndpoints
         });
 
         project.MapPost("/releases/{releaseId}/deployments", (HttpContext context, string projectName,
-            string releaseId, DeploymentRequest request, DeployService deploy) =>
-            QuotaRefusable(() => Respond(deploy.RequestDeployment(projectName, releaseId, request,
-                Actor(context, projectName)), accepted: true)))
+            string releaseId, DeploymentRequest request, DeployService deploy,
+            ProjectEnvironmentService environments) =>
+        {
+            if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access)
+            {
+                var environment = IamEnvironments.ForDeclaration(environments.Declarations(projectName), request.EnvironmentId);
+                if (!access.Allows(IamPermissions.EnvironmentDeploy,
+                        PermissionTarget.ForProject(projectName, environment)))
+                    return Results.Json(new { error = "environment-scope-denied" },
+                        statusCode: StatusCodes.Status403Forbidden);
+            }
+            return QuotaRefusable(() => Respond(deploy.RequestDeployment(projectName, releaseId, request,
+                Actor(context, projectName)), accepted: true));
+        })
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         project.MapPost("/deployments/{deploymentId}/approve", (HttpContext context, string projectName,
@@ -176,9 +187,18 @@ public static class DeployEndpoints
     }
 
     public static DeployActor Actor(HttpContext context, string project)
-        => DeployApprovalAuthority.Resolve(
-            DeployApprovalAuthority.SignedInUser(context, context.RequestServices.GetRequiredService<AccessSecurityStore>()),
-            project);
+    {
+        if (context.Items[AccessSecurityMiddleware.ServiceAccountPrincipalItem] is ServiceAccountPrincipal account)
+            return new DeployActor(account.ActorId, false);
+        var user = DeployApprovalAuthority.SignedInUser(context,
+            context.RequestServices.GetRequiredService<AccessSecurityStore>());
+        if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access)
+            return new DeployActor(user?.Id ?? DeployApprovalAuthority.LocalOperator,
+                user is { Disabled: false, MustChangePassword: false }
+                && access.Allows(IamPermissions.EnvironmentProductionDeployApprove,
+                    PermissionTarget.ForProject(project, IamEnvironments.Production)));
+        return DeployApprovalAuthority.Resolve(user, project);
+    }
 
     private static IResult UnknownProject(string project)
         => Results.NotFound(new { error = $"Unknown project '{project}'" });

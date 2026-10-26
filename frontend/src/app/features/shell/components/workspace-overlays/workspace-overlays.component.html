@@ -107,7 +107,9 @@
           <app-appearance-settings />
         }
         @case ('access') {
-          <app-access-settings />
+          @defer (on immediate) {
+            <app-access-area />
+          }
         }
         @case ('first-run') {
           <app-first-run-checklist (openProjectSettings)="openProjectSettings.emit($event)" />

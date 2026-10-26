@@ -65,6 +65,22 @@ public class WikiSearchServiceTests : IDisposable
         Assert.Single(limited!.Results);
     }
 
+    [Fact]
+    public async Task Search_SkipsLinkedPagesAndDirectoriesOutsideTheProject()
+    {
+        Directory.CreateDirectory(_branchDir);
+        var secret = Path.Combine(_branchDir, "secret.md");
+        File.WriteAllText(secret, "# Secret\n\nrefresh_token ultravioletspill\n");
+        File.CreateSymbolicLink(Path.Combine(_docsDir, "linked.md"), secret);
+        Directory.CreateSymbolicLink(Path.Combine(_docsDir, "linked-dir"), _branchDir);
+        WritePage("safe.md", "# Safe\n\ninhabitedpage\n");
+        var search = BuildSearchService();
+
+        Assert.Empty((await search.SearchAsync(ProjectName, "ultravioletspill", false, 20))!.Results);
+        Assert.Single((await search.SearchAsync(ProjectName, "inhabitedpage", false, 20))!.Results);
+        Assert.Empty(search.SearchTitlesAndHeadings(ProjectName, "Secret", 20)!);
+    }
+
     // ---- Umlaut folding ----
 
     [Fact]

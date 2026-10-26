@@ -55,9 +55,8 @@ public static class ProjectOperatorDashboardEndpoints
                 "Artifact, commit, or stage and production declarations are invalid.")))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
-        // Production approval follows the BD-1 standard lifecycle: Owner or
-        // Maintainer only, on these AGT-3176 routes as on the deploy routes,
-        // and the lifecycle decides each approval again.
+        // The access boundary admits scoped human Approvers; DeployService
+        // decides each production approval again in the standard lifecycle.
         app.MapPost("/api/projects/{projectName}/environments/promotions/approve", (
             HttpContext context, string projectName, PromotionDecisionRequest request, DeployService deploy) =>
             DeployEndpoints.QuotaRefusable(() => DecidePromotion(context, projectName, request, approve: true, deploy)))
@@ -98,8 +97,7 @@ public static class ProjectOperatorDashboardEndpoints
             HttpContext context, string projectName, string environmentId, RunTargetRemovalConfirmRequest? request,
             ProjectEnvironmentService environments) =>
             environments.ConfirmRunTargetRemoval(projectName, environmentId, request?.HostId,
-                context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
-                    ? human.User.Id : "local-operator")
+                AccessSecurityMiddleware.ActorId(context, "local-operator"))
                 ? Results.Accepted() : Results.Conflict(new { error = "No removal is pending for this environment." }))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 

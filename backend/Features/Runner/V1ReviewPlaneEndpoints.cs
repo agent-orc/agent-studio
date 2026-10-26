@@ -7,6 +7,7 @@ using System.Text.Json;
 using AgentStudio.Cli;
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
+using AgentStudio.Registry;
 using AgentStudio.Security;
 using AgentStudio.Tasks;
 using Microsoft.Extensions.Hosting;
@@ -649,11 +650,25 @@ public static class V1ReviewPlaneEndpoints
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Claim);
 
         api.MapGet("/reviews/attempts/{attemptId}", (
+            HttpContext context,
             string attemptId,
-            AttemptAuthorityService authority) =>
-            authority.GetReview(attemptId) is { } review
-                ? Results.Ok(ToAttempt(review))
-                : Results.NotFound(new Contract.ApiError("not-found", "ReviewAttempt was not found.")));
+            AttemptAuthorityService authority,
+            TaskScannerService scanner,
+            ProjectRegistry projects) =>
+        {
+            var review = authority.GetReview(attemptId);
+            if (review is null)
+                return Results.NotFound(new Contract.ApiError("not-found", "ReviewAttempt was not found."));
+            if (context.Items[AccessSecurityMiddleware.RequestAccessItem] is RequestAccess access
+                && !access.Allows(IamPermissions.ProjectRead, PermissionTarget.WorkspaceWide))
+            {
+                var project = ReviewAttemptProject(review.TaskKey, projects, scanner);
+                if (project is null || !ProjectAccessAuthorization.AllowsTasks(
+                        context, [project], IamPermissions.ProjectRead, projects))
+                    return Results.NotFound(new Contract.ApiError("not-found", "ReviewAttempt was not found."));
+            }
+            return Results.Ok(ToAttempt(review));
+        });
 
         api.MapPost("/reviews/attempts/{attemptId}/lease/renew", (
             HttpContext context,
@@ -3290,6 +3305,23 @@ public static class V1ReviewPlaneEndpoints
     /// so this never needs to fall back to a sub-minute unit.</summary>
     internal static string FormatRetryDelay(TimeSpan delay)
         => $"{(int)Math.Round(delay.TotalMinutes, MidpointRounding.AwayFromZero)}m";
+
+    // Canonical and legacy task keys carry a registered project address. The
+    // published index handles old bare slugs without scanning every archived
+    // task folder for each scoped attempt read.
+    internal static string? ReviewAttemptProject(string taskKey, ProjectRegistry projects, TaskScannerService scanner)
+    {
+        var separator = taskKey.IndexOf("::", StringComparison.Ordinal);
+        if (separator > 0)
+        {
+            var prefix = taskKey[..separator];
+            var project = TaskKeyResolver.IsCanonical(taskKey)
+                ? projects.FindById(prefix)
+                : projects.FindByStorageLocation(prefix);
+            return project?.DisplayName;
+        }
+        return scanner.FindPublishedJob(taskKey)?.ProjectName;
+    }
 
     internal static TaskInfo? FindTask(TaskScannerService scanner, string taskKey)
         => scanner.ScanAllJobsWithArchive().FirstOrDefault(task =>

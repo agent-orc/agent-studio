@@ -368,10 +368,12 @@ public static class ProjectSettingsEndpoints
         // The Settings panel reads this to render one control per step
         // without hardcoding the step list on the frontend.
         app.MapGet("/api/projects/pipeline-catalogue", (
+            HttpContext context,
             string? projectName,
             string? pipelineType,
             ProjectSettingsService settings,
-            TaskScannerService scanner) =>
+            TaskScannerService scanner,
+            ProjectRegistry projects) =>
         {
             if (!string.IsNullOrWhiteSpace(pipelineType) && !PipelineTypes.IsValid(pipelineType))
                 return Results.BadRequest(new { error = $"Unknown pipeline type '{pipelineType}'" });
@@ -383,6 +385,8 @@ public static class ProjectSettingsEndpoints
             {
                 project = scanner.GetWatchPaths().FirstOrDefault(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
                 if (project is null) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+                if (!ProjectAccessAuthorization.AllowsTasks(context, [project.Name], IamPermissions.ProjectRead, projects))
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
                 projectSettings = PipelineTypeSettings.ForType(settings.Get(projectName.Trim()), type);
                 repositoryPath = string.IsNullOrWhiteSpace(project.RepositoryPath) ? project.RootPath : project.RepositoryPath;
             }
