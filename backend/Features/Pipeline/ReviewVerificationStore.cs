@@ -65,6 +65,14 @@ public sealed record ReviewVerificationRecord
     /// </summary>
     public IReadOnlyList<string> VerifiedRequirements { get; init; } = [];
 
+    /// <summary>
+    /// The review plan's test level (AGT-3310). <c>work-package</c> marks a
+    /// per-card affected selection, which does not stand in for the
+    /// integration gate's tests. Null (full declared suite, or a record written
+    /// before this field) keeps the reuse rules as they were.
+    /// </summary>
+    public string? TestLevel { get; init; }
+
     public DateTimeOffset VerifiedAtUtc { get; init; }
 }
 
