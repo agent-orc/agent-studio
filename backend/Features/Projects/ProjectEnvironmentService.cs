@@ -23,6 +23,15 @@ public sealed record EnvironmentDeclaration(
     public bool? Protected { get; init; }
     public bool? Automatic { get; init; }
     public string? Requires { get; init; }
+
+    /// <summary>
+    /// Explicit position in the project lifecycle (AGT-3276 D6). Without it a
+    /// declaration keeps the kind order: stage, production, then other kinds.
+    /// </summary>
+    public int? Order { get; init; }
+
+    /// <summary>The lifecycle sort key: the declared order, else 100 for stage, 200 for production, 300 otherwise.</summary>
+    public int LifecycleOrder() => Order ?? Kind switch { "stage" => 100, "production" => 200, _ => 300 };
 }
 
 public sealed record TenantDeployTarget(string Destination, string HealthUrl);
@@ -353,10 +362,14 @@ public sealed partial class ProjectEnvironmentService
                 Automatic = phase.Automatic, Requires = phase.Requires,
             } });
         }
-        return output.OrderBy(item => item.Declaration?.Kind switch
-            { null => 3, "stage" => 0, "production" => 1, _ => 2 })
-            .ThenBy(item => item.EnvironmentId, StringComparer.Ordinal).ToArray();
+        return InLifecycleOrder(output);
     }
+
+    /// <summary>Valid declarations in lifecycle order, then broken files; ties break by id.</summary>
+    public static EnvironmentDeclarationFile[] InLifecycleOrder(IEnumerable<EnvironmentDeclarationFile> files)
+        => files.OrderBy(item => item.Declaration is null ? 1 : 0)
+            .ThenBy(item => item.Declaration?.LifecycleOrder() ?? 0)
+            .ThenBy(item => item.EnvironmentId, StringComparer.Ordinal).ToArray();
 
     private bool IsWatched(string project)
         => _scanner.GetWatchPaths().Any(item => string.Equals(item.Name, project, StringComparison.OrdinalIgnoreCase));
@@ -422,10 +435,8 @@ public sealed partial class ProjectEnvironmentService
         }
         var duplicates = result.Where(item => item.Declaration is not null).GroupBy(item => item.EnvironmentId, StringComparer.Ordinal)
             .Where(group => group.Count() > 1).Select(group => group.Key).ToHashSet(StringComparer.Ordinal);
-        return result.Select(item => item.Declaration is not null && duplicates.Contains(item.EnvironmentId)
-                ? item with { Declaration = null, Error = "Environment ids must be unique within a project." } : item)
-            .OrderBy(item => item.Declaration?.Kind switch { null => 3, "stage" => 0, "production" => 1, _ => 2 })
-            .ThenBy(item => item.EnvironmentId, StringComparer.Ordinal).ToArray();
+        return InLifecycleOrder(result.Select(item => item.Declaration is not null && duplicates.Contains(item.EnvironmentId)
+                ? item with { Declaration = null, Error = "Environment ids must be unique within a project." } : item));
     }
 
     private static string BrokenDeclarationId(string file, string json)
@@ -556,13 +567,17 @@ public sealed partial class ProjectEnvironmentService
             : timeoutValue.ValueKind == JsonValueKind.Number && timeoutValue.TryGetInt32(out var parsedTimeout)
                 ? parsedTimeout : throw new JsonException("Invalid intervention timeout.");
         if (timeout is < 1 or > 10080) throw new JsonException("Intervention timeout must be 1 to 10080 minutes.");
+        int? order = !value.TryGetProperty("order", out var orderValue) || orderValue.ValueKind == JsonValueKind.Null ? null
+            : orderValue.ValueKind == JsonValueKind.Number && orderValue.TryGetInt32(out var parsedOrder)
+                && parsedOrder is >= 0 and <= 1000
+                ? parsedOrder : throw new JsonException("order must be a whole number from 0 to 1000.");
         return new(id, Required("name"), kind, host, Required("address"), template,
             destination, healthUrl, approval, secrets, containerPort,
             HealthCheckDeclarations.Parse(value, Path.GetFileName(file)),
             HealthCheckDeclarations.AllowsPrivateNetwork(value, Path.GetFileName(file)),
             guidedFailure, timeout,
             edgeHosted ? RunTargetHostingDeclaration.Parse(value, Path.GetFileName(file), healthUrl, secrets) : null)
-        { TenantTargets = targets, Data = HostedDataDeclaration.Parse(value, template, id, Path.GetFileName(file)) };
+        { TenantTargets = targets, Data = HostedDataDeclaration.Parse(value, template, id, Path.GetFileName(file)), Order = order };
     }
 
     public ProjectEnvironmentsResponse? Read(string project)

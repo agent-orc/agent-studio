@@ -346,6 +346,33 @@ Deployment `state` uses `queued`, `running`, `succeeded`, `failed`, `cancelled`
 and `awaiting-approval`. Step `state` also permits `pending` and `skipped`.
 EnvironmentStatus `health` is `healthy`, `unhealthy` or `unknown`.
 
+Environments follow an explicit lifecycle order (AGT-3276 D6 A). A JSON
+declaration may set `order`, a whole number from 0 to 1000; without it Stage
+sorts as 100, Production as 200 and every other kind as 300, ties by id.
+Stage, Production and every declaration with an explicit `order` except
+previews enter the lifecycle in that order. A kind other than `stage` and
+`production`, such as a Dev environment of kind `other`, has the environment
+kind `other`, and lifecycle phases name it by its environment id. Without
+`order` such a declaration stays a direct-deploy target outside releases. A release on the standard lifecycle gains a phase for each such
+environment at its position: automatic without approval, Owner or Maintainer
+when `protected`, and requiring the phase before it. Staging still starts at
+integration; an automatic Dev phase before it starts on its own. Named
+lifecycles, such as a hotfix that skips Staging, keep exactly their phases.
+
+`GET lanes[?releases=N]` is the read model of the board's Delivery section
+(AGT-3276 D5 L-B). It returns `projectId`, `releaseDepth` (N, default 5,
+clamped to 1 to 50) and `columns`: first `integrated`, the archive-inclusive
+cards with a verified integration that no release names yet (in `landed`),
+then one column per environment in lifecycle order with `currentRelease`,
+`lastRun` (state, trigger, time), `health`, `pendingApproval`, `landed` (cards
+of the current release and the releases before it, newest first, bounded to N
+releases), `waiting` (the environment's `CardsSinceLastDeploy`, without
+releases whose lifecycle skips the environment) and `rolledBack`. A card
+entry has `key`, `releaseId`, `releaseVersion` and `rolledBack`; a rollback
+moves the withdrawn release's cards back to `waiting` and marks them rolled
+back. Membership follows release creation order, as the status projection
+does, so the read runs no git. Card lane states never change.
+
 The deploy host uses a credential with only `runner.deploy`; its service
 identity must match `targetHostId`. In the managed host record, the deploy
 principal and host id are the same enrolled `runner_<id>` value. Schema 2

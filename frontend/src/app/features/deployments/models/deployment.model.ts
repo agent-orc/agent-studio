@@ -3,7 +3,7 @@ export interface Environment {
   projectId: string;
   name: string;
   order: number;
-  kind: 'staging' | 'production' | 'preview';
+  kind: 'staging' | 'production' | 'preview' | 'other';
 }
 
 export interface Release {

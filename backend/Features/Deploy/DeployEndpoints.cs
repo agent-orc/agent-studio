@@ -23,6 +23,10 @@ public static class DeployEndpoints
         project.MapGet("/delivery-lanes", (string projectName, DeployService deploy) =>
             deploy.DeliveryLanes(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
+        project.MapGet("/lanes", (string projectName, int? releases, DeployService deploy) =>
+            deploy.DeliveryColumns(projectName, Math.Clamp(releases ?? DeliveryColumnProjection.DefaultReleaseDepth,
+                1, DeliveryColumnProjection.MaxReleaseDepth)) is { } value ? Results.Ok(value) : UnknownProject(projectName));
+
         project.MapGet("/releases", (string projectName, DeployService deploy) =>
             deploy.Releases(projectName) is { } value ? Results.Ok(value) : UnknownProject(projectName));
 
