@@ -6,7 +6,6 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Http;
 
 namespace AgentStudio.Tests;
 
@@ -52,10 +51,6 @@ public class TestHostFactory : WebApplicationFactory<Program>
             services.AddSingleton<IHostLifetime, TestOwnedHostLifetime>();
             services.AddSingleton(provider => new InFlightRequestTracker(provider.GetRequiredService<TimeProvider>()));
             services.AddSingleton<IStartupFilter, InFlightRequestStartupFilter>();
-            // The production handler rotation timer can outlive a short-lived
-            // test host and repeatedly resolve its already-disposed provider.
-            services.ConfigureAll<HttpClientFactoryOptions>(options =>
-                options.HandlerLifetime = Timeout.InfiniteTimeSpan);
             // Registered last, so it is the first hosted service to stop.
             services.AddHostedService<InFlightRequestDrain>();
         });

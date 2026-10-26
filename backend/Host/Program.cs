@@ -1376,6 +1376,12 @@ if (connectorProfile)
     builder.ConfigureConnectorProfile();
 
 hostTimeline.Checkpoint("entryToBuild");
+// Short-lived test hosts must not leave HttpClientFactory handler-expiry timers
+// behind after their service providers have been disposed.
+if (builder.Environment.IsEnvironment("Test"))
+    builder.Services.ConfigureAll<Microsoft.Extensions.Http.HttpClientFactoryOptions>(options =>
+        options.HandlerLifetime = Timeout.InfiniteTimeSpan);
+
 var app = builder.Build();
 // Test-host overrides and deployment configuration are final only after Build().
 // Reject a mistyped public-edge setting before the host accepts requests.
