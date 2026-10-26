@@ -300,7 +300,7 @@
 <figure>
   <svg viewBox="0 0 1040 340" role="img" aria-labelledby="fig3-title fig3-desc">
     <title id="fig3-title">How a card moves through the target</title>
-    <desc id="fig3-desc">A coding attempt and a review attempt run on runner hosts. The engine decides the next step. A pass goes to the batch gate, integration and Human Review. A blocking review opens a fix round that continues on the reviewed delivery. A spent budget degrades non-test blocks or escalates test blocks. The Task Server records every step.</desc>
+    <desc id="fig3-desc">A coding attempt and a review attempt run on runner hosts. The engine decides the next step. A pass goes to the merge check, integration and Human Review; post-merge checks on develop and the full suite before delivery follow outside the card path. A blocking review opens a fix round that continues on the reviewed delivery. A spent budget degrades non-test blocks or escalates test blocks. The Task Server records every step.</desc>
     <defs>
       <marker id="ns-arrow-3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
         <path d="M 0 0 L 10 5 L 0 10 z" style="fill: var(--ink-3)"></path>
@@ -319,9 +319,9 @@
     <text class="svg-sub" x="372" y="81">pass, fix or escalate</text>
     <text class="svg-tiny" x="372" y="99">receipt per decision</text>
     <rect class="svg-execution" x="528" y="40" width="146" height="72" rx="9"></rect>
-    <text class="svg-label" x="540" y="62">Batch gate</text>
-    <text class="svg-sub" x="540" y="81">full suite per wave</text>
-    <text class="svg-tiny" x="540" y="99">claimable gate attempt</text>
+    <text class="svg-label" x="540" y="62">Merge check</text>
+    <text class="svg-sub" x="540" y="81">compile merged tree</text>
+    <text class="svg-tiny" x="540" y="99">no cross-project lock</text>
     <rect class="svg-execution" x="696" y="40" width="146" height="72" rx="9"></rect>
     <text class="svg-label" x="708" y="62">Integration</text>
     <text class="svg-sub" x="708" y="81">merge and push</text>
@@ -352,7 +352,7 @@
     <path class="svg-flow" d="M 110 170 L 110 116" style="marker-end: url(#ns-arrow-3)"></path>
     <path class="svg-flow" d="M 470 114 L 470 206 L 542 206" style="marker-end: url(#ns-arrow-3)"></path>
   </svg>
-  <figcaption><b>Figure 3.</b> A card in the target. Green steps run on runner hosts as claimed units; amber steps are engine decisions; the person acts only in Human Review. The model step of AGT-W73, once decided, chooses inside the amber boxes; the authority floors of the Task Server stay mechanical.</figcaption>
+  <figcaption><b>Figure 3.</b> A card in the target. Green steps run on runner hosts as claimed units; amber steps are engine decisions; the person acts only in Human Review. The full suite is not on the card path (AGT-W84 D1): it runs after merge, nightly and once per release candidate before delivery. The model step of AGT-W73, once decided, chooses inside the amber boxes; the authority floors of the Task Server stay mechanical.</figcaption>
 </figure>
 
 <div class="tablewrap">
@@ -360,13 +360,15 @@
   <thead><tr><th>Step</th><th>Decides</th><th>Executes</th><th>Rule</th><th>Decided in</th></tr></thead>
   <tbody>
     <tr><td>Coding attempt</td><td>Task Server admits the claim</td><td>Runner host</td><td>One fenced attempt per claim; worktree, preparation script, isolated run, fenced result ref. Git belongs to the platform.</td><td>AGT-W51, AGT-W65 D5</td></tr>
-    <tr><td>Review attempt</td><td>Engine requests it</td><td>Review-capable runner host</td><td>Exact result SHA in a fresh clone; model review, build and the tests for the changed files per card.</td><td>AGT-W59 D1, AGT-W77 D1, AGT-W65 D13</td></tr>
-    <tr><td>Next step</td><td>Engine</td><td>Task Server applies the intent</td><td>Pass, fix round, wait for the batch, or escalate, with a receipt. Guard rails are signals for the decision.</td><td>AGT-W65 D14, AGT-W73</td></tr>
+    <tr><td>Review attempt</td><td>Engine requests it</td><td>Review-capable runner host</td><td>Exact result SHA in a fresh clone; model review, build, the affected tests from the project map and fast checks per card.</td><td>AGT-W59 D1, AGT-W77 D1, AGT-W65 D13, AGT-W84 D1</td></tr>
+    <tr><td>Next step</td><td>Engine</td><td>Task Server applies the intent</td><td>Pass, fix round, wait for the batch where a project keeps the pre-merge batch gate, or escalate, with a receipt. Guard rails are signals for the decision.</td><td>AGT-W65 D14, AGT-W73</td></tr>
     <tr><td>Fix round</td><td>Engine</td><td>Runner host</td><td>Continues on the reviewed delivery with the findings in the prompt.</td><td>AGT-W65 D17</td></tr>
     <tr><td>Budget end</td><td>Engine</td><td>Task Server applies</td><td>One per-card budget for every automatic round; non-test blocks degrade with a follow-up card, build and test blocks escalate.</td><td>AGT-W65 D18</td></tr>
-    <tr><td>Batch gate</td><td>Engine (planner and advisor)</td><td>Runner host, claimable gate attempt</td><td>The full suite runs once per wave on the combined candidate and before every release; red batches are isolated with a bounded budget.</td><td>AGT-W59 D1 to D8, AGT-W57 D3, AGT-W77 D1</td></tr>
+    <tr><td>Merge check</td><td>Engine</td><td>Runner host</td><td>Compile of the merged tree per project and branch, without a cross-project lock. The pre-merge batch gate (full suite once per wave, red members isolated with a bounded budget) stays as a stricter per-project mode and as the fallback.</td><td>AGT-W84 D1, AGT-W59 D1 to D8, AGT-W77 D1 as amended</td></tr>
     <tr><td>Integration</td><td>Engine</td><td>Runner host</td><td>One fenced publication lease for every canonical push; the remote host merges, the Studio observes.</td><td>AGT-W59 D4, AGT-W57</td></tr>
+    <tr><td>Post-merge checks</td><td>Engine</td><td>Runner host, claimable gate attempt</td><td>Union of the affected tests per merge window and the full suite nightly on develop. A red result is attributed to one merge and opens one repair card: revert when the revert is clean, otherwise fix forward. It holds release candidates, not merges outside the failing area; escalation after 2 hours red.</td><td>AGT-W84 D1, D2, AGT-W57 D3</td></tr>
     <tr><td>Human Review</td><td>Person</td><td>Studio</td><td>Starts only after integration; acceptance confirms it.</td><td>AGT-W57 D5, D6</td></tr>
+    <tr><td>Before delivery</td><td>Engine</td><td>Runner host</td><td>The full suite runs once on the release candidate before the first environment, required by default where a production environment is declared; every stage and the promotion to main reuse that verdict for the exact SHA.</td><td>AGT-W84 D3, D4</td></tr>
   </tbody>
 </table>
 </div>
@@ -392,7 +394,7 @@
   <li><b>Claimable work stays on runner hosts.</b> Model calls, builds, tests, review and batch suites run inside claimed units; the Operations Server runs only host operations. <span class="muted">Owner: AGT-W65 D16.</span></li>
   <li><b>Isolation applies to the run, not to the sources.</b> One stable checkout per project, one leased worktree per run, prepared by a script that travels with the commit. <span class="muted">Owner: AGT-W51.</span></li>
   <li><b>Git ownership belongs to the platform.</b> Pre and post steps commit, push and manage worktrees; one fenced publication lease guards every canonical push. <span class="muted">Owner: ADR-0052, AGT-W59 D4.</span></li>
-  <li><b>Review before integration, Human Review after it.</b> Model review and cheap checks per round, full suite once per batch. <span class="muted">Owner: AGT-W59 D1, AGT-W57 D5.</span></li>
+  <li><b>Review before integration, Human Review after it.</b> Model review, build, affected tests and fast checks per round; the full suite after merge (nightly on develop) and once per release candidate before delivery, never on the card path. <span class="muted">Owner: AGT-W84 D1, AGT-W59 D1, AGT-W57 D5.</span></li>
   <li><b>The browser never holds a service bearer.</b> <span class="muted">Owner: AGT-W49.</span></li>
   <li><b>No fallback authority.</b> When the Task Server is down nothing claims or decides; when the engine is down transitions wait visibly. <span class="muted">Owner: AGT-W49, AGT-W65.</span></li>
 </ul>
@@ -412,13 +414,14 @@
     <tr><td><a href="../../orchestrator-rule-core/index.html">AGT-W73</a> Orchestrator decisions between steps</td><td>11 October 2026</td><td>A strong model chooses the next typed action from bounded grounds; mechanical floors, one alternate-model retry then ask and hold, 24-hour emergency limit, cost caps per card and per host-day, versioned rules with dry run, bounded artefacts; actor model O1: two operators, two kinds of steps. AGT-W68 run budgets absorbed.</td></tr>
     <tr><td><a href="../../merge-gate-economics/index.html">AGT-W69</a>, <a href="../../integration-lane-throughput/index.html">AGT-W70</a></td><td>11 October 2026</td><td>Recommendations adopted after the batch gate is measured; measurement first (AGT-3070).</td></tr>
     <tr><td><a href="../deployment-story/index.html">AGT-W63</a> Deployment story</td><td>26 September 2026</td><td>D1 to D8: one-box first, then hosts, then authority; limited baseline with explicit deltas; one runner-host family; WireGuard target; installer bootstrap; versioned manifest; verified recovery; proven remote completion.</td></tr>
-    <tr><td><a href="../test-acceleration/index.html">AGT-W77</a> Test acceleration</td><td>11 October 2026 (D1, D2)</td><td>Per card: model review, build and the tests for the changed files; full suite per batch and before every release. End-to-end tests run on the production bundle unless specs need development helpers.</td></tr>
+    <tr><td><a href="../test-acceleration/index.html">AGT-W77</a> Test acceleration</td><td>11 October 2026 (D1, D2)</td><td>Per card: model review, build and the tests for the changed files; full suite per batch and before every release. D1 amended by AGT-W84 D1 for projects in post-merge mode. End-to-end tests run on the production bundle unless specs need development helpers.</td></tr>
+    <tr><td><a href="../pipeline-delivery-target/index.html">AGT-W84</a> Pipeline target picture</td><td>26 October 2026, recommended options (AGT-3308)</td><td>D1 to D10: affected tests per card, full suite after merge, nightly and before delivery (T-B); revert when clean, otherwise fix forward, escalate after 2 hours; full suite before delivery per project, required where production is declared; promotion reuses the pre-delivery verdict; Delivery section per environment as a projection (L-B); every declared environment in lifecycle order; Task Server and one producer for derived source data (A-B); host object cache for gate and review sources; workspace repository as export; <code>6-completed</code> displayed as Accepted.</td></tr>
   </tbody>
 </table>
 </div>
 
 <h2 id="still-open"><span class="no">&sect;7</span>What is still open</h2>
-<p>Nothing that shapes the roles, the actor model, the flow or the deployment forms. On 11 October 2026 the operator decided the remaining points by following the recommendations: the model step between steps and the actor model (AGT-W73), review host preference, engine instances and the Operations Broker term (AGT-W65 D19 to D21), the end-to-end build rule (AGT-W77 D2), the integration-throughput Dossiers after measurement (AGT-W69, AGT-W70), and this page as a standing map (N1).</p>
+<p>Nothing that shapes the roles, the actor model, the flow or the deployment forms. On 11 October 2026 the operator decided the remaining points by following the recommendations: the model step between steps and the actor model (AGT-W73), review host preference, engine instances and the Operations Broker term (AGT-W65 D19 to D21), the end-to-end build rule (AGT-W77 D2), the integration-throughput Dossiers after measurement (AGT-W69, AGT-W70), and this page as a standing map (N1). On 26 October 2026 the pipeline target picture (AGT-W84) recorded D1 to D10 with its recommended options; its outcomes are in &sect;6 and the Dossier is on the map in &sect;9.</p>
 <p>Still open, as capabilities of roles that are already placed:</p>
 <div class="tablewrap">
 <table>
@@ -474,6 +477,7 @@
   <a class="card" href="../../orchestrator-rule-core/index.html"><h4>Orchestrator decisions between steps</h4><div class="path">orchestrator-rule-core/ &middot; AGT-W73 &middot; Source AGT-3018</div><p>Decided 11 October 2026: a strong model chooses a typed action from bounded, versioned grounds; code validates authority and safety, limits execution, dispatches and records a receipt. Human Operator and AI Operator share an intent interface with different autonomy. Engine decision steps answer one bounded question and escalate to the AI Operator, then the human; execution steps run on runner hosts. Degraded mode, a 24-hour emergency limit and cost caps apply.</p></a>
   <a class="card" href="../delivery-chain/index.html"><h4>Delivery chain</h4><div class="path">operations/delivery-chain/ &middot; AGT-W57</div><p>Integration, recovery and robustness from the last commit to a published release; D1 to D7 decided 25 September 2026.</p></a>
   <a class="card" href="../gates/index.html"><h4>Gates</h4><div class="path">operations/gates/ &middot; AGT-W59</div><p>Batch gate and remote gate: when the full suite runs, on what subject, who owns the attempt; D1 to D10 decided 25 September 2026.</p></a>
+  <a class="card" href="../pipeline-delivery-target/index.html"><h4>Pipeline target picture</h4><div class="path">operations/pipeline-delivery-target/ &middot; AGT-W84 &middot; Source AGT-3276</div><p>Tests before delivery: affected tests per card, the full suite after merge, nightly and once per release candidate, red develop repaired by revert or fix forward. A Delivery section with one column per declared environment. The Task Server and derived source data for the hot paths instead of git. D1 to D10 decided 26 October 2026.</p></a>
   <a class="card" href="../test-acceleration/index.html"><h4>Test acceleration</h4><div class="path">operations/test-acceleration/ &middot; AGT-W77</div><p>Measured baseline and levers for backend and frontend tests; D1 decided 11 October 2026, D2 open.</p></a>
   <a class="card" href="../docker-ausfuehrungswelt-migration/index.html"><h4>Isolated execution</h4><div class="path">operations/docker-ausfuehrungswelt-migration/ &middot; AGT-W51</div><p>Preparation script, per run isolation, healing orchestrator, tests as a product feature, migration stages M1 to M7.</p></a>
   <a class="card" href="../dossier-consolidation-and-area-tags/index.html"><h4>Dossier consolidation and area tags</h4><div class="path">operations/dossier-consolidation-and-area-tags/ &middot; AGT-W55</div><p>The sixteen Dossier target set, the archiving rule, and the area and facet tag system. This rewrite is its first delivery slice.</p></a>
