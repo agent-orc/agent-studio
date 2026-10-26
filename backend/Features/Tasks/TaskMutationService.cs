@@ -1931,9 +1931,9 @@ public class TaskMutationService
         // Capture resident identities before the create lock. A refresh may be
         // running, but creates must not queue behind a workspace scan.
         var jobs = _scanner.GetResidentIdentityFacts();
-        lock (_createIdentityLock)
+        using (_laneMutex.Acquire(entry.Path))
         {
-            using (_laneMutex.Acquire(entry.Path))
+            lock (_createIdentityLock)
             {
                 taskKey = MintTaskKey(entry.Path, jobs);
                 var used = jobs
@@ -1951,10 +1951,17 @@ public class TaskMutationService
                     used.UnionWith(reserved);
                 foreach (var (path, reserved) in _reservedJobIds)
                     if (!WatchPathComparison.PathsEqual(path, entry.Path)) foreign.UnionWith(reserved);
-                if (foreign.Contains(baseSlug) || _projectRegistry.List().Any(project =>
-                        !WatchPathComparison.PathsEqual(project.StorageLocation, entry.Path)
-                        && TaskKeyNumbers.TryParse(baseSlug, project.ShortCode, out _)))
+                var matchesForeignKeyPattern = _projectRegistry.List().Any(project =>
+                    !WatchPathComparison.PathsEqual(project.StorageLocation, entry.Path)
+                    && TaskKeyNumbers.TryParse(baseSlug, project.ShortCode, out _));
+                if (!string.IsNullOrWhiteSpace(req.Id)
+                    && (foreign.Contains(baseSlug)
+                        || foreign.Contains(TaskCoreRecord.Limit(baseSlug, 128)!)
+                        || matchesForeignKeyPattern))
                     return null;
+                // A title-derived slug is free to take a suffix even when its
+                // first spelling resembles another project's task key.
+                if (matchesForeignKeyPattern) used.Add(baseSlug);
                 if (taskKey is not null)
                 {
                     var project = _projectRegistry.FindByStorageLocation(entry.Path)!;
@@ -2242,6 +2249,12 @@ public class TaskMutationService
             reserved.Add(candidate);
             return candidate;
         }
+    }
+
+    internal bool IsReservedIdentity(string identity)
+    {
+        lock (_createIdentityLock)
+            return _reservedJobIds.Values.Any(reserved => reserved.Contains(identity));
     }
 
     public bool UpdateJobFile(string jobId, string fileName, string content, string? watchPath = null)

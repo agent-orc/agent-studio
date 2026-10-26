@@ -167,6 +167,49 @@ public sealed class IamHandlerAccessTests : IDisposable
     }
 
     [Fact]
+    public async Task Title_derived_ids_take_a_suffix_across_projects_and_foreign_key_patterns()
+    {
+        using var factory = BuildFactory();
+        using var owner = Client(factory, Login(factory, "first.owner"));
+        foreach (var project in new[] { "alpha", "beta" })
+        {
+            using var created = await owner.PostAsJsonAsync("/api/tasks",
+                new { title = "Update dependencies", watchPath = ProjectPath(project) });
+            Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        }
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var cards = scanner.ScanAllJobsWithArchive().Where(card => card.Title == "Update dependencies").ToArray();
+        Assert.Equal(2, cards.Length);
+        Assert.Contains(cards, card => card.Id == "update-dependencies");
+        Assert.Contains(cards, card => card.Id == "update-dependencies-2");
+
+        var foreignCode = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>()
+            .List().Single(project => project.DisplayName == "beta").ShortCode;
+        using var codeTitle = await owner.PostAsJsonAsync("/api/tasks",
+            new { title = foreignCode + " 2", watchPath = ProjectPath("alpha") });
+        Assert.Equal(HttpStatusCode.OK, codeTitle.StatusCode);
+        Assert.Contains(scanner.ScanAllJobsWithArchive(), card =>
+            card.Title == foreignCode + " 2" && card.Id == foreignCode.ToLowerInvariant() + "-2-2");
+    }
+
+    [Fact]
+    public async Task Explicit_id_cannot_shadow_a_foreign_utf8_prefix_alias()
+    {
+        var prefix = new string('x', 126) + "é";
+        var folder = Path.Combine(ProjectPath("beta"), TaskStates.Backlog, prefix);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = prefix, title = "Foreign UTF-8 prefix", state = TaskStates.Backlog, kind = "task", order = 2,
+        }));
+        using var factory = BuildFactory();
+        using var owner = Client(factory, Login(factory, "first.owner"));
+        using var created = await owner.PostAsJsonAsync("/api/tasks",
+            new { id = prefix + "-alpha", title = "Prefix collision", watchPath = ProjectPath("alpha") });
+        Assert.Equal(HttpStatusCode.Conflict, created.StatusCode);
+    }
+
+    [Fact]
     public void Lane_move_skips_a_suffix_that_is_another_projects_identity()
     {
         foreach (var (project, state, id) in new[]
@@ -185,6 +228,38 @@ public sealed class IamHandlerAccessTests : IDisposable
         }
         using var factory = BuildFactory();
         factory.Services.GetRequiredService<TaskIndexCache>().GetSnapshot();
+        var outcome = factory.Services.GetRequiredService<TaskStateMachine>()
+            .MoveJob("duplicate", TaskStates.Archive, ProjectPath("alpha"));
+        Assert.Equal(MoveJobStatus.Success, outcome.Status);
+        Assert.EndsWith("duplicate-3", outcome.NewFolderPath);
+    }
+
+    [Fact]
+    public void Lane_move_skips_an_in_flight_create_reservation()
+    {
+        foreach (var state in new[] { TaskStates.Completed, TaskStates.Archive })
+        {
+            var folder = Path.Combine(ProjectPath("alpha"), state, "duplicate");
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+            {
+                id = "duplicate", title = "duplicate", state, kind = "task", order = 2,
+            }));
+        }
+        using var factory = BuildFactory();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        factory.Services.GetRequiredService<TaskIndexCache>().GetSnapshot();
+        var mutations = factory.Services.GetRequiredService<TaskMutationService>();
+        var reservedId = mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "duplicate-2", Title = "Reserved candidate", WatchPath = ProjectPath("beta"),
+        });
+        Assert.Equal("duplicate-2", reservedId);
+        var reservedCard = scanner.FindJob(reservedId!, ProjectPath("beta"))!;
+        Directory.Delete(reservedCard.FolderPath, recursive: true);
+        scanner.RemoveCoreByFolder(reservedCard.FolderPath);
+        Assert.DoesNotContain(scanner.GetResidentIdentityFacts(), card => card.Id == reservedId);
+
         var outcome = factory.Services.GetRequiredService<TaskStateMachine>()
             .MoveJob("duplicate", TaskStates.Archive, ProjectPath("alpha"));
         Assert.Equal(MoveJobStatus.Success, outcome.Status);

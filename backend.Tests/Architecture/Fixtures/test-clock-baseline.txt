@@ -332,7 +332,6 @@ fixed-date backend.Tests/DossierMaintenanceServiceTests.cs
 fixed-date backend.Tests/DriftReportValidatorTests.cs
 fixed-date backend.Tests/DuplicateTaskKeyTests.cs
 fixed-date backend.Tests/ExternalCompletionEndpointsTests.cs
-fixed-date backend.Tests/FailureInterventionTests.cs
 fixed-date backend.Tests/FileGenerationIndexTests.cs
 fixed-date backend.Tests/FixtureFilterTests.cs
 fixed-date backend.Tests/Fixtures/UpdateService/FakeBackendHarness.cs

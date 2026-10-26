@@ -46,6 +46,7 @@ public class TaskStateMachine
     private readonly TaskIntegrationStatusService? _integrationStatus;
     private readonly AgentStudio.Runner.AttemptAuthorityService? _attemptAuthority;
     private readonly AgentStudio.Pipeline.TaskGateCancellationRegistry? _gateCancellation;
+    private readonly TaskMutationService? _mutations;
     private readonly bool _guardedDelivery;
 
     public TaskStateMachine(
@@ -59,7 +60,8 @@ public class TaskStateMachine
         TaskIntegrationStatusService? integrationStatus = null,
         IConfiguration? configuration = null,
         AgentStudio.Runner.AttemptAuthorityService? attemptAuthority = null,
-        AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null)
+        AgentStudio.Pipeline.TaskGateCancellationRegistry? gateCancellation = null,
+        TaskMutationService? mutations = null)
     {
         _scanner = scanner;
         _logger = logger;
@@ -74,6 +76,7 @@ public class TaskStateMachine
         _integrationStatus = integrationStatus;
         _attemptAuthority = attemptAuthority;
         _gateCancellation = gateCancellation;
+        _mutations = mutations;
         _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
 
@@ -336,7 +339,8 @@ public class TaskStateMachine
             for (var suffix = 2; ; suffix++)
             {
                 var candidate = $"{jobFolderName}-{suffix}";
-                if (identities.Contains(candidate) || LaneSlug.IsTaken(recheck.WatchPath, candidate)) continue;
+                if (identities.Contains(candidate) || _mutations?.IsReservedIdentity(candidate) == true
+                    || LaneSlug.IsTaken(recheck.WatchPath, candidate)) continue;
                 targetSlug = candidate;
                 break;
             }
