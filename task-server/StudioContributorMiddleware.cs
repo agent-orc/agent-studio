@@ -88,7 +88,8 @@ internal sealed class StudioContributorMiddleware(RequestDelegate next, TaskServ
                 return;
             }
             var taskRoute = parts.Length >= 5 && parts[4] == "tasks";
-            var allowed = safe && taskRoute;
+            var boardRoute = parts.Length >= 5 && parts[4] == "board";
+            var allowed = safe && (taskRoute || boardRoute);
             if (HttpMethods.IsPost(method) && parts.Length == 5 && taskRoute)
                 allowed = true;
             if (task is not null && task.State is (StudioTaskLanes.Backlog or StudioTaskLanes.Ready))

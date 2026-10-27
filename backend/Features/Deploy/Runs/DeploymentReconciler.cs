@@ -123,7 +123,7 @@ public static class DeploymentReconciler
             var trigger = !job.IsRollback ? DeploymentTriggers.Deploy
                 : actor == "automatic-rollback" ? DeploymentTriggers.AutomaticRollback : DeploymentTriggers.Rollback;
             var record = input.Releases.FirstOrDefault(item => item.Release.Id == release.Id);
-            var phase = record?.Lifecycle.FirstOrDefault(item => item.Phase == environment.Kind);
+            var phase = record is null ? null : StandardLifecyclePolicy.PhaseFor(record.Lifecycle, environment);
             var needsApproval = (record is { Lifecycle.Count: > 0 }
                     ? phase?.Approval.Count > 0
                     : record?.Environments.FirstOrDefault(item => item.Id == environment.Id)?.Protected
@@ -168,9 +168,8 @@ public static class DeploymentReconciler
             if (record is null || record.Lifecycle.Count == 0
                 && record.Environments.FirstOrDefault(item => item.Id == environment.Id)?.Protected == false) continue;
             var release = record.Release;
-            if (record.Lifecycle.Count > 0 && record.Lifecycle.All(item => item.Phase != environment.Kind))
-                continue;
-            if (record.Lifecycle.Count > 0 && record.Lifecycle.First(item => item.Phase == environment.Kind).Approval.Count == 0)
+            if (record.Lifecycle.Count > 0
+                && StandardLifecyclePolicy.PhaseFor(record.Lifecycle, environment) is not { Approval.Count: > 0 })
                 continue;
             // Any run for this release here since staging turned healthy answers
             // the promotion already, including a cancelled one.

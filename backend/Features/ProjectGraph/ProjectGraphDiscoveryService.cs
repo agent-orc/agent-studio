@@ -834,22 +834,8 @@ internal static class ProjectGraphScanner
             startInfo.ArgumentList.Add(root);
             foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
 
-            AgentStudio.Git.HostGitProcessHardening.Apply(startInfo);
-            using var process = Process.Start(startInfo);
-            if (process is null) return null;
-            var output = process.StandardOutput.ReadToEndAsync();
-            var error = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(3_000))
-            {
-                try { process.Kill(entireProcessTree: true); }
-                catch (InvalidOperationException ex)
-                {
-                    SilentCatch.Note(ex, "ProjectGraphScanner: timed-out git process had already exited");
-                }
-                return null;
-            }
-            Task.WaitAll(output, error);
-            return process.ExitCode == 0 ? output.Result.Trim() : null;
+            var result = AgentStudio.Git.GitProcessBoundary.Run(startInfo, timeout: TimeSpan.FromSeconds(3));
+            return result.Success ? result.StandardOutput.Trim() : null;
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException)
         {

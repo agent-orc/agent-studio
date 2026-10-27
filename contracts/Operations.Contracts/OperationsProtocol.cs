@@ -47,8 +47,24 @@ public static class OperationCatalogue
     public static readonly OperationDefinition HostInspect = new("host.inspect", 1, "host.inspect", "read-only",
         OperationsProtocol.Digest("{\"type\":\"object\",\"maxProperties\":0}"),
         OperationsProtocol.Digest("{\"type\":\"object\",\"required\":[\"os\",\"architecture\",\"processors\"]}"), 30, 4096);
+
+    // AGT-3207: the AI Operator's bounded restart. The input names one service
+    // from the agent's local allowlist; the agent maps it to a fixed compose
+    // target, validates the configuration first and never accepts a path,
+    // command or argument from the caller.
+    public static readonly OperationDefinition ServiceRestart = new("service.restart", 1, "service.restart", "bounded-restart",
+        OperationsProtocol.Digest("{\"type\":\"object\",\"required\":[\"service\"],\"maxProperties\":1}"),
+        OperationsProtocol.Digest("{\"type\":\"object\",\"required\":[\"service\",\"restarted\",\"configurationValid\"]}"), 180, 4096);
+
+    public static readonly IReadOnlyList<OperationDefinition> All = [HostInspect, ServiceRestart];
+
     public static OperationDefinition? Find(string id, int version) =>
-        id == HostInspect.Id && version == HostInspect.Version ? HostInspect : null;
+        All.FirstOrDefault(definition => definition.Id == id && definition.Version == version);
+
+    /// <summary>An allowlisted service name: lower-case letters, digits and dashes.</summary>
+    public static bool ValidServiceName(string? value) =>
+        value is { Length: >= 2 and <= 63 } && value[0] is >= 'a' and <= 'z'
+        && value.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 }
 
 public sealed record IssueOperationPermitRequest(string PrincipalId, string Actor, OperationSubject Subject,

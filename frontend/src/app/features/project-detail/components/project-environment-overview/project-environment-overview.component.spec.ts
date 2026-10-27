@@ -49,6 +49,8 @@ describe('ProjectEnvironmentOverviewComponent', () => {
       failureCards: [],
     });
     fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
     const host = fixture.nativeElement as HTMLElement;
     expect(host.querySelector('[data-testid="project-environment-stage"]')?.textContent).toContain('Healthy');
     expect(host.querySelector('[data-testid="project-environment-stage"]')?.textContent).toContain('Running sha-abc');

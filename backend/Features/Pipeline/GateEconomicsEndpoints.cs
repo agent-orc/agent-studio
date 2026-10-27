@@ -19,10 +19,15 @@ public sealed record GateEconomicsRow(
     double? MergeLockWaitP95Ms, double? PublicationLockWaitP95Ms,
     int EjectedConflict, int EjectedAgentRound, int EjectedRed, int EjectedError,
     double ArrivalsPerHour, double MergesPerHour,
-    string? ProjectShortCode = null, string? ProjectColor = null);
+    string? ProjectShortCode = null, string? ProjectColor = null, PipelineBaseline? Baseline = null);
 
+/// <param name="BoardRead">
+/// Installation-wide board handler latency and git spawns over the last
+/// <paramref name="BoardReadWindowMinutes"/> (git telemetry, AGT-3309).
+/// </param>
 public sealed record GateEconomicsResponse(string Window, DateTimeOffset AsOfUtc,
-    IReadOnlyList<GateEconomicsRow> Rows, int LaneWindowHours = GateEconomicsEndpoints.LaneWindowHours);
+    IReadOnlyList<GateEconomicsRow> Rows, int LaneWindowHours = GateEconomicsEndpoints.LaneWindowHours,
+    IReadOnlyList<BoardReadMetric>? BoardRead = null, double? BoardReadWindowMinutes = null);
 
 public static class GateEconomicsEndpoints
 {
@@ -92,6 +97,7 @@ public static class GateEconomicsEndpoints
         var receipts = new List<GateReceiptMetric>();
         var events = new List<IntegrationLaneEvent>();
         var integratedReceipts = new List<GateReceiptMetric>();
+        var baselineFolders = new List<BaselineFolder>();
         var laneSince = now.AddHours(-LaneWindowHours);
         foreach (var folder in folders.Distinct(StringComparer.OrdinalIgnoreCase))
         {
@@ -117,6 +123,8 @@ public static class GateEconomicsEndpoints
                     catch (IOException ex) { SilentCatch.Note(ex, "GateEconomics: receipt unavailable"); }
                 }
             var folderEvents = IntegrationLaneEvents.Read(folder);
+            baselineFolders.Add(new BaselineFolder(folderEvents, folderReceipts,
+                PipelineBaselineMetrics.ReadReviews(folder, since)));
             events.AddRange(folderEvents.Where(e => e.AtUtc >= laneSince && e.AtUtc <= now));
             // The gate receipt proves verification; the published event proves
             // that the publication fence and push completed for that SHA.
@@ -136,6 +144,7 @@ public static class GateEconomicsEndpoints
         // Every batch attempt stays in the gate outcome counts. Published
         // members receive only the final successful attempt's minutes.
         var batches = (batchMetrics ?? []).ToArray();
+        var baseline = PipelineBaselineMetrics.Compute(baselineFolders, batches, since, now);
         // Economics per merge uses the final gate that actually integrated the
         // delivery. Red attempts remain gate runs in the outcome counts below.
         var publishedBatches = batches.Where(sample => sample.Published)
@@ -242,7 +251,7 @@ public static class GateEconomicsEndpoints
             ejections.Count(e => e.Outcome == "GateFailed"),
             ejections.Count(e => e.Outcome is not ("Conflict" or "AgentRoundRequired" or "GateFailed")),
             arrivals / (double)LaneWindowHours, published.Length / (double)LaneWindowHours,
-            shortCode, color);
+            shortCode, color, baseline);
     }
 
     // A batch delivery handed to the per-task fallback continues under the
@@ -253,14 +262,7 @@ public static class GateEconomicsEndpoints
         => rows.Length == 0 ? null : (double)rows.Count(predicate) / rows.Length;
 
     private static double? Percentile(IEnumerable<double> numbers, double fraction)
-    {
-        var values = numbers.Order().ToArray();
-        if (values.Length == 0) return null;
-        var position = (values.Length - 1) * fraction;
-        var lower = (int)Math.Floor(position);
-        var upper = (int)Math.Ceiling(position);
-        return values[lower] + (values[upper] - values[lower]) * (position - lower);
-    }
+        => PipelineBaselineMetrics.Percentile(numbers, fraction);
 }
 
 /// <summary>One batch gate run; <paramref name="Published"/> when that run's candidate was published.</summary>
@@ -270,12 +272,15 @@ internal sealed record BatchGateMetric(string Project, int Members, BatchGateExe
 internal sealed record GateReceiptMetric(long? DurationMs, long? GateQueueWaitMs,
     long? MergeLockWaitMs, string? Rung, string? TestLevel,
     string? Verdict, DateTimeOffset AtUtc = default, string? TestedSha = null,
-    int ReceiptIndex = 0)
+    int ReceiptIndex = 0, string? VerdictSource = null, long? SourceBytes = null,
+    double? SourceSeconds = null)
 {
     /// <summary>
     /// Reads the economics tokens. The receipt time is its own recordedAtUtc
     /// token, else the gate's originalCompletedAtUtc; only a legacy receipt
-    /// with neither falls back to <paramref name="writtenAtUtc"/>.
+    /// with neither falls back to <paramref name="writtenAtUtc"/>. A remote
+    /// gate's reason line carries its source bundle transfer
+    /// (<c>remote_gate_bundle_transferred</c>); other receipts leave it unknown.
     /// </summary>
     public static GateReceiptMetric Read(string path, DateTime writtenAtUtc,
         DateTimeOffset? since = null, DateTimeOffset? now = null)
@@ -283,7 +288,8 @@ internal sealed record GateReceiptMetric(long? DurationMs, long? GateQueueWaitMs
         using var reader = new StreamReader(path);
         var first = reader.ReadLine() ?? "";
         var shaLine = reader.ReadLine() ?? "";
-        _ = reader.ReadLine();
+        var source = PipelineBaselineMetrics.ParseSourceTransfer(reader.ReadLine());
+        string? verdictSource = null;
         long? duration = TokenLong(first, "durationMs=");
         long? wait = null;
         long? mergeWait = null;
@@ -300,6 +306,7 @@ internal sealed record GateReceiptMetric(long? DurationMs, long? GateQueueWaitMs
             testLevel ??= Token(line, "testLevel=");
             recordedAt ??= TokenTime(line, "recordedAtUtc=");
             completedAt ??= TokenTime(line, "originalCompletedAtUtc=");
+            verdictSource ??= Token(line, "verdictSource=");
         }
         var at = recordedAt ?? completedAt ?? new DateTimeOffset(writtenAtUtc, TimeSpan.Zero);
         if ((since is null || at >= since) && (now is null || at <= now))
@@ -307,7 +314,8 @@ internal sealed record GateReceiptMetric(long? DurationMs, long? GateQueueWaitMs
         var numbered = Path.GetFileNameWithoutExtension(path).Split('-').LastOrDefault();
         _ = int.TryParse(numbered, out var index);
         return new GateReceiptMetric(duration, wait, mergeWait, rung, testLevel,
-            Token(first, "verdict="), at, Token(shaLine, "testedSha="), index);
+            Token(first, "verdict="), at, Token(shaLine, "testedSha="), index,
+            verdictSource, source?.Bytes, source?.Seconds);
     }
 
     private static DateTimeOffset? TokenTime(string line, string key)
@@ -334,7 +342,10 @@ internal sealed record GateReceiptMetric(long? DurationMs, long? GateQueueWaitMs
         try
         {
             using var document = JsonDocument.Parse(json.ToString());
-            return document.RootElement.TryGetProperty("Level", out var level)
+            // A gate without a selection audit serializes it as null.
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("Level", out var level)
+                && level.ValueKind == JsonValueKind.String
                 ? level.GetString() : null;
         }
         catch (JsonException ex)

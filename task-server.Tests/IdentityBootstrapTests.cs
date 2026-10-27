@@ -499,6 +499,11 @@ public sealed class IdentityBootstrapTests
         Assert.Single((await (await product.GetAsync("/api/v1/projects")).Content.ReadFromJsonAsync<ProjectDto[]>())!);
         Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync("/api/v1/projects/prj-foreign/tasks")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync("/api/v1/projects/prj-assigned/placement")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await product.GetAsync("/api/v1/projects/prj-assigned/board")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await product.GetAsync("/api/v1/projects/prj-assigned/board/changes")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.GetAsync("/api/v1/projects/prj-foreign/board")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await product.PutAsJsonAsync("/api/v1/projects/prj-assigned/board/workspace-import",
+            new BoardWorkspaceImportRequest(1, [], []))).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await product.PostAsJsonAsync(
             "/api/v1/studio/runner/project:prj-assigned/orchestrator-chat",
             new StudioOrchestratorChatMessageRequest("Please review the preview."))).StatusCode);

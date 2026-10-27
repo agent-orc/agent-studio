@@ -115,6 +115,15 @@ public static class IntegrationGateReusePolicy
                 review.AttemptId);
         }
 
+        // AGT-3310: an affected per-card selection is tier T1, not the suite the
+        // integration gate would run. The gate keeps its own test stage until
+        // the project moves to post-merge checks (pipeline Dossier P7).
+        if (string.Equals(review.TestLevel, TestExecutionLevels.WorkPackage, StringComparison.OrdinalIgnoreCase))
+            return Full(
+                "the Remote Review ran the per-card affected test selection (testing.perCard: affected), "
+                + "not the declared test suite",
+                review.AttemptId);
+
         if (string.IsNullOrWhiteSpace(review.MergeBaseSha))
             return Full("the Remote Review report records no merge base", review.AttemptId);
 

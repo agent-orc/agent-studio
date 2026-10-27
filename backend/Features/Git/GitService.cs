@@ -691,7 +691,7 @@ public partial class GitService
     private readonly CommitCandidateGate _commitGate;
     private readonly ProjectSettingsService? _projectSettings;
     internal Func<ProcessStartInfo, TimeSpan, CancellationToken, GitProcessResult> IntegrationFetchForTesting { get; set; }
-        = (start, timeout, ct) => GitNetworkProcessRunner.Run(start, stdin: null, timeout, ct);
+        = (start, timeout, ct) => GitProcessBoundary.Run(start, stdin: null, timeout, ct);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> IntegrationRemoteGates = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _checkoutLagStates = new(StringComparer.OrdinalIgnoreCase);
@@ -4142,18 +4142,8 @@ public partial class GitService
         psi.EnvironmentVariables["GIT_OPTIONAL_LOCKS"] = "0";
         var stdin = string.Concat(paths.Select(path => $"{revision}:{path}\n"));
 
-        var command = CommandLabel(psi);
-        var sw = Stopwatch.StartNew();
-        GitBinaryProcessResult result;
-        using (GitProcessBudget.Acquire())
-        using (var linked = CancellationTokenSource.CreateLinkedTokenSource(GitProcessBudget.Token))
-        {
-            result = GitNetworkProcessRunner.RunBinary(
-                psi, stdin, MaxRevisionFileReadBytes, GitNetworkProcessRunner.DefaultTimeout, linked.Token);
-        }
-        sw.Stop();
-        GitProcessTelemetry.Record(command, sw.ElapsedMilliseconds, result.ExitCode,
-            timedOut: result.FailureKind == GitProcessFailureKind.TimedOut);
+        var result = GitProcessBoundary.RunBinary(
+            psi, stdin, MaxRevisionFileReadBytes, GitNetworkProcessRunner.DefaultTimeout);
 
         if (!result.Success)
             return RevisionFiles.Failed(string.IsNullOrWhiteSpace(result.StandardError)
@@ -7203,7 +7193,7 @@ public partial class GitService
         foreach (var arg in args) psi.ArgumentList.Add(arg);
         var result = RunRollbackGitWithRetry(
             psi,
-            (start, timeout) => GitNetworkProcessRunner.Run(start, timeout: timeout),
+            (start, timeout) => GitProcessBoundary.Run(start, timeout: timeout),
             () =>
             _logger.LogWarning(
                 "Integration rollback git {Operation} timed out at {Path}; retrying once with a 120-second budget",
@@ -8867,12 +8857,7 @@ public partial class GitService
                 CreateNoWindow = true,
             };
             foreach (var arg in args) psi.ArgumentList.Add(arg);
-            var command = CommandLabel(psi);
-            var sw = Stopwatch.StartNew();
             var result = IntegrationFetchForTesting(psi, timeout, cancellationToken);
-            sw.Stop();
-            GitProcessTelemetry.Record(command, sw.ElapsedMilliseconds, result.ExitCode,
-                timedOut: result.FailureKind == GitProcessFailureKind.TimedOut);
             if (result.ExitCode != 0 && IsConcurrentRefUpdate(result.StandardError)
                 && refLockRetries < 2 && !cancellationToken.IsCancellationRequested)
             {
@@ -8927,48 +8912,10 @@ public partial class GitService
         string? stdin,
         CancellationToken cancellationToken = default)
     {
-        // Time every spawn and record it against the ambient git-info request
-        // scope (if any). This is the per-subprocess half of the AGT-2007
-        // instrumentation; the scope rollup turns it into "N spawns, X ms".
-        var command = CommandLabel(psi);
-        var sw = Stopwatch.StartNew();
-        var result = RunGitProcessCore(psi, stdin, cancellationToken);
-        sw.Stop();
-        GitProcessTelemetry.Record(command, sw.ElapsedMilliseconds, result.ExitCode,
-            timedOut: result.FailureKind == GitProcessFailureKind.TimedOut);
+        // The boundary guards, registers, budgets and times every spawn
+        // against the ambient git-info request scope (AGT-2007, AGT-3321).
+        var result = GitProcessBoundary.Run(psi, stdin, GitNetworkProcessRunner.DefaultTimeout, cancellationToken);
         return (result.StandardOutput, result.StandardError, result.ExitCode);
-    }
-
-    private static GitProcessResult RunGitProcessCore(
-        ProcessStartInfo psi,
-        string? stdin,
-        CancellationToken cancellationToken)
-    {
-        using var processSlot = GitProcessBudget.Acquire();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken, GitProcessBudget.Token);
-        var result = GitNetworkProcessRunner.Run(
-            psi,
-            stdin,
-            GitNetworkProcessRunner.DefaultTimeout,
-            linked.Token);
-        return result;
-    }
-
-    /// <summary>
-    /// A short, low-cardinality label for one git spawn - the git subcommand
-    /// (e.g. <c>status</c>, <c>merge-base</c>, <c>rev-parse</c>). Deliberately
-    /// the first token only: it groups spawns cleanly in the telemetry rollup
-    /// and never leaks a branch name, path, or commit message into the logs.
-    /// </summary>
-    private static string CommandLabel(ProcessStartInfo psi)
-    {
-        if (psi.ArgumentList.Count > 0)
-            return psi.ArgumentList[0];
-        var args = psi.Arguments;
-        if (string.IsNullOrWhiteSpace(args)) return "git";
-        var space = args.IndexOf(' ');
-        return space < 0 ? args : args[..space];
     }
 
     /// <summary>

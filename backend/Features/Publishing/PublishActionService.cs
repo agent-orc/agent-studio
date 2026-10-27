@@ -541,10 +541,13 @@ public sealed class PublishActionService : IPublishEnvironmentReconciler
         var psi = new ProcessStartInfo(file) { WorkingDirectory = root, RedirectStandardOutput = true,
             RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
-        var result = GitNetworkProcessRunner.Run(
-            psi,
-            timeout: GitNetworkProcessRunner.DefaultTimeout,
-            cancellationToken: cancellationToken);
+        // Git goes through the boundary; gh is not Git and only borrows the
+        // bounded process runner.
+        var result = file == "git"
+            ? GitProcessBoundary.Run(psi, timeout: GitNetworkProcessRunner.DefaultTimeout,
+                cancellationToken: cancellationToken)
+            : GitNetworkProcessRunner.Run(psi, timeout: GitNetworkProcessRunner.DefaultTimeout,
+                cancellationToken: cancellationToken);
         return (result.StandardOutput, result.StandardError, result.ExitCode);
     }
 }

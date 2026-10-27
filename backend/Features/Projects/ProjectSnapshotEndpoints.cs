@@ -146,6 +146,8 @@ public static class ProjectSnapshotEndpoints
                     requireDifferentReviewHost = settings.RequireDifferentReviewHost,
                     scopedReviewAfterFinding = settings.ScopedReviewAfterFinding,
                     scopedReviewMaximumDeltaFiles = settings.ScopedReviewMaximumDeltaFiles,
+                    // AGT-3310: effective testing.perCard, shown read-only.
+                    testingPerCard = PerCardTestModes.Resolve(settings),
                     // F35: every lane resolved to its effective strategy.
                     // The kanban renders the lane-header icon and the
                     // drag-disabled hint from this map.

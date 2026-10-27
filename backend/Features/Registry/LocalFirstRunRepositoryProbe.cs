@@ -132,49 +132,27 @@ public sealed class LocalFirstRunGitCommand : ILocalFirstRunGitCommand
     public async Task<(bool Success, string Output)> RunAsync(string directory,
         IReadOnlyList<string> args, IReadOnlyDictionary<string, string?> environment, CancellationToken ct)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(15));
-        using var process = new Process
+        var start = new ProcessStartInfo
         {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "git",
-                WorkingDirectory = directory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            },
+            FileName = "git",
+            WorkingDirectory = directory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
         };
-        process.StartInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        process.StartInfo.Environment["GCM_INTERACTIVE"] = "Never";
+        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        start.Environment["GCM_INTERACTIVE"] = "Never";
         foreach (var (key, value) in environment)
-            if (value is null) process.StartInfo.Environment.Remove(key);
-            else process.StartInfo.Environment[key] = value;
-        foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
-        try
-        {
-            AgentStudio.Git.HostGitProcessHardening.Apply(process.StartInfo);
-            if (!process.Start()) return (false, string.Empty);
-            var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
-            var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
-            await process.WaitForExitAsync(timeout.Token);
-            await stderr;
-            return (process.ExitCode == 0, await stdout);
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync(CancellationToken.None);
-            }
-            return (false, string.Empty);
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
-            return (false, string.Empty);
-        }
+            if (value is null) start.Environment.Remove(key);
+            else start.Environment[key] = value;
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        var result = await AgentStudio.Git.GitProcessBoundary.RunAsync(
+            start, stdin: null, TimeSpan.FromSeconds(15), ct);
+        ct.ThrowIfCancellationRequested();
+        return result.FailureKind == AgentStudio.Git.GitProcessFailureKind.None
+            ? (result.ExitCode == 0, result.StandardOutput)
+            : (false, string.Empty);
     }
 }
 

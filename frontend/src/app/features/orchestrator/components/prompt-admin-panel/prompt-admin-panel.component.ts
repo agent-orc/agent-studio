@@ -20,6 +20,7 @@ import { PromptCallTelemetryComponent } from '../prompt-call-telemetry/prompt-ca
 import { PromptCoverageSectionComponent } from '../prompt-coverage-section/prompt-coverage-section.component';
 import { PromptMetaSummaryComponent } from '../prompt-meta-summary/prompt-meta-summary.component';
 import { GitTelemetryPanelComponent } from '../git-telemetry-panel/git-telemetry-panel.component';
+import { BoardSourcePanelComponent } from '../board-source-panel/board-source-panel.component';
 import {
   PromptAdminService,
   PromptDetail,
@@ -57,6 +58,7 @@ interface PromptDiffLine {
     PromptCoverageSectionComponent,
     PromptMetaSummaryComponent,
     GitTelemetryPanelComponent,
+    BoardSourcePanelComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './prompt-admin-panel.component.html',

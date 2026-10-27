@@ -285,12 +285,9 @@ internal static class CrashRecoveryGitScan
         psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         if (index != null) psi.Environment["GIT_INDEX_FILE"] = index;
         foreach (var arg in args) psi.ArgumentList.Add(arg);
-        AgentStudio.Git.HostGitProcessHardening.Apply(psi);
-        using var process = Process.Start(psi)!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return (output, process.ExitCode, error);
+        var result = AgentStudio.Git.GitProcessBoundary.Run(
+            psi, timeout: AgentStudio.Git.GitProcessBoundary.LongOperationTimeout);
+        return (result.StandardOutput, result.ExitCode, result.StandardError);
     }
 
     private static (string Output, int Code) GitInput(string root, string input, params string[] args)
@@ -303,17 +300,8 @@ internal static class CrashRecoveryGitScan
         };
         psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         foreach (var arg in args) psi.ArgumentList.Add(arg);
-        AgentStudio.Git.HostGitProcessHardening.Apply(psi);
-        using var process = Process.Start(psi)!;
-        var writer = Task.Run(async () =>
-        {
-            await process.StandardInput.WriteAsync(input);
-            process.StandardInput.Close();
-        });
-        var output = process.StandardOutput.ReadToEndAsync();
-        var error = process.StandardError.ReadToEndAsync();
-        Task.WhenAll(writer, output, error).GetAwaiter().GetResult();
-        process.WaitForExit();
-        return (output.Result, process.ExitCode);
+        var result = AgentStudio.Git.GitProcessBoundary.Run(
+            psi, input, AgentStudio.Git.GitProcessBoundary.LongOperationTimeout);
+        return (result.StandardOutput, result.ExitCode);
     }
 }

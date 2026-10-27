@@ -1,5 +1,6 @@
 using AgentStudio.Deploy;
 using AgentStudio.Security;
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -201,6 +202,61 @@ public sealed class StandardLifecyclePolicyTests
         var actor = DeployApprovalAuthority.Resolve(null, "demo");
         Assert.Equal(DeployApprovalAuthority.LocalOperator, actor.Id);
         Assert.False(actor.IsApprover);
+    }
+
+    [Theory]
+    // kind, protected, automatic -> automatic
+    [InlineData(EnvironmentKinds.Other, null, null, true)]
+    [InlineData(EnvironmentKinds.Other, true, null, false)]
+    [InlineData(EnvironmentKinds.Other, false, false, false)]
+    [InlineData(EnvironmentKinds.Staging, null, null, true)]
+    [InlineData(EnvironmentKinds.Production, null, null, false)]
+    [InlineData(EnvironmentKinds.Production, null, true, true)]
+    [InlineData(EnvironmentKinds.Preview, null, null, false)]
+    public void DeclaredPhaseWithoutApproval_IsAutomatic(string kind, bool? isProtected, bool? automatic, bool expected)
+        => Assert.Equal(expected, StandardLifecyclePolicy.IsAutomatic(
+            new DeployEnvironment("env", "demo", "Env", 0, kind) { Protected = isProtected, Automatic = automatic }));
+
+    [Theory]
+    // phase, environment id, kind -> names
+    [InlineData("staging", "stage", EnvironmentKinds.Staging, true)]
+    [InlineData("stage", "stage", EnvironmentKinds.Staging, false)]
+    [InlineData("production", "production", EnvironmentKinds.Production, true)]
+    [InlineData("dev", "dev", EnvironmentKinds.Other, true)]
+    [InlineData("other", "dev", EnvironmentKinds.Other, false)]
+    [InlineData(null, "dev", EnvironmentKinds.Other, false)]
+    public void PhaseNames_StagingAndProductionByKind_OtherEnvironmentsById(string? phase, string id, string kind,
+        bool expected)
+        => Assert.Equal(expected, StandardLifecyclePolicy.Names(phase, new DeployEnvironment(id, "demo", id, 0, kind)));
+
+    [Fact]
+    public void StandardLifecycle_GainsDeclaredDevBeforeStaging_AndProtectedQaAfterProduction()
+    {
+        var dev = new DeployEnvironment("dev", "demo", "Dev", 0, EnvironmentKinds.Other);
+        var qa = new DeployEnvironment("qa", "demo", "QA", 3, EnvironmentKinds.Other) { Protected = true };
+        var phases = StandardLifecyclePolicy.WithDeclaredPhases(ProjectDeploymentVocabulary.DefaultStandardLifecycle(),
+            [qa, Production with { Order = 2 }, dev, Staging with { Order = 1 }]);
+
+        Assert.Equal(["dev", "staging", "production", "qa"], phases.Select(item => item.Phase));
+        Assert.Equal((true, 0, (string?)null), (phases[0].Automatic, phases[0].Approval.Count, phases[0].Requires));
+        Assert.Null(phases[1].Requires);
+        Assert.Equal((false, "production"), (phases[3].Automatic, phases[3].Requires));
+        Assert.Equal(["Owner", "Maintainer"], phases[3].Approval);
+        Assert.Equal("staging", StandardLifecyclePolicy.IntegrationPhase(phases, [dev, Staging, Production, qa])!.Phase);
+        Assert.Equal(LifecycleOutcome.Queue, StandardLifecyclePolicy.Decide(Request(DeployIntent.Deploy, dev, Operator,
+            false, previousSucceeded: false) with { Phases = phases }).Outcome);
+        Assert.Equal(LifecycleOutcome.AwaitApproval, StandardLifecyclePolicy.Decide(Request(DeployIntent.Deploy, qa,
+            Operator, false) with { Phases = phases }).Outcome);
+    }
+
+    [Fact]
+    public void LifecycleWithoutOtherEnvironments_IsReturnedUnchanged()
+    {
+        var standard = ProjectDeploymentVocabulary.DefaultStandardLifecycle();
+        Assert.Same(standard, StandardLifecyclePolicy.WithDeclaredPhases(standard, [Staging, Production]));
+        IReadOnlyList<ProjectLifecyclePhase> named = [new("dev", true, [], null), new("staging", true, [], "dev")];
+        var dev = new DeployEnvironment("dev", "demo", "Dev", 0, EnvironmentKinds.Other);
+        Assert.Same(named, StandardLifecyclePolicy.WithDeclaredPhases(named, [dev, Staging]));
     }
 
     private static LifecycleRequest Request(DeployIntent intent, DeployEnvironment environment, DeployActor actor,

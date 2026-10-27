@@ -817,18 +817,8 @@ public sealed class WorkspaceArtifactCommitService
         };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
 
-        using var tracked = AgentStudio.Git.GitChildProcessRegistry.Track(cwd);
-        AgentStudio.Git.HostGitProcessHardening.Apply(psi);
-        using var p = Process.Start(psi)!;
-        if (stdin != null)
-        {
-            p.StandardInput.Write(stdin);
-            p.StandardInput.Close();
-        }
-        var stdout = p.StandardOutput.ReadToEnd();
-        var stderr = p.StandardError.ReadToEnd();
-        p.WaitForExit(30_000);
-        return new GitProcessResult(stdout, stderr, p.ExitCode);
+        var result = AgentStudio.Git.GitProcessBoundary.Run(psi, stdin, TimeSpan.FromSeconds(30));
+        return new GitProcessResult(result.StandardOutput, result.StandardError, result.ExitCode);
     }
 
     internal sealed record GitProcessResult(string Out, string Err, int Code)

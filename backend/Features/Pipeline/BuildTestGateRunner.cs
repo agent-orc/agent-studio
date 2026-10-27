@@ -2039,7 +2039,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             CreateNoWindow = true,
         };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
-        var result = await GitNetworkProcessRunner.RunAsync(
+        var result = await GitProcessBoundary.RunAsync(
             psi,
             stdin: null,
             timeout,

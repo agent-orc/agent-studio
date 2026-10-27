@@ -220,6 +220,17 @@
       </p>
     </section>
 
+    <section class="proj-detail__group" data-testid="project-detail-per-card-tests">
+      <h3>Per-card tests</h3>
+      <p class="proj-detail__hint">
+        <code>testing.perCard</code>:
+        <strong data-testid="project-detail-per-card-tests-value">{{ settings()?.testingPerCard === 'affected' ? 'Affected tests' : 'Full suite' }}</strong>
+        ({{ settings()?.testingPerCard ?? 'full' }}).
+        Affected runs the build, the fast checks of the touched areas, and the tests the generated project map selects.
+        Read-only here; change it with <code>PUT /api/projects/{{ projectName() }}/testing</code>.
+      </p>
+    </section>
+
     <section class="proj-detail__group">
       <h3>Review follow-up</h3>
       <div class="proj-detail__model-row">

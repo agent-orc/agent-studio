@@ -23,6 +23,7 @@ export function resourceReasonLabel(reason: string | null): string {
   switch (reason) {
     case 'git-snapshot-pending': return 'The Git snapshot is still warming.';
     case 'git-snapshot-refreshing': return 'The Git snapshot is being refreshed.';
+    case 'git-snapshot-restored': return 'The Git snapshot was restored after a restart and is being confirmed.';
     case 'review-projection-pending': return 'The review projection is still warming.';
     case 'document-read-failed': return 'The document could not be read.';
     case 'document-access-denied': return 'The document is not accessible.';

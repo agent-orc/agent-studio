@@ -74,7 +74,10 @@ public sealed class GateEconomicsProjection
                 Published(fact.BatchId!, fact.BatchRunId!)))
             .ToArray();
         var response = new GateEconomicsResponse(window, now,
-            GateEconomicsEndpoints.Rows(projects, batchSamples, since, now, allowed: null));
+            GateEconomicsEndpoints.Rows(projects, batchSamples, since, now, allowed: null),
+            BoardRead: PipelineBaselineMetrics.BoardRead(AgentStudio.Git.GitProcessTelemetry.GetStatsSnapshot(
+                AgentStudio.Git.GitTelemetryAdminEndpoints.StatsWindow, _time)),
+            BoardReadWindowMinutes: AgentStudio.Git.GitTelemetryAdminEndpoints.StatsWindow.TotalMinutes);
         lock (_sync) _cache[key] = response;
         return ForCaller(response, allowed);
     }

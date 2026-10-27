@@ -232,6 +232,35 @@ public sealed class RemoteReviewPlanBuilder
                     }
             }
         }
+        // AGT-3310: testing.perCard: affected runs tier T1 per card. Full keeps
+        // the plan above byte for byte; so does a T1 scope that falls back.
+        var perCardApplied = false;
+        if (!deferBuildTest && !noChange && task is not null && !TaskModes.IsReportOnly(task.Mode)
+            && PerCardTestModes.Resolve(projectSettings) == PerCardTestModes.Affected
+            && changedPaths is { Count: > 0 } && !string.IsNullOrWhiteSpace(repositoryPath)
+            && ReviewSubjectStore.IsValidResultSha(resultSha))
+        {
+            var verify = VerifyCommandPlanner.Plan(repositoryPath, projectSettings!.BuildProfile);
+            var selection = PerCardVerifyPlanner.Plan(repositoryPath, verify, changedPaths, null,
+                projectSettings.TestExecution, ReferenceSelection(repositoryPath, resultSha!));
+            LogReferenceSelection(task, selection.Audit);
+            _logger?.LogInformation(
+                "remote-review-plan-per-card task={TaskKey} selector={Selector} full={Full} mapDigest={MapDigest} selection={Digest} reasons={Reasons}",
+                string.IsNullOrWhiteSpace(task.TaskKey) ? task.Id : task.TaskKey, selection.Audit.Selector,
+                selection.Audit.FullSuiteRequired, selection.Audit.ProjectMapDigest, selection.Audit.Digest,
+                string.Join(" | ", selection.Audit.Reasons));
+            if (!selection.Audit.FullSuiteRequired)
+            {
+                toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(repositoryPath, projectSettings.BuildProfile,
+                    integrationRef, changedPaths, verify with { Commands = selection.Commands }) with
+                {
+                    RequireDifferentHostFailureDomain = projectSettings.RequireDifferentReviewHost == true,
+                };
+                testLevel = TestExecutionLevels.WorkPackage;
+                selectionDigest = selection.Audit.Digest;
+                perCardApplied = true;
+            }
+        }
         if (task is null || TaskModes.IsReportOnly(task.Mode))
             return toolPlan;
 
@@ -393,8 +422,8 @@ public sealed class RemoteReviewPlanBuilder
                 : deferBuildTest && !hasModelReview
                     ? ordinaryToolPlan.Preparation : toolPlan.Preparation,
             BuildTestDeferredToBatch = deferBuildTest && hasModelReview,
-            TestLevel = deferBuildTest && hasModelReview ? testLevel : null,
-            TestSelectionDigest = deferBuildTest && hasModelReview ? selectionDigest : null,
+            TestLevel = (deferBuildTest && hasModelReview) || perCardApplied ? testLevel : null,
+            TestSelectionDigest = (deferBuildTest && hasModelReview) || perCardApplied ? selectionDigest : null,
             RequiredAspects = commands
                 .Select(command => command.Aspect)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -690,12 +719,8 @@ public sealed class RemoteReviewPlanBuilder
                 CreateNoWindow = true,
             };
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
-            AgentStudio.Git.HostGitProcessHardening.Apply(start);
-            using var process = Process.Start(start);
-            if (process is null) return null;
-            var stdout = process.StandardOutput.ReadToEnd();
-            process.WaitForExit(10_000);
-            return process.ExitCode == 0 ? stdout.Trim() : null;
+            var result = AgentStudio.Git.GitProcessBoundary.Run(start, timeout: TimeSpan.FromSeconds(10));
+            return result.Success ? result.StandardOutput.Trim() : null;
         }
         catch
         {
