@@ -4548,7 +4548,7 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runs", "brief_version", "TEXT", ct);
         await EnsureColumnAsync(connection, "runners", "host_orchestrator_minimum", "TEXT", ct);
         await EnsureColumnAsync(connection, "runners", "host_orchestrator_maximum", "TEXT", ct);
-        await EnsureColumnAsync(connection, "runtime_capacity_settings", "allocation_version", "INTEGER NOT NULL DEFAULT 1", ct);
+        await EnsureAllocationVersionColumnAsync(connection, ct);
         await EnsureColumnAsync(connection, "runners", "role_max_parallelism", "INTEGER", ct);
         await EnsureColumnAsync(connection, "runners", "effective_max_parallelism", "INTEGER", ct);
         await EnsureColumnAsync(connection, "runners", "runtime_capacity_applied_at", "TEXT", ct);
@@ -4781,6 +4781,28 @@ public sealed partial class TaskServerStore
             CultureInfo.InvariantCulture);
         if (foreignKeyErrors != 0)
             throw new InvalidOperationException($"Artifact retention migration left {foreignKeyErrors} foreign-key violation(s).");
+    }
+
+    private static async Task EnsureAllocationVersionColumnAsync(
+        SqliteConnection connection,
+        CancellationToken ct)
+    {
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct);
+        var exists = Convert.ToInt64(await ScalarAsync(connection, """
+            SELECT COUNT(*) FROM pragma_table_info('runtime_capacity_settings')
+             WHERE name = 'allocation_version';
+            """, ct, transaction) ?? 0L, CultureInfo.InvariantCulture) != 0;
+        if (!exists)
+        {
+            // Existing hosts acknowledged the policy version before this column existed.
+            await ExecuteAsync(connection, """
+                ALTER TABLE runtime_capacity_settings
+                    ADD COLUMN allocation_version INTEGER NOT NULL DEFAULT 1;
+                UPDATE runtime_capacity_settings
+                   SET allocation_version = version;
+                """, ct, transaction);
+        }
+        await transaction.CommitAsync(ct);
     }
 
     private static async Task EnsureColumnAsync(

@@ -1,5 +1,6 @@
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -103,6 +104,50 @@ public sealed class RuntimeCapacitySettingsTests
             new UpdateRuntimeCapacitySettingsRequest(8, 80, "balanced", current.Version),
             "operator",
             default));
+    }
+
+    [Fact]
+    public async Task Upgraded_host_preserves_its_capacity_version_for_allocation_acknowledgment()
+    {
+        using var temp = new TempDirectory();
+        var original = Store(temp.Path);
+        await original.InitializeAsync();
+        var service = new RuntimeCapacitySettingsService(original);
+        var first = await service.UpdateAsync("host-a",
+            new UpdateRuntimeCapacitySettingsRequest(4, 80, "balanced", 0), "operator");
+        var second = await service.UpdateAsync("host-a",
+            new UpdateRuntimeCapacitySettingsRequest(5, 80, "balanced", first.Version), "operator");
+        var latest = await service.UpdateAsync("host-a",
+            new UpdateRuntimeCapacitySettingsRequest(6, 80, "balanced", second.Version), "operator");
+
+        await using (var connection = new SqliteConnection(
+                         $"Data Source={original.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "ALTER TABLE runtime_capacity_settings DROP COLUMN allocation_version;";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var upgraded = Store(temp.Path);
+        await upgraded.InitializeAsync();
+        var capacity = (await upgraded.GetRuntimeCapacitySettingsAsync("host-a", default))!;
+        Assert.Equal(latest.Version, capacity.Version);
+        Assert.Equal(latest.Version, capacity.AllocationVersion);
+
+        await upgraded.RegisterRunnerAsync("runner-a", Runner("runner-a:1", bootstrap: 2),
+            "test", default);
+        await upgraded.ClaimAsync(new ClaimRequest("runner-a", "runner-a:1",
+            AvailableSlots: 0, EffectiveMaxParallelism: 6,
+            RuntimeCapacityAppliedVersion: latest.Version), "runner-a", default);
+        var snapshot = Assert.Single(await upgraded.ListRunnerCapabilitySnapshotsAsync(default));
+        Assert.Equal(latest.Version, snapshot.RuntimeCapacityAppliedVersion);
+        Assert.NotNull(snapshot.RuntimeCapacityAppliedAt);
+
+        await upgraded.InitializeAsync();
+        Assert.Equal(latest.Version,
+            (await upgraded.GetRuntimeCapacitySettingsAsync("host-a", default))!.AllocationVersion);
     }
 
     [Fact]
