@@ -676,7 +676,9 @@ internal static class RemoteGateProcess
             RedirectStandardOutput = true, RedirectStandardError = true,
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
-        if (fileName == "git") AgentStudio.Git.HostGitProcessHardening.Apply(start);
+        // Git output is streamed line by line, so this helper owns the process
+        // and opens a boundary span around it instead of using the runner.
+        using var gitSpan = fileName == "git" ? AgentStudio.Git.GitProcessBoundary.Begin(start) : null;
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
         bounded.CancelAfter(timeout);
         using var process = Process.Start(start) ?? throw new IOException(fileName + " did not start.");
@@ -700,6 +702,7 @@ internal static class RemoteGateProcess
         {
             await process.WaitForExitAsync(bounded.Token);
             await Task.WhenAll(stdout, stderr).WaitAsync(bounded.Token);
+            gitSpan?.Complete(process.ExitCode);
             if (process.ExitCode != 0)
                 throw new IOException(fileName + " exited " + process.ExitCode + ": " + string.Join("\n", diagnostics));
         }

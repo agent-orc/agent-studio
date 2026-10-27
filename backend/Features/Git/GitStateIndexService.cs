@@ -696,7 +696,9 @@ public sealed class GitStateIndexService : BackgroundService
     /// </summary>
     private async Task<string> IndexAsync(RepoState state, string trigger, RunContext run)
     {
-        using var deadline = new CancellationTokenSource(_options.RunDeadline);
+        // The deadline runs on the injected clock, so a test can expire it
+        // deterministically (AGT-3321); production passes TimeProvider.System.
+        using var deadline = new CancellationTokenSource(_options.RunDeadline, _timeProvider);
         lock (state.Gate)
         {
             if (state.Disposed) return "disposed";

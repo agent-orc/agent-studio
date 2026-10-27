@@ -35,11 +35,7 @@ internal static class GitConfigSignature
         start.ArgumentList.Add("--null");
         start.ArgumentList.Add("--list");
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
-        var watch = Stopwatch.StartNew();
-        using var processSlot = GitProcessBudget.Acquire();
-        var result = GitNetworkProcessRunner.Run(start, cancellationToken: GitProcessBudget.Token);
-        watch.Stop();
-        GitProcessTelemetry.Record("config", watch.ElapsedMilliseconds, result.ExitCode);
+        var result = GitProcessBoundary.Run(start);
         if (GitProcessBudget.Token.IsCancellationRequested)
             throw new OperationCanceledException(GitProcessBudget.Token);
         if (!result.Success) throw new IOException("repository-config-unavailable");

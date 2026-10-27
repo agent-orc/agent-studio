@@ -22,6 +22,14 @@ internal static class GitProcessBudget
         return new Scope(() => budget.ProcessSlots.Release());
     }
 
+    internal static async Task<IDisposable> AcquireAsync()
+    {
+        var budget = Current.Value;
+        if (budget is null) return new Scope(() => { });
+        await budget.ProcessSlots.WaitAsync(budget.Token).ConfigureAwait(false);
+        return new Scope(() => budget.ProcessSlots.Release());
+    }
+
     private sealed record Budget(CancellationToken Token)
     {
         internal readonly SemaphoreSlim ProcessSlots = new(4, 4);

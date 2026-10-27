@@ -635,12 +635,9 @@ public sealed class CommitCandidateGate
         if (!string.IsNullOrWhiteSpace(indexPath))
             psi.Environment["GIT_INDEX_FILE"] = indexPath;
         foreach (var arg in args) psi.ArgumentList.Add(arg);
-        HostGitProcessHardening.Apply(psi);
-        using var process = Process.Start(psi);
-        if (process == null) return ("", "Could not start git.", -1);
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return (output, error, process.ExitCode);
+        var result = GitProcessBoundary.Run(psi, timeout: GitProcessBoundary.LongOperationTimeout);
+        return result.FailureKind == GitProcessFailureKind.StartFailure
+            ? ("", "Could not start git.", -1)
+            : (result.StandardOutput, result.StandardError, result.ExitCode);
     }
 }

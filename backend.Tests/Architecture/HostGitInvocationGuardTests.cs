@@ -20,7 +20,9 @@ public sealed class HostGitInvocationGuardTests
             var source = File.ReadAllText(file);
             var launches = Regex.Matches(source,
                 "FileName\\s*=\\s*\"git\"|new\\s+ProcessStartInfo\\(\"git\"\\)").Count;
-            if (launches == 0 || source.Contains("GitNetworkProcessRunner.Run(", StringComparison.Ordinal)
+            // GitProcessBoundary hardens every start it runs or spans (AGT-3321).
+            if (launches == 0 || source.Contains("GitProcessBoundary.", StringComparison.Ordinal)
+                || source.Contains("GitNetworkProcessRunner.Run(", StringComparison.Ordinal)
                 || source.Contains("GitNetworkProcessRunner.RunAsync(", StringComparison.Ordinal))
                 continue;
             var hardened = Regex.Matches(source, "HostGitProcessHardening\\.Apply\\(").Count;

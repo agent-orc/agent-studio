@@ -96,7 +96,14 @@ public sealed class LegacyResultHistoryBackfill
             if (_inFlight.TryGetValue(key, out var existing)) return existing.Value;
             Lazy<Task>? run = null;
             run = new Lazy<Task>(
-                () => Task.Run(() => RunGuardedAsync(key, run!, jobId, watchPath)),
+                () =>
+                {
+                    // The backfill outlives the read that scheduled it; its
+                    // history walk is background work, not the request's
+                    // (AGT-3321 read guard).
+                    using (AgentStudio.Git.GitReadRequestGuard.Detach())
+                        return Task.Run(() => RunGuardedAsync(key, run!, jobId, watchPath));
+                },
                 LazyThreadSafetyMode.ExecutionAndPublication);
             if (!_inFlight.TryAdd(key, run)) continue;
 

@@ -1754,6 +1754,23 @@ their authoritative checks; display state never grants permission to mutate.
   unavailable while other cards retain their facts. Failed index runs keep
   the previous snapshot and do not recompute unchanged failed input on each
   task event.
+- **Git read guard (AGT-3321, Git facts S1).** Every backend Git process
+  starts through `GitProcessBoundary`, which applies the read guard,
+  registers the child for the stale-lock guard, takes the index budget slot
+  and records `GitProcessTelemetry`; `GitProcessBoundaryGuardTests` rejects
+  any other start. `GitReadRequestGuardMiddleware` opens a read scope for
+  every GET from its route template. A GET that starts Git needs an exact
+  method/route-template entry in `GitReadSpawnExceptionManifest`, with a
+  per-request spawn ceiling, an owner and a removal slice. Production counts
+  and warns (`git-read-guard-violation`) without throwing; the backend test
+  process and a Debug build under a debugger throw
+  `GitProcessOnReadRequestException`. `GitReadGuard:Mode` (`Warn` or
+  `Strict`) overrides the default. The admin git-telemetry snapshot carries
+  the per-route debt under `readGuard`. Background work a read starts on
+  purpose runs under `GitReadRequestGuard.Detach()`. The manifest only
+  shrinks: `GitReadGuardManifestTests` pins its reviewed digest, and
+  `Fixtures/git-read-route-census.tsv` classifies every registered GET
+  template (frozen, measured zero, or a coverage gap with an owner).
 
 Task detail has a separate opt-in diagnostic trace. `X-Task-Switch-Trace: 1`
 enables bounded stage timing for `GET /api/tasks/{jobId}` only. Canonical UUID

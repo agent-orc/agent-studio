@@ -242,17 +242,14 @@ public sealed partial class PromptReviewService
             start.ArgumentList.Add("--");
             start.ArgumentList.Add("prompts/runtime");
 
-            AgentStudio.Git.HostGitProcessHardening.Apply(start);
-            using var process = Process.Start(start);
-            if (process is null) return result;
-            var stdout = process.StandardOutput.ReadToEnd();
-            if (!process.WaitForExit(5000))
+            var git = AgentStudio.Git.GitProcessBoundary.Run(start, timeout: TimeSpan.FromSeconds(5));
+            if (git.FailureKind == AgentStudio.Git.GitProcessFailureKind.TimedOut)
             {
-                process.Kill(entireProcessTree: true);
                 _logger.LogWarning("prompt-git-history-timeout");
                 return result;
             }
-            if (process.ExitCode != 0) return result;
+            if (!git.Success) return result;
+            var stdout = git.StandardOutput;
 
             foreach (var block in stdout.Split('\u001e', StringSplitOptions.RemoveEmptyEntries))
             {

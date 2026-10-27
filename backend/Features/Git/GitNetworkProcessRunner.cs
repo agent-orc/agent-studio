@@ -41,6 +41,8 @@ internal sealed record GitBinaryProcessResult(
 /// concurrently, and every timeout or cancellation terminates the full process
 /// tree before returning. This prevents a DNS or remote stall from retaining
 /// Git processes and their inherited pipe handles for the backend lifetime.
+/// Git callers reach it only through <see cref="GitProcessBoundary"/>, which
+/// adds the read-request guard, child registration and telemetry.
 /// </summary>
 internal static class GitNetworkProcessRunner
 {
@@ -103,7 +105,6 @@ internal static class GitNetworkProcessRunner
         Task<string>? stderr = null;
         Task? input = null;
         var elapsed = Stopwatch.StartNew();
-        using var tracked = GitChildProcessRegistry.Track(startInfo.WorkingDirectory);
 
         try
         {
@@ -191,7 +192,6 @@ internal static class GitNetworkProcessRunner
         Task<string>? stderr = null;
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         bounded.CancelAfter(timeout);
-        using var tracked = GitChildProcessRegistry.Track(startInfo.WorkingDirectory);
 
         try
         {

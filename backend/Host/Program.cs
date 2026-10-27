@@ -1467,6 +1467,10 @@ if (networkedSecurityProfile) app.UseStudioResponseHeaders();
 // same legacy handlers, guards, and security checks as before (AGT-2983).
 app.UseStudioV1LegacyRouteAlias(TaskServerPlaneProxy.IsConfigured(app.Configuration));
 app.UseRouting();
+// Every matched GET runs in a Git read scope keyed by its route template, so
+// a read that starts Git outside the frozen S1 exceptions is counted, warned
+// and, in strict mode, rejected (AGT-3321).
+app.UseGitReadRequestGuard(app.Configuration);
 // A tab running the previous frontend sees this on its next API response.
 // The value is captured once from the installed artifacts, never from a
 // checkout that might advance while this process is still running.
