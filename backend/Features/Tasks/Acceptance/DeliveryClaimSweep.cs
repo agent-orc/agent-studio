@@ -55,6 +55,16 @@ public sealed record TaskDeliveryClaimAnswer(
     string? Detail)
 {
     public CompletionContentFacts? ContentReview { get; init; }
+
+    /// <summary>
+    /// State of the published Git facts the answer joined (Git facts S3):
+    /// <c>ready</c>, <c>restored</c>, <c>stale</c>, <c>warming</c> or
+    /// <c>unavailable</c>. Containment reads <c>unknown</c> unless a verdict was published.
+    /// </summary>
+    public string FactsState { get; init; } = "ready";
+
+    /// <summary>The generation of the card facts the answer joined; 0 while warming.</summary>
+    public long FactsGeneration { get; init; }
 }
 
 /// <summary>Result of one sweep over a project's delivered and archived cards.</summary>
@@ -97,7 +107,8 @@ public sealed class DeliveryClaimSweep
     private readonly TaskMutationService _mutations;
     private readonly ProjectSettingsService _settings;
     private readonly ProjectRegistry _projects;
-    private readonly GitService? _git;
+    private readonly TaskListGitProjectionCache? _projection;
+    private readonly GitCardFactReader? _cardFacts;
     private readonly TimeProvider _time;
     private readonly ILogger<DeliveryClaimSweep> _logger;
 
@@ -108,7 +119,8 @@ public sealed class DeliveryClaimSweep
         ProjectSettingsService settings,
         ProjectRegistry projects,
         ILogger<DeliveryClaimSweep> logger,
-        GitService? git = null,
+        TaskListGitProjectionCache? projection = null,
+        GitCardFactReader? cardFacts = null,
         TimeProvider? timeProvider = null)
     {
         _scanner = scanner;
@@ -116,7 +128,8 @@ public sealed class DeliveryClaimSweep
         _mutations = mutations;
         _settings = settings;
         _projects = projects;
-        _git = git;
+        _projection = projection;
+        _cardFacts = cardFacts;
         _logger = logger;
         _time = timeProvider ?? TimeProvider.System;
     }
@@ -126,10 +139,20 @@ public sealed class DeliveryClaimSweep
     /// state where the operator already looks. Containment decides; the merge
     /// that carried the delivery is read from the curated integration history
     /// when it can be named, and stays null rather than being guessed.
+    ///
+    /// <para>
+    /// Git facts S3 (AGT-3323): a read path. Containment is the card's
+    /// integration verdict the Git fact producer published with its
+    /// generation, and the carrying merge comes from the curated merge index
+    /// the producer keeps per integration ref. Neither a live lookup nor a
+    /// <c>git log</c> runs here. A card whose verdict is not published reads
+    /// <c>unknown</c>, never a false "not integrated".
+    /// </para>
     /// </summary>
     public TaskDeliveryClaimAnswer Describe(TaskInfo card)
     {
-        var status = _integrationStatus.BuildLookup([card]).GetValueOrDefault(card.TaskKey);
+        var snapshot = _projection?.ReadTask(card);
+        var status = snapshot?.Data?.Integration;
         var facts = BuildFacts(card, status);
         var assessment = DeliveryClaimSweepPolicy.Assess(facts);
         var integrated = CompletionContractPolicy.IsContained(status?.Status);
@@ -141,7 +164,8 @@ public sealed class DeliveryClaimSweep
             .SelectMany(repository => repository.Commits)
             .GroupBy(commit => commit.Sha, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
-        var merge = integrated ? FindCarryingMerge(card, branch) : null;
+        var published = _cardFacts?.Read(card.WatchPath).Facts;
+        var merge = integrated ? CarryingMerge(card, branch, published) : null;
 
         return new TaskDeliveryClaimAnswer(
             card.TaskKey,
@@ -169,31 +193,32 @@ public sealed class DeliveryClaimSweep
                 membership.TryGetValue(commit.Sha, out var entry) && entry.OnIntegrationBranch,
                 membership.TryGetValue(commit.Sha, out var release) && release.OnReleaseBranch,
                 TaskCommitSupersession.State(commit))).ToList(),
-            status?.Detail);
+            status?.Detail)
+        {
+            FactsState = snapshot?.State ?? GitFactsResults.WarmingState,
+            FactsGeneration = published?.Generation ?? snapshot?.Generation ?? 0,
+        };
     }
 
     /// <summary>
     /// The curated <c>merge(KEY): ...</c> commit on the integration line that
     /// carried this card, including the operator card-scoped merges performed
-    /// outside the pipeline. Null when none can be named.
+    /// outside the pipeline, joined by task key from the published merge
+    /// index. Null when none can be named; a ref the index does not cover yet
+    /// is queued for the producer.
     /// </summary>
-    private GitIntegrationMergeCommit? FindCarryingMerge(TaskInfo card, string branch)
+    private GitIntegrationMergeCommit? CarryingMerge(TaskInfo card, string branch, GitPublishedFacts? published)
     {
-        if (_git is null || string.IsNullOrWhiteSpace(card.Key)) return null;
-        try
+        if (published is null || string.IsNullOrWhiteSpace(card.Key)) return null;
+        if (!published.Merges.TryGetValue(branch, out var merges))
         {
-            var root = _git.ResolveRepoRootForWatchPath(card.WatchPath);
-            if (string.IsNullOrWhiteSpace(root)) return null;
-            return _git.GetIntegrationMergeCommits(root, branch)
-                .Where(merge => string.Equals(merge.TaskKey, card.Key, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(merge => merge.CommittedAtUtc)
-                .FirstOrDefault();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "carrying-merge-lookup-failed job={JobId}", card.Id);
+            _cardFacts?.Request(card.WatchPath, [new GitMergesWork(branch)]);
             return null;
         }
+        return merges
+            .Where(merge => string.Equals(merge.TaskKey, card.Key, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(merge => merge.CommittedAtUtc)
+            .FirstOrDefault();
     }
 
     /// <summary>
@@ -222,7 +247,12 @@ public sealed class DeliveryClaimSweep
             .ThenBy(task => task.TaskKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var statuses = _integrationStatus.BuildLookup(cards);
+        // Read mode joins the verdicts the Git fact producer published (Git
+        // facts S3); only a repair, a POST, computes containment live before it
+        // writes anything.
+        var statuses = repair || _projection is null
+            ? _integrationStatus.BuildLookup(cards)
+            : PublishedStatuses(cards);
         var rows = new List<DeliveryClaimSweepRow>(cards.Count);
         foreach (var card in cards)
         {
@@ -264,6 +294,14 @@ public sealed class DeliveryClaimSweep
             rows.Count(row => row.Findings.Count > 0),
             rows.Count(row => row.Repairs.Count > 0));
         return report;
+    }
+
+    private Dictionary<string, TaskIntegrationStatus> PublishedStatuses(IEnumerable<TaskInfo> cards)
+    {
+        var statuses = new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
+        foreach (var card in cards)
+            if (_projection!.ReadTask(card).Data?.Integration is { } status) statuses[card.TaskKey] = status;
+        return statuses;
     }
 
     /// <summary>

@@ -85,7 +85,7 @@ describe('card move rows', () => {
   it('uses visible manual neighbours and removes duplicate shortcuts', () => {
     const rows = moves(TaskState.HumanReview);
     expect(rows.map((row) => row.label)).toEqual([
-      'Move back: Ready', 'Move forward: Delivered', 'Move to Archive',
+      'Move back: Ready', 'Move forward: Accepted', 'Move to Archive',
     ]);
     expect(rows.map((row) => cardMoveTarget(row.id))).toEqual([
       TaskState.Ready, TaskState.Completed, TaskState.Archive,
@@ -94,14 +94,14 @@ describe('card move rows', () => {
 
   it('omits missing neighbours, hidden lanes, and current lane shortcuts', () => {
     expect(moves(TaskState.Backlog).map((row) => row.label)).toEqual([
-      'Move forward: Preparation', 'Move to Delivered', 'Move to Archive',
+      'Move forward: Preparation', 'Move to Accepted', 'Move to Archive',
     ]);
     expect(moves(TaskState.Archive).map((row) => row.label)).toEqual([
-      'Move back: Delivered',
+      'Move back: Accepted',
     ]);
     expect(moves(TaskState.HumanReview, false, [TaskState.Backlog, TaskState.Ready, TaskState.HumanReview])
       .map((row) => row.label)).toEqual([
-      'Move back: Ready', 'Move to Delivered', 'Move to Archive',
+      'Move back: Ready', 'Move to Accepted', 'Move to Archive',
     ]);
   });
 

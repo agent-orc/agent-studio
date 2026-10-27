@@ -1,6 +1,7 @@
 import { Injectable, signal, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse, HttpHeaders, HttpParams } from '@angular/common/http';
 import { Subject, catchError, finalize, map, switchMap, tap, throwError, timer, type Observable } from 'rxjs';
+import { isGitFactsWarming, retryWhileWarming } from '../utils/git-facts-warming';
 import type { TaskCore, TaskResource, ResourceName } from '../models/task-core.model';
 import type {
   ArchivedTasksResponse,
@@ -1725,11 +1726,13 @@ export class TaskService {
    * plus the live graph-derived landed-state, ladder, and per-commit membership.
    * Recomputed server-side on every call so it tracks develop/main as they move.
    */
-  getTaskProvenance(jobId: string, watchPath?: string) {
+  getTaskProvenance(jobId: string, watchPath?: string): Observable<TaskProvenanceView | null> {
+    // Served from the Git fact store (AGT-3323); a warming answer retries and
+    // then reads as "not loaded" rather than as an empty ladder.
     return this.http.get<TaskProvenanceView>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/provenance`,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(retryWhileWarming(), map((view) => (isGitFactsWarming(view) ? null : view)));
   }
 
   /**
@@ -1740,10 +1743,12 @@ export class TaskService {
    * is resolved rather than reported as "not integrated".
    */
   getDeliveryClaim(jobId: string, watchPath?: string) {
+    // Containment reads `unknown` until the card's Git facts are published
+    // (factsState warming or stale); re-ask a few times before settling.
     return this.http.get<TaskDeliveryClaimAnswer>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/delivery-claim`,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(retryWhileWarming());
   }
 
   // Per-task commit snapshot — what the auto-commit recorded on the
@@ -1752,7 +1757,7 @@ export class TaskService {
     return this.http.get<TaskCommitDetail>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/commit`,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(retryWhileWarming());
   }
 
   getJobCommitDiff(jobId: string, path: string | null, watchPath?: string) {
@@ -1770,7 +1775,7 @@ export class TaskService {
     return this.http.get<{ files: GitFileChange[] }>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/commits/files`,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(retryWhileWarming());
   }
 
   /**
@@ -1779,10 +1784,10 @@ export class TaskService {
    */
   getJobCommitDiffAggregate(jobId: string, path: string | null, watchPath?: string) {
     const opts = path ? this.withWatchPathAndPath(watchPath, path) : this.withWatchPath(watchPath);
-    return this.http.get<{ diff: string }>(
+    return this.http.get<{ diff: string; state?: string }>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/commits/diff`,
       opts,
-    );
+    ).pipe(retryWhileWarming());
   }
 
   /**
@@ -1794,7 +1799,7 @@ export class TaskService {
     return this.http.get<{ sha: string; files: GitFileChange[] }>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/commits/${encodeURIComponent(sha)}/files`,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(retryWhileWarming());
   }
 
   /**
@@ -1806,10 +1811,10 @@ export class TaskService {
     // See getGitDiff: scope to one path via HttpParams.set, not a plain
     // property on the immutable HttpParams (which is dropped).
     const opts = path ? this.withWatchPathAndPath(watchPath, path) : this.withWatchPath(watchPath);
-    return this.http.get<{ diff: string }>(
+    return this.http.get<{ diff: string; state?: string }>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/commits/${encodeURIComponent(sha)}/diff`,
       opts,
-    );
+    ).pipe(retryWhileWarming());
   }
 
   /**
@@ -1834,7 +1839,7 @@ export class TaskService {
     return this.http.get<GitFileContentResponse>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/commits/${encodeURIComponent(sha)}/file`,
       this.withWatchPathAndPath(watchPath, path),
-    );
+    ).pipe(retryWhileWarming());
   }
 
   openInVsCode(jobId: string, watchPath?: string) {
@@ -1952,7 +1957,7 @@ export class TaskService {
     return this.http.get<RunCommitsResponse>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/runs/${runIndex}/commits`,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(retryWhileWarming());
   }
 
   /** Aggregated file list for one run's SHA range - drives the run git viewer's file tree. */
@@ -1960,7 +1965,7 @@ export class TaskService {
     return this.http.get<RunFilesResponse>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/runs/${runIndex}/files`,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(retryWhileWarming());
   }
 
   /** Unified diff for one path inside a run's SHA range. */
@@ -1968,7 +1973,7 @@ export class TaskService {
     return this.http.get<RunDiffResponse>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/runs/${runIndex}/diff`,
       this.withWatchPathAndPath(watchPath, path),
-    );
+    ).pipe(retryWhileWarming());
   }
 
   /** The exact context (rendered prompt) handed to the agent for one run. Fetched on demand from the run card. */

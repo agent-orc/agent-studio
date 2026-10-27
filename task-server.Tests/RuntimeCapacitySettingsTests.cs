@@ -152,7 +152,8 @@ public sealed class RuntimeCapacitySettingsTests
                 """;
             Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
             command.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
-            Assert.Equal("37", (string)(await command.ExecuteScalarAsync())!);
+            Assert.Equal(TaskServerStore.CurrentSchemaVersion.ToString(),
+                (string)(await command.ExecuteScalarAsync())!);
         }
 
         await upgraded.RegisterRunnerAsync("runner-a", Runner("runner-a:1", bootstrap: 2),

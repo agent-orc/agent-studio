@@ -11,11 +11,13 @@ namespace AgentStudio.Tests.Architecture;
 /// an entry, or lower a ceiling, and update both in the same reviewed change.
 /// It may never grow: a new key or a raised ceiling fails here, and the fix is
 /// to move the Git work off the request, not to extend this list.
+/// AGT-3323 (Git facts S3) removed R4, R5, R7, R12 and R14 and moved the
+/// commit-mode file preview to S4.
 /// </summary>
 [Trait("Category", "Guard")]
 public sealed class GitReadGuardManifestTests
 {
-    private const string ReviewedDigest = "7df6585db01a759d1178896f698b71d6b94702cdbfa444256375e8468bef6131";
+    private const string ReviewedDigest = "26e9c57e5b2d256ee3ac08a2f12ff0b3e53698d77c90debc656a8f1e601e616e";
 
     /// <summary>Method, route template and spawn ceiling of every reviewed exception.</summary>
     private const string Reviewed = """
@@ -23,7 +25,6 @@ public sealed class GitReadGuardManifestTests
             GET /api/admin/prompts/{name} 2
             GET /api/git/cleanup/plan 209
             GET /api/git/hygiene 5
-            GET /api/git/integration 17
             GET /api/git/project-commit/diff 1
             GET /api/git/project-commit/files 2
             GET /api/git/summary 3
@@ -57,24 +58,12 @@ public sealed class GitReadGuardManifestTests
             GET /api/runner/task:{projectId}/{taskKey}/orchestrator-chat 3
             GET /api/runner/workbench:{projectId}/{workbenchKey}/orchestrator-chat 3
             GET /api/tasks/{jobId}/checkout/{**path} 2
-            GET /api/tasks/{jobId}/commit 2
-            GET /api/tasks/{jobId}/commit/diff 1
-            GET /api/tasks/{jobId}/commits 2
-            GET /api/tasks/{jobId}/commits/diff 3
-            GET /api/tasks/{jobId}/commits/files 8
-            GET /api/tasks/{jobId}/commits/{sha}/diff 1
             GET /api/tasks/{jobId}/commits/{sha}/file 1
-            GET /api/tasks/{jobId}/commits/{sha}/files 4
-            GET /api/tasks/{jobId}/delivery-claim 10
             GET /api/tasks/{jobId}/files/{**path} 5
             GET /api/tasks/{jobId}/git/diff 2
             GET /api/tasks/{jobId}/git/file 1
             GET /api/tasks/{jobId}/git/hygiene 5
             GET /api/tasks/{jobId}/git/status 5
-            GET /api/tasks/{jobId}/provenance 10
-            GET /api/tasks/{jobId}/runs/{index:int}/commits 1
-            GET /api/tasks/{jobId}/runs/{index:int}/diff 1
-            GET /api/tasks/{jobId}/runs/{index:int}/files 2
             """;
 
     [Fact]

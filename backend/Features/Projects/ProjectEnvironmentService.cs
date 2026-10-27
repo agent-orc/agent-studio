@@ -921,7 +921,7 @@ public sealed partial class ProjectEnvironmentService
             using var record = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "promotion-record.json")));
             var release = record.RootElement;
             if (release.GetProperty("status").GetString() != "promoted"
-                || release.GetProperty("gate").GetString() != "passed"
+                || release.GetProperty("gate").GetString() is not ("passed" or "reused")
                 || release.GetProperty("candidateSha").GetString() != commit
                 || !release.GetProperty("atomicPush").GetBoolean()
                 || release.GetProperty("releasePackage").GetProperty("status").GetString() != "written"
