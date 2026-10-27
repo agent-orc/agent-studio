@@ -33,6 +33,7 @@ public sealed class TaskAccessService : ITaskAccess, ITaskAccessHost
     private readonly TaskIndexCache _indexCache;
     private readonly LaneMutexRegistry _laneMutex;
     private readonly ILogger<TaskAccessService> _logger;
+    private readonly RestoredBoard? _restoredBoard;
 
     private long _snapshotVersion;
 
@@ -55,9 +56,11 @@ public sealed class TaskAccessService : ITaskAccess, ITaskAccessHost
         TaskTransitionService transitions,
         TaskIndexCache indexCache,
         ILogger<TaskAccessService> logger,
-        LaneMutexRegistry? laneMutex = null)
+        LaneMutexRegistry? laneMutex = null,
+        RestoredBoard? restoredBoard = null)
     {
         _scanner = scanner;
+        _restoredBoard = restoredBoard;
         _mutations = mutations;
         _states = states;
         _transitions = transitions;
@@ -93,13 +96,25 @@ public sealed class TaskAccessService : ITaskAccess, ITaskAccessHost
     // ---------- ITaskAccessHost ----------
 
     /// <summary>
-    /// Boot the index. The existing <see cref="TaskIndexCache"/> hydrates
-    /// lazily on first read, so the boot is a single forced refresh that
-    /// surfaces config / disk problems early instead of on the first
-    /// HTTP request.
+    /// Boot the index. With a persisted board (Git facts S5) the first
+    /// publication starts in the background: the HTTP listener does not wait
+    /// for a full workspace scan, board reads answer from the persisted board
+    /// marked restored, and per-card reads answer warming until it lands. A
+    /// failing scan is logged by the background refresh
+    /// (<c>task-index-background-refresh-failed</c>) and retried by the next
+    /// read. Without one (a first start), there is nothing to answer from, so
+    /// the boot keeps the single forced refresh that surfaces config and disk
+    /// problems before the first HTTP request.
     /// </summary>
     public Task BootAsync(CancellationToken ct = default)
     {
+        if (_restoredBoard?.Projects.Count > 0)
+        {
+            var published = _indexCache.TryAcquireBoardRead();
+            _logger.LogInformation("TaskAccess: index boot {State}; board reads answer from the persisted board",
+                published is null ? "started in the background" : "already published");
+            return Task.CompletedTask;
+        }
         try
         {
             _indexCache.ForceRefresh();
