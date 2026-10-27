@@ -44,9 +44,10 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config, prompts);
         var transitions = new TaskTransitionService(scanner, states, mutations, git, settings,
             NullLogger<TaskTransitionService>.Instance);
-        var escalation = new HumanReviewEscalation(states, transitions, _root,
-            NullLogger<HumanReviewEscalation>.Instance);
         var store = new PostMergeRunStore(Path.Combine(_root, "post-merge"));
+        var escalation = new HumanReviewEscalation(states, transitions, _root,
+            NullLogger<HumanReviewEscalation>.Instance, scanner, postMergeRuns: store,
+            projects: registry);
         var service = new PostMergeIncidentService(store, mutations, scanner, states, escalation, clock,
             NullLogger<PostMergeIncidentService>.Instance);
         var failure = new PostMergeFailureEvidence("fingerprint", ["Demo.Tests.Fails"], "Failed Demo.Tests.Fails",
@@ -70,6 +71,7 @@ public sealed class PostMergeIncidentServiceTests : IDisposable
         service.EscalateOverdue(project);
         Assert.True(Assert.Single(store.Read(project.Id).Incidents!).Escalated);
         Assert.Equal(TaskStates.Escalated, scanner.FindJob(opened.RepairCardId, projectPath)!.State);
+        Assert.Equal(opened.RepairCardId, store.Read(project.Id).AttributionEscalatedTaskId);
         Assert.Contains(ReviewDecisionLog.ReadAll(_root, project.DisplayName),
             record => record.JobId == opened.RepairCardId && record.Kind == ReviewDecisionKind.Escalate);
         var escalatedCard = scanner.FindJob(opened.RepairCardId, projectPath)!;

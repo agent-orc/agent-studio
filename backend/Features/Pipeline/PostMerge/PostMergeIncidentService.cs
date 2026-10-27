@@ -72,7 +72,8 @@ public sealed class PostMergeIncidentService
                 : decision.Action;
             var title = $"Repair red develop: {fingerprint}";
             var priorCard = _scanner.ScanAllJobsWithArchive().FirstOrDefault(card => card.ProjectName == project.DisplayName
-                && card.Title == title && card.CreationSource == TimelineActors.Orchestrator);
+                && card.Title == title && card.CreationSource is TimelineActors.Orchestrator
+                    or HumanReviewEscalationCategories.PostMergeRepairCreationSource);
             var cardId = priorCard?.Id ?? _mutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
             {
                 Project = project.Id,
@@ -81,7 +82,7 @@ public sealed class PostMergeIncidentService
                 TargetState = TaskStates.Preparation,
                 TaskType = TaskTypes.Bug,
                 Order = 0,
-                CreationSource = TimelineActors.Orchestrator,
+                CreationSource = HumanReviewEscalationCategories.PostMergeRepairCreationSource,
                 CreatedBy = "Orchestrator",
             }) ?? throw new InvalidOperationException("The red-develop repair card could not be created.");
             if (priorCard is not null)
@@ -139,7 +140,7 @@ public sealed class PostMergeIncidentService
         if (!_mutations.AppendContinuationNote(card.Id, note, project.StorageLocation))
             throw new InvalidOperationException("The red-develop escalation note could not be attached.");
         var moved = _humanReviewEscalation.EscalateAsync(card.Id, project.StorageLocation,
-            project.DisplayName, HumanReviewEscalationCategories.FailureIntervention, note,
+            project.DisplayName, HumanReviewEscalationCategories.PostMergeAttribution, note,
             expectedSourceState: card.State).GetAwaiter().GetResult();
         if (moved.Status != MoveJobStatus.Success)
             throw new InvalidOperationException("The red-develop repair card could not be escalated: " + moved.Message);
