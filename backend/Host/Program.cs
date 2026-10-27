@@ -627,6 +627,17 @@ builder.Services.AddSingleton<TaskWatcherService>();
 // SetIndexCache so existing ScanAllJobs callers transparently benefit.
 builder.Services.AddSingleton<TaskIndexCache>();
 builder.Services.AddHostedService<TaskIndexCacheDiagnosticsService>();
+// Board read model on the Task Server (pipeline delivery target M1 and M2,
+// decision D7 A-B). Board:Source selects workspace, task-server-shadow or
+// task-server; the worker mirrors the task index and compares off the request path.
+builder.Services.AddSingleton<BoardSourceSettings>();
+builder.Services.AddSingleton<BoardShadowLedger>();
+builder.Services.AddSingleton<TaskServerBoardClient>();
+builder.Services.AddSingleton<TaskServerBoardReader>();
+builder.Services.AddSingleton<TaskServerBoardSource>();
+builder.Services.AddSingleton<BoardShadowWorker>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<BoardShadowWorker>());
+TaskServerBoardClient.AddTaskServerBoardClient(builder.Services, builder.Configuration);
 builder.Services.AddSingleton<JobStatsMetadataCache>();
 // AGT-2703: conditional board reads. TaskSidecarGeneration counts the watcher
 // events the task index deliberately drops, and BoardReadSignatureSource folds

@@ -135,6 +135,7 @@ public static class EndpointMapping
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapDevToolsEndpoints();
         app.MapAdminConfigEndpoints();
         app.MapGitTelemetryAdminEndpoints();
+        app.MapBoardSourceEndpoints();
         app.MapBranchSweepEndpoints();
         app.MapSupervisorEndpoints();
         if (SecurityProfiles.IsLocal(app.Configuration)) app.MapDiagnosticsEndpoints();
