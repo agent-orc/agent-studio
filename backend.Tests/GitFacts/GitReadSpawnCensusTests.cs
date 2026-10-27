@@ -257,7 +257,8 @@ public static class GitReadSpawnScenarios
                 finally { registry.SetWikiSourceBranch(record.Id, null); }
             }),
         Scenario("R14 delivery claim: integrated Human Review, integrated and pending escalated", "R14",
-            [Tasks + "/delivery-claim", "/api/projects/{projectId}/delivery-claims"],
+            [Tasks + "/delivery-claim", "/api/projects/{projectId}/delivery-claims",
+             "/api/projects/{projectId}/completed-lane/integration-pending"],
             async host =>
             {
                 for (var pass = 0; pass < 2; pass++)
@@ -269,6 +270,10 @@ public static class GitReadSpawnScenarios
                         await host.Get(host.TaskUrl(host.Board.PlainCard(lane), "delivery-claim"));
                 }
                 await host.Get($"/api/projects/{host.ProjectId}/delivery-claims");
+                // The project sweep and the pending listing read published
+                // verdicts too (Git facts S3): a cold host starts no Git.
+                await host.GetCold($"/api/projects/{host.ProjectId}/delivery-claims");
+                await host.GetCold($"/api/projects/{host.ProjectId}/completed-lane/integration-pending");
             }),
         Scenario("Project Git views and maintenance previews", "Inventory boundary: project views",
             ["/api/git/summary", "/api/git/hygiene", "/api/git/inventory", "/api/git/history",
@@ -400,14 +405,20 @@ public sealed class GitReadCensusHost : IAsyncDisposable
     private readonly HttpClient _client;
     private readonly RecordingObserver _observer = new();
 
-    public GitReadCensusHost(GitFactsBoardFixture board, bool keepGitStateIndex = false, IndexRunLog? indexRuns = null)
+    public GitReadCensusHost(GitFactsBoardFixture board, bool keepGitStateIndex = false, IndexRunLog? indexRuns = null,
+        IReadOnlyDictionary<string, string?>? settings = null,
+        Func<Func<List<TaskInfo>>, Func<List<TaskInfo>>>? wrapIndexScan = null)
     {
         Board = board;
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
             if (indexRuns is not null) builder.ConfigureLogging(logging => logging.AddProvider(indexRuns));
-            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(board.HostSettings()));
+            builder.ConfigureAppConfiguration((_, config) =>
+            {
+                config.AddInMemoryCollection(board.HostSettings());
+                if (settings is not null) config.AddInMemoryCollection(settings);
+            });
             builder.ConfigureTestServices(services =>
             {
                 // Hosted services reconcile lanes and warm caches in the
@@ -416,6 +427,13 @@ public sealed class GitReadCensusHost : IAsyncDisposable
                 if (keepGitStateIndex)
                     services.AddHostedService(provider => provider.GetRequiredService<GitStateIndexService>());
                 services.AddSingleton<IGitReadRequestObserver>(_observer);
+                if (wrapIndexScan is not null)
+                    services.AddSingleton(provider =>
+                    {
+                        var scanner = provider.GetRequiredService<TaskScannerService>();
+                        return new TaskIndexCache(scanner, provider.GetRequiredService<ILogger<TaskIndexCache>>(),
+                            provider.GetRequiredService<IConfiguration>(), wrapIndexScan(scanner.ScanAllJobsRaw));
+                    });
             });
         });
         _client = _factory.CreateClient();

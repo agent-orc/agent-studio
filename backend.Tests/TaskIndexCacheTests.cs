@@ -1054,6 +1054,97 @@ public class TaskIndexCacheTests : IDisposable
         }
     }
 
+    // Git facts S5: a cold board read that can answer from the persisted board
+    // does not wait for the first publication.
+
+    [Fact]
+    public async Task TryAcquireBoardRead_OnAColdCache_StartsTheFirstPublicationInTheBackground_WithoutWaiting()
+    {
+        var gate = new GatedScan();
+        gate.Hold();
+        var cache = NewCache(gate);
+        RequestFlow.Value = "board-request";
+        try
+        {
+            Assert.Null(cache.TryAcquireBoardRead());
+            Assert.True(gate.Entered.Wait(TimeSpan.FromSeconds(5)), "a cold read must start the first publication");
+            Assert.Null(cache.TryAcquireBoardRead());
+            gate.Release.Set();
+            await WaitForRefreshAsync(cache);
+
+            Assert.Equal("job-1", Assert.Single(cache.TryAcquireBoardRead()!.Live).Id);
+            Assert.Equal(1, gate.Scans);
+            Assert.All(gate.Flows, flow => Assert.Null(flow));
+        }
+        finally
+        {
+            RequestFlow.Value = null;
+            gate.Release.Set();
+        }
+    }
+
+    [Fact]
+    public async Task TryGetPublished_NeverStartsAScan()
+    {
+        var gate = new GatedScan();
+        var cache = NewCache(gate);
+
+        Assert.Null(cache.TryGetPublished());
+        Assert.Null(cache.RefreshInFlight);
+        Assert.Equal(0, gate.Scans);
+
+        var published = await BoardRead(cache, null);
+        cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+
+        Assert.Same(published, cache.TryGetPublished());
+        Assert.Null(cache.RefreshInFlight);
+        Assert.Equal(1, gate.Scans);
+    }
+
+    [Fact]
+    public async Task RestoredBoardRead_PushesBulkChanged_OnceTheFirstPublicationLands()
+    {
+        var gate = new GatedScan();
+        gate.Hold();
+        var cache = NewCache(gate);
+        var pushes = 0;
+        cache.AttachBulkChangedPublisher(() => Interlocked.Increment(ref pushes));
+        try
+        {
+            Assert.Null(cache.TryAcquireBoardRead());
+            cache.NoteRestoredBoardServed();
+            await Task.Delay(TaskIndexCache.BulkChangedDebounce * 2);
+            Assert.Equal(0, Volatile.Read(ref pushes));
+        }
+        finally
+        {
+            gate.Release.Set();
+        }
+        await WaitForRefreshAsync(cache);
+
+        Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref pushes) > 0, TimeSpan.FromSeconds(5)));
+        Assert.Equal(1, Volatile.Read(ref pushes));
+
+        // A restored read noted after the publication pushes at once.
+        cache.NoteRestoredBoardServed();
+        Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref pushes) > 1, TimeSpan.FromSeconds(5)));
+        Assert.Equal(2, Volatile.Read(ref pushes));
+    }
+
+    [Fact]
+    public async Task ColdPublication_WithoutARestoredRead_DoesNotPush()
+    {
+        var gate = new GatedScan();
+        var cache = NewCache(gate);
+        var pushes = 0;
+        cache.AttachBulkChangedPublisher(() => Interlocked.Increment(ref pushes));
+
+        await BoardRead(cache, null);
+        await Task.Delay(TaskIndexCache.BulkChangedDebounce * 3);
+
+        Assert.Equal(0, Volatile.Read(ref pushes));
+    }
+
     [Fact]
     public async Task FailedBackgroundRefresh_KeepsTheSnapshot_AndTheNextReadRetries()
     {

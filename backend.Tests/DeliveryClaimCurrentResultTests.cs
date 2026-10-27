@@ -69,10 +69,12 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
     public void Describe_CurrentResultAncestor_IsAnIntegratedAndReleasedDelivery()
     {
         WriteCard(TaskStates.Completed);
-        var (sweep, scanner) = BuildSweep();
+        var (sweep, scanner, publish) = BuildSweep();
+        publish();
 
         var answer = sweep.Describe(scanner.FindJob(TaskId, _watchPath)!);
 
+        Assert.Equal("ready", answer.FactsState);
         Assert.True(answer.Integrated);
         Assert.Equal("current-result-ancestor", answer.Detail);
         Assert.Equal(DeliveryClaimClasses.IntegratedDelivery, answer.Class);
@@ -90,7 +92,7 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
     public void Reconcile_ClearsThePlaceholderOnAContainedCurrentResultDelivery()
     {
         WriteCard(TaskStates.Completed);
-        var (sweep, scanner) = BuildSweep();
+        var (sweep, scanner, publish) = BuildSweep();
 
         var report = sweep.Run(_watchPath, repair: true);
 
@@ -106,6 +108,7 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
         Assert.Equal(
             CommitSupersessionStates.Current,
             TaskCommitSupersession.State(Assert.Single(card.Commits)));
+        publish();
         var after = sweep.Describe(card);
         Assert.Equal(DeliveryClaimClasses.IntegratedDelivery, after.Class);
         Assert.Empty(after.Findings);
@@ -123,8 +126,9 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
             $"/api/tasks/{TaskId}/delivery-claim?watchPath={Uri.EscapeDataString(_watchPath)}");
 
         response.EnsureSuccessStatusCode();
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var body = await PublishedClaim(client);
         var root = body.RootElement;
+        Assert.Equal("ready", root.GetProperty("factsState").GetString());
         Assert.True(root.GetProperty("integrated").GetBoolean());
         Assert.Equal("current-result-ancestor", root.GetProperty("detail").GetString());
         Assert.Equal(DeliveryClaimClasses.IntegratedDelivery, root.GetProperty("class").GetString());
@@ -143,6 +147,8 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
 
+        // The read-mode sweep joins published card facts (Git facts S3).
+        (await PublishedClaim(client)).Dispose();
         using var response = await client.GetAsync($"/api/projects/{Project}/delivery-claims");
 
         response.EnsureSuccessStatusCode();
@@ -190,7 +196,8 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
         if (released)
             Git(_repo, "merge", "-q", "--ff-only", "develop");
         WriteCuratedCard(first, source, integrated);
-        var (sweep, scanner) = BuildSweep();
+        var (sweep, scanner, publish) = BuildSweep();
+        publish();
 
         var answer = sweep.Describe(scanner.FindJob(TaskId, _watchPath)!);
         var row = Assert.Single(sweep.Run(_watchPath, repair: false)!.Rows);
@@ -326,7 +333,32 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
             builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(_clock));
         });
 
-    private (DeliveryClaimSweep Sweep, TaskScannerService Scanner) BuildSweep()
+    /// <summary>
+    /// The claim once the host's Git fact producer published the card's
+    /// generation (Git facts S3): until then the answer reads unknown.
+    /// </summary>
+    private async Task<JsonDocument> PublishedClaim(HttpClient client)
+    {
+        var waited = Stopwatch.StartNew();
+        while (true)
+        {
+            using var response = await client.GetAsync(
+                $"/api/tasks/{TaskId}/delivery-claim?watchPath={Uri.EscapeDataString(_watchPath)}");
+            response.EnsureSuccessStatusCode();
+            var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            if (body.RootElement.GetProperty("factsState").GetString() is "ready" or "restored") return body;
+            body.Dispose();
+            if (waited.Elapsed > TimeSpan.FromMinutes(1)) throw new TimeoutException("Card facts were not published.");
+            await Task.Delay(50);
+        }
+    }
+
+    /// <summary>
+    /// The sweep over published card facts, and the publish the Git fact
+    /// producer would do: the card's integration verdict from the live lookup
+    /// into the projection the claim reads.
+    /// </summary>
+    private (DeliveryClaimSweep Sweep, TaskScannerService Scanner, Action Publish) BuildSweep()
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -357,6 +389,7 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
             new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
             NullLogger<TaskIntegrationStatusService>.Instance,
             _clock);
+        var projection = new TaskListGitProjectionCache();
         var sweep = new DeliveryClaimSweep(
             scanner,
             integration,
@@ -364,10 +397,21 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
             settings,
             projects,
             NullLogger<DeliveryClaimSweep>.Instance,
-            git,
+            projection,
+            cardFacts: null,
             _clock);
         Assert.NotNull(scanner.FindJob(TaskId, _watchPath));
-        return (sweep, scanner);
+        void Publish()
+        {
+            scanner.InvalidateCache();
+            var cards = scanner.ScanAllJobsRaw().ToArray();
+            projection.SetSnapshot(_watchPath, TaskListGitProjection.Empty with
+            {
+                Integration = integration.BuildLookup(cards),
+                Signatures = cards.ToDictionary(card => card.TaskKey, TaskGitSignature.For, StringComparer.Ordinal),
+            }, _clock.GetUtcNow(), "test");
+        }
+        return (sweep, scanner, Publish);
     }
 
     private static string Git(string cwd, params string[] args)

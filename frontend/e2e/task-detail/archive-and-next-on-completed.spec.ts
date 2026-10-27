@@ -171,7 +171,7 @@ test.describe('Completed lane primary is "Archive & Next"', () => {
       const confirm = page.getByTestId('confirm-dialog');
       await expect(confirm).toBeVisible();
       await expect(page.getByTestId('confirm-dialog-message')).toContainText('not in main');
-      await expect(page.getByTestId('confirm-dialog-confirm')).toHaveText('Keep in Delivered');
+      await expect(page.getByTestId('confirm-dialog-confirm')).toHaveText('Keep in Accepted');
       const evidenceDir = resolve(process.env.JOB_RESULTS_DIR ?? join('..', 'results', 'AGT-2920'));
       mkdirSync(evidenceDir, { recursive: true });
       for (const theme of ['light', 'dark'] as const) {

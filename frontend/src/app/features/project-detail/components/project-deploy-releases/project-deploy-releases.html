@@ -34,6 +34,9 @@
           @if (selected(); as release) {
             <article class="releases__detail" data-testid="deploy-release-detail" aria-labelledby="deploy-release-detail-title">
               <h3 id="deploy-release-detail-title">Release {{ release.version }}</h3>
+              @if (release.preDeliveryVerdict; as verdict) {
+                <p class="releases__verdict" data-testid="deploy-release-verdict">Full suite: {{ verdict.status }} · SHA <code>{{ verdict.commitSha }}</code></p>
+              }
               <dl class="releases__facts">
                 <dt>Created</dt><dd><time [attr.datetime]="release.createdAtUtc">{{ release.createdAtUtc | date:'medium' }}</time></dd>
                 <dt>Commit</dt><dd><code>{{ release.commitSha }}</code></dd>

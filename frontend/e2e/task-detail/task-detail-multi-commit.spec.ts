@@ -644,6 +644,39 @@ test.describe('Task-detail multi-commit chain', () => {
     }
   });
 
+  // Git facts S3 (AGT-3323): the aggregate file list and its diff object
+  // come from the backend's Git fact store. Before the producer wrote them
+  // the reads answer 202 warming; the pane asks again and then renders the
+  // published diff instead of an empty change set.
+  test('retries warming aggregate reads until the published diff arrives', async ({ page }) => {
+    await installRoutes(page);
+    const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const warmingAnswers = { files: 0, diff: 0 };
+    await page.route(new RegExp(`/api/tasks/${idEsc}/commits/files(\\?|$)`), (route) => {
+      if (warmingAnswers.files++ < 2)
+        return route.fulfill({ status: 202, contentType: 'application/json',
+          body: JSON.stringify({ files: [], state: 'warming', retryAfterMs: 1000 }) });
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ files: AGGREGATE_FILES.map(p => ({ status: 'M', path: p, added: 6, removed: 2 })) }) });
+    });
+    await page.route(new RegExp(`/api/tasks/${idEsc}/commits/diff(\\?|$)`), (route) => {
+      if (warmingAnswers.diff++ < 1)
+        return route.fulfill({ status: 202, contentType: 'application/json',
+          body: JSON.stringify({ diff: '', hasDiff: false, emptyReason: null, state: 'warming', retryAfterMs: 1000 }) });
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ diff: `diff --git a/${AGGREGATE_FILES[0]} b/${AGGREGATE_FILES[0]}\n--- a/${AGGREGATE_FILES[0]}\n+++ b/${AGGREGATE_FILES[0]}\n@@ -1,3 +1,5 @@\n context line\n+published by the fact producer\n-removed line`, hasDiff: true, emptyReason: null }) });
+    });
+
+    await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+    await expect(page.getByTestId('pane-git')).toBeVisible({ timeout: 10_000 });
+
+    await expect(page.getByTestId('git-diff')).toContainText('published by the fact producer', { timeout: 15_000 });
+    expect(warmingAnswers.files).toBeGreaterThanOrEqual(3);
+    expect(warmingAnswers.diff).toBeGreaterThanOrEqual(2);
+    if (RESULTS_DIR)
+      await page.getByTestId('pane-git').screenshot({ path: path.join(RESULTS_DIR, 'multi-commit-warming-then-ready.png') });
+  });
+
   test('renders all three commits in chronological order', async ({ page }) => {
     await installRoutes(page);
     await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);

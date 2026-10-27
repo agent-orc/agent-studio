@@ -47,6 +47,7 @@ public sealed class CompletedLaneAuditService
     private readonly ILogger<CompletedLaneAuditService> _logger;
     private readonly TaskIntegrationStatusService? _integrationStatus;
     private readonly FailureInterventionService? _failureInterventions;
+    private readonly TaskListGitProjectionCache? _projection;
 
     public CompletedLaneAuditService(
         TaskScannerService scanner,
@@ -58,7 +59,8 @@ public sealed class CompletedLaneAuditService
         ProjectRegistry projects,
         ILogger<CompletedLaneAuditService> logger,
         TaskIntegrationStatusService? integrationStatus = null,
-        FailureInterventionService? failureInterventions = null)
+        FailureInterventionService? failureInterventions = null,
+        TaskListGitProjectionCache? projection = null)
     {
         _scanner = scanner;
         _states = states;
@@ -70,6 +72,7 @@ public sealed class CompletedLaneAuditService
         _logger = logger;
         _integrationStatus = integrationStatus;
         _failureInterventions = failureInterventions;
+        _projection = projection;
     }
 
     /// <summary>
@@ -99,8 +102,13 @@ public sealed class CompletedLaneAuditService
             .Where(j => (j.Tags ?? []).Any(IntegrationStatuses.IsPendingTag))
             .ToList();
 
-        var statusByKey = _integrationStatus?.BuildLookup(candidates)
-            ?? new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
+        // Git facts S3 (AGT-3323): a GET joins the verdicts the Git fact
+        // producer published and starts no Git. A card without a published
+        // verdict stays listed as pending and is never self-healed.
+        var statusByKey = _projection is not null
+            ? PublishedStatuses(candidates)
+            : _integrationStatus?.BuildLookup(candidates)
+              ?? new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
 
         var items = new List<IntegrationPendingItem>();
         var cleared = 0;
@@ -140,6 +148,14 @@ public sealed class CompletedLaneAuditService
             Items = items,
             Cleared = cleared,
         };
+    }
+
+    private Dictionary<string, TaskIntegrationStatus> PublishedStatuses(IEnumerable<TaskInfo> cards)
+    {
+        var statuses = new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
+        foreach (var card in cards)
+            if (_projection!.ReadTask(card).Data?.Integration is { } status) statuses[card.TaskKey] = status;
+        return statuses;
     }
 
     public ReEvaluateOutcome ReEvaluate(string jobId, string? watchPath, string actorEmail)

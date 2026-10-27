@@ -761,6 +761,9 @@ public sealed class AccessSecurityMiddleware
     {
         if (HttpMethods.IsPost(method) && path.Equals("/api/deploy/gate-releases", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Release;
+        if ((HttpMethods.IsGet(method) && path.StartsWith("/api/runner/release-candidates/", StringComparison.OrdinalIgnoreCase))
+            || (HttpMethods.IsPut(method) && path.Equals("/api/runner/release-suite-verdicts", StringComparison.OrdinalIgnoreCase)))
+            return RunnerScopes.Release;
         if (HttpMethods.IsPost(method) && path.StartsWith("/api/deploy/jobs/", StringComparison.OrdinalIgnoreCase))
             return RunnerScopes.Deploy;
         if (HttpMethods.IsGet(method) && path.StartsWith("/api/deploy/jobs/", StringComparison.OrdinalIgnoreCase))

@@ -2063,10 +2063,29 @@ disk for runner state.
 - **A dirty index refreshes in the background.** A dirty or TTL-expired index
   starts one single-flight background refresh after a 200 ms coalescing window.
   It inherits neither the request trace nor the pin, and the read answers from
-  the last snapshot. Only a cold start waits, asynchronously and cancelled with
+  the last snapshot. A cold start answers from the persisted board (below);
+  only a first start without one waits, asynchronously and cancelled with
   the request. A failed background refresh keeps the last
   snapshot, logs `task-index-background-refresh-failed`, and the next read
   retries.
+- **A cold start answers from the persisted board (Git facts S5).**
+  `BoardSummaryPersister`, the only writer, builds every live card of each
+  newly published generation once per project with the board routes' own
+  enrichment (`BoardCardProjector`) and serializer, and replaces the rows of
+  changed projects in `board-summaries.db` next to `git-facts.db` (override
+  `BoardSummaries:StorePath`; schema `BoardSummaryStoreSchema`; cadence
+  `BoardSummaries:PersistIntervalSeconds`, default 10 s). Each row keeps its
+  index generation, lane rank and index position. With a persisted board, the
+  boot starts the first index publication in the background instead of before
+  the listener, and until it lands list and grouped reads answer from
+  `RestoredBoard` with `X-Board-State: restored`, `X-Board-Restored-At` and
+  `X-Board-Index-Generation`; the grouped body says `stale: true`. Access,
+  project and fixture filters apply as on a live read; transitive waiters only
+  name cards of the same project. The tag follows the bytes, so an unchanged
+  card set still answers 304, and after a restored read the first publication pushes
+  `jobsBulkChanged`. Live reads carry `X-Board-State: ready`. Query reads and a
+  first start without a persisted board keep the wait. A corrupt or foreign
+  store file is discarded by the next write.
 - **Mutation readers share the refresh.** Callers outside the board still
   wait for their mutation generation, but simultaneous callers enter the same
   200 ms window and one full scan instead of starting a scan per caller.

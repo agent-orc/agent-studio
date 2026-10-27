@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, HostListener, computed, inject, input, signal } from '@angular/core';
 import { TaskState, type TaskInfo } from '../../../../models/task.model';
+import { laneName } from '../../../../models/lane-presentation';
 import type { TaskScreenshot } from '../../../screenshots';
 import { TaskService } from '../../../../services/task.service';
 import { OrchestratorPanelStateService } from '../../../orchestrator/state/orchestrator-panel-state.service';
@@ -10,7 +11,7 @@ export function productStatus(task: TaskInfo): { label: string; next: string } {
     case TaskState.Progress: return { label: 'In progress', next: 'Studio is making the change.' };
     case TaskState.AutoReview: return { label: 'Being checked', next: 'Studio is checking the delivery.' };
     case TaskState.HumanReview: return { label: 'Ready to look at', next: 'Review the preview, then accept or leave feedback.' };
-    case TaskState.Completed: return { label: 'Accepted', next: 'A release approver decides when it goes live.' };
+    case TaskState.Completed: return { label: laneName(TaskState.Completed), next: 'A release approver decides when it goes live.' };
     default: return { label: 'Waiting to start', next: 'Studio will pick up this change.' };
   }
 }

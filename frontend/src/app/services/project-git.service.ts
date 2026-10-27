@@ -1,6 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import type { Observable } from 'rxjs';
+import { map, type Observable } from 'rxjs';
+import { isGitFactsWarming, retryWhileWarming } from '../utils/git-facts-warming';
 import type {
   BranchSweepExecutionItem,
   BranchSweepExecutionResult,
@@ -50,11 +51,22 @@ export class ProjectGitService {
     });
   }
 
-  /** Honest remote integration queue and develop-to-main promotion delta. */
+  /**
+   * Honest remote integration queue and develop-to-main promotion delta, as
+   * the Git fact store published it (AGT-3323). Before the first publication
+   * the route answers warming; after the retries it surfaces as an error the
+   * panel shows instead of an empty queue.
+   */
   getIntegration(project: string): Observable<ProjectIntegrationView> {
     return this.http.get<ProjectIntegrationView>('/api/git/integration', {
       params: new HttpParams().set('project', project),
-    });
+    }).pipe(
+      retryWhileWarming(),
+      map((view) => {
+        if (isGitFactsWarming(view)) throw new Error('The integration view is still being prepared.');
+        return view;
+      }),
+    );
   }
 
   /** Changed-file list for a commit browsed in the Git View. */

@@ -123,6 +123,24 @@ public sealed record PromotionDiffView(
     int Added,
     int Removed);
 
+/// <summary>
+/// The Git half of one project integration view: refs, heads, the ancestor
+/// sets of the integration and release refs, curated publisher merges and the
+/// promotion file list, all from one ref/config generation.
+/// </summary>
+internal sealed record ProjectIntegrationFacts(
+    string Project,
+    string IntegrationRef,
+    string ReleaseRef,
+    string? IntegrationHead,
+    string? ReleaseHead,
+    IReadOnlySet<string> IntegrationAncestors,
+    IReadOnlySet<string> ReleaseAncestors,
+    IReadOnlyList<GitIntegrationMergeCommit> PublisherCommits,
+    string? PromotionBase,
+    IReadOnlyList<GitFileChange> PromotionFiles,
+    DateTime CapturedAt);
+
 public sealed record ProjectIntegrationView(
     string Project,
     bool IsRepo,
@@ -173,6 +191,12 @@ public sealed class ProjectIntegrationViewService
         _taskIntegration = taskIntegration;
     }
 
+    /// <summary>
+    /// The view computed live from Git. Git facts S3 (AGT-3323) took it off
+    /// <c>GET /api/git/integration</c>, which serves the view the fact producer
+    /// publishes (<see cref="Compose"/> over stored facts); this live path
+    /// stays for diagnostics and as the reference the producer is tested against.
+    /// </summary>
     public ProjectIntegrationView Build(string projectName)
     {
         var configuredIntegrationBranch = _settings.Get(projectName).IntegrationBranch;
@@ -195,15 +219,7 @@ public sealed class ProjectIntegrationViewService
         if (integrationHead == null)
             return Empty(projectName, integrationRef, releaseRef, $"Integration ref '{integrationRef}' does not exist.");
 
-        var accepted = _scanner.ScanAllJobsWithArchive()
-            .Where(task => string.Equals(task.ProjectName, projectName, StringComparison.OrdinalIgnoreCase))
-            .Where(task => AcceptedQueueLanes.Contains(task.State))
-            .Where(IsAcceptedQueueTask)
-            .Where(task => !task.Fixture)
-            .ToList();
-        var titles = accepted
-            .GroupBy(TaskKey, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.OrdinalIgnoreCase);
+        var accepted = SelectAccepted(_scanner.ScanAllJobsWithArchive(), projectName);
 
         _git.TryGetAncestorShaSet(root, [integrationRef], out var integrationAncestors);
         var releaseAncestors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -211,7 +227,50 @@ public sealed class ProjectIntegrationViewService
             _git.TryGetAncestorShaSet(root, [releaseRef], out releaseAncestors);
 
         var publisherCommits = _git.GetIntegrationMergeCommits(root, integrationRef);
-        var fallback = _taskIntegration.BuildLookup(accepted);
+        var promotionBase = releaseHead == null
+            ? null
+            : _git.GetMergeBase(root, releaseHead, integrationHead);
+        var files = promotionBase == null
+            ? new List<GitFileChange>()
+            : _git.GetFilesChangedInRangeAtRoot(root, promotionBase, integrationHead);
+        return Compose(
+            new ProjectIntegrationFacts(projectName, integrationRef, releaseRef, integrationHead, releaseHead,
+                integrationAncestors, releaseAncestors, publisherCommits, promotionBase, files, DateTime.UtcNow),
+            accepted,
+            _taskIntegration.BuildLookup(accepted));
+    }
+
+    /// <summary>
+    /// The accepted-queue cards of one project: completed history plus Human
+    /// Review cards that are integrating or carry the integration-pending tag.
+    /// </summary>
+    internal static List<TaskInfo> SelectAccepted(IEnumerable<TaskInfo> tasks, string projectName)
+        => SelectAccepted(tasks.Where(task =>
+            string.Equals(task.ProjectName, projectName, StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>The accepted-queue cards of tasks already scoped to one repository.</summary>
+    internal static List<TaskInfo> SelectAccepted(IEnumerable<TaskInfo> tasks)
+        => tasks
+            .Where(task => AcceptedQueueLanes.Contains(task.State))
+            .Where(IsAcceptedQueueTask)
+            .Where(task => !task.Fixture)
+            .ToList();
+
+    /// <summary>
+    /// The view as a pure join (Git facts S3): Git facts of one ref/config
+    /// generation with the accepted cards and their published integration
+    /// verdicts. The fact producer composes it from stored reachability and
+    /// the curated merge index; <see cref="Build"/> composes it from live Git.
+    /// </summary>
+    internal static ProjectIntegrationView Compose(
+        ProjectIntegrationFacts git,
+        IReadOnlyList<TaskInfo> accepted,
+        IReadOnlyDictionary<string, TaskIntegrationStatus> statuses)
+    {
+        var integrationRef = git.IntegrationRef;
+        var titles = accepted
+            .GroupBy(TaskKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.OrdinalIgnoreCase);
         var proofByTask = new Dictionary<string, string>(StringComparer.Ordinal);
 
         var queue = accepted.Select(task =>
@@ -220,10 +279,10 @@ public sealed class ProjectIntegrationViewService
             var attributed = TaskIntegrationStatusService.AttributedCommits(task);
             if (attributed.Count > 0
                 && attributed.All(sha =>
-                    TaskIntegrationStatusService.AncestorSetContains(integrationAncestors, sha)))
+                    TaskIntegrationStatusService.AncestorSetContains(git.IntegrationAncestors, sha)))
                 proof = attributed[^1];
 
-            fallback.TryGetValue(task.TaskKey, out var localStatus);
+            statuses.TryGetValue(task.TaskKey, out var localStatus);
             var hasLegacyUnfencedReviewSubject = false;
             if (task.State == TaskStates.Archive
                 && localStatus?.Status == IntegrationStatuses.ConflictSkipped
@@ -250,7 +309,7 @@ public sealed class ProjectIntegrationViewService
         .ThenByDescending(item => item.StateSince)
         .ToList();
 
-        var publisher = publisherCommits
+        var publisher = git.PublisherCommits
             .Take(200)
             .Select(commit => new PublisherMergeItem(
                 commit.TaskKey,
@@ -262,11 +321,11 @@ public sealed class ProjectIntegrationViewService
                 commit.Subject))
             .ToList();
 
-        var promotionShas = new HashSet<string>(integrationAncestors, StringComparer.OrdinalIgnoreCase);
-        promotionShas.ExceptWith(releaseAncestors);
+        var promotionShas = new HashSet<string>(git.IntegrationAncestors, StringComparer.OrdinalIgnoreCase);
+        promotionShas.ExceptWith(git.ReleaseAncestors);
         var promotionTasks = new List<PromotionTaskItem>();
         var seenPromotionKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var merge in publisherCommits.Where(commit => promotionShas.Contains(commit.Sha)))
+        foreach (var merge in git.PublisherCommits.Where(commit => promotionShas.Contains(commit.Sha)))
         {
             if (!seenPromotionKeys.Add(merge.TaskKey)) continue;
             promotionTasks.Add(new PromotionTaskItem(
@@ -285,17 +344,12 @@ public sealed class ProjectIntegrationViewService
             promotionTasks.Add(new PromotionTaskItem(key, task.Title, proof, Short(proof), "Attributed task change set"));
         }
 
-        var promotionBase = releaseHead == null
-            ? null
-            : _git.GetMergeBase(root, releaseHead, integrationHead);
-        var files = promotionBase == null
-            ? new List<GitFileChange>()
-            : _git.GetFilesChangedInRangeAtRoot(root, promotionBase, integrationHead);
+        var files = git.PromotionFiles;
         var promotion = new PromotionDiffView(
             integrationRef,
-            releaseRef,
-            integrationHead,
-            releaseHead,
+            git.ReleaseRef,
+            git.IntegrationHead,
+            git.ReleaseHead,
             promotionTasks,
             files,
             files.Count,
@@ -303,20 +357,20 @@ public sealed class ProjectIntegrationViewService
             files.Sum(file => file.Removed));
 
         return new ProjectIntegrationView(
-            projectName,
+            git.Project,
             true,
             integrationRef,
-            releaseRef,
-            integrationHead,
-            releaseHead,
-            DateTime.UtcNow,
+            git.ReleaseRef,
+            git.IntegrationHead,
+            git.ReleaseHead,
+            git.CapturedAt,
             queue,
             publisher,
             promotion,
-            releaseHead == null
-                ? $"Release ref '{releaseRef}' does not exist; promotion diff is unavailable."
-                : promotionBase == null
-                    ? $"Refs '{releaseRef}' and '{integrationRef}' have no common merge base; promotion diff is unavailable."
+            git.ReleaseHead == null
+                ? $"Release ref '{git.ReleaseRef}' does not exist; promotion diff is unavailable."
+                : git.PromotionBase == null
+                    ? $"Refs '{git.ReleaseRef}' and '{integrationRef}' have no common merge base; promotion diff is unavailable."
                     : null);
     }
 
@@ -346,7 +400,7 @@ public sealed class ProjectIntegrationViewService
         _ => 5,
     };
 
-    private static ProjectIntegrationView Empty(string project, string integrationRef, string releaseRef, string error)
+    internal static ProjectIntegrationView Empty(string project, string integrationRef, string releaseRef, string error)
         => new(
             project,
             false,

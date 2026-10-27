@@ -23,6 +23,7 @@ export { KanbanFilterSidesheetComponent } from './components/kanban-filter-sides
 export { TaskCardComponent } from './components/task-card/task-card.component';
 export { TaskColumnComponent } from './components/task-column/task-column';
 export { DossierGroupBoardComponent } from './components/dossier-group-board/dossier-group-board.component';
+export { DeliverySectionComponent } from './components/delivery-section/delivery-section';
 export {
   ProjectTabsComponent,
   type ProjectAutoInfo,
@@ -47,8 +48,12 @@ export {
 export { splitReadyByPhase } from './components/ready-lane-split.util';
 export {
   buildFocusLanes,
+  buildDeliveryGroup,
   buildLaneGroups,
   laneChrome,
+  DELIVERY_GROUP_ID,
+  type BoardDeliveryColumn,
+  type BoardDeliveryGroup,
   type BoardLane,
   type BoardLaneGroup,
 } from './components/board-lane-layout.util';
