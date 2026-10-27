@@ -40,6 +40,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
     private readonly RemoteGateRunRegistry _runs;
     private readonly Action<string> _deleteDirectory;
     private readonly GateSlotUsageTracker _slotUsage;
+    private readonly PullGateStore? _pullGates;
     private static readonly ConcurrentDictionary<string, byte> LiveRuns = new(StringComparer.Ordinal);
     private readonly Func<RemoteGateRunRecord, bool> _ownerIsAlive;
     private readonly OrchestratorLog? _activity;
@@ -50,12 +51,13 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
 
     public RemoteGateTransport(IConfiguration configuration, ILogger<RemoteGateTransport> logger,
         TimeProvider? timeProvider = null, GateSlotUsageTracker? slotUsage = null,
-        OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null)
+        OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null,
+        PullGateStore? pullGates = null)
         : this(configuration, logger, timeProvider ?? TimeProvider.System,
             Path.Combine(Path.GetTempPath(), "agentstudio-gate-transport"),
             WorktreeDirectoryCleanup.DeleteDirectoryWithoutFollowingReparsePoints, slotUsage,
             runRegistry: CreateDefaultRegistrySafe(timeProvider ?? TimeProvider.System, configuration, logger),
-            activity: activity, scanner: scanner)
+            activity: activity, scanner: scanner, pullGates: pullGates)
     {
     }
 
@@ -83,7 +85,8 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         RemoteGateRunRegistry? runRegistry = null,
         Func<RemoteGateRunRecord, bool>? ownerIsAlive = null,
         OrchestratorLog? activity = null, AgentStudio.Tasks.TaskScannerService? scanner = null,
-        string section = RemoteGateOptions.PrimarySection)
+        string section = RemoteGateOptions.PrimarySection,
+        PullGateStore? pullGates = null)
     {
         _section = section;
         _configuration = configuration;
@@ -95,6 +98,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             throw new InvalidDataException("Remote gate installation id is invalid.");
         _deleteDirectory = deleteDirectory;
         _slotUsage = slotUsage ?? new GateSlotUsageTracker(clock: timeProvider);
+        _pullGates = pullGates;
         _runProcess = runProcess ?? RemoteGateProcess.RunAsync;
         _ownerIsAlive = ownerIsAlive ?? IsOwnerProcessAlive;
         _activity = activity;
@@ -108,6 +112,10 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
         var options = RemoteGateOptions.Read(_configuration, _section);
         _slotUsage.Configure(options.GateSlots);
         var runId = Guid.NewGuid().ToString("N");
+        using var dispatch = _slotUsage.TryBeginDispatch(runId)
+            ?? throw new IOException("The gate host is drained for a service restart.");
+        if (_pullGates?.HasRestartFence(options.Host) == true)
+            throw new IOException("The gate host is drained for a service restart.");
         var local = Path.Combine(_localRoot, runId);
         var remote = options.Root + "/" + runId;
         var infra = request.InfrastructureTimeout > TimeSpan.Zero
@@ -443,6 +451,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             if (usage.Length == 2 && int.TryParse(usage[0], out var busy)
                 && int.TryParse(usage[1], out var total) && busy >= 0 && total > 0 && busy <= total)
             {
+                _slotUsage.RemoteWaiting(busy, total);
                 request.OnMachineGateWaiting?.Invoke();
                 request.OnMachineGateSlotWaiting?.Invoke(busy, total);
             }

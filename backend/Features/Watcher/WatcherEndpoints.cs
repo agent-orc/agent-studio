@@ -61,6 +61,62 @@ public static class WatcherEndpoints
             return Results.Ok(new { count = open.Length, cases = open });
         });
 
+        // AGT-3207: AI Operator interventions on stall events, newest first.
+        // The host view, the stall list and the card detail read the receipts here.
+        group.MapGet("/interventions", (HttpContext context, ProjectRegistry projects,
+            StallInterventionStore store, StallInterventionService service,
+            string? subject, string? card, int? limit) =>
+        {
+            bool Allowed(string? project) => project is not null
+                && (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human
+                    || ProjectAccessAuthorization.Allows(human.User, project, projects));
+            var records = store.All()
+                .Where(item => Allowed(item.Project))
+                .Where(item => string.IsNullOrWhiteSpace(subject) || item.Subject == subject
+                    || item.Host == subject)
+                .Where(item => string.IsNullOrWhiteSpace(card) || item.AffectedCards.Contains(card, StringComparer.OrdinalIgnoreCase)
+                    || item.Members.Contains(card, StringComparer.OrdinalIgnoreCase))
+                .OrderByDescending(item => item.DecidedAtUtc)
+                .Take(Math.Clamp(limit ?? 50, 1, 200))
+                .Select(item => new
+                {
+                    receipt = StallInterventionReceipts.View(item),
+                    item.Kind,
+                    item.Host,
+                    item.Project,
+                    item.CaseId,
+                    item.DecidedBy,
+                    item.DecidedAtUtc,
+                    item.FollowUpDueUtc,
+                    item.ResolvedAtUtc,
+                    item.AffectedCards,
+                    item.Members,
+                    item.UndoneBy,
+                    headline = StallInterventionReceipts.Headline(item),
+                })
+                .ToArray();
+            return Results.Ok(new { count = records.Length, interventions = records,
+                decisions = service.LatestDecisions().Where(item => Allowed(item.Project)).ToArray() });
+        });
+
+        group.MapPost("/interventions/{id}/undo", (string id, HttpContext context,
+            ProjectRegistry projects, StallInterventionStore store, StallInterventionService service) =>
+        {
+            var record = store.Find(id);
+            if (record is null || context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal principal
+                && !ProjectAccessAuthorization.Allows(principal.User, record.Project, projects))
+                return Results.NotFound(new { error = "intervention-not-found" });
+            var actor = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
+                ? human.User.Username : context.Request.Headers["X-Client-Id"].FirstOrDefault() ?? "operator";
+            var result = service.Undo(id, actor);
+            return result switch
+            {
+                { Undone: true } => Results.Ok(new { result.Message, receipt = StallInterventionReceipts.View(result.Record!) }),
+                { Record: null } => Results.NotFound(new { error = result.Message }),
+                _ => Results.Conflict(new { error = result.Message }),
+            };
+        });
+
         group.MapGet("/proposals", (IConfiguration configuration, WatcherProposalStore proposals, bool? pending) =>
         {
             var workspaceRoot = configuration["TaskRepository"] ?? "";

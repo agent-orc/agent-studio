@@ -40,3 +40,7 @@
   border-radius: 50%;
   background: var(--studio-error);
 }
+
+.operational-stalls--settled { margin-top: var(--space-2, 8px); }
+.operational-stalls__settled + .operational-stalls__settled { margin-top: var(--space-2, 8px); }
+.operational-stalls__error { margin: var(--space-2, 8px) 0 0; color: var(--studio-error); }

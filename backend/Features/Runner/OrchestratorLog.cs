@@ -130,6 +130,9 @@ public record OrchestratorLogEntry
     /// <summary>Typed operational finding or resolution when this entry concerns a stall.</summary>
     public OperationalStallEvent? Stall { get; init; }
 
+    /// <summary>AGT-3207: plain-language receipt when the AI Operator intervened on a stall.</summary>
+    public StallInterventionReceiptEvent? Intervention { get; init; }
+
     /// <summary>Job that was the subject of this entry, when applicable.</summary>
     public string? JobId { get; init; }
 
@@ -168,6 +171,16 @@ public sealed record OperationalStallEvent(
     string Subject, string Severity, DateTime? SinceUtc, int BlockedCount,
     IReadOnlyList<string> AffectedCards, string? SuggestedAction,
     IReadOnlyDictionary<string, string> Evidence);
+
+/// <summary>
+/// AGT-3207: what the AI Operator observed (with numbers), did, why, what it
+/// changed (before and after) and how to undo it.
+/// </summary>
+public sealed record StallInterventionReceiptEvent(
+    string Id, string Subject, string Action, string Autonomy, string Status,
+    string Observed, string Done, string Why, string Before, string After, string Undo,
+    string? Proposal, IReadOnlyList<string> Chain, bool Undoable, string? EffectEvidence,
+    string? Outcome);
 
 // OrchestratorTokenUsage moved to AgentTaskboard.Shared (Runner/OrchestratorTokenUsage.cs)
 // so the executor-side OneShot result envelope can reference it without depending

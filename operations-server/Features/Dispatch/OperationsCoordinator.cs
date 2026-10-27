@@ -99,9 +99,9 @@ public sealed class OperationsCoordinator(OperationsStore store, IOperationPermi
                 if (attempt.LateResultDigest != digest) throw new OperationRejected("result-replay-conflict");
                 return attempt;
             }
-            if (attempt.State == "unreachable" && attempt.Command.OperationId == OperationCatalogue.HostInspect.Id)
+            if (attempt.State == "unreachable" && OperationCatalogue.Find(attempt.Command.OperationId, attempt.Command.Version) is not null)
             {
-                // A prior boot may have finished a read-only inspection before
+                // A prior boot may have finished an inspection or a restart before
                 // crashing or losing its lease. Keep the outcome unreachable;
                 // this receipt only preserves evidence and unblocks its spool.
                 Reject(OperationPolicy.ResultDenial(attempt, request.Result, clock.GetUtcNow()));
@@ -134,6 +134,18 @@ public sealed class OperationsCoordinator(OperationsStore store, IOperationPermi
                     state.Attempts[id] = attempt;
                 }
             }
+            return Task.FromResult(attempt);
+        });
+
+    /// <summary>Finds an accepted command after its submitting Studio lost the response.</summary>
+    public Task<OperationAttempt> ReadByKeyAsync(OperationsPrincipal principal, string key) =>
+        store.TransactionAsync(state =>
+        {
+            Reject(OperationsAccessPolicy.Denial(principal, "service", "operations.read"), 403);
+            Expire(state);
+            var attempt = state.Attempts.Values.FirstOrDefault(item => item.PrincipalId == principal.Id
+                && item.Command.IdempotencyKey == key);
+            if (attempt is null) throw new OperationRejected("attempt-not-found", 404);
             return Task.FromResult(attempt);
         });
 

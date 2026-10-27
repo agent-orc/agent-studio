@@ -46,6 +46,11 @@ a baseline exception list.
   and asks a person instead of taking an A3 action. The authority applies an
   Act or Ask receipt through the decider's `IAiOperatorEffect`; each effect
   checks the lane and the frozen facts again before it writes.
+- `stall-intervention` keys an occurrence on the stall case or the checked
+  intervention per five-minute period, and the occurrence's task id is the
+  stall subject (`host:<name>`, `gate:<project>:<plan>`), not a card. Its
+  effect implements `IAiOperatorProposalEffect`, so an engine Propose receipt
+  also writes the A2 proposal receipt.
 - The residual deciders `delivery-chain`, `cause-breaker`, `intake-routing` and
   `acceptance-rail` key their occurrences on a hash of the facts
   (`AiOperatorDecisionGateway.FactsSubjectKey`): unchanged facts map to one
@@ -130,6 +135,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | OperatorSweepHostedService | !PD | decide, switched | `OperatorSweep` profile (`OperatorSweepPolicy`). Effect: `MonolithOrchestrationApplier` with `OperatorSweepActions`. |
 | WatcherHostedService | !PD, off by default | report | Authority host (drafts proposals, no lane move) |
 | EnvironmentHealthWorker | !PD, not Test | report | Authority host (IP-14 environment health checks; opens incident and certificate cards in Backlog and comments on them, no lane move) |
+| StallInterventionHostedService | !PD | decide, operator | AI Operator decider `stall-intervention` (`StallInterventionPolicy`, AGT-3207) on the AGT-3206 stall cases and due follow-up checks. Effect: `StallInterventionEffect` lowers or restores coding admission, restarts an allowlisted service through the Operations Server, reroutes a provider, reconciles the batch gate queue or pins the last delivery; it records A2 proposals and escalations. `StallIntervention:Mode` `observe` (default, "would do" receipts only), `act` or `off`; per-action switches. Held decisions are evaluated in process and never submitted. |
 | HostedVolumeBackupWorker | !PD, not Test | infra | Authority host (IP-D5 daily declared-volume backups through the host adapter; no lane decision) |
 | CardPreviewSweep | !PD, not Test | infra | Authority host. Reconciles green deliveries, integration and expiry into fenced preview deploy and removal jobs; it does not move cards. |
 | DeploymentInterventionWorker | !PD, not Test | infra | Authority host. Runs deployment intervention timeout reconciliation each minute; it does not move task lanes. |

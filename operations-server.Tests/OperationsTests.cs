@@ -383,6 +383,7 @@ internal sealed class Fixture : IAsyncDisposable
         Edge with { Id = "edge-b", TokenSha256 = OperationsProtocol.Digest("second-edge-token") },
         Edge with { Id = "foreign", Audience = "task-server", TokenSha256 = OperationsProtocol.Digest("other-audience-token") }];
     public string Directory { get; } = Path.Combine(Path.GetTempPath(), "operations-tests", Guid.NewGuid().ToString("N"));
+    public string ComposeFile => Path.Combine(Directory, "compose.yaml");
     public TestClock Clock { get; } = new();
     public TestPermits Permits { get; } = new();
     private WebApplication app = null!;

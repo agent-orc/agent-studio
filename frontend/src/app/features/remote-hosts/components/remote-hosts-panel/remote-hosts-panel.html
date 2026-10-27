@@ -8,7 +8,9 @@
   @if (view() === 'list') {
   <app-deployment-checkpoints [hosts]="hosts()" [stableRelease]="stableRelease()" [now]="now()" />
   <app-execution-infrastructure [reloadToken]="infrastructureReload()" />
-  <app-operational-stalls />
+  @defer (on idle) {
+    <app-operational-stalls />
+  }
   <div class="rh__summary" data-testid="remote-hosts-summary">
     <span class="rh__count"><strong>{{ total() }}</strong> {{ total() === 1 ? 'machine' : 'machines' }}</span>
     <span class="rh__sep" aria-hidden="true">·</span>

@@ -98,6 +98,7 @@ public sealed record ContinuationBaseRecord(
 public static class ContinuationBaseStore
 {
     public const string FileName = "continuation-base.json";
+    private static readonly object Sync = new();
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -106,6 +107,7 @@ public static class ContinuationBaseStore
 
     public static bool Save(string folderPath, ContinuationBaseRecord record)
     {
+        lock (Sync)
         try
         {
             Directory.CreateDirectory(folderPath);
@@ -121,8 +123,21 @@ public static class ContinuationBaseStore
         }
     }
 
+    /// <summary>Compare the live base and lane under the same lock used by base writers and consumers.</summary>
+    public static bool TrySaveWhen(string folderPath, ContinuationBaseRecord? expected,
+        ContinuationBaseRecord replacement, Func<bool> isReady)
+    {
+        lock (Sync)
+        {
+            if (!isReady() || Read(folderPath) != expected
+                || expected is null && File.Exists(Path.Combine(folderPath, FileName))) return false;
+            return Save(folderPath, replacement);
+        }
+    }
+
     public static ContinuationBaseRecord? Read(string folderPath)
     {
+        lock (Sync)
         try
         {
             var path = Path.Combine(folderPath, FileName);
@@ -144,9 +159,12 @@ public static class ContinuationBaseStore
     /// <summary>Reads the record and removes it in one step.</summary>
     public static ContinuationBaseRecord? Consume(string folderPath)
     {
-        var record = Read(folderPath);
-        if (record is not null) Clear(folderPath);
-        return record;
+        lock (Sync)
+        {
+            var record = Read(folderPath);
+            if (record is not null) Clear(folderPath);
+            return record;
+        }
     }
 
     /// <summary>
@@ -158,9 +176,12 @@ public static class ContinuationBaseStore
     /// </summary>
     public static ContinuationBaseRecord? ConsumeForClaim(string folderPath)
     {
-        var record = Read(folderPath);
-        if (record is not null && !ReviewFixRoundBase.IsFixRound(record.Reason)) Clear(folderPath);
-        return record;
+        lock (Sync)
+        {
+            var record = Read(folderPath);
+            if (record is not null && !ReviewFixRoundBase.IsFixRound(record.Reason)) Clear(folderPath);
+            return record;
+        }
     }
 
     /// <summary>
@@ -175,6 +196,7 @@ public static class ContinuationBaseStore
 
     public static void Clear(string folderPath)
     {
+        lock (Sync)
         try
         {
             var path = Path.Combine(folderPath, FileName);
@@ -186,6 +208,24 @@ public static class ContinuationBaseStore
             // A stale base is bounded by its own verification: the runner starts
             // from the integration branch when the ref no longer resolves.
             SilentCatch.Note(exception, $"continuation base could not be cleared in {folderPath}");
+        }
+    }
+
+    /// <summary>Remove a base only if it is still the record selected for undo.</summary>
+    public static bool TryClearWhen(string folderPath, ContinuationBaseRecord expected)
+    {
+        lock (Sync)
+        try
+        {
+            if (Read(folderPath) != expected) return false;
+            File.Delete(Path.Combine(folderPath, FileName));
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            SilentCatch.Note(exception, $"continuation base could not be conditionally cleared in {folderPath}");
+            return false;
         }
     }
 }

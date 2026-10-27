@@ -1,0 +1,39 @@
+.receipt {
+  display: grid;
+  gap: 2px;
+  margin-top: var(--space-2, 8px);
+  padding: var(--space-2, 8px);
+  background: color-mix(in srgb, var(--studio-accent, var(--studio-text)) 6%, var(--studio-bg-elevated));
+  border-radius: var(--radius-sm, 4px);
+  font-variant-numeric: tabular-nums;
+}
+
+.receipt[data-status='escalated'] {
+  background: color-mix(in srgb, var(--studio-error) 10%, var(--studio-bg-elevated));
+}
+
+.receipt[data-status='proposed'] {
+  background: color-mix(in srgb, var(--studio-warn) 10%, var(--studio-bg-elevated));
+}
+
+.receipt p { margin: 0; }
+
+.receipt__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px);
+  align-items: baseline;
+  font-size: var(--text-xs, 12px);
+}
+
+.receipt__badge { font-weight: 600; }
+.receipt__status, .receipt__head time { opacity: .75; }
+
+.receipt__undo {
+  display: flex;
+  gap: var(--space-2, 8px);
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--text-xs, 12px);
+  opacity: .9;
+}
