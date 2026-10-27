@@ -57,7 +57,8 @@ public sealed partial class TaskServerStore
     // 36 adds one-time Studio invitations and per-project production approval.
     // 37 removes retired parent tables and their task metadata field.
     // Older binaries must reject this store before reading task metadata.
-    public const int CurrentSchemaVersion = 37;
+    // 38 adds physical-host placement advertisements and shadow claim receipts.
+    public const int CurrentSchemaVersion = 38;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -1511,7 +1512,7 @@ public sealed partial class TaskServerStore
                 ("$effective", reportedMaxParallelism),
                 ("$confirms", adoption.ConfirmsDesired ? 1 : 0),
                 ("$newConfirmation", adoption.EmitAudit ? 1 : 0),
-                ("$appliedVersion", runtimeCapacity.Version),
+                ("$appliedVersion", runtimeCapacity.AllocationVersion),
                 ("$id", request.RunnerId));
             if (adoption.EmitAudit)
             {
@@ -1527,6 +1528,7 @@ public sealed partial class TaskServerStore
                         runtimeCapacity.HostId,
                         request.InstanceId,
                         runtimeCapacity.Version,
+                        runtimeCapacity.AllocationVersion,
                         runtimeCapacity.MaxParallelism,
                     }),
                     ct);
@@ -1694,6 +1696,34 @@ public sealed partial class TaskServerStore
             }
             capabilityAdmission = selected!.Admission!;
 
+            // DP-S1 compares the new host decision at the existing claim
+            // authority. Shadow is observational; canary is an explicit switch.
+            var placementRequirements = (request.RequiredCapabilities ?? [])
+                .Concat(selectedPlacement?.RequiredCapabilities ?? [])
+                .Distinct(StringComparer.Ordinal).ToArray();
+            var shadowPlacement = await EvaluateHostPlacementAsync(
+                connection, transaction, capabilityRunner.HostId, request.RunnerId, request.InstanceId,
+                task.ProjectId, placementRequirements, task.CreatedAt,
+                adoption.ConfirmsDesired,
+                occupiedHostSlots < runtimeCapacity.MaxParallelism, ct);
+            if (string.Equals(_options.DynamicPlacementMode, "canary", StringComparison.Ordinal)
+                && _options.DynamicPlacementCanaryHostIds.Contains(
+                    capabilityRunner.HostId, StringComparer.Ordinal)
+                && (!shadowPlacement.Eligible || shadowPlacement.WarmPreferenceActive))
+            {
+                await RecordPlacementShadowAsync(connection, transaction, task.TaskId,
+                    request.RunnerId, capabilityRunner.HostId, "empty", shadowPlacement,
+                    runtimeCapacity.AllocationVersion, 0, null, null, UtcNow, ct);
+                response = new ClaimResponse("empty",
+                    Message: "Host placement is not admitted.",
+                    ReconciliationActions: reconciliationActions,
+                    RuntimeCapacity: runtimeCapacity,
+                    PlacementReason: shadowPlacement.WarmPreferenceActive
+                        ? "warm-repository-preference"
+                        : string.Join(",", shadowPlacement.Rejected));
+                return;
+            }
+
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
                 connection, transaction, task.TaskId, ct);
             var continuationIntent = await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct);
@@ -1778,6 +1808,9 @@ public sealed partial class TaskServerStore
                     placementVersion = selectedPlacement?.Version,
                     placementReason,
                 }), ct);
+            await RecordPlacementShadowAsync(connection, transaction, task.TaskId,
+                request.RunnerId, capabilityRunner.HostId, "claimed", shadowPlacement,
+                runtimeCapacity.AllocationVersion, 2, leaseId, fence, now, ct);
             string? quotaWarning = null;
             if (quotaProjectNames.TryGetValue(task.ProjectId, out var claimedProjectName))
             {
@@ -3829,8 +3862,35 @@ public sealed partial class TaskServerStore
                 target_load_percent INTEGER NOT NULL,
                 ramp_strategy TEXT NOT NULL,
                 version INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                allocation_version INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS host_placement_advertisements(
+                host_id TEXT PRIMARY KEY,
+                runner_id TEXT NOT NULL,
+                instance_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                version INTEGER NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS placement_shadow_receipts(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                runner_id TEXT NOT NULL,
+                host_id TEXT NOT NULL,
+                actual_status TEXT NOT NULL,
+                shadow_status TEXT NOT NULL,
+                matched_json TEXT NOT NULL,
+                rejected_json TEXT NOT NULL,
+                allocation_version INTEGER NOT NULL,
+                grant_half_cores INTEGER NOT NULL,
+                lease_id TEXT,
+                fence INTEGER,
+                authority_epoch INTEGER NOT NULL,
+                observed_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_placement_shadow_receipts_task
+                ON placement_shadow_receipts(task_id, id DESC);
             CREATE TABLE IF NOT EXISTS host_project_policies(
                 host_id TEXT PRIMARY KEY,
                 allow_all_projects INTEGER NOT NULL,
@@ -4488,6 +4548,7 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runs", "brief_version", "TEXT", ct);
         await EnsureColumnAsync(connection, "runners", "host_orchestrator_minimum", "TEXT", ct);
         await EnsureColumnAsync(connection, "runners", "host_orchestrator_maximum", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runtime_capacity_settings", "allocation_version", "INTEGER NOT NULL DEFAULT 1", ct);
         await EnsureColumnAsync(connection, "runners", "role_max_parallelism", "INTEGER", ct);
         await EnsureColumnAsync(connection, "runners", "effective_max_parallelism", "INTEGER", ct);
         await EnsureColumnAsync(connection, "runners", "runtime_capacity_applied_at", "TEXT", ct);

@@ -11,6 +11,10 @@ public sealed class TaskServerOptions
     public string? QuotaAdmissionBearerToken { get; set; }
     public int MinimumLeaseSeconds { get; set; } = 30;
     public int MaximumLeaseSeconds { get; set; } = 900;
+    /// <summary>Shadow is the default. Canary admission requires an explicit operator switch.</summary>
+    public string DynamicPlacementMode { get; set; } = "shadow";
+    public string[] DynamicPlacementCanaryHostIds { get; set; } = [];
+    public int DynamicPlacementWarmPreferenceSeconds { get; set; } = 30;
     public int ResultRetentionDays { get; set; } = 30;
     public int ResultFinalizationMaxAttempts { get; set; } = 3;
     public bool ResultRefGcEnabled { get; set; } = true;

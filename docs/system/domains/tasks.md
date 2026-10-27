@@ -216,6 +216,33 @@ capability snapshot, runtime capacity GET, and host admission projection
 provide the read side for selection, rejection, capacity, and drain.
 The host's coding and review registrations retain distinct role slot budgets.
 
+### Dynamic placement shadow (DP-S1, AGT-3327)
+
+Working decisions are AGT-3171 D1 option A (host pull with bounded warm
+preference), D2 option A (one physical host identity), and D5 option A (the
+existing versioned host capacity record). The approved target executor is D3
+option A; this slice does not launch containers. The new
+`PUT /api/v1/hosts/{hostId}/placement-advertisement` stores one versioned
+advertisement per physical host, bound to a registered runner instance. It
+describes roles, OS, architecture, executor, toolchain digests, provider
+bindings, tested project repository access, and warm mirrors. The default
+`TaskServer:DynamicPlacementMode` is `shadow`; `canary` applies only to hosts
+named in `TaskServer:DynamicPlacementCanaryHostIds`. An empty host list keeps
+admissions unchanged. `TaskServer:DynamicPlacementWarmPreferenceSeconds` defaults
+to 30 and is clamped to five minutes.
+
+The coding claim transaction computes typed eligibility against the existing
+project capability requirements and the current runtime capacity version.
+It records matched and rejected requirements, actual versus shadow status,
+host, allocation version, provisional two half-core grant, lease, fence and
+per-item authority epoch in `placement_shadow_receipts`. The shadow read at
+`GET /api/v1/hosts/placement-shadow` reports differences. A current warm host
+gets a short preference; an eligible cold host can claim once the oldest
+ready task passes that window. Canary refuses stale allocation acknowledgement
+only for new claims; existing leases continue through their normal renewal
+and fenced result path. This slice does not replace the AGT-3019 allocator or
+the platform-owned Git path.
+
 Configured placement defaults to one active coding lease per project. Its
 `maxParallelism` may only use slots authorized by the existing project
 `maxParallelism` setting; the effective limit is the smaller value. Active

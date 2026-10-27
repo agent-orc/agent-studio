@@ -887,10 +887,12 @@ public sealed class TaskServerClient : IDisposable
             WarnCapacityOnce("Discarding runtime capacity for a foreign host.");
             return;
         }
-        if (_restoredCapacityFromCache && _centralRuntimeCapacityVersion > capacity.Version)
+        var allocationVersion = capacity.AllocationVersion > 0
+            ? capacity.AllocationVersion : capacity.Version;
+        if (_restoredCapacityFromCache && _centralRuntimeCapacityVersion > allocationVersion)
             WarnCapacityOnce("Discarding runtime capacity cache version not issued by this server for this host.");
-        if (!_restoredCapacityFromCache && _centralRuntimeCapacityVersion > capacity.Version) return;
-        if (!_restoredCapacityFromCache && _centralRuntimeCapacityVersion == capacity.Version
+        if (!_restoredCapacityFromCache && _centralRuntimeCapacityVersion > allocationVersion) return;
+        if (!_restoredCapacityFromCache && _centralRuntimeCapacityVersion == allocationVersion
             && _centralHostMaxParallelism == capacity.MaxParallelism)
         {
             return;
@@ -899,7 +901,7 @@ public sealed class TaskServerClient : IDisposable
         var adoptedAt = DateTime.UtcNow;
         _centralHostMaxParallelism = capacity.MaxParallelism;
         _centralHostMaxParallelismAppliedAt = adoptedAt;
-        _centralRuntimeCapacityVersion = capacity.Version;
+        _centralRuntimeCapacityVersion = allocationVersion;
         _restoredCapacityFromCache = false;
         _runtimeCapacityCache?.Save(capacity, adoptedAt);
     }
@@ -938,7 +940,8 @@ public sealed class TaskServerClient : IDisposable
         _restoredCapacityFromCache = true;
         _centralHostMaxParallelism = cached.Capacity.MaxParallelism;
         _centralHostMaxParallelismAppliedAt = cached.AdoptedAt;
-        _centralRuntimeCapacityVersion = cached.Capacity.Version;
+        _centralRuntimeCapacityVersion = cached.Capacity.AllocationVersion > 0
+            ? cached.Capacity.AllocationVersion : cached.Capacity.Version;
     }
 
     /// <summary>
