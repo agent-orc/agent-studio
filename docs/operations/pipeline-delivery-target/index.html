@@ -924,6 +924,10 @@
   <strong>AGT-3311 · Post-merge develop checks</strong>
   <span>T3 implementation: runner merge windows and nightly full-suite checks at a fetched develop SHA, project run receipts, last green SHA and develop state in the board and baseline metrics. Implemented D1 T-B's post-merge tier. D3 A and the other recorded decisions remain the working choices for their respective delivery slices.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3319" data-delivered-at="2026-10-27" data-slice="gate-source-object-cache">
+  <strong>AGT-3319 · Gate and review source cache</strong>
+  <span>Implemented D8 A: host caches retain verified objects across requested SHA misses. Pull gate workers request a thin bundle against a cached ancestor tip and fetch it into a private attempt before hash and tree verification; cold starts use a full subject bundle. The SSH path keeps its cached-tip thin bundle. Per-run source bytes and ready time remain in the gate receipt and logs. D1 T-B, D2 A, D3 A, D4 A, D5 L-B, D6 A, D7 A-B, D9 A and D10 A remain the recorded working choices for their own slices.</span>
+</li>
 <li data-implementation-entry="" data-task-key="AGT-3313" data-delivered-at="2026-10-27" data-slice="pre-delivery-full-suite">
   <strong>AGT-3313 · Pre-delivery release candidate gate</strong>
   <span>Implemented D3 A: <code>delivery.fullSuite</code> has required, optional and off modes, with required as the default for declared Production; required releases need a green post-merge candidate and a Task Server verdict for that SHA and command digest. Implemented D4 A: the promotion train reuses an exact green verdict, runs the sharded suite on a digest miss and records reuse. The release detail shows the verdict and SHA.</span>

@@ -145,7 +145,8 @@ public sealed class RemoteReviewWorkspace
 
     public async Task<ReviewWorkspaceProofDto> PrepareAsync(
         TaskServerClient client,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<string>? sparsePaths = null)
     {
         if (Directory.Exists(AttemptRoot))
             throw new ReviewInfrastructureException(
@@ -159,10 +160,19 @@ public sealed class RemoteReviewWorkspace
         Directory.CreateDirectory(BaselineCacheRoot);
         Directory.CreateDirectory(DependencyCacheRoot);
 
-        if (!string.IsNullOrWhiteSpace(_subject.SourceBundleArtifactId))
-            await MaterializeBundleAsync(client, ct);
-        else if (!string.IsNullOrWhiteSpace(_subject.RepositoryUrl))
-            await MaterializeGitAsync(_subject.RepositoryUrl!, ct);
+        if (!string.IsNullOrWhiteSpace(_subject.RepositoryUrl))
+        {
+            try { await MaterializeGitAsync(_subject.RepositoryUrl!, sparsePaths, ct); }
+            catch (ReviewInfrastructureException) when (!string.IsNullOrWhiteSpace(_subject.SourceBundleArtifactId))
+            {
+                if (!ResilientDirectory.TryDelete(RepositoryPath))
+                    throw new ReviewInfrastructureException("SnapshotUnavailable",
+                        "Failed source cache checkout could not be removed before bundle fallback.");
+                await MaterializeBundleAsync(client, sparsePaths, ct);
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(_subject.SourceBundleArtifactId))
+            await MaterializeBundleAsync(client, sparsePaths, ct);
         else
             throw new ReviewInfrastructureException(
                 "SnapshotUnavailable",
@@ -2762,63 +2772,47 @@ public sealed class RemoteReviewWorkspace
         return !Directory.Exists(target);
     }
 
-    private async Task MaterializeGitAsync(string repositoryUrl, CancellationToken ct)
+    private async Task MaterializeGitAsync(string repositoryUrl,
+        IReadOnlyList<string>? sparsePaths, CancellationToken ct)
     {
         var credential = RepositoryCredential();
         var keyPath = RunnerFirstRunGitCredentials.Key(_options.StateDir, repositoryUrl);
         var cloneUrl = keyPath is null || repositoryUrl.StartsWith("git@github.com:", StringComparison.Ordinal)
             ? repositoryUrl
             : "git@github.com:" + new Uri(repositoryUrl).AbsolutePath.TrimStart('/');
-        // A private clone is complete, not blob-filtered: a promisor remote would
-        // fetch missing blobs lazily from later git commands, which hold no
-        // credential. Nothing has run in the fresh clone yet, so its config and
-        // hooks are git's own while the credential is in use.
-        var clone = credential is null
-            ? await ProcessRunner.RunAsync(
-                "git",
-                ["-c", "credential.helper=", "clone", "--no-checkout", "--filter=blob:none", cloneUrl, RepositoryPath],
-                AttemptRoot,
-                environment: GitTransportEnvironment(),
-                clearEnvironment: true,
-                ct: ct)
-            : await ProcessRunner.RunAsync(
-                "git",
-                CredentialedGitArguments(credential, "clone", "--no-checkout", credential.CloneUrl, RepositoryPath),
-                AttemptRoot,
-                environment: CredentialedGitEnvironment(credential),
-                clearEnvironment: true,
-                ct: ct);
-        if (!clone.Success)
-            throw new ReviewInfrastructureException(
-                "SnapshotUnavailable",
-                credential is null && LooksLikeMissingReadAccess(clone.StdErr)
-                    ? $"Repository clone failed: the review host has no read access to '{repositoryUrl}'. "
-                      + "A private repository needs repository visibility 'private' on its project and a "
-                      + $"scoped read credential in {ReviewRepositoryCredentials.FileVariable}: {clone.StdErr.Trim()}"
-                    : $"Repository clone failed: {clone.StdErr.Trim()}");
         var resultRef = string.IsNullOrWhiteSpace(_subject.ResultRef)
             ? _subject.ExpectedResultSha
             : _subject.ResultRef!;
-        var fetch = credential is null
-            ? await ProcessRunner.RunAsync(
-                "git",
-                ["-c", "credential.helper=", "fetch", "--no-tags", "origin", resultRef],
-                RepositoryPath,
-                environment: GitTransportEnvironment(),
-                clearEnvironment: true,
-                ct: ct)
-            : await ProcessRunner.RunAsync(
-                "git",
-                CredentialedGitArguments(credential, "fetch", "--no-tags", "origin", resultRef),
-                RepositoryPath,
-                environment: CredentialedGitEnvironment(credential),
-                clearEnvironment: true,
-                ct: ct);
-        if (!fetch.Success)
+        var sourceUrl = credential?.CloneUrl ?? cloneUrl;
+        async Task<ProcessResult> Run(string cwd, IReadOnlyList<string> args,
+            bool credentialed, CancellationToken token)
+        {
+            var arguments = credentialed && credential is not null
+                ? CredentialedGitArguments(credential, args.ToArray())
+                : ["-c", "credential.helper=", .. args];
+            return await ProcessRunner.RunAsync("git", arguments, cwd,
+                environment: credentialed && credential is not null
+                    ? CredentialedGitEnvironment(credential) : GitTransportEnvironment(),
+                clearEnvironment: true, ct: token);
+        }
+        (long bytes, TimeSpan ready) source;
+        try
+        {
+            source = await HostSourceObjectCache.MaterializeAsync(sourceUrl,
+                resultRef, _subject.ExpectedResultSha, RepositoryPath, Run, _utcNow, ct, sparsePaths);
+        }
+        catch (ReviewInfrastructureException exception) when (credential is null
+            && exception.Classification == "SnapshotUnavailable"
+            && LooksLikeMissingReadAccess(exception.Message))
+        {
             throw new ReviewInfrastructureException(
                 "SnapshotUnavailable",
-                $"Immutable result ref '{resultRef}' could not be fetched: {fetch.StdErr.Trim()}");
-        await GitRequiredAsync(["checkout", "--detach", "FETCH_HEAD"], ct);
+                $"Repository fetch failed: the review host has no read access to '{repositoryUrl}'. "
+                + "A private repository needs repository visibility 'private' on its project and a "
+                + $"scoped read credential in {ReviewRepositoryCredentials.FileVariable}: {exception.Message}");
+        }
+        var (bytes, ready) = source;
+        _log($"review_source_ready subject={_subject.SubjectId} bytes={bytes} ready_ms={ready.TotalMilliseconds:F0}");
     }
 
     private ReviewRepositoryCredential? RepositoryCredential()
@@ -2994,34 +2988,26 @@ public sealed class RemoteReviewWorkspace
         }
     }
 
-    private async Task MaterializeBundleAsync(TaskServerClient client, CancellationToken ct)
+    private async Task MaterializeBundleAsync(TaskServerClient client,
+        IReadOnlyList<string>? sparsePaths, CancellationToken ct)
     {
-        var artifact = await client.GetArtifactContentAsync(
-            _subject.SourceRunId,
-            _subject.SourceBundleArtifactId!,
-            ct);
-        if (artifact is null)
-            throw new ReviewInfrastructureException("SnapshotUnavailable", "Immutable source bundle is unavailable.");
-        var bytes = Convert.FromBase64String(artifact.ContentBase64);
-        var digest = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-        if (!string.Equals(digest, _subject.SourceBundleSha256, StringComparison.OrdinalIgnoreCase))
-            throw new ReviewInfrastructureException(
-                "SourceBundleDigestMismatch",
-                $"Source bundle digest '{digest}' does not match '{_subject.SourceBundleSha256}'.");
-        var bundlePath = Path.Combine(AttemptRoot, "source.bundle");
-        await File.WriteAllBytesAsync(bundlePath, bytes, ct);
-        var clone = await ProcessRunner.RunAsync(
-            "git",
-            ["clone", "--no-checkout", bundlePath, RepositoryPath],
-            AttemptRoot,
-            environment: ProcessEnvironment(),
-            clearEnvironment: true,
-            ct: ct);
-        if (!clone.Success)
-            throw new ReviewInfrastructureException(
-                "SnapshotUnavailable",
-                $"Source bundle could not be materialized: {clone.StdErr.Trim()}");
-        await GitRequiredAsync(["checkout", "--detach", _subject.ExpectedResultSha], ct);
+        async Task<byte[]> Download(CancellationToken token)
+        {
+            var artifact = await client.GetArtifactContentAsync(_subject.SourceRunId,
+                _subject.SourceBundleArtifactId!, token);
+            if (artifact is null)
+                throw new ReviewInfrastructureException("SnapshotUnavailable",
+                    "Immutable source bundle is unavailable.");
+            return Convert.FromBase64String(artifact.ContentBase64);
+        }
+        async Task<ProcessResult> Run(string cwd, IReadOnlyList<string> args,
+            bool _, CancellationToken token)
+            => await ProcessRunner.RunAsync("git", ["-c", "credential.helper=", .. args], cwd,
+                environment: ProcessEnvironment(), clearEnvironment: true, ct: token);
+        var (bytes, ready) = await HostSourceObjectCache.MaterializeBundleAsync(
+            _subject.SourceBundleSha256!, _subject.ExpectedResultSha, RepositoryPath,
+            Download, Run, _utcNow, ct, sparsePaths);
+        _log($"review_source_ready subject={_subject.SubjectId} bytes={bytes} ready_ms={ready.TotalMilliseconds:F0}");
     }
 
     private async Task<string> GitValueAsync(string first, string second, CancellationToken ct)

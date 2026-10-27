@@ -146,8 +146,23 @@ board read. A missing input is null (Unknown), never zero.
   gate runs, and completed T3 nightly suites, per window and per day.
 - **Red develop time** reads T3 red-to-green intervals from post-merge receipts;
   it stays null until one such interval is observed.
-- **Gate source** reads the `Source bundle N bytes transferred in Xs` reason
-  suffix that remote gates write next to `remote_gate_bundle_transferred`.
+- **Gate source** reads transferred bytes from the `Source bundle N bytes
+  transferred in Xs` receipt suffix. New receipts use `Source ready Ys` for
+  checkout-ready time; old receipts retain transfer time as their proxy.
+
+### Host source object cache (M5, AGT-3319)
+
+The recorded D8 choice is A. Gate and Remote Review hosts keep bounded, evictable
+Git object caches outside attempt folders. The cache is a local copy only;
+the canonical repository or an immutable source bundle remains the source of
+truth. A warm exact SHA avoids source bundle transfer. The pull transport
+prepares a `gate-subject`-only bundle and transfers it on a miss; SSH creates
+its thin bundle against an ancestor tip only on a miss. Workers verify the complete object graph with
+`git fsck` before starting a gate. Reviews copy objects into an independent
+attempt checkout, so cache eviction cannot change an active review. A frozen
+gate plan can provide project `SourcePaths` for a cone sparse checkout; without
+an explicit safe path set the full tree is materialized. Per-run receipts log
+source bytes and checkout-ready seconds for the gate economics baseline.
 - **Board read** is a response-level list for the board, card list and board
   status handlers. It covers all projects over the git telemetry window and
   reads `GitProcessTelemetry`, the source of `/api/admin/git-telemetry`.

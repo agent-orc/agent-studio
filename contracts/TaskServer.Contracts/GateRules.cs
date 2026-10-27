@@ -80,6 +80,11 @@ public static class GateRules
             || plan.OverallTimeoutSeconds is < 1 or > 21600 || plan.MaxOutputBytes is < 1 or > 1048576
             || plan.CleanupPolicy != "always" || Path.IsPathRooted(plan.WorkingSubdirectory)
             || plan.WorkingSubdirectory.Split('/', '\\').Any(segment => segment == "..")
+            || plan.SourcePaths is { Count: > 32 }
+            || plan.SourcePaths?.Any(path => string.IsNullOrWhiteSpace(path)
+                || path.Length > 256
+                || Path.IsPathRooted(path)
+                || path.Split('/', '\\').Any(segment => segment is ".." or "." or "")) == true
             || plan.Commands.Select(command => command.StepId).Distinct(StringComparer.Ordinal).Count() != plan.Commands.Count
             || plan.Commands.Any(command => string.IsNullOrWhiteSpace(command.StepId)
                 || string.IsNullOrWhiteSpace(command.FileName) || command.TimeoutSeconds is < 1 or > 21600

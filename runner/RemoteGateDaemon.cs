@@ -153,7 +153,8 @@ public sealed class RemoteGateDaemon
         {
             await _client.AdvanceGateAsync(attempt.AttemptId,
                 new GatePhaseRequest(authority, GateStates.Materializing), leaseLoss.Token);
-            var proof = await workspace.PrepareAsync(_client, leaseLoss.Token);
+            var proof = await workspace.PrepareAsync(_client, leaseLoss.Token,
+                subject.Plan.SourcePaths);
             actualSha = proof.ActualHead;
             tree = proof.TreeHash;
             dirtyBefore = proof.DirtyBefore;

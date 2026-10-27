@@ -3,6 +3,13 @@
 Version: 2026-10-21
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
+Remote Review materializes exact result SHAs through the runner host's bounded
+source object cache (D8 A, AGT-3319). A canonical remote fetch populates a
+missing commit; a bundle-only subject downloads its digest-checked bundle only
+on a cache miss. Each attempt receives an independent object copy and proves
+its HEAD and tree before review commands run. A failing cache integrity check
+evicts and refetches the entry.
+
 ## Review economics (AGT-3278)
 
 `GET /api/projects/{projectName}/token-usage/reviews` folds the canonical

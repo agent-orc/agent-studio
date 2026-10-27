@@ -61,6 +61,8 @@ internal static class PipelineBaselineMetrics
     private static readonly Regex SourceBundle = new(
         @"Source bundle (\d+) bytes transferred in ([0-9]+(?:[.,][0-9]+)?)s\.",
         RegexOptions.CultureInvariant);
+    private static readonly Regex SourceReady = new(
+        @"Source ready ([0-9]+(?:[.,][0-9]+)?)s\.", RegexOptions.CultureInvariant);
 
     /// <summary>
     /// Computes the baseline over the folders of one row. A card is one
@@ -151,14 +153,17 @@ internal static class PipelineBaselineMetrics
                     (double)stats.TotalSpawns / stats.SampleCount)
                 : new BoardReadMetric(handler.Label, handler.Name, 0, null, null, null)).ToArray();
 
-    /// <summary>Bytes and seconds of a remote gate's source bundle transfer, from the receipt reason.</summary>
+    /// <summary>Source bytes and checkout-ready seconds; old receipts use transfer seconds.</summary>
     internal static (long Bytes, double Seconds)? ParseSourceTransfer(string? text)
     {
         if (string.IsNullOrEmpty(text)) return null;
+        if (text.Contains("Source ready unavailable.", StringComparison.Ordinal)) return null;
         var match = SourceBundle.Matches(text).LastOrDefault();
         if (match is null) return null;
+        var ready = SourceReady.Matches(text).LastOrDefault();
+        var secondsText = ready?.Groups[1].Value ?? match.Groups[2].Value;
         return long.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var bytes)
-            && double.TryParse(match.Groups[2].Value.Replace(',', '.'), NumberStyles.AllowDecimalPoint,
+            && double.TryParse(secondsText.Replace(',', '.'), NumberStyles.AllowDecimalPoint,
                 CultureInfo.InvariantCulture, out var seconds)
                 ? (bytes, seconds) : null;
     }

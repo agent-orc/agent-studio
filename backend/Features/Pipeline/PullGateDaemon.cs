@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Threading.Channels;
 
@@ -71,24 +72,77 @@ public static class PullGateDaemon
         });
         var progressSender = SendProgressAsync(client, claim, lines.Reader, lifetime.Token);
         var heartbeat = HeartbeatAsync(client, claim, () => Volatile.Read(ref progress), lifetime);
+        FileStream? cacheLease = null;
         try
         {
-            foreach (var name in new[] { "request.json", "source.bundle" })
+            using (var request = LeaseRequest(HttpMethod.Get,
+                $"api/pull-gates/runs/{claim.RunId}/request.json", claim.Lease))
             {
-                using var request = LeaseRequest(HttpMethod.Get,
-                    $"api/pull-gates/runs/{claim.RunId}/{name}", claim.Lease);
                 using var response = await client.SendAsync(request,
                     HttpCompletionOption.ResponseHeadersRead, lifetime.Token);
                 response.EnsureSuccessStatusCode();
                 await using var input = await response.Content.ReadAsStreamAsync(lifetime.Token);
-                await using var output = File.Create(Path.Combine(directory, name));
+                await using var output = File.Create(Path.Combine(directory, "request.json"));
                 await input.CopyToAsync(output, lifetime.Token);
             }
+            var requestPath = Path.Combine(directory, "request.json");
+            var invocation = JsonSerializer.Deserialize<RemoteGateInvocation>(
+                await File.ReadAllTextAsync(requestPath, lifetime.Token), Json)
+                ?? throw new InvalidDataException("Pull gate request is empty.");
+            RemoteGateWorker.Validate(invocation, claim.RunId);
+            var cacheRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "agentstudio", "source", "cache");
+            var cachePath = invocation.SourceCacheKey is { } key
+                ? Path.Combine(cacheRoot, key) : null;
+            if (cachePath is not null)
+                cacheLease = await GateSourceCacheRetention.LockAsync(cachePath + ".lock", lifetime.Token);
+            var sourceTimer = Stopwatch.StartNew();
+            long workerSourceReadyMs = -1;
+            var cacheState = cachePath is null ? GateSourceCacheState.Missing
+                : await InspectCacheAsync(cachePath, invocation.Request.ExpectedSha!,
+                    directory, lifetime.Token);
+            var warm = cacheState == GateSourceCacheState.Ready;
+            long sourceBytes = 0;
+            if (!warm)
+            {
+                if (cacheState == GateSourceCacheState.Corrupt && cachePath is not null)
+                {
+                    var corrupt = cachePath + ".corrupt-" + claim.RunId;
+                    Directory.Move(cachePath, corrupt);
+                    Directory.Delete(corrupt, recursive: true);
+                }
+                var tip = cacheState == GateSourceCacheState.HealthyWithoutSubject
+                    ? await CacheTipAsync(cachePath!, directory, lifetime.Token) : null;
+                using var request = LeaseRequest(HttpMethod.Post,
+                    $"api/pull-gates/runs/{claim.RunId}/source-bundle"
+                    + (tip is null ? "" : "?base=" + Uri.EscapeDataString(tip)), claim.Lease);
+                using var response = await client.SendAsync(request,
+                    HttpCompletionOption.ResponseHeadersRead, lifetime.Token);
+                response.EnsureSuccessStatusCode();
+                var transferDigest = response.Headers.GetValues("X-Source-Bundle-Sha256").Single();
+                invocation = invocation with { TransferBundleSha256 = transferDigest };
+                await using var input = await response.Content.ReadAsStreamAsync(lifetime.Token);
+                await using var output = File.Create(Path.Combine(directory, "source.bundle"));
+                await input.CopyToAsync(output, lifetime.Token);
+                sourceBytes = output.Length;
+            }
+            invocation = invocation with { CachePath = cachePath, SourceFromCache = warm };
+            await File.WriteAllTextAsync(requestPath, JsonSerializer.Serialize(invocation, Json), lifetime.Token);
+            sourceTimer.Stop();
+            Console.WriteLine($"pull_gate_source_ready run_id={claim.RunId} bytes={sourceBytes} ready_ms={sourceTimer.ElapsedMilliseconds} cache_hit={warm}");
             Volatile.Write(ref progress, "materialized");
             lines.Writer.TryWrite("materialized");
-            await RemoteGateWorker.RunAsync(Path.Combine(directory, "request.json"),
+            await RemoteGateWorker.RunAsync(requestPath,
                 line =>
                 {
+                    if (line == "REMOTE_GATE_OBJECTS_READY " + claim.RunId)
+                    {
+                        cacheLease?.Dispose();
+                        cacheLease = null;
+                    }
+                    if (line.StartsWith("REMOTE_GATE_SOURCE_READY " + claim.RunId + " ", StringComparison.Ordinal)
+                        && long.TryParse(line[("REMOTE_GATE_SOURCE_READY " + claim.RunId + " ").Length..],
+                            out var readyMs)) workerSourceReadyMs = readyMs;
                     Volatile.Write(ref progress, line);
                     lines.Writer.TryWrite(line);
                 }, lifetime.Token);
@@ -114,11 +168,24 @@ public static class PullGateDaemon
             var result = JsonSerializer.Deserialize<RemoteGateResponse>(
                 await File.ReadAllTextAsync(responsePath, lifetime.Token), Json)
                 ?? throw new InvalidDataException("Gate worker produced no result.");
+            result = result with { Result = result.Result with { Reason = result.Result.Reason
+                + $" Source bundle {sourceBytes} bytes transferred in {sourceTimer.Elapsed.TotalSeconds:F1}s."
+                + (workerSourceReadyMs < 0 ? " Source ready unavailable."
+                    : $" Source ready {(sourceTimer.Elapsed + TimeSpan.FromMilliseconds(workerSourceReadyMs)).TotalSeconds:F1}s.") } };
             using var complete = LeaseRequest(HttpMethod.Post,
                 $"api/pull-gates/runs/{claim.RunId}/result", claim.Lease);
             complete.Content = JsonContent.Create(result, options: Json);
             using var receipt = await client.SendAsync(complete, lifetime.Token);
             receipt.EnsureSuccessStatusCode();
+            try
+            {
+                GateSourceCacheRetention.Sweep(cacheRoot, cachePath,
+                    TimeProvider.System.GetUtcNow().UtcDateTime);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine("Gate source cache sweep failed: " + exception.Message);
+            }
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
         {
@@ -130,6 +197,7 @@ public static class PullGateDaemon
         }
         finally
         {
+            cacheLease?.Dispose();
             lines.Writer.TryComplete();
             lifetime.Cancel();
             try { await progressSender; }
@@ -156,6 +224,42 @@ public static class PullGateDaemon
                 Console.Error.WriteLine("Gate cleanup failed: " + exception.Message);
             }
         }
+    }
+
+    internal static async Task<bool> CacheHasSubjectAsync(string cache, string sha, string cwd, CancellationToken ct)
+        => await InspectCacheAsync(cache, sha, cwd, ct) == GateSourceCacheState.Ready;
+
+    internal enum GateSourceCacheState { Missing, HealthyWithoutSubject, Ready, Corrupt }
+
+    internal static async Task<GateSourceCacheState> InspectCacheAsync(string cache, string sha,
+        string cwd, CancellationToken ct)
+    {
+        if (!Directory.Exists(cache)) return GateSourceCacheState.Missing;
+        try
+        {
+            await RemoteGateProcess.RunAsync("git", ["-C", cache, "fsck", "--full", "--no-reflogs",
+                "--no-progress"], cwd, TimeSpan.FromMinutes(2), ct);
+            try
+            {
+                await RemoteGateProcess.RunAsync("git", ["-C", cache, "cat-file", "-e", sha + "^{commit}"],
+                    cwd, TimeSpan.FromMinutes(2), ct);
+                return GateSourceCacheState.Ready;
+            }
+            catch (IOException) { return GateSourceCacheState.HealthyWithoutSubject; }
+        }
+        catch (IOException)
+        {
+            return GateSourceCacheState.Corrupt;
+        }
+    }
+
+    internal static async Task<string?> CacheTipAsync(string cache, string cwd, CancellationToken ct)
+    {
+        var tips = new List<string>();
+        await RemoteGateProcess.RunAsync("git", ["-C", cache, "for-each-ref",
+            "--sort=-committerdate", "--format=%(objectname)", "refs/heads/gate-cache"],
+            cwd, TimeSpan.FromMinutes(2), ct, tips.Add);
+        return tips.FirstOrDefault(RemoteBuildTestGateRunner.ValidSha);
     }
 
     private static async Task SendProgressAsync(HttpClient client, PullGateClaim claim,
