@@ -145,7 +145,7 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
 
         using var response = await client.GetAsync($"/api/projects/{Project}/delivery-claims");
 
-        response.EnsureSuccessStatusCode();
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var root = body.RootElement;
         Assert.False(root.GetProperty("repair").GetBoolean());
@@ -318,6 +318,7 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["TaskRepository"] = _root,
+                    ["ErrorHandling:IncludeExceptionDetails"] = "true",
                     ["WatchPaths:0:Name"] = Project,
                     ["WatchPaths:0:Path"] = _watchPath,
                     ["WatchPaths:0:RootPath"] = _repo,

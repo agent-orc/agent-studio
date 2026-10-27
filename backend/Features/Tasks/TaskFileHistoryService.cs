@@ -31,6 +31,7 @@ public sealed class TaskFileHistoryService
     /// at the policy default.
     /// </summary>
     private readonly TimeSpan _gitCallBudget;
+    private readonly TimeProvider _clock;
     private readonly AgentStudio.Git.ISourceFactsReader? _sourceFacts;
 
     public TaskFileHistoryService(
@@ -39,12 +40,14 @@ public sealed class TaskFileHistoryService
         ILogger<TaskFileHistoryService> logger,
         TimeSpan? gitCallBudget = null,
         ITaskHistoryGitRunner? runner = null,
-        AgentStudio.Git.ISourceFactsReader? sourceFacts = null)
+        AgentStudio.Git.ISourceFactsReader? sourceFacts = null,
+        TimeProvider? clock = null)
     {
         _scanner = scanner;
         _git = git;
         _logger = logger;
         _gitCallBudget = gitCallBudget ?? GitCallBudgetPolicy.DefaultTotalBudget;
+        _clock = clock ?? TimeProvider.System;
         _runner = runner ?? new ProcessTaskHistoryGitRunner();
         _sourceFacts = sourceFacts;
     }
@@ -134,9 +137,11 @@ public sealed class TaskFileHistoryService
     {
         // One budget for the whole lookup, so the deadline the caller sees is
         // this method's and not the sum of however many commits the file has.
-        var budget = new GitCallBudget(_gitCallBudget);
+        var budget = new GitCallBudget(_gitCallBudget, clock: _clock);
         var resolved = ResolveCandidates(budget, jobId, watchPath, requestPath, scope);
-        if (!resolved.Success) return TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Fail(resolved.StatusCode, resolved.Error);
+        if (!resolved.Success) return TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Fail(
+            budget.IsExhausted || budget.HasTimedOutCall ? StatusCodes.Status503ServiceUnavailable : resolved.StatusCode,
+            budget.IsExhausted ? GitBudgetExhausted : budget.HasTimedOutCall ? TaskHistoryGitResult.TimedOut : resolved.Error);
 
         var sw = Stopwatch.StartNew();
         foreach (var candidate in resolved.Candidates)
@@ -145,8 +150,8 @@ public sealed class TaskFileHistoryService
             {
                 if (resolved.IsExplicitScope)
                     return TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Fail(
-                        StatusCodes.Status400BadRequest,
-                        budget.IsExhausted ? GitBudgetExhausted : "The selected file source is not in a git repository.");
+                        budget.IsExhausted || budget.HasTimedOutCall ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status400BadRequest,
+                        budget.IsExhausted ? GitBudgetExhausted : budget.HasTimedOutCall ? TaskHistoryGitResult.TimedOut : "The selected file source is not in a git repository.");
                 continue;
             }
 
@@ -154,10 +159,14 @@ public sealed class TaskFileHistoryService
             if (!result.Success)
             {
                 if (resolved.IsExplicitScope)
-                    return TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Fail(StatusCodes.Status400BadRequest, result.Error ?? "git log failed.");
+                    return GitHistoryFailure<IReadOnlyList<TaskFileHistoryEntry>>(budget, result.Error);
+                if (budget.IsExhausted || budget.HasTimedOutCall)
+                    return GitHistoryFailure<IReadOnlyList<TaskFileHistoryEntry>>(budget, result.Error);
                 continue;
             }
 
+            if (budget.IsExhausted || budget.HasTimedOutCall)
+                return GitHistoryFailure<IReadOnlyList<TaskFileHistoryEntry>>(budget, budget.IsExhausted ? GitBudgetExhausted : TaskHistoryGitResult.TimedOut);
             if (result.Value.Count > 0 || resolved.IsExplicitScope || File.Exists(candidate.LivePath))
             {
                 LogSlow(sw, "history", jobId, candidate.Source, candidate.RequestPath);
@@ -166,7 +175,9 @@ public sealed class TaskFileHistoryService
         }
 
         LogSlow(sw, "history", jobId, TaskFileSources.Auto, requestPath);
-        return TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Ok([], TaskFileSources.Auto);
+        return budget.IsExhausted || budget.HasTimedOutCall
+            ? GitHistoryFailure<IReadOnlyList<TaskFileHistoryEntry>>(budget, budget.IsExhausted ? GitBudgetExhausted : TaskHistoryGitResult.TimedOut)
+            : TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Ok([], TaskFileSources.Auto);
     }
 
     public TaskFileLookupResult<TaskFileContent> ReadFile(
@@ -177,14 +188,16 @@ public sealed class TaskFileHistoryService
         string? scope)
     {
         if (string.IsNullOrWhiteSpace(at))
-            return ReadLiveFile(new GitCallBudget(_gitCallBudget), jobId, watchPath, requestPath, scope);
+            return ReadLiveFile(new GitCallBudget(_gitCallBudget, clock: _clock), jobId, watchPath, requestPath, scope);
 
         if (!IsSha(at))
             return TaskFileLookupResult<TaskFileContent>.Fail(StatusCodes.Status400BadRequest, "Invalid commit SHA.");
 
-        var budget = new GitCallBudget(_gitCallBudget);
+        var budget = new GitCallBudget(_gitCallBudget, clock: _clock);
         var resolved = ResolveCandidates(budget, jobId, watchPath, requestPath, scope);
-        if (!resolved.Success) return TaskFileLookupResult<TaskFileContent>.Fail(resolved.StatusCode, resolved.Error);
+        if (!resolved.Success) return TaskFileLookupResult<TaskFileContent>.Fail(
+            budget.IsExhausted || budget.HasTimedOutCall ? StatusCodes.Status503ServiceUnavailable : resolved.StatusCode,
+            budget.IsExhausted ? GitBudgetExhausted : budget.HasTimedOutCall ? TaskHistoryGitResult.TimedOut : resolved.Error);
 
         var sw = Stopwatch.StartNew();
         foreach (var candidate in resolved.Candidates)
@@ -193,12 +206,14 @@ public sealed class TaskFileHistoryService
             {
                 if (resolved.IsExplicitScope)
                     return TaskFileLookupResult<TaskFileContent>.Fail(
-                        StatusCodes.Status400BadRequest,
-                        budget.IsExhausted ? GitBudgetExhausted : "The selected file source is not in a git repository.");
+                        budget.IsExhausted || budget.HasTimedOutCall ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status400BadRequest,
+                        budget.IsExhausted ? GitBudgetExhausted : budget.HasTimedOutCall ? TaskHistoryGitResult.TimedOut : "The selected file source is not in a git repository.");
                 continue;
             }
 
             var show = RunGit(budget, candidate.GitRoot, "show", $"{at}:{candidate.GitPath}");
+            if (show.RunnerFailed || budget.IsExhausted || budget.HasTimedOutCall)
+                return GitHistoryFailure<TaskFileContent>(budget, show.Err);
             if (show.Code == 0)
             {
                 LogSlow(sw, "show", jobId, candidate.Source, candidate.RequestPath);
@@ -216,7 +231,9 @@ public sealed class TaskFileHistoryService
         }
 
         LogSlow(sw, "show", jobId, TaskFileSources.Auto, requestPath);
-        return TaskFileLookupResult<TaskFileContent>.Fail(StatusCodes.Status404NotFound, "File was not found at the requested commit.");
+        return budget.IsExhausted || budget.HasTimedOutCall
+            ? GitHistoryFailure<TaskFileContent>(budget, budget.IsExhausted ? GitBudgetExhausted : TaskHistoryGitResult.TimedOut)
+            : TaskFileLookupResult<TaskFileContent>.Fail(StatusCodes.Status404NotFound, "File was not found at the requested commit.");
     }
 
     /// <summary>
@@ -367,8 +384,12 @@ public sealed class TaskFileHistoryService
         string? scope)
     {
         var resolved = ResolveCandidates(budget, jobId, watchPath, requestPath, scope);
-        if (!resolved.Success) return TaskFileLookupResult<TaskFileContent>.Fail(resolved.StatusCode, resolved.Error);
+        if (!resolved.Success) return TaskFileLookupResult<TaskFileContent>.Fail(
+            budget.IsExhausted || budget.HasTimedOutCall ? StatusCodes.Status503ServiceUnavailable : resolved.StatusCode,
+            budget.IsExhausted ? GitBudgetExhausted : budget.HasTimedOutCall ? TaskHistoryGitResult.TimedOut : resolved.Error);
 
+        if (budget.IsExhausted || budget.HasTimedOutCall)
+            return GitHistoryFailure<TaskFileContent>(budget, budget.IsExhausted ? GitBudgetExhausted : TaskHistoryGitResult.TimedOut);
         foreach (var candidate in resolved.Candidates)
         {
             if (!File.Exists(candidate.LivePath))
@@ -417,7 +438,15 @@ public sealed class TaskFileHistoryService
         {
             var workspaceCandidate = BuildWorkspaceCandidate(budget, info, normalized);
             if (workspaceCandidate != null)
+            {
                 candidates.Add(workspaceCandidate);
+                // Auto selects the workspace source when its live artifact exists.
+                // Resolving the code repository here would spend Git calls on a
+                // source the request can never use.
+                if (normalizedScope == TaskFileSources.Auto && workspaceCandidate.GitRoot is not null
+                    && File.Exists(workspaceCandidate.LivePath))
+                    return CandidateResolution.Ok(candidates, isExplicitScope: false);
+            }
             else if (normalizedScope == TaskFileSources.Workspace)
                 return CandidateResolution.Fail(StatusCodes.Status400BadRequest, "The requested workspace path is outside the task folder.");
         }
@@ -488,6 +517,15 @@ public sealed class TaskFileHistoryService
             info.FolderPath);
     }
 
+    private static TaskFileLookupResult<T> GitHistoryFailure<T>(GitCallBudget budget, string? error)
+    {
+        var exhausted = budget.IsExhausted || string.Equals(error, GitBudgetExhausted, StringComparison.Ordinal);
+        var timedOut = budget.HasTimedOutCall || string.Equals(error, TaskHistoryGitResult.TimedOut, StringComparison.Ordinal);
+        return TaskFileLookupResult<T>.Fail(
+            exhausted || timedOut ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status400BadRequest,
+            exhausted ? GitBudgetExhausted : timedOut ? TaskHistoryGitResult.TimedOut : error ?? "git failed.");
+    }
+
     private GitValue<IReadOnlyList<TaskFileHistoryEntry>> ReadHistory(GitCallBudget budget, TaskFileCandidate candidate)
     {
         var log = RunGit(
@@ -501,6 +539,8 @@ public sealed class TaskFileHistoryService
         if (log.Code != 0)
             return GitValue<IReadOnlyList<TaskFileHistoryEntry>>.Fail(log.Err);
 
+        if (budget.IsExhausted)
+            return GitValue<IReadOnlyList<TaskFileHistoryEntry>>.Fail(GitBudgetExhausted);
         if (string.IsNullOrWhiteSpace(log.Out))
             return GitValue<IReadOnlyList<TaskFileHistoryEntry>>.Ok([]);
 
@@ -530,6 +570,9 @@ public sealed class TaskFileHistoryService
             var generation = candidate.Source == TaskFileSources.Workspace
                 ? ReadGenerationAt(budget, candidate, sha)
                 : null;
+            if (budget.IsExhausted || budget.HasTimedOutCall)
+                return GitValue<IReadOnlyList<TaskFileHistoryEntry>>.Fail(
+                    budget.IsExhausted ? GitBudgetExhausted : TaskHistoryGitResult.TimedOut);
 
             entries.Add(new TaskFileHistoryEntry(
                 Sha: sha,
@@ -545,7 +588,10 @@ public sealed class TaskFileHistoryService
                     Generation: generation)));
         }
 
-        return GitValue<IReadOnlyList<TaskFileHistoryEntry>>.Ok(entries);
+        return budget.IsExhausted || budget.HasTimedOutCall
+            ? GitValue<IReadOnlyList<TaskFileHistoryEntry>>.Fail(
+                budget.IsExhausted ? GitBudgetExhausted : TaskHistoryGitResult.TimedOut)
+            : GitValue<IReadOnlyList<TaskFileHistoryEntry>>.Ok(entries);
     }
 
     private FileGenerationMeta? ReadGenerationAt(GitCallBudget budget, TaskFileCandidate candidate, string sha)
@@ -706,7 +752,10 @@ public sealed class TaskFileHistoryService
         var timeout = budget.NextCallTimeout();
         if (timeout <= TimeSpan.Zero)
             return TaskHistoryGitResult.Failed(GitBudgetExhausted);
-        return _runner.Run(cwd, args, timeout);
+        var result = _runner.Run(cwd, args, timeout);
+        if (string.Equals(result.Err, TaskHistoryGitResult.TimedOut, StringComparison.Ordinal))
+            budget.RecordTimeout();
+        return result;
     }
 
     private sealed record TaskFileCandidate(

@@ -1,4 +1,5 @@
 using Xunit;
+using Microsoft.Extensions.Time.Testing;
 
 namespace AgentStudio.Tests;
 
@@ -90,6 +91,20 @@ public class GitCallBudgetPolicyTests
         // Total already zero, so the very first call is over budget.
         var budget = new GitCallBudget(TimeSpan.Zero, TimeSpan.FromSeconds(10));
 
+        Assert.Equal(TimeSpan.Zero, budget.NextCallTimeout());
+    }
+
+    [Fact]
+    public void BudgetUsesInjectedClockToStopAfterThirtySeconds()
+    {
+        var clock = new FakeTimeProvider();
+        var budget = new GitCallBudget(clock: clock);
+
+        clock.Advance(TimeSpan.FromSeconds(25));
+        Assert.Equal(TimeSpan.FromSeconds(5), budget.NextCallTimeout());
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+        Assert.True(budget.IsExhausted);
         Assert.Equal(TimeSpan.Zero, budget.NextCallTimeout());
     }
 }

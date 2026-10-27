@@ -1669,6 +1669,12 @@ release branches on demand.
 - `SourceFacts:ReadMode` selects the source. Without a setting, a configured
   Task Server plane means `derived`; `legacy` restores the live-Git reads and
   is the only answer on a dev seat without a Task Server.
+- The legacy `GET /api/tasks/{jobId}/files/{path}/history` and historical
+  `GET /api/tasks/{jobId}/files/{path}?at={sha}` reads share a 30 second Git
+  budget per request, with a 10 second cap per call. If the budget expires
+  or a Git call times out, the route returns `503 Service Unavailable` with
+  `Retry-After: 1` and an error naming the exhausted budget or timed out
+  Git call. It does not return an incomplete history as a successful read.
 - The Task Server stores the facts by immutable key without a TTL and evicts
   the least recently read objects once `TaskServer:SourceFactsMaxStoredBytes`
   (default 512 MiB) is exceeded. One producer lease per repository carries a
