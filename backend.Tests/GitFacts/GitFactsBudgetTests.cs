@@ -96,7 +96,7 @@ public sealed class GitFactsBudgetTests(GitFactsBoardFixture board)
     }
 
     [Fact]
-    public async Task Unchanged_input_index_run_spawns_only_its_config_capture()
+    public async Task Unchanged_input_index_run_starts_no_git_process()
     {
         var runs = new IndexRunLog();
         await using var host = new GitReadCensusHost(board, keepGitStateIndex: true, runs);
@@ -108,8 +108,9 @@ public sealed class GitFactsBudgetTests(GitFactsBoardFixture board)
         var run = await runs.NextAsync(before);
 
         Assert.Equal("task-event", run.Trigger);
-        // S1 measures this; S2 moves the configuration generation to the watcher (0 spawns).
-        Assert.Equal(1, run.Spawns);
+        // S1 measured 1 spawn (the config capture); S2 (AGT-3322) moved the
+        // configuration generation to the watcher, so the run starts none.
+        Assert.Equal(0, run.Spawns);
         Assert.Empty(runs.Failures);
     }
 
