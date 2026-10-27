@@ -76,10 +76,22 @@ public sealed class StallInterventionAdapterTests : IDisposable
         Assert.Null(control.SetAdmission("KORI Runner 01", 4));
         Assert.Equal(6, control.SetAdmission(runner.Id, 6));
         Assert.Equal(6, clients.Find(runner.Id)!.RunnerDesiredMaxParallelism);
-        Assert.False(control.TrySetAdmission(runner.Id, 8, 4));
+        Assert.Null(control.TrySetAdmission(runner.Id, 8, 4));
         Assert.Equal(6, clients.Find(runner.Id)!.RunnerDesiredMaxParallelism);
-        Assert.True(control.TrySetAdmission(runner.Id, 6, 8));
+        var aiStamp = control.TrySetAdmission(runner.Id, 6, 8);
+        Assert.True(aiStamp.HasValue);
         Assert.Equal(8, clients.Find(runner.Id)!.RunnerDesiredMaxParallelism);
+        Assert.Equal(aiStamp, control.Read(runner.Id, 0.8, Now)!.CapacityStampUtc);
+
+        // A person saves the same value again: the stamp changed, so the AI value is not written over it.
+        clients.SetRunnerCapacity(runner.Id, 8, null, null);
+        Assert.Null(control.TrySetAdmission(runner.Id, 8, 4, aiStamp));
+        Assert.Equal(8, clients.Find(runner.Id)!.RunnerDesiredMaxParallelism);
+
+        // A host without a ceiling a person set has nothing to lower or restore to.
+        var unset = clients.Register(new RegisterClientRequest { DisplayName = "KORI Runner 02", Kind = ClientIdentityKinds.Service });
+        Assert.Null(control.Read(unset.Id, 0.8, Now)!.Admission);
+        Assert.Null(control.TrySetAdmission(unset.Id, 4, 3));
     }
 
     [Fact]
@@ -89,6 +101,10 @@ public sealed class StallInterventionAdapterTests : IDisposable
         var registry = new V1ReviewExecutorRegistry(_clock, exclusions);
         Register(registry, "kori-review-01");
         Register(registry, "kori-review-02");
+        // A coding runner in the same registry is not a review host and not a reroute target.
+        registry.Register("agent-runner-01-runner", new Contract.RegisterRunnerRequest("agent-runner-01-runner",
+            "agent-runner-01", "agent-runner-01:1", "1.0.0", Contract.TaskServerProtocol.Current,
+            [Contract.ReviewCapabilities.CodingExecutor, "provider-auth:codex"]));
         var control = new ReviewProviderRouteControl(registry, exclusions, _clock);
 
         Assert.True(control.IsReviewHost("kori-review-01"));
@@ -109,7 +125,10 @@ public sealed class StallInterventionAdapterTests : IDisposable
         Assert.False(withoutSnapshot.IsRerouted("kori-review-01", "codex"));
         Assert.True(withoutSnapshot.IsExcluded("kori-review-01", "codex"));
 
-        control.Restore("kori-review-01", "codex");
+        control.Restore("kori-review-01", "codex", "si-other");
+        Assert.True(control.IsExcluded("kori-review-01", "codex"));
+        Assert.Equal("si-1", control.ExcludedBy("kori-review-01", "codex"));
+        control.Restore("kori-review-01", "codex", "si-1");
         Assert.False(control.IsExcluded("kori-review-01", "codex"));
         Assert.False(control.IsRerouted("kori-review-01", "codex"));
         Assert.Contains("provider-auth:codex", registry.AdmittedReviewCapabilities("kori-review-01-runner", "kori-review-01:1"));
@@ -158,6 +177,9 @@ public sealed class StallInterventionAdapterTests : IDisposable
             var blocked = authority.ClaimReview(review.AttemptId, "kori-review-01-runner", "kori-review-01",
                 3600, "claim-while-queued");
             Assert.Equal(AttemptWriteStatus.InvalidState, blocked.Status);
+            // Lease hosts compare case-insensitively; so does the fence.
+            Assert.Equal(AttemptWriteStatus.InvalidState, authority.ClaimReview(review.AttemptId,
+                "kori-review-01-runner", "KORI-Review-01", 3600, "claim-other-casing").Status);
             Assert.Empty(authority.ListActiveReviewAttempts());
         }
 
@@ -250,8 +272,9 @@ public sealed class StallInterventionAdapterTests : IDisposable
         Assert.Contains("provider-auth:codex", registry.AdmittedReviewCapabilities("kori-review-01-runner", "kori-review-01:1"));
         Assert.False(exclusions.IsExcluded("kori-review-01", "kori-review-01-runner", "codex"));
 
-        exclusions.Exclude("kori-review-01", "codex", "si-1");
-        Assert.True(new ProviderRouteExclusions(() => _root).IsExcluded("kori-review-01", "kori-review-01-runner", "codex"));
+        // A write over the torn file would erase every other host's exclusion: it is refused, the file kept.
+        Assert.Throws<InvalidDataException>(() => exclusions.Exclude("kori-review-01", "codex", "si-1"));
+        Assert.Equal("{ \"kori-review-01|codex\": ", File.ReadAllText(path));
         Assert.False(File.Exists(path + ".tmp"));
     }
 

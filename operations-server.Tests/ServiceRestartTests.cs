@@ -112,6 +112,75 @@ public sealed class ServiceRestartTests
     }
 
     [Fact]
+    public async Task Service_outside_the_local_allowlist_fails_definitely_without_stopping_the_agent()
+    {
+        await using var f = await Start();
+        var calls = new List<ProcessStartInfo>();
+        var agent = Agent(f, calls, exitCodes: []);
+        await agent.RegisterAsync(default);
+
+        var attempt = await f.Submit(Restart(f, "gate-worker"));
+        await agent.PollOnceAsync(default);
+
+        var completed = await f.Service.GetFromJsonAsync<OperationAttempt>(Fixture.Api + $"attempts/{attempt.Id}");
+        Assert.Equal(("failed", "service-not-allowlisted"), (completed!.State, completed.Result!.ExitClassification));
+        Assert.Empty(calls);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(f.Directory, "spool")));
+    }
+
+    [Fact]
+    public async Task Restart_whose_lease_cannot_cover_a_bounded_recreate_is_refused_before_docker()
+    {
+        await using var f = await Start();
+        var calls = new List<ProcessStartInfo>();
+        var agent = Agent(f, calls, exitCodes: []);
+        await agent.RegisterAsync(default);
+
+        var attempt = await f.Submit(Restart(f, "review-daemon") with { Deadline = f.Clock.GetUtcNow().AddSeconds(100) });
+        await agent.PollOnceAsync(default);
+
+        var completed = await f.Service.GetFromJsonAsync<OperationAttempt>(Fixture.Api + $"attempts/{attempt.Id}");
+        Assert.Equal(("failed", "insufficient-lease"), (completed!.State, completed.Result!.ExitClassification));
+        Assert.Empty(calls);
+    }
+
+    [Fact]
+    public async Task Missing_docker_is_a_definite_failure_not_an_agent_crash()
+    {
+        var start = ServiceRestart.Docker("version");
+        start.FileName = "agent-studio-missing-tool-" + Guid.NewGuid().ToString("N");
+
+        var result = await ServiceRestart.RunAsync(start, TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        Assert.Equal((ServiceRestart.ToolUnavailable, false), (result.ExitCode, result.TimedOut));
+        Assert.Contains("could not start", result.Output);
+    }
+
+    [Fact]
+    public async Task Leftover_marker_of_a_reported_restart_is_settled_and_the_agent_keeps_polling()
+    {
+        await using var f = await Start();
+        var spool = Path.Combine(f.Directory, "spool");
+        var agent = Agent(f, [], exitCodes: [0, 0]);
+        await agent.RegisterAsync(default);
+        var attempt = await f.Submit(Restart(f, "review-daemon"));
+        await agent.PollOnceAsync(default);
+        var completed = await f.Service.GetFromJsonAsync<OperationAttempt>(Fixture.Api + $"attempts/{attempt.Id}");
+        // A crash after the result was reported, before its marker was deleted.
+        var at = f.Clock.GetUtcNow();
+        File.WriteAllBytes(Path.Combine(spool, attempt.Id + ".restart-started"), JsonSerializer.SerializeToUtf8Bytes(
+            new AttemptReportRequest("boot-a", completed!.Fence, new OperationResult("failed", completed.Command.InputDigest,
+                "restart-outcome-unknown", JsonSerializer.SerializeToElement(new { }), [], true, at, at)),
+            OperationsProtocol.Json));
+
+        await agent.PollOnceAsync(default);
+
+        Assert.Empty(Directory.EnumerateFiles(spool));
+        var settled = await f.Service.GetFromJsonAsync<OperationAttempt>(Fixture.Api + $"attempts/{attempt.Id}");
+        Assert.Equal("succeeded", settled!.State);
+    }
+
+    [Fact]
     public async Task Agent_without_an_allowlist_offers_no_restart()
     {
         await using var f = await Start();
@@ -261,9 +330,11 @@ public sealed class ServiceRestartTests
     private static OperationCommand Restart(Fixture f, string service)
     {
         var input = JsonSerializer.SerializeToElement(new { service });
+        // The Studio's command window: the lease covers a bounded validate and recreate.
         return f.Command("restart-" + service) with
         {
             OperationId = "service.restart", Input = input, InputDigest = OperationsProtocol.Digest(input),
+            Deadline = f.Clock.GetUtcNow().AddMinutes(4),
         };
     }
 }

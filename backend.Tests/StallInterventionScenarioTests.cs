@@ -161,6 +161,33 @@ public sealed class StallInterventionScenarioTests : IDisposable
     }
 
     [Fact]
+    public async Task Unconfirmable_restart_keeps_claims_fenced_until_its_command_expired_never_forever()
+    {
+        _h.Restarts.Allowed.Add(("kori-review-01", "review-daemon"));
+        _h.Restarts.ReadFailsAfterQueue = true;
+        _h.Raise(Snapshot(capacity: [new("KORI", "kori-review-01", "review", 3, 15,
+            Now0.AddHours(-2), ["AGT-3194"])]));
+        await _h.Service.RunOnceAsync();
+        _h.Restart();
+        _h.Clear();
+        // The attempt is absent (lost submission, server restore): ambiguous until the command expired.
+        _h.Restarts.Terminal = null;
+
+        _h.Clock.Advance(StallInterventionEffect.RestartFenceHorizon - TimeSpan.FromMinutes(1));
+        await _h.Service.RunOnceAsync();
+        Assert.True(_h.Workload.Fenced);
+
+        // A person switched the AI Operator off after the bad restart: the drain still ends.
+        _h.Configuration["StallIntervention:Mode"] = StallInterventionModes.Off;
+        _h.Clock.Advance(TimeSpan.FromMinutes(1));
+        await _h.Service.RunOnceAsync();
+
+        Assert.False(_h.Workload.Fenced);
+        Assert.Single(_h.Restarts.Calls);
+        Assert.Contains("its command expired", Assert.Single(_h.Store.All()).Outcome);
+    }
+
+    [Fact]
     public async Task Restart_without_an_operations_agent_becomes_a_proposal_for_a_person()
     {
         _h.Raise(Snapshot(capacity: [new("KORI", "kori-review-01", "review", 3, 15, Now0.AddHours(-2), ["AGT-3194"])]));
@@ -220,6 +247,52 @@ public sealed class StallInterventionScenarioTests : IDisposable
     }
 
     [Fact]
+    public async Task An_escalated_reroute_still_in_force_is_routed_back_once_the_login_stall_cleared()
+    {
+        _h.Routes.Healthy.Add("kori-review-02");
+        _h.Raise(Snapshot(providers: [new("kori-review-01", "codex", "auth-invalid", Now0.AddHours(-2), ["AGT-3194"], "CredentialInvalid")]));
+        await _h.Service.RunOnceAsync();
+        var reroute = Assert.Single(_h.Store.All());
+        _h.Routes.IgnoreRestore = true;
+        _h.Clock.Advance(TimeSpan.FromMinutes(30));
+        _h.Clear();
+        await _h.Service.RunOnceAsync();
+        Assert.Equal(StallInterventionStatuses.Escalated, _h.Store.Find(reroute.Id)!.Status);
+
+        // The write works again on a later pass; months later the record is still kept while in force.
+        _h.Routes.IgnoreRestore = false;
+        await _h.Service.RunOnceAsync();
+
+        Assert.DoesNotContain(("kori-review-01", "codex"), _h.Routes.Excluded);
+        var released = _h.Store.Find(reroute.Id)!;
+        Assert.Equal(("login stall cleared", false, false), (released.RevertedBy, released.Undoable, released.RouteMayBeInForce));
+        Assert.Contains("I routed codex to it again", released.Outcome);
+    }
+
+    [Fact]
+    public async Task A_reroute_in_force_is_never_pruned_and_another_owner_keeps_its_exclusion()
+    {
+        _h.Routes.Healthy.Add("kori-review-02");
+        _h.Raise(Snapshot(providers: [new("kori-review-01", "codex", "auth-invalid", Now0.AddHours(-2), ["AGT-3194"], "CredentialInvalid")]));
+        _h.Routes.IgnoreRestore = true;
+        await _h.Service.RunOnceAsync();
+        var reroute = Assert.Single(_h.Store.All());
+        _h.Clock.Advance(TimeSpan.FromMinutes(30));
+        _h.Clear();
+        await _h.Service.RunOnceAsync();
+        _h.Store.Prune(_h.Now.AddDays(90));
+        Assert.NotNull(_h.Store.Find(reroute.Id));
+
+        // A person's own exclusion replaced this one: routing back must not lift theirs.
+        _h.Routes.Owners[("kori-review-01", "codex")] = "person";
+        _h.Routes.IgnoreRestore = false;
+        await _h.Service.RunOnceAsync();
+
+        Assert.Contains(("kori-review-01", "codex"), _h.Routes.Excluded);
+        Assert.Equal("exclusion no longer in force", _h.Store.Find(reroute.Id)!.RevertedBy);
+    }
+
+    [Fact]
     public async Task Stuck_batch_gate_drops_completed_members_and_closes_the_overdue_batch()
     {
         _h.WriteCard(TaskStates.Completed, "AGT-3097");
@@ -260,6 +333,23 @@ public sealed class StallInterventionScenarioTests : IDisposable
         Assert.False(_h.Continuations.Pins.ContainsKey("AGT-3176"));
         Assert.Equal(("robert", StallInterventionStatuses.Undone), (undo.Record!.UndoneBy, undo.Record.Status));
         Assert.Equal("intervention-already-undone", _h.Service.Undo(record.Id, "robert").Message);
+    }
+
+    [Fact]
+    public async Task Undo_of_a_base_a_run_already_started_from_is_not_reported_as_undone()
+    {
+        _h.Continuations.Candidates.Add(new("AGT-3176", TaskStates.Ready, StallContinuationBases.EmptySalvage, true,
+            "refs/heads/agent-results/AGT-3176/r2", "0123456789abcdef", "fedcba9876543210"));
+        _h.Raise(Snapshot(providers: [new("agent-runner-01", "codex", "rate-limited", Now0.AddHours(-11), ["AGT-3176"], "rate limit 08:12Z")]));
+        await _h.Service.RunOnceAsync();
+        var record = Assert.Single(_h.Store.All());
+        _h.Continuations.Started.Add("AGT-3176");
+
+        var undo = _h.Service.Undo(record.Id, "robert");
+
+        Assert.False(undo.Undone);
+        Assert.Contains("AGT-3176 already started from it", undo.Message);
+        Assert.Null(_h.Store.Find(record.Id)!.UndoneAtUtc);
     }
 
     [Fact]
@@ -718,6 +808,72 @@ public sealed class StallInterventionScenarioTests : IDisposable
     }
 
     [Fact]
+    public async Task A_person_who_saves_the_lowered_value_again_is_neither_undone_nor_restored_over()
+    {
+        _h.Admission.Hosts[ClientId] = new HostState(8, 12, 46.7, 95);
+        _h.Raise(Overload());
+        await _h.Service.RunOnceAsync();
+        var lowered = Assert.Single(_h.Store.All());
+        // The person keeps 6 on purpose: the value is the same, the save is theirs.
+        _h.Admission.PersonSaves(ClientId, 6);
+
+        Assert.False(_h.Service.Undo(lowered.Id, "robert").Undone);
+        _h.Clear();
+        _h.Clock.Advance(TimeSpan.FromMinutes(17));
+        _h.Admission.Hosts[ClientId] = _h.Admission.Hosts[ClientId] with { Load1 = 4.0, CalmSince = _h.Now.AddMinutes(-16) };
+        await _h.Service.RunOnceAsync();
+        await _h.Service.RunOnceAsync();
+
+        Assert.Equal([(ClientId, 6)], _h.Admission.Writes);
+        Assert.Equal(6, _h.Admission.Hosts[ClientId].Admission);
+        Assert.False(_h.Store.Find(lowered.Id)!.AdmissionInForce);
+    }
+
+    [Fact]
+    public async Task A_restore_waits_while_the_host_is_not_calm_when_it_is_applied()
+    {
+        _h.Admission.Hosts[ClientId] = new HostState(8, 12, 46.7, 95);
+        _h.Raise(Overload());
+        await _h.Service.RunOnceAsync();
+        var lowered = Assert.Single(_h.Store.All());
+        _h.Clear();
+        _h.Clock.Advance(TimeSpan.FromMinutes(17));
+        _h.Admission.Hosts[ClientId] = _h.Admission.Hosts[ClientId] with { Load1 = 4.0, CalmSince = _h.Now.AddMinutes(-16) };
+        var options = StallInterventionOptions.FromConfiguration(_h.Configuration);
+        var restore = Facts().Restore(_h.Store.Find(lowered.Id)!, _h.Admission.Read(ClientId, 0.8, _h.Now)!, false,
+            _h.Store.All(), options, _h.Now);
+        // The load came back before the engine receipt arrived.
+        _h.Admission.Hosts[ClientId] = _h.Admission.Hosts[ClientId] with { Load1 = 46.7, CalmSince = null };
+
+        await _h.Effect.ApplyAsync(Application(restore, "engine-restore-1"), default);
+
+        Assert.Equal([(ClientId, 6)], _h.Admission.Writes);
+        Assert.DoesNotContain(_h.Store.All(), item => item.Action == StallInterventionActions.RestoreAdmission);
+        Assert.True(_h.Store.Find(lowered.Id)!.AdmissionInForce);
+
+        _h.Admission.Hosts[ClientId] = _h.Admission.Hosts[ClientId] with { Load1 = 4.0, CalmSince = _h.Now.AddMinutes(-16) };
+        await _h.Effect.ApplyAsync(Application(restore, "engine-restore-2"), default);
+
+        Assert.Equal(8, _h.Admission.Hosts[ClientId].Admission);
+    }
+
+    [Fact]
+    public async Task Concurrent_receipts_for_one_subject_act_once()
+    {
+        _h.Admission.Hosts[ClientId] = new HostState(8, 12, 46.7, 95);
+        _h.Raise(Overload());
+        var facts = Facts().Stall(_h.Cases.All(_h.Root).Single(), _h.Cases.All(_h.Root).ToArray(), [],
+            StallInterventionOptions.FromConfiguration(_h.Configuration), _h.Now);
+
+        await Task.WhenAll(Enumerable.Range(1, 4).Select(index =>
+            Task.Run(() => _h.Effect.ApplyAsync(Application(facts, $"engine-run-{index}"), default))));
+
+        Assert.Equal([(ClientId, 6)], _h.Admission.Writes);
+        var record = Assert.Single(_h.Store.All());
+        Assert.Equal((StallInterventionStatuses.Applied, true), (record.Status, record.AdmissionInForce));
+    }
+
+    [Fact]
     public async Task Observe_mode_is_the_default_and_writes_one_would_do_receipt_without_acting()
     {
         using var observe = new Harness(mode: null);
@@ -940,27 +1096,41 @@ public sealed class StallInterventionScenarioTests : IDisposable
         public Exception? FailAfterWrite { get; set; }
         public int? ChangeBeforeCompare { get; set; }
 
+        /// <summary>The capacity stamp of each host's last save, by the AI Operator or a person.</summary>
+        public readonly Dictionary<string, DateTime> Stamps = new(StringComparer.Ordinal);
+        private long _saves;
+
+        /// <summary>A person saves the capacity form, possibly with the value it already reads.</summary>
+        public void PersonSaves(string clientId, int value)
+        {
+            Hosts[clientId] = Hosts[clientId] with { Admission = value };
+            Stamps[clientId] = DateTime.UnixEpoch.AddTicks(++_saves);
+        }
+
         public HostAdmissionReading? Read(string clientId, double restoreFraction, DateTime nowUtc)
             => Hosts.TryGetValue(clientId, out var state)
                 ? new HostAdmissionReading(clientId, HostName, state.Admission, state.Cores, state.Load1, null, null, state.Target,
-                    state.ActiveSlots ?? state.Admission, state.Load1 / state.Cores, state.CalmSince, state.SampleUtc ?? nowUtc)
+                    state.ActiveSlots ?? state.Admission, state.Load1 / state.Cores, state.CalmSince, state.SampleUtc ?? nowUtc,
+                    CapacityStampUtc: Stamps.TryGetValue(clientId, out var stamp) ? stamp : null)
                 : null;
 
-        public bool TrySetAdmission(string clientId, int expected, int replacement)
+        public DateTime? TrySetAdmission(string clientId, int expected, int replacement, DateTime? expectedStampUtc = null)
         {
-            if (ChangeBeforeCompare is { } changed && Hosts.TryGetValue(clientId, out var current))
+            if (ChangeBeforeCompare is { } changed && Hosts.ContainsKey(clientId))
             {
-                Hosts[clientId] = current with { Admission = changed };
+                PersonSaves(clientId, changed);
                 ChangeBeforeCompare = null;
             }
-            if (!Hosts.TryGetValue(clientId, out var state) || state.Admission != expected) return false;
-            return SetAdmission(clientId, replacement) == replacement;
+            if (!Hosts.TryGetValue(clientId, out var state) || state.Admission != expected
+                || expectedStampUtc is { } stamp && Stamps.GetValueOrDefault(clientId) != stamp) return null;
+            return SetAdmission(clientId, replacement) == replacement ? Stamps[clientId] : null;
         }
 
         public int? SetAdmission(string clientId, int maxParallelism)
         {
             Writes.Add((clientId, maxParallelism));
             if (!IgnoreWrites) Hosts[clientId] = Hosts[clientId] with { Admission = maxParallelism };
+            Stamps[clientId] = DateTime.UnixEpoch.AddTicks(++_saves);
             if (FailAfterWrite is { } failure) throw failure;
             return Hosts[clientId].Admission;
         }
@@ -1032,6 +1202,7 @@ public sealed class StallInterventionScenarioTests : IDisposable
     {
         public readonly List<string> Healthy = [];
         public readonly HashSet<(string Host, string Provider)> Excluded = [];
+        public readonly Dictionary<(string Host, string Provider), string> Owners = [];
 
         public IReadOnlyList<string> HealthyHosts(string provider, string exceptHost) => Healthy.Where(host => host != exceptHost).ToArray();
         public bool IsReviewHost(string host) => host.StartsWith("kori-review", StringComparison.Ordinal);
@@ -1040,13 +1211,18 @@ public sealed class StallInterventionScenarioTests : IDisposable
         public bool IgnoreReroute { get; set; }
         public bool IgnoreRestore { get; set; }
 
+        public string? ExcludedBy(string host, string provider)
+            => Excluded.Contains((host, provider)) ? Owners.GetValueOrDefault((host, provider)) : null;
+
         public void Reroute(string host, string provider, string interventionId)
         {
-            if (!IgnoreReroute) Excluded.Add((host, provider));
+            if (IgnoreReroute) return;
+            Excluded.Add((host, provider));
+            Owners[(host, provider)] = interventionId;
         }
-        public void Restore(string host, string provider)
+        public void Restore(string host, string provider, string interventionId)
         {
-            if (!IgnoreRestore) Excluded.Remove((host, provider));
+            if (!IgnoreRestore && Owners.GetValueOrDefault((host, provider)) == interventionId) Excluded.Remove((host, provider));
         }
     }
 
@@ -1082,8 +1258,11 @@ public sealed class StallInterventionScenarioTests : IDisposable
                 DeliveryContinuationControl.Reason);
         }
 
+        /// <summary>Cards a run already claimed: their pinned base was consumed and stays.</summary>
+        public readonly HashSet<string> Started = new(StringComparer.Ordinal);
+
         public ContinuationPin? Read(string card) => Pins.GetValueOrDefault(card);
-        public bool LeftReady(string card) => false;
-        public bool Clear(string card, string interventionId) => Pins.Remove(card);
+        public bool LeftReady(string card) => Started.Contains(card);
+        public bool Clear(string card, string interventionId) => !Started.Contains(card) && Pins.Remove(card);
     }
 }

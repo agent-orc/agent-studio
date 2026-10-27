@@ -84,7 +84,7 @@ public sealed class PullGateStore
                 return null;
             _restartFences.Add(hostId);
             try { SaveRestartFences(); }
-            catch (IOException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 _restartFences.Remove(hostId);
                 return null;
@@ -104,7 +104,7 @@ public sealed class PullGateStore
         {
             if (!_restartFences.Remove(hostId)) return;
             try { SaveRestartFences(); }
-            catch (IOException) { _restartFences.Add(hostId); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { _restartFences.Add(hostId); }
         }
     }
 
@@ -120,7 +120,7 @@ public sealed class PullGateStore
             {
                 owner._restartFences.Remove(hostId);
                 try { owner.SaveRestartFences(); }
-                catch (IOException) { owner._restartFences.Add(hostId); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { owner._restartFences.Add(hostId); }
             }
         }
     }

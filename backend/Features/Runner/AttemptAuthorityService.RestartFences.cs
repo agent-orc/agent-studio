@@ -11,7 +11,8 @@ public interface IRestartClaimFence : IDisposable
 
 public sealed partial class AttemptAuthorityService
 {
-    private readonly HashSet<string> _reviewRestartFences = new(StringComparer.Ordinal);
+    // Host ids compare like lease hosts (Same): case-insensitively.
+    private readonly HashSet<string> _reviewRestartFences = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Blocks new review leases before a restart can be submitted.</summary>
     public IDisposable? TryFenceReviewHost(string hostId)
@@ -25,7 +26,7 @@ public sealed partial class AttemptAuthorityService
                 return null;
             _reviewRestartFences.Add(hostId);
             try { SaveReviewRestartFences(); }
-            catch (IOException exception)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 _reviewRestartFences.Remove(hostId);
                 _logger.LogWarning(exception, "review-restart-fence-save-failed host={Host}", hostId);
@@ -46,7 +47,7 @@ public sealed partial class AttemptAuthorityService
         {
             if (!_reviewRestartFences.Remove(hostId)) return;
             try { SaveReviewRestartFences(); }
-            catch (IOException exception)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 _reviewRestartFences.Add(hostId);
                 _logger.LogWarning(exception, "review-restart-fence-release-failed host={Host}", hostId);
@@ -66,7 +67,7 @@ public sealed partial class AttemptAuthorityService
             {
                 owner._reviewRestartFences.Remove(hostId);
                 try { owner.SaveReviewRestartFences(); }
-                catch (IOException exception)
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
                     owner._reviewRestartFences.Add(hostId);
                     owner._logger.LogWarning(exception, "review-restart-fence-release-failed host={Host}", hostId);

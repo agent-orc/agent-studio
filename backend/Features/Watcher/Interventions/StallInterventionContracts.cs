@@ -49,6 +49,13 @@ public sealed record StallInterventionRecord
     public int? TargetAdmission { get; init; }
     public int? PreviousAdmission { get; init; }
 
+    /// <summary>
+    /// The capacity stamp the AI Operator's admission write left. Restore and
+    /// Undo require it unchanged, so a person's later save is never overwritten,
+    /// even when it set the same value.
+    /// </summary>
+    public DateTime? AdmissionStampUtc { get; init; }
+
     public DateTime DecidedAtUtc { get; init; }
     public DateTime? FollowUpDueUtc { get; init; }
     public DateTime? ResolvedAtUtc { get; init; }
@@ -66,8 +73,9 @@ public sealed record StallInterventionRecord
     public string? UndoneBy { get; init; }
 
     /// <summary>
-    /// What ended a lowered admission: the restoring intervention's id, an
-    /// undo, or a person's own change. Null while the reduction is in force.
+    /// What ended a lowered admission or a reroute: the restoring
+    /// intervention's id, an undo, a person's own change or the cleared stall.
+    /// Null while the change is in force.
     /// </summary>
     public string? RevertedBy { get; init; }
 
@@ -82,6 +90,17 @@ public sealed record StallInterventionRecord
         && RevertedBy is null && UndoneAtUtc is null
         && Status is not (StallInterventionStatuses.Superseded or StallInterventionStatuses.Observed
             or StallInterventionStatuses.Failed);
+
+    /// <summary>
+    /// A provider reroute whose exclusion may still be in force although the
+    /// record settled (escalated, interrupted or not observed): it keeps its
+    /// Undo, is routed back once the login stall clears and is never pruned
+    /// before. A confirmed (verified) reroute was already routed back.
+    /// </summary>
+    public bool RouteMayBeInForce => Action == StallInterventionActions.RerouteProvider
+        && RevertedBy is null && UndoneAtUtc is null
+        && Status is not (StallInterventionStatuses.Superseded or StallInterventionStatuses.Observed
+            or StallInterventionStatuses.Failed or StallInterventionStatuses.Verified);
 }
 
 /// <summary>How far the AI Operator goes on stall events (<c>StallIntervention:Mode</c>).</summary>

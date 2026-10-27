@@ -37,13 +37,19 @@ public sealed class ClientIdentityAdmissionControl(ClientIdentityStore clients, 
             calmSince = point.Timestamp;
             previous = point.Timestamp;
         }
+        // A calm run ends with the last sample: stale telemetry proves nothing.
+        if (last is null || nowUtc - last.Timestamp > StallInterventionFactsBuilder.TelemetryFreshness) calmSince = null;
         double? memory = last?.MemoryTotalBytes is > 0
             ? 100.0 * last.MemoryUsedBytes.GetValueOrDefault() / last.MemoryTotalBytes.Value : null;
+        // Admission is the ceiling a person set. A host without one has nothing
+        // to lower or restore to (the policy proposes instead), and the
+        // compare-and-set reads the same field.
         return new HostAdmissionReading(identity.Id, identity.DisplayName,
-            identity.RunnerDesiredMaxParallelism ?? identity.RunnerEffectiveMaxParallelism,
+            identity.RunnerDesiredMaxParallelism,
             last?.CpuCores ?? 0, last?.Load1, last?.CpuPercent, memory, target, last?.ActiveSlots ?? 0,
             last is null ? null : PerCore(last), calmSince, last?.Timestamp,
-            last is null ? null : (last.SwapInBytesPerSecond ?? 0) + (last.SwapOutBytesPerSecond ?? 0));
+            last is null ? null : (last.SwapInBytesPerSecond ?? 0) + (last.SwapOutBytesPerSecond ?? 0),
+            identity.RunnerCapacityUpdatedAt);
     }
 
     public int? SetAdmission(string clientId, int maxParallelism)
@@ -54,9 +60,9 @@ public sealed class ClientIdentityAdmissionControl(ClientIdentityStore clients, 
         return clients.Find(identity.Id)?.RunnerDesiredMaxParallelism;
     }
 
-    public bool TrySetAdmission(string clientId, int expected, int replacement)
+    public DateTime? TrySetAdmission(string clientId, int expected, int replacement, DateTime? expectedStampUtc = null)
         => Find(clientId) is { } identity
-            && clients.TrySetRunnerCapacity(identity.Id, expected, replacement);
+            ? clients.TrySetRunnerCapacity(identity.Id, expected, replacement, expectedStampUtc) : null;
 
     private ClientIdentity? Find(string clientId)
         => clients.Find(clientId) is { } identity && identity.Kind != ClientIdentityKind.Retired ? identity : null;
@@ -177,6 +183,9 @@ public sealed class OperationsServerRestartControl(
     public const string HttpClientName = "operations-server";
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
 
+    /// <summary>The command deadline; the Operations Server accepts at most five minutes.</summary>
+    public static readonly TimeSpan CommandWindow = TimeSpan.FromMinutes(4);
+
     public async Task<bool?> IsTerminalAsync(string idempotencyKey, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(configuration["Operations:Url"])
@@ -219,14 +228,17 @@ public sealed class OperationsServerRestartControl(
         {
             using var client = Client();
             var input = JsonSerializer.SerializeToElement(new { service }, OperationsProtocol.Json);
-            var deadline = time.GetUtcNow().AddMinutes(4);
+            var deadline = time.GetUtcNow().Add(CommandWindow);
             var command = new OperationCommand(OperationsProtocol.Digest(idempotencyKey)[..48], "ai-operator",
                 configuration[$"Operations:Agents:{host}"]!, OperationCatalogue.ServiceRestart.Id,
                 OperationCatalogue.ServiceRestart.Version, input, OperationsProtocol.Digest(input), deadline,
                 OperationsProtocol.Digest(reason)[..32]);
             using var submitted = await client.PostAsJsonAsync("api/operations/v1/commands", command, OperationsProtocol.Json, ct);
+            // A 4xx refusal never queued the command. A 5xx may hide an accepted
+            // one, so the claim fence stays until the command expired.
             if (!submitted.IsSuccessStatusCode)
-                return new(false, $"the Operations Server refused the restart: {await Error(submitted, ct)}");
+                return new(false, $"the Operations Server refused the restart: {await Error(submitted, ct)}",
+                    (int)submitted.StatusCode < 500);
             var attempt = await submitted.Content.ReadFromJsonAsync<OperationAttempt>(OperationsProtocol.Json, ct)
                 ?? throw new InvalidDataException("The Operations Server returned no attempt.");
             while (attempt.State is "queued" or "running" or "cancelling" && time.GetUtcNow() < deadline)
@@ -281,6 +293,7 @@ public sealed class ProviderRouteExclusions
     private readonly ILogger<ProviderRouteExclusions>? _logger;
     private readonly object _gate = new();
     private Dictionary<string, string>? _entries;
+    private bool _unreadable;
 
     public ProviderRouteExclusions(IConfiguration configuration, ILogger<ProviderRouteExclusions> logger)
         : this(() => configuration["TaskRepository"], logger) { }
@@ -305,7 +318,7 @@ public sealed class ProviderRouteExclusions
     {
         lock (_gate)
         {
-            var entries = new Dictionary<string, string>(Load(), StringComparer.Ordinal)
+            var entries = new Dictionary<string, string>(LoadForWrite(), StringComparer.Ordinal)
             {
                 [Key(host, provider)] = interventionId,
             };
@@ -313,13 +326,30 @@ public sealed class ProviderRouteExclusions
         }
     }
 
-    public void Include(string host, string provider)
+    /// <summary>The intervention that owns the host's exclusion of the provider, or null; unknown (throws) while unreadable.</summary>
+    public string? Owner(string host, string provider)
+    {
+        lock (_gate) return LoadForWrite().GetValueOrDefault(Key(host, provider));
+    }
+
+    /// <summary>Removes the exclusion only while <paramref name="interventionId"/> owns it.</summary>
+    public void Include(string host, string provider, string interventionId)
     {
         lock (_gate)
         {
-            var entries = new Dictionary<string, string>(Load(), StringComparer.Ordinal);
-            if (entries.Remove(Key(host, provider))) Save(entries);
+            var entries = new Dictionary<string, string>(LoadForWrite(), StringComparer.Ordinal);
+            if (entries.TryGetValue(Key(host, provider), out var owner) && owner == interventionId
+                && entries.Remove(Key(host, provider))) Save(entries);
         }
+    }
+
+    /// <summary>A write over an unreadable file would erase every other host's exclusion: refuse it.</summary>
+    private IReadOnlyDictionary<string, string> LoadForWrite()
+    {
+        var entries = Load();
+        if (_unreadable)
+            throw new InvalidDataException("The provider route exclusions file is unreadable; it is not overwritten.");
+        return entries;
     }
 
     private static string Key(string host, string provider) => $"{host}|{provider}";
@@ -332,6 +362,7 @@ public sealed class ProviderRouteExclusions
     private IReadOnlyDictionary<string, string> Load()
     {
         if (_entries is not null) return _entries;
+        _unreadable = false;
         var path = Path();
         if (path is null || !File.Exists(path)) return _entries = new Dictionary<string, string>(StringComparer.Ordinal);
         try
@@ -342,6 +373,7 @@ public sealed class ProviderRouteExclusions
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
         {
             _logger?.LogWarning(exception, "provider-route-exclusions-unreadable path={Path}", path);
+            _unreadable = true;
             return new Dictionary<string, string>(StringComparer.Ordinal);
         }
     }
@@ -369,19 +401,19 @@ public sealed class ReviewProviderRouteControl(V1ReviewExecutorRegistry registry
     public IReadOnlyList<string> HealthyHosts(string provider, string exceptHost)
     {
         var now = time.GetUtcNow().UtcDateTime;
-        return registry.ListCapabilitySnapshots()
+        return ReviewSnapshots()
             .Where(snapshot => snapshot.HostId != exceptHost && now - snapshot.LastSeenAt <= TimeSpan.FromMinutes(10)
                 && registry.AdmittedReviewCapabilities(snapshot.RunnerId, snapshot.InstanceId)
                     .Contains("provider-auth:" + provider))
             .Select(snapshot => snapshot.HostId).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
     }
 
-    public bool IsReviewHost(string host) => registry.ListCapabilitySnapshots().Any(snapshot => snapshot.HostId == host);
+    public bool IsReviewHost(string host) => ReviewSnapshots().Any(snapshot => snapshot.HostId == host);
 
     /// <summary>A host without a review registration is never rerouted: nothing routes its attempts by provider.</summary>
     public bool IsRerouted(string host, string provider)
     {
-        var snapshots = registry.ListCapabilitySnapshots().Where(snapshot => snapshot.HostId == host).ToArray();
+        var snapshots = ReviewSnapshots().Where(snapshot => snapshot.HostId == host).ToArray();
         return snapshots.Length > 0 && exclusions.IsExcluded(host, host, provider)
             && snapshots.All(snapshot => !registry.AdmittedReviewCapabilities(snapshot.RunnerId, snapshot.InstanceId)
                 .Contains("provider-auth:" + provider));
@@ -389,9 +421,16 @@ public sealed class ReviewProviderRouteControl(V1ReviewExecutorRegistry registry
 
     public bool IsExcluded(string host, string provider) => exclusions.IsExcluded(host, host, provider);
 
+    public string? ExcludedBy(string host, string provider) => exclusions.Owner(host, provider);
+
     public void Reroute(string host, string provider, string interventionId) => exclusions.Exclude(host, provider, interventionId);
 
-    public void Restore(string host, string provider) => exclusions.Include(host, provider);
+    public void Restore(string host, string provider, string interventionId) => exclusions.Include(host, provider, interventionId);
+
+    /// <summary>Review executors only: a coding registration on the same registry is never routed by provider.</summary>
+    private IEnumerable<Contract.RunnerCapabilitySnapshotDto> ReviewSnapshots()
+        => registry.ListCapabilitySnapshots()
+            .Where(snapshot => registry.TryGetReviewExecutor(snapshot.RunnerId, snapshot.InstanceId, out _));
 }
 
 /// <summary>
@@ -434,7 +473,7 @@ public sealed class BatchGateInterventionControl(BatchGateStore store, BatchGate
             var pending = store.ListPending().FirstOrDefault(item => item.ReviewAttemptId == attemptId
                 && string.Equals(item.Subject.Project, project, StringComparison.OrdinalIgnoreCase));
             if (pending is null || !StallGateMembers.Droppable(StateOf(jobs, pending.Subject.TaskKey))) continue;
-            if (pilot.DropPendingMember(attemptId, reason)) dropped.Add(attemptId);
+            if (pilot.DropPendingMember(attemptId, reason, StallGateMembers.Droppable)) dropped.Add(attemptId);
         }
         return dropped;
     }
@@ -510,11 +549,12 @@ public sealed class DeliveryContinuationControl(TaskScannerService scanner, Atte
         if (!ContinuationBaseStore.TrySaveWhen(job.FolderPath, expectedBase,
                 new ContinuationBaseRecord(candidate.LastDeliveryRef, candidate.LastDeliverySha,
                     Reason, interventionId, time.GetUtcNow().UtcDateTime),
-                () => Directory.Exists(job.FolderPath)
-                    && string.Equals(Path.GetFileName(Path.GetDirectoryName(job.FolderPath)),
-                        TaskStates.Ready, StringComparison.OrdinalIgnoreCase))) return null;
+                () => InReady(job))) return null;
         return Read(card);
     }
+
+    private static bool InReady(TaskInfo job) => Directory.Exists(job.FolderPath)
+        && string.Equals(Path.GetFileName(Path.GetDirectoryName(job.FolderPath)), TaskStates.Ready, StringComparison.OrdinalIgnoreCase);
 
     public ContinuationPin? Read(string card)
     {
@@ -525,11 +565,19 @@ public sealed class DeliveryContinuationControl(TaskScannerService scanner, Atte
 
     public bool LeftReady(string card) => Job(card) is { } job && job.State != TaskStates.Ready;
 
+    /// <summary>
+    /// Clears this intervention's base only while the card still waits in
+    /// Ready, under the lane mutex a claim takes: a base a run already started
+    /// from is never reported as undone.
+    /// </summary>
     public bool Clear(string card, string interventionId)
     {
         var job = Job(card);
-        var record = job is null ? null : ContinuationBaseStore.Read(job.FolderPath);
-        if (job is null || record is null || record.Reason != Reason || record.AttemptId != interventionId) return false;
+        if (job is null) return false;
+        using var lane = (laneMutex ?? LaneMutexRegistry.NullSingleton).TryAcquireStrict(job.WatchPath);
+        if (lane is null || !InReady(job)) return false;
+        var record = ContinuationBaseStore.Read(job.FolderPath);
+        if (record is null || record.Reason != Reason || record.AttemptId != interventionId) return false;
         beforeClear?.Invoke();
         return ContinuationBaseStore.TryClearWhen(job.FolderPath, record);
     }

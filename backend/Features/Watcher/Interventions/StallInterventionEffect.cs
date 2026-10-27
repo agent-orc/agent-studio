@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using AgentStudio.Runner;
 
 namespace AgentStudio.Watcher;
@@ -37,7 +38,26 @@ public sealed class StallInterventionEffect(
 
     public string Decider => AiOperatorDeciders.StallIntervention;
 
-    /// <summary>Releases a durable claim drain only after its remote attempt is terminal.</summary>
+    // One writer per subject: an engine receipt, the in-process path, a
+    // recovery and a person's Undo never interleave their read and save.
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _subjects = new(StringComparer.Ordinal);
+
+    private SemaphoreSlim SubjectLock(string subject) => _subjects.GetOrAdd(subject, _ => new SemaphoreSlim(1, 1));
+
+    /// <summary>
+    /// After this time from the decision no restart of the record can still
+    /// run: the Operations Server and the agent refuse the command after its
+    /// deadline (<see cref="OperationsServerRestartControl.CommandWindow"/>),
+    /// the agent bounds one restart to its validate and recreate timeouts, and
+    /// the rest is margin for clock skew and result spooling.
+    /// </summary>
+    public static readonly TimeSpan RestartFenceHorizon = OperationsServerRestartControl.CommandWindow + TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// Releases a durable claim drain once its remote attempt is terminal, or
+    /// once the command can no longer run (absent, unreadable or unreachable
+    /// attempts past <see cref="RestartFenceHorizon"/>).
+    /// </summary>
     public async Task RecoverRestartFencesAsync(CancellationToken ct)
     {
         var latest = store.All().Where(item => item.Action == StallInterventionActions.RestartService
@@ -49,16 +69,33 @@ public sealed class StallInterventionEffect(
             var role = record.Subject.Split(':') is { Length: > 2 } parts ? parts[2] : "coding";
             if (!workloads.HasRestartFence(record.Host, role)) continue;
             var terminal = await restarts.IsTerminalAsync(record.WriteKey, ct);
-            // An absent attempt is ambiguous after a principal rotation or
-            // a server restore. Keep the fence for a person's inspection.
-            if (terminal != true) continue;
+            // An absent, unreadable or unreachable attempt is ambiguous until
+            // the command expired: hold the fence until then, never forever.
+            var expiredAtUtc = record.DecidedAtUtc + RestartFenceHorizon;
+            var expired = time.GetUtcNow().UtcDateTime >= expiredAtUtc;
+            if (terminal != true && !expired) continue;
             workloads.ReleaseRestartFence(record.Host, role);
             if (workloads.HasRestartFence(record.Host, role)) continue;
-            var updated = record with { Outcome = (record.Outcome ?? string.Empty)
-                + " The remote restart attempt is terminal; new claims may start."
-                + " The service effect still needs its own check." };
-            store.Save(updated);
-            receipts.Publish(updated, store.All());
+            var gate = SubjectLock(record.Subject);
+            await gate.WaitAsync(ct);
+            try
+            {
+                var current = store.Find(record.Id) ?? record;
+                logger.LogInformation("stall-intervention-restart-fence-released id={Id} host={Host} role={Role} terminal={Terminal}",
+                    record.Id, record.Host, role, terminal);
+                var updated = current with { Outcome = (current.Outcome ?? string.Empty)
+                    + (terminal == true
+                        ? " The remote restart attempt is terminal; new claims may start."
+                        : $" The restart attempt could not be confirmed, but its command expired before {expiredAtUtc:u}"
+                            + " and no restart can still run; new claims may start.")
+                    + " The service effect still needs its own check." };
+                store.Save(updated);
+                receipts.Publish(updated, store.All());
+            }
+            finally
+            {
+                gate.Release();
+            }
         }
     }
 
@@ -91,6 +128,21 @@ public sealed class StallInterventionEffect(
         var stall = application.Payload.StallIntervention
             ?? throw new InvalidDataException("The stall-intervention occurrence has no facts.");
         if (application.Decision.Disposition == AiOperatorDisposition.Hold) return;
+        var gate = SubjectLock(stall.Subject);
+        await gate.WaitAsync(ct);
+        try
+        {
+            await ApplyLockedAsync(application, plan, stall, ct);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task ApplyLockedAsync(AiOperatorApplication application, StallInterventionPlan plan,
+        StallInterventionFacts stall, CancellationToken ct)
+    {
         var options = StallInterventionOptions.FromConfiguration(configuration);
         var observe = Observes(options, plan.Action);
         var writeKey = WriteKey(stall, plan.Action, observe);
@@ -163,7 +215,7 @@ public sealed class StallInterventionEffect(
             if (original?.Action == StallInterventionActions.RerouteProvider
                 && plan.Action == StallInterventionActions.ConfirmCleared)
             {
-                routes.Restore(original.Host, original.Provider ?? "unknown");
+                routes.Restore(original.Host, original.Provider ?? "unknown", original.Id);
                 if (routes.IsExcluded(original.Host, original.Provider ?? "unknown"))
                     settled = settled with
                     {
@@ -188,6 +240,13 @@ public sealed class StallInterventionEffect(
         {
             logger.LogInformation("stall-intervention-refused subject={Subject} pending={Pending} action={Action}",
                 stall.Subject, other.Id, plan.Action);
+            return;
+        }
+        if (record.Action == StallInterventionActions.RestoreAdmission && !CalmNow(record))
+        {
+            // Not a person's change: the restore waits for the next calm pass.
+            logger.LogInformation("stall-intervention-restore-held subject={Subject} reason=not-calm-by-fresh-telemetry",
+                stall.Subject);
             return;
         }
         if (LiveMismatch(record) is { } mismatch)
@@ -243,6 +302,23 @@ public sealed class StallInterventionEffect(
     /// </summary>
     public StallInterventionRecord RecoverInterrupted(StallInterventionRecord record)
     {
+        var gate = SubjectLock(record.Subject);
+        gate.Wait();
+        try
+        {
+            // Settled meanwhile (by the apply that was still running): nothing to recover.
+            var current = store.Find(record.Id);
+            return current is null || current.Status != StallInterventionStatuses.Applying
+                ? current ?? record : RecoverInterruptedLocked(current);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private StallInterventionRecord RecoverInterruptedLocked(StallInterventionRecord record)
+    {
         var now = time.GetUtcNow().UtcDateTime;
         var options = StallInterventionOptions.FromConfiguration(configuration);
         var observed = facts.Effect(record, options, now, out var evidence, out _);
@@ -274,11 +350,74 @@ public sealed class StallInterventionEffect(
     }
 
     /// <summary>
+    /// Routes a provider back to a host whose reroute is still in force although
+    /// its record settled (an escalation, an interrupted apply, an effect not
+    /// observed), once the host's login stall is no longer open. Only the
+    /// exclusion this intervention owns is lifted; a failed write is retried
+    /// on the next pass.
+    /// </summary>
+    public int ReleaseClearedReroutes(IReadOnlySet<string> openSubjects)
+    {
+        var released = 0;
+        foreach (var record in store.All().Where(item => item.RouteMayBeInForce
+            && !StallInterventionStatuses.Pending.Contains(item.Status) && !openSubjects.Contains(item.Subject)).ToArray())
+        {
+            var gate = SubjectLock(record.Subject);
+            gate.Wait();
+            try
+            {
+                var current = store.Find(record.Id);
+                if (current is null || !current.RouteMayBeInForce || StallInterventionStatuses.Pending.Contains(current.Status)) continue;
+                var provider = current.Provider ?? "unknown";
+                var owned = routes.ExcludedBy(current.Host, provider) == current.Id;
+                if (owned) routes.Restore(current.Host, provider, current.Id);
+                if (owned && routes.IsExcluded(current.Host, provider)) continue;
+                var settled = current with
+                {
+                    RevertedBy = owned ? "login stall cleared" : "exclusion no longer in force",
+                    Undoable = false,
+                    ResolvedAtUtc = current.ResolvedAtUtc ?? time.GetUtcNow().UtcDateTime,
+                    Outcome = (current.Outcome ?? string.Empty) + (owned
+                        ? $" The login stall on {current.Host} cleared; I routed {provider} to it again."
+                        : $" The exclusion of {provider} on {current.Host} is no longer this intervention's; nothing to route back."),
+                };
+                store.Save(settled);
+                receipts.Publish(settled, store.All());
+                released++;
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
+            {
+                logger.LogWarning(exception, "stall-intervention-route-release-failed id={Id}", record.Id);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+        return released;
+    }
+
+    /// <summary>
     /// The admission no longer reads the lowered value (a person changed it,
     /// or the write never took): the reduction is no longer in force and is
     /// never restored over the live value.
     /// </summary>
     public StallInterventionRecord ReleaseLowering(StallInterventionRecord record, string evidence)
+    {
+        var gate = SubjectLock(record.Subject);
+        gate.Wait();
+        try
+        {
+            var current = store.Find(record.Id) ?? record;
+            return current.AdmissionInForce ? ReleaseLoweringLocked(current, evidence) : current;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private StallInterventionRecord ReleaseLoweringLocked(StallInterventionRecord record, string evidence)
     {
         var now = time.GetUtcNow().UtcDateTime;
         var released = record with
@@ -294,8 +433,27 @@ public sealed class StallInterventionEffect(
         return released;
     }
 
-    /// <summary>A person's undo. Restarts, gate drops and escalations have nothing to undo.</summary>
+    /// <summary>
+    /// A person's undo. Restarts, gate drops, restores and escalations have
+    /// nothing to undo: a restored baseline is the person's own value.
+    /// </summary>
     public StallInterventionUndoResult Undo(string id, string actor)
+    {
+        var found = store.Find(id);
+        if (found is null) return new(false, "intervention-not-found", null);
+        var gate = SubjectLock(found.Subject);
+        gate.Wait();
+        try
+        {
+            return UndoLocked(id, actor);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private StallInterventionUndoResult UndoLocked(string id, string actor)
     {
         var record = store.Find(id);
         if (record is null) return new(false, "intervention-not-found", null);
@@ -306,25 +464,43 @@ public sealed class StallInterventionEffect(
         bool undone;
         switch (record.Action)
         {
-            case StallInterventionActions.LowerAdmission or StallInterventionActions.RestoreAdmission:
+            case StallInterventionActions.LowerAdmission:
                 if (record.HostClientId is not { } clientId || record.PreviousAdmission is not { } previousAdmission
                     || record.TargetAdmission is not { } aiAdmission)
                     return new(false, "intervention-not-undoable", record);
-                undone = admission.TrySetAdmission(clientId, aiAdmission, previousAdmission);
+                undone = admission.TrySetAdmission(clientId, aiAdmission, previousAdmission, record.AdmissionStampUtc) is not null;
                 var value = admission.Read(clientId, StallInterventionOptions.FromConfiguration(configuration)
                     .Limits.RestoreBelowTargetFraction, now)?.Admission;
                 evidence = $"admission of {record.Host} reads {value?.ToString() ?? "unknown"}";
                 break;
             case StallInterventionActions.RerouteProvider:
-                routes.Restore(record.Host, record.Provider ?? "unknown");
-                undone = !routes.IsExcluded(record.Host, record.Provider ?? "unknown");
-                evidence = undone ? $"{record.Provider} is routed to {record.Host} again" : "the route exclusion is still in force";
+                var routedProvider = record.Provider ?? "unknown";
+                try
+                {
+                    routes.Restore(record.Host, routedProvider, record.Id);
+                }
+                catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException)
+                {
+                    logger.LogWarning(exception, "stall-intervention-undo-route-failed id={Id}", record.Id);
+                    return new(false, $"undo-not-observed: {exception.Message}", record);
+                }
+                // Undone once this reroute no longer holds the exclusion; another one may still.
+                undone = routes.ExcludedBy(record.Host, routedProvider) != record.Id;
+                evidence = !routes.IsExcluded(record.Host, routedProvider) ? $"{record.Provider} is routed to {record.Host} again"
+                    : undone ? $"this reroute is no longer in force; {routes.ExcludedBy(record.Host, routedProvider)} still excludes {record.Provider}"
+                    : "the route exclusion is still in force";
                 break;
             case StallInterventionActions.RequeueFromDelivery:
                 var cleared = record.Members.Where(card => continuations.Clear(card, record.Id)).ToArray();
-                undone = record.Members.All(card => continuations.Read(card) is not { } pin
-                    || pin.Reason != DeliveryContinuationControl.Reason || continuations.LeftReady(card));
-                evidence = $"cleared the base on {cleared.Length} of {record.Members.Count} cards";
+                // A card that left Ready already started from the pinned base: nothing to take back there.
+                var started = record.Members.Except(cleared).Where(continuations.LeftReady).ToArray();
+                var holding = record.Members.Except(cleared).Except(started).Where(card => continuations.Read(card) is { } pin
+                    && pin.Reason == DeliveryContinuationControl.Reason).ToArray();
+                undone = holding.Length == 0 && (cleared.Length > 0 || started.Length < record.Members.Count);
+                evidence = $"cleared the base on {cleared.Length} of {record.Members.Count} cards"
+                    + (started.Length == 0 ? string.Empty
+                        : $"; {string.Join(", ", started)} already started from it, which an Undo cannot take back")
+                    + (holding.Length == 0 ? string.Empty : $"; {string.Join(", ", holding)} still hold it");
                 break;
             default:
                 return new(false, "intervention-not-undoable", record);
@@ -362,6 +538,16 @@ public sealed class StallInterventionEffect(
             FollowUpDueUtc = null,
             ResolvedAtUtc = now,
         };
+    }
+
+    /// <summary>A restore raises admission only into a load that is calm by fresh telemetry now.</summary>
+    private bool CalmNow(StallInterventionRecord record)
+    {
+        var now = time.GetUtcNow().UtcDateTime;
+        var reading = record.HostClientId is { } clientId ? admission.Read(clientId,
+            StallInterventionOptions.FromConfiguration(configuration).Limits.RestoreBelowTargetFraction, now) : null;
+        return reading?.CalmSinceUtc is not null && !StallInterventionFactsBuilder.IsCurrentPressure(record.Kind, reading, now,
+            WatcherOptions.FromConfiguration(configuration).OperationalThresholds);
     }
 
     /// <summary>The live value differs from the plan's before-value: someone acted first.</summary>
@@ -407,10 +593,22 @@ public sealed class StallInterventionEffect(
                     return Superseded(record, now, admissionMismatch);
                 if (record.PreviousAdmission is not { } expected || record.TargetAdmission is not { } target)
                     throw new InvalidDataException("The admission plan has no before-value or target.");
-                if (!admission.TrySetAdmission(record.HostClientId!, expected, target)
-                    && admission.Read(record.HostClientId!, StallInterventionOptions.FromConfiguration(configuration)
-                        .Limits.RestoreBelowTargetFraction, now)?.Admission != expected)
-                    return Superseded(record, now, "the admission changed before the atomic update");
+                // A restore writes over the AI value only while nobody saved the capacity since the lowering.
+                var lowering = record.Action == StallInterventionActions.RestoreAdmission
+                    ? store.Find(record.PreviousInterventionId ?? string.Empty) : null;
+                var stamp = admission.TrySetAdmission(record.HostClientId!, expected, target, lowering?.AdmissionStampUtc);
+                if (stamp is null)
+                {
+                    // Refused: a person changed or saved the capacity (superseded), or the
+                    // write did not take, which the effect check below escalates.
+                    var live = admission.Read(record.HostClientId!, StallInterventionOptions.FromConfiguration(configuration)
+                        .Limits.RestoreBelowTargetFraction, now);
+                    if (live?.Admission != expected || lowering?.AdmissionStampUtc is { } aiStamp && live.CapacityStampUtc != aiStamp)
+                        return Superseded(record, now, record.Action == StallInterventionActions.RestoreAdmission
+                            ? $"the capacity of {record.Host} was changed after the lowering; I do not restore over it"
+                            : "the admission changed before the atomic update");
+                }
+                record = record with { AdmissionStampUtc = stamp };
                 break;
             case StallInterventionActions.RestartService or StallInterventionActions.RetryEngineStart:
                 var role = record.Subject.Split(':') is { Length: > 2 } subjectParts ? subjectParts[2] : "coding";
@@ -497,8 +695,7 @@ public sealed class StallInterventionEffect(
         };
 
     private static bool UndoableAction(string action) => action is StallInterventionActions.LowerAdmission
-        or StallInterventionActions.RestoreAdmission or StallInterventionActions.RerouteProvider
-        or StallInterventionActions.RequeueFromDelivery;
+        or StallInterventionActions.RerouteProvider or StallInterventionActions.RequeueFromDelivery;
 
     /// <summary>The follow-up or restore closes the intervention it checked.</summary>
     private void Settle(StallInterventionRecord original, StallInterventionRecord followUp, DateTime now)
@@ -506,7 +703,7 @@ public sealed class StallInterventionEffect(
         if (followUp.Action == StallInterventionActions.RestoreAdmission
             && followUp.Status == StallInterventionStatuses.Superseded)
         {
-            ReleaseLowering(original, followUp.EffectEvidence ?? "the admission changed");
+            ReleaseLoweringLocked(original, followUp.EffectEvidence ?? "the admission changed");
             return;
         }
         var restored = followUp.Action == StallInterventionActions.RestoreAdmission

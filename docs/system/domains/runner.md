@@ -2389,8 +2389,8 @@ Proposals and escalations are recorded in every mode except `off`.
 
 | Stall | Intervention | Class | Effect measured afterwards |
 |---|---|---|---|
-| `host-overload`, `memory-pressure` | Lower the coding host's admission by a quarter of the person's baseline (8 to 6), floor `MinAdmission` (1), only when telemetry from the last 10 minutes still shows overload or memory pressure. The host is addressed by its client identity id (`clientId` on the case), never by display name. An admission the AI Operator already lowered is never lowered again: a new episode becomes a proposal | A1 | The identity store reads the new value back |
-| Load back after a lowering | Restore the baseline once the load per core stayed under target x `RestoreBelowTargetFraction` (0.8) for `CalmMinutesBeforeRestore` (15). This also runs for a reduction whose follow-up already escalated, as long as the live admission still reads the lowered value; a value a person changed is never restored over | A1 | Same |
+| `host-overload`, `memory-pressure` | Lower the coding host's admission by a quarter of the person's baseline (8 to 6), floor `MinAdmission` (1), only when telemetry from the last 10 minutes still shows overload or memory pressure. The admission is the ceiling a person set in Settings > Capacity; a host without one gets a proposal. The host is addressed by its client identity id (`clientId` on the case), never by display name. An admission the AI Operator already lowered is never lowered again: a new episode becomes a proposal | A1 | The identity store reads the new value back |
+| Load back after a lowering | Restore the baseline once the load per core stayed under target x `RestoreBelowTargetFraction` (0.8) for `CalmMinutesBeforeRestore` (15). This also runs for a reduction whose follow-up already escalated, as long as the live admission still reads the lowered value and nobody saved the capacity since; a value a person changed or saved again is never restored over. When it is applied, the load must still be calm by telemetry from the last 10 minutes, otherwise the restore waits for the next pass | A1 | Same |
 | `host-offline`, `idle-capacity` of a review daemon or pull gate worker | Restart the allowlisted service through the Operations Server (`service.restart`) only while the host is drained and waiting work is claimable. Review needs fresh zero-slot telemetry and no host-owned review lease; a pull gate worker needs zero claimed jobs and a queued pull gate job. When SSH fallback uses the same host, its remote slot sample must also be fresh and empty. Pending batch members do not count | A1 | The Operations Server attempt reports `restarted` |
 | The same with running or unknown work, or nothing claimable (pending batch gate members wait for the batch plan, not for the gate worker) | Proposal to restart once the work finished or to check the worker | A2 | None |
 | Gate host reports every slot busy while this Studio holds none and runs no batch or per-task gate (orphaned gate workers after a Studio restart) | Proposal to stop the orphaned workers (`propose-release-gate-slots`; the automatic release is AGT-3237) | A2 | None |
@@ -2423,14 +2423,21 @@ re-checked at apply time as well.
 An admission reduction also checks fresh overload or memory pressure immediately
 before the side effect. Both lowering and restoring admission use an atomic
 compare-and-set against the planned before-value, so a capacity edit made by a
-person between the live read and the write is preserved. The restart path
+person between the live read and the write is preserved. The record keeps the
+capacity stamp its write left; restore and Undo also require that stamp, so a
+person who saved the same value again keeps it. Decisions of one subject
+(engine receipts, the in-process path, recoveries, Undo) are applied one at a
+time. The restart path
 fences new review or pull gate claims, confirms the host is drained using fresh slot
 telemetry and active leases, then holds the durable fence through the Operations Server
 attempt. For the gate host the same drain also blocks SSH fallback dispatches.
 If the attempt status cannot be read, the fence survives a Studio restart.
 The next intervention pass reads the attempt by its idempotency key and releases
-the fence only after terminal confirmation. An absent or unreadable attempt leaves
-the fence in place for a person to inspect. The agent writes a durable restart-started marker before Docker runs;
+the fence after terminal confirmation. An absent, unreadable or `unreachable`
+attempt keeps the fence until `RestartFenceHorizon` (the four-minute command
+deadline plus ten minutes) after the decision: past the deadline the Operations
+Server and the agent refuse the command, and the agent bounds one restart to its
+validate and recreate timeouts, so no restart can still run. The agent writes a durable restart-started marker before Docker runs;
 if result spooling fails after recreation, replay reports an unknown outcome
 and never recreates the service a second time. The rate-limit continuation pin
 compares the live Ready folder and continuation base while holding the lane mutex
@@ -2445,7 +2452,11 @@ requeues). If the condition has not cleared by then, the follow-up escalates to
 a person with the receipt chain. A lowered admission does not escalate while
 more runs are active than it admits (running work drains), up to
 `MaxCalmWaitHours` (4). A reroute waits for the login renewal and routes back
-once the provider stall clears.
+once the provider stall clears; a reroute that settled while its exclusion
+was still in force (escalated, interrupted, effect not observed) is routed back
+by the next pass after the stall cleared and is not pruned before. An exclusion
+is lifted only by the intervention that owns it, and an unreadable exclusions
+file is never overwritten.
 
 Loop protection is part of the policy: one pending (`applying` or `applied`)
 intervention per subject; at most `MaxPerHostPerHour` (3) mutating
@@ -2460,9 +2471,11 @@ propose or ask count toward the budget of 20 per pass and reach the engine, so
 a held subject adds no occurrence. Actionable kinds are ordered overload,
 memory, provider login, offline, idle capacity, batch gate, rate limit, deploy,
 claim refusal; a case in `decision-required` belongs to a person and is left
-alone. `POST /api/watcher/interventions/{id}/undo` reverts an admission change
+alone. `POST /api/watcher/interventions/{id}/undo` reverts an admission reduction
 (also an escalated one that is still in force), a reroute or a pinned base; a
-restart, a gate reconciliation and an escalation have nothing to undo.
+restart, a restore of the person's baseline, a gate reconciliation and an
+escalation have nothing to undo. A pinned base that a run already started from
+is reported, not counted as undone.
 Admission Undo uses an atomic compare-and-set against the AI-set value, so a
 later change by a person stays in force. The intervention list and decision
 views include only projects assigned to the signed-in account; an Undo for

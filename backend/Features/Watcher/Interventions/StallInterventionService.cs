@@ -43,11 +43,16 @@ public sealed class StallInterventionService(
     public async Task<StallInterventionPassResult> RunOnceAsync(CancellationToken ct = default)
     {
         var options = StallInterventionOptions.FromConfiguration(configuration);
-        if (!options.Enabled) return new(0, 0, 0, 0, "disabled");
         var root = configuration["TaskRepository"];
         if (string.IsNullOrWhiteSpace(root)) return new(0, 0, 0, 0, "no-task-repository");
-        var now = time.GetUtcNow().UtcDateTime;
+        // A claim fence left by an earlier restart is released even when the
+        // AI Operator was switched off after it: a drained host must not stay drained.
         await effect.RecoverRestartFencesAsync(ct);
+        // Likewise a reroute that settled while in force is routed back once its stall cleared.
+        effect.ReleaseClearedReroutes(cases.All(root).Where(item => item.Subject is not null
+            && StallInterventionFactsBuilder.IsOpen(item)).Select(item => item.Subject!).ToHashSet(StringComparer.Ordinal));
+        if (!options.Enabled) return new(0, 0, 0, 0, "disabled");
+        var now = time.GetUtcNow().UtcDateTime;
         store.Prune(now);
         foreach (var record in store.All().Where(item => item.Status == StallInterventionStatuses.Applying
             && now - item.DecidedAtUtc >= StallInterventionEffect.InterruptedAfter).ToArray())

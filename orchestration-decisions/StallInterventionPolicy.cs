@@ -772,7 +772,7 @@ public static class StallInterventionPolicy
             $"I raised its admission from {now} back to {before} parallel runs.",
             $"The load is back; the reduction of {check.InterventionId} is no longer needed.",
             $"admission {now}", $"admission {before}",
-            $"Undo sets {now} again (Settings > Capacity, or Undo on this receipt).",
+            $"{before} is your own value again; to lower it, set it in Settings > Capacity.",
             10, TargetAdmission: before, PreviousAdmission: now);
     }
 

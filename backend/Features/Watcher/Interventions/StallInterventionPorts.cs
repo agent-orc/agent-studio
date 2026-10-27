@@ -18,7 +18,8 @@ public sealed record HostAdmissionReading(
     double? LoadPerCore,
     DateTime? CalmSinceUtc,
     DateTime? SampleUtc = null,
-    double? SwapBytesPerSecond = null);
+    double? SwapBytesPerSecond = null,
+    DateTime? CapacityStampUtc = null);
 
 /// <summary>
 /// Coding host admission (Settings &gt; Capacity), addressed by the host's
@@ -31,8 +32,13 @@ public interface IHostAdmissionControl
     /// <summary>Sets the host's maximum parallel runs and returns the value read back afterwards.</summary>
     int? SetAdmission(string clientId, int maxParallelism);
 
-    /// <summary>Changes admission only while it still equals the value set by this intervention.</summary>
-    bool TrySetAdmission(string clientId, int expected, int replacement);
+    /// <summary>
+    /// Changes admission only while it still reads <paramref name="expected"/>
+    /// and, when <paramref name="expectedStampUtc"/> is given, nobody saved the
+    /// capacity since that write. Returns the capacity stamp of this write, or
+    /// null when it was refused.
+    /// </summary>
+    DateTime? TrySetAdmission(string clientId, int expected, int replacement, DateTime? expectedStampUtc = null);
 }
 
 /// <summary>
@@ -85,9 +91,13 @@ public interface IProviderRouteControl
     /// <summary>True while the durable provider exclusion still blocks this host.</summary>
     bool IsExcluded(string host, string provider);
 
+    /// <summary>The intervention that owns the host's provider exclusion, or null when none is in force.</summary>
+    string? ExcludedBy(string host, string provider);
+
     void Reroute(string host, string provider, string interventionId);
 
-    void Restore(string host, string provider);
+    /// <summary>Lifts the exclusion only while <paramref name="interventionId"/> still owns it.</summary>
+    void Restore(string host, string provider, string interventionId);
 }
 
 /// <summary>The batch gate queue of one project.</summary>

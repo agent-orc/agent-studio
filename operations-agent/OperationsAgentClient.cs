@@ -45,7 +45,9 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
                   ?? throw new InvalidDataException("Agent lease response is empty.");
         if (!Guid.TryParseExact(attempt.Id, "N", out _)) throw new InvalidDataException("Agent attempt identity is invalid.");
         var restartMarker = Path.Combine(spoolDirectory, attempt.Id + ".restart-started");
-        if (attempt.Command.OperationId == OperationCatalogue.ServiceRestart.Id)
+        // A refused restart has no side effect and needs no execution marker.
+        if (attempt.Command.OperationId == OperationCatalogue.ServiceRestart.Id
+            && ServiceRestart.Refusal(attempt, _services, clock.GetUtcNow()) is null)
         {
             if (File.Exists(restartMarker))
                 throw new IOException("Restart attempt has an unresolved durable execution marker.");
@@ -67,8 +69,10 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
         await WriteDurableAsync(target + ".tmp", bytes, ct);
         File.Move(target + ".tmp", target);
         await ReportAsync(attempt.Id, reportRequest, ct);
-        File.Delete(target);
+        // The marker goes first: a leftover result replays itself, a leftover
+        // marker would replay a contradicting "unknown" for a reported result.
         if (File.Exists(restartMarker)) File.Delete(restartMarker);
+        File.Delete(target);
     }
 
     private static async Task WriteDurableAsync(string path, byte[] bytes, CancellationToken ct)
@@ -90,9 +94,9 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
             var report = JsonSerializer.Deserialize<AttemptReportRequest>(await File.ReadAllTextAsync(file, ct), OperationsProtocol.Json)
                          ?? throw new InvalidDataException("Agent result evidence is empty.");
             await ReportAsync(Path.GetFileNameWithoutExtension(file), report, ct);
-            File.Delete(file);
             var marker = Path.ChangeExtension(file, ".restart-started");
             if (File.Exists(marker)) File.Delete(marker);
+            File.Delete(file);
         }
         // A side effect may have completed before its result could be spooled.
         // Report uncertainty and never recreate the service on redispatch.
@@ -100,7 +104,8 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
         {
             var report = JsonSerializer.Deserialize<AttemptReportRequest>(await File.ReadAllTextAsync(marker, ct), OperationsProtocol.Json)
                          ?? throw new InvalidDataException("Restart execution marker is empty.");
-            await ReportAsync(Path.GetFileNameWithoutExtension(marker), report, ct);
+            // The server already holds a result for the attempt: the marker is settled.
+            await ReportAsync(Path.GetFileNameWithoutExtension(marker), report, ct, settledOnConflict: true);
             File.Delete(marker);
         }
     }
@@ -148,10 +153,12 @@ public sealed class OperationsAgentClient(HttpClient client, string agentId, str
         }
     }
 
-    private async Task ReportAsync(string id, AttemptReportRequest report, CancellationToken ct)
+    private async Task ReportAsync(string id, AttemptReportRequest report, CancellationToken ct, bool settledOnConflict = false)
     {
         if (!Guid.TryParseExact(id, "N", out _)) throw new InvalidDataException("Agent spool identity is invalid.");
         using var response = await client.PostAsJsonAsync(Api + $"attempts/{id}/result", report, ct);
+        if (settledOnConflict && response.StatusCode == System.Net.HttpStatusCode.Conflict
+            && (await response.Content.ReadAsStringAsync(ct)).Contains("result-replay-conflict", StringComparison.Ordinal)) return;
         response.EnsureSuccessStatusCode();
     }
 }
