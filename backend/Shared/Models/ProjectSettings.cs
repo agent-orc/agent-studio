@@ -1168,6 +1168,25 @@ public sealed record ProjectTestingSettings
 {
     /// <summary><c>affected</c> or <c>full</c> (default); see <see cref="PerCardTestModes"/>.</summary>
     public string? PerCard { get; init; }
+    /// <summary>Integration verification placement; absent means pre-merge.</summary>
+    public string? Mode { get; init; }
+}
+
+public static class IntegrationTestModes
+{
+    public const string PreMerge = "pre-merge";
+    public const string PostMerge = "post-merge";
+
+    public static bool IsKnown(string? value)
+        => value is not null && (string.Equals(value.Trim(), PreMerge, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value.Trim(), PostMerge, StringComparison.OrdinalIgnoreCase));
+
+    public static string Normalize(string? value)
+        => string.Equals(value?.Trim(), PostMerge, StringComparison.OrdinalIgnoreCase)
+            ? PostMerge : PreMerge;
+
+    public static string Resolve(ProjectSettings? settings)
+        => Normalize(settings?.Testing?.Mode);
 }
 
 /// <summary>

@@ -49,6 +49,20 @@ public sealed class PostMergeRunStoreTests : IDisposable
         Assert.Null(store.Read(Project).LastGreenSha);
     }
 
+    [Fact]
+    public void GreenReceiptClearsEscalatedRepairCard()
+    {
+        var store = new PostMergeRunStore(_root);
+        store.RecordAttributionEscalation(Project, "repair-one");
+        Assert.Equal("repair-one", store.Read(Project).AttributionEscalatedTaskId);
+        var run = Run("one", First, "window");
+        store.Record(Project, run);
+        Assert.Equal("repair-one", store.Read(Project).AttributionEscalatedTaskId);
+        store.Record(Project, run with { Status = "green", FinishedAtUtc = Now.AddMinutes(1),
+            Verdicts = [new("dotnet test", 0, false)] });
+        Assert.Null(store.Read(Project).AttributionEscalatedTaskId);
+    }
+
     private static PostMergeRunRecord Run(string id, string tip, string kind) =>
         new(id, "Agent Studio", kind, tip, null, Now, Now, 1, ["dotnet test"], [], "running", Now, null);
 

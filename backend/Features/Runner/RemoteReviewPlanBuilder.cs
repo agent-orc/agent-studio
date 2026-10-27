@@ -61,6 +61,7 @@ public sealed class RemoteReviewPlanBuilder
     private readonly QuotaAdmissionService? _quota;
     private readonly ModelRoutingPolicyRegistry? _routing;
     private readonly ReviewObservationStore? _observations;
+    private readonly PostMergeModeService? _postMergeMode;
 
     public RemoteReviewPlanBuilder(
         AspectRunnerService aspects,
@@ -72,7 +73,8 @@ public sealed class RemoteReviewPlanBuilder
         ProjectRegistry? projects = null,
         QuotaAdmissionService? quota = null,
         ModelRoutingPolicyRegistry? routing = null,
-        ReviewObservationStore? observations = null)
+        ReviewObservationStore? observations = null,
+        PostMergeModeService? postMergeMode = null)
     {
         _aspects = aspects;
         _configuration = configuration;
@@ -84,6 +86,7 @@ public sealed class RemoteReviewPlanBuilder
         _quota = quota;
         _routing = routing;
         _observations = observations;
+        _postMergeMode = postMergeMode;
     }
 
     /// <summary>
@@ -162,6 +165,8 @@ public sealed class RemoteReviewPlanBuilder
             : _git.ChangedPathsAgainstMergeBase(
                 repositoryPath, integrationRef, resultRef));
         var deferBuildTest = projectSettings?.BatchGate.Enabled == true
+            && (_postMergeMode?.Resolve(task?.ProjectName ?? string.Empty, projectSettings)
+                ?? IntegrationTestModes.Resolve(projectSettings)) != IntegrationTestModes.PostMerge
             && task is not null && !TaskModes.IsReportOnly(task.Mode)
             && (projectSettings.BatchGate.EffectiveScope == "code"
                 || DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths))
