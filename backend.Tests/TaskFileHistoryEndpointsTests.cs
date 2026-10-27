@@ -221,12 +221,9 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
     [Fact]
     public async Task CodeFileHistory_WhenTheProducerBudgetIsSpent_ReportsWarming()
     {
-        // The loaded-host case made deterministic: instead of waiting for a slow
-        // host to push the lookup past the client's deadline, the server starts
-        // with no budget at all. What matters is the shape of the outcome - a
-        // real HTTP response naming the server's own limit, arriving well inside
-        // ClientTimeout, rather than the aborted request this test used to fail
-        // on (AGT-2867).
+        // An exhausted producer budget leaves the route on persisted facts.
+        // The request answers warming without starting its own Git lookup.
+        // The producer can retry the bounded history work later.
         WriteJob("ASS-901");
         WriteFile(_codeRoot, "src/app.cs", "class App { }\n");
         RunGit(_codeRoot, "add", "-A");
