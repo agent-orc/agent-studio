@@ -3518,10 +3518,13 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
         new(StringComparer.Ordinal);
     private readonly object _gate = new();
     private readonly TimeProvider _time;
+    private readonly AgentStudio.Watcher.ProviderRouteExclusions? _routeExclusions;
 
-    public V1ReviewExecutorRegistry(TimeProvider? time = null)
+    public V1ReviewExecutorRegistry(TimeProvider? time = null,
+        AgentStudio.Watcher.ProviderRouteExclusions? routeExclusions = null)
     {
         _time = time ?? TimeProvider.System;
+        _routeExclusions = routeExclusions;
     }
 
     public Contract.RunnerDto Register(string runnerId, Contract.RegisterRunnerRequest request)
@@ -4288,6 +4291,11 @@ public sealed class V1ReviewExecutorRegistry : IGateExecutorDirectory
             if (!_registrations.TryGetValue(runnerId, out var registration)
                 || registration.InstanceId != instanceId) return new HashSet<string>(StringComparer.Ordinal);
             var admitted = registration.Capabilities.ToHashSet(StringComparer.Ordinal);
+            // AGT-3207: the AI Operator rerouted this provider away from the host
+            // until its login works again, whether or not the host advertised yet.
+            if (_routeExclusions is not null)
+                admitted.RemoveWhere(key => key.StartsWith("provider-auth:", StringComparison.Ordinal)
+                    && _routeExclusions.IsExcluded(registration.HostId, runnerId, key["provider-auth:".Length..]));
             if (!_capabilityStates.TryGetValue(runnerId, out var state)
                 || state.InstanceId != instanceId)
             {

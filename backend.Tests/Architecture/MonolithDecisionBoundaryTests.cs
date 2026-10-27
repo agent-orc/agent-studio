@@ -40,6 +40,7 @@ public sealed class MonolithDecisionBoundaryTests
         ["OperatorSweepHostedService"] = "OperatorSweepService",
         ["RunLivenessMonitorHostedService"] = "RunLivenessMonitor",
         ["StaleProgressSweepHostedService"] = "StaleProgressArchiver",
+        ["StallInterventionHostedService"] = "StallInterventionService",
         ["SteerTimeoutMonitorHostedService"] = "SteerTimeoutMonitor",
     };
 
@@ -152,7 +153,7 @@ public sealed class MonolithDecisionBoundaryTests
             "RunLivenessPolicy", "StaleProgressPolicy", "SteerTimeoutPolicy",
             "RunTimeoutSalvageContinuationPolicy", "GateEnvironmentRetryPolicy",
             "DeliveryChainPolicy", "CauseBreakerClosePolicy", "IntakeRoutingPolicy",
-            "AcceptanceRailDecisionPolicy", "GateCancellationPolicy",
+            "AcceptanceRailDecisionPolicy", "GateCancellationPolicy", "StallInterventionPolicy",
         ];
         var violations = sources.SelectMany(file => movedRules
             .Where(rule => Regex.IsMatch(StripComments(file.Value),

@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using AgentStudio.Operations.Agent;
+using AgentStudio.Operations.Agent.Features.Execution;
 using AgentStudio.Operations.Contracts;
 
 string Required(string name) => Environment.GetEnvironmentVariable(name)
@@ -18,7 +19,8 @@ using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = fa
     BaseAddress = endpoint, Timeout = TimeSpan.FromSeconds(10), MaxResponseContentBufferSize = 32768,
 };
 client.DefaultRequestHeaders.Add(OperationsProtocol.Header, OperationsProtocol.Version.ToString());
-var agent = new OperationsAgentClient(client, agentId, bootId, Required("OPERATIONS_SPOOL_DIRECTORY"), TimeProvider.System);
+var agent = new OperationsAgentClient(client, agentId, bootId, Required("OPERATIONS_SPOOL_DIRECTORY"), TimeProvider.System,
+    RestartableServices.Load(Environment.GetEnvironmentVariable("OPERATIONS_SERVICES_FILE"), Console.Error.WriteLine));
 using var stop = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); };
 var failures = 0;

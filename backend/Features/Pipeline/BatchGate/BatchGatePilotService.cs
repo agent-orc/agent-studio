@@ -280,6 +280,46 @@ public sealed partial class BatchGatePilotService
 
     public void RequestCloseNow(string project) => _store.RequestCloseNow(project);
 
+    /// <summary>
+    /// AGT-3207: drops a pending member whose card is already completed or
+    /// left Auto Review. It runs under the pass lock, so a forming batch never
+    /// takes the member while it is dropped; a member that a formed batch owns
+    /// stays with that batch. <paramref name="droppable"/> decides on the
+    /// card's lane read from disk under that lock (null when the folder is
+    /// gone). Returns false when nothing was dropped.
+    /// </summary>
+    public bool DropPendingMember(string reviewAttemptId, string reason, Func<string?, bool>? droppable = null)
+    {
+        if (!_tick.Wait(TimeSpan.FromSeconds(30)))
+        {
+            _logger.LogInformation("batch-gate-drop-deferred attempt={AttemptId} reason=pilot-pass-running", reviewAttemptId);
+            return false;
+        }
+        try
+        {
+            var pending = _store.ListPending().FirstOrDefault(item => item.ReviewAttemptId == reviewAttemptId);
+            if (pending is null) return false;
+            var folder = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath)?.FolderPath ?? pending.JobFolderPath;
+            if (BatchGateOwnershipStore.Read(folder)?.BatchId is not null) return false;
+            if (droppable is not null && !droppable(Directory.Exists(folder) ? LaneOf(folder) : null)) return false;
+            ResolveSuperseded(pending, reason);
+            return true;
+        }
+        finally
+        {
+            _tick.Release();
+        }
+    }
+
+    /// <summary>The lane folder a card folder sits in (archive cards may be nested), or null.</summary>
+    private static string? LaneOf(string folder)
+    {
+        for (var directory = Path.GetDirectoryName(folder); directory is not null; directory = Path.GetDirectoryName(directory))
+            if (TaskStates.All.FirstOrDefault(state => string.Equals(state, Path.GetFileName(directory),
+                    StringComparison.OrdinalIgnoreCase)) is { } lane) return lane;
+        return null;
+    }
+
     public object State(string project, int history = 10)
     {
         var options = _settings.Get(project).BatchGate;

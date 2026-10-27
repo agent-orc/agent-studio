@@ -12,9 +12,27 @@
               @if (item.sinceUtc) { · since <time [attr.datetime]="item.sinceUtc">{{ timeLabel(item.sinceUtc) }}</time> }
             </small>
             @if (item.suggestedAction) { <p>Suggested action: {{ item.suggestedAction }}</p> }
+            @if (interventions.latestBySubject().get(item.subject); as row) {
+              <app-stall-intervention-receipt [row]="row" (undo)="undo($event)" />
+            }
           </div>
         </li>
       }
     </ul>
   </section>
+}
+@if (settled().length) {
+  <section class="operational-stalls operational-stalls--settled" aria-label="Recent AI Operator interventions"
+    data-testid="stall-interventions">
+    <h3>Recent AI Operator interventions <strong>{{ settled().length }}</strong></h3>
+    @for (row of settled(); track row.receipt.id) {
+      <div class="operational-stalls__settled">
+        <strong>{{ subjectLabel(row.receipt.subject) }}</strong>
+        <app-stall-intervention-receipt [row]="row" (undo)="undo($event)" />
+      </div>
+    }
+  </section>
+}
+@if (interventions.error(); as error) {
+  <p class="operational-stalls__error" role="alert">{{ error }}</p>
 }

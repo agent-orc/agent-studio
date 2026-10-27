@@ -475,12 +475,28 @@ test.describe('Execution Hosts settings section', () => {
           lastSummary: 'Engine image differs from the release.', suggestedAction: 'Reconcile the running image.' },
       ] }),
     }));
+    await page.route('**/api/watcher/interventions?limit=50', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ count: 1, interventions: [{
+        receipt: {
+          id: 'si-overload-1', subject: 'host:agent-runner-01', action: 'lower-admission',
+          autonomy: 'A1', status: 'applied',
+          observed: 'runner-01 load was 46 on 12 cores with 8 admitted runs.',
+          done: 'I lowered admission from 8 to 6; running work continues.',
+          why: 'New work waits until the host has capacity.', before: '8 admitted runs', after: '6 admitted runs',
+          undo: 'Undo restores 8 in Environment > Capacity.', chain: [], undoable: true,
+        }, kind: 'host-overload', host: 'agent-runner-01', project: '_workspace', decidedBy: 'engine',
+        decidedAtUtc: '2026-10-16T19:51:00Z', affectedCards: ['AGT-1'], headline: 'Admission lowered',
+      }] }),
+    }));
     await page.reload();
     await page.goto('/#/workspace/settings/execution-hosts');
     await expect(page.getByTestId('studio-open-stalls')).toContainText('2');
     await expect(page.getByTestId('operational-stalls')).toContainText('agent-runner-01');
     await expect(page.getByTestId('operational-stalls')).toContainText('engine on engine-host');
     await expect(page.getByTestId('operational-stalls')).toContainText('Reduce admission or move work.');
+    await expect(page.getByTestId('operational-stalls').getByTestId('stall-intervention-receipt'))
+      .toContainText('46 on 12 cores');
+    await expect(page.getByTestId('stall-intervention-undo')).toBeVisible();
     const directory = process.env.JOB_RESULTS_DIR ?? SHOT_DIR;
     mkdirSync(directory, { recursive: true });
     for (const theme of ['light', 'dark'] as const) {
