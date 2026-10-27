@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text.Json;
 using AgentStudio.Security;
 using AgentStudio.Watcher;
 using Microsoft.AspNetCore.Hosting;
@@ -19,7 +18,7 @@ public sealed class StallInterventionEndpointAccessTests : IDisposable
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 20, 10, 0, 0, TimeSpan.Zero));
 
     [Fact]
-    public async Task Scoped_account_reads_only_its_project_and_cannot_undo_a_foreign_receipt()
+    public async Task Project_scoped_account_can_neither_read_nor_undo_receipts_of_any_project()
     {
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -48,23 +47,26 @@ public sealed class StallInterventionEndpointAccessTests : IDisposable
             new ChangePasswordRequest(created.TemporaryPassword, "another long passphrase!"));
         client.DefaultRequestHeaders.Add("Cookie", $"{AccessSecurityStore.SessionCookieName}={login.SessionToken}");
         client.DefaultRequestHeaders.Add("X-CSRF-Token", login.CsrfToken);
+        // A session request proves it came from a Studio page (AGT-3230).
+        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
         var store = factory.Services.GetRequiredService<StallInterventionStore>();
         var own = Save("Alpha", "host:alpha:review");
         var foreign = Save("Beta", "host:beta:review");
 
+        // The Watcher routes are installation-wide and need workspace.operate
+        // (develop's IAM catalogue); the endpoint's own project filter stays
+        // as the second layer for workspace accounts.
         using var response = await client.GetAsync("/api/watcher/interventions");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        var listed = body.RootElement.GetProperty("interventions").EnumerateArray().ToArray();
-        Assert.Single(listed);
-        Assert.Equal("Alpha", listed[0].GetProperty("project").GetString());
-        Assert.Equal(own.Id, listed[0].GetProperty("receipt").GetProperty("id").GetString());
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Contains("workspace.operate", await response.Content.ReadAsStringAsync());
+        Assert.DoesNotContain(own.Id, await response.Content.ReadAsStringAsync());
 
-        using var denied = await client.PostAsync($"/api/watcher/interventions/{foreign.Id}/undo", null);
-        Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
-        Assert.Null(store.Find(foreign.Id)!.UndoneAtUtc);
-        using var allowed = await client.PostAsync($"/api/watcher/interventions/{own.Id}/undo", null);
-        Assert.Equal(HttpStatusCode.Conflict, allowed.StatusCode);
+        foreach (var record in new[] { own, foreign })
+        {
+            using var undo = await client.PostAsync($"/api/watcher/interventions/{record.Id}/undo", null);
+            Assert.Equal(HttpStatusCode.Forbidden, undo.StatusCode);
+            Assert.Null(store.Find(record.Id)!.UndoneAtUtc);
+        }
 
         StallInterventionRecord Save(string project, string subject)
         {
