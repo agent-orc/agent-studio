@@ -1,6 +1,9 @@
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.Tasks;
+using AgentStudio.OrchestrationDecisions;
+using AgentStudio.Pipeline;
+using AgentStudio.Registry;
 
 namespace AgentStudio.Deploy;
 
@@ -41,6 +44,8 @@ public sealed class DeployService
     private readonly ILogger<DeployService> _logger;
     private readonly TaskMutationService? _mutations;
     private readonly ReleaseCardAttributionSource _attribution;
+    private readonly PostMergeRunStore? _postMerge;
+    private readonly ProjectRegistry? _registry;
 
     /// <summary>
     /// Ancestry answers between release commits. Commits are immutable, so a
@@ -59,7 +64,8 @@ public sealed class DeployService
 
     public DeployService(ProjectEnvironmentService environments, DeployStore store, GitService git,
         TaskScannerService scanner, TimeProvider clock, ILogger<DeployService> logger,
-        TaskMutationService? mutations, ReleaseCardAttributionSource? attribution = null)
+        TaskMutationService? mutations, ReleaseCardAttributionSource? attribution = null,
+        PostMergeRunStore? postMerge = null, ProjectRegistry? registry = null)
     {
         _environments = environments;
         _store = store;
@@ -69,6 +75,8 @@ public sealed class DeployService
         _logger = logger;
         _mutations = mutations;
         _attribution = attribution ?? new ReleaseCardAttributionSource(scanner);
+        _postMerge = postMerge;
+        _registry = registry;
     }
 
     /// <summary>
@@ -135,6 +143,16 @@ public sealed class DeployService
         string? versionTag = null, string? branch = null, string? requestedChannel = null, bool mayOverride = false)
     {
         const string invalid = "Artifact, commit, or stage and production declarations are invalid.";
+        var projectRecord = _registry?.FindByIdOrDisplayName(project) ?? _registry?.FindByShortCode(project);
+        if (_postMerge is not null && projectRecord is not null)
+        {
+            var develop = _postMerge.Read(projectRecord.Id);
+            var lastTerminal = develop.Runs.LastOrDefault(run => run.Status is "red" or "green");
+            if (!AgentStudio.Runner.MonolithTransitionAdapter.MayCreateRelease(lastTerminal?.Status == "red"))
+                return DeployOutcome<Release>.Conflict(
+                    "Develop is red. A green post-merge verdict is required before creating a release candidate.",
+                    "develop-red");
+        }
         try
         {
             if (_environments.Declarations(project) is null)

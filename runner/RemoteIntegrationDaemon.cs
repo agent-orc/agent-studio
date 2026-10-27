@@ -1,4 +1,5 @@
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.OrchestrationDecisions;
 
 namespace AgentRunner;
 
@@ -51,6 +52,8 @@ public sealed class RemoteIntegrationDaemon
                             result.IntegratedSha, result.Detail), shutdown);
                     _log($"integration {command.IntegrationId} for {command.TaskId}: {result.Outcome}; " +
                          $"lane {report.TaskState ?? "unchanged"}");
+                    if (result.Outcome == IntegrationOutcomeKinds.BlockedFailingArea)
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown);
                     continue;
                 }
                 await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _options.PollSeconds)), shutdown);
@@ -85,7 +88,9 @@ public sealed class RemoteIntegrationDaemon
             _time, _log).RunAsync(lease, leaseLoss, renewal.Token);
         try
         {
-            return await IntegrationPublisher.PublishAsync(command, lease.Fence, root, _log, leaseLoss.Token);
+            var develop = await _client.GetPostMergeStateAsync(command.ProjectId, leaseLoss.Token);
+            return await IntegrationPublisher.PublishAsync(command, lease.Fence, root, _log,
+                leaseLoss.Token, develop);
         }
         catch (OperationCanceledException) when (leaseLoss.IsCancellationRequested && !shutdown.IsCancellationRequested)
         {
@@ -162,7 +167,8 @@ public static class IntegrationPublisher
     private const string ResultRef = "refs/remotes/publication/result";
 
     public static async Task<IntegrationPublishResult> PublishAsync(
-        IntegrationCommandDto command, long fence, string root, Action<string> log, CancellationToken ct)
+        IntegrationCommandDto command, long fence, string root, Action<string> log, CancellationToken ct,
+        PostMergeProjectState? develop = null)
     {
         var branch = BranchRef(command.IntegrationRef);
         var directory = Path.Combine(root, $"{SafeSegment(command.IntegrationId)}-{fence}");
@@ -182,6 +188,22 @@ public static class IntegrationPublisher
             if (await IsAncestorAsync(resultSha, target, directory, ct))
                 return new(IntegrationOutcomeKinds.AlreadyIntegrated, target,
                     $"{branch} at {target} already contains {resultSha}.");
+            var lastT3 = develop?.Runs.LastOrDefault(run => run.Status is "red" or "green");
+            if (lastT3?.Status == "red")
+            {
+                var failingArea = (develop?.Incidents ?? []).Where(item => item.ResolvedAtUtc is null
+                    && item.RepairCardId != command.TaskId)
+                    .SelectMany(item => item.FailingPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                if (failingArea.Length > 0)
+                {
+                    var mergeBase = (await Git(["merge-base", target, resultSha], directory, ct)).StdOut.Trim();
+                    var changed = (await Git(["diff", "--name-only", mergeBase, resultSha], directory, ct))
+                        .StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                    if (!RedDevelopRepairPolicy.MayMerge(changed, failingArea))
+                        return new(IntegrationOutcomeKinds.BlockedFailingArea, null,
+                            "Delivery paths overlap the open red-develop incident.");
+                }
+            }
             string tip;
             if (await IsAncestorAsync(target, resultSha, directory, ct))
                 tip = resultSha;

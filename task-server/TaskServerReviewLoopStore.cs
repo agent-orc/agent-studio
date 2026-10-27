@@ -548,7 +548,7 @@ public sealed partial class TaskServerStore
                         WHERE lease.project_id = integration_commands.project_id
                           AND lease.integration_ref = integration_commands.integration_ref
                           AND lease.status = 'active')
-                 ORDER BY created_at, id;
+                 ORDER BY updated_at, id;
                 """, transaction))
             await using (var reader = await command.ExecuteReaderAsync(ct))
             {
@@ -709,6 +709,7 @@ public sealed partial class TaskServerStore
                     "The publication lease expired before the report.");
 
             var decision = IntegrationResultPolicy.Decide(outcome, command.Attempts);
+            var heldForRedDevelop = outcome == IntegrationOutcomeKinds.BlockedFailingArea;
             var nextStatus = decision.Action switch
             {
                 IntegrationResultAction.HumanReview => IntegrationCommandStates.Integrated,
@@ -748,6 +749,7 @@ public sealed partial class TaskServerStore
             var updated = command with
             {
                 Status = nextStatus,
+                Attempts = heldForRedDevelop ? Math.Max(0, command.Attempts - 1) : command.Attempts,
                 UpdatedAt = now,
                 IntegratedSha = request.IntegratedSha?.ToLowerInvariant() ?? command.IntegratedSha,
                 LastOutcome = outcome,
@@ -757,13 +759,15 @@ public sealed partial class TaskServerStore
             await ExecuteAsync(connection, """
                 UPDATE integration_commands
                    SET status = $status, integrated_sha = $integrated, last_outcome = $outcome,
-                       reason = $reason, report_key = $key, report_response_json = $response, updated_at = $now
+                       reason = $reason, report_key = $key, report_response_json = $response, updated_at = $now,
+                       attempts = $attempts
                  WHERE id = $id;
                 UPDATE publication_leases SET status = 'released'
                  WHERE project_id = $project AND integration_ref = $ref AND lease_id = $lease;
                 """, ct, transaction,
                 ("$status", nextStatus), ("$integrated", updated.IntegratedSha), ("$outcome", outcome),
                 ("$reason", reason), ("$key", request.IdempotencyKey),
+                ("$attempts", updated.Attempts),
                 ("$response", JsonSerializer.Serialize(response)), ("$now", Iso(now)), ("$id", integrationId),
                 ("$project", command.ProjectId), ("$ref", command.IntegrationRef), ("$lease", leaseId));
             await AuditAsync(connection, transaction, actorId, "integration.reported", "integration", integrationId,

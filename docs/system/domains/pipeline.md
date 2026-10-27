@@ -63,6 +63,35 @@ The Dossier's recorded working decisions are D1 T-B, D2 A, D3 A, D4 A,
 D5 L-B, D6 A, D7 A-B, D8 A, D9 A, and D10 A. This card implements T3 under
 D1 T-B and retains D3 A as the before-delivery policy for its later card.
 
+### Red develop repair (AGT-3312)
+
+This slice implements the Dossier's recorded D2 option A (`revert-first`). A
+terminal red T3 receipt carries failing tests, a bounded log excerpt, the
+first-parent suspects since the last green SHA, changed paths, and the result
+of a clean revert check. The runner excludes active test quarantines and
+re-runs a focused failure at the same SHA before attribution. It intersects
+suspect paths with the failing test project's tracked reference graph and
+tests merge points, bisecting when several candidates remain. Unknown graph
+edges retain the suspect. `RedDevelopRepairPolicy` in the pure decision
+library chooses revert for one clean independent suspect, fix forward
+otherwise, and Human Operator escalation at two hours. A repair card carries
+the evidence and uses the normal integration path, whose publication lease
+guards the eventual revert. The card starts at the front of Preparation.
+
+The project post-merge store keeps one open incident per fingerprint. A repeat
+red receipt reuses that card; a green receipt closes open incidents and records
+their red duration. A red terminal verdict blocks release creation. The
+scheduled runner invokes an escalation check even when the checkout is busy;
+it escalates an incident that has remained red for two hours and offers the
+project's pre-merge batch gate as the fallback.
+The integration executor reads that project state before publication. While
+the latest terminal T3 verdict is red, it compares the delivery's changed
+paths with open incident paths under its publication lease. An overlap
+requeues the command without spending its publication retry budget and places
+it behind other queued integrations; an unrelated delivery continues. A
+direct Task Server runner sets `RUNNER_POST_MERGE_STATE_URL` to the Studio API
+so this check reads the same durable T3 state.
+
 
 An operator override that accepts a published delivery writes an append-only
 `integrated-verified` record on the completed card. The record names the actor,

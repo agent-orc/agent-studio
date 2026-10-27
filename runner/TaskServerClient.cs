@@ -983,6 +983,17 @@ public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFa
                "/api/v1/integrations/claims", request, ct)
            ?? throw new TaskServerException(500, "Empty integration claim response.");
 
+    public async Task<Contract.PostMergeProjectState> GetPostMergeStateAsync(string projectId,
+        CancellationToken ct)
+    {
+        var path = $"/api/runner/post-merge/projects/{Uri.EscapeDataString(projectId)}";
+        var url = _options?.PostMergeStateUrl is { } baseUrl ? baseUrl + path : path;
+        using var response = await _http.GetAsync(url, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Contract.PostMergeProjectState>(TaskServerContractJson, ct)
+            ?? throw new TaskServerException(500, "Empty post-merge project state.");
+    }
+
     public async Task<Contract.PublicationLeaseDto> RenewPublicationLeaseAsync(
         string integrationId, Contract.IntegrationLeaseRenewRequest request, CancellationToken ct)
         => await PostJsonAsync<Contract.IntegrationLeaseRenewRequest, Contract.PublicationLeaseDto>(

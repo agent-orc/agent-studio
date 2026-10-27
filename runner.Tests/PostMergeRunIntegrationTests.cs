@@ -54,11 +54,17 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         await Git(_root, "clone", "--quiet", "--branch", "develop", origin, checkout);
 
         var received = new List<PostMergeRunRecord>();
+        var escalationChecks = 0;
         string? lastGreenForGet = null;
         using var http = new HttpClient(new Handler(async request =>
         {
             if (request.Method == HttpMethod.Get)
                 return Json(PostMergeProjectState.Empty("PROJ-002") with { LastGreenSha = lastGreenForGet });
+            if (request.RequestUri?.AbsolutePath.EndsWith("/escalation-check", StringComparison.Ordinal) == true)
+            {
+                escalationChecks++;
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            }
             var run = JsonSerializer.Deserialize<PostMergeRunRecord>(
                 await request.Content!.ReadAsStringAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
             received.Add(run);
@@ -88,6 +94,7 @@ public sealed class PostMergeRunIntegrationTests : IDisposable
         Assert.Equal(0, await new PostMergeRunCommand(options, output, new FixedClock(), http,
             () => new(0.1, 0)).ExecuteAsync(CancellationToken.None));
         Assert.Equal("skipped", received[^1].Status);
+        Assert.Equal(2, escalationChecks);
         Assert.Equal(second, received[^1].TipSha);
         Assert.Equal(first, File.ReadAllText(Path.Combine(checkout, "tested.sha")).Trim());
     }

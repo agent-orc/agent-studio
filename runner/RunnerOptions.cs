@@ -15,6 +15,9 @@ public sealed class RunnerOptions
     /// <summary>Central Task Server base URL, e.g. http://127.0.0.1:5030 or the reverse-proxied central URL.</summary>
     public required string ServerUrl { get; init; }
 
+    /// <summary>Studio API URL for red-develop containment facts when integration claims use a direct Task Server URL.</summary>
+    public string? PostMergeStateUrl { get; init; }
+
     /// <summary>Stable per-runner identity used as the lease owner (fencing is per task, not per pid).</summary>
     public required string RunnerId { get; init; }
 
@@ -501,6 +504,8 @@ public sealed class RunnerOptions
         var options = new RunnerOptions
         {
             ServerUrl = Val("server", "RUNNER_SERVER_URL", "http://127.0.0.1:5030").TrimEnd('/'),
+            PostMergeStateUrl = Val("post-merge-state-url", "RUNNER_POST_MERGE_STATE_URL").Trim() is { Length: > 0 } postMergeUrl
+                ? postMergeUrl.TrimEnd('/') : null,
             RunnerId = Val("runner-id", "RUNNER_ID", $"agent-runner-{Environment.MachineName}".ToLowerInvariant()),
             RunnerName = Val("runner-name", "RUNNER_NAME", "agent-runner-01"),
             ClientId = Val("client-id", "RUNNER_CLIENT_ID").Trim() is { Length: > 0 } clientId ? clientId : null,
@@ -640,6 +645,15 @@ public sealed class RunnerOptions
                 + "network (for example a container network such as http://orchestrator-api:5031).");
         if (!serverUri.IsLoopback && string.IsNullOrWhiteSpace(options.AuthToken))
             throw new ArgumentException("RUNNER_AUTH_TOKEN is required for a non-loopback Task Server.");
+        if (options.PostMergeStateUrl is { } postMergeStateUrl)
+        {
+            var stateUri = new Uri(postMergeStateUrl, UriKind.Absolute);
+            if (stateUri.Scheme != Uri.UriSchemeHttp && stateUri.Scheme != Uri.UriSchemeHttps
+                || stateUri.Scheme == Uri.UriSchemeHttp && !stateUri.IsLoopback && !options.AllowInsecureHttp)
+                throw new ArgumentException("RUNNER_POST_MERGE_STATE_URL must use HTTPS unless it is loopback or private HTTP is explicitly allowed.");
+            if (!stateUri.IsLoopback && string.IsNullOrWhiteSpace(options.AuthToken))
+                throw new ArgumentException("RUNNER_AUTH_TOKEN is required for a non-loopback post-merge state URL.");
+        }
         if (options.Role is not ("coding" or "review" or "gate" or "integration" or "run-target"))
             throw new ArgumentException("RUNNER_ROLE must be 'coding', 'review', 'gate', 'integration', or 'run-target'.");
         if (options.Role is "review" or "gate"
