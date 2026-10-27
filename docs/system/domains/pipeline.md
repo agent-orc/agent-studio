@@ -42,9 +42,10 @@ merge-busy flag still drains stable deployment.
 The post-merge worker reads its window size and age from the project's
 look-ahead settings through the runner state endpoint.
 
-An attribution repair card escalated through `HumanReviewEscalation` with the
-`post-merge-attribution` category records its card ID in the post-merge run
-state. While that card is in Escalated, or a red develop has lasted at least
+An attribution repair card created with `creationSource: post-merge-attribution`
+is classified by the `HumanReviewEscalation` funnel when its normal run path
+escalates it. The funnel records the card ID in the post-merge run state.
+While that card is in Escalated, or a red develop has lasted at least
 two hours, the project temporarily resolves to `pre-merge`. A green T3 receipt
 clears the recorded card ID. Agent Studio remains in `pre-merge` until its T1 replay
 median is at most ten minutes. The gate-economics seven-day view reports lead

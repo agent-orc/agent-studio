@@ -10,6 +10,8 @@ namespace AgentStudio.Runner;
 /// </summary>
 public static class HumanReviewEscalationCategories
 {
+    /// <summary>Creation source set by the post-merge attribution repair producer.</summary>
+    public const string PostMergeRepairCreationSource = "post-merge-attribution";
     /// <summary>Fallback for legacy auto-review escalation paths.</summary>
     public const string AutoReviewEscalation = "auto-review-escalation";
     /// <summary>A failure boundary raised a deduplicated orchestrator follow-up task.</summary>
@@ -259,6 +261,7 @@ public sealed class HumanReviewEscalation
         string? statusDetail = null,
         string? expectedSourceState = null)
     {
+        category = ResolveCategory(jobId, watchPath, category);
         var beforeFolder = ResolveSourceFolder(jobId, watchPath);
         // Write the Result scaffold before the lane mutation. The folder moves
         // with status.md on success, and a refused/interrupted move still leaves
@@ -305,6 +308,7 @@ public sealed class HumanReviewEscalation
         string jobId, string watchPath, string project,
         string category, string reason)
     {
+        category = ResolveCategory(jobId, watchPath, category);
         var beforeFolder = ResolveSourceFolder(jobId, watchPath);
         if (!string.IsNullOrWhiteSpace(beforeFolder))
             WriteStatusStubIfMissing(beforeFolder, category, reason);
@@ -332,6 +336,16 @@ public sealed class HumanReviewEscalation
                 "HumanReviewEscalation: move of {Project}/{JobId} to 5e-escalated failed: {Status} {Message}",
                 project, jobId, outcome.Status, outcome.Message);
         return outcome;
+    }
+
+    private string ResolveCategory(string jobId, string watchPath, string category)
+    {
+        var task = _scanner?.FindJob(jobId, watchPath);
+        return string.Equals(task?.CreationSource,
+            HumanReviewEscalationCategories.PostMergeRepairCreationSource,
+            StringComparison.OrdinalIgnoreCase)
+            ? HumanReviewEscalationCategories.PostMergeAttribution
+            : category;
     }
 
     private void RecordPostMergeAttributionEscalation(string project, string jobId, string category)
