@@ -96,9 +96,9 @@ public sealed class PostMergeIncidentService
             }
             var incident = new PostMergeIncident(fingerprint, cardId, action.ToString(), firstRed,
                 null, failure?.AttributedMerge, failure?.FailingTests ?? [], failure?.FailingPaths ?? [],
-                decision.Action == RedDevelopRepairAction.Escalate, OriginalTaskId: failure?.AttributedTaskId);
+                false, OriginalTaskId: failure?.AttributedTaskId);
             _store.UpdateIncidents(project.Id, items => [.. items, incident]);
-            if (incident.Escalated) Escalate(project, incident);
+            if (decision.Action == RedDevelopRepairAction.Escalate) Escalate(project, incident);
         }
     }
 
