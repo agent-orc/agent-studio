@@ -79,6 +79,9 @@ builder.Services.AddHostedService<TaskServerInvariantReconciliationService>();
 builder.Services.AddHostedService<ResultRefGcHostedService>();
 builder.Services.AddHostedService<RetentionSchedulerHostedService>();
 builder.Services.AddHostedService<CredentialReminderHostedService>();
+builder.Services.AddSingleton<WorkspaceExportService>();
+builder.Services.AddSingleton<WorkspaceExportStatus>();
+builder.Services.AddHostedService<WorkspaceExportHostedService>();
 
 var configuredUrl = builder.Configuration["LISTEN_URL"]
                     ?? builder.Configuration[$"{TaskServerOptions.SectionName}:ListenUrl"];
@@ -145,6 +148,29 @@ if (command.Kind == TaskServerCommandKind.Import)
     {
         var code = exception is TaskServerConflictException conflict ? $" [{conflict.Code}]" : string.Empty;
         Console.Error.WriteLine($"Task Server import failed{code}: {exception.Message}");
+        return 1;
+    }
+}
+
+if (command.Kind == TaskServerCommandKind.Export)
+{
+    try
+    {
+        // Read-only on the store: no lease quarantine, so it may run beside a live server.
+        await store.InitializeForBackupAsync();
+        var target = Path.GetFullPath(command.ExportTarget!);
+        var exported = await app.Services.GetRequiredService<WorkspaceExportService>().ExportAsync(target, default);
+        WorkspaceExportCommit? committed = null;
+        if (command.ExportCommit && WorkspaceExportGit.IsRepository(target))
+            committed = await new WorkspaceExportGit(
+                    app.Services.GetRequiredService<IOptions<TaskServerOptions>>().Value.GitCommand)
+                .CommitAsync(target, exported, default);
+        Console.WriteLine(JsonSerializer.Serialize(new { export = exported, commit = committed }, commandJson));
+        return committed?.Error is null ? 0 : 1;
+    }
+    catch (Exception exception)
+    {
+        Console.Error.WriteLine($"Task Server export failed: {exception.Message}");
         return 1;
     }
 }
@@ -261,7 +287,9 @@ app.UseMiddleware<StudioContributorMiddleware>();
 app.UseMiddleware<TaskServerProtocolMiddleware>();
 app.UseMiddleware<ArtifactRequestLimitMiddleware>();
 app.MapTaskServerEndpoints();
+app.MapSourceFactsEndpoints();
 app.MapBoardReadModelEndpoints();
+app.MapTaskArtifactsEndpoints();
 app.MapOperationPermitEndpoints();
 app.MapCredentialRunbookEndpoints();
 app.MapStudioEndpoints();

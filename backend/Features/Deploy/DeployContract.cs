@@ -51,6 +51,9 @@ public static class DeployRefusalReasons
 {
     /// <summary>A newer release exists, so this release never starts Staging.</summary>
     public const string Superseded = "superseded";
+
+    /// <summary>The configured release card attribution source (the Task Server, AGT-3320) could not answer.</summary>
+    public const string AttributionUnavailable = "attribution-unavailable";
 }
 
 public static class EnvironmentHealth

@@ -920,6 +920,10 @@
   <strong>AGT-3308 · Target picture update</strong>
   <span>Delivered: Dossier moved to <code>docs/operations/pipeline-delivery-target/</code> with its assets; decisions D1 to D10 recorded on the recommended options (status decided); North star &sect;3 and the &sect;5 guardrail follow T-B, &sect;6 register row, &sect;7 open implementation cards, &sect;9 map card; rows in <code>docs/start/README.md</code> and <code>docs/operations/README.md</code>. No product code changed.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3311" data-delivered-at="2026-10-27" data-slice="post-merge-develop-checks">
+  <strong>AGT-3311 · Post-merge develop checks</strong>
+  <span>T3 implementation: runner merge windows and nightly full-suite checks at a fetched develop SHA, project run receipts, last green SHA and develop state in the board and baseline metrics. Implemented D1 T-B's post-merge tier. D3 A and the other recorded decisions remain the working choices for their respective delivery slices.</span>
+</li>
 <li data-implementation-entry="" data-task-key="AGT-3316" data-delivered-at="2026-10-27" data-slice="delivery-section-board">
   <strong>AGT-3316 · Delivery section on the board</strong>
   <span>Delivered on D5 L-B and D10 A: a Delivery group follows Done &amp; Decide (<code>buildDeliveryGroup</code> in <code>board-lane-layout.util.ts</code>, <code>&lt;app-delivery-section&gt;</code>), one column per read-model column of <code>GET deploy/lanes</code> with release version, last run state and time, health and an approval pill; landed cards, a Waiting divider, then waiting cards with a rolled-back flag, all as the standard task card. Columns collapse like lanes; the display option "Furthest environment only" shows each card once. Words and tones come from <code>models/delivery-presentation.ts</code>. Refresh follows task events and the 30-second deploy poll. In the studio board the group is a fourth super-column whose environment columns stack like lanes. Lane <code>6-completed</code> now reads "Accepted" ("Integrated and accepted."); the interim "Delivery lanes" board toggle is removed.</span>

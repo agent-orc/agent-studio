@@ -556,6 +556,45 @@ public sealed class PrincipalAuthenticationTests
     }
 
     [Fact]
+    public async Task Source_facts_reads_and_demands_need_tasks_read_and_publishing_needs_runs_write()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = Factory(temp.Path);
+        using var studio = Client(factory, StudioToken);
+        var runs = await CreateAsync(studio, "source-producer",
+            TaskServerPrincipalKinds.Runner, [TaskServerScopes.RunsWrite], "source-producer");
+        var reader = await CreateAsync(studio, "source-reader",
+            TaskServerPrincipalKinds.Runner, [TaskServerScopes.TasksRead], "source-reader");
+        var reviewer = await CreateAsync(studio, "source-reviewer",
+            TaskServerPrincipalKinds.Runner, [TaskServerScopes.ReviewsWrite], "source-reviewer");
+        using var runClient = Client(factory, runs.Credential);
+        using var readClient = Client(factory, reader.Credential);
+        using var reviewClient = Client(factory, reviewer.Credential);
+        var root = "/api/v1/source-facts/prj_scope";
+        var sha = new string('a', 40);
+
+        var missing = await readClient.GetAsync($"{root}/diffs?base={sha}&head={new string('b', 40)}");
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        Assert.Contains("source-object-missing", await missing.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        var demand = new SourceFactDemandRequest(SourceFactKinds.Diff, "scope-test", sha, new string('b', 40));
+        Assert.Equal(HttpStatusCode.Forbidden, (await readClient.PostAsJsonAsync($"{root}/demands", demand)).StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, (await reviewClient.PostAsJsonAsync($"{root}/demands", demand)).StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, (await studio.PostAsJsonAsync($"{root}/demands", demand)).StatusCode);
+        var read = new SourceReviewMaterialReadReport(sha, new string('b', 40), SourceReviewMaterialSources.Fallback, 12);
+        Assert.Equal(HttpStatusCode.Forbidden, (await readClient.PostAsJsonAsync($"{root}/review-material/reads", read)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await reviewClient.PostAsJsonAsync($"{root}/review-material/reads", read)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await readClient.PostAsJsonAsync($"{root}/producer/lease",
+            new SourceProducerLeaseRequest("reader"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await readClient.GetAsync($"{root}/demands")).StatusCode);
+
+        var lease = await runClient.PostAsJsonAsync($"{root}/producer/lease", new SourceProducerLeaseRequest("producer:1"));
+        Assert.Equal(HttpStatusCode.OK, lease.StatusCode);
+        Assert.Single((await runClient.GetFromJsonAsync<SourceFactDemandDto[]>($"{root}/demands"))!);
+        Assert.Equal(HttpStatusCode.OK,
+            (await readClient.GetAsync("/api/v1/source-facts/review-material/timings")).StatusCode);
+    }
+
+    [Fact]
     public async Task Orchestrator_context_archive_routes_require_tasks_write()
     {
         using var temp = new TempDirectory();

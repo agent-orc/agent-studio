@@ -2686,14 +2686,18 @@ public sealed partial class TaskServerStore
                 "artifact",
                 ct);
             var now = UtcNow;
+            // Above the inline limit the bytes go to the content object store and the row keeps the hash.
+            var objectStored = ContentObjects.Spills(content.LongLength);
+            if (objectStored) ContentObjects.Put(actualSha, content);
             var inserted = await ExecuteAsync(connection, """
-                INSERT INTO artifacts(id, run_id, name, media_type, sha256, content, size_bytes, idempotency_key, fence, created_at, sequence)
-                VALUES ($id, $run, $name, $media, $sha, $content, $size, $key, $fence, $now, $sequence)
+                INSERT INTO artifacts(id, run_id, name, media_type, sha256, content, size_bytes, idempotency_key, fence, created_at, sequence, object_stored)
+                VALUES ($id, $run, $name, $media, $sha, $content, $size, $key, $fence, $now, $sequence, $object)
                 ON CONFLICT(idempotency_key) DO NOTHING;
                 """, ct, transaction,
                 ("$id", request.ArtifactId), ("$run", runId), ("$name", request.Name), ("$media", request.MediaType),
-                ("$sha", actualSha), ("$content", content), ("$size", content.LongLength), ("$key", request.IdempotencyKey),
-                ("$fence", request.Fence), ("$now", Iso(now)), ("$sequence", request.Sequence));
+                ("$sha", actualSha), ("$content", objectStored ? Array.Empty<byte>() : content), ("$size", content.LongLength),
+                ("$key", request.IdempotencyKey), ("$fence", request.Fence), ("$now", Iso(now)), ("$sequence", request.Sequence),
+                ("$object", objectStored ? 1 : 0));
             result = await ReadArtifactByIdempotencyKeyAsync(connection, transaction, request.IdempotencyKey, ct);
             ValidateArtifactReplay(result, runId, request, actualSha, content.LongLength);
             if (inserted > 0)
@@ -4555,6 +4559,7 @@ public sealed partial class TaskServerStore
         await ApplyReviewMigrationAsync(connection, ct);
         await ApplyGateMigrationAsync(connection, ct);
         await ApplyFailureFingerprintMigrationAsync(connection, ct);
+        await ApplySourceFactsMigrationAsync(connection, ct);
         // Studio route-ownership P1 "task detail and hosts" bundle
         // (docs/studio-route-ownership/index.html): each group below owns a
         // disjoint set of new tables and touches no other group's schema.
@@ -4566,6 +4571,7 @@ public sealed partial class TaskServerStore
         await ApplyStudioTaskMetadataMigrationAsync(connection, ct);
         await ApplyStudioTaskLifecycleExtrasMigrationAsync(connection, ct);
         await ApplyStudioTaskArtifactsMigrationAsync(connection, ct);
+        await ApplyTaskContentMigrationAsync(connection, ct);
         await ApplyStudioTaskHistoryMigrationAsync(connection, ct);
         await ApplyStudioTaskReviewMigrationAsync(connection, ct);
         await ApplyStudioWorkspaceMigrationAsync(connection, ct);

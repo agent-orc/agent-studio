@@ -476,6 +476,11 @@ public sealed class RemoteRunnerDaemon
         var repositoryProbePoll = new RunnerProjectRepositoryProbe(_options, _client,
             new PlatformRepositoryGitProof(_ => null, _options.StateDir), _log).PollAsync(shutdown);
         var gitSetupPoll = new RunnerGitSetupAgent(_options, _client, _log).PollAsync(shutdown);
+        var sourceFactsPoll = new AgentRunner.SourceFacts.SourceFactsDemandSweep(
+            _options,
+            new AgentRunner.SourceFacts.SourceFactsProducer(
+                _client, $"{_options.RunnerId}:{_client.RunnerInstanceId}", _log),
+            _log).PollAsync(shutdown);
         while (!shutdown.IsCancellationRequested)
         {
             idleWatchdog.RecordActiveSlots(active.Count);
@@ -969,6 +974,7 @@ public sealed class RemoteRunnerDaemon
         await decisionPoll;
         await repositoryProbePoll;
         await gitSetupPoll;
+        await sourceFactsPoll;
         await salvageSweep;
         try { await interactiveChat.DrainAsync(); }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }

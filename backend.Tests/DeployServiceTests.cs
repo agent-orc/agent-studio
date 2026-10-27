@@ -664,6 +664,45 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void TaskServerAttribution_NamesTheCardsOfItsIntegrationRecords_WithoutReadingTaskFolders()
+    {
+        var (_, environments, store) = Build();
+        var commit = Head();
+        var requests = new List<string>();
+        // No task folder holds a record: only the Task Server knows DEMO-9 (AGT-3320).
+        var deploy = WithTaskServerAttribution(environments, store, request =>
+        {
+            requests.Add(request.RequestUri!.AbsolutePath);
+            return JsonContent.Create(new AgentStudio.TaskServer.Contracts.IntegratedCardsResponse("prj-demo",
+                [new("DEMO-9", "Server card", "6-completed", [commit], "develop")]));
+        });
+
+        var release = CreateRelease(deploy, Artifact('a'), commit);
+
+        Assert.Equal(["DEMO-9"], release.CardKeys);
+        Assert.Equal(["/api/v1/projects/demo/integrated-cards"], requests);
+    }
+
+    [Fact]
+    public void TaskServerAttribution_RefusesTheReleaseWhenTheTaskServerCannotAnswer()
+    {
+        var (_, environments, store) = Build();
+        var commit = Head();
+        // The folder record exists, but it is no fallback once the Task Server attributes.
+        Card("DEMO-1", commit);
+        var deploy = WithTaskServerAttribution(environments, store,
+            _ => throw new HttpRequestException("connection refused"));
+        WriteReleaseEvidence(Artifact('a'), commit);
+        Assert.True(_environments!.RegisterGateArtifact("demo", Artifact('a'), commit));
+
+        var outcome = deploy.CreateRelease("demo", Artifact('a'), commit, "release-gate");
+
+        Assert.Equal((DeployOutcomeKind.Conflict, DeployRefusalReasons.AttributionUnavailable), (outcome.Kind, outcome.Reason));
+        Assert.Contains("connection refused", outcome.Error);
+        Assert.Empty(store.ReadReleaseRecords("demo"));
+    }
+
+    [Fact]
     public void GreenIntegrationBuild_CreatesImmutableRelease_AndQueuesStagingAutomatically()
     {
         var (deploy, environments, store) = Build();
@@ -2355,6 +2394,31 @@ public sealed class DeployServiceTests : IDisposable
             new DeployStepResult($"deploy[{index}]:{step.Step}", healthy))
             .Take(healthy ? job.SshSteps.Count : 1).ToArray();
         return new(job.LeaseToken!, healthy, evidence ?? (healthy ? "health-ok" : "deploy-step-failed"), steps);
+    }
+
+    private DeployService WithTaskServerAttribution(ProjectEnvironmentService environments, DeployStore store,
+        Func<HttpRequestMessage, HttpContent> answer)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Board:TaskServer:BaseUrl"] = "http://task-server.test/",
+            [AgentStudio.Tasks.TaskArtifactsSourceSetting.SectionKey] = AgentStudio.Tasks.TaskArtifactsSourceSetting.TaskServer,
+        }).Build();
+        var client = new AgentStudio.Tasks.TaskServerBoardClient(new StubTaskServerClientFactory(answer), config);
+        var attribution = new ReleaseCardAttributionSource(_scanner!, new AgentStudio.Tasks.TaskArtifactsSourceSettings(config), client);
+        return new DeployService(environments, store, _git!, _scanner!, _clock, NullLogger<DeployService>.Instance, null, attribution);
+    }
+
+    private sealed class StubTaskServerClientFactory(Func<HttpRequestMessage, HttpContent> answer) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name)
+            => new(new Handler(answer)) { BaseAddress = new Uri("http://task-server.test/") };
+
+        private sealed class Handler(Func<HttpRequestMessage, HttpContent> answer) : HttpMessageHandler
+        {
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+                => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = answer(request) });
+        }
     }
 
     private Release CreateRelease(DeployService deploy, string artifact, string commit)

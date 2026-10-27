@@ -65,7 +65,8 @@ public sealed class RemoteReviewExecutor
     public async Task<int> RunClaimedAsync(ReviewClaimResponse claim, CancellationToken shutdown)
     {
         ValidateClaim(claim);
-        var workspace = new RemoteReviewWorkspace(_options, claim.Subject!, claim.Lease!, _log);
+        var workspace = new RemoteReviewWorkspace(
+            _options, claim.Subject!, claim.Lease!, _log, sourceFacts: _client);
         var slot = _state.Create(claim, workspace.RepositoryPath);
         BindAuthority(slot);
         return await RunPersistedAsync(slot, workspace, shutdown, reattach: false);
@@ -88,7 +89,8 @@ public sealed class RemoteReviewExecutor
             _options,
             slot.Claim.Subject!,
             slot.Claim.Lease!,
-            _log);
+            _log,
+            sourceFacts: _client);
         BindAuthority(slot);
         return await RunPersistedAsync(slot, workspace, shutdown, reattach: true);
     }

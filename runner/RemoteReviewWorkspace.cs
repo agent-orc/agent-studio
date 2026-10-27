@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using AgentRunner.SourceFacts;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
@@ -26,6 +27,7 @@ public sealed class RemoteReviewWorkspace
     private readonly Func<string, Task<FailureFingerprintHistoryDto?>>? _historyReader;
     private readonly RemoteReviewAgentCommandRunner _agentCommands;
     private readonly Func<DateTime> _utcNow;
+    private readonly ISourceFactsClient? _sourceFacts;
     private string? _initialTree;
     private string? _baselineSha;
     private string? _integrationHeadSha;
@@ -40,10 +42,12 @@ public sealed class RemoteReviewWorkspace
         ReviewLeaseDto lease,
         Action<string> log,
         Func<string, Task<FailureFingerprintHistoryDto?>>? historyReader = null,
-        Func<DateTime>? utcNow = null)
+        Func<DateTime>? utcNow = null,
+        ISourceFactsClient? sourceFacts = null)
     {
         _options = options;
         _subject = subject;
+        _sourceFacts = sourceFacts;
         _lease = lease;
         _log = log;
         _historyReader = historyReader;
@@ -2473,6 +2477,13 @@ public sealed class RemoteReviewWorkspace
     /// Result-SHA and a freshly fetched integration ref. Both Git streams are
     /// counted while only their bounded heads are retained, so exceeding either
     /// budget can never look like a complete diff.
+    ///
+    /// <para>AGT-3318: the material is first read from the Task Server, where
+    /// the fenced producer published the diff object for this base and head.
+    /// Only a missing object falls back to a local <c>git diff</c>, through the
+    /// same <see cref="MergeBaseDiffMaterial.ComputeAsync"/> the producer runs,
+    /// and the miss is recorded as a demand. Either way the read time is
+    /// reported for the review material p95.</para>
     /// </summary>
     internal async Task<string> BuildReviewMaterialAsync(
         int maximumFiles,
@@ -2483,93 +2494,113 @@ public sealed class RemoteReviewWorkspace
         if (maximumLines <= 0) throw new ArgumentOutOfRangeException(nameof(maximumLines));
 
         var baselineSha = await ResolveBaselineShaAsync(ct);
-        var changedFiles = new List<string>(Math.Min(maximumFiles, 256));
-        var totalFiles = 0;
-        var names = await ProcessRunner.RunAsync(
-            "git",
-            [
-                "-c", "credential.helper=", "-c", "core.quotePath=false",
-                "diff", "--name-only", "--find-renames", baselineSha,
-                _subject.ExpectedResultSha,
-            ],
-            RepositoryPath,
-            onStdOut: line =>
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var (stored, missReason) = await ReadStoredReviewMaterialAsync(baselineSha, maximumFiles, maximumLines, ct);
+        MergeBaseDiffMaterial material;
+        if (stored is not null)
+        {
+            material = stored;
+        }
+        else
+        {
+            try
             {
-                if (string.IsNullOrEmpty(line)) return;
-                totalFiles++;
-                if (changedFiles.Count < maximumFiles) changedFiles.Add(line);
-            },
-            environment: ProcessEnvironment(),
-            clearEnvironment: true,
-            ct: ct);
-        if (!names.Success)
-            throw BaselineUnavailable(
-                $"Changed-file enumeration failed against merge-base '{baselineSha}': {names.StdErr.Trim()}",
-                baselineSha,
-                command: null);
-
-        var diffLines = new List<string>(Math.Min(maximumLines, 16_384));
-        var totalDiffLines = 0;
-        var currentFile = 0;
-        var diff = await ProcessRunner.RunAsync(
-            "git",
-            [
-                "-c", "credential.helper=", "-c", "core.quotePath=false",
-                "diff", "--no-ext-diff", "--find-renames", "--unified=3",
-                baselineSha, _subject.ExpectedResultSha,
-            ],
-            RepositoryPath,
-            onStdOut: line =>
+                material = await MergeBaseDiffMaterial.ComputeAsync(
+                    RepositoryPath,
+                    baselineSha,
+                    _subject.ExpectedResultSha,
+                    maximumFiles,
+                    maximumLines,
+                    ProcessEnvironment(),
+                    clearEnvironment: true,
+                    ct);
+            }
+            catch (MergeBaseDiffUnavailableException exception)
             {
-                totalDiffLines++;
-                if (line.StartsWith("diff --git ", StringComparison.Ordinal)) currentFile++;
-                if (currentFile <= maximumFiles && diffLines.Count < maximumLines)
-                    diffLines.Add(line);
-            },
-            environment: ProcessEnvironment(),
-            clearEnvironment: true,
-            ct: ct);
-        if (!diff.Success)
-            throw BaselineUnavailable(
-                $"Unified diff failed against merge-base '{baselineSha}': {diff.StdErr.Trim()}",
-                baselineSha,
-                command: null);
+                throw BaselineUnavailable(exception.Message, baselineSha, command: null);
+            }
+        }
+        var elapsed = (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        await ReportReviewMaterialReadAsync(baselineSha, stored is null, elapsed, missReason, ct);
 
-        var truncated = totalFiles > maximumFiles || totalDiffLines > maximumLines;
-        var shownFiles = Math.Min(totalFiles, maximumFiles);
-        var shownLines = diffLines.Count;
         _log(
             $"review material prepared ref={_subject.Plan.IntegrationRef} base={baselineSha} " +
-            $"result={_subject.ExpectedResultSha} files={shownFiles}/{totalFiles} " +
-            $"lines={shownLines}/{totalDiffLines} truncated={truncated.ToString().ToLowerInvariant()}");
-        return RenderReviewMaterial(
-            _subject.Plan.IntegrationRef!,
-            baselineSha,
-            _subject.ExpectedResultSha,
-            changedFiles,
-            diffLines,
-            totalFiles,
-            totalDiffLines,
-            maximumFiles,
-            maximumLines,
-            truncated);
+            $"result={_subject.ExpectedResultSha} files={Math.Min(material.TotalFiles, maximumFiles)}/{material.TotalFiles} " +
+            $"lines={material.DiffLines.Count}/{material.TotalDiffLines} truncated={material.Truncated.ToString().ToLowerInvariant()} " +
+            $"source={(stored is null ? SourceReviewMaterialSources.Fallback : SourceReviewMaterialSources.Object)} " +
+            $"elapsedMs={elapsed} digest={material.ContentSha256}");
+        return RenderReviewMaterial(_subject.Plan.IntegrationRef!, material);
+    }
+
+    private async Task<(MergeBaseDiffMaterial? Material, string? MissReason)> ReadStoredReviewMaterialAsync(
+        string baselineSha, int maximumFiles, int maximumLines, CancellationToken ct)
+    {
+        if (_sourceFacts is null) return (null, "no-task-server-client");
+        try
+        {
+            var stored = await _sourceFacts.GetSourceDiffObjectAsync(
+                _subject.RepositoryId,
+                baselineSha,
+                _subject.ExpectedResultSha,
+                SourceDiffObjectOptions.Review(maximumFiles, maximumLines),
+                SourceDiffObjectOptions.RendererVersion,
+                ct);
+            if (stored is null) return (null, "object-missing");
+            var material = MergeBaseDiffMaterial.FromObject(stored);
+            // A stored body that no longer matches its digest is not evidence.
+            return string.Equals(material.ContentSha256, stored.ContentSha256, StringComparison.Ordinal)
+                ? (material, null)
+                : (null, "object-digest-mismatch");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _log($"review material object read failed; falling back to local git diff: {exception.Message}");
+            return (null, "object-read-failed:" + exception.GetType().Name);
+        }
+    }
+
+    private async Task ReportReviewMaterialReadAsync(
+        string baselineSha, bool fallback, long elapsedMilliseconds, string? missReason, CancellationToken ct)
+    {
+        if (_sourceFacts is null) return;
+        try
+        {
+            if (fallback)
+                await _sourceFacts.RecordSourceFactDemandAsync(_subject.RepositoryId, new SourceFactDemandRequest(
+                    SourceFactKinds.Diff, "review-material-miss", baselineSha, _subject.ExpectedResultSha,
+                    FetchRef: _subject.ResultRef), ct);
+            await _sourceFacts.RecordSourceReviewMaterialReadAsync(_subject.RepositoryId, new SourceReviewMaterialReadReport(
+                baselineSha,
+                _subject.ExpectedResultSha,
+                fallback ? SourceReviewMaterialSources.Fallback : SourceReviewMaterialSources.Object,
+                elapsedMilliseconds,
+                missReason), ct);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _log($"review material read report deferred source={(fallback ? "fallback" : "object")}: {exception.Message}");
+        }
     }
 
     private static string AppendReviewMaterial(string prompt, string reviewMaterial)
         => prompt.TrimEnd() + PromptText.NewLine + PromptText.NewLine + reviewMaterial;
 
-    private static string RenderReviewMaterial(
-        string integrationRef,
-        string baselineSha,
-        string resultSha,
-        IReadOnlyList<string> changedFiles,
-        IReadOnlyList<string> diffLines,
-        int totalFiles,
-        int totalDiffLines,
-        int maximumFiles,
-        int maximumLines,
-        bool truncated)
+    /// <summary>
+    /// Renders the prompt section from a diff object. The text depends only on
+    /// the integration ref name and the object, so an object read from the Task
+    /// Server and a fallback computation of the same key render byte-identically.
+    /// </summary>
+    internal static string RenderReviewMaterial(string integrationRef, MergeBaseDiffMaterial material)
     {
+        var baselineSha = material.BaseSha;
+        var resultSha = material.HeadSha;
+        var changedFiles = material.ChangedFiles;
+        var diffLines = material.DiffLines;
+        var totalFiles = material.TotalFiles;
+        var totalDiffLines = material.TotalDiffLines;
+        var maximumFiles = material.MaximumFiles;
+        var maximumLines = material.MaximumLines;
+        var truncated = material.Truncated;
         var text = new StringBuilder();
         text.AppendLf("## Authoritative delivery review material");
         text.AppendLf();

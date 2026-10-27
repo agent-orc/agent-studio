@@ -275,27 +275,12 @@ public sealed partial class TaskServerStore
                     $"Expected task file version {request.ExpectedVersion}, current version is {currentVersion}.");
 
             var nextVersion = (currentVersion ?? 0) + 1;
-            var contentBase64 = Convert.ToBase64String(content);
-            await ExecuteAsync(connection, """
-                INSERT INTO task_files(task_id, path, content_base64, media_type, version, updated_at)
-                VALUES ($task, $path, $content, $media, $version, $now)
-                ON CONFLICT(task_id, path) DO UPDATE SET
-                    content_base64 = excluded.content_base64,
-                    media_type = excluded.media_type,
-                    version = excluded.version,
-                    updated_at = excluded.updated_at;
-                """, ct, transaction,
-                ("$task", task.TaskId), ("$path", path), ("$content", contentBase64), ("$media", mediaType),
-                ("$version", nextVersion), ("$now", Iso(now)));
-            await ExecuteAsync(connection, """
-                INSERT INTO task_file_revisions(task_id, path, version, content_base64, updated_at, actor_id)
-                VALUES ($task, $path, $version, $content, $now, $actor);
-                """, ct, transaction,
-                ("$task", task.TaskId), ("$path", path), ("$version", nextVersion), ("$content", contentBase64),
-                ("$now", Iso(now)), ("$actor", actorId));
+            var stored = StoreContent(content);
+            await WriteTaskFileRevisionAsync(connection, transaction, task.TaskId, path, mediaType, nextVersion,
+                stored, Iso(now), actorId, ct);
             await AuditAsync(connection, transaction, actorId, "task-file.updated", "task", task.TaskId,
-                JsonSerializer.Serialize(new { path, version = nextVersion }), ct);
-            result = new TaskFileDto(task.TaskId, path, mediaType, nextVersion, content.LongLength, now);
+                JsonSerializer.Serialize(new { path, version = nextVersion, sha256 = stored.Sha256 }), ct);
+            result = new TaskFileDto(task.TaskId, path, mediaType, nextVersion, content.LongLength, now, stored.Sha256);
         }, ct);
         return result!;
     }
@@ -306,15 +291,17 @@ public sealed partial class TaskServerStore
         var task = await RequireTaskAsync(projectId, taskIdentity, ct);
         await using var connection = await OpenReadyAsync(ct);
         await using var command = Command(connection, """
-            SELECT content_base64, media_type, version, updated_at
+            SELECT content_base64, media_type, version, updated_at, object_stored, sha256
               FROM task_files
              WHERE task_id = $task AND path = $path;
             """, ("$task", task.TaskId), ("$path", path));
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) return null;
-        var content = Convert.FromBase64String(reader.GetString(0));
+        var sha256 = reader.IsDBNull(5) ? null : reader.GetString(5);
+        var content = ReadTaskContent(reader.GetString(0), reader.GetInt64(4) != 0, sha256);
         var mediaType = reader.IsDBNull(1) ? "application/octet-stream" : reader.GetString(1);
-        var meta = new TaskFileDto(task.TaskId, path, mediaType, reader.GetInt64(2), content.LongLength, Parse(reader.GetString(3)));
+        var meta = new TaskFileDto(task.TaskId, path, mediaType, reader.GetInt64(2), content.LongLength,
+            Parse(reader.GetString(3)), sha256 ?? TaskContentObjectStore.Sha256(content));
         return (meta, content);
     }
 
@@ -324,7 +311,7 @@ public sealed partial class TaskServerStore
         var task = await RequireTaskAsync(projectId, taskIdentity, ct);
         await using var connection = await OpenReadyAsync(ct);
         await using var command = Command(connection, """
-            SELECT version, updated_at, actor_id
+            SELECT version, updated_at, actor_id, sha256, size_bytes
               FROM task_file_revisions
              WHERE task_id = $task AND path = $path
              ORDER BY version;
@@ -333,7 +320,8 @@ public sealed partial class TaskServerStore
         var revisions = new List<TaskFileRevisionDto>();
         while (await reader.ReadAsync(ct))
             revisions.Add(new TaskFileRevisionDto(
-                reader.GetInt64(0), Parse(reader.GetString(1)), reader.IsDBNull(2) ? null : reader.GetString(2)));
+                reader.GetInt64(0), Parse(reader.GetString(1)), reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetInt64(4)));
         return new TaskFileHistoryResponse(task.TaskId, path, revisions);
     }
 

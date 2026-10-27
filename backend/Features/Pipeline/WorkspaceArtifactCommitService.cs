@@ -143,6 +143,8 @@ public sealed class WorkspaceArtifactCommitService
                 : workspaceRoot;
             if (string.IsNullOrWhiteSpace(workspaceRoot) || !Directory.Exists(workspaceRoot))
                 return WorkspaceArtifactCommitResult.Skipped("workspace-missing");
+            if (AgentStudio.Tasks.TaskArtifactsSourceSetting.IsExportedWorkspacePath(_configuration, workspaceRoot))
+                return WorkspaceArtifactCommitResult.Skipped(AgentStudio.Tasks.TaskArtifactsSourceSetting.ExportSkipReason);
 
             var gitRoot = ResolveGitRoot(workspaceRoot);
             if (gitRoot == null)
@@ -420,6 +422,8 @@ public sealed class WorkspaceArtifactCommitService
         {
             if (string.IsNullOrWhiteSpace(gitRoot) || !Directory.Exists(gitRoot))
                 return WorkspaceArtifactCommitResult.Skipped("workspace-missing");
+            if (AgentStudio.Tasks.TaskArtifactsSourceSetting.IsExportedWorkspacePath(_configuration, gitRoot))
+                return WorkspaceArtifactCommitResult.Skipped(AgentStudio.Tasks.TaskArtifactsSourceSetting.ExportSkipReason);
 
             var pathspecs = new List<string>();
             foreach (var wp in watchPaths)
@@ -528,6 +532,8 @@ public sealed class WorkspaceArtifactCommitService
     {
         try
         {
+            if (AgentStudio.Tasks.TaskArtifactsSourceSetting.IsExportedWorkspacePath(_configuration, workspaceRoot))
+                return WorkspaceArtifactCommitResult.Skipped(AgentStudio.Tasks.TaskArtifactsSourceSetting.ExportSkipReason);
             var gitRoot = ResolveWorkspaceGitRoot(workspaceRoot);
             if (gitRoot == null)
                 return WorkspaceArtifactCommitResult.Skipped("not-a-git-repo");

@@ -63,6 +63,7 @@
 /api/deploy/jobs/{project}/{jobId}/artifact	free	-	-	-
 /api/deploy/matrix	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/deploy/run-targets/{hostId}/desired-state	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/develop-states	free	-	-	-
 /api/devtools/e2e-jobs	free	-	-	-
 /api/devtools/fixtures/scan	free	-	-	-
 /api/devtools/update-stable/stream	free	-	-	-
@@ -271,6 +272,7 @@
 /api/runner/integration-lease/{projectName}/{integrationBranch}	free	-	-	-
 /api/runner/lease/{taskKey}	free	-	-	-
 /api/runner/orchestrator-feed	free	-	-	-
+/api/runner/post-merge/projects/{project}	free	-	-	-
 /api/runner/project-chat/status	free	-	-	-
 /api/runner/project-chat/usage	free	-	-	-
 /api/runner/project:{projectId}/orchestrator-chat	reachable	frozen	Orchestrator chat	Context from published Git facts
