@@ -2795,8 +2795,23 @@ public sealed class RemoteReviewWorkspace
                     ? CredentialedGitEnvironment(credential) : GitTransportEnvironment(),
                 clearEnvironment: true, ct: token);
         }
-        var (bytes, ready) = await HostSourceObjectCache.MaterializeAsync(sourceUrl,
-            resultRef, _subject.ExpectedResultSha, RepositoryPath, Run, _utcNow, ct, sparsePaths);
+        (long bytes, TimeSpan ready) source;
+        try
+        {
+            source = await HostSourceObjectCache.MaterializeAsync(sourceUrl,
+                resultRef, _subject.ExpectedResultSha, RepositoryPath, Run, _utcNow, ct, sparsePaths);
+        }
+        catch (ReviewInfrastructureException exception) when (credential is null
+            && exception.Classification == "SnapshotUnavailable"
+            && LooksLikeMissingReadAccess(exception.Message))
+        {
+            throw new ReviewInfrastructureException(
+                "SnapshotUnavailable",
+                $"Repository fetch failed: the review host has no read access to '{repositoryUrl}'. "
+                + "A private repository needs repository visibility 'private' on its project and a "
+                + $"scoped read credential in {ReviewRepositoryCredentials.FileVariable}: {exception.Message}");
+        }
+        var (bytes, ready) = source;
         _log($"review_source_ready subject={_subject.SubjectId} bytes={bytes} ready_ms={ready.TotalMilliseconds:F0}");
     }
 
