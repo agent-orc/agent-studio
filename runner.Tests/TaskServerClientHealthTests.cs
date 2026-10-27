@@ -337,6 +337,7 @@ public class TaskServerClientHealthTests
                     "targetLoadPercent":80,
                     "rampStrategy":"balanced",
                     "version":1,
+                    "allocationVersion":7,
                     "updatedAt":"{{now}}"
                   }
                 }
@@ -354,7 +355,7 @@ public class TaskServerClientHealthTests
         await client.RegisterAsync("Runner v1", "service", CancellationToken.None);
 
         Assert.Equal(7, client.HostMaxParallelism);
-        Assert.Equal(1, client.RuntimeCapacityVersion);
+        Assert.Equal(7, client.RuntimeCapacityVersion);
         Assert.Equal(HttpMethod.Put, Assert.Single(handler.Requests).Method);
     }
 

@@ -77,7 +77,8 @@ public sealed partial class TaskServerStore
                     request.TargetLoadPercent,
                     NormalizeRampStrategy(request.RampStrategy),
                     1,
-                    createdAt);
+                    createdAt,
+                    1);
                 await ExecuteAsync(connection, """
                     INSERT INTO runtime_capacity_settings(
                         host_id, max_parallelism, target_load_percent, ramp_strategy,
@@ -119,6 +120,7 @@ public sealed partial class TaskServerStore
                        target_load_percent = $target,
                        ramp_strategy = $ramp,
                        version = version + 1,
+                       allocation_version = allocation_version + 1,
                        updated_at = $now
                  WHERE host_id = $host AND version = $expected;
                 """, ct, transaction,
@@ -139,7 +141,8 @@ public sealed partial class TaskServerStore
                 request.TargetLoadPercent,
                 NormalizeRampStrategy(request.RampStrategy),
                 request.ExpectedVersion + 1,
-                now);
+                now,
+                existing.AllocationVersion + 1);
             await AuditAsync(
                 connection,
                 transaction,
@@ -168,7 +171,7 @@ public sealed partial class TaskServerStore
     {
         await using var command = Command(connection, """
             SELECT host_id, max_parallelism, target_load_percent, ramp_strategy,
-                   version, updated_at
+                   version, updated_at, allocation_version
               FROM runtime_capacity_settings
              WHERE host_id = $host;
             """, transaction, ("$host", hostId));
@@ -180,7 +183,8 @@ public sealed partial class TaskServerStore
                 reader.GetInt32(2),
                 reader.GetString(3),
                 reader.GetInt64(4),
-                Parse(reader.GetString(5)))
+                Parse(reader.GetString(5)),
+                reader.GetInt64(6))
             : null;
     }
 
@@ -230,11 +234,13 @@ internal static class RuntimeCapacityAdoptionPolicy
         long? reportedVersion,
         long? previouslyAppliedVersion)
     {
-        var confirmsDesired = reportedVersion == desired.Version
+        var allocationVersion = desired.AllocationVersion > 0
+            ? desired.AllocationVersion : desired.Version;
+        var confirmsDesired = reportedVersion == allocationVersion
                               && reportedMaxParallelism == desired.MaxParallelism;
         return new RuntimeCapacityAdoptionDecision(
             confirmsDesired,
-            confirmsDesired && previouslyAppliedVersion != desired.Version);
+            confirmsDesired && previouslyAppliedVersion != allocationVersion);
     }
 }
 

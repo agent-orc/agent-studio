@@ -79,7 +79,8 @@ public sealed record RuntimeCapacitySettingsDto(
     int TargetLoadPercent,
     string RampStrategy,
     long Version,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    long AllocationVersion = 0);
 
 public sealed record UpdateRuntimeCapacitySettingsRequest(
     int MaxParallelism,
