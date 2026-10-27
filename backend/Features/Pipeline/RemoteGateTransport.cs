@@ -129,45 +129,62 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             throw new InvalidOperationException("Remote gate total budget must be at most 24 hours.");
         TrySweepStaleRunFolders();
         Directory.CreateDirectory(local);
+        var sourceTimer = Stopwatch.StartNew();
         var remoteCreationAttempted = false;
         try
         {
             long sourcePackKiB = 0;
-            await Git(local, ["-C", Path.GetFullPath(request.RepositoryPath), "count-objects", "-v"], infra, ct,
-                line =>
-                {
-                    if (line.StartsWith("size-pack: ", StringComparison.Ordinal)
-                        && long.TryParse(line[11..], out var value)) sourcePackKiB = value;
-                });
-            var preparationBudget = TransferBudget(infra, checked(sourcePackKiB * 1024));
+            var preparationBudget = infra;
             var repository = Path.Combine(local, "source.git");
-            await Git(local, ["init", "--bare", "--quiet", repository], infra, ct);
-            // Only this private bare repository receives a ref. The operator's
-            // checkout and the integration remote remain untouched.
-            await GitPrepared(local, ["-C", repository, "fetch", "--no-tags", "--no-recurse-submodules",
-                Path.GetFullPath(request.RepositoryPath), request.ExpectedSha!], preparationBudget,
-                sourcePackKiB * 1024, "fetch", ct);
-            await Git(local, ["-C", repository, "update-ref", "refs/heads/gate-subject", request.ExpectedSha!], infra, ct);
             var knownTips = new List<string>();
+            var warm = false;
             await Ssh(options, local, "umask 077; mkdir -p -- " + Quote(options.Root + "/cache")
                 + "; git init --bare --quiet -- " + Quote(cache)
+                + "; if git --git-dir=" + Quote(cache) + " fsck --full --no-reflogs --no-progress >/dev/null 2>&1; then "
+                + "if git --git-dir=" + Quote(cache) + " cat-file -e " + Quote(request.ExpectedSha! + "^{commit}")
+                + " 2>/dev/null; then printf 'CACHE_WARM\\n'; fi; "
+                + "else mv -- " + Quote(cache) + " " + Quote(cache + ".corrupt-" + runId)
+                + "; git init --bare --quiet -- " + Quote(cache) + "; fi"
+                + "; rm -rf -- " + Quote(cache + ".corrupt-" + runId)
                 + "; git --git-dir=" + Quote(cache) + " for-each-ref --sort=-committerdate --count=16 --format='%(objectname)' refs/heads/gate-cache",
-                infra, ct, line => { if (Regex.IsMatch(line, "^[0-9a-f]{40}([0-9a-f]{24})?$")) knownTips.Add(line); });
-            var includedTips = new List<string>();
-            // Only exclude cache tips that are ancestors of this exact subject.
-            foreach (var tip in knownTips)
-            {
-                if (!string.Equals(tip, request.ExpectedSha, StringComparison.OrdinalIgnoreCase)
-                    && await GitIsAncestor(local, repository, tip, request.ExpectedSha!, preparationBudget, ct))
+                infra, ct, line =>
                 {
-                    includedTips.Add(tip);
-                    break;
-                }
-            }
-            await GitPrepared(local, BundleArguments(repository, Path.Combine(local, "source.bundle"), includedTips),
-                preparationBudget, sourcePackKiB * 1024, "bundle", ct);
+                    if (line == "CACHE_WARM") warm = true;
+                    else if (Regex.IsMatch(line, "^[0-9a-f]{40}([0-9a-f]{24})?$")) knownTips.Add(line);
+                });
             var bundle = Path.Combine(local, "source.bundle");
-            var bundleBytes = new FileInfo(bundle).Length;
+            if (!warm)
+            {
+                await Git(local, ["-C", Path.GetFullPath(request.RepositoryPath), "count-objects", "-v"], infra, ct,
+                    line =>
+                    {
+                        if (line.StartsWith("size-pack: ", StringComparison.Ordinal)
+                            && long.TryParse(line[11..], out var value)) sourcePackKiB = value;
+                    });
+                preparationBudget = TransferBudget(infra, checked(sourcePackKiB * 1024));
+                await Git(local, ["init", "--bare", "--quiet", repository], infra, ct);
+                // Only this private bare repository receives a ref. The operator's
+                // checkout and the integration remote remain untouched.
+                await GitPrepared(local, ["-C", repository, "fetch", "--no-tags", "--no-recurse-submodules",
+                    Path.GetFullPath(request.RepositoryPath), request.ExpectedSha!], preparationBudget,
+                    sourcePackKiB * 1024, "fetch", ct);
+                await Git(local, ["-C", repository, "update-ref", "refs/heads/gate-subject",
+                    request.ExpectedSha!], infra, ct);
+                var includedTips = new List<string>();
+                // Only exclude cache tips that are ancestors of this exact subject.
+                foreach (var tip in knownTips)
+                {
+                    if (!string.Equals(tip, request.ExpectedSha, StringComparison.OrdinalIgnoreCase)
+                        && await GitIsAncestor(local, repository, tip, request.ExpectedSha!, preparationBudget, ct))
+                    {
+                        includedTips.Add(tip);
+                        break;
+                    }
+                }
+                await GitPrepared(local, BundleArguments(repository, bundle, includedTips),
+                    preparationBudget, sourcePackKiB * 1024, "bundle", ct);
+            }
+            var bundleBytes = warm ? 0 : new FileInfo(bundle).Length;
             if (bundleBytes > 1024L * 1024 * 1024)
                 throw new InvalidOperationException("Remote gate source bundle exceeds the 1 GiB transport limit.");
             var transferBudget = TransferBudget(infra, bundleBytes);
@@ -177,8 +194,12 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             if (overallSeconds > 86400)
                 throw new InvalidOperationException("Remote gate total budget must be at most 24 hours.");
             string digest;
-            await using (var input = File.OpenRead(bundle))
-                digest = Convert.ToHexString(await SHA256.HashDataAsync(input, ct)).ToLowerInvariant();
+            if (warm) digest = new string('0', 64);
+            else
+            {
+                await using var input = File.OpenRead(bundle);
+                digest = Convert.ToHexStringLower(await SHA256.HashDataAsync(input, ct));
+            }
             var invocation = new RemoteGateInvocation(1, runId, digest,
                 request with
                 {
@@ -193,7 +214,8 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                     OnMachineGateSlotAcquired = null,
                     OnMachineGateSlotWaiting = null,
                 }, changedFiles, profile, mode, checked((int)Math.Ceiling(timeout.TotalSeconds)), overallSeconds)
-            { CachePath = cache, GateSlots = options.GateSlots, ProcessorCount = options.ProcessorCount };
+            { CachePath = cache, SourceFromCache = warm,
+                GateSlots = options.GateSlots, ProcessorCount = options.ProcessorCount };
             invocation = invocation with { InstallationId = _runs.InstallationId };
             await File.WriteAllTextAsync(Path.Combine(local, "request.json"),
                 JsonSerializer.Serialize(invocation, RemoteBuildTestGateRunner.Json), ct);
@@ -207,7 +229,8 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             var transfer = Stopwatch.StartNew();
             try
             {
-                await Scp(options, local, "source.bundle", options.Host + ":" + remote + "/source.bundle", transferBudget, ct);
+                if (!warm)
+                    await Scp(options, local, "source.bundle", options.Host + ":" + remote + "/source.bundle", transferBudget, ct);
             }
             catch (Exception exception) when (exception is IOException or TimeoutException)
             {
@@ -216,8 +239,12 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             transfer.Stop();
             _logger.LogInformation("remote_gate_bundle_transferred run_id={RunId} bundle_bytes={BundleBytes} transfer_ms={TransferMs} budget_seconds={BudgetSeconds}",
                 runId, bundleBytes, transfer.ElapsedMilliseconds, transferBudget.TotalSeconds);
+            _logger.LogInformation("remote_gate_source_ready run_id={RunId} bytes={Bytes} ready_ms={ReadyMs} cache_hit={CacheHit}",
+                runId, bundleBytes, transfer.ElapsedMilliseconds, warm);
             await Scp(options, local, "request.json", options.Host + ":" + remote + "/request.json", infra, ct);
             await Ssh(options, local, "touch -- " + Quote(remote + "/heartbeat"), infra, ct);
+            var dispatchReady = sourceTimer.Elapsed;
+            long workerSourceReadyMs = -1;
             _logger.LogInformation("remote_gate_dispatched run_id={RunId} host={Host} expected_sha={ExpectedSha} bundle_sha256={Digest} bundle_bytes={BundleBytes} transfer_ms={TransferMs}",
                 runId, options.Host, request.ExpectedSha, digest, bundleBytes, transfer.ElapsedMilliseconds);
             var command = "cd " + Quote(remote) + " && exec flock " + Quote(remote + "/worker.lock")
@@ -231,7 +258,13 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
                 try
                 {
                     await Ssh(options, local, command, TimeSpan.FromSeconds(overallSeconds + 150), ct,
-                        line => ReportWorkerLine(line, runId, options.Host, request));
+                        line =>
+                        {
+                            if (line.StartsWith("REMOTE_GATE_SOURCE_READY " + runId + " ", StringComparison.Ordinal)
+                                && long.TryParse(line[("REMOTE_GATE_SOURCE_READY " + runId + " ").Length..],
+                                    out var readyMs)) workerSourceReadyMs = readyMs;
+                            ReportWorkerLine(line, runId, options.Host, request);
+                        });
                 }
                 finally
                 {
@@ -250,8 +283,13 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             var response = JsonSerializer.Deserialize<RemoteGateResponse>(
                 await File.ReadAllTextAsync(responsePath, ct), RemoteBuildTestGateRunner.Json)
                 ?? throw new InvalidDataException("Remote gate response is empty.");
+            var readySeconds = workerSourceReadyMs < 0 ? (double?)null
+                : (dispatchReady + TimeSpan.FromMilliseconds(workerSourceReadyMs)).TotalSeconds;
+            _logger.LogInformation("remote_gate_source_checkout_ready run_id={RunId} bytes={Bytes} ready_seconds={ReadySeconds}",
+                runId, bundleBytes, readySeconds);
             return AcceptResponse(response, runId, digest, options.Host, request.Executor,
-                bundleBytes, transfer.Elapsed) with { GrantedCores = options.ProcessorCount };
+                bundleBytes, transfer.Elapsed, readySeconds, includeReady: true)
+                with { GrantedCores = options.ProcessorCount };
         }
         finally
         {
@@ -417,7 +455,7 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
 
     internal static BuildTestGateResult AcceptResponse(RemoteGateResponse response,
         string runId, string digest, string host, string executor, long bundleBytes,
-        TimeSpan transfer)
+        TimeSpan transfer, double? readySeconds = null, bool includeReady = false)
     {
         if (response.Version != 1 || response.RunId != runId || response.BundleSha256 != digest)
             throw new InvalidDataException("Remote gate response does not match this invocation and source bundle.");
@@ -426,6 +464,8 @@ public sealed class RemoteGateTransport : IRemoteGateTransport
             Executor = "ssh:" + host + "/" + executor,
             Reason = response.Result.Reason
                 + $" Source bundle {bundleBytes} bytes transferred in {transfer.TotalSeconds:F1}s."
+                + (readySeconds is { } ready ? $" Source ready {ready:F1}s."
+                    : includeReady ? " Source ready unavailable." : "")
         };
     }
 

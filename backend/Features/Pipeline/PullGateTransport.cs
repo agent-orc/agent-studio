@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace AgentStudio.Pipeline;
@@ -58,7 +59,8 @@ public sealed class PullGateTransport(PullGateStore store, TimeProvider clock,
                 ["-C", repository, "update-ref", "refs/heads/gate-subject", request.ExpectedSha!],
                 local, infra, ct);
             var bundle = Path.Combine(local, "source.bundle");
-            await RemoteGateProcess.RunAsync("git", ["-C", repository, "bundle", "create", bundle, "--all"],
+            await RemoteGateProcess.RunAsync("git", ["-C", repository, "bundle", "create", bundle,
+                    "refs/heads/gate-subject"],
                 local, RemoteGateTransport.TransferBudget(infra, 1024L * 1024 * 1024), ct);
             if (new FileInfo(bundle).Length > 1024L * 1024 * 1024)
                 throw new InvalidDataException("Pull gate bundle exceeds 1 GiB.");
@@ -74,7 +76,11 @@ public sealed class PullGateTransport(PullGateStore store, TimeProvider clock,
                     OnMachineGateWaiting = null, OnMachineGateSlotAcquired = null,
                     OnMachineGateSlotWaiting = null,
                 }, changedFiles, profile, mode, (int)Math.Ceiling(timeout.TotalSeconds),
-                (int)Math.Ceiling(overall.TotalSeconds));
+                (int)Math.Ceiling(overall.TotalSeconds))
+            {
+                SourceCacheKey = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
+                    request.Project ?? Path.GetFullPath(request.RepositoryPath))))
+            };
             store.Enqueue(invocation, bundle);
             var deadline = clock.GetUtcNow() + overall;
             string? lastProgress = null;

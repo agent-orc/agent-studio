@@ -56,6 +56,8 @@ public sealed record BuildTestGateRequest(
     public string? JobId { get; init; }
     public string? AttemptChainId { get; init; }
     public string? SubjectRef { get; init; }
+    /// <summary>Explicit project directories from a frozen test plan; null checks out the complete tree.</summary>
+    public IReadOnlyList<string>? SourcePaths { get; init; }
     public string? IntegrationRef { get; init; }
     public string Lane { get; init; } = TaskStates.AutoReview;
     public string? RequiredTestLevel { get; init; }
@@ -83,6 +85,8 @@ public sealed record BuildTestGateRequest(
     public Action<int, int>? OnMachineGateSlotWaiting { get; init; }
     [System.Text.Json.Serialization.JsonIgnore]
     public Action? OnMachineGateAcquired { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Action? OnSourceReady { get; init; }
     [System.Text.Json.Serialization.JsonIgnore]
     public Action<int, int>? OnMachineGateSlotAcquired { get; init; }
     public int GateSlots { get; init; } = 1;
@@ -548,7 +552,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             {
                 var prepared = await PrepareExactWorkspaceAsync(
                     repositoryPath, request.ExpectedSha, request.SubjectRef, gateRunId,
-                    infrastructureTimeout, ct).ConfigureAwait(false);
+                    infrastructureTimeout, ct, request.SourcePaths).ConfigureAwait(false);
                 if (prepared.Lease is null)
                 {
                     completed = InfrastructureFailure(
@@ -563,6 +567,7 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                     workspace = workspaceLease.Path;
                     testedSha = workspaceLease.TestedSha;
                     selfHealed = prepared.SelfHealed;
+                    request.OnSourceReady?.Invoke();
                 }
             }
             else if (completed is null && !Directory.Exists(repositoryPath))
@@ -1839,7 +1844,8 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
         string? subjectRef,
         string gateRunId,
         TimeSpan infrastructureTimeout,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<string>? sourcePaths = null)
     {
         if (!Directory.Exists(repositoryPath))
             return WorkspacePreparation.Failed(BuildTestGateFailureKind.MissingSource,
@@ -1922,8 +1928,16 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
             }
 
             var workspace = Path.Combine(ReviewWorkspaceRoot, gateRunId);
+            if (sourcePaths is { Count: > 0 } && (sourcePaths.Count > 32
+                || sourcePaths.Any(path => string.IsNullOrWhiteSpace(path)
+                    || Path.IsPathRooted(path)
+                    || path.Split('/', '\\').Any(part => part is ".." or "." or ""))))
+                return WorkspacePreparation.Failed(BuildTestGateFailureKind.MissingSource,
+                    "gate source paths are invalid");
             var add = await RunGitAsync(
-                repositoryPath, ["worktree", "add", "--detach", workspace, expectedSha],
+                repositoryPath, sourcePaths is { Count: > 0 }
+                    ? ["worktree", "add", "--no-checkout", "--detach", workspace, expectedSha]
+                    : ["worktree", "add", "--detach", workspace, expectedSha],
                 Remaining(infrastructureTimeout, stopwatch.Elapsed), bounded.Token)
                 .ConfigureAwait(false);
             if (add.ExitCode != 0)
@@ -1938,6 +1952,20 @@ public sealed partial class BuildTestGateRunner : IBuildTestGateRunner
                         stopwatch.Elapsed,
                         "materialization",
                         add));
+            }
+
+            if (sourcePaths is { Count: > 0 })
+            {
+                var sparse = await RunGitAsync(workspace,
+                    ["sparse-checkout", "set", "--cone", "--", .. sourcePaths],
+                    Remaining(infrastructureTimeout, stopwatch.Elapsed), bounded.Token).ConfigureAwait(false);
+                if (sparse.ExitCode != 0)
+                {
+                    await RunGitAsync(repositoryPath, ["worktree", "remove", "--force", workspace],
+                        Remaining(infrastructureTimeout, stopwatch.Elapsed), bounded.Token).ConfigureAwait(false);
+                    return WorkspacePreparation.Failed(BuildTestGateFailureKind.MissingSource,
+                        "gate sparse checkout could not be created", sparse.StandardError);
+                }
             }
 
             await EnsureGateWorkspaceWritableAsync(workspace, bounded.Token).ConfigureAwait(false);

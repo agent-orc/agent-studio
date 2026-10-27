@@ -227,12 +227,18 @@ public sealed class PipelineBaselineMetricsTests : IDisposable
     [Theory]
     [InlineData("Passed. Source bundle 2048 bytes transferred in 3.5s.", 2048L, 3.5)]
     [InlineData("Passed. Source bundle 2048 bytes transferred in 3,5s.", 2048L, 3.5)]
+    [InlineData("Passed. Source bundle 0 bytes transferred in 0.0s. Source ready 12.4s.", 0L, 12.4)]
     public void Source_transfer_reads_the_receipt_reason_in_any_culture(string reason, long bytes, double seconds)
         => Assert.Equal((bytes, seconds), PipelineBaselineMetrics.ParseSourceTransfer(reason));
 
     [Fact]
     public void Local_gate_reason_has_no_source_transfer()
         => Assert.Null(PipelineBaselineMetrics.ParseSourceTransfer("Passed."));
+
+    [Fact]
+    public void Gate_without_a_ready_checkout_has_no_ready_metric()
+        => Assert.Null(PipelineBaselineMetrics.ParseSourceTransfer(
+            "Failed. Source bundle 0 bytes transferred in 0.0s. Source ready unavailable."));
 
     private PipelineBaseline Row(string folder)
         => GateEconomicsEndpoints.ProjectRow("fixture", [folder], since: Now.AddDays(-7), now: Now, retest: null).Baseline!;
