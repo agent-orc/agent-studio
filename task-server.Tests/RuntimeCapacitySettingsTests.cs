@@ -131,7 +131,7 @@ public sealed class RuntimeCapacitySettingsTests
                 CREATE TABLE epic_tasks(epic_id TEXT, task_id TEXT);
                 ALTER TABLE task_studio_fields ADD COLUMN epic_id TEXT;
                 UPDATE meta SET value = '36' WHERE key = 'schema_version';
-                DELETE FROM schema_migrations WHERE version = 37;
+                DELETE FROM schema_migrations WHERE version >= 37;
                 """;
             await command.ExecuteNonQueryAsync();
         }
@@ -152,7 +152,8 @@ public sealed class RuntimeCapacitySettingsTests
                 """;
             Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
             command.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
-            Assert.Equal("37", (string)(await command.ExecuteScalarAsync())!);
+            Assert.Equal(TaskServerStore.CurrentSchemaVersion.ToString(),
+                (string)(await command.ExecuteScalarAsync())!);
         }
 
         await upgraded.RegisterRunnerAsync("runner-a", Runner("runner-a:1", bootstrap: 2),
