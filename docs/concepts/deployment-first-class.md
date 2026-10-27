@@ -373,6 +373,14 @@ moves the withdrawn release's cards back to `waiting` and marks them rolled
 back. Membership follows release creation order, as the status projection
 does, so the read runs no git. Card lane states never change.
 
+The board renders it as the Delivery group after "Done & Decide" (AGT-3316,
+`<app-delivery-section>`): one column per read-model column, landed cards, a
+Waiting divider, then waiting cards, each as the standard task card. Columns of
+several projects on the workspace board merge by column id. Only cards in the
+filtered board feed render, so every count is the sum of visible tiles. The
+display option "Furthest environment only" shows each card once. The section
+refreshes on task events and on the 30-second deploy poll.
+
 The deploy host uses a credential with only `runner.deploy`; its service
 identity must match `targetHostId`. In the managed host record, the deploy
 principal and host id are the same enrolled `runner_<id>` value. Schema 2

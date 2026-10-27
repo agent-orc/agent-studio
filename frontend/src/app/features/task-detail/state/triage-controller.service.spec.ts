@@ -475,7 +475,7 @@ describe('TriageController · planning accept spawn-contract guard', () => {
 
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     const options = confirmSpy.mock.calls[0][0];
-    expect(options.confirmLabel).toBe('Keep in Delivered');
+    expect(options.confirmLabel).toBe('Keep in Accepted');
     expect(String(options.message)).toContain('task/triage-fixture');
     expect(String(options.message)).toContain('develop');
     expect(String(options.message)).toContain('written override');

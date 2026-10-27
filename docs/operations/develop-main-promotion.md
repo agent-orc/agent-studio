@@ -1,8 +1,8 @@
 # Develop to main promotion
 
 `develop` is the work line. `main` is the release line. The standard promotion
-train fixes the fetched `develop` tip as its exact candidate, runs the complete
-blocking gate against that commit, publishes an annotated release marker with
+train fixes the fetched `develop` tip as its exact candidate, checks the
+pre-delivery verdict for that commit and command digest, publishes an annotated release marker with
 `main`, and hands the new `main` SHA to the external Stable deploy watcher.
 With `--release-dir` it also packages that SHA for deployment from the same
 gated worktree, so a deploy does not run the full gate a second time (see
@@ -24,9 +24,10 @@ The command fails closed when any of these facts is false:
 - the annotated `release/*` marker does not already exist;
 - the candidate is a descendant of `main` before the gate and remains a
   descendant of the freshly fetched `main` immediately before the push;
-- every command in
+- the candidate has a green post-merge check and either a matching green
+  pre-delivery verdict or every suite command in
   [promotion-full-gate.sh](../../scripts/release/promotion-full-gate.sh) passes
-  against the exact candidate commit;
+  against that commit; build and packaging commands still run when the suite verdict is reused;
 - the gate emits its completion marker and leaves the candidate checkout clean;
 - the server accepts one atomic push containing both `main` and the annotated
   release marker; and
@@ -93,7 +94,7 @@ removed before retrying the same marker.
    package then lands in `<directory>/<candidate sha>/`; see
    [One-gate deploy package](#one-gate-deploy-package).
 
-6. Verify `promotion-record.json` says `status=promoted`, `gate=passed`, and
+6. Verify `promotion-record.json` says `status=promoted`, `gate=passed` or `gate=reused`, and
    `atomicPush=true`. Verify the remote `main` and peeled tag resolve to the
    recorded `candidateSha`. With `--release-dir`, also verify
    `releasePackage.status=written`.
@@ -216,8 +217,8 @@ not publish versioned binaries. It runs, in order:
    promotion and deploy-watcher tests;
 6. .NET Release build: builds the solution in Release configuration without
    restoring again;
-7. .NET full non-machine-bound suite: runs every non-machine-bound .NET test in
-   the solution, including the
+7. .NET full non-machine-bound suite: runs every solution test project in
+   bounded parallel shards, including the
    legacy-plane completion contract test
    (`backend.Tests/LegacyRunnerCompletionContractTests.cs`);
 8. Deployment regression scenario (smoke): runs the
@@ -228,6 +229,17 @@ not publish versioned binaries. It runs, in order:
 10. Frontend type-check: checks frontend types;
 11. Frontend unit tests: runs the CI unit test command; and
 12. Frontend production build: builds the production frontend.
+
+For a project with `delivery.fullSuite: required`, a production declaration
+defaults the setting to `required`; without production it defaults to
+`optional`. Explicit values are `required`, `optional`, and `off`. The release
+endpoint requires a green post-merge candidate before it accepts a release
+unless the setting is `off`. A red suite verdict always blocks; `required`
+also blocks a missing verdict. The Task Server stores the verdict by project,
+candidate SHA, and a digest of the committed `project.yml` and gate script.
+On an exact green match the train records `gate=reused`, skips the .NET and
+frontend test suites, and still restores, builds, lints, audits, and packages
+the candidate. A command digest change runs the suites again.
 
 The script is the source of truth; a step added to or removed from it must be
 mirrored in this list in the same change.
@@ -458,7 +470,7 @@ The backend reads five files from
 |---|---|
 | `release.tar.gz` and `release.sha256` | The archive hashes to the 64-character lowercase SHA-256 in the digest file. |
 | `full-gate.log` | Contains the exact line `PROMOTION_FULL_GATE=passed`. |
-| `promotion-record.json` | `status=promoted`, `gate=passed`, `candidateSha=<candidate sha>`, `atomicPush=true`, and `releasePackage.status=written` with `releasePackage.sha256` equal to `release.sha256`. Its `gateRunId` is the release tag recorded as provenance. |
+| `promotion-record.json` | `status=promoted`, `gate=passed` or `gate=reused`, `candidateSha=<candidate sha>`, `atomicPush=true`, and `releasePackage.status=written` with `releasePackage.sha256` equal to `release.sha256`. Its `gateRunId` is the release tag recorded as provenance. |
 | `deploy-artifact.json` | `project`, `commit`, `artifact`, and `sourceSha256` match the request and package digest. For a static package, `artifact` is `release-package@sha256:<package digest>`; for a container it is the pushed image reference with its registry digest. |
 
 The train writes `deploy-artifact.json` and copies the final promotion record

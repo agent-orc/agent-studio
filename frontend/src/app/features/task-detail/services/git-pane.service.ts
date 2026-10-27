@@ -15,6 +15,10 @@ import {
   clearVisibleInterval,
   VisibleIntervalHandle,
 } from '../../../utils/visible-interval';
+import { isGitFactsWarming } from '../../../utils/git-facts-warming';
+
+/** Shown when a commit diff object is still being written by the Git fact producer (AGT-3323). */
+export const DIFF_WARMING_TEXT = '(The diff is still being prepared. Select the file again in a moment.)';
 
 /**
  * Owns the Git pane state and API calls for a single job-detail
@@ -510,6 +514,12 @@ export class GitPaneService implements OnDestroy {
     if (this.viewMode() === 'commit') {
       const selectedSha = this.selectedCommitSha();
       const setDiff = (res: unknown) => {
+        // The diff object is not published yet even after the retries: say so,
+        // and keep it out of the cache so the next selection asks again.
+        if (isGitFactsWarming(res)) {
+          if (stillSelected()) this.diffText.set(DIFF_WARMING_TEXT);
+          return;
+        }
         let text = '';
         if (typeof res === 'string') text = res;
         else if (res && typeof res === 'object' && 'diff' in (res as Record<string, unknown>)) {

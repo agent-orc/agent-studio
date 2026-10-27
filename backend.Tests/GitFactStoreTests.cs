@@ -51,11 +51,7 @@ public sealed class GitFactStoreTests : IDisposable
         var names = new List<string>();
         using (var reader = tables.ExecuteReader())
             while (reader.Read()) names.Add(reader.GetString(0));
-        Assert.Equal(new[]
-        {
-            GitFactStoreSchema.CardFacts, GitFactStoreSchema.ProducerHealth,
-            GitFactStoreSchema.Repositories, GitFactStoreSchema.RefGenerations,
-        }.Order(StringComparer.Ordinal), names);
+        Assert.Equal(GitFactStoreSchema.Tables.Order(StringComparer.Ordinal), names);
         using var mode = connection.CreateCommand();
         mode.CommandText = "PRAGMA journal_mode";
         Assert.Equal("wal", mode.ExecuteScalar() as string);

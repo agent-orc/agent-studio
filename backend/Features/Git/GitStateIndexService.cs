@@ -49,6 +49,17 @@ namespace AgentStudio.Git;
 /// or a changed configuration file, so a task event that changes no card input
 /// starts no Git process.
 /// </para>
+///
+/// <para>
+/// AGT-3323 (Git facts S3): each run also hands its repository to the
+/// <see cref="GitCardFactProducer"/>, which keeps commit facts, reachability,
+/// the run trailer and commit range indexes, curated merges, diff objects and
+/// the project integration view. Its facts commit in the same transaction as
+/// the generation and are published with the projection, so card reads
+/// (provenance, commit lists, default diff, run views, integration view and
+/// delivery claim) join one generation without starting Git. A read that
+/// misses a fact queues it here with the <c>facts</c> trigger.
+/// </para>
 /// </summary>
 public sealed class GitStateIndexService : BackgroundService
 {
@@ -67,6 +78,7 @@ public sealed class GitStateIndexService : BackgroundService
     private readonly GitFactStore? _factStore;
     private readonly Func<string, IReadOnlyList<string>> _fingerprintBranches;
     private readonly string _producerId;
+    private readonly GitCardFactProducer? _cardFacts;
     private readonly TaskCompletionSource _restoration = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private const string SweepConfigUnavailable = "unavailable";
     private const string SweepConfigSourcesChanged = "sources-changed";
@@ -97,6 +109,9 @@ public sealed class GitStateIndexService : BackgroundService
         TaskListGitProjectionCache projectionCache,
         GitOriginStore originStore,
         GitFactStore factStore,
+        GitCardFactReader cardFactReader,
+        GitReachabilityIndex reachability,
+        TaskMutationService mutations,
         ILogger<GitStateIndexService> logger,
         IConfiguration config)
         : this(
@@ -153,7 +168,18 @@ public sealed class GitStateIndexService : BackgroundService
             // Publish under the same root TaskIntegrationStatusService asks for.
             git.ResolveRepoRootForWatchPath,
             factStore,
-            projectName => settings.Get(projectName).IntegrationBranch is { Length: > 0 } branch ? [branch] : [])
+            projectName => settings.Get(projectName).IntegrationBranch is { Length: > 0 } branch ? [branch] : [],
+            cardFacts: new GitCardFactProducer(
+                reachability,
+                cardFactReader,
+                factStore,
+                projectName => settings.Get(projectName).IntegrationBranch,
+                git.ResolveRepoRootForWatchPath,
+                git.ResolveIntegrationBranch,
+                task => CommitAttributionBackfill.Run(task, sessions, git, mutations),
+                GitCardFactOptions.FromConfiguration(config),
+                logger,
+                TimeProvider.System))
     {
     }
 
@@ -171,7 +197,8 @@ public sealed class GitStateIndexService : BackgroundService
         Func<string, string?>? originRoot = null,
         GitFactStore? factStore = null,
         Func<string, IReadOnlyList<string>>? fingerprintBranches = null,
-        string? producerId = null)
+        string? producerId = null,
+        GitCardFactProducer? cardFacts = null)
     {
         _scanner = scanner;
         _watcher = watcher;
@@ -187,6 +214,7 @@ public sealed class GitStateIndexService : BackgroundService
         _factStore = factStore;
         _fingerprintBranches = fingerprintBranches ?? (_ => []);
         _producerId = producerId ?? $"backend:{Environment.MachineName}:{Environment.ProcessId}";
+        _cardFacts = cardFacts;
         _repoSlots = new SemaphoreSlim(options.MaxConcurrentRepos, options.MaxConcurrentRepos);
     }
 
@@ -299,6 +327,7 @@ public sealed class GitStateIndexService : BackgroundService
             {
                 DisposeRepo(removed);
                 _projectionCache.ResetRepository(removed.WatchPath, "repository-changed");
+                _cardFacts?.Forget(removed.ProjectName);
             }
         }
         foreach (var entry in configured)
@@ -313,6 +342,9 @@ public sealed class GitStateIndexService : BackgroundService
             };
             if (_repos.TryAdd(entry.Name, state))
             {
+                // Registered before the restore and the watcher, so a commit-graph
+                // configuration write raises no watcher event of its own.
+                _cardFacts?.Register(entry.Name, entry.Path, repositoryPath, () => RequestRefreshCore(state, "facts"));
                 Restore(state);
                 SetupWatcher(state);
             }
@@ -350,6 +382,7 @@ public sealed class GitStateIndexService : BackgroundService
                 state.Config = snapshot.Repository.Config;
                 state.ConfigGeneration = snapshot.Repository.ConfigGeneration;
                 state.StoreGeneration = generation.Generation;
+                state.FactsGeneration = generation.Generation;
                 state.LastIndexedAt = generation.PublishedAt;
                 state.RestoredServing = true;
                 state.PendingRestore = new PendingRestore(new GitFactGenerationInput(generation.RefFingerprint,
@@ -358,6 +391,7 @@ public sealed class GitStateIndexService : BackgroundService
             }
             if (snapshot.Repository.Config is { } config && GitConfigSignature.SourcesUnchanged(config))
                 PublishOrigin(state, config);
+            _cardFacts?.Restore(state.ProjectName, generation.Generation, generation.PublishedAt, generation.RefObjectIds);
             _logger.LogInformation(
                 "git-facts-restored repository={Repository} generation={Generation} cards={Cards} unreadable={Unreadable} ageSeconds={AgeSeconds}",
                 state.ProjectName, generation.Generation, snapshot.Cards.Count, unreadable,
@@ -579,7 +613,8 @@ public sealed class GitStateIndexService : BackgroundService
         lock (state.Gate)
         {
             if (state.Disposed) return;
-            if (trigger != "task-event") state.InvalidationVersion++;
+            // A task event or queued fact work does not supersede a run in flight.
+            if (trigger is not ("task-event" or "facts")) state.InvalidationVersion++;
             if (Volatile.Read(ref state.Running) == 1)
             {
                 state.RerunRequested = true;
@@ -608,7 +643,7 @@ public sealed class GitStateIndexService : BackgroundService
             }
             // A restored generation is confirmed or replaced by this run; it
             // is not marked refreshing before the run knows which.
-            if (trigger is not ("task-event" or "fs-watch" or "sweep") && state.PendingRestore is null)
+            if (trigger is not ("task-event" or "fs-watch" or "sweep" or "facts") && state.PendingRestore is null)
                 _projectionCache.MarkRefreshing(state.WatchPath);
         }
         _ = RunRepoIndexAsync(state, trigger);
@@ -713,11 +748,11 @@ public sealed class GitStateIndexService : BackgroundService
         run.Attempted = input;
         var restoreChecked = TryConfirmRestored(state, input, out var confirmed);
         if (confirmed) return "confirmed";
-        var changeDriven = trigger is "task-event" or "fs-watch" or "sweep";
+        var changeDriven = trigger is "task-event" or "fs-watch" or "sweep" or "facts";
         if (changeDriven && !restoreChecked
             && (Volatile.Read(ref state.LastErrorReason) is null && input == state.LastPublishedInput
                 || trigger == "task-event" && input == state.LastFailedInput))
-            return "unchanged";
+            return PassWithoutGeneration(state, tasksForRepo, deadline.Token);
         if (changeDriven || restoreChecked)
             _projectionCache.MarkRefreshing(state.WatchPath);
         long invalidation;
@@ -756,12 +791,17 @@ public sealed class GitStateIndexService : BackgroundService
             return "degraded";
         }
 
+        // S3: the card facts of this generation, computed before the publish
+        // so they commit and swap with it.
+        var pass = _cardFacts?.Prepare(state.ProjectName, tasksForRepo, projection, deadline.Token);
         var gitStateAt = _timeProvider.GetUtcNow();
-        PublishToStore(state, input, effectiveConfig, projection, tasksForRepo, gitStateAt);
+        var stored = PublishToStore(state, input, effectiveConfig, projection, tasksForRepo, gitStateAt, pass?.Write);
         lock (state.Gate)
         {
             if (state.Disposed) return "disposed";
+            state.FactsGeneration = stored ? state.StoreGeneration : state.FactsGeneration + 1;
             _projectionCache.SetSnapshot(state.WatchPath, projection, gitStateAt, input.Version);
+            if (pass is not null) _cardFacts!.Publish(pass, state.FactsGeneration, gitStateAt);
             state.LastIndexedAt = gitStateAt;
             state.LastPublishedInput = input;
             state.LastSweepSignature = input.Refs;
@@ -776,7 +816,33 @@ public sealed class GitStateIndexService : BackgroundService
         // instead of waiting for the next request to notice staleness.
         _warmInventory(state.ProjectName);
         RepositoryIndexed?.Invoke(state.ProjectName, gitStateAt);
+        if (pass?.Backlog == true) RequestRefreshCore(state, "facts");
         return "published";
+    }
+
+    /// <summary>
+    /// A run whose generation input is unchanged. Queued fact work and a
+    /// task-only change of the integration view are still served: the pass
+    /// joins stored facts, starts Git only for queued or new work, and writes
+    /// its facts under the current generation. Returns <c>unchanged</c> when it
+    /// started no Git process, else <c>facts</c>.
+    /// </summary>
+    private string PassWithoutGeneration(RepoState state, TaskInfo[] tasks, CancellationToken cancellationToken)
+    {
+        if (_cardFacts is null) return "unchanged";
+        var projection = _projectionCache.ReadCacheOnly(tasks);
+        var pass = _cardFacts.Prepare(state.ProjectName, tasks, projection, cancellationToken);
+        if (pass is null) return "unchanged";
+        _cardFacts.WriteWithoutGeneration(pass);
+        long generation;
+        lock (state.Gate)
+        {
+            if (state.Disposed) return "disposed";
+            generation = state.FactsGeneration;
+        }
+        _cardFacts.Publish(pass, generation, _timeProvider.GetUtcNow());
+        if (pass.Backlog) RequestRefreshCore(state, "facts");
+        return pass.Spawned ? "facts" : "unchanged";
     }
 
     /// <summary>
@@ -863,6 +929,8 @@ public sealed class GitStateIndexService : BackgroundService
             ClearFailure(state);
         }
         confirmed = true;
+        _cardFacts?.Confirm(state.ProjectName, now);
+        if (_cardFacts?.HasPendingWork(state.ProjectName) == true) RequestRefreshCore(state, "facts");
         _logger.LogInformation("git-facts-restore-confirmed repository={Repository}", state.ProjectName);
         _warmInventory(state.ProjectName);
         RepositoryIndexed?.Invoke(state.ProjectName, now);
@@ -874,15 +942,15 @@ public sealed class GitStateIndexService : BackgroundService
     /// fenced producer never withholds fresh facts from this process's readers;
     /// it costs restart persistence only and is logged and recorded.
     /// </summary>
-    private void PublishToStore(RepoState state, RepoInput input, GitEffectiveConfig config,
-        TaskListGitProjection projection, TaskInfo[] tasks, DateTimeOffset publishedAt)
+    private bool PublishToStore(RepoState state, RepoInput input, GitEffectiveConfig config,
+        TaskListGitProjection projection, TaskInfo[] tasks, DateTimeOffset publishedAt, GitCardFactsWrite? cardFacts)
     {
-        if (_factStore is not { IsAvailable: true }) return;
+        if (_factStore is not { IsAvailable: true }) return false;
         long epoch;
         long configGeneration;
         lock (state.Gate)
         {
-            if (state.Fenced) return;
+            if (state.Fenced) return false;
             epoch = state.ProducerEpoch;
             configGeneration = state.ConfigGeneration;
         }
@@ -899,10 +967,11 @@ public sealed class GitStateIndexService : BackgroundService
                 new GitRefGenerationDraft(GitRefObjectIds.Read(state.RepositoryPath), input.RefFingerprint,
                     configGeneration, input.SettingsVersion, input.DurableTasks, input.Version, _producerId, epoch,
                     publishedAt),
-                CardGitFactsCodec.ToRows(projection, tasks)));
+                CardGitFactsCodec.ToRows(projection, tasks), cardFacts));
             if (result.Outcome == GitFactPublishOutcome.Published)
             {
                 lock (state.Gate) state.StoreGeneration = result.Generation;
+                return true;
             }
             else if (result.Outcome == GitFactPublishOutcome.RejectedStaleEpoch)
             {
@@ -917,6 +986,7 @@ public sealed class GitStateIndexService : BackgroundService
         {
             _logger.LogWarning(ex, "git-facts-publish-failed repository={Repository}", state.ProjectName);
         }
+        return false;
     }
 
     /// <summary>Records a failed or degraded run; returns the retry ordinal, or 0 for no retry.</summary>
@@ -951,7 +1021,7 @@ public sealed class GitStateIndexService : BackgroundService
         {
             state.RecentSpawns.Enqueue((now, spawns));
             // A fenced producer no longer writes the store, health included.
-            if (outcome is "unchanged" or "disposed" || state.Fenced || _factStore is not { IsAvailable: true }) return;
+            if (outcome is "unchanged" or "disposed" or "facts" || state.Fenced || _factStore is not { IsAvailable: true }) return;
             health = new GitProducerHealth(state.ProjectName, HealthState(state),
                 state.StoreGeneration == 0 ? null : state.StoreGeneration, state.LastIndexedAt, state.Failures,
                 state.LastErrorReason, state.RerunRequested ? 1 : 0, SpawnsPerMinute(state, now),
@@ -1100,6 +1170,8 @@ public sealed class GitStateIndexService : BackgroundService
         public PendingRestore? PendingRestore;
         public bool RestoredServing;
         public long StoreGeneration;
+        /// <summary>The generation card facts are published with: the store's, or a local count without one.</summary>
+        public long FactsGeneration;
         public long ProducerEpoch;
         public bool Fenced;
         public readonly Queue<(DateTimeOffset At, int Spawns)> RecentSpawns = new();

@@ -132,7 +132,8 @@ public sealed class DeployService
     /// created meanwhile.
     /// </summary>
     public DeployOutcome<Release> CreateRelease(string project, string artifact, string commit, string actor,
-        string? versionTag = null, string? branch = null, string? requestedChannel = null, bool mayOverride = false)
+        string? versionTag = null, string? branch = null, string? requestedChannel = null, bool mayOverride = false,
+        ReleaseSuiteVerdict? preDeliveryVerdict = null)
     {
         const string invalid = "Artifact, commit, or stage and production declarations are invalid.";
         try
@@ -212,7 +213,7 @@ public sealed class DeployService
                 return DeployOutcome<Release>.Conflict(raced.Error, raced.Reason);
             var now = _clock.GetUtcNow().UtcDateTime;
             var (record, created) = FindOrCreateRelease(project, id, commit, [artifact], declarations, definition,
-                channel?.Name ?? ReleaseSnapshot.DefaultChannel, lifecycle, repo, integrated, now);
+                channel?.Name ?? ReleaseSnapshot.DefaultChannel, lifecycle, repo, integrated, now, preDeliveryVerdict);
             var release = record.Release;
             if (!created && requestedChannel is not null && release.Channel != requestedChannel)
                 return DeployOutcome<Release>.Conflict($"Release already belongs to channel '{release.Channel}'.");
@@ -1174,7 +1175,8 @@ public sealed class DeployService
     private (ReleaseRecord Release, bool Created) FindOrCreateRelease(string project, string id, string commit,
         IReadOnlyList<string> artifacts, IReadOnlyList<EnvironmentDeclaration> declarations,
         ProjectDeploymentDefinition? definition, string channel, IReadOnlyList<ProjectLifecyclePhase> lifecycle,
-        string? repo, IReadOnlyList<IntegratedCardRecord> integrated, DateTime now)
+        string? repo, IReadOnlyList<IntegratedCardRecord> integrated, DateTime now,
+        ReleaseSuiteVerdict? preDeliveryVerdict)
     {
         var existing = _store.ReadReleaseRecords(project);
         if (existing.FirstOrDefault(item => item.Release.Id == id) is { } known) return (known, false);
@@ -1187,7 +1189,7 @@ public sealed class DeployService
         var release = new Release(id, project, ReleaseSnapshot.NextVersion(existing.Select(item => item.Release), now),
             commit, artifacts, ReleaseSnapshot.ProcessVersion(definition, declarations),
             ReleaseSnapshot.VariablesVersion(definition, declarations),
-            cardKeys, now, channel);
+            cardKeys, now, channel) { PreDeliveryVerdict = preDeliveryVerdict };
         var titles = integrated.Where(card => cardKeys.Contains(card.Key, StringComparer.OrdinalIgnoreCase))
             .GroupBy(card => card.Key, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.OrdinalIgnoreCase);

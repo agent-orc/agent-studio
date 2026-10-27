@@ -25,15 +25,74 @@ internal static class BoardCardSummary
     public static byte[] SerializeList(IReadOnlyList<TaskInfo> jobs, Func<TaskInfo, byte[]>? serializeCard = null)
     {
         serializeCard ??= Serialize;
+        return SerializeSummaryList(jobs.Select(serializeCard));
+    }
+
+    /// <summary>The list body from already serialized cards (the persisted board, S5).</summary>
+    public static byte[] SerializeSummaryList(IEnumerable<byte[]> cards)
+    {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
         {
             writer.WriteStartArray();
-            foreach (var job in jobs)
-                writer.WriteRawValue(serializeCard(job), skipInputValidation: true);
+            foreach (var card in cards)
+                writer.WriteRawValue(card, skipInputValidation: true);
             writer.WriteEndArray();
         }
         return stream.ToArray();
+    }
+
+    /// <summary>
+    /// The sorted lanes of <c>GET /api/tasks/grouped</c> in wire order, by
+    /// wire name and lane state. <see cref="GroupedLanes{T}"/> adds the two
+    /// lanes that are not sorted from the board.
+    /// </summary>
+    internal static readonly IReadOnlyList<(string Name, string State)> SortedGroupedLanes =
+    [
+        // Backlog: triage staging area, the leftmost lane and the default
+        // landing for new jobs.
+        ("backlog", TaskStates.Backlog),
+        ("preparation", TaskStates.Preparation),
+        // ADR-0026: orchestrator-prep lane (hide-when-empty).
+        ("orchestratorPrep", TaskStates.OrchestratorPrep),
+        ("ready", TaskStates.Ready),
+        ("progress", TaskStates.Progress),
+        // ADR-0028: hide-when-empty lane for orphan boot-sweep verdicts.
+        ("failedPickup", TaskStates.FailedPickup),
+        // Hide-when-empty park lane for tasks that exhausted their auto-pickup
+        // retry budget without reaching review.
+        ("codeNotComplete", TaskStates.CodeNotComplete),
+        // ADR-0025: explicit AutoReview and HumanReview lanes.
+        ("autoReview", TaskStates.AutoReview),
+        ("humanReview", TaskStates.HumanReview),
+        ("escalated", TaskStates.Escalated),
+        ("completed", TaskStates.Completed),
+    ];
+
+    /// <summary>
+    /// The lanes of the grouped body in wire order. The live read and the
+    /// persisted board both build it here, so the two can never disagree on a
+    /// lane name or its position.
+    /// <para>The legacy <c>review</c> key repeats the AutoReview lane for
+    /// clients that only know the four pre-ADR-0025 lane names (AGT-2703: a
+    /// client that sends <c>includeLegacyReviewLane=false</c> stops paying for
+    /// the copy; the key stays, empty). <c>archive</c> is always empty
+    /// (ASS-1727): the board never carries the terminal lane, which the Archive
+    /// view pages through <c>GET /api/tasks/archive</c>; the key is kept so
+    /// older clients reading it do not fail.</para>
+    /// </summary>
+    internal static Dictionary<string, IReadOnlyList<T>> GroupedLanes<T>(
+        Func<string, IReadOnlyList<T>> sortLane, bool legacyReviewLane)
+    {
+        var lanes = new Dictionary<string, IReadOnlyList<T>>(StringComparer.Ordinal);
+        foreach (var (name, state) in SortedGroupedLanes)
+        {
+            if (state == TaskStates.Completed)
+                lanes["review"] = legacyReviewLane ? lanes["autoReview"] : Array.Empty<T>();
+            lanes[name] = sortLane(state);
+        }
+        lanes["archive"] = Array.Empty<T>();
+        return lanes;
     }
 
     public static byte[] SerializeGrouped(
@@ -43,21 +102,38 @@ internal static class BoardCardSummary
         Func<TaskInfo, byte[]>? serializeCard = null)
     {
         serializeCard ??= Serialize;
+        var cards = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        return WriteGrouped(lanes, job =>
+        {
+            if (!cards.TryGetValue(job.TaskKey, out var bytes))
+                cards[job.TaskKey] = bytes = serializeCard(job);
+            return bytes;
+        }, gitStateAt, stale);
+    }
+
+    /// <summary>The grouped body from already serialized cards (the persisted board, S5).</summary>
+    public static byte[] SerializeSummaryGrouped(
+        IReadOnlyDictionary<string, IReadOnlyList<byte[]>> lanes,
+        DateTimeOffset? gitStateAt,
+        bool stale)
+        => WriteGrouped(lanes, card => card, gitStateAt, stale);
+
+    private static byte[] WriteGrouped<T>(
+        IReadOnlyDictionary<string, IReadOnlyList<T>> lanes,
+        Func<T, byte[]> card,
+        DateTimeOffset? gitStateAt,
+        bool stale)
+    {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
         {
             writer.WriteStartObject();
-            var cards = new Dictionary<string, byte[]>(StringComparer.Ordinal);
-            foreach (var (name, jobs) in lanes)
+            foreach (var (name, items) in lanes)
             {
                 writer.WritePropertyName(name);
                 writer.WriteStartArray();
-                foreach (var job in jobs)
-                {
-                    if (!cards.TryGetValue(job.TaskKey, out var bytes))
-                        cards[job.TaskKey] = bytes = serializeCard(job);
-                    writer.WriteRawValue(bytes, skipInputValidation: true);
-                }
+                foreach (var item in items)
+                    writer.WriteRawValue(card(item), skipInputValidation: true);
                 writer.WriteEndArray();
             }
             writer.WritePropertyName("gitStateAt");
