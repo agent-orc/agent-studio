@@ -211,6 +211,9 @@ public static class RoutePermissionCatalog
             "/api/runner/post-merge/projects/{}/runs",
             "/api/clients/{}/runner-git-capability", "/api/deploy/jobs/**", "/api/deploy/gate-releases");
         Add("GET", IamPermissions.RunnerService, "/api/runner/post-merge/projects/{}");
+        Add("POST", IamPermissions.RunnerService,
+            "/api/runner/post-merge/projects/{}/escalation-check");
+        Add("GET", IamPermissions.WorkspaceRead, "/api/develop-states");
         Add("GET", IamPermissions.RunnerService, "/api/runner/release-candidates/{}/{}");
         Add("PUT", IamPermissions.RunnerService, "/api/runner/release-suite-verdicts");
         Add("GET", IamPermissions.RunnerService, "/api/deploy/jobs/{}/{}/artifact");

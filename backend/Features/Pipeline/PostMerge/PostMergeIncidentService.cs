@@ -16,17 +16,20 @@ public sealed class PostMergeIncidentService
     private readonly TaskMutationService _mutations;
     private readonly TaskScannerService _scanner;
     private readonly TaskStateMachine _states;
+    private readonly HumanReviewEscalation _humanReviewEscalation;
     private readonly TimeProvider _clock;
     private readonly ILogger<PostMergeIncidentService> _logger;
 
     public PostMergeIncidentService(PostMergeRunStore store, TaskMutationService mutations,
-        TaskScannerService scanner, TaskStateMachine states, TimeProvider clock,
+        TaskScannerService scanner, TaskStateMachine states, HumanReviewEscalation humanReviewEscalation,
+        TimeProvider clock,
         ILogger<PostMergeIncidentService> logger)
     {
         _store = store;
         _mutations = mutations;
         _scanner = scanner;
         _states = states;
+        _humanReviewEscalation = humanReviewEscalation;
         _clock = clock;
         _logger = logger;
     }
@@ -135,8 +138,9 @@ public sealed class PostMergeIncidentService
             + "and consider switching this project to the pre-merge batch gate until T3 is proven green.";
         if (!_mutations.AppendContinuationNote(card.Id, note, project.StorageLocation))
             throw new InvalidOperationException("The red-develop escalation note could not be attached.");
-        var moved = _states.MoveJob(card.Id, TaskStates.Escalated, project.StorageLocation,
-            expectedSourceState: card.State, reason: note);
+        var moved = _humanReviewEscalation.EscalateAsync(card.Id, project.StorageLocation,
+            project.DisplayName, HumanReviewEscalationCategories.FailureIntervention, note,
+            expectedSourceState: card.State).GetAwaiter().GetResult();
         if (moved.Status != MoveJobStatus.Success)
             throw new InvalidOperationException("The red-develop repair card could not be escalated: " + moved.Message);
         _store.UpdateIncidents(project.Id, items => items.Select(item => item.Fingerprint == incident.Fingerprint
