@@ -19,6 +19,8 @@ public sealed record RemoteGateInvocation(
     /// <summary>A host-verified cache already contains the exact subject; no bundle was sent.</summary>
     public bool SourceFromCache { get; init; }
     public string? SourceCacheKey { get; init; }
+    /// <summary>Digest of an incremental pull bundle; the run identity remains BundleSha256.</summary>
+    public string? TransferBundleSha256 { get; init; }
     public int GateSlots { get; init; } = 1;
     public int ProcessorCount { get; init; } = 2;
     public string InstallationId { get; init; } = "";

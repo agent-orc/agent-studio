@@ -104,7 +104,8 @@ public static class RemoteGateWorker
             {
                 await using var source = File.OpenRead(bundle);
                 var actual = Convert.ToHexStringLower(await SHA256.HashDataAsync(source, lifetime.Token));
-                if (!string.Equals(actual, invocation.BundleSha256, StringComparison.Ordinal))
+                if (!string.Equals(actual, invocation.TransferBundleSha256 ?? invocation.BundleSha256,
+                    StringComparison.Ordinal))
                     throw new InvalidDataException("Remote gate source bundle digest mismatch.");
             }
             // The clone is private to this GUID invocation. Its only advertised
@@ -248,6 +249,8 @@ public static class RemoteGateWorker
             || (invocation.InstallationId.Length > 0
                 && !Regex.IsMatch(invocation.InstallationId, "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"))
             || !Regex.IsMatch(invocation.BundleSha256, "^[0-9a-f]{64}$")
+            || (invocation.TransferBundleSha256 is { } transferDigest
+                && !Regex.IsMatch(transferDigest, "^[0-9a-f]{64}$"))
             || invocation.Request is null || !invocation.Request.RequireExactSubject
             || !RemoteBuildTestGateRunner.ValidSha(invocation.Request.ExpectedSha)
             || invocation.TimeoutSeconds is < 1 or > 43200

@@ -260,6 +260,48 @@ public sealed class PullGateStore
         }
     }
 
+    /// <summary>Serve only the objects newer than a verified host tip when it is an ancestor.</summary>
+    public async Task<(string Path, string Digest)> BundleForLeaseAsync(string hostId, string runId,
+        string lease, string? baseSha, CancellationToken ct)
+    {
+        var full = FileForLease(hostId, runId, lease, "source.bundle");
+        var fullDigest = JsonSerializer.Deserialize<RemoteGateInvocation>(
+            await File.ReadAllTextAsync(FileForLease(hostId, runId, lease, "request.json"), ct), Json)!
+            .BundleSha256;
+        if (baseSha is null) return (full, fullDigest);
+        if (!RemoteBuildTestGateRunner.ValidSha(baseSha))
+            throw new ArgumentException("Invalid source cache tip.", nameof(baseSha));
+        var folder = Folder(runId);
+        var thin = Path.Combine(folder, "source-" + baseSha.ToLowerInvariant() + ".bundle");
+        if (File.Exists(thin)) return (thin, await DigestAsync(thin, ct));
+        var temporary = Path.Combine(folder, "thin-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(temporary);
+        try
+        {
+            var repository = Path.Combine(temporary, "source.git");
+            await RemoteGateProcess.RunAsync("git", ["clone", "--bare", "--quiet", full, repository],
+                temporary, TimeSpan.FromMinutes(2), ct);
+            try
+            {
+                await RemoteGateProcess.RunAsync("git", ["-C", repository, "merge-base", "--is-ancestor",
+                    baseSha, "refs/heads/gate-subject"], temporary, TimeSpan.FromMinutes(2), ct);
+            }
+            catch (IOException) { return (full, fullDigest); }
+            var output = Path.Combine(temporary, "source.bundle");
+            await RemoteGateProcess.RunAsync("git", RemoteGateTransport.BundleArguments(repository,
+                output, [baseSha]), temporary, TimeSpan.FromMinutes(2), ct);
+            File.Move(output, thin, overwrite: true);
+            return (thin, await DigestAsync(thin, ct));
+        }
+        finally { Directory.Delete(temporary, recursive: true); }
+    }
+
+    private static async Task<string> DigestAsync(string path, CancellationToken ct)
+    {
+        await using var input = File.OpenRead(path);
+        return Convert.ToHexStringLower(await SHA256.HashDataAsync(input, ct));
+    }
+
     public void UploadArtifact(string hostId, string runId, string lease, string name, Stream input)
     {
         if (string.IsNullOrEmpty(name) || name != Path.GetFileName(name)
