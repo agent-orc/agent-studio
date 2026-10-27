@@ -32,10 +32,9 @@
       <span class="studio-titlebar__separator" data-nav-inline-from="desktop">/</span>
     }
 
-    <!-- Project picker: single combo carrying ONLY the active selection.
-         Click opens a dropdown with "All projects" + each project. This
-         replaces the legacy multi-pill row that suggested a multi-select
-         filter; the title bar now shows exactly what is in scope. -->
+    @if (activeTab()?.kind === 'board') {
+      <app-develop-state-indicator [project]="activeProjectName()" />
+    }
     <div class="studio-titlebar__picker" data-testid="studio-project-picker" data-nav-inline-from="tablet">
       <button #studioPickerTrigger
               type="button"

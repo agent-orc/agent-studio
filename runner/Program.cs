@@ -81,6 +81,16 @@ if (args is ["coverage-run", ..])
     }
 }
 
+if (args is ["post-merge-run", ..])
+{
+    using var stop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); };
+    using var postMergeSigterm = OperatingSystem.IsWindows() ? null
+        : PosixSignalRegistration.Create(PosixSignal.SIGTERM, context => { context.Cancel = true; stop.Cancel(); });
+    try { return await PostMergeRunCommand.RunAsync(args[1..], Console.Out, Console.Error, stop.Token); }
+    catch (OperationCanceledException) when (stop.IsCancellationRequested) { return 130; }
+}
+
 if (args.Length == 3 && args[0] == "--rebind-provider-auth"
     && args[1] is ("codex" or "claude") && args[2] == "--drained")
 {

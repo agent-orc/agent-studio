@@ -1,0 +1,21 @@
+[Unit]
+Description=Agent Studio nightly develop full suite for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agent-runner
+Group=agent-runner
+WorkingDirectory=/var/lib/agent-runner
+EnvironmentFile=/etc/agent-runner/post-merge-%i.env
+ExecStart=/opt/agent-host/current/agent-host post-merge-run --mode nightly
+Nice=19
+CPUSchedulingPolicy=batch
+IOSchedulingClass=idle
+TimeoutStartSec=12h
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/agent-runner /home/agent-runner

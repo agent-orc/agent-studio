@@ -1,0 +1,10 @@
+[Unit]
+Description=Poll develop merge windows for %i every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+Unit=agent-post-merge-window@%i.service
+
+[Install]
+WantedBy=timers.target

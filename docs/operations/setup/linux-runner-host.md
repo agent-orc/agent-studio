@@ -1655,6 +1655,33 @@ The Quality Studio project view of the `agent-studio-coverage` registration
 shows the measured commit and time from the coverage snapshot, and marks it
 stale once the checkout's HEAD moves past it.
 
+### Post-merge develop checks
+
+The project-scoped T3 worker uses a separate dedicated clone and the Studio
+Runner service credential. Install one pair of template timers per project;
+the instance name selects `/etc/agent-runner/post-merge-<instance>.env`.
+The window timer polls each minute, and the nightly timer tries at 02:15 and
+04:15 between the coverage timer's 01:15, 03:15 and 05:15 starts. Host slot and
+load admission yield when the runner is occupied. Configure the branch, Studio
+URL, token file, checkout, and project display name in the environment file.
+
+```bash
+sudo install -m 0640 -o root -g agent-runner deploy/systemd/agent-post-merge.env.example \
+  /etc/agent-runner/post-merge-agent-studio.env
+sudo install -m 0644 deploy/systemd/agent-post-merge-{window,nightly}@.{service,timer} \
+  /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now agent-post-merge-window@agent-studio.timer \
+  agent-post-merge-nightly@agent-studio.timer
+sudo -u agent-runner bash -c 'set -a; . /etc/agent-runner/post-merge-agent-studio.env; \
+  set +a; /opt/agent-host/current/agent-host post-merge-run --dry-run --mode window'
+```
+
+Create and own the checkout as `agent-runner` before enabling the timers. The
+worker posts receipts to `/api/runner/post-merge/projects/{project}/runs` and
+does not read or mutate card folders. The board reads the compact
+`/api/develop-states` route; gate economics reads the same durable receipts.
+
 ### Salvage store retention
 
 The coding daemon owns the host salvage store and sweeps it on its own timer
