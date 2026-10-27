@@ -65,6 +65,14 @@
         }
       }
     },
+    "delivery": {
+      "description": "Pre-delivery release candidate verification policy.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fullSuite": { "enum": ["required", "optional", "off"] }
+      }
+    },
     "testSuites": {
       "description": "Named test inventory with operator-facing category and expected duration.",
       "type": "array",

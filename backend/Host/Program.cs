@@ -574,6 +574,7 @@ if (!publicDemoExecutionProfile && !builder.Environment.IsEnvironment("Test") &&
 builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseArtifactRegistry>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployStore>();
 builder.Services.AddSingleton<AgentStudio.Deploy.DeployService>();
+builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCandidateGate>();
 builder.Services.AddSingleton<AgentStudio.Deploy.RunbookService>();
 builder.Services.AddSingleton<AgentStudio.Projects.IOperationsTelemetryReader,
     AgentStudio.Projects.UnavailableOperationsTelemetryReader>();
@@ -631,6 +632,15 @@ builder.Services.AddSingleton<TaskWatcherService>();
 // SetIndexCache so existing ScanAllJobs callers transparently benefit.
 builder.Services.AddSingleton<TaskIndexCache>();
 builder.Services.AddHostedService<TaskIndexCacheDiagnosticsService>();
+// Board card enrichment shared by the board routes and the persisted board
+// (Git facts S5): the persister writes the slim cards of each published
+// generation to board-summaries.db, and a cold board read answers from them
+// marked restored instead of waiting for the first workspace scan.
+builder.Services.AddSingleton<BoardCardProjector>();
+builder.Services.AddSingleton<BoardSummaryStore>();
+builder.Services.AddSingleton<RestoredBoard>();
+builder.Services.AddSingleton<BoardSummaryPersister>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<BoardSummaryPersister>());
 // Board read model on the Task Server (pipeline delivery target M1 and M2,
 // decision D7 A-B). Board:Source selects workspace, task-server-shadow or
 // task-server; the worker mirrors the task index and compares off the request path.
@@ -1076,6 +1086,11 @@ if (!publicDemoExecutionProfile)
 // TaskListGitProjectionCache and GitService.GetProjectInventory.
 // AGT-3322: the durable Git fact store (git-facts.db); the indexer is its only writer.
 builder.Services.AddSingleton<GitFactStore>();
+// AGT-3323 (Git facts S3): reachability per target ref, shared by card
+// classification, provenance and the integration view; card reads join the
+// facts the indexer publishes through GitCardFactReader and never start Git.
+builder.Services.AddSingleton<GitReachabilityIndex>();
+builder.Services.AddSingleton<GitCardFactReader>();
 builder.Services.AddSingleton<GitStateIndexService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<GitStateIndexService>());
@@ -2037,11 +2052,12 @@ app.Services.GetRequiredService<WikiPublicationService>().SetWikiContentCache(wi
 watcher.OnWikiChanged += (projectName, _) =>
     wikiContentCache.Invalidate(projectName, WikiContentCache.InvalidationSource.Watcher);
 
-// TaskAccess layer (ADR-0024): force a synchronous first index read so
-// boot-time disk problems surface here rather than on the first HTTP
-// request. The host's other lifecycle calls (ReloadProjectAsync,
-// ShutdownAsync) are wired through the typed interface and used by
-// callers, not at startup.
+// TaskAccess layer (ADR-0024): the first index publication starts at boot so
+// boot-time disk problems surface early. With a persisted board (Git facts
+// S5) it runs in the background and board reads answer restored; on a first
+// start it is a synchronous read before the listener, as before. The host's
+// other lifecycle calls (ReloadProjectAsync, ShutdownAsync) are wired through
+// the typed interface and used by callers, not at startup.
 _ = hostTimeline.Sweep("TaskAccessHost.Boot", () => app.Services.GetRequiredService<AgentStudio.TaskAccess.ITaskAccessHost>()
     .BootAsync());
 

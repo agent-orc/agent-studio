@@ -1,3 +1,5 @@
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Deploy;
 
 // BD-1 shared data contract for stage P1 of the deployment Dossier
@@ -77,7 +79,10 @@ public sealed record DeployEnvironment(string Id, string ProjectId, string Name,
 public sealed record Release(
     string Id, string ProjectId, string Version, string CommitSha,
     IReadOnlyList<string> ArtifactDigests, string ProcessVersion, string VariablesVersion,
-    IReadOnlyList<string> CardKeys, DateTime CreatedAtUtc, string Channel);
+    IReadOnlyList<string> CardKeys, DateTime CreatedAtUtc, string Channel)
+{
+    public ReleaseSuiteVerdict? PreDeliveryVerdict { get; init; }
+}
 
 public sealed record DeploymentStep(string Name, string State, DateTime? StartedAtUtc,
     DateTime? FinishedAtUtc, string LogRef);

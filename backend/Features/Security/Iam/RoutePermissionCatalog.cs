@@ -211,6 +211,8 @@ public static class RoutePermissionCatalog
             "/api/runner/post-merge/projects/{}/runs",
             "/api/clients/{}/runner-git-capability", "/api/deploy/jobs/**", "/api/deploy/gate-releases");
         Add("GET", IamPermissions.RunnerService, "/api/runner/post-merge/projects/{}");
+        Add("GET", IamPermissions.RunnerService, "/api/runner/release-candidates/{}/{}");
+        Add("PUT", IamPermissions.RunnerService, "/api/runner/release-suite-verdicts");
         Add("GET", IamPermissions.RunnerService, "/api/deploy/jobs/{}/{}/artifact");
         // The proxy to a standalone Task Server declares its own split
         // (TaskServerPlaneProxy.MapTaskServerPlaneProxy).

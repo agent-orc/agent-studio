@@ -50,13 +50,17 @@ describe('ProjectDeployReleasesComponent', () => {
   });
 
   it('lists releases newest first and details the newest by default', async () => {
-    await render({ status: 'ready', value: deployReleasesFixture() });
+    const releases = deployReleasesFixture();
+    releases[0].preDeliveryVerdict = { project: 'Web Site', commitSha: 'c'.repeat(40),
+      commandDigest: 'd'.repeat(64), status: 'green', finishedAtUtc: '2026-10-19T12:00:00Z' };
+    await render({ status: 'ready', value: releases });
 
     const rows = Array.from(host().querySelectorAll('.releases__row')).map(row => row.getAttribute('data-testid'));
     expect(rows).toEqual([`deploy-release-${'c'.repeat(16)}`, `deploy-release-${'b'.repeat(16)}`, `deploy-release-${'a'.repeat(16)}`]);
     expect(byTestId('deploy-release-detail')?.textContent).toContain('Release 2026.10.19.2');
     expect(byTestId('deploy-release-detail')?.textContent).toContain('WEB-35');
     expect(byTestId('deploy-release-live-in')?.textContent?.trim()).toBe('Staging');
+    expect(byTestId('deploy-release-verdict')?.textContent).toContain(`Full suite: green · SHA ${'c'.repeat(40)}`);
     expect(byTestId(`deploy-release-${'c'.repeat(16)}`)?.getAttribute('aria-current')).toBe('true');
   });
 

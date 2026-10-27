@@ -1,0 +1,82 @@
+<header class="delivery__head" [attr.title]="copy.groupSentence">
+  <span class="delivery__label">{{ group().label }}</span>
+  <span class="delivery__count" data-testid="delivery-group-count">{{ group().count }}</span>
+  <label class="delivery__option">
+    <input type="checkbox" data-testid="delivery-furthest-only"
+           [checked]="furthestOnly()" (change)="toggleFurthestOnly()" />
+    {{ copy.furthestOnly }}
+  </label>
+</header>
+@if (error()) {
+  <p class="delivery__notice" role="status" data-testid="delivery-load-error">{{ copy.loadError }}</p>
+}
+<div class="delivery__columns" data-testid="delivery-columns">
+  @for (column of group().columns; track column.id) {
+    @let isCollapsed = collapsed(column);
+    <section class="delivery-column" [class.delivery-column--collapsed]="isCollapsed"
+             [attr.data-testid]="'delivery-column-' + column.id"
+             [attr.data-delivery-tone]="column.approvalPending ? 'attention' : null"
+             [attr.aria-label]="column.title">
+      <header class="delivery-column__head">
+        <button type="button" class="delivery-column__toggle" [attr.aria-expanded]="!isCollapsed"
+                [attr.aria-label]="(isCollapsed ? copy.expand : copy.collapse) + ': ' + column.title"
+                [attr.data-testid]="'delivery-column-toggle-' + column.id" (click)="toggle(column)">
+          <app-disclosure-marker [open]="!isCollapsed" />
+          <span class="delivery-column__title">{{ column.title }}</span>
+          <span class="delivery-column__count" [attr.data-testid]="'delivery-column-count-' + column.id">{{ column.landed.length + column.waiting.length }}</span>
+        </button>
+        @if (!isCollapsed) {
+          @if (column.integrated) {
+            <p class="delivery-release delivery-release--quiet">{{ copy.integratedSubtitle }}</p>
+          }
+          @for (head of column.headers; track head.projectId) {
+            <div class="delivery-release" data-testid="delivery-release">
+              @if (multiProject()) { <span class="delivery-release__project">{{ head.projectId }}</span> }
+              <span class="delivery-release__version" data-testid="delivery-release-version">{{ head.releaseVersion ?? copy.noRelease }}</span>
+              @if (head.run; as run) {
+                @let state = runLabel(run);
+                <span class="delivery-pill" [attr.data-delivery-tone]="state.tone" data-testid="delivery-run-state">{{ state.label }}</span>
+                @if (run.atUtc) { <time class="delivery-release__time" [attr.datetime]="run.atUtc">{{ run.atUtc | date:'MMM d, HH:mm' }}</time> }
+              }
+              @let health = healthLabel(head.health);
+              <span class="delivery-health" [attr.data-delivery-tone]="health.tone" data-testid="delivery-health">
+                <span class="delivery-health__dot" aria-hidden="true"></span>{{ health.label }}
+              </span>
+              @if (head.approval; as approval) {
+                <span class="delivery-pill delivery-pill--strong" data-delivery-tone="attention" data-testid="delivery-approval-pill">
+                  {{ copy.approvalPending }}@if (approval.releaseVersion) { · {{ approval.releaseVersion }} }
+                </span>
+              }
+            </div>
+          }
+        }
+      </header>
+      @if (!isCollapsed) {
+        <div class="delivery-column__body">
+          @for (card of column.landed; track card.task.taskKey) {
+            <div class="delivery-card" data-testid="delivery-landed-card" [attr.data-card-key]="card.task.displayKey ?? card.task.taskKey">
+              <app-job-card [job]="card.task" [mutationsBlocked]="mutationsBlocked()" (click)="jobClick.emit(card.task)" />
+            </div>
+          } @empty {
+            <p class="delivery-column__empty">{{ copy.landedEmpty }}</p>
+          }
+          @if (!column.integrated) {
+            <div class="delivery-column__divider" role="separator" data-testid="delivery-waiting-divider">
+              {{ copy.waiting }} · {{ column.waiting.length }}
+            </div>
+            @for (card of column.waiting; track card.task.taskKey) {
+              <div class="delivery-card" data-testid="delivery-waiting-card" [attr.data-card-key]="card.task.displayKey ?? card.task.taskKey">
+                @if (card.rolledBack) {
+                  <span class="delivery-pill" data-delivery-tone="danger" data-testid="delivery-rolled-back">
+                    {{ copy.rolledBack }}@if (card.releaseVersion) { · {{ card.releaseVersion }} }
+                  </span>
+                }
+                <app-job-card [job]="card.task" [mutationsBlocked]="mutationsBlocked()" (click)="jobClick.emit(card.task)" />
+              </div>
+            }
+          }
+        </div>
+      }
+    </section>
+  }
+</div>

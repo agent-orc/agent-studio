@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import { TaskInfo, type TaskDeliveryClaimAnswer } from '../../../models/task.model';
+import { TaskInfo, TaskState, type TaskDeliveryClaimAnswer } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { NotificationService } from '../../../services/notification.service';
@@ -139,7 +139,7 @@ export class TriageController {
       message:
         `${lost} Integrate the current delivery before archiving. An owner can record a written override for this card.`,
       detail: info.integration?.detail || info.title || info.id,
-      confirmLabel: 'Keep in Delivered',
+      confirmLabel: `Keep in ${LANE_LABELS[TaskState.Completed]}`,
       cancelLabel: 'Close',
       kind: 'primary',
     });
@@ -221,8 +221,8 @@ export class TriageController {
     });
     void persisted.catch(() => undefined);
 
-    const actionLabel = ev.targetState === '6-completed'
-        ? 'Accepted'
+    const actionLabel = ev.targetState === TaskState.Completed
+        ? LANE_LABELS[TaskState.Completed]
         : ev.targetState === '2-ready'
           ? 'Requeued'
           : ev.targetState === '7-archive' ? 'Archived' : 'Moved';
