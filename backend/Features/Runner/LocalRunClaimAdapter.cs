@@ -83,9 +83,9 @@ public sealed class LocalRunClaimAdapter(
                 logger.LogWarning(exception, "Local stop receipt observation failed for {TaskKey}", taskKey);
             }
         }
-        leases.Release(ToRelease(held.Lease) with { Outcome = stopped ? "Stopped" : null });
-        if (stopped)
-            stops?.Clear(taskKey, held.Lease.AttemptId, held.Lease.FencingToken, "settled");
+        leases.Release(ToRelease(held.Lease) with { Outcome = stopped ? "Stopped" : null },
+            stopped ? () => stops?.Clear(taskKey, held.Lease.AttemptId,
+                held.Lease.FencingToken, "settled") : null);
     }
 
     private bool StopRequestedForRelease(string taskKey, HeldRun held)

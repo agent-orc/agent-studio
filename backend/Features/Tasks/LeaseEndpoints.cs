@@ -250,10 +250,10 @@ public static class LeaseEndpoints
                         reviewInputDecisions, loggerFactory, ct);
                 var releaseWrite = leases.CurrentWriteReference(
                     req.TaskKey, $"infrastructure-release:{req.AttemptId}:{req.LeaseId}");
-                var released = leases.Release(req);
+                var released = leases.Release(req, () => stops.Clear(
+                    req.TaskKey, req.AttemptId, req.FencingToken, "released"));
                 if (string.Equals(released.Outcome, "Released", StringComparison.OrdinalIgnoreCase))
                 {
-                    stops.Clear(req.TaskKey, req.AttemptId, req.FencingToken, "released");
                     var task = FindTask(scanner, req.TaskKey);
                     if (task is not null)
                         mutations.RollbackStashedPendingIntent(task.FolderPath);

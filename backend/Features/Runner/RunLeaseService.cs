@@ -107,7 +107,7 @@ public sealed class RunLeaseService
         return MapMutation(result, "Renewed");
     }
 
-    public RunLeaseResponse Release(RunLeaseReleaseRequest request)
+    public RunLeaseResponse Release(RunLeaseReleaseRequest request, Action? beforeRelease = null)
     {
         var before = Current(request.TaskKey);
         var reference = ResolveReference(
@@ -115,6 +115,14 @@ public sealed class RunLeaseService
             request.IdempotencyKey, "lease-release");
         if (reference is null)
             return new RunLeaseResponse("NotHeld", false, null, "No canonical RunAttempt is held for this task.");
+
+        // Retire the matching stop while the exact lease is still held. Once a
+        // stopped attempt is settled, Peek already reports Free.
+        if (beforeRelease is not null
+            && IsCurrent(request.TaskKey, request.LeaseId, request.FencingToken, request.RunnerId)
+            && string.Equals(before?.AttemptId, request.AttemptId, StringComparison.Ordinal)
+            && before?.AuthorityEpoch == request.AuthorityEpoch)
+            beforeRelease();
 
         if (string.Equals(request.Outcome, "Stopped", StringComparison.OrdinalIgnoreCase))
         {
