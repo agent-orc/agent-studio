@@ -299,15 +299,16 @@ public static class TaskGitEndpoints
         // (task/<id> -> develop @sha -> main @sha with "HEAD now"), and per-commit
         // branch membership. Recomputed on every read so it never lies about
         // where develop / main currently are.
-        group.MapGet("/{jobId}/provenance", (
+        group.MapGet("/{jobId}/provenance", async (
             string jobId, string? project, string? watchPath,
-            TaskScannerService scanner, TaskProvenanceService provenance, AgentStudio.Registry.ProjectRegistry projects) =>
+            TaskScannerService scanner, TaskProvenanceService provenance, AgentStudio.Registry.ProjectRegistry projects,
+            CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
             if (info == null) return Results.NotFound(new { error = "Job not found" });
-            return Results.Ok(provenance.BuildView(info));
-        });
+            return Results.Ok(await provenance.BuildViewAsync(info, ct));
+        }).AddEndpointFilter<AgentStudio.Git.SourceFacts.GitSpawnCountFilter>();
 
         // Per-job hygiene: project-level snapshot overlaid with whether the
         // job carries a platform-owned commit stamp and whether accepted task

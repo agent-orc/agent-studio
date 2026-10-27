@@ -3,6 +3,9 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using SourceFactDemandRequest = AgentStudio.TaskServer.Contracts.SourceFactDemandRequest;
+using SourceFactKinds = AgentStudio.TaskServer.Contracts.SourceFactKinds;
+using SourcePathHistoryDto = AgentStudio.TaskServer.Contracts.SourcePathHistoryDto;
 using Microsoft.AspNetCore.Http;
 
 namespace AgentStudio.Tasks;
@@ -28,20 +31,100 @@ public sealed class TaskFileHistoryService
     /// at the policy default.
     /// </summary>
     private readonly TimeSpan _gitCallBudget;
+    private readonly AgentStudio.Git.SourceFacts.ISourceFactsReader? _sourceFacts;
 
     public TaskFileHistoryService(
         TaskScannerService scanner,
         GitService git,
         ILogger<TaskFileHistoryService> logger,
         TimeSpan? gitCallBudget = null,
-        ITaskHistoryGitRunner? runner = null)
+        ITaskHistoryGitRunner? runner = null,
+        AgentStudio.Git.SourceFacts.ISourceFactsReader? sourceFacts = null)
     {
         _scanner = scanner;
         _git = git;
         _logger = logger;
         _gitCallBudget = gitCallBudget ?? GitCallBudgetPolicy.DefaultTotalBudget;
         _runner = runner ?? new ProcessTaskHistoryGitRunner();
+        _sourceFacts = sourceFacts;
     }
+
+    /// <summary>True when source file history is served from derived facts (AGT-3318).</summary>
+    public bool ReadsDerivedCodeHistory
+        => _sourceFacts?.Mode == AgentStudio.Git.SourceFacts.SourceFactsReadMode.Derived;
+
+    /// <summary>
+    /// Source file history of a card from the path history the runner-host
+    /// producer published for the card's result commit (AGT-3318). No Git
+    /// process starts. A missing row returns an empty list in state
+    /// <c>warming</c> and asks the producer for it; a card without an
+    /// attributed commit has no result to follow and answers
+    /// <c>unavailable</c>.
+    /// </summary>
+    public async Task<(TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>> Result, string State)> GetDerivedCodeHistoryAsync(
+        string jobId,
+        string? watchPath,
+        string requestPath,
+        CancellationToken ct)
+    {
+        var facts = _sourceFacts ?? throw new InvalidOperationException("Derived source facts are not configured.");
+        using var _t = GitProcessTelemetry.BeginRequest("tasks/files/history", _logger);
+        var path = NormalizeFileIndexPath(requestPath.Trim());
+        if (path.Length == 0 || path.Split('/').Any(segment => segment is ".." or "."))
+            return (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Fail(
+                StatusCodes.Status400BadRequest, "Path must be repository-relative."), AgentStudio.Git.SourceFacts.SourceFactStates.Ready);
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null)
+            return (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Fail(
+                StatusCodes.Status404NotFound, "Task not found."), AgentStudio.Git.SourceFacts.SourceFactStates.Ready);
+        var head = ResultHead(info);
+        if (head is null)
+            return (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Ok([], TaskFileSources.Code),
+                AgentStudio.Git.SourceFacts.SourceFactStates.Unavailable);
+
+        var read = await facts.GetPathHistoryAsync(info.ProjectName, head, path, ct);
+        if (read.Value is null)
+        {
+            if (read.State == AgentStudio.Git.SourceFacts.SourceFactStates.Warming)
+                await facts.RequestAsync(info.ProjectName, new SourceFactDemandRequest(
+                    SourceFactKinds.PathHistory, "card-open-file-history", HeadSha: head, Path: path), ct);
+            return (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Ok([], TaskFileSources.Code), read.State);
+        }
+        return (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Ok(
+            ProjectDerivedHistory(read.Value, path), TaskFileSources.Code), AgentStudio.Git.SourceFacts.SourceFactStates.Ready);
+    }
+
+    /// <summary>The card's result head: its last attributed commit.</summary>
+    internal static string? ResultHead(TaskInfo info)
+    {
+        var attributed = new HashSet<string>(
+            TaskIntegrationStatusService.AttributedCommits(info), StringComparer.OrdinalIgnoreCase);
+        var chain = info.Commits.Count > 0
+            ? info.Commits
+            : info.Commit is null ? [] : new List<TaskCommitInfo> { info.Commit };
+        return chain.LastOrDefault(commit => commit.Sha is { Length: 40 or 64 } && attributed.Contains(commit.Sha))?.Sha;
+    }
+
+    /// <summary>Maps stored path history to the history wire shape, with the same trailer parsing as the Git read.</summary>
+    internal static IReadOnlyList<TaskFileHistoryEntry> ProjectDerivedHistory(SourcePathHistoryDto history, string requestPath)
+        => history.Entries.Select(entry =>
+        {
+            var runIndexRaw = ReadTrailer(entry.Body, "Run-Index");
+            var verdict = ReadTrailer(entry.Body, "Verdict");
+            var steps = ReadTrailer(entry.Body, "Steps");
+            return new TaskFileHistoryEntry(
+                Sha: entry.Sha,
+                At: entry.AuthoredAt,
+                RunIndex: int.TryParse(runIndexRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) ? n : null,
+                Verdict: string.IsNullOrWhiteSpace(verdict) ? null : verdict,
+                Message: string.IsNullOrWhiteSpace(entry.Subject) ? FirstLine(entry.Body) : entry.Subject.Trim(),
+                Author: entry.Author,
+                Provenance: new TaskFileVersionProvenance(
+                    Source: TaskFileSources.Code,
+                    Path: requestPath,
+                    Steps: string.IsNullOrWhiteSpace(steps) ? null : steps,
+                    Generation: null));
+        }).ToArray();
 
     public TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>> GetHistory(
         string jobId,

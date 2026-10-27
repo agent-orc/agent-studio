@@ -256,6 +256,14 @@ public sealed class RunnerOptions
     /// </summary>
     public bool WorkerEnvelopeEnabled { get; init; } = true;
 
+    /// <summary>
+    /// Derived source data producer (AGT-3318): diff objects, path history and
+    /// blame at result handoff and on demand. <c>RUNNER_SOURCE_FACTS_PRODUCER=0</c>
+    /// turns it off on this host; the Task Server lease still admits one
+    /// producer per repository across hosts.
+    /// </summary>
+    public bool SourceFactsProducerEnabled { get; init; } = true;
+
     /// <summary>Delay between empty daemon pickup polls.</summary>
     public int PollSeconds { get; init; }
 
@@ -569,6 +577,7 @@ public sealed class RunnerOptions
                 "RUNNER_WORKER_CPU_BURST",
                 WorkerResourceEnvelope.DefaultCpuBurst),
             WorkerEnvelopeEnabled = OptOut(Val("worker-envelope", "RUNNER_WORKER_ENVELOPE")),
+            SourceFactsProducerEnabled = OptOut(Val("source-facts-producer", "RUNNER_SOURCE_FACTS_PRODUCER")),
             PollSeconds = overrides.TryGetValue("poll-seconds", out var poll) && int.TryParse(poll, out var pollV) && pollV > 0
                 ? pollV : EnvInt("RUNNER_POLL_SECONDS", 5),
             ServerRequestTimeoutSeconds = overrides.TryGetValue("server-request-timeout-seconds", out var requestTimeout)

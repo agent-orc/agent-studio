@@ -115,6 +115,8 @@ test('task switch budget on the designated workstation', async ({ page, baseURL 
     backendReadiness: 'unverified', origin: baseURL, source: process.env.TASK_SWITCH_SOURCE ?? 'unknown',
     startedAt: new Date().toISOString(), coldProcessStartupMs: null },
     pageErrors: [] as string[], requestErrors: [] as unknown[], apiErrors: [] as unknown[],
+    // AGT-3318: Git spawns of the card-open provenance and file-history reads.
+    cardOpenGitReads: [] as unknown[],
     cohorts: {}, screenshots: [] as string[], maxConcurrentCoreRequests: 0 };
   const responsePromises: Promise<void>[] = [];
   let current: Sample | null = null;
@@ -156,6 +158,11 @@ test('task switch budget on the designated workstation', async ({ page, baseURL 
       const etag = response.headers()['etag'];
       if (sample && etag) sample.resourceGenerations[new URL(response.url()).pathname] = etag;
     }
+    if (/\/api\/tasks\/[^/]+\/(?:provenance|checkout\/.+\/history)(?:\?|$)/.test(response.url()))
+      capture.cardOpenGitReads.push({ path: new URL(response.url()).pathname, status: response.status(),
+        gitSpawns: parseCounter(response.headers()['x-git-spawns']),
+        sourceFacts: response.headers()['x-source-facts-state'] ?? null,
+        switchId: requestSwitch.get(response.request()) ?? null });
     if (!/\/api\/tasks\/[^/]+\/core(?:\?|$)/.test(response.url())) return;
     const id = requestSwitch.get(response.request());
     const sample = id && sampleBySwitch.get(id);

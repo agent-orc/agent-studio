@@ -261,6 +261,7 @@ app.UseMiddleware<StudioContributorMiddleware>();
 app.UseMiddleware<TaskServerProtocolMiddleware>();
 app.UseMiddleware<ArtifactRequestLimitMiddleware>();
 app.MapTaskServerEndpoints();
+app.MapSourceFactsEndpoints();
 app.MapOperationPermitEndpoints();
 app.MapCredentialRunbookEndpoints();
 app.MapStudioEndpoints();

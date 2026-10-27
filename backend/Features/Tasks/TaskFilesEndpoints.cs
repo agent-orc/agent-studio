@@ -88,25 +88,35 @@ public static class TaskFilesEndpoints
         // never has to resolve or serve live repository content - only this
         // dev-seat route does, and the query-string `scope` is fixed here
         // rather than caller-selectable.
-        group.MapGet("/{jobId}/checkout/{**path}", (
+        group.MapGet("/{jobId}/checkout/{**path}", async (
             string jobId,
             string path,
             [FromQuery] string? project,
             [FromQuery] string? watchPath,
             [FromQuery] string? at,
             TaskFileHistoryService files,
-            AgentStudio.Registry.ProjectRegistry projects) =>
+            AgentStudio.Registry.ProjectRegistry projects,
+            HttpContext context,
+            CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             if (TryStripOperationSuffix(path, "history", out var historyPath))
             {
+                // AGT-3318: card-open file history reads the derived path
+                // history of the card's result commit, not the checkout.
+                if (files.ReadsDerivedCodeHistory)
+                {
+                    var (derived, state) = await files.GetDerivedCodeHistoryAsync(jobId, watchPath, historyPath, ct);
+                    context.Response.Headers[SourceFactsStateHeader] = state;
+                    return HistoryResult(derived);
+                }
                 var history = files.GetHistory(jobId, watchPath, historyPath, TaskFileSources.Code);
                 return HistoryResult(history);
             }
 
             var content = files.ReadFile(jobId, watchPath, path, at, TaskFileSources.Code);
             return FileContentResult(content);
-        });
+        }).AddEndpointFilter<AgentStudio.Git.SourceFacts.GitSpawnCountFilter>();
 
         // Lists supported documents directly in the job root (status.md
         // excluded). Drives the detail view's Files tab (F48): prompt, aspect
@@ -285,6 +295,9 @@ public static class TaskFilesEndpoints
         filePath = normalized[..^marker.Length];
         return !string.IsNullOrWhiteSpace(filePath);
     }
+
+    /// <summary>Response header that names the derived source facts state: ready, warming or unavailable.</summary>
+    public const string SourceFactsStateHeader = "X-Source-Facts-State";
 
     private static IResult HistoryResult(TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>> result)
     {

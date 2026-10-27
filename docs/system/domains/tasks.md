@@ -1639,6 +1639,36 @@ from completion backfill, cycle time, throughput, and environment flow metrics.
   from `git-index-run`, so request rollups must remain at zero spawns
   regardless of how much background indexing HEAD churn causes.
 
+## Card-open provenance and source file history (AGT-3318)
+
+`GET /api/tasks/{jobId}/provenance` and the source file history route
+`GET /api/tasks/{jobId}/checkout/{path}/history` read derived source facts
+from the Task Server (`/api/v1/source-facts/{repositoryId}/...`), not Git.
+The fenced producer on the runner host (`runner/SourceFacts/`) publishes them:
+the merge-base diff object, path history and blame of the touched files at
+result handoff, and reachability of attributed commits in the integration and
+release branches on demand.
+
+- Provenance joins the persisted attributed commits with the reachability
+  facts. A positive fact stays current after every fast-forward; a negative
+  fact holds only at the head it was computed at. A missing pair reads as not
+  landed, the view carries `sourceFacts: "warming"`, and the read records a
+  demand that the producer's sweep answers. `unavailable` means the Task
+  Server could not be read; nothing falls back to Git.
+- File history reads the path history at the card's result head, its last
+  attributed commit, and parses the same `Run-Index`, `Verdict` and `Steps`
+  trailers as the Git read. The `X-Source-Facts-State` header names the state.
+- Both routes carry `X-Git-Spawns`, the number of Git processes the request
+  started. The task-switch board measurement records it per card-open read.
+- `SourceFacts:ReadMode` selects the source. Without a setting, a configured
+  Task Server plane means `derived`; `legacy` restores the live-Git reads and
+  is the only answer on a dev seat without a Task Server.
+- The Task Server stores the facts by immutable key without a TTL and evicts
+  the least recently read objects once `TaskServer:SourceFactsMaxStoredBytes`
+  (default 512 MiB) is exceeded. One producer lease per repository carries a
+  producer epoch; a publish under an older epoch fails with
+  `stale-source-producer`.
+
 ## Board state source (AGT-2726)
 
 Git-derived board and task-detail state (merge signal, integration status,
