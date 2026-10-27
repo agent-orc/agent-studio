@@ -257,7 +257,8 @@ public static class GitReadSpawnScenarios
                 finally { registry.SetWikiSourceBranch(record.Id, null); }
             }),
         Scenario("R14 delivery claim: integrated Human Review, integrated and pending escalated", "R14",
-            [Tasks + "/delivery-claim", "/api/projects/{projectId}/delivery-claims"],
+            [Tasks + "/delivery-claim", "/api/projects/{projectId}/delivery-claims",
+             "/api/projects/{projectId}/completed-lane/integration-pending"],
             async host =>
             {
                 for (var pass = 0; pass < 2; pass++)
@@ -269,6 +270,10 @@ public static class GitReadSpawnScenarios
                         await host.Get(host.TaskUrl(host.Board.PlainCard(lane), "delivery-claim"));
                 }
                 await host.Get($"/api/projects/{host.ProjectId}/delivery-claims");
+                // The project sweep and the pending listing read published
+                // verdicts too (Git facts S3): a cold host starts no Git.
+                await host.GetCold($"/api/projects/{host.ProjectId}/delivery-claims");
+                await host.GetCold($"/api/projects/{host.ProjectId}/completed-lane/integration-pending");
             }),
         Scenario("Project Git views and maintenance previews", "Inventory boundary: project views",
             ["/api/git/summary", "/api/git/hygiene", "/api/git/inventory", "/api/git/history",

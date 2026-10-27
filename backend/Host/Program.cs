@@ -1061,6 +1061,11 @@ if (!publicDemoExecutionProfile)
 // TaskListGitProjectionCache and GitService.GetProjectInventory.
 // AGT-3322: the durable Git fact store (git-facts.db); the indexer is its only writer.
 builder.Services.AddSingleton<GitFactStore>();
+// AGT-3323 (Git facts S3): reachability per target ref, shared by card
+// classification, provenance and the integration view; card reads join the
+// facts the indexer publishes through GitCardFactReader and never start Git.
+builder.Services.AddSingleton<GitReachabilityIndex>();
+builder.Services.AddSingleton<GitCardFactReader>();
 builder.Services.AddSingleton<GitStateIndexService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<GitStateIndexService>());
