@@ -281,12 +281,8 @@ public class FilesystemLayerSnapshotService
                 CreateNoWindow = true
             };
             foreach (var arg in args) psi.ArgumentList.Add(arg);
-            AgentStudio.Git.HostGitProcessHardening.Apply(psi);
-            using var process = Process.Start(psi)!;
-            var stdout = process.StandardOutput.ReadToEnd();
-            var stderr = process.StandardError.ReadToEnd();
-            process.WaitForExit(15_000);
-            return (stdout, stderr, process.ExitCode);
+            var result = AgentStudio.Git.GitProcessBoundary.Run(psi, timeout: TimeSpan.FromSeconds(15));
+            return (result.StandardOutput, result.StandardError, result.ExitCode);
         }
         catch (Exception ex)
         {

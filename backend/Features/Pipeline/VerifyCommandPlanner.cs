@@ -430,13 +430,10 @@ internal static class TrackedRepositoryFiles
                 CreateNoWindow = true,
             };
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
-            AgentStudio.Git.HostGitProcessHardening.Apply(start);
-            using var process = Process.Start(start);
-            if (process is null) return false;
-            output = process.StandardOutput.ReadToEnd();
-            _ = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-            return process.ExitCode == 0;
+            var result = AgentStudio.Git.GitProcessBoundary.Run(
+                start, timeout: AgentStudio.Git.GitProcessBoundary.LongOperationTimeout);
+            output = result.StandardOutput;
+            return result.Success;
         }
         catch (Exception exception)
         {

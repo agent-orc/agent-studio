@@ -499,7 +499,9 @@ public sealed class GitStateIndexService : BackgroundService
         {
             using (GitProcessTelemetry.BeginRequest("git-index-run", _logger, includeNested: true, _timeProvider))
             {
-                using var deadline = new CancellationTokenSource(_options.RunDeadline);
+                // The deadline runs on the injected clock, so a test can expire it
+                // deterministically (AGT-3321); production passes TimeProvider.System.
+                using var deadline = new CancellationTokenSource(_options.RunDeadline, _timeProvider);
                 lock (state.Gate)
                 {
                     if (state.Disposed) return;

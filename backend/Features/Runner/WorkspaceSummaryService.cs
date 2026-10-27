@@ -418,13 +418,8 @@ public sealed class WorkspaceSummaryService
         };
         try
         {
-            AgentStudio.Git.HostGitProcessHardening.Apply(psi);
-            using var proc = Process.Start(psi);
-            if (proc is null) return ("", "", -1);
-            var stdout = proc.StandardOutput.ReadToEnd();
-            var stderr = proc.StandardError.ReadToEnd();
-            proc.WaitForExit(10_000);
-            return (stdout, stderr, proc.ExitCode);
+            var result = AgentStudio.Git.GitProcessBoundary.Run(psi, timeout: TimeSpan.FromSeconds(10));
+            return (result.StandardOutput, result.StandardError, result.ExitCode);
         }
         catch (Exception ex)
         {

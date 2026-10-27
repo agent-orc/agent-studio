@@ -690,12 +690,8 @@ public sealed class RemoteReviewPlanBuilder
                 CreateNoWindow = true,
             };
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
-            AgentStudio.Git.HostGitProcessHardening.Apply(start);
-            using var process = Process.Start(start);
-            if (process is null) return null;
-            var stdout = process.StandardOutput.ReadToEnd();
-            process.WaitForExit(10_000);
-            return process.ExitCode == 0 ? stdout.Trim() : null;
+            var result = AgentStudio.Git.GitProcessBoundary.Run(start, timeout: TimeSpan.FromSeconds(10));
+            return result.Success ? result.StandardOutput.Trim() : null;
         }
         catch
         {

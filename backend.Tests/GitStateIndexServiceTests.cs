@@ -1104,8 +1104,10 @@ public sealed class GitStateIndexServiceTests : IDisposable
         var jobsPath = NewRepoWatchPath("proj");
         var scanner = BuildScanner("proj", jobsPath, Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo"));
         var childDone = new TaskCompletionSource<GitProcessResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var childStarting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task<TaskListGitProjection> Hang(IReadOnlyCollection<TaskInfo> _) => Task.Run(() =>
         {
+            childStarting.TrySetResult();
             var start = new ProcessStartInfo("/bin/sh")
             {
                 RedirectStandardOutput = true, RedirectStandardError = true,
@@ -1119,13 +1121,18 @@ public sealed class GitStateIndexServiceTests : IDisposable
             return TaskListGitProjection.Empty;
         });
         var cache = new TaskListGitProjectionCache();
+        var clock = NewClock();
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
             Hang, _ => { }, NullLogger.Instance,
             FastOptions() with { RunDeadline = TimeSpan.FromMilliseconds(300), MaxRetries = 0 },
-            NewClock());
+            clock);
         await service.StartAsync(CancellationToken.None);
         try
         {
+            // The run deadline is on the injected clock (AGT-3321): only the
+            // advance below can expire it, however slow the host is.
+            await childStarting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            clock.Advance(TimeSpan.FromMilliseconds(301));
             var result = await childDone.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await WaitUntilAsync(() => !service.IsRunning("proj"));
             Assert.Equal(GitProcessFailureKind.Cancelled, result.FailureKind);

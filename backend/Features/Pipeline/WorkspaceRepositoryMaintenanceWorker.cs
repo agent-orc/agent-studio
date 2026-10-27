@@ -195,7 +195,7 @@ public sealed class WorkspaceRepositoryMaintenanceService
             CreateNoWindow = true,
         };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
-        var result = GitNetworkProcessRunner.Run(psi, timeout: _timeout, cancellationToken: ct);
+        var result = GitProcessBoundary.Run(psi, timeout: _timeout, cancellationToken: ct);
         return new MaintenanceGitResult(
             result.Success,
             result.StandardOutput,

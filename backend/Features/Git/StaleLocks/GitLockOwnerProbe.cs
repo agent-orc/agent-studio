@@ -43,7 +43,7 @@ public interface IGitLockOwnerProbe
 
 /// <summary>
 /// Live git children of this server, keyed by their working directory. Every
-/// backend spawn through <see cref="GitNetworkProcessRunner"/> registers here,
+/// backend spawn through <see cref="GitProcessBoundary"/> registers here,
 /// so the stale-lock guard can tell "our own git is still running in that
 /// repository" without an OS inventory (on Windows the inventory cannot read
 /// another process's working directory).
