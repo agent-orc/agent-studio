@@ -87,6 +87,7 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | BatchMoveJobCoordinator | !PD | apply-recover | Authority (applies an operator command) |
 | TaskIndexCacheDiagnosticsService | always | infra | Authority host |
 | BoardShadowWorker | always | infra | Authority host. Idle unless `Board:Source` is `task-server-shadow` or `task-server`; then it mirrors the published task index generation into the Task Server board read model and records shadow differences by card and field (AGT-3317). Makes no transition decision. |
+| TaskFileMirrorWorker | always | infra | Authority host. Idle unless `TaskArtifacts:Source` is `task-server-shadow` or `task-server`; then it copies task folder files into the Task Server's `task_files` by content hash, off the request path, until the write cutover (AGT-3320). Makes no transition decision. |
 | OperatorCandidateAuditRepair | always | apply-recover | Authority host. Restores missing timeline audits from persisted operator candidate receipts at startup; makes no transition decision. |
 | ResultSummaryRetryScheduler | !PD | apply-recover | Authority |
 | AttemptArchiveIndexWarmupService | always | infra | Authority host |
@@ -110,9 +111,9 @@ Registration abbreviations: `!PD` means not the PublicDemo execution profile;
 | PipelineHealthService | always | report | Authority host |
 | PublishEnvironmentReconciliationService | always | infra | Authority host. Polls website deployment state and releases stopped hosting reservations; no lane transition. |
 | RemoteGateOrphanSweepService | always | infra | Authority host. Cancels unowned SSH gate runs from prior Studio process instances and clears their durable records once the remote run directory is gone. |
-| WorkspaceArtifactPushWorker | !PD | infra | Authority host |
+| WorkspaceArtifactPushWorker | !PD | infra | Authority host. Pushes nothing into the TaskRepository while `TaskArtifacts:Source = task-server` (AGT-3320). |
 | WorkspaceRepositoryMaintenanceWorker | !PD | infra | Authority host |
-| WorkspaceEvidenceWorker | !PD | infra | Authority host |
+| WorkspaceEvidenceWorker | !PD | infra | Authority host. Commits nothing while `TaskArtifacts:Source = task-server`; the Task Server export job writes the workspace repository (AGT-3320). |
 | ReviewDecisionOrchestrator | loop | decide, switched | Remote coding completion, review report and gate result follow their profiles (`CodingCompletion`, `ReviewReport`, `GateResult`). The local legacy review loop (`ProcessDoneAsync`, `ProcessNoOpAsync`) retires with local execution (D16, I11). |
 | AutoReviewPostProcessingWorker | loop | decide, switched | Same as ReviewDecisionOrchestrator: it decides through `ReviewDecisionOrchestrator.ProcessCardAsync`. |
 | AutoReviewPostProcessingRecoveryService | loop | apply-recover | Authority |

@@ -642,6 +642,15 @@ builder.Services.AddSingleton<TaskServerBoardSource>();
 builder.Services.AddSingleton<BoardShadowWorker>();
 builder.Services.AddHostedService(provider => provider.GetRequiredService<BoardShadowWorker>());
 TaskServerBoardClient.AddTaskServerBoardClient(builder.Services, builder.Configuration);
+// Task-folder artefacts in the Task Server (AGT-3320, migration M3 and M6,
+// decision D9 A). TaskArtifacts:Source selects workspace, task-server-shadow
+// or task-server: the mirror copies task files off the request path, release
+// card attribution reads the Task Server, and in task-server mode the
+// workspace repository is the Task Server's export, never committed here.
+builder.Services.AddSingleton<TaskArtifactsSourceSettings>();
+builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCardAttributionSource>();
+builder.Services.AddSingleton<TaskFileMirrorWorker>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<TaskFileMirrorWorker>());
 builder.Services.AddSingleton<JobStatsMetadataCache>();
 // AGT-2703: conditional board reads. TaskSidecarGeneration counts the watcher
 // events the task index deliberately drops, and BoardReadSignatureSource folds

@@ -24,6 +24,7 @@ public sealed class WorkspaceArtifactPushWorker : BackgroundService
     private readonly long _backlogWarningBytes;
     private readonly string? _workspaceRoot;
     private readonly bool _autoPushEnabled;
+    private readonly IConfiguration _configuration;
     private readonly TimeProvider _time;
     private readonly Func<string, IReadOnlyList<string>, TimeSpan, CancellationToken, Task<PushGitResult>> _runGit;
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> RepositoryPushGates =
@@ -50,6 +51,7 @@ public sealed class WorkspaceArtifactPushWorker : BackgroundService
     {
         _queue = queue;
         _logger = logger;
+        _configuration = configuration;
         _bus = bus;
         _advisories = advisories;
         _time = time;
@@ -86,11 +88,21 @@ public sealed class WorkspaceArtifactPushWorker : BackgroundService
 
     internal WorkspaceArtifactPushRequest? StartupCatchUpRequest() =>
         _autoPushEnabled && !string.IsNullOrWhiteSpace(_workspaceRoot) && Directory.Exists(_workspaceRoot)
+            && !AgentStudio.Tasks.TaskArtifactsSourceSetting.IsExportedWorkspacePath(_configuration, _workspaceRoot)
             ? new WorkspaceArtifactPushRequest(_workspaceRoot, "workspace-startup-catch-up")
             : null;
 
     internal async Task<bool> ProcessAsync(WorkspaceArtifactPushRequest request, CancellationToken ct)
     {
+        // With TaskArtifacts:Source = task-server the workspace repository is the
+        // Task Server's export (AGT-3320): its export job pushes it, the monolith never does.
+        if (AgentStudio.Tasks.TaskArtifactsSourceSetting.IsExportedWorkspacePath(_configuration, request.RepositoryRoot))
+        {
+            _logger.LogDebug(
+                "workspace-artifact-push-skipped repo={Repo} reason={Reason}",
+                request.RepositoryRoot, AgentStudio.Tasks.TaskArtifactsSourceSetting.ExportSkipReason);
+            return true;
+        }
         var repository = Path.GetFullPath(request.RepositoryRoot);
         var gate = RepositoryPushGates.GetOrAdd(repository, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct).ConfigureAwait(false);
