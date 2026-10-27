@@ -11,6 +11,8 @@ namespace AgentStudio.Tasks;
 /// </summary>
 public sealed class RestoredBoard(BoardSummaryStore store, ILogger<RestoredBoard> logger)
 {
+    /// <summary>Cheap boot hint; validation and loading stay off the host startup path.</summary>
+    public bool HasPersistedCandidate => store.DatabasePath is { } path && File.Exists(path);
     /// <summary>Response header naming the board state: <c>restored</c> or <c>ready</c>.</summary>
     public const string StateHeader = "X-Board-State";
     public const string Restored = "restored";

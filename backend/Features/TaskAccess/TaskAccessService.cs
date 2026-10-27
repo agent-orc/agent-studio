@@ -108,7 +108,7 @@ public sealed class TaskAccessService : ITaskAccess, ITaskAccessHost
     /// </summary>
     public Task BootAsync(CancellationToken ct = default)
     {
-        if (_restoredBoard?.Projects.Count > 0)
+        if (_restoredBoard?.HasPersistedCandidate == true)
         {
             var published = _indexCache.TryAcquireBoardRead();
             _logger.LogInformation("TaskAccess: index boot {State}; board reads answer from the persisted board",

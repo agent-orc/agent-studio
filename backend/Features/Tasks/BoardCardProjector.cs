@@ -30,9 +30,10 @@ public sealed class BoardCardProjector(
     /// limited to <paramref name="eligibleWaiters"/>, by default the cards
     /// themselves, so a reader never learns of a waiter it cannot see.
     /// </summary>
-    public List<TaskInfo> Project(IReadOnlyList<TaskInfo> raw, IEnumerable<TaskInfo>? eligibleWaiters = null)
+    public List<TaskInfo> Project(IReadOnlyList<TaskInfo> raw, IEnumerable<TaskInfo>? eligibleWaiters = null,
+        IReadOnlyDictionary<string, TaskTokenSummary>? cachedTokens = null)
     {
-        var tokenLookup = BuildTokenLookup(raw, tokens);
+        var tokenLookup = cachedTokens ?? BuildTokenLookup(raw, tokens);
         var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
         var dependencyLookups = BuildDependencyGraphLookups(raw, scanner, eligibleWaiters,
             attemptAuthority: attemptAuthority);

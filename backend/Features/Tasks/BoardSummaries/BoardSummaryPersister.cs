@@ -18,6 +18,7 @@ public sealed class BoardSummaryPersister : BackgroundService
     private readonly TaskScannerService _scanner;
     private readonly BoardCardProjector _projector;
     private readonly TaskListGitProjectionCache _gitProjection;
+    private readonly TaskTokenUsageCache _tokenCache;
     private readonly BoardSummaryStore _store;
     private readonly RestoredBoard _restored;
     private readonly TimeProvider _clock;
@@ -31,6 +32,7 @@ public sealed class BoardSummaryPersister : BackgroundService
         TaskScannerService scanner,
         BoardCardProjector projector,
         TaskListGitProjectionCache gitProjection,
+        TaskTokenUsageCache tokenCache,
         BoardSummaryStore store,
         RestoredBoard restored,
         TimeProvider clock,
@@ -40,6 +42,7 @@ public sealed class BoardSummaryPersister : BackgroundService
         _scanner = scanner;
         _projector = projector;
         _gitProjection = gitProjection;
+        _tokenCache = tokenCache;
         _store = store;
         _restored = restored;
         _clock = clock;
@@ -98,7 +101,14 @@ public sealed class BoardSummaryPersister : BackgroundService
                      .GroupBy(entry => entry.Card.ProjectName ?? string.Empty, StringComparer.Ordinal))
         {
             var cards = group.Select(entry => entry.Card).ToList();
-            var enriched = _projector.Project(cards, cards.Where(card => !card.Fixture));
+            // Persistence runs after every publication, including publications
+            // caused by unrelated card drift. Keep the ledger fold off this
+            // path: a detail read of one card must not trigger token work for
+            // every project through the background board writer.
+            var cachedTokens = cards.Select(card => (Card: card, Summary: _tokenCache.PeekCached(card)))
+                .Where(entry => entry.Summary is not null)
+                .ToDictionary(entry => entry.Card.TaskKey, entry => entry.Summary!, StringComparer.Ordinal);
+            var enriched = _projector.Project(cards, cards.Where(card => !card.Fixture), cachedTokens);
             var freshness = _gitProjection.ReadFreshness(cards);
             projects.Add(BoardSummaryPolicy.Build(group.Key, publication.Generation, now,
                 freshness.GitStateAt, freshness.Stale, enriched, group.Select(entry => entry.Rank).ToList(),
