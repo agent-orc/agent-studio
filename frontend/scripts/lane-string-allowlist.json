@@ -38,5 +38,30 @@
     "file": "src/app/features/task-server/components/task-server-panel/task-server-panel.html",
     "literal": "Ready",
     "reason": "Task Server connection readiness flag. Not the 2-ready lane."
+  },
+  {
+    "file": "src/app/features/project-detail/components/project-architecture-section/project-architecture-section.ts",
+    "literal": "Accepted",
+    "reason": "ADR status keyword (Accepted / Superseded). Not the 6-completed lane."
+  },
+  {
+    "file": "src/app/features/project-detail/components/project-drift-section/project-drift-section.ts",
+    "literal": "Accepted",
+    "reason": "Drift finding status (New / Tracked / Accepted / Ignored / Resolved). Not the 6-completed lane."
+  },
+  {
+    "file": "src/app/models/drift.model.ts",
+    "literal": "Accepted",
+    "reason": "Drift finding status union member from the backend contract. Not the 6-completed lane."
+  },
+  {
+    "file": "src/app/features/project-detail/components/uxui-panel/uxui-panel.component.html",
+    "literal": "Accepted",
+    "reason": "UX council note accept-button state ('Accept' / 'Accepted'). Not the 6-completed lane."
+  },
+  {
+    "file": "src/app/features/task-timeline/models/task-timeline.model.ts",
+    "literal": "Accepted",
+    "reason": "Completion-loop verdict label (Accepted / Re-opened). Not the 6-completed lane."
   }
 ]

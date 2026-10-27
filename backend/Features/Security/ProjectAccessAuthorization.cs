@@ -63,6 +63,15 @@ public static class ProjectAccessAuthorization
     }
 
     /// <summary>
+    /// The per-project form of <see cref="FilterTasks"/>, for collections
+    /// keyed by project name rather than holding <see cref="TaskInfo"/>
+    /// (the persisted board).
+    /// </summary>
+    public static bool ShowsProject(HttpContext context, string? projectName, ProjectRegistry registry)
+        => context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human
+           || Allows(human.User, projectName, registry);
+
+    /// <summary>
     /// Membership guard for body-addressed task-set mutations (reorder,
     /// batch-move). The networked middleware cannot infer a project from routes
     /// whose target set travels in the request body, so those handlers resolve

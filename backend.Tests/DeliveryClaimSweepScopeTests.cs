@@ -187,8 +187,7 @@ public sealed class DeliveryClaimSweepScopeTests : IDisposable
             mutations,
             settings,
             projects,
-            NullLogger<DeliveryClaimSweep>.Instance,
-            git);
+            NullLogger<DeliveryClaimSweep>.Instance);
         Assert.NotNull(scanner.FindJob(TaskId, _watchPath));
         return (sweep, scanner, projects);
     }

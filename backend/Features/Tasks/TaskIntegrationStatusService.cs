@@ -72,6 +72,7 @@ public sealed class TaskIntegrationStatusService
     private readonly ILogger<TaskIntegrationStatusService> _logger;
     private readonly ProjectRegistry? _registry;
     private readonly Func<string, string?> _readOriginUrl;
+    private readonly GitReachabilityIndex? _reachability;
 
     /// <summary>The delivered lanes this verdict applies to. Cards outside get no entry.</summary>
     internal static readonly HashSet<string> DeliveredLanes = new(StringComparer.Ordinal)
@@ -101,9 +102,10 @@ public sealed class TaskIntegrationStatusService
         PipelineExecutionLog pipelineLog,
         ILogger<TaskIntegrationStatusService> logger,
         ProjectRegistry? registry = null,
-        GitOriginStore? originStore = null)
+        GitOriginStore? originStore = null,
+        GitReachabilityIndex? reachability = null)
         : this(git, settings, pipelineLog, logger, TimeProvider.System, registry,
-            originStore: originStore)
+            originStore: originStore, reachability: reachability)
     {
     }
 
@@ -115,7 +117,8 @@ public sealed class TaskIntegrationStatusService
         TimeProvider timeProvider,
         ProjectRegistry? registry = null,
         Func<string, string?>? readOriginUrl = null,
-        GitOriginStore? originStore = null)
+        GitOriginStore? originStore = null,
+        GitReachabilityIndex? reachability = null)
     {
         _git = git;
         _settings = settings;
@@ -125,6 +128,10 @@ public sealed class TaskIntegrationStatusService
         // AGT-3083: the host shares one origin store with the Git state index.
         // A service built without one keeps a private store, so tests stay isolated.
         _readOriginUrl = readOriginUrl ?? (originStore ?? new GitOriginStore()).ReadOrigin;
+        // AGT-3323 (Git facts S3): ancestor sets come from the shared
+        // reachability index, so a moved ref costs one incremental rev-list and
+        // card classification shares it with provenance and the integration view.
+        _reachability = reachability;
         _cache = new GenerationSingleFlightCache<RepoIntegration>(timeProvider);
         _contentCache = new GenerationSingleFlightCache<bool?>(timeProvider);
         _pathCache = new GenerationSingleFlightCache<IReadOnlyList<string>>(timeProvider);
@@ -1469,12 +1476,12 @@ public sealed class TaskIntegrationStatusService
 
             // AGT-2996: a merge waiting for its push lives on the integration
             // lane, not on the local branch; it is present locally all the same.
-            var succeeded = _git.TryGetAncestorShaSet(
+            var succeeded = TryGetAncestors(
                 root,
                 [integrationBranch, "origin/" + integrationBranch, GitService.IntegrationLaneRef(integrationBranch)],
                 out var ancestors);
 
-            var releaseSucceeded = _git.TryGetAncestorShaSet(
+            var releaseSucceeded = TryGetAncestors(
                 root,
                 [BoardMergeStatusService.ReleaseBranch, "origin/" + BoardMergeStatusService.ReleaseBranch],
                 out var releaseAncestors);
@@ -1490,7 +1497,7 @@ public sealed class TaskIntegrationStatusService
             var publishedSucceeded = true;
             if (hasPublishedBranch)
             {
-                publishedSucceeded = _git.TryGetAncestorShaSet(
+                publishedSucceeded = TryGetAncestors(
                     root,
                     ["origin/" + integrationBranch],
                     out publishedAncestors);
@@ -1512,6 +1519,15 @@ public sealed class TaskIntegrationStatusService
                 succeeded && publishedSucceeded && publishedHead is not null);
         });
     }
+
+    /// <summary>
+    /// The union of the commits reachable from <paramref name="refs"/>: from
+    /// the shared reachability index when the refs are readable from files,
+    /// else one <c>rev-list</c> as before.
+    /// </summary>
+    private bool TryGetAncestors(string root, IReadOnlyCollection<string> refs, out HashSet<string> ancestors)
+        => _reachability is not null && _reachability.TryUnion(root, refs, out ancestors)
+            || _git.TryGetAncestorShaSet(root, refs, out ancestors);
 
     private string ConfiguredIntegrationBranch(TaskInfo task)
     {

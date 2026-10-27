@@ -190,6 +190,24 @@ public class TaskScannerService : ITaskScanner
             : await _indexCache.AcquireBoardReadAsync(clientId, cancellationToken).ConfigureAwait(false);
 
     /// <summary>
+    /// The non-waiting board acquire (S5). False only on a cold start with a
+    /// cache wired: the first publication has been started in the background
+    /// and the caller may answer from the persisted board instead of waiting.
+    /// True with a null publication when no cache is wired.
+    /// </summary>
+    public bool TryAcquireBoardRead(out TaskIndexPublication? publication)
+    {
+        publication = _indexCache?.TryAcquireBoardRead();
+        return _indexCache is null || publication is not null;
+    }
+
+    /// <summary>The published generation without refreshing, or null before the first one.</summary>
+    public TaskIndexPublication? TryGetPublishedBoard() => _indexCache?.TryGetPublished();
+
+    /// <summary>A board read was answered from the persisted board; see <see cref="TaskIndexCache.NoteRestoredBoardServed"/>.</summary>
+    public void NoteRestoredBoardServed() => _indexCache?.NoteRestoredBoardServed();
+
+    /// <summary>
     /// Pins <paramref name="publication"/> for the current flow: every index
     /// read below it answers from that generation. Call it from the request
     /// method itself so the pin flows into the rest of the request.

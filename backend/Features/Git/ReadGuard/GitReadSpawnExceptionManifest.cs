@@ -32,7 +32,6 @@ public sealed record GitReadSpawnException(
 internal static class GitReadSpawnExceptionManifest
 {
     private const string Cards = "Git facts";
-    private const string S3 = "S3 card Git facts";
     private const string S4 = "S4 card files and result history";
 
     // Measured on the 3,000-card board with cold caches (GitReadSpawnCensusTests)
@@ -40,13 +39,18 @@ internal static class GitReadSpawnExceptionManifest
     // larger maximum. A route seen only in existing tests carries one spawn of
     // margin for the process-wide toplevel cache, whose order those tests do not
     // control. Ordered by route template.
+    //
+    // AGT-3323 (Git facts S3) removed the card Git facts it migrated to the
+    // store: R4 provenance, the R5 commit and default-diff reads, the R7 run
+    // views, R12 the project integration view and R14 the delivery claim. The
+    // commit-mode file preview (/commits/{sha}/file) reads a historical blob
+    // and moved to S4 with the other historical file reads (git_file_objects).
     internal static readonly IReadOnlyList<GitReadSpawnException> Entries =
     [
         new("GET", "/api/admin/prompts/", 1, "Prompt administration", "Prompt revisions from the Git fact store", "Other reads"),
         new("GET", "/api/admin/prompts/{name}", 2, "Prompt administration", "Prompt revisions from the Git fact store", "Other reads"),
         new("GET", "/api/git/cleanup/plan", 209, "AGT-3017 route ownership", "AGT-3017 project views and maintenance", "Project views"),
         new("GET", "/api/git/hygiene", 5, "AGT-3017 route ownership", "AGT-3017 project views and maintenance", "Project views"),
-        new("GET", "/api/git/integration", 17, Cards, S3, "R12"),
         new("GET", "/api/git/project-commit/diff", 1, "AGT-3017 route ownership", "AGT-3017 project views and maintenance", "Project views"),
         new("GET", "/api/git/project-commit/files", 2, "AGT-3017 route ownership", "AGT-3017 project views and maintenance", "Project views"),
         new("GET", "/api/git/summary", 3, "AGT-3017 route ownership", "AGT-3017 project views and maintenance", "Project views"),
@@ -80,24 +84,12 @@ internal static class GitReadSpawnExceptionManifest
         new("GET", "/api/runner/task:{projectId}/{taskKey}/orchestrator-chat", 3, "Orchestrator chat", "Context from published Git facts", "Other reads"),
         new("GET", "/api/runner/workbench:{projectId}/{workbenchKey}/orchestrator-chat", 3, "Orchestrator chat", "Context from published Git facts", "Other reads"),
         new("GET", "/api/tasks/{jobId}/checkout/{**path}", 2, Cards, S4, "R11"),
-        new("GET", "/api/tasks/{jobId}/commit", 2, Cards, S3, "R5"),
-        new("GET", "/api/tasks/{jobId}/commit/diff", 1, Cards, S3, "R5"),
-        new("GET", "/api/tasks/{jobId}/commits", 2, Cards, S3, "R5"),
-        new("GET", "/api/tasks/{jobId}/commits/diff", 3, Cards, S3, "R5"),
-        new("GET", "/api/tasks/{jobId}/commits/files", 8, Cards, S3, "R5"),
-        new("GET", "/api/tasks/{jobId}/commits/{sha}/diff", 1, Cards, S3, "R5"),
-        new("GET", "/api/tasks/{jobId}/commits/{sha}/file", 1, Cards, S3, "R5"),
-        new("GET", "/api/tasks/{jobId}/commits/{sha}/files", 4, Cards, S3, "R5"),
-        new("GET", "/api/tasks/{jobId}/delivery-claim", 10, Cards, S3, "R14"),
+        new("GET", "/api/tasks/{jobId}/commits/{sha}/file", 1, Cards, S4, "R11"),
         new("GET", "/api/tasks/{jobId}/files/{**path}", 5, Cards, S4, "R11"),
         new("GET", "/api/tasks/{jobId}/git/diff", 2, "AGT-3017 route ownership", "AGT-3017 D2/D4 dev-seat retirement", "R8"),
         new("GET", "/api/tasks/{jobId}/git/file", 1, "AGT-3017 route ownership", "AGT-3017 D2/D4 dev-seat retirement", "R8"),
         new("GET", "/api/tasks/{jobId}/git/hygiene", 5, "AGT-3017 route ownership", "AGT-3017 D2/D4 dev-seat retirement", "R8"),
         new("GET", "/api/tasks/{jobId}/git/status", 5, "AGT-3017 route ownership", "AGT-3017 D2/D4 dev-seat retirement", "R8"),
-        new("GET", "/api/tasks/{jobId}/provenance", 10, Cards, S3, "R4"),
-        new("GET", "/api/tasks/{jobId}/runs/{index:int}/commits", 1, Cards, S3, "R7"),
-        new("GET", "/api/tasks/{jobId}/runs/{index:int}/diff", 1, Cards, S3, "R7"),
-        new("GET", "/api/tasks/{jobId}/runs/{index:int}/files", 2, Cards, S3, "R7"),
     ];
 
     private static readonly Dictionary<string, GitReadSpawnException> ByKey =

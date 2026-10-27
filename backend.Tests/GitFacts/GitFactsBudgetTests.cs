@@ -48,6 +48,35 @@ public sealed class GitFactsBudgetTests(GitFactsBoardFixture board)
     }
 
     [Fact]
+    public async Task Persisted_board_summaries_cover_every_live_card_within_two_kib_each()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "atp-board-summaries-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            await using var host = new GitReadCensusHost(board, keepGitStateIndex: true,
+                settings: new Dictionary<string, string?> { ["BoardSummaries:StorePath"] = Path.Combine(directory, "board.db") });
+            await IndexedAsync(host);
+            using (var response = await host.Get("/api/tasks/grouped")) response.EnsureSuccessStatusCode();
+
+            Assert.Equal(1, host.Services.GetRequiredService<BoardSummaryPersister>().PersistPublished());
+            var live = host.Services.GetRequiredService<TaskScannerService>().TryGetPublishedBoard()!.Live;
+            var cards = host.Services.GetRequiredService<BoardSummaryStore>().Load().SelectMany(project => project.Cards).ToList();
+
+            Assert.Equal(live.Select(card => card.TaskKey).Order(StringComparer.Ordinal),
+                cards.Select(card => card.TaskKey).Order(StringComparer.Ordinal));
+            var largest = cards.Max(card => card.Summary.Length);
+            Assert.True(largest <= SummaryBytesPerCard, $"one persisted card serializes to {largest} bytes");
+            Assert.All(host.Records, record => Assert.Equal(0, record.Spawns));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(directory, recursive: true); }
+            catch (IOException) { /* best-effort temp cleanup */ }
+        }
+    }
+
+    [Fact]
     public async Task Card_core_and_detail_resources_start_no_git()
     {
         await using var host = new GitReadCensusHost(board, keepGitStateIndex: true);

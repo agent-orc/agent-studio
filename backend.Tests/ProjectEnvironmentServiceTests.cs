@@ -13,6 +13,7 @@ using AgentStudio.Runner;
 using AgentStudio.Security;
 using AgentStudio.Secrets;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.TestSupport;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -843,6 +844,7 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     {
         const string project = "Operator Demo";
         var (_, repo, watch) = Build(project: project);
+        WriteDeliveryOff(repo);
         Git(repo, "add", ".");
         Git(repo, "commit", "-m", "declarations");
         var commit = Git(repo, "rev-parse", "HEAD").Trim();
@@ -1432,6 +1434,15 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
     {
         WriteReleaseEvidence("demo", artifact, commit);
         return service.RegisterGateArtifact("demo", artifact, commit) && service.QueueRelease("demo", artifact, commit);
+    }
+
+    private static void WriteDeliveryOff(string repo)
+    {
+        var directory = Path.Combine(repo, ".agent-studio");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "project.yml"),
+            File.ReadAllText(Path.Combine(RepositoryRoot.Find(), ".agent-studio", "project.yml"))
+            + "\ndelivery:\n  fullSuite: off\n");
     }
 
     private void WriteReleaseEvidence(string project, string artifact, string commit)

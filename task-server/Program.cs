@@ -288,6 +288,7 @@ app.UseMiddleware<TaskServerProtocolMiddleware>();
 app.UseMiddleware<ArtifactRequestLimitMiddleware>();
 app.MapTaskServerEndpoints();
 app.MapSourceFactsEndpoints();
+app.MapReleaseSuiteVerdictEndpoints();
 app.MapBoardReadModelEndpoints();
 app.MapTaskArtifactsEndpoints();
 app.MapOperationPermitEndpoints();

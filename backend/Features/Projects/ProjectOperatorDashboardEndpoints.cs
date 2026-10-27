@@ -14,21 +14,50 @@ public static class ProjectOperatorDashboardEndpoints
 
         // BD-1: a green integration build becomes an immutable release and
         // starts the automatic Staging phase of the standard lifecycle.
-        app.MapPost("/api/deploy/gate-releases", (HttpContext context, GateArtifactRequest request,
+        app.MapPost("/api/deploy/gate-releases", async (HttpContext context, GateArtifactRequest request,
             ProjectEnvironmentService environments, DeployService deploy, IConfiguration configuration,
-            AccessSecurityStore security) =>
+            AccessSecurityStore security, ReleaseCandidateGate gate, CancellationToken ct) =>
         {
             var builder = RunnerCredential(context, configuration, security);
             if (builder is null || !builder.Scopes.Contains(RunnerScopes.Release))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
+            ReleaseCandidateGateResult candidate;
+            try { candidate = await gate.InspectAsync(request.Project, request.Commit, ct); }
+            catch (HttpRequestException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
+            if (candidate.Mode == "invalid") return Results.BadRequest(new { error = candidate.Error });
+            if (!candidate.Allowed) return Results.Conflict(new { error = candidate.Error });
             return DeployEndpoints.QuotaRefusable(() => environments.RegisterGateArtifact(
                 request.Project, request.Artifact, request.Commit, builder.RunnerId)
                 ? ReleaseCreated(deploy.CreateRelease(request.Project, request.Artifact, request.Commit, "release-gate",
-                        request.VersionTag, request.Branch, request.Channel),
+                        request.VersionTag, request.Branch, request.Channel,
+                        preDeliveryVerdict: candidate.Verdict),
                     "Gate artifact or environment declarations are invalid.")
                 : Results.BadRequest(new { error = "Gate artifact or environment declarations are invalid." }));
         })
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
+        app.MapGet("/api/runner/release-candidates/{project}/{commit}", async (HttpContext context,
+            string project, string commit, IConfiguration configuration, AccessSecurityStore security,
+            ReleaseCandidateGate gate, CancellationToken ct) =>
+        {
+            var builder = RunnerCredential(context, configuration, security);
+            if (builder is null || !builder.Scopes.Contains(RunnerScopes.Release))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            try { return Results.Ok(await gate.InspectAsync(project, commit, ct)); }
+            catch (HttpRequestException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
+        });
+
+        app.MapPut("/api/runner/release-suite-verdicts", async (HttpContext context,
+            ReleaseSuiteVerdict verdict, IConfiguration configuration, AccessSecurityStore security,
+            ReleaseCandidateGate gate, CancellationToken ct) =>
+        {
+            var builder = RunnerCredential(context, configuration, security);
+            if (builder is null || !builder.Scopes.Contains(RunnerScopes.Release))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            try { return Results.Ok(await gate.PublishAsync(verdict, ct)); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            catch (HttpRequestException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
         app.MapGet("/api/projects/{projectName}/environments", (string projectName,
             ProjectEnvironmentService environments) => environments.Read(projectName) is { } value

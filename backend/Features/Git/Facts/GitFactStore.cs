@@ -23,7 +23,7 @@ namespace AgentStudio.Git;
 /// from Git while readers answer warming per card.
 /// </para>
 /// </summary>
-public sealed class GitFactStore
+public sealed partial class GitFactStore
 {
     internal const string StorePathKey = "GitFacts:StorePath";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.General);
@@ -225,6 +225,8 @@ public sealed class GitFactStore
                     insert.ExecuteNonQuery();
                 }
             }
+            // S3: the card facts of this run commit with the generation pointer.
+            if (publication.CardFacts is { } cardFacts) WriteCardFacts(connection, transaction, cardFacts, next);
             beforeCommit?.Invoke();
             transaction.Commit();
             return new GitFactPublishResult(GitFactPublishOutcome.Published, next, storedEpoch);
@@ -508,7 +510,7 @@ internal sealed record GitRefGeneration(
 internal sealed record CardGitFactRow(string TaskKey, string InputSignature, string? Facts, string? ErrorCode);
 
 internal sealed record GitFactPublication(GitRepositoryFacts Repository, GitRefGenerationDraft Generation,
-    IReadOnlyList<CardGitFactRow> Cards);
+    IReadOnlyList<CardGitFactRow> Cards, GitCardFactsWrite? CardFacts = null);
 
 internal sealed record GitFactSnapshot(GitRepositoryFacts Repository, GitRefGeneration Generation,
     IReadOnlyList<CardGitFactRow> Cards);

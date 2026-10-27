@@ -92,31 +92,51 @@ public static class TaskGitEndpoints
                 : Results.BadRequest(new { error = result.Error });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
-        // Per-job commit details: returns the cached snapshot from task.json plus
-        // a live re-derivation of the file list from `git show --name-status`,
-        // so the detail view stays accurate even after history rewrites.
-        group.MapGet("/{jobId}/commit", (string jobId, string? project, string? watchPath, TaskScannerService scanner, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>
+        // Per-job commit details: the cached snapshot from task.json plus the
+        // file list from the published commit facts (Git facts S3, AGT-3323),
+        // so the detail view stays accurate even after history rewrites. No
+        // read starts Git: a commit the store does not hold yet answers warming.
+        group.MapGet("/{jobId}/commit", (string jobId, string? project, string? watchPath, TaskScannerService scanner,
+            GitCardFactReader facts, ProjectSettingsService settings, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
             if (info == null) return Results.NotFound();
             if (info.Commit == null) return Results.Ok(new { commit = (object?)null, files = Array.Empty<GitFileChange>() });
 
-            var live = git.GetCommitFiles(jobId, watchPath, info.Commit.Sha);
-            var files = live.Count > 0 ? live : info.Commit.Files.Select(p => new GitFileChange("?", p, 0, 0)).ToList();
-            return Results.Ok(new { commit = info.Commit, files });
+            var published = TaskGitFactReads.Facts(facts, info, settings);
+            var fallback = info.Commit.Files.Select(p => new GitFileChange("?", p, 0, 0)).ToList();
+            if (published is null)
+                return GitFactsResults.Warming(new { commit = info.Commit, files = fallback }, null);
+            var misses = new List<GitFactWork>();
+            var fact = GitCardFactJoins.Facts([info.Commit.Sha], published, misses).FirstOrDefault();
+            if (TaskGitFactReads.Queue(facts, info, misses))
+                return GitFactsResults.Warming(new { commit = info.Commit, files = fallback }, published);
+            var live = fact?.ToFileChanges() ?? [];
+            var files = live.Count > 0 ? live : fallback;
+            return GitFactsResults.Ok(new { commit = info.Commit, files }, published);
         });
 
-        // Diff for the recorded commit, optionally scoped to one path. Lets
-        // the detail view show the exact changes the task produced even long
-        // after the working tree has moved on.
-        group.MapGet("/{jobId}/commit/diff", (string jobId, string? project, string? watchPath, string? path, TaskScannerService scanner, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>
+        // Diff for the recorded commit, optionally scoped to one path, from the
+        // commit's immutable diff object. Lets the detail view show the exact
+        // changes the task produced even long after the working tree has moved on.
+        group.MapGet("/{jobId}/commit/diff", (string jobId, string? project, string? watchPath, string? path,
+            TaskScannerService scanner, GitCardFactReader facts, ProjectSettingsService settings,
+            AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
             if (info == null) return Results.NotFound(new { error = "Job not found" });
             if (info.Commit == null) return Results.NotFound(new { error = "This task has no recorded commit." });
-            return DiffTextResult(git.GetCommitDiffResult(jobId, watchPath, info.Commit.Sha, path));
+            var published = TaskGitFactReads.Facts(facts, info, settings);
+            if (published is null) return GitFactsResults.TextWarming(null);
+            var misses = new List<GitFactWork>();
+            var fact = GitCardFactJoins.Facts([info.Commit.Sha], published, misses).FirstOrDefault();
+            if (fact is null && misses.Count == 0)
+                return Results.BadRequest(new { error = "The recorded commit is not in the task repository." });
+            var diff = fact is null ? null : TaskGitFactReads.CommitDiff(facts, published, fact, path, misses, out _);
+            if (TaskGitFactReads.Queue(facts, info, misses) || diff is null) return GitFactsResults.TextWarming(published);
+            return GitFactsResults.Text(diff, published);
         });
 
         // Job-level commit aggregation: every commit attributed to this
@@ -124,30 +144,25 @@ public static class TaskGitEndpoints
         // auto-commit when present. Drives the protocol-pane "Commits
         // and change set" panel - the user must be able to see what
         // landed without having to drill into individual runs first.
+        // AGT-3323: run ranges, the run trailer index and commit facts come
+        // from the store; the legacy attribution backfill this read used to
+        // run (and persist) now runs in the Git fact producer.
         group.MapGet("/{jobId}/commits", (
             string jobId, string? project, string? watchPath,
-            TaskScannerService scanner, TaskSessionLog sessions, GitService git,
-            TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
+            TaskScannerService scanner, GitCardFactReader facts, ProjectSettingsService settings,
+            AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
             if (info == null) return Results.NotFound(new { error = "Job not found" });
 
-            // Lazy attribution backfill for legacy folders. A job that left
-            // 3-progress before the commit-attribution step existed carries an
-            // empty commits[] even though its runs moved
-            // HEAD; the kanban card's commit total (derived from commits[]) then
-            // reads 0 while the change set below clearly shows work. On first
-            // view we run the same deterministic rule engine the transition
-            // uses and persist the result, so the SSOT catches up. Idempotent:
-            // once either list is populated the guard skips, and an
-            // analysis-only job (no code activity) is skipped without touching
-            // git. See ADR "Commit-Attribution-Regel".
-            info = TryBackfillAttribution(info, watchPath, scanner, sessions, git, mutations);
-
-            var aggregate = BuildJobCommitsAggregate(info, sessions, jobId, watchPath, git);
-
-            return Results.Ok(aggregate);
+            var published = TaskGitFactReads.Facts(facts, info, settings);
+            if (published is null) return GitFactsResults.Warming(new TaskCommitsAggregate(), null);
+            var misses = new List<GitFactWork>();
+            var aggregate = TaskGitFactReads.Aggregate(info, published, misses);
+            return TaskGitFactReads.Queue(facts, info, misses)
+                ? GitFactsResults.Warming(aggregate, published)
+                : GitFactsResults.Ok(aggregate, published);
         });
 
         // API-owned repair for accepted integration commits that already exist
@@ -212,102 +227,166 @@ public static class TaskGitEndpoints
 
         group.MapGet("/{jobId}/commits/files", (
             string jobId, string? project, string? watchPath,
-            TaskScannerService scanner, TaskSessionLog sessions, GitService git,
-            TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
+            TaskScannerService scanner, GitCardFactReader facts, ProjectSettingsService settings,
+            AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
             if (info == null) return Results.NotFound(new { error = "Job not found" });
-            info = TryBackfillAttribution(info, watchPath, scanner, sessions, git, mutations);
 
-            var shas = JobCommitShas(info, sessions, jobId, watchPath, git);
-            var files = git.GetAggregateCommitFiles(jobId, watchPath, shas);
-            return Results.Ok(new { files });
+            var published = TaskGitFactReads.Facts(facts, info, settings);
+            if (published is null) return GitFactsResults.Warming(new { files = Array.Empty<GitFileChange>() }, null);
+            var misses = new List<GitFactWork>();
+            var aggregate = TaskGitFactReads.Aggregate(info, published, misses);
+            var commits = GitCardFactJoins.Facts(GitCardFactJoins.ActiveShas(info, aggregate), published, misses);
+            if (TaskGitFactReads.Queue(facts, info, misses))
+                return GitFactsResults.Warming(new { files = Array.Empty<GitFileChange>() }, published);
+            return GitFactsResults.Ok(new { files = GitCardFactJoins.AggregateFiles(commits) }, published);
         });
 
+        // The default diff of a multi-commit card (git-pane applyCommitDefault):
+        // served from the aggregate diff object the producer writes at
+        // publication. A missing object answers warming and is queued with
+        // priority.
         group.MapGet("/{jobId}/commits/diff", (
             string jobId, string? project, string? path, string? watchPath,
-            TaskScannerService scanner, TaskSessionLog sessions, GitService git,
-            TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
+            TaskScannerService scanner, GitCardFactReader facts, ProjectSettingsService settings,
+            AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
             if (info == null) return Results.NotFound(new { error = "Job not found" });
-            info = TryBackfillAttribution(info, watchPath, scanner, sessions, git, mutations);
 
-            var shas = JobCommitShas(info, sessions, jobId, watchPath, git);
-            if (shas.Count == 0)
-            {
-                return Results.Ok(DiffJsonResponse("", "This task has no attributed commits."));
-            }
-            var result = git.GetAggregateCommitDiffResult(jobId, watchPath, shas, path);
-            return result.Success
-                ? Results.Ok(DiffJsonResponse(result.Diff, "No diff for this path in the task's attributed commits."))
-                : Results.BadRequest(new { error = result.Error ?? "Could not load diff." });
+            var warming = TaskGitFactReads.DiffJson("", "");
+            var published = TaskGitFactReads.Facts(facts, info, settings);
+            if (published is null) return GitFactsResults.Warming(warming, null);
+            var misses = new List<GitFactWork>();
+            var aggregate = TaskGitFactReads.Aggregate(info, published, misses);
+            var members = GitCardFactJoins.Facts(GitCardFactJoins.ActiveShas(info, aggregate), published, misses);
+            if (misses.Count == 0 && members.Count == 0)
+                return GitFactsResults.Ok(TaskGitFactReads.DiffJson("", "This task has no attributed commits."), published);
+            var tooLarge = false;
+            var diff = misses.Count > 0
+                ? null
+                : TaskGitFactReads.AggregateDiff(facts, published, members, path, misses, out tooLarge);
+            if (TaskGitFactReads.Queue(facts, info, misses) || diff is null) return GitFactsResults.Warming(warming, published);
+            return GitFactsResults.Ok(TaskGitFactReads.DiffJson(diff, tooLarge
+                ? TaskGitFactReads.TooLargeReason
+                : "No diff for this path in the task's attributed commits."), published);
         });
 
         // File list for one of the job's commits. Validates the SHA is
-        // actually a known commit on this job before calling git so the
+        // actually a known commit on this job before reading its facts so the
         // endpoint can't be coaxed into showing arbitrary repo history.
         group.MapGet("/{jobId}/commits/{sha}/files", (
             string jobId, string sha, string? project, string? watchPath,
-            TaskScannerService scanner, TaskSessionLog sessions, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>
+            TaskScannerService scanner, GitCardFactReader facts, ProjectSettingsService settings,
+            AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
             if (info == null) return Results.NotFound(new { error = "Job not found" });
-            if (!IsKnownJobCommit(info, sessions, jobId, watchPath, git, sha))
-                return Results.NotFound(new { error = "Commit is not associated with this job." });
-            var files = git.GetCommitFiles(jobId, watchPath, sha);
-            return Results.Ok(new { sha, files });
+            var published = TaskGitFactReads.Facts(facts, info, settings);
+            if (published is null) return GitFactsResults.Warming(new { sha, files = Array.Empty<GitFileChange>() }, null);
+            var misses = new List<GitFactWork>();
+            var known = TaskGitFactReads.IsKnownCommit(info, published, sha, misses);
+            if (known == false) return Results.NotFound(new { error = "Commit is not associated with this job." });
+            var fact = known == true ? GitCardFactJoins.Facts([sha], published, misses).FirstOrDefault() : null;
+            if (TaskGitFactReads.Queue(facts, info, misses))
+                return GitFactsResults.Warming(new { sha, files = Array.Empty<GitFileChange>() }, published);
+            return GitFactsResults.Ok(new { sha, files = fact?.ToFileChanges() ?? [] }, published);
         });
 
+        // Diff of one of the job's commits, from its immutable diff object.
         group.MapGet("/{jobId}/commits/{sha}/diff", (
             string jobId, string sha, string? project, string? path, string? watchPath,
-            TaskScannerService scanner, TaskSessionLog sessions, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>
+            TaskScannerService scanner, GitCardFactReader facts, ProjectSettingsService settings,
+            AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
             if (info == null) return Results.NotFound(new { error = "Job not found" });
-            if (!IsKnownJobCommit(info, sessions, jobId, watchPath, git, sha))
-                return Results.NotFound(new { error = "Commit is not associated with this job." });
-            var result = git.GetCommitDiffResult(jobId, watchPath, sha, path);
-            return result.Success
-                ? Results.Ok(DiffJsonResponse(result.Diff, "No diff for this path in the selected commit."))
-                : Results.BadRequest(new { error = result.Error ?? "Could not load diff." });
+            var warming = TaskGitFactReads.DiffJson("", "");
+            var published = TaskGitFactReads.Facts(facts, info, settings);
+            if (published is null) return GitFactsResults.Warming(warming, null);
+            var misses = new List<GitFactWork>();
+            var known = TaskGitFactReads.IsKnownCommit(info, published, sha, misses);
+            if (known == false) return Results.NotFound(new { error = "Commit is not associated with this job." });
+            var fact = known == true ? GitCardFactJoins.Facts([sha], published, misses).FirstOrDefault() : null;
+            if (known == true && fact is null && misses.Count == 0)
+                return Results.BadRequest(new { error = "The commit is not in the task repository." });
+            var tooLarge = false;
+            var diff = fact is null ? null : TaskGitFactReads.CommitDiff(facts, published, fact, path, misses, out tooLarge);
+            if (TaskGitFactReads.Queue(facts, info, misses) || diff is null) return GitFactsResults.Warming(warming, published);
+            return GitFactsResults.Ok(TaskGitFactReads.DiffJson(diff, tooLarge
+                ? TaskGitFactReads.TooLargeReason
+                : "No diff for this path in the selected commit."), published);
         });
 
         // File content at one of the job's commits, for the commit-mode md/html
         // preview (AGT-2008). Same known-commit gate as the diff endpoint so the
         // blob can only be read from a commit that actually belongs to this job.
+        // The blob read stays a frozen S4 exception (historical file objects);
+        // the known-commit gate joins published facts and starts no Git.
         group.MapGet("/{jobId}/commits/{sha}/file", (
             string jobId, string sha, string? project, string? path, string? watchPath,
-            TaskScannerService scanner, TaskSessionLog sessions, GitService git, AgentStudio.Registry.ProjectRegistry projects) =>
+            TaskScannerService scanner, GitCardFactReader facts, ProjectSettingsService settings, GitService git,
+            AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
             if (info == null) return Results.NotFound(new { error = "Job not found" });
-            if (!IsKnownJobCommit(info, sessions, jobId, watchPath, git, sha))
+            var published = TaskGitFactReads.Facts(facts, info, settings);
+            if (published is null) return GitFactsResults.Warming(new { content = "", isBinary = false }, null);
+            var misses = new List<GitFactWork>();
+            var known = TaskGitFactReads.IsKnownCommit(info, published, sha, misses);
+            if (known is null)
+            {
+                TaskGitFactReads.Queue(facts, info, misses);
+                return GitFactsResults.Warming(new { content = "", isBinary = false }, published);
+            }
+            if (known == false)
                 return Results.NotFound(new { error = "Commit is not associated with this job." });
             return FileContentResult(git.GetFileContentResult(jobId, watchPath, path, sha));
         });
 
         // Commit-provenance & landed-state (ASS-1724). Returns the persisted
-        // append-only provenance facts plus everything derived live off the
-        // graph: the landed-state (on-branch-only / merged-to-develop /
-        // released-to-main via merge-base --is-ancestor), the landed ladder
-        // (task/<id> -> develop @sha -> main @sha with "HEAD now"), and per-commit
-        // branch membership. Recomputed on every read so it never lies about
-        // where develop / main currently are.
+        // append-only provenance facts plus the graph-derived landed-state
+        // (on-branch-only / merged-to-develop / released-to-main), the landed
+        // ladder (task/<id> -> develop @sha -> main @sha with "HEAD now") and
+        // per-commit branch membership. AGT-3323 (Git facts S3): joined from
+        // the published generation - ladder heads from its ref object IDs,
+        // membership from the reachability sets of the integration and release
+        // refs - so it tracks develop / main per generation without a single
+        // rev-parse or merge-base on the request.
         group.MapGet("/{jobId}/provenance", async (
             string jobId, string? project, string? watchPath,
-            TaskScannerService scanner, TaskProvenanceService provenance, AgentStudio.Registry.ProjectRegistry projects,
+            TaskScannerService scanner, GitCardFactReader facts, ProjectSettingsService settings,
+            TaskProvenanceService provenance, AgentStudio.Git.ISourceFactsReader sourceFacts,
+            AgentStudio.Registry.ProjectRegistry projects,
             CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
             if (info == null) return Results.NotFound(new { error = "Job not found" });
-            return Results.Ok(await provenance.BuildViewAsync(info, ct));
+            // AGT-3318 keeps the Task Server reachability read when selected.
+            // Its published-only method cannot reach the legacy Git graph walk.
+            if (sourceFacts.Mode == AgentStudio.Git.SourceFactsReadMode.Derived)
+                return Results.Ok(await provenance.BuildPublishedViewAsync(info, ct));
+
+            var published = TaskGitFactReads.Facts(facts, info, settings);
+            if (published is not null)
+            {
+                var view = GitCardFactJoins.Provenance(info, published) with
+                {
+                    SourceFacts = published.State == GitPublishedFacts.UnavailableState
+                        ? AgentStudio.Git.SourceFactStates.Unavailable
+                        : AgentStudio.Git.SourceFactStates.Ready,
+                };
+                return GitFactsResults.Ok(view, published);
+            }
+
+            return GitFactsResults.Warming(new { branch = WorktreeTaskLifecycle.BranchFor(info.Id) }, null);
         }).AddEndpointFilter<AgentStudio.Git.GitSpawnCountFilter>();
 
         // Per-job hygiene: project-level snapshot overlaid with whether the
@@ -399,97 +478,6 @@ public static class TaskGitEndpoints
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
     }
 
-    // Lanes where commit attribution is considered final: the job has left
-    // 3-progress, so the transition post-step should already have stamped a
-    // chain. A legacy folder that predates the step lands here with empty
-    // lists and is the backfill target. (Includes the pre-ADR-0025 "4-review"
-    // alias for folders that never migrated.)
-    private static readonly HashSet<string> AttributionFinalLanes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        TaskStates.AutoReview, TaskStates.HumanReview, TaskStates.Escalated, "4-review",
-        TaskStates.Completed, TaskStates.Archive,
-    };
-
-    /// <summary>
-    /// Repopulates <c>commits[]</c> for a legacy job whose attribution never
-    /// ran, then returns the refreshed <see cref="TaskInfo"/>. A no-op (returns
-    /// <paramref name="info"/> unchanged) unless the job is in an
-    /// attribution-final lane, has an empty chain, and shows code activity.
-    /// Best-effort: any failure is swallowed so a read never fails on a
-    /// backfill hiccup.
-    /// </summary>
-    private static TaskInfo TryBackfillAttribution(
-        TaskInfo info, string? watchPath,
-        TaskScannerService scanner, TaskSessionLog sessions, GitService git,
-        TaskMutationService mutations)
-    {
-        if (!AttributionFinalLanes.Contains(info.State)) return info;
-        if (info.Commits.Count > 0) return info;
-        if (!info.CodeActivityDetected) return info;
-
-        try
-        {
-            var result = CommitAttributionRunner.Run(info, watchPath, sessions, git);
-            if (result == null) return info;
-            if (result.Attributed.Count == 0 && result.Excluded.Count == 0) return info;
-
-            mutations.SetCommitAttributionOnFolder(info.FolderPath, result.Attributed);
-            return scanner.FindJob(info.Id, watchPath) ?? info;
-        }
-        catch
-        {
-            return info;
-        }
-    }
-
-    /// <summary>
-    /// Builds the job-level commit aggregate from all three sources: per-run
-    /// SHA ranges, the reconstructed task-branch run commits (durable trailer),
-    /// and the persisted attribution chain + auto-commit. Shared by the
-    /// <c>/commits</c> list, drill-down validation, and the combined files/diff
-    /// endpoints so every surface agrees on which commits belong to the job.
-    /// Delegates to <see cref="JobCommitsAggregation.Build"/> - the single
-    /// binding reused by the task-detail endpoint (ASS-1712) so both surfaces
-    /// agree on a job's commit set.
-    /// </summary>
-    private static TaskCommitsAggregate BuildJobCommitsAggregate(
-        TaskInfo info, TaskSessionLog sessions, string jobId, string? watchPath, GitService git)
-        => JobCommitsAggregation.Build(info, sessions, jobId, watchPath, git);
-
-    private static bool IsKnownJobCommit(
-        TaskInfo info, TaskSessionLog sessions,
-        string jobId, string? watchPath, GitService git, string sha)
-    {
-        if (string.IsNullOrWhiteSpace(sha)) return false;
-        if (info.Commit != null && string.Equals(info.Commit.Sha, sha, StringComparison.OrdinalIgnoreCase))
-            return true;
-        var aggregate = BuildJobCommitsAggregate(info, sessions, jobId, watchPath, git);
-        return aggregate.Commits.Any(c => string.Equals(c.Sha, sha, StringComparison.OrdinalIgnoreCase));
-    }
-
-    /// <summary>
-    /// SHA set for the combined files/diff endpoints. Derives from the full
-    /// aggregate (same source as the displayed <c>/commits</c> list) so the
-    /// combined change set matches what the user sees - including the
-    /// reconstructed per-run commits of an in-progress per-task-worktree job,
-    /// whose persisted chain is still empty.
-    /// </summary>
-    private static IReadOnlyList<string> JobCommitShas(
-        TaskInfo info, TaskSessionLog sessions, string jobId, string? watchPath, GitService git)
-    {
-        var aggregate = BuildJobCommitsAggregate(info, sessions, jobId, watchPath, git);
-        var superseded = info.Commits
-            .Where(TaskCommitSupersession.IsSuperseded)
-            .Select(commit => commit.Sha)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return aggregate.Commits
-            .Where(commit => !superseded.Contains(commit.Sha))
-            .Select(c => c.Sha)
-            .Where(s => !string.IsNullOrWhiteSpace(s))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
     private static IResult DiffTextResult(GitDiffLookupResult result)
     {
         if (!result.Success)
@@ -510,17 +498,6 @@ public static class TaskGitEndpoints
         if (!result.Success)
             return Results.BadRequest(new { error = result.Error ?? "Could not load file." });
         return Results.Ok(new { content = result.Content, isBinary = result.IsBinary });
-    }
-
-    private static object DiffJsonResponse(string diff, string emptyReason)
-    {
-        var hasDiff = !string.IsNullOrWhiteSpace(diff);
-        return new
-        {
-            diff,
-            hasDiff,
-            emptyReason = hasDiff ? null : emptyReason
-        };
     }
 }
 

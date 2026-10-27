@@ -22,7 +22,7 @@ public sealed partial class TaskServerStoreTests
                 ALTER TABLE task_studio_fields ADD COLUMN epic_id TEXT;
                 INSERT INTO epics(id) VALUES ('old-parent');
                 UPDATE meta SET value = '36' WHERE key = 'schema_version';
-                DELETE FROM schema_migrations WHERE version = 37;
+                DELETE FROM schema_migrations WHERE version >= 37;
                 """;
             await legacy.ExecuteNonQueryAsync();
         }
@@ -38,7 +38,7 @@ public sealed partial class TaskServerStoreTests
             """;
         Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
         command.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
-        Assert.Equal("37", (string)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(TaskServerStore.CurrentSchemaVersion.ToString(), (string)(await command.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -55,7 +55,7 @@ public sealed partial class TaskServerStoreTests
         command.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
         var storedVersion = int.Parse((string)(await command.ExecuteScalarAsync())!);
 
-        Assert.Equal(37, storedVersion);
+        Assert.Equal(TaskServerStore.CurrentSchemaVersion, storedVersion);
         var error = Assert.Throws<InvalidOperationException>(() =>
             TaskServerStore.RejectUnsupportedSchemaVersion(storedVersion, previousBinarySchemaVersion));
         Assert.Contains("newer than this service supports (36)", error.Message);
@@ -80,7 +80,7 @@ public sealed partial class TaskServerStoreTests
                 CREATE TABLE epic_tasks(epic_id TEXT, task_id TEXT);
                 ALTER TABLE task_studio_fields ADD COLUMN epic_id TEXT;
                 UPDATE meta SET value = '36' WHERE key = 'schema_version';
-                DELETE FROM schema_migrations WHERE version = 37;
+                DELETE FROM schema_migrations WHERE version >= 37;
                 """;
             await legacy.ExecuteNonQueryAsync();
 
@@ -115,6 +115,6 @@ public sealed partial class TaskServerStoreTests
         command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('task_studio_fields') WHERE name = 'epic_id';";
         Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
         command.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
-        Assert.Equal("37", (string)(await command.ExecuteScalarAsync())!);
+        Assert.Equal(TaskServerStore.CurrentSchemaVersion.ToString(), (string)(await command.ExecuteScalarAsync())!);
     }
 }

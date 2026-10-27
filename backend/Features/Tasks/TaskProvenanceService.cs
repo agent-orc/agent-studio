@@ -62,17 +62,23 @@ public sealed class TaskProvenanceService
     }
 
     /// <summary>
-    /// Card-open read of <c>GET /api/tasks/{id}/provenance</c>. Under derived
-    /// source facts (AGT-3318) the landed state, ladder heads and per-commit
-    /// membership come from the reachability facts the runner-host producer
-    /// published; the request starts no Git process. A missing fact is shown
-    /// as not yet landed with <c>sourceFacts=warming</c> and is requested from
-    /// the producer. The legacy mode keeps <see cref="BuildView"/>.
+    /// Compatibility entry point for derived and legacy callers. The migrated
+    /// card GET calls <see cref="BuildPublishedViewAsync"/> directly so its
+    /// call graph cannot reach the legacy Git implementation.
     /// </summary>
     public async Task<TaskProvenanceView> BuildViewAsync(TaskInfo info, CancellationToken ct)
     {
-        if (_sourceFacts is not { Mode: AgentStudio.Git.SourceFactsReadMode.Derived } facts)
+        if (_sourceFacts is not { Mode: AgentStudio.Git.SourceFactsReadMode.Derived })
             return BuildView(info);
+        return await BuildPublishedViewAsync(info, ct);
+    }
+
+    /// <summary>Reads only published reachability; safe for a migrated GET route.</summary>
+    public async Task<TaskProvenanceView> BuildPublishedViewAsync(TaskInfo info, CancellationToken ct)
+    {
+        if (_sourceFacts is not { } facts)
+            return BuildDerivedView(info, _settings.Get(info.ProjectName).IntegrationBranch,
+                AgentStudio.Git.SourceFactRead<SourceReachabilityView>.Unavailable);
 
         using var _t = GitProcessTelemetry.BeginRequest("tasks/provenance", _logger);
         var integrationBranch = _settings.Get(info.ProjectName).IntegrationBranch;

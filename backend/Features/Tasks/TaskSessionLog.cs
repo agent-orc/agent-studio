@@ -178,6 +178,13 @@ public class TaskSessionLog
         }
     }
 
+    /// <summary>
+    /// The session events of a task folder, read from the file without a task
+    /// lookup. The Git fact producer reads run SHA ranges through it.
+    /// </summary>
+    internal static List<SessionEvent> ReadSessionEventsInFolder(string folderPath)
+        => ReadSessionEventsFromPath(TaskPaths.SessionEventsLog(folderPath));
+
     private static List<SessionEvent> ReadSessionEventsFromPath(string path)
     {
         if (!File.Exists(path)) return [];
