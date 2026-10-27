@@ -65,7 +65,7 @@ public static class TaskDetailResources
                 core.Commit, core.Commits, index.GetDetailFacts(core.Id, core.WatchPath).Info?.Provenance);
             var state = freshness.GitStateAt is null ? "unavailable" : freshness.Stale ? "stale" : "ready";
             var reason = state == "unavailable" ? "git-snapshot-pending" :
-                state == "stale" ? "git-snapshot-refreshing" : null;
+                state == "stale" ? freshness.Restored ? "git-snapshot-restored" : "git-snapshot-refreshing" : null;
             return Reply(context, core, lookup.ProjectId!, runtime, "git", state, data, reason, freshness.GitStateAt?.UtcDateTime);
         });
 
