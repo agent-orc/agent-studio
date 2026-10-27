@@ -328,6 +328,7 @@ public static class ProjectSettingsEndpoints
                         ?? new Dictionary<string, PipelineStepSetting>(),
                     testExecution = kv.Value.TestExecution,
                     testingPerCard = PerCardTestModes.Resolve(kv.Value),
+                    testingMode = IntegrationTestModes.Resolve(kv.Value),
                     pipelineStepOrder = PipelineTypeSettings.ForType(kv.Value, PipelineTypes.Task)?.PipelineStepOrder
                         ?? Array.Empty<string>(),
                     pipelineStepsByType = kv.Value.PipelineStepsByType
@@ -1174,9 +1175,15 @@ public static class ProjectSettingsEndpoints
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
             if (req.PerCard is not null && !PerCardTestModes.IsKnown(req.PerCard))
                 return Results.BadRequest(new { error = "perCard must be 'affected' or 'full'." });
+            if (req.Mode is not null && !IntegrationTestModes.IsKnown(req.Mode))
+                return Results.BadRequest(new { error = "mode must be 'pre-merge' or 'post-merge'." });
             settings.SetTesting(projectName, req);
             ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
-            return Results.Ok(new { perCard = PerCardTestModes.Resolve(settings.Get(projectName)) });
+            return Results.Ok(new
+            {
+                perCard = PerCardTestModes.Resolve(settings.Get(projectName)),
+                mode = IntegrationTestModes.Resolve(settings.Get(projectName)),
+            });
         }).RequireStudioRole(StudioRoles.Owner);
 
         app.MapGet("/api/projects/{projectName}/batch-gate", (string projectName,

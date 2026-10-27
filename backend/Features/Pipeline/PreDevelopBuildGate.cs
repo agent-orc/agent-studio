@@ -98,12 +98,13 @@ public sealed class PreDevelopBuildGate
         BuildProfile? profile,
         TimeSpan timeout,
         CancellationToken ct,
-        bool reuseRemoteReviewVerdict = false)
+        bool reuseRemoteReviewVerdict = false,
+        string? postMergeLevel = null)
         => _runner.RunAsync(
             request with
             {
                 RequireExactSubject = true,
-                RequiredTestLevel = LevelFor(changedFiles, reuseRemoteReviewVerdict),
+                RequiredTestLevel = postMergeLevel ?? LevelFor(changedFiles, reuseRemoteReviewVerdict),
             },
             changedFiles,
             profile,

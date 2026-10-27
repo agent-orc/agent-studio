@@ -30,6 +30,11 @@ public sealed record PostMergeProjectState(
     PostMergeRunRecord? ActiveRun, IReadOnlyList<PostMergeRunRecord> Runs,
     IReadOnlyList<PostMergeIncident>? Incidents = null)
 {
+    /// <summary>Repair card escalated for this red develop incident. Its current lane decides the fallback.</summary>
+    public string? AttributionEscalatedTaskId { get; init; }
+    /// <summary>Post-merge window sizing derived from the project's look-ahead settings.</summary>
+    public int? WindowMaxMerges { get; init; }
+    public int? WindowMinutes { get; init; }
     public static PostMergeProjectState Empty(string project) => new(project, "green", null, null, null, [], []);
 }
 

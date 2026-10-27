@@ -29,6 +29,28 @@ pipeline view.
 
 ## Gate economics and integration lane
 
+### Per-project integration test placement (AGT-3314)
+
+`testing.mode` defaults to `pre-merge`. That path retains the existing
+per-card integration gate and optional pre-merge batch gate. In `post-merge`
+the Remote Review runs the affected T1 plan, the batch route is disabled, and
+the integration gate compiles the exact merged tree. It repeats the affected
+selection when develop moved over a path changed by the reviewed delivery,
+or when review and merge evidence cannot prove a disjoint merge. Merge and
+publication locks are keyed by project and integration branch; the aggregate
+merge-busy flag still drains stable deployment.
+The post-merge worker reads its window size and age from the project's
+look-ahead settings through the runner state endpoint.
+
+An attribution repair card created with `creationSource: post-merge-attribution`
+is classified by the `HumanReviewEscalation` funnel when its normal run path
+escalates it. The funnel records the card ID in the post-merge run state.
+While that card is in Escalated, or a red develop has lasted at least
+two hours, the project temporarily resolves to `pre-merge`. A green T3 receipt
+clears the recorded card ID. Agent Studio remains in `pre-merge` until its T1 replay
+median is at most ten minutes. The gate-economics seven-day view reports lead
+time and gate minutes per card for comparison after a project switches.
+
 ### Post-merge develop checks (T3, AGT-3311)
 
 `agent-host post-merge-run --mode window|nightly` is a scheduled, project-scoped

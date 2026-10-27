@@ -41,6 +41,7 @@ public sealed partial class BatchGatePilotService
     private readonly IServiceProvider? _services;
     private readonly IConfiguration? _configuration;
     private readonly TimelineLog? _timeline;
+    private readonly PostMergeModeService? _postMergeMode;
     private readonly ConcurrentDictionary<string, byte> _pushAgeAlerts =
         new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _tick = new(1, 1);
@@ -73,10 +74,11 @@ public sealed partial class BatchGatePilotService
         GateSlotUsageTracker? gateSlots = null,
         PipelineHealthDetector? pipelineHealth = null,
         IServiceProvider? services = null, IConfiguration? configuration = null,
-        TimelineLog? timeline = null)
+        TimelineLog? timeline = null, PostMergeModeService? postMergeMode = null)
     {
         _store = store;
         _timeline = timeline;
+        _postMergeMode = postMergeMode;
         _leases = leases;
         _refLeases = refLeases;
         _git = git;
@@ -340,7 +342,7 @@ public sealed partial class BatchGatePilotService
     private bool CodeBatchEnabled(string project)
     {
         var options = _settings.Get(project).BatchGate;
-        return options.Enabled && options.EffectiveScope == "code";
+        return BatchEnabled(project) && options.EffectiveScope == "code";
     }
 
     /// <summary>
@@ -449,7 +451,7 @@ public sealed partial class BatchGatePilotService
                 ct.ThrowIfCancellationRequested();
                 var first = group.First();
                 var options = _settings.Get(first.Subject.Project).BatchGate;
-                if (!options.Enabled)
+                if (!BatchEnabled(first.Subject.Project))
                 {
                     _store.ClearCloseNow(first.Subject.Project);
                     foreach (var item in group)
@@ -762,7 +764,7 @@ public sealed partial class BatchGatePilotService
             {
                 var paused = _store.LatestState(manifest.BatchId);
                 var options = _settings.Get(manifest.Scope.Project).BatchGate;
-                if (paused.Reason == "integration-branch-red" && options.Enabled
+                if (paused.Reason == "integration-branch-red" && BatchEnabled(manifest.Scope.Project)
                     && (options.EffectiveScope == "code"
                         || manifest.Members.All(member => member.DocumentationOnly)))
                 {
@@ -2624,10 +2626,18 @@ public sealed partial class BatchGatePilotService
             new { fingerprint = BuildProfileValidationFingerprint.Create(profile), commands })));
     }
 
+    private bool BatchEnabled(string project)
+    {
+        var settings = _settings.Get(project);
+        return settings.BatchGate.Enabled
+            && (_postMergeMode?.Resolve(project, settings)
+                ?? IntegrationTestModes.Resolve(settings)) != IntegrationTestModes.PostMerge;
+    }
+
     private bool BatchRouteEnabled(BatchGateManifest manifest)
     {
         var options = _settings.Get(manifest.Scope.Project).BatchGate;
-        return options.Enabled && (options.EffectiveScope == "code"
+        return BatchEnabled(manifest.Scope.Project) && (options.EffectiveScope == "code"
             || manifest.Members.All(member => member.DocumentationOnly));
     }
 

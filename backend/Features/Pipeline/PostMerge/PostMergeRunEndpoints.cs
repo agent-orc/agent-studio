@@ -23,10 +23,19 @@ public static class PostMergeRunEndpoints
                 }).ToArray());
         });
         app.MapGet("/api/runner/post-merge/projects/{project}", (string project,
-            ProjectRegistry registry, PostMergeRunStore store) =>
+            ProjectRegistry registry, PostMergeRunStore store, ProjectSettingsService settings) =>
         {
             var record = registry.FindByIdOrDisplayName(project) ?? registry.FindByShortCode(project);
-            return record is null ? Results.NotFound() : Results.Ok(store.Read(record.Id));
+            if (record is null) return Results.NotFound();
+            var state = store.Read(record.Id);
+            var projectSettings = settings.Get(record.DisplayName);
+            if (IntegrationTestModes.Resolve(projectSettings) == IntegrationTestModes.PostMerge)
+                state = state with
+                {
+                    WindowMaxMerges = projectSettings.BatchGate.MaximumSize,
+                    WindowMinutes = Math.Max(0, projectSettings.BatchGate.LookAheadMinutes),
+                };
+            return Results.Ok(state);
         });
         app.MapPost("/api/runner/post-merge/projects/{project}/escalation-check", (string project,
             ProjectRegistry registry, PostMergeIncidentService incidents) =>

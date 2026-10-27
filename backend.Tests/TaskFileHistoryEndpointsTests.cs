@@ -45,11 +45,11 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         {
             foreach (var f in Directory.EnumerateFiles(_tempDir, "*", SearchOption.AllDirectories))
             {
-                try { File.SetAttributes(f, FileAttributes.Normal); } catch { }
+                try { File.SetAttributes(f, FileAttributes.Normal); } catch (Exception ex) { SilentCatch.Note(ex, "File attribute cleanup is best-effort."); }
             }
             Directory.Delete(_tempDir, recursive: true);
         }
-        catch { /* best-effort */ }
+        catch (Exception ex) { SilentCatch.Note(ex, "File history test cleanup is best-effort."); }
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
             "Run-Index: 2\nVerdict: accept\nSteps: aspect-code-quality=pass");
         var secondSha = RunGitCapture(_workspaceRoot, "rev-parse", "HEAD").Trim();
 
-        using var factory = CreateFactory();
+        using var factory = CreateFactory(clock: new FakeTimeProvider());
         using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
         using var historyResponse = await client.GetAsync($"/api/tasks/ASS-853/files/code-review.md/history?watchPath={watchPath}");
@@ -223,19 +223,76 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
 
-        var started = Stopwatch.StartNew();
         using var response = await client.GetAsync(
             $"/api/tasks/ASS-901/files/src/app.cs/history?watchPath={watchPath}&scope=code");
-        started.Stop();
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal("1", response.Headers.GetValues("Retry-After").Single());
         Assert.Contains(
             TaskFileHistoryService.GitBudgetExhausted,
             await response.Content.ReadAsStringAsync(),
             StringComparison.Ordinal);
-        Assert.True(
-            started.Elapsed < ClientTimeout,
-            $"The server answered in {started.Elapsed}, which must stay inside the client deadline {ClientTimeout}.");
+    }
+
+    [Fact]
+    public async Task WorkspaceHistory_WhenBudgetExpiresAfterLog_Returns503WithoutPartialEntries()
+    {
+        var job = WriteJob("ASS-BUDGET-WALK");
+        File.WriteAllText(Path.Combine(job, "code-review.md"), "review\n", Encoding.UTF8);
+        WriteGenerationIndex(job, runIndex: 1);
+        RunGit(_workspaceRoot, "add", "-A");
+        RunGit(_workspaceRoot, "commit", "-q", "-m", "chore: record review");
+        var clock = new FakeTimeProvider();
+        var git = new RecordingGitRunner
+        {
+            AfterRun = args =>
+            {
+                if (args[0] == "log") clock.Advance(GitCallBudgetPolicy.DefaultTotalBudget);
+            },
+        };
+        using var factory = CreateFactory(runner: git, clock: clock);
+        using var client = CreateClient(factory);
+
+        using var response = await client.GetAsync(
+            $"/api/tasks/ASS-BUDGET-WALK/files/code-review.md/history?watchPath={Uri.EscapeDataString(_workspaceProjectRoot)}&scope=workspace");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal("1", response.Headers.GetValues("Retry-After").Single());
+        Assert.Contains(TaskFileHistoryService.GitBudgetExhausted,
+            await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Single(git.Calls, call => call.StartsWith("log ", StringComparison.Ordinal));
+        Assert.DoesNotContain(git.Calls, call => call.StartsWith("show ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task WorkspaceHistory_WhenMetadataGitTimesOut_Returns503()
+    {
+        var job = WriteJob("ASS-METADATA-TIMEOUT");
+        File.WriteAllText(Path.Combine(job, "code-review.md"), "review\n", Encoding.UTF8);
+        WriteGenerationIndex(job, runIndex: 1);
+        RunGit(_workspaceRoot, "add", "-A");
+        RunGit(_workspaceRoot, "commit", "-q", "-m", "chore: record review");
+        File.WriteAllText(Path.Combine(job, "code-review.md"), "second review\n", Encoding.UTF8);
+        RunGit(_workspaceRoot, "add", "-A");
+        RunGit(_workspaceRoot, "commit", "-q", "-m", "chore: update review");
+        var git = new RecordingGitRunner
+        {
+            Override = args => args[0] == "show"
+                ? TaskHistoryGitResult.Failed(TaskHistoryGitResult.TimedOut)
+                : null,
+        };
+        using var factory = CreateFactory(runner: git, clock: new FakeTimeProvider());
+        using var client = CreateClient(factory);
+
+        using var response = await client.GetAsync(
+            $"/api/tasks/ASS-METADATA-TIMEOUT/files/code-review.md/history?watchPath={Uri.EscapeDataString(_workspaceProjectRoot)}&scope=workspace");
+
+        Assert.True(response.StatusCode == HttpStatusCode.ServiceUnavailable,
+            $"HTTP {(int)response.StatusCode}; git calls: {string.Join(" | ", git.Calls)}; body: {await response.Content.ReadAsStringAsync()}");
+        Assert.Equal("1", response.Headers.GetValues("Retry-After").Single());
+        Assert.Contains(TaskHistoryGitResult.TimedOut,
+            await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Single(git.Calls, call => call.StartsWith("show ", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -714,13 +771,16 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         public ManualResetEventSlim Entered { get; } = new(false);
         public ManualResetEventSlim? Hold { get; init; }
         public Func<IReadOnlyList<string>, TaskHistoryGitResult?>? Override { get; init; }
+        public Action<IReadOnlyList<string>>? AfterRun { get; init; }
 
         public TaskHistoryGitResult Run(string cwd, IReadOnlyList<string> args, TimeSpan timeout)
         {
             Calls.Enqueue(string.Join(' ', args));
             Entered.Set();
             Hold?.Wait(ClientTimeout);
-            return Override?.Invoke(args) ?? _git.Run(cwd, args, timeout);
+            var result = Override?.Invoke(args) ?? _git.Run(cwd, args, timeout);
+            AfterRun?.Invoke(args);
+            return result;
         }
     }
 
@@ -794,19 +854,19 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
                 {
                     if (runner is not null)
                         services.AddSingleton(runner);
-                    if (gitCallBudget is { } budget)
+                    if (gitCallBudget is not null || clock is not null)
                     {
                         services.AddSingleton(sp => new TaskFileHistoryService(
                             sp.GetRequiredService<TaskScannerService>(),
                             sp.GetRequiredService<GitService>(),
                             sp.GetRequiredService<ILogger<TaskFileHistoryService>>(),
-                            budget,
-                            sp.GetRequiredService<ITaskHistoryGitRunner>()));
+                            gitCallBudget,
+                            sp.GetRequiredService<ITaskHistoryGitRunner>(),
+                            clock: clock));
                     }
                     if (gitCallBudget is not null || clock is not null)
                     {
-                        // Only the backfill gets the test clock; the rest of
-                        // the host keeps its own.
+                        // The backfill shares the injected clock with history lookups.
                         services.AddSingleton(sp => new LegacyResultHistoryBackfill(
                             sp.GetRequiredService<TaskScannerService>(),
                             sp.GetRequiredService<TaskFileHistoryService>(),

@@ -740,6 +740,21 @@ public sealed class ProjectSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void SetTesting_PostMergeForcesAffectedAndPersistsMode()
+    {
+        var svc = Build();
+        svc.SetTesting("runbook", new ProjectTestingSettings { Mode = "post-merge" });
+        var stored = Build().Get("runbook");
+        Assert.Equal(IntegrationTestModes.PostMerge, IntegrationTestModes.Resolve(stored));
+        Assert.Equal(PerCardTestModes.Affected, PerCardTestModes.Resolve(stored));
+
+        svc.SetTesting("runbook", new ProjectTestingSettings { PerCard = "full" });
+        Assert.Equal(IntegrationTestModes.PostMerge, IntegrationTestModes.Resolve(Build().Get("runbook")));
+        svc.SetTesting("runbook", new ProjectTestingSettings { Mode = "pre-merge", PerCard = "full" });
+        Assert.Null(Build().Get("runbook").Testing);
+    }
+
+    [Fact]
     public void MarkBuildProfileValidated_FlipsToPipelineReadyAndStampsTime()
     {
         var svc = Build();
