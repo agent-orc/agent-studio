@@ -18,6 +18,17 @@ internal static class GitRefObjectIds
         ["refs/heads/", "refs/remotes/origin/", "refs/agent-studio/integration/"];
 
     internal static IReadOnlyDictionary<string, string> Read(string repositoryPath)
+        => Read(repositoryPath, Prefixes);
+
+    /// <summary>
+    /// Every ref under <c>refs/</c> (branches, remotes, tags, result and salvage
+    /// refs), read from files. The run trailer scan uses these as the tips it
+    /// covered, so its next scan walks only commits new since then.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> ReadAll(string repositoryPath)
+        => Read(repositoryPath, ["refs/"]);
+
+    private static IReadOnlyDictionary<string, string> Read(string repositoryPath, string[] prefixes)
     {
         var refs = new SortedDictionary<string, string>(StringComparer.Ordinal);
         var gitDirectory = GitRefSignature.ResolveGitDirectory(repositoryPath);
@@ -31,8 +42,8 @@ internal static class GitRefObjectIds
 
         try
         {
-            ReadPacked(Path.Combine(common, "packed-refs"), refs);
-            foreach (var prefix in Prefixes)
+            ReadPacked(Path.Combine(common, "packed-refs"), refs, prefixes);
+            foreach (var prefix in prefixes)
                 ReadLoose(common, prefix, refs);
             if (refs.Count >= MaxRefs) refs[TruncatedKey] = "true";
             var head = ReadRefFile(Path.Combine(gitDirectory, "HEAD"));
@@ -48,7 +59,7 @@ internal static class GitRefObjectIds
         return refs;
     }
 
-    private static void ReadPacked(string path, SortedDictionary<string, string> refs)
+    private static void ReadPacked(string path, SortedDictionary<string, string> refs, string[] prefixes)
     {
         if (!File.Exists(path)) return;
         foreach (var line in File.ReadLines(path))
@@ -57,7 +68,7 @@ internal static class GitRefObjectIds
             var space = line.IndexOf(' ');
             if (space <= 0) continue;
             var name = line[(space + 1)..].Trim();
-            if (refs.Count < MaxRefs && IsTracked(name)) refs[name] = line[..space];
+            if (refs.Count < MaxRefs && IsTracked(name, prefixes)) refs[name] = line[..space];
         }
     }
 
@@ -81,8 +92,29 @@ internal static class GitRefObjectIds
         }
     }
 
-    private static bool IsTracked(string name)
-        => Prefixes.Any(prefix => name.StartsWith(prefix, StringComparison.Ordinal));
+    private static bool IsTracked(string name, string[] prefixes)
+        => prefixes.Any(prefix => name.StartsWith(prefix, StringComparison.Ordinal));
+
+    /// <summary>
+    /// The full ref a short name resolves to among <paramref name="refs"/>, in
+    /// Git's order for the refs read here: an exact <c>refs/</c> name, then
+    /// <c>refs/heads/</c>, then <c>refs/remotes/</c>. Null when absent.
+    /// </summary>
+    internal static string? Resolve(IReadOnlyDictionary<string, string> refs, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        if (name.StartsWith("refs/", StringComparison.Ordinal)) return refs.ContainsKey(name) ? name : null;
+        foreach (var candidate in new[] { "refs/heads/" + name, "refs/remotes/" + name })
+            if (refs.ContainsKey(candidate)) return candidate;
+        return null;
+    }
+
+    /// <summary>True when <paramref name="name"/> is inside the namespaces <see cref="Read(string)"/> covers.</summary>
+    internal static bool Covers(string name)
+        => name.StartsWith("refs/", StringComparison.Ordinal)
+            ? IsTracked(name, Prefixes)
+            : !name.Contains("..", StringComparison.Ordinal) && !name.Contains('^') && !name.Contains('~')
+              && !name.Contains(':') && (!name.Contains('/') || name.StartsWith("origin/", StringComparison.Ordinal));
 
     private static string? ReadRefFile(string path)
     {

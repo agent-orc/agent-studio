@@ -45,6 +45,9 @@ public sealed class GitFactsBoardFixture : IDisposable
     public const string EscalatedWithFiles = "agt-9002";
     public const string EscalatedBare = "agt-9003";
     public const string InProgress = "agt-9004";
+
+    /// <summary>An Auto Review card whose delivery commit is on develop (Git facts S3, AGT-3323).</summary>
+    public const string IntegratedAutoReview = "agt-9005";
     public const string WikiPage = "docs/guide/getting-started.md";
 
     /// <summary>Lane to folder count; with the duplicate folders the board has 3,000.</summary>
@@ -227,6 +230,7 @@ public sealed class GitFactsBoardFixture : IDisposable
                     (TaskStates.Escalated, 0) => EscalatedWithFiles,
                     (TaskStates.Escalated, 1) => EscalatedBare,
                     (TaskStates.Progress, 0) => InProgress,
+                    (TaskStates.AutoReview, 0) => IntegratedAutoReview,
                     (TaskStates.Archive, < DuplicateIds) => $"dup-{index + 1}",
                     _ => $"agt-{10_000 + serial}",
                 };
@@ -266,7 +270,8 @@ public sealed class GitFactsBoardFixture : IDisposable
     {
         var folder = Directory.CreateDirectory(JobFolder(lane, id)).FullName;
         var key = id.ToUpperInvariant();
-        var delivered = lane is TaskStates.Archive or TaskStates.Completed or TaskStates.HumanReview;
+        var delivered = lane is TaskStates.Archive or TaskStates.Completed or TaskStates.HumanReview
+            || id == IntegratedAutoReview;
         object[] commits = id switch
         {
             IntegratedReview => ReviewCommits.Select((sha, index) => Card(sha, $"feat(AGT-9001): review {index + 1}",

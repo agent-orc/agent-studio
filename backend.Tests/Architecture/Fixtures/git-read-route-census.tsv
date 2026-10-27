@@ -94,7 +94,7 @@
 /api/git/cleanup/plan	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
 /api/git/history	free	-	-	-
 /api/git/hygiene	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
-/api/git/integration	reachable	frozen	Git facts	S3 card Git facts
+/api/git/integration	free	-	-	-
 /api/git/inventory	free	-	-	-
 /api/git/project-commit/diff	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
 /api/git/project-commit/files	reachable	frozen	AGT-3017 route ownership	AGT-3017 project views and maintenance
@@ -132,7 +132,7 @@
 /api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls/{urlId}/process	free	-	-	-
 /api/projects/{projId:regex(^PROJ-\d{{3,}}$)}/urls/{urlId}/readiness	free	-	-	-
 /api/projects/{projectId}/completed-lane/content-review-gaps	free	-	-	-
-/api/projects/{projectId}/completed-lane/integration-pending	reachable	gap	Git facts	S3 card Git facts
+/api/projects/{projectId}/completed-lane/integration-pending	reachable	measured-zero	-	-
 /api/projects/{projectId}/completed-lane/report	free	-	-	-
 /api/projects/{projectId}/delivery-claims	reachable	measured-zero	-	-
 /api/projects/{projectName}/architecture	free	-	-	-
@@ -320,17 +320,17 @@
 /api/tasks/{jobId}/claude/session-info	free	-	-	-
 /api/tasks/{jobId}/code-review/list	free	-	-	-
 /api/tasks/{jobId}/code-review/{fileName}	free	-	-	-
-/api/tasks/{jobId}/commit	reachable	frozen	Git facts	S3 card Git facts
-/api/tasks/{jobId}/commit/diff	reachable	frozen	Git facts	S3 card Git facts
-/api/tasks/{jobId}/commits	reachable	frozen	Git facts	S3 card Git facts
-/api/tasks/{jobId}/commits/diff	reachable	frozen	Git facts	S3 card Git facts
-/api/tasks/{jobId}/commits/files	reachable	frozen	Git facts	S3 card Git facts
-/api/tasks/{jobId}/commits/{sha}/diff	reachable	frozen	Git facts	S3 card Git facts
-/api/tasks/{jobId}/commits/{sha}/file	reachable	frozen	Git facts	S3 card Git facts
-/api/tasks/{jobId}/commits/{sha}/files	reachable	frozen	Git facts	S3 card Git facts
+/api/tasks/{jobId}/commit	free	-	-	-
+/api/tasks/{jobId}/commit/diff	free	-	-	-
+/api/tasks/{jobId}/commits	free	-	-	-
+/api/tasks/{jobId}/commits/diff	free	-	-	-
+/api/tasks/{jobId}/commits/files	free	-	-	-
+/api/tasks/{jobId}/commits/{sha}/diff	free	-	-	-
+/api/tasks/{jobId}/commits/{sha}/file	reachable	frozen	Git facts	S4 card files and result history
+/api/tasks/{jobId}/commits/{sha}/files	free	-	-	-
 /api/tasks/{jobId}/conversation	free	-	-	-
 /api/tasks/{jobId}/core	free	-	-	-
-/api/tasks/{jobId}/delivery-claim	reachable	frozen	Git facts	S3 card Git facts
+/api/tasks/{jobId}/delivery-claim	free	-	-	-
 /api/tasks/{jobId}/dependents	free	-	-	-
 /api/tasks/{jobId}/details/documents	free	-	-	-
 /api/tasks/{jobId}/details/git	free	-	-	-
@@ -349,17 +349,17 @@
 /api/tasks/{jobId}/plan	free	-	-	-
 /api/tasks/{jobId}/promote-concept	free	-	-	-
 /api/tasks/{jobId}/promote-to-coding	free	-	-	-
-/api/tasks/{jobId}/provenance	reachable	frozen	Git facts	S3 card Git facts
+/api/tasks/{jobId}/provenance	free	-	-	-
 /api/tasks/{jobId}/regression-radar	reachable	gap	Tasks	Task reads from the Git fact store
 /api/tasks/{jobId}/result-history	reachable	measured-zero	-	-
 /api/tasks/{jobId}/result-history/{versionId}	free	-	-	-
 /api/tasks/{jobId}/results/{**path}	free	-	-	-
 /api/tasks/{jobId}/review-projection	free	-	-	-
 /api/tasks/{jobId}/runs	free	-	-	-
-/api/tasks/{jobId}/runs/{index:int}/commits	reachable	frozen	Git facts	S3 card Git facts
+/api/tasks/{jobId}/runs/{index:int}/commits	free	-	-	-
 /api/tasks/{jobId}/runs/{index:int}/context	free	-	-	-
-/api/tasks/{jobId}/runs/{index:int}/diff	reachable	frozen	Git facts	S3 card Git facts
-/api/tasks/{jobId}/runs/{index:int}/files	reachable	frozen	Git facts	S3 card Git facts
+/api/tasks/{jobId}/runs/{index:int}/diff	free	-	-	-
+/api/tasks/{jobId}/runs/{index:int}/files	free	-	-	-
 /api/tasks/{jobId}/screenshot	free	-	-	-
 /api/tasks/{jobId}/screenshots	free	-	-	-
 /api/tasks/{jobId}/session-events	free	-	-	-
