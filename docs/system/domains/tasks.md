@@ -246,9 +246,9 @@ the platform-owned Git path.
 Runtime-capacity acknowledgment now compares the host's reported version with
 `allocationVersion`, the version used by placement admission. Upgrading an
 existing host copies its current capacity `version` into the new allocation
-column after the version-37 retired-schema cleanup. The additive placement
-tables and column keep schema marker 37, so version-36 binaries still reject
-stores whose retired task fields have been removed.
+column after the version-37 retired-schema cleanup and the version-38 release
+suite verdict migration. The combined store uses schema marker 39, so older
+binaries still reject stores whose retired task fields have been removed.
 
 Configured placement defaults to one active coding lease per project. Its
 `maxParallelism` may only use slots authorized by the existing project
