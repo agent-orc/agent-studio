@@ -88,7 +88,7 @@ public static class TaskCrudEndpoints
             return Results.Ok(new TaskReferenceStatusResponse(items!));
         });
 
-        group.MapGet("/", async (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, ILoggerFactory loggerFactory) =>
+        group.MapGet("/", async (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, TaskListGitProjectionCache gitProjection, AgentStudio.Registry.ProjectRegistry projects, BoardCardProjector cards, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, RestoredBoard restoredBoard, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/list",
@@ -101,10 +101,26 @@ public static class TaskCrudEndpoints
 
             // AGT-3088: one published index generation serves the whole read,
             // including the runner status the validator folds; see /grouped.
+            // S5: before the first publication the persisted board answers.
             TaskIndexPublication? publication;
             using (TaskSwitchTrace.Span("snapshot"))
-                publication = await scanner.AcquireBoardReadAsync(BoardReadClientId(ctx), ctx.RequestAborted);
+            {
+                if (!scanner.TryAcquireBoardRead(out publication))
+                {
+                    if (TaskQueryRequest.FromQuery(ctx.Request.Query) is not { IsActive: true }
+                        && restoredBoard.List(ctx, ProjectVisible(ctx, projects),
+                            projectRequested ? path => WatchPathComparison.PathsEqual(path, projectWatchPath) : null,
+                            includeFixtures == true, "tasks/list" + (ctx.Request.QueryString.Value ?? string.Empty))
+                            is { } restored)
+                    {
+                        scanner.NoteRestoredBoardServed();
+                        return restored;
+                    }
+                    publication = await scanner.AcquireBoardReadAsync(BoardReadClientId(ctx), ctx.RequestAborted);
+                }
+            }
             using var pin = scanner.PinBoardRead(publication);
+            ApplyBoardStateHeaders(ctx, publication);
 
             List<TaskInfo> raw;
             using (TaskSwitchTrace.Span("filter"))
@@ -137,26 +153,7 @@ public static class TaskCrudEndpoints
                     router,
                     runners));
 
-            List<TaskInfo> BuildJobs()
-            {
-                var tokenLookup = BuildTokenLookup(raw, tokens);
-                var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
-                var dependencyLookups = BuildDependencyGraphLookups(raw, scanner,
-                    attemptAuthority: attemptAuthority);
-                var gitLookup = gitProjection.ReadCacheOnly(raw);
-                var liveLookup = liveStatus.BuildLookup(raw);
-                var reviewQueue = attemptAuthority.ReadReviewQueue();
-                return raw.Select(job => betterCandidates.Attach(
-                                  WithRuntime(pricing, job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters),
-                                  projectSettings.Get(job.ProjectName)))
-                              .WithLiveStatus(liveLookup)
-                              .WithMergeSignal(gitLookup.Merge)
-                              .WithIntegrationStatus(gitLookup.Integration)
-                              .WithPublishSignal(gitLookup.Publish)
-                              .WithTestRunEvidence(gitLookup.TestRuns)
-                              .Select(job => WithReviewQueue(job, reviewQueue))
-                              .ToList();
-            }
+            List<TaskInfo> BuildJobs() => cards.Project(raw);
             if (TaskQueryRequest.FromQuery(ctx.Request.Query) is { IsActive: true } query)
             {
                 // A query answer is not cached, so it keeps the signature tag.
@@ -188,7 +185,7 @@ public static class TaskCrudEndpoints
                 ?? BoardReadValidator.Bytes(ctx, body.ETag, body.Bytes);
         });
 
-        group.MapGet("/grouped", async (bool? includeFixtures, bool? includeLegacyReviewLane, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, BoardSourceSettings boardSource, BoardShadowWorker boardShadow, TaskServerBoardSource taskServerBoard, ILoggerFactory loggerFactory) =>
+        group.MapGet("/grouped", async (bool? includeFixtures, bool? includeLegacyReviewLane, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, TaskListGitProjectionCache gitProjection, AgentStudio.Registry.ProjectRegistry projects, BoardCardProjector cards, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, BoardSourceSettings boardSource, BoardShadowWorker boardShadow, TaskServerBoardSource taskServerBoard, RestoredBoard restoredBoard, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/grouped",
@@ -200,12 +197,29 @@ public static class TaskCrudEndpoints
             // use the separately published core graph; the live-status strip
             // read, the generation folded into the tag - answers from that one
             // generation and none of them refreshes on this thread. A dirty
-            // index starts a background refresh; only a cold start or this
-            // client's own pending write waits.
+            // index starts a background refresh. A cold start answers from the
+            // persisted board marked restored (S5) and waits for the first
+            // publication only when no board was ever persisted.
+            var legacyReviewLane = includeLegacyReviewLane != false;
             TaskIndexPublication? publication;
             using (TaskSwitchTrace.Span("snapshot"))
-                publication = await scanner.AcquireBoardReadAsync(BoardReadClientId(context), context.RequestAborted);
+            {
+                if (!scanner.TryAcquireBoardRead(out publication))
+                {
+                    if (restoredBoard.Grouped(context, ProjectVisible(context, projects), includeFixtures == true,
+                            legacyReviewLane,
+                            $"tasks/grouped?fixtures={includeFixtures == true}&legacyReviewLane={legacyReviewLane}")
+                        is { } restored)
+                    {
+                        context.Response.Headers["X-Board-Source"] = BoardSourceSetting.Format(boardSource.Mode);
+                        scanner.NoteRestoredBoardServed();
+                        return restored;
+                    }
+                    publication = await scanner.AcquireBoardReadAsync(BoardReadClientId(context), context.RequestAborted);
+                }
+            }
             using var pin = scanner.PinBoardRead(publication);
+            ApplyBoardStateHeaders(context, publication);
 
             // Board:Source (pipeline delivery target M1 and M2): the shadow
             // answers from the workspace and only asks the mirror worker for a
@@ -251,7 +265,6 @@ public static class TaskCrudEndpoints
             // lookups, the per-lane sort and the serialisation below run once
             // per signature, and a rebuilt body that matches the client's copy
             // still answers 304 because its tag is derived from its bytes.
-            var legacyReviewLane = includeLegacyReviewLane != false;
             var variant = $"fixtures={includeFixtures == true}&legacyReviewLane={legacyReviewLane}{sourceVariant}";
             string signature;
             using (TaskSwitchTrace.Span("compose"))
@@ -265,123 +278,14 @@ public static class TaskCrudEndpoints
 
             byte[] BuildPayload()
             {
-                var tokenLookup = BuildTokenLookup(raw, tokens);
-                var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
-                var dependencyLookups = BuildDependencyGraphLookups(raw, scanner,
-                    attemptAuthority: attemptAuthority);
-                var gitLookup = gitProjection.ReadCacheOnly(raw);
-                var liveLookup = liveStatus.BuildLookup(raw);
-                var reviewQueue = attemptAuthority.ReadReviewQueue();
-                var jobs = raw.Select(job => betterCandidates.Attach(
-                                  WithRuntime(pricing, job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters),
-                                  projectSettings.Get(job.ProjectName)))
-                              .WithLiveStatus(liveLookup)
-                              .WithMergeSignal(gitLookup.Merge)
-                              .WithIntegrationStatus(gitLookup.Integration)
-                              .WithPublishSignal(gitLookup.Publish)
-                              .WithTestRunEvidence(gitLookup.TestRuns)
-                              .Select(job => WithReviewQueue(job, reviewQueue))
-                              .ToList();
-                // F35: each lane is sorted using a per-project strategy. The kanban
-                // mixes projects inside one lane, so the sort groups by project,
-                // applies that project's resolved strategy, then concatenates the
-                // groups in alphabetical project order for a deterministic global
-                // result. Settings are cached in-memory (single lock) so the
-                // per-project lookup is essentially free.
-                var settingsByProject = new Dictionary<string, ProjectSettings>(StringComparer.OrdinalIgnoreCase);
-                ProjectSettings SettingsFor(string projectName)
-                {
-                    if (!settingsByProject.TryGetValue(projectName, out var s))
-                    {
-                        s = projectSettings.Get(projectName);
-                        settingsByProject[projectName] = s;
-                    }
-                    return s;
-                }
-                List<TaskInfo> SortLane(string lane)
-                    => LaneSortApplier.Sort(jobs.Where(j => j.State == lane), lane, SettingsFor).ToList();
-
-                // ADR-0025: explicit AutoReview + HumanReview lanes. The legacy
-                // "Review" key is kept (auto-review only) so older clients that
-                // only know the four pre-ADR-0025 lane names keep getting a
-                // populated bucket and don't crash on a missing field.
-                //
-                // AGT-2703: that alias serialises the whole AutoReview lane a second
-                // time, and on a review-heavy board it is a large share of the
-                // response. Dropping it outright would break exactly the clients it
-                // exists for, so it is opt-out instead: a client that knows the
-                // ADR-0025 lane names declares so with
-                // "?includeLegacyReviewLane=false" and stops paying for the
-                // duplicate. Omitting the parameter retains the legacy lane key.
-                var autoReview = SortLane(TaskStates.AutoReview);
-                var humanReview = SortLane(TaskStates.HumanReview);
-                var escalated = SortLane(TaskStates.Escalated);
-                var grouped = new
-                {
-                    // Backlog: triage staging area, the leftmost lane and the
-                    // default landing for new jobs.
-                    Backlog = SortLane(TaskStates.Backlog),
-                    Preparation = SortLane(TaskStates.Preparation),
-                    // ADR-0026: orchestrator-prep lane (hide-when-empty). The
-                    // 1b-needs-human-review bounce lane has been retired.
-                    OrchestratorPrep = SortLane(TaskStates.OrchestratorPrep),
-                    Ready = SortLane(TaskStates.Ready),
-                    Progress = SortLane(TaskStates.Progress),
-                    // ADR-0028: 3a-failed-pickup is a hide-when-empty lane that
-                    // surfaces orphan boot-sweep verdicts the runner used to hide
-                    // in 7-archive. Empty by default; clients render it only when
-                    // it has at least one job.
-                    FailedPickup = SortLane(TaskStates.FailedPickup),
-                    // 3b-code-not-complete: hide-when-empty park lane for tasks that
-                    // exhausted their auto-pickup retry budget without reaching
-                    // review. Empty by default; clients render it only when populated.
-                    CodeNotComplete = SortLane(TaskStates.CodeNotComplete),
-                    AutoReview = autoReview,
-                    HumanReview = humanReview,
-                    Escalated = escalated,
-                    // Kept as an always-present key (same reasoning as Archive
-                    // below) so an opted-out client still parses the payload; it
-                    // just stops receiving the second copy of the lane.
-                    Review = legacyReviewLane ? (IReadOnlyList<TaskInfo>)autoReview : Array.Empty<TaskInfo>(),
-                    Completed = SortLane(TaskStates.Completed),
-                    // ASS-1727: the board response intentionally keeps Archive
-                    // empty. ScanAllJobs() (cache-backed) already excludes the
-                    // terminal 7-archive lane, so there is nothing to filter or
-                    // sort here even though hundreds of archived folders exist on
-                    // disk. Emit an explicit empty array instead of re-running
-                    // SortLane over a lane the scan guarantees is absent: that
-                    // call only ever produced [] and reading as if it built the
-                    // archive lane was misleading. Eager-loading those cards
-                    // bloated every poll; the Archive view pages through the
-                    // dedicated GET /api/tasks/archive endpoint instead. The key is
-                    // kept (always []) so pre-existing clients that read
-                    // grouped.archive don't NPE on a missing field.
-                    Archive = Array.Empty<TaskInfo>(),
-                    // AGT-2726: the board-wide Git derived state (merge/integration/
-                    // publish/test-run signals folded into the cards above) is a
-                    // background-index snapshot, not something this request
-                    // computed. GitStateAt is the oldest index timestamp among the
-                    // repositories represented on the board; Stale is true while at
-                    // least one of them has never been indexed yet or is mid-refresh.
-                    GitStateAt = gitFreshness.GitStateAt,
-                    Stale = gitFreshness.Stale,
-                };
-                var lanes = new Dictionary<string, IReadOnlyList<TaskInfo>>
-                {
-                    ["backlog"] = grouped.Backlog,
-                    ["preparation"] = grouped.Preparation,
-                    ["orchestratorPrep"] = grouped.OrchestratorPrep,
-                    ["ready"] = grouped.Ready,
-                    ["progress"] = grouped.Progress,
-                    ["failedPickup"] = grouped.FailedPickup,
-                    ["codeNotComplete"] = grouped.CodeNotComplete,
-                    ["autoReview"] = grouped.AutoReview,
-                    ["humanReview"] = grouped.HumanReview,
-                    ["escalated"] = grouped.Escalated,
-                    ["review"] = grouped.Review,
-                    ["completed"] = grouped.Completed,
-                    ["archive"] = grouped.Archive,
-                };
+                var jobs = cards.Project(raw);
+                // The lane names, their order, the legacy Review alias and the
+                // always-empty Archive key are BoardCardSummary.GroupedLanes,
+                // shared with the persisted board. GitStateAt is the oldest
+                // index timestamp among the repositories represented on the
+                // board (AGT-2726); Stale is true while at least one of them has
+                // never been indexed yet or is mid-refresh.
+                var lanes = BoardCardSummary.GroupedLanes(cards.LaneSorter(jobs), legacyReviewLane);
                 return BoardCardSummary.SerializeGrouped(lanes, gitFreshness.GitStateAt, gitFreshness.Stale);
             }
             BoardReadBody body;
@@ -1681,13 +1585,6 @@ public static class TaskCrudEndpoints
         return TimelineActors.Human(clientId ?? string.Empty);
     }
 
-    private static TaskInfo WithReviewQueue(TaskInfo job, IReadOnlyDictionary<string, ReviewQueueEntry> queue)
-    {
-        if (job.State != TaskStates.AutoReview || !queue.TryGetValue(ReviewAuthorityKey(job), out var entry)) return job;
-        return job with { ReviewPriority = entry.Priority, ReviewQueuePosition = entry.Position };
-    }
-
-    private static string ReviewAuthorityKey(TaskInfo card) => TaskIdentity.AuthorityKey(card);
 
     /// <summary>
     /// AGT-2795: the decider identity for a decision-card write. Unlike
@@ -1766,6 +1663,19 @@ public static class TaskCrudEndpoints
     /// contract change. <c>GET /api/tasks/grouped</c> carries the same values
     /// as body fields as well, since its response is already an object.
     /// </summary>
+    private static Func<string, bool> ProjectVisible(HttpContext context, AgentStudio.Registry.ProjectRegistry projects)
+        => projectName => ProjectAccessAuthorization.ShowsProject(context, projectName, projects);
+
+    private static string ReviewAuthorityKey(TaskInfo card) => TaskIdentity.AuthorityKey(card);
+
+    private static void ApplyBoardStateHeaders(HttpContext context, TaskIndexPublication? publication)
+    {
+        context.Response.Headers[RestoredBoard.StateHeader] = RestoredBoard.Ready;
+        if (publication is not null)
+            context.Response.Headers[RestoredBoard.GenerationHeader] =
+                publication.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     private static void ApplyGitStateHeaders(HttpContext context, GitProjectionFreshness freshness)
     {
         if (freshness.GitStateAt is { } at)

@@ -31,7 +31,8 @@ namespace AgentStudio.Tasks;
 /// never refreshes on the request path. A dirty or expired cache starts one
 /// background refresh instead. Once a snapshot exists, no board read waits
 /// for a mutation or a rebuild, including a write from the same client. The
-/// cold first read awaits the first publication. When a background refresh
+/// cold first read answers from the persisted board marked restored (S5) and
+/// awaits the first publication only when no board was ever persisted. When a background refresh
 /// publishes data that a
 /// board read was served stale against, one debounced bulk-changed push tells
 /// clients to revalidate. Full-detail reads use resident per-card facts and
@@ -121,6 +122,9 @@ public sealed class TaskIndexCache
     // already made stale. The publish that catches up pushes one debounced
     // bulk-changed signal so that client revalidates.
     private bool _staleServed;
+    // A board read was answered from the persisted board (S5) before the
+    // first publication; that publication pushes bulk-changed.
+    private bool _restoredServed;
     private long _publishedInvalidationGen;
     private readonly Lock _pushLock = new();
     private ITimer? _pushTimer;
@@ -277,7 +281,9 @@ public sealed class TaskIndexCache
     /// The board-read entry point (AGT-3088). Returns an already published
     /// generation without running a disk walk on the caller's thread. A dirty
     /// or expired cache starts one background refresh and the caller gets the
-    /// last snapshot. Only a cold start waits, asynchronously.
+    /// last snapshot. Only a cold start waits, asynchronously; a caller that
+    /// can answer from the persisted board (S5) uses
+    /// <see cref="TryAcquireBoardRead"/> first and does not wait at all.
     /// Callers pin the result with <see cref="Pin"/>.
     /// </summary>
     public async ValueTask<TaskIndexPublication> AcquireBoardReadAsync(
@@ -289,26 +295,71 @@ public sealed class TaskIndexCache
             Task refresh;
             lock (_lock)
             {
-                if (_hasSnapshot)
-                {
-                    Interlocked.Increment(ref Hits);
-                    if (_dirty || _time.GetUtcNow() - _snapshotAt >= _safetyTtl)
-                    {
-                        Interlocked.Increment(ref StaleHits);
-                        // Only an invalidation makes the push worthwhile: a
-                        // TTL rescan normally finds nothing new.
-                        if (_dirty) _staleServed = true;
-                        StartBackgroundRefreshLocked();
-                    }
-                    return _publication;
-                }
-                StartBackgroundRefreshLocked();
+                if (TryAcquireBoardReadLocked() is { } publication) return publication;
                 refresh = _refreshCompletion!.Task;
             }
 
             using (TaskSwitchTrace.Span("index.wait"))
                 await refresh.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// The non-waiting form of <see cref="AcquireBoardReadAsync"/>: the
+    /// published generation, or null on a cold start, after starting the first
+    /// publication in the background. Neither path scans on the caller.
+    /// </summary>
+    public TaskIndexPublication? TryAcquireBoardRead()
+    {
+        lock (_lock) return TryAcquireBoardReadLocked();
+    }
+
+    private TaskIndexPublication? TryAcquireBoardReadLocked()
+    {
+        if (!_hasSnapshot)
+        {
+            StartBackgroundRefreshLocked();
+            return null;
+        }
+        Interlocked.Increment(ref Hits);
+        if (_dirty || _time.GetUtcNow() - _snapshotAt >= _safetyTtl)
+        {
+            Interlocked.Increment(ref StaleHits);
+            // Only an invalidation makes the push worthwhile: a
+            // TTL rescan normally finds nothing new.
+            if (_dirty) _staleServed = true;
+            StartBackgroundRefreshLocked();
+        }
+        return _publication;
+    }
+
+    /// <summary>
+    /// The published generation, or null before the first publication. Never
+    /// refreshes and never starts a scan, so a background reader (the board
+    /// summary persister) cannot keep an idle index rescanning.
+    /// </summary>
+    public TaskIndexPublication? TryGetPublished()
+    {
+        lock (_lock) return _hasSnapshot ? _publication : null;
+    }
+
+    /// <summary>
+    /// A board read was answered from the persisted board before the first
+    /// publication. That publication then pushes one debounced bulk-changed
+    /// signal so the client revalidates; if it has already happened, the push
+    /// is scheduled now.
+    /// </summary>
+    public void NoteRestoredBoardServed()
+    {
+        lock (_lock)
+        {
+            if (!_hasSnapshot)
+            {
+                _restoredServed = true;
+                return;
+            }
+        }
+        SchedulePush();
     }
 
     /// <summary>
@@ -1172,6 +1223,11 @@ public sealed class TaskIndexCache
                     if (followedInvalidation && (background || _staleServed))
                     {
                         _staleServed = false;
+                        push = true;
+                    }
+                    if (_restoredServed)
+                    {
+                        _restoredServed = false;
                         push = true;
                     }
                     if (ReferenceEquals(_refreshCompletion, completion))

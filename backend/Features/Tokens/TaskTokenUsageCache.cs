@@ -162,6 +162,16 @@ public sealed class TaskTokenUsageCache
         return last?.Summary;
     }
 
+    /// <summary>Returns a fresh resident summary without starting a ledger fold.</summary>
+    public TaskTokenSummary? PeekCached(TaskInfo info)
+    {
+        if (!_entries.TryGetValue((info.ProjectName, info.WatchPath, info.Id), out var entry)) return null;
+        var last = Volatile.Read(ref entry.Last);
+        return last is not null && last.Receipt == ReceiptStamp(info)
+            && last.Bus == _busRevisions.GetValueOrDefault((info.ProjectName, info.Id)).Version
+            && last.ExpiresAt > _clock.GetUtcNow() ? last.Summary : null;
+    }
+
     public void OnTokenUsageAppended(AgentMessage message)
     {
         if (message.Kind != "token-usage" || string.IsNullOrWhiteSpace(message.Project)
