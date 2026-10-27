@@ -2,7 +2,7 @@ using AgentStudio.Pipeline;
 using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
-namespace OrchestratorApi.Tests;
+namespace AgentStudio.Tests;
 
 public sealed class PostMergeRunStoreTests : IDisposable
 {
