@@ -186,6 +186,19 @@ const fullMocks = (extra: Partial<DeployMocks> = {}): DeployMocks => ({
 });
 
 test.describe('Project Deploy area (mocked)', () => {
+  test('shows the pre-delivery verdict and candidate SHA on the release header', async ({ page }) => {
+    const releases = deployReleasesFixture();
+    releases[0].preDeliveryVerdict = { project: PROJECT, commitSha: 'c'.repeat(40),
+      commandDigest: 'd'.repeat(64), status: 'green', finishedAtUtc: '2026-10-19T12:00:00Z' };
+    await openDeploy(page, fullMocks({ releases }));
+    await page.getByTestId('deploy-tab-releases').click();
+    await expect(page.getByTestId('deploy-release-verdict')).toContainText(`Full suite: green · SHA ${'c'.repeat(40)}`);
+    await setTheme(page, 'light');
+    await capture(page, 'release-verdict-light');
+    await setTheme(page, 'dark');
+    await capture(page, 'release-verdict-dark');
+  });
+
   test('opens the Runbooks tab with current-page semantics', async ({ page }) => {
     test.setTimeout(180_000);
     await openDeploy(page, fullMocks(), 90_000);

@@ -486,9 +486,13 @@ if [[ "$mode" == dry-run ]]; then
   exit 0
 fi
 
+gate_args=(--repo "$candidate_checkout")
+if [[ -n "$project" && -n "$deploy_token_file" ]]; then
+  gate_args+=(--project "$project" --verdict-api "$api" --token-file "$deploy_token_file")
+fi
 set +e
 "$window_helper" --record "$gate_window_record" -- \
-  "$gate_script" --repo "$candidate_checkout" 2>&1 \
+  "$gate_script" "${gate_args[@]}" 2>&1 \
   | tee "$evidence_dir/full-gate.log"
 gate_rc=${PIPESTATUS[0]}
 set -e
@@ -511,6 +515,11 @@ if ! grep -Fxq 'PROMOTION_FULL_GATE=passed' "$evidence_dir/full-gate.log"; then
   write_record blocked-incomplete-gate "$candidate_sha" incomplete "$conflict_text" false
   exit 4
 fi
+gate_result=passed
+if grep -Fxq 'PROMOTION_FULL_GATE=reused' "$evidence_dir/full-gate.log"; then
+  gate_result=reused
+  log "reused green pre-delivery full-suite verdict for candidate=$candidate_sha"
+fi
 if [[ -n $(git -C "$candidate_checkout" status --porcelain --untracked-files=all) ]]; then
   git -C "$candidate_checkout" status --short > "$evidence_dir/post-gate-dirty.txt"
   log 'candidate checkout became dirty during the gate; main remains unchanged'
@@ -531,7 +540,7 @@ develop_after=$(git -C "$repo" rev-parse "$develop_ref^{commit}")
 main_after=$(git -C "$repo" rev-parse "$main_ref^{commit}")
 if ! git -C "$repo" merge-base --is-ancestor "$main_after" "$candidate_sha"; then
   log "gated candidate=$candidate_sha is not a descendant of current main=$main_after; main remains unchanged"
-  write_record blocked-non-fast-forward "$candidate_sha" passed "$conflict_text" false
+  write_record blocked-non-fast-forward "$candidate_sha" "$gate_result" "$conflict_text" false
   exit 5
 fi
 if [[ "$develop_after" != "$develop_sha" ]]; then
@@ -564,7 +573,7 @@ if ((tag_rc != 0)); then
     tag_error+=": $(< "$evidence_dir/tag.log")"
   fi
   log "$tag_error; main remains unchanged"
-  write_record blocked-tag "$candidate_sha" passed "$conflict_text" false "$tag_error"
+  write_record blocked-tag "$candidate_sha" "$gate_result" "$conflict_text" false "$tag_error"
   exit 6
 fi
 
@@ -580,7 +589,7 @@ if ((push_rc != 0)); then
     push_error+=": $(< "$evidence_dir/push.log")"
   fi
   log "$push_error; remote main and tag remain unchanged"
-  write_record blocked-push "$candidate_sha" passed "$conflict_text" false "$push_error"
+  write_record blocked-push "$candidate_sha" "$gate_result" "$conflict_text" false "$push_error"
   exit 6
 fi
 
@@ -588,11 +597,11 @@ remote_main=$(git -C "$candidate_checkout" ls-remote "$remote" refs/heads/main |
 remote_tag=$(git -C "$candidate_checkout" ls-remote "$remote" "refs/tags/$tag_name^{}" | awk 'NR == 1 { print $1 }')
 if [[ "$remote_main" != "$candidate_sha" || "$remote_tag" != "$candidate_sha" ]]; then
   log "remote verification failed: main=${remote_main:-missing} tag=${remote_tag:-missing}"
-  write_record pushed-verification-failed "$candidate_sha" passed "$conflict_text" true
+  write_record pushed-verification-failed "$candidate_sha" "$gate_result" "$conflict_text" true
   exit 7
 fi
 
-write_record promoted "$candidate_sha" passed "$conflict_text" true
+write_record promoted "$candidate_sha" "$gate_result" "$conflict_text" true
 log "promoted develop=$develop_sha to main=$candidate_sha with tag=$tag_name candidate=$candidate_sha"
 log 'deployment handoff is ready: the main-advance cron watcher can deploy this main SHA'
 
@@ -602,7 +611,7 @@ log 'deployment handoff is ready: the main-advance cron watcher can deploy this 
 release_rc=0
 if [[ -n "$release_target" ]]; then
   if write_release_package; then
-    write_record promoted "$candidate_sha" passed "$conflict_text" true
+    write_record promoted "$candidate_sha" "$gate_result" "$conflict_text" true
     log "release package written: $release_target/release.tar.gz sha256=$(< "$release_target/release.sha256")"
   else
     release_rc=8
@@ -612,7 +621,7 @@ if [[ -n "$release_target" ]]; then
     fi
     release_package_json=$(printf '{"status":"failed","directory":"%s","error":"%s"}' \
       "$(json_escape "$release_target")" "$(json_escape "$release_error")")
-    write_record promoted "$candidate_sha" passed "$conflict_text" true
+    write_record promoted "$candidate_sha" "$gate_result" "$conflict_text" true
     log "WARNING: release package was not written: $release_error; main and $tag_name stay promoted, deploy needs a separate package build"
   fi
 fi

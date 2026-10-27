@@ -273,6 +273,7 @@
 /api/runner/lease/{taskKey}	free	-	-	-
 /api/runner/orchestrator-feed	free	-	-	-
 /api/runner/post-merge/projects/{project}	free	-	-	-
+/api/runner/release-candidates/{project}/{commit}	reachable	gap	Deploy and environments	Release candidate plan from Task Server source facts
 /api/runner/project-chat/status	free	-	-	-
 /api/runner/project-chat/usage	free	-	-	-
 /api/runner/project:{projectId}/orchestrator-chat	reachable	frozen	Orchestrator chat	Context from published Git facts

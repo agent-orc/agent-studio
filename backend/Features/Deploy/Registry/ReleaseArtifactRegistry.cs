@@ -36,7 +36,7 @@ public class ReleaseArtifactRegistry
             var sourceDigest = File.ReadAllText(Path.Combine(evidence, "release.sha256")).Trim();
             if (!DigestPattern.IsMatch(sourceDigest)) return false;
             if (gate.GetProperty("status").GetString() != "promoted"
-                || gate.GetProperty("gate").GetString() != "passed"
+                || gate.GetProperty("gate").GetString() is not ("passed" or "reused")
                 || gate.GetProperty("candidateSha").GetString() != commit
                 || !gate.GetProperty("atomicPush").GetBoolean()
                 || gate.GetProperty("releasePackage").GetProperty("status").GetString() != "written"
