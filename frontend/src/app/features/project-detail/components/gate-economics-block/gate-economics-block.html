@@ -46,5 +46,41 @@
         }
       </tbody>
     </table></div>
+    <div class="ge__subhead">Delivery-target baseline · {{ projection.window === '30d' ? '30 days' : '7 days' }} · Unknown means the input is missing</div>
+    <div class="ge__scroll"><table data-testid="pipeline-baseline-metrics">
+      <thead><tr><th scope="col">Project</th><th scope="col">Lead time to develop median / p90</th><th scope="col">Cards measured / unknown</th><th scope="col">Gate minutes per card median / p90</th><th scope="col">Cards measured / unknown</th><th scope="col">Full-suite runs</th><th scope="col">Full-suite runs per day</th><th scope="col">Red develop median / p90</th><th scope="col">Gate source median / p90</th><th scope="col">Source transfer median / p90</th><th scope="col">Source runs measured</th></tr></thead>
+      <tbody>
+        @for (row of projection.rows; track row.project) {
+          @let b = row.baseline;
+          <tr [attr.data-project]="row.project" [attr.data-testid]="row.project === 'All projects' ? 'pipeline-baseline-all' : 'pipeline-baseline-project'">
+            <th scope="row"><span class="ge__project">@if (row.project !== 'All projects') { <i class="ge__mark" [style.background]="row.projectColor || color(row.project)" aria-hidden="true"></i><span class="ge__code">{{ row.projectShortCode || '?' }}</span> }<span>{{ row.project }}</span></span></th>
+            <td>{{ format(b?.leadTimeMedianMinutes ?? null, ' min') }} / {{ format(b?.leadTimeP90Minutes ?? null, ' min') }}</td>
+            <td>{{ b?.leadTimeCards ?? 0 }} / {{ b?.leadTimeUnknownCards ?? 0 }}</td>
+            <td>{{ format(b?.gateMinutesPerCardMedian ?? null, ' min') }} / {{ format(b?.gateMinutesPerCardP90 ?? null, ' min') }}</td>
+            <td>{{ b?.gateMinutesCards ?? 0 }} / {{ b?.gateMinutesUnknownCards ?? 0 }}</td>
+            <td data-testid="baseline-full-suite-runs">{{ format(b?.fullSuiteRuns ?? null) }}</td>
+            <td>{{ format(b?.fullSuiteRunsPerDay ?? null, '/day') }}</td>
+            <td>{{ redDevelop(b) }}</td>
+            <td>{{ size(b?.gateSourceBytesMedian ?? null) }} / {{ size(b?.gateSourceBytesP90 ?? null) }}</td>
+            <td>{{ format(b?.gateSourceSecondsMedian ?? null, ' s') }} / {{ format(b?.gateSourceSecondsP90 ?? null, ' s') }}</td>
+            <td data-testid="baseline-source-runs">{{ b?.gateSourceRuns ?? 0 }}</td>
+          </tr>
+        }
+      </tbody>
+    </table></div>
+    <div class="ge__subhead">Board read · last {{ projection.boardReadWindowMinutes ?? 60 }} minutes, all projects, server side</div>
+    <div class="ge__scroll"><table class="ge__narrow" data-testid="board-read-metrics">
+      <thead><tr><th scope="col">Handler</th><th scope="col">Requests</th><th scope="col">p50 / p95</th><th scope="col">Git spawns per request</th></tr></thead>
+      <tbody>
+        @for (handler of projection.boardRead ?? []; track handler.label) {
+          <tr [attr.data-handler]="handler.label">
+            <th scope="row">{{ handler.name }}</th>
+            <td>{{ handler.requests }}</td>
+            <td>{{ format(handler.p50Ms, ' ms') }} / {{ format(handler.p95Ms, ' ms') }}</td>
+            <td>{{ format(handler.gitSpawnsPerRequest) }}</td>
+          </tr>
+        } @empty { <tr><td colspan="4">Unknown</td></tr> }
+      </tbody>
+    </table></div>
   } @else { <p class="ge__empty">Loading gate measurements…</p> }
 </section>
