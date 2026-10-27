@@ -12,6 +12,7 @@ public enum TaskServerCommandKind
     Inventory,
     Import,
     Recovery,
+    Export,
 }
 
 /// <summary>Installation recovery set workflow; options are validated per operation by the runner.</summary>
@@ -45,7 +46,9 @@ public sealed record TaskServerCommandLine(
     string[] HostArguments,
     RetentionCommandLine? Retention = null,
     FullBackupCommandLine? FullBackup = null,
-    RecoveryCommandLine? Recovery = null)
+    RecoveryCommandLine? Recovery = null,
+    string? ExportTarget = null,
+    bool ExportCommit = false)
 {
     public const string RecoveryUsage = """
         Usage:
@@ -114,6 +117,8 @@ public sealed record TaskServerCommandLine(
         string? source = null;
         string? inventory = null;
         string? workspace = null;
+        string? target = null;
+        var commit = false;
         TaskServerMode? mode = null;
         var hostArguments = new List<string>();
         for (var index = 1; index < args.Length; index++)
@@ -140,6 +145,16 @@ public sealed record TaskServerCommandLine(
                 workspace = workspaceValue;
                 continue;
             }
+            if (ReadOption(args, ref index, "--target", out var targetValue))
+            {
+                target = targetValue;
+                continue;
+            }
+            if (string.Equals(args[index], "--commit", StringComparison.OrdinalIgnoreCase))
+            {
+                commit = true;
+                continue;
+            }
             if (ReadOption(args, ref index, "--mode", out var modeValue))
             {
                 if (!Enum.TryParse<TaskServerMode>(modeValue, true, out var parsedMode))
@@ -155,6 +170,7 @@ public sealed record TaskServerCommandLine(
             "backup" => TaskServerCommandKind.Backup,
             "inventory" => TaskServerCommandKind.Inventory,
             "import" => TaskServerCommandKind.Import,
+            "export" => TaskServerCommandKind.Export,
             _ => throw new ArgumentException($"Unknown Task Server command '{args[0]}'."),
         };
         if (kind is TaskServerCommandKind.Inventory or TaskServerCommandKind.Import
@@ -164,6 +180,8 @@ public sealed record TaskServerCommandLine(
             throw new ArgumentException("import --inventory requires a value.");
         if (kind == TaskServerCommandKind.Import && mode is not null and not TaskServerMode.Maintenance)
             throw new ArgumentException("import --mode only accepts maintenance.");
+        if (kind == TaskServerCommandKind.Export && string.IsNullOrWhiteSpace(target))
+            throw new ArgumentException("export --target requires a value.");
         return new TaskServerCommandLine(
             kind,
             name,
@@ -171,7 +189,9 @@ public sealed record TaskServerCommandLine(
             inventory,
             workspace,
             mode,
-            hostArguments.ToArray());
+            hostArguments.ToArray(),
+            ExportTarget: target,
+            ExportCommit: commit);
     }
 
     private static TaskServerCommandLine ParseRetention(string[] args)
@@ -264,7 +284,8 @@ public sealed record TaskServerCommandLine(
     private static bool IsCommand(string value)
         => value.Equals("backup", StringComparison.OrdinalIgnoreCase)
            || value.Equals("inventory", StringComparison.OrdinalIgnoreCase)
-           || value.Equals("import", StringComparison.OrdinalIgnoreCase);
+           || value.Equals("import", StringComparison.OrdinalIgnoreCase)
+           || value.Equals("export", StringComparison.OrdinalIgnoreCase);
 
     private static bool ReadOption(string[] args, ref int index, string option, out string? value)
     {

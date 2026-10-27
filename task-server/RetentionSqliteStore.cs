@@ -157,10 +157,12 @@ public sealed partial class TaskServerStore
     {
         var (_, artifactId, _) = ParseRetentionFileKey(relativePath);
         await using var connection = await OpenReadyAsync(ct);
-        var content = await ScalarAsync(connection, "SELECT content FROM artifacts WHERE id = $id;", ct, ("$id", artifactId));
-        if (content is null or DBNull)
+        await using var command = Command(connection,
+            "SELECT content, object_stored, sha256 FROM artifacts WHERE id = $id;", ("$id", artifactId));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct) || (reader.IsDBNull(0) && reader.GetInt64(1) == 0))
             throw new InvalidOperationException($"Artifact '{artifactId}' has no hot content.");
-        return new MemoryStream((byte[])content);
+        return new MemoryStream(ReadArtifactBytes(reader[0], reader.GetInt64(1) != 0, reader.GetString(2)));
     }
 
     internal async Task<ArchiveTransition?> MoveRetentionActionToColdAsync(
@@ -485,11 +487,12 @@ public sealed partial class TaskServerStore
         {
             var placeholders = string.Join(",", chunk.Select((_, index) => $"$id{index}"));
             var parameters = chunk.Select((id, index) => ($"$id{index}", (object?)id)).ToArray();
-            await using var command = Command(connection, $"SELECT id, content FROM artifacts WHERE id IN ({placeholders}) AND archived = 0;", parameters);
+            await using var command = Command(connection,
+                $"SELECT id, content, object_stored, sha256 FROM artifacts WHERE id IN ({placeholders}) AND archived = 0;", parameters);
             await using var reader = await command.ExecuteReaderAsync(ct);
             while (await reader.ReadAsync(ct))
-                if (!reader.IsDBNull(1))
-                    result[reader.GetString(0)] = (byte[])reader[1];
+                if (!reader.IsDBNull(1) || reader.GetInt64(2) != 0)
+                    result[reader.GetString(0)] = ReadArtifactBytes(reader[1], reader.GetInt64(2) != 0, reader.GetString(3));
         }
         return result;
     }

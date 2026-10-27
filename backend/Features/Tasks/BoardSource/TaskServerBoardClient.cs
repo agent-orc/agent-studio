@@ -10,7 +10,8 @@ public enum TaskServerBoardReadStatus { Ok, NotModified, ProjectMissing }
 public sealed record TaskServerBoardRead(TaskServerBoardReadStatus Status, BoardReadModelResponse? Model);
 
 /// <summary>
-/// Client for the Task Server board read model and workspace import.
+/// Client for the Task Server board read model and workspace import, and for
+/// the task-file mirror and integrated-card query of AGT-3320.
 /// <c>Board:TaskServer:BaseUrl</c> names the Task Server; it falls back to
 /// <c>TaskServer:BaseUrl</c>. The board client stays separate from the
 /// <c>/api/v1</c> plane proxy, so shadowing never turns that proxy on.
@@ -48,6 +49,27 @@ public sealed class TaskServerBoardClient(IHttpClientFactory factory, IConfigura
             ?? throw new HttpRequestException("The Task Server answered an empty import result.");
     }
 
+    /// <summary>Null when the Task Server does not know the project.</summary>
+    public async Task<TaskFileMirrorResponse?> MirrorTaskFilesAsync(
+        string project, TaskFileMirrorRequest batch, CancellationToken ct)
+    {
+        using var response = await Client().PutAsJsonAsync(ProjectPath(project) + "/task-files/workspace-import", batch, ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        await EnsureSuccessAsync(response, ct);
+        return await response.Content.ReadFromJsonAsync<TaskFileMirrorResponse>(ct)
+            ?? throw new HttpRequestException("The Task Server answered an empty task file import result.");
+    }
+
+    /// <summary>Cards with a verified integration record; null when the Task Server does not know the project.</summary>
+    public async Task<IntegratedCardsResponse?> GetIntegratedCardsAsync(string project, CancellationToken ct)
+    {
+        using var response = await Client().GetAsync(ProjectPath(project) + "/integrated-cards", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        await EnsureSuccessAsync(response, ct);
+        return await response.Content.ReadFromJsonAsync<IntegratedCardsResponse>(ct)
+            ?? throw new HttpRequestException("The Task Server answered an empty integrated card list.");
+    }
+
     public static void AddTaskServerBoardClient(IServiceCollection services, IConfiguration configuration)
         => services.AddHttpClient(ClientName, client =>
             {
@@ -76,7 +98,9 @@ public sealed class TaskServerBoardClient(IHttpClientFactory factory, IConfigura
         return client;
     }
 
-    private static string BoardPath(string project) => $"api/v1/projects/{Uri.EscapeDataString(project)}/board";
+    private static string ProjectPath(string project) => $"api/v1/projects/{Uri.EscapeDataString(project)}";
+
+    private static string BoardPath(string project) => ProjectPath(project) + "/board";
 
     private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken ct)
     {

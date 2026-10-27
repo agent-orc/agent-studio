@@ -1577,20 +1577,32 @@ public sealed partial class TaskServerStore
             && artifact.ContentBase64 is not null
             && ValidArtifact(artifact));
 
-    private static async Task<string?> CurrentBriefHashAsync(
+    private async Task<string?> CurrentBriefHashAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         string taskId,
         CancellationToken ct)
     {
-        var encoded = await ScalarAsync(connection, """
-            SELECT content_base64 FROM task_files
+        string? encoded = null;
+        var objectStored = false;
+        string? sha256 = null;
+        await using (var command = Command(connection, """
+            SELECT content_base64, object_stored, sha256 FROM task_files
              WHERE task_id = $task AND path = 'prompt.md';
-            """, ct, transaction, ("$task", taskId)) as string;
-        if (string.IsNullOrWhiteSpace(encoded)) return null;
+            """, transaction, ("$task", taskId)))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            if (await reader.ReadAsync(ct))
+            {
+                encoded = reader.GetString(0);
+                objectStored = reader.GetInt64(1) != 0;
+                sha256 = reader.IsDBNull(2) ? null : reader.GetString(2);
+            }
+        }
+        if (string.IsNullOrWhiteSpace(encoded) && !objectStored) return null;
         try
         {
-            return Hash(Encoding.UTF8.GetString(Convert.FromBase64String(encoded))
+            return Hash(Encoding.UTF8.GetString(ReadTaskContent(encoded ?? string.Empty, objectStored, sha256))
                 .TrimStart('\uFEFF'));
         }
         catch (FormatException)

@@ -40,6 +40,7 @@ public sealed class DeployService
     private readonly TimeProvider _clock;
     private readonly ILogger<DeployService> _logger;
     private readonly TaskMutationService? _mutations;
+    private readonly ReleaseCardAttributionSource _attribution;
 
     /// <summary>
     /// Ancestry answers between release commits. Commits are immutable, so a
@@ -58,7 +59,7 @@ public sealed class DeployService
 
     public DeployService(ProjectEnvironmentService environments, DeployStore store, GitService git,
         TaskScannerService scanner, TimeProvider clock, ILogger<DeployService> logger,
-        TaskMutationService? mutations)
+        TaskMutationService? mutations, ReleaseCardAttributionSource? attribution = null)
     {
         _environments = environments;
         _store = store;
@@ -67,6 +68,7 @@ public sealed class DeployService
         _clock = clock;
         _logger = logger;
         _mutations = mutations;
+        _attribution = attribution ?? new ReleaseCardAttributionSource(scanner);
     }
 
     /// <summary>
@@ -172,7 +174,16 @@ public sealed class DeployService
         var newestSeen = existing.LastOrDefault()?.Release;
         if (OrderRejection(repo, newestSeen, id, commit, known) is { } orderRejection)
             return DeployOutcome<Release>.Conflict(orderRejection.Error, orderRejection.Reason);
-        var integrated = known || repo is null ? [] : IntegratedCards(project);
+        IReadOnlyList<IntegratedCardRecord> integrated;
+        try
+        {
+            integrated = known || repo is null ? [] : _attribution.IntegratedCards(project);
+        }
+        catch (ReleaseAttributionUnavailableException exception)
+        {
+            _logger.LogWarning(exception, "Release card attribution unavailable for {Project}", project);
+            return DeployOutcome<Release>.Conflict(exception.Message, DeployRefusalReasons.AttributionUnavailable);
+        }
         var definitionRead = repo is null ? null : ReadDefinition(repo, commit);
         if (definitionRead is { IsValid: false })
             return DeployOutcome<Release>.Invalid($"The deployment definition at commit {ShortSha(commit)} is invalid: "
@@ -1163,7 +1174,7 @@ public sealed class DeployService
     private (ReleaseRecord Release, bool Created) FindOrCreateRelease(string project, string id, string commit,
         IReadOnlyList<string> artifacts, IReadOnlyList<EnvironmentDeclaration> declarations,
         ProjectDeploymentDefinition? definition, string channel, IReadOnlyList<ProjectLifecyclePhase> lifecycle,
-        string? repo, IReadOnlyList<IntegratedCard> integrated, DateTime now)
+        string? repo, IReadOnlyList<IntegratedCardRecord> integrated, DateTime now)
     {
         var existing = _store.ReadReleaseRecords(project);
         if (existing.FirstOrDefault(item => item.Release.Id == id) is { } known) return (known, false);
@@ -1187,22 +1198,6 @@ public sealed class DeployService
         => _git.GetFileAtCommit(repo, commit, ProjectPreparationPaths.Definition) is { } yaml
             ? ProjectDefinitionReader.Parse(yaml) : null;
 
-    private sealed record IntegratedCard(string Key, string Title, IReadOnlyList<string> Shas,
-        string IntegrationBranch);
-
-    /// <summary>Cards of the project with an integration verification and the commits it names.</summary>
-    private IReadOnlyList<IntegratedCard> IntegratedCards(string project)
-        => _scanner.ScanAllJobsWithArchive()
-            .Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase))
-            .Select(task => (Task: task, Record: IntegrationVerificationStore.Read(task.FolderPath)))
-            .Where(item => item.Record is { State: IntegrationVerificationStates.Verified })
-            .Select(item => new IntegratedCard(
-                string.IsNullOrWhiteSpace(item.Task.Key) ? item.Task.Id : item.Task.Key,
-                item.Task.Title,
-                [.. item.Record!.Sha is { } sha ? [sha] : Array.Empty<string>(), .. item.Record.DeliveryShas],
-                item.Record.IntegrationBranch))
-            .ToArray();
-
     /// <summary>
     /// The integration verification is the durable card mapping. A card joins
     /// the release that adds a commit its verification names, or a commit whose
@@ -1212,7 +1207,7 @@ public sealed class DeployService
     /// ancestor release never join again.
     /// </summary>
     private IReadOnlyList<string> CardKeys(string repo, string commit, string? previousCommit,
-        IReadOnlyList<IntegratedCard> integrated, IReadOnlySet<string> priorKeys)
+        IReadOnlyList<IntegratedCardRecord> integrated, IReadOnlySet<string> priorKeys)
     {
         var window = previousCommit is null ? FirstReleaseCommitWindow : ReleaseCommitWindow;
         var delta = _git.ListRevisionDetails(repo, commit, previousCommit, window);

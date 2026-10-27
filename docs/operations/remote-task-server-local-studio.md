@@ -264,7 +264,8 @@ a capture interval, not an achieved recovery point. The recovery point depends
 on the age of the newest verified off-host full set at loss time and must be
 measured in a restore rehearsal using the
 [installation recovery workflow](./setup/installation-recovery.md). The timer's
-SQLite snapshot does not include cold payloads. The exact interval is accepted only after a
+SQLite snapshot does not include cold payloads or content objects (task file and artifact
+content above the inline limit, AGT-3320); full backup sets carry both. The exact interval is accepted only after a
 load and restore rehearsal shows it does not disrupt lease renewal or
 completion. The Windows standby regularly receives and verifies the newest
 backup but never opens it while the remote server is authoritative.

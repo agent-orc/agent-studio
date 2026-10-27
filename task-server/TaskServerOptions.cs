@@ -39,6 +39,16 @@ public sealed class TaskServerOptions
     public int RetentionSchedulerIntervalMinutes { get; set; } = 60;
     public double RetentionMaximumLoadPerCore { get; set; } = 1.5;
     public string? BackupPathFull { get; set; }
+    /// <summary>Task file and run artifact content above this size goes to the content object store (AGT-3320).</summary>
+    public long ContentInlineLimitBytes { get; set; } = 1024 * 1024;
+    /// <summary>Content object store root; defaults to <c>&lt;DataDirectory&gt;/objects</c>.</summary>
+    public string? ContentObjectStorePath { get; set; }
+    /// <summary>Clone of the workspace repository the periodic export writes; unset turns the export job off.</summary>
+    public string? WorkspaceExportRoot { get; set; }
+    public int WorkspaceExportIntervalMinutes { get; set; } = 15;
+    public bool WorkspaceExportPush { get; set; }
+    public string WorkspaceExportBranch { get; set; } = "main";
+    public int WorkspaceExportPushTimeoutSeconds { get; set; } = 600;
     public string CodexCliTargetVersion { get; set; } = "0.154.0";
     public string ClaudeCliTargetVersion { get; set; } = "2.1.269";
 
@@ -48,6 +58,13 @@ public sealed class TaskServerOptions
             : Path.GetFullPath(Path.IsPathRooted(RetentionArchivePath)
                 ? RetentionArchivePath
                 : Path.Combine(AppContext.BaseDirectory, RetentionArchivePath));
+
+    public string ResolveContentObjectStorePath()
+        => string.IsNullOrWhiteSpace(ContentObjectStorePath)
+            ? Path.Combine(ResolveDataDirectory(), "objects")
+            : Path.GetFullPath(Path.IsPathRooted(ContentObjectStorePath)
+                ? ContentObjectStorePath
+                : Path.Combine(AppContext.BaseDirectory, ContentObjectStorePath));
 
     public string ResolveFullBackupDirectory()
         => string.IsNullOrWhiteSpace(BackupPathFull)

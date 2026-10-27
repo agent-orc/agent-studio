@@ -80,6 +80,7 @@ public sealed partial class TaskServerStore
             var manifests = await ReadBackupArchiveManifestsAsync(snapshotPath, ct);
             await WriteBackupArchiveManifestsAsync(root, manifests, ct);
             await CopyAndVerifyColdPayloadsAsync(root, manifests, ct);
+            await CopyAndVerifyContentObjectsAsync(root, snapshotPath, ct);
             var taskCount = await WriteAnalysisExportAsync(root, snapshotPath, ct);
 
             var files = await InventoryFullBackupSetAsync(root, ct);
@@ -207,6 +208,8 @@ public sealed partial class TaskServerStore
         {
             Directory.CreateDirectory(stagedArchive);
             CopyDirectory(Path.Combine(root, "cold"), stagedArchive);
+            // Content objects are immutable and addressed by hash, so restoring them is additive.
+            CopyDirectory(Path.Combine(root, "objects"), ContentObjects.Root);
             rollbackBackup = await CreateBackupAsync(new BackupRequest("before-full-restore"), actorId, ct);
             File.Copy(Path.Combine(root, "snapshot.db"), stagedSnapshot, overwrite: true);
             var restore = await RestoreBackupAsync(
@@ -429,6 +432,30 @@ public sealed partial class TaskServerStore
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             File.Copy(source, target, overwrite: true);
         }
+    }
+
+    /// <summary>
+    /// Copies every content object the snapshot points to (task files and hot
+    /// run artifacts above the inline limit, AGT-3320) into <c>objects/</c>,
+    /// verified by hash, so a full set restores without the live object store.
+    /// </summary>
+    private async Task CopyAndVerifyContentObjectsAsync(string root, string snapshotPath, CancellationToken ct)
+    {
+        var hashes = new SortedSet<string>(StringComparer.Ordinal);
+        await using (var connection = await OpenSnapshotAsync(snapshotPath, ct))
+        await using (var command = Command(connection, """
+            SELECT sha256 FROM task_files WHERE object_stored = 1
+            UNION SELECT sha256 FROM task_file_revisions WHERE object_stored = 1
+            UNION SELECT sha256 FROM artifacts WHERE object_stored = 1 AND archived = 0;
+            """))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+                if (!reader.IsDBNull(0)) hashes.Add(reader.GetString(0).ToLowerInvariant());
+        }
+        var target = new TaskContentObjectStore(Path.Combine(root, "objects"), ContentObjects.InlineLimitBytes);
+        foreach (var hash in hashes)
+            target.Put(hash, ContentObjects.Read(hash));
     }
 
     private async Task RewriteRestoredArchiveManifestPathsAsync(
