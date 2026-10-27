@@ -243,6 +243,13 @@ only for new claims; existing leases continue through their normal renewal
 and fenced result path. This slice does not replace the AGT-3019 allocator or
 the platform-owned Git path.
 
+Runtime-capacity acknowledgment now compares the host's reported version with
+`allocationVersion`, the version used by placement admission. Upgrading an
+existing host copies its current capacity `version` into the new allocation
+column after the version-37 retired-schema cleanup. The additive placement
+tables and column keep schema marker 37, so version-36 binaries still reject
+stores whose retired task fields have been removed.
+
 Configured placement defaults to one active coding lease per project. Its
 `maxParallelism` may only use slots authorized by the existing project
 `maxParallelism` setting; the effective limit is the smaller value. Active

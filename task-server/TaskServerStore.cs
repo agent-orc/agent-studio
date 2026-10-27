@@ -57,8 +57,9 @@ public sealed partial class TaskServerStore
     // 36 adds one-time Studio invitations and per-project production approval.
     // 37 removes retired parent tables and their task metadata field.
     // Older binaries must reject this store before reading task metadata.
-    // 38 adds physical-host placement advertisements and shadow claim receipts.
-    public const int CurrentSchemaVersion = 38;
+    // Placement advertisements and allocation versions are additive to the
+    // version-37 store; version 37 remains the retired-schema downgrade guard.
+    public const int CurrentSchemaVersion = 37;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -4552,7 +4553,6 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runs", "brief_version", "TEXT", ct);
         await EnsureColumnAsync(connection, "runners", "host_orchestrator_minimum", "TEXT", ct);
         await EnsureColumnAsync(connection, "runners", "host_orchestrator_maximum", "TEXT", ct);
-        await EnsureAllocationVersionColumnAsync(connection, ct);
         await EnsureColumnAsync(connection, "runners", "role_max_parallelism", "INTEGER", ct);
         await EnsureColumnAsync(connection, "runners", "effective_max_parallelism", "INTEGER", ct);
         await EnsureColumnAsync(connection, "runners", "runtime_capacity_applied_at", "TEXT", ct);
@@ -4630,6 +4630,7 @@ public sealed partial class TaskServerStore
         await ApplyStudioProjectMetaMigrationAsync(connection, ct);
         await ApplyStudioRunnerOrchestratorMigrationAsync(connection, ct);
         await ApplyStudioTaskMetadataMigrationAsync(connection, ct);
+        await EnsureAllocationVersionColumnAsync(connection, ct);
         await ApplyStudioTaskLifecycleExtrasMigrationAsync(connection, ct);
         await ApplyStudioTaskArtifactsMigrationAsync(connection, ct);
         await ApplyTaskContentMigrationAsync(connection, ct);

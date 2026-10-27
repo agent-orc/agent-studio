@@ -125,8 +125,14 @@ public sealed class RuntimeCapacitySettingsTests
         {
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
-            command.CommandText =
-                "ALTER TABLE runtime_capacity_settings DROP COLUMN allocation_version;";
+            command.CommandText = """
+                ALTER TABLE runtime_capacity_settings DROP COLUMN allocation_version;
+                CREATE TABLE epics(id TEXT PRIMARY KEY);
+                CREATE TABLE epic_tasks(epic_id TEXT, task_id TEXT);
+                ALTER TABLE task_studio_fields ADD COLUMN epic_id TEXT;
+                UPDATE meta SET value = '36' WHERE key = 'schema_version';
+                DELETE FROM schema_migrations WHERE version = 37;
+                """;
             await command.ExecuteNonQueryAsync();
         }
 
@@ -135,6 +141,19 @@ public sealed class RuntimeCapacitySettingsTests
         var capacity = (await upgraded.GetRuntimeCapacitySettingsAsync("host-a", default))!;
         Assert.Equal(latest.Version, capacity.Version);
         Assert.Equal(latest.Version, capacity.AllocationVersion);
+        await using (var connection = new SqliteConnection(
+                         $"Data Source={upgraded.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('epics','epic_tasks'))
+                     + (SELECT COUNT(*) FROM pragma_table_info('task_studio_fields') WHERE name='epic_id');
+                """;
+            Assert.Equal(0L, (long)(await command.ExecuteScalarAsync())!);
+            command.CommandText = "SELECT value FROM meta WHERE key = 'schema_version';";
+            Assert.Equal("37", (string)(await command.ExecuteScalarAsync())!);
+        }
 
         await upgraded.RegisterRunnerAsync("runner-a", Runner("runner-a:1", bootstrap: 2),
             "test", default);
