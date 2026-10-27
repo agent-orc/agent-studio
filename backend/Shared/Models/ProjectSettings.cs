@@ -336,6 +336,12 @@ public record ProjectSettings
     public TestExecutionPolicy? TestExecution { get; init; }
 
     /// <summary>
+    /// Per-card test placement (<c>testing.perCard</c>, AGT-3310). Null keeps
+    /// <see cref="PerCardTestModes.Full"/>, so the Remote Review plan stays as it was.
+    /// </summary>
+    public ProjectTestingSettings? Testing { get; init; }
+
+    /// <summary>
     /// Per-CLI permission / sandbox mode override. Map of <see cref="CliTypes"/>
     /// id (<c>claude</c> / <c>codex</c> / <c>gemini</c> / <c>copilot</c>) to a
     /// mode id from <see cref="CliPermissionModes"/>. A missing CLI key means
@@ -1155,6 +1161,34 @@ public sealed record TestExecutionPolicy
     /// <summary>Roots whose immediate source folders must all have a mapping entry.</summary>
     public IReadOnlyList<string>? MappedSourceRoots { get; init; }
     public string? TestHubHistoryPath { get; init; }
+}
+
+/// <summary>Project-level test placement settings (pipeline Dossier AGT-3276, decision D1).</summary>
+public sealed record ProjectTestingSettings
+{
+    /// <summary><c>affected</c> or <c>full</c> (default); see <see cref="PerCardTestModes"/>.</summary>
+    public string? PerCard { get; init; }
+}
+
+/// <summary>
+/// What the Remote Review runs per card. <see cref="Full"/> keeps the declared
+/// test commands. <see cref="Affected"/> runs the build, the fast checks of the
+/// touched areas, and the tests the generated project map selects (tier T1).
+/// </summary>
+public static class PerCardTestModes
+{
+    public const string Affected = "affected";
+    public const string Full = "full";
+
+    /// <summary>The stored value; anything but <see cref="Affected"/> is <see cref="Full"/>.</summary>
+    public static string Normalize(string? value)
+        => string.Equals(value?.Trim(), Affected, StringComparison.OrdinalIgnoreCase) ? Affected : Full;
+
+    public static string Resolve(ProjectSettings? settings) => Normalize(settings?.Testing?.PerCard);
+
+    public static bool IsKnown(string? value)
+        => string.Equals(value?.Trim(), Affected, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value?.Trim(), Full, StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed record TestFolderMapping

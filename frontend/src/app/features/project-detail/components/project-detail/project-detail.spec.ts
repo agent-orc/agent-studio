@@ -167,6 +167,37 @@ describe('ProjectDetailComponent (smoke)', () => {
     fixture.destroy();
   });
 
+  it('shows testing.perCard read-only with full as the default', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectDetailComponent],
+      providers: [
+        provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectDetailComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.componentRef.setInput('view', 'settings');
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const host = fixture.nativeElement as HTMLElement;
+    const value = () =>
+      host.querySelector('[data-testid="project-detail-per-card-tests-value"]')?.textContent?.trim();
+
+    http.expectOne('/api/projects/demo/snapshot').flush({ settings: {} });
+    await fixture.whenStable();
+    expect(value()).toBe('Full suite');
+    const section = host.querySelector('[data-testid="project-detail-per-card-tests"]')!;
+    expect(section.querySelectorAll('input, select, button')).toHaveLength(0);
+
+    fixture.componentInstance.refreshAll();
+    http.expectOne('/api/projects/demo/snapshot').flush({ settings: { testingPerCard: 'affected' } });
+    await fixture.whenStable();
+    expect(value()).toBe('Affected tests');
+    expect(section.textContent).toContain('PUT /api/projects/demo/testing');
+    fixture.destroy();
+  });
+
   it('keeps the retired legacy overview free of machine plumbing', async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectDetailComponent],

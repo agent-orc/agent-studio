@@ -39,6 +39,23 @@ public sealed class IntegrationGateReusePolicyTests
         Assert.Contains(Base[..8], decision.Reason);
     }
 
+    [Theory]
+    [InlineData("work-package", false)]
+    [InlineData(null, true)]
+    [InlineData("full", true)]
+    public void Per_card_affected_review_keeps_the_integration_gate_tests(string? testLevel, bool reused)
+    {
+        var decision = IntegrationGateReusePolicy.Decide(
+            Input() with { Review = Review() with { TestLevel = testLevel } });
+
+        Assert.Equal(reused, decision.Reused);
+        if (!reused)
+            Assert.Equal(
+                "the Remote Review ran the per-card affected test selection (testing.perCard: affected), "
+                + "not the declared test suite",
+                decision.Reason);
+    }
+
     [Fact]
     public void Review_report_without_a_merge_base_runs_the_full_gate()
     {

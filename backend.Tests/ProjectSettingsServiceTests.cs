@@ -725,6 +725,21 @@ public sealed class ProjectSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void SetTesting_PersistsAffectedAndClearsTheSectionForFull()
+    {
+        var svc = Build();
+        Assert.Equal(PerCardTestModes.Full, PerCardTestModes.Resolve(svc.Get("runbook")));
+
+        svc.SetTesting("runbook", new ProjectTestingSettings { PerCard = " Affected " });
+        var stored = Build().Get("runbook");
+        Assert.Equal(PerCardTestModes.Affected, stored.Testing?.PerCard);
+        Assert.Equal(PerCardTestModes.Affected, PerCardTestModes.Resolve(stored));
+
+        svc.SetTesting("runbook", new ProjectTestingSettings { PerCard = "full" });
+        Assert.Null(Build().Get("runbook").Testing);
+    }
+
+    [Fact]
     public void MarkBuildProfileValidated_FlipsToPipelineReadyAndStampsTime()
     {
         var svc = Build();
