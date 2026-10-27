@@ -2,6 +2,7 @@
 # owners and removal slices are reviewed by hand. Columns: route, git, status, owner, removal.
 /api/adhoc-usage/	free	-	-	-
 /api/adhoc-usage/log-path	free	-	-	-
+/api/admin/board-source	free	-	-	-
 /api/admin/config/orchestrator	free	-	-	-
 /api/admin/git-telemetry	free	-	-	-
 /api/admin/prompts/	reachable	frozen	Prompt administration	Prompt revisions from the Git fact store
@@ -157,6 +158,7 @@
 /api/projects/{projectName}/deploy/deployments/{deploymentId}	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/deployments/{deploymentId}/log	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/environments	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
+/api/projects/{projectName}/deploy/lanes	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/operations	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/operations/logs	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
 /api/projects/{projectName}/deploy/releases	reachable	gap	Deploy and environments	Environment declarations from the Git fact store
@@ -390,6 +392,7 @@
 /api/v1/{**path}	free	-	-	-
 /api/watch-paths	free	-	-	-
 /api/watcher/cases	free	-	-	-
+/api/watcher/interventions	free	-	-	-
 /api/watcher/proposals	free	-	-	-
 /api/watcher/stalls	free	-	-	-
 /api/watcher/status	free	-	-	-
