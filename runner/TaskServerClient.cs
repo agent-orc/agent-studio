@@ -16,7 +16,7 @@ namespace AgentRunner;
 /// task-file read used to fetch prompt.md. The runner talks to the server only
 /// through these routes - it never writes the task store directly.
 /// </summary>
-public sealed class TaskServerClient : IDisposable
+public sealed partial class TaskServerClient : IDisposable, AgentRunner.SourceFacts.ISourceFactsClient
 {
     private static readonly JsonSerializerOptions Json = CreateJsonOptions();
     private static readonly JsonSerializerOptions TaskServerContractJson =

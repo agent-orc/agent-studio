@@ -457,6 +457,10 @@ builder.Services.AddSingleton<TaskStateMachine>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.TaskGateCancellationRegistry>();
 builder.Services.AddSingleton<TaskMutationService>();
 builder.Services.AddSingleton<ITaskHistoryGitRunner, ProcessTaskHistoryGitRunner>();
+// AGT-3318: card-open provenance and source file history read the derived
+// source facts on the Task Server; SourceFacts:ReadMode=legacy rolls back.
+builder.Services.AddSingleton<AgentStudio.Git.ISourceFactsReader,
+    AgentStudio.Git.TaskServerSourceFactsReader>();
 builder.Services.AddSingleton<TaskFileHistoryService>();
 builder.Services.AddSingleton<ResultVersionStore>();
 builder.Services.AddSingleton<LegacyResultHistoryBackfill>();
@@ -638,6 +642,15 @@ builder.Services.AddSingleton<TaskServerBoardSource>();
 builder.Services.AddSingleton<BoardShadowWorker>();
 builder.Services.AddHostedService(provider => provider.GetRequiredService<BoardShadowWorker>());
 TaskServerBoardClient.AddTaskServerBoardClient(builder.Services, builder.Configuration);
+// Task-folder artefacts in the Task Server (AGT-3320, migration M3 and M6,
+// decision D9 A). TaskArtifacts:Source selects workspace, task-server-shadow
+// or task-server: the mirror copies task files off the request path, release
+// card attribution reads the Task Server, and in task-server mode the
+// workspace repository is the Task Server's export, never committed here.
+builder.Services.AddSingleton<TaskArtifactsSourceSettings>();
+builder.Services.AddSingleton<AgentStudio.Deploy.ReleaseCardAttributionSource>();
+builder.Services.AddSingleton<TaskFileMirrorWorker>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<TaskFileMirrorWorker>());
 builder.Services.AddSingleton<JobStatsMetadataCache>();
 // AGT-2703: conditional board reads. TaskSidecarGeneration counts the watcher
 // events the task index deliberately drops, and BoardReadSignatureSource folds
@@ -952,6 +965,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IBatchGateSubjectAuthority>(s
 builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedBatchGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeRunStore>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchIntegrationReservationService(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(

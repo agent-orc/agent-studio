@@ -1,3 +1,6 @@
+using SourceFactDemandRequest = AgentStudio.TaskServer.Contracts.SourceFactDemandRequest;
+using SourceFactKinds = AgentStudio.TaskServer.Contracts.SourceFactKinds;
+using SourceReachabilityView = AgentStudio.TaskServer.Contracts.SourceReachabilityView;
 
 
 namespace AgentStudio.Tasks;
@@ -40,6 +43,7 @@ public sealed class TaskProvenanceService
     private readonly ProjectSettingsService _settings;
     private readonly TaskMutationService _mutations;
     private readonly ILogger<TaskProvenanceService> _logger;
+    private readonly AgentStudio.Git.ISourceFactsReader? _sourceFacts;
 
     public const string ReleaseBranch = "main";
 
@@ -47,12 +51,121 @@ public sealed class TaskProvenanceService
         GitService git,
         ProjectSettingsService settings,
         TaskMutationService mutations,
-        ILogger<TaskProvenanceService> logger)
+        ILogger<TaskProvenanceService> logger,
+        AgentStudio.Git.ISourceFactsReader? sourceFacts = null)
     {
         _git = git;
         _settings = settings;
         _mutations = mutations;
         _logger = logger;
+        _sourceFacts = sourceFacts;
+    }
+
+    /// <summary>
+    /// Card-open read of <c>GET /api/tasks/{id}/provenance</c>. Under derived
+    /// source facts (AGT-3318) the landed state, ladder heads and per-commit
+    /// membership come from the reachability facts the runner-host producer
+    /// published; the request starts no Git process. A missing fact is shown
+    /// as not yet landed with <c>sourceFacts=warming</c> and is requested from
+    /// the producer. The legacy mode keeps <see cref="BuildView"/>.
+    /// </summary>
+    public async Task<TaskProvenanceView> BuildViewAsync(TaskInfo info, CancellationToken ct)
+    {
+        if (_sourceFacts is not { Mode: AgentStudio.Git.SourceFactsReadMode.Derived } facts)
+            return BuildView(info);
+
+        using var _t = GitProcessTelemetry.BeginRequest("tasks/provenance", _logger);
+        var integrationBranch = _settings.Get(info.ProjectName).IntegrationBranch;
+        var shas = AttributedChain(info).Select(commit => commit.Sha).ToArray();
+        string[] targets = [integrationBranch, ReleaseBranch];
+        var read = shas.Length == 0
+            ? AgentStudio.Git.SourceFactRead<SourceReachabilityView>.Ready(
+                new SourceReachabilityView(info.ProjectName, [], [], []))
+            : await facts.GetReachabilityAsync(info.ProjectName, shas, targets, ct);
+        var view = BuildDerivedView(info, integrationBranch, read);
+        if (read.Value is { Missing.Count: > 0 } missing)
+            await facts.RequestAsync(info.ProjectName, new SourceFactDemandRequest(
+                SourceFactKinds.Reachability,
+                "card-open-provenance",
+                Shas: missing.Missing.Select(pair => pair.Sha).Distinct(StringComparer.Ordinal).ToArray(),
+                TargetRefs: missing.Missing.Select(pair => pair.TargetRef).Distinct(StringComparer.Ordinal).ToArray()), ct);
+        else if (read.State == AgentStudio.Git.SourceFactStates.Warming && shas.Length > 0)
+            await facts.RequestAsync(info.ProjectName, new SourceFactDemandRequest(
+                SourceFactKinds.Reachability, "card-open-provenance", Shas: shas, TargetRefs: targets), ct);
+        return view;
+    }
+
+    /// <summary>
+    /// Pure projection of the persisted provenance facts and one reachability
+    /// read. A pair without a current fact counts as not contained, so a card
+    /// never reads as landed on evidence that is not there. The branch tip is
+    /// the last recorded transition anchor; the live task branch is not a
+    /// derived fact.
+    /// </summary>
+    public static TaskProvenanceView BuildDerivedView(
+        TaskInfo info,
+        string integrationBranch,
+        AgentStudio.Git.SourceFactRead<SourceReachabilityView> read)
+    {
+        var branch = WorktreeTaskLifecycle.BranchFor(info.Id);
+        var prov = info.Provenance;
+        var reach = read.Value;
+        var contained = new HashSet<(string Sha, string Ref)>(
+            (reach?.Facts ?? []).Where(fact => fact.Contained)
+                .Select(fact => (fact.Sha.ToLowerInvariant(), fact.TargetRef)));
+        bool In(string sha, string target) => contained.Contains((sha.ToLowerInvariant(), target));
+        var commits = AttributedChain(info).Select(commit => new TaskCommitMembership
+        {
+            Sha = commit.Sha,
+            ShortSha = string.IsNullOrWhiteSpace(commit.ShortSha) ? Short(commit.Sha) : commit.ShortSha,
+            Message = commit.Message,
+            OnTaskBranch = true,
+            AlsoOnIntegration = In(commit.Sha, integrationBranch),
+            AlsoOnRelease = In(commit.Sha, ReleaseBranch),
+        }).ToList();
+        var mergedToIntegration = commits.Count > 0 && commits.All(commit => commit.AlsoOnIntegration);
+        var releasedToRelease = commits.Count > 0 && commits.All(commit => commit.AlsoOnRelease);
+        string? Head(string target) => reach?.Heads.FirstOrDefault(head => head.Ref == target)?.Sha;
+        var state = read.State != AgentStudio.Git.SourceFactStates.Ready
+            ? read.State
+            : reach is { Missing.Count: > 0 }
+                ? AgentStudio.Git.SourceFactStates.Warming
+                : AgentStudio.Git.SourceFactStates.Ready;
+        return new TaskProvenanceView
+        {
+            Branch = prov?.Branch ?? branch,
+            Base = prov?.Base,
+            Transitions = prov?.Transitions ?? [],
+            Merge = prov?.Merge,
+            LandedState = releasedToRelease
+                ? LandedStates.ReleasedToMain
+                : mergedToIntegration ? LandedStates.MergedToDevelop : LandedStates.OnBranchOnly,
+            Ladder = new TaskLandedLadder
+            {
+                Branch = branch,
+                BranchTip = prov?.Transitions.LastOrDefault(transition => transition.BranchTip is not null)?.BranchTip,
+                IntegrationBranch = integrationBranch,
+                IntegrationHead = Head(integrationBranch),
+                MergedToIntegration = mergedToIntegration,
+                ReleaseBranch = ReleaseBranch,
+                ReleaseHead = Head(ReleaseBranch),
+                ReleasedToRelease = releasedToRelease,
+            },
+            Commits = commits,
+            SourceFacts = state,
+        };
+    }
+
+    /// <summary>The persisted attributed commit chain, the same set integration status uses.</summary>
+    private static List<TaskCommitInfo> AttributedChain(TaskInfo info)
+    {
+        var chain = info.Commits.Count > 0
+            ? info.Commits
+            : info.Commit is null ? [] : new List<TaskCommitInfo> { info.Commit };
+        var attributed = new HashSet<string>(
+            TaskIntegrationStatusService.AttributedCommits(info),
+            StringComparer.OrdinalIgnoreCase);
+        return chain.Where(c => !string.IsNullOrWhiteSpace(c.Sha) && attributed.Contains(c.Sha)).ToList();
     }
 
     /// <summary>

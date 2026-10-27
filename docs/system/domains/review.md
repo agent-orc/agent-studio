@@ -283,7 +283,25 @@ authoritative material to every semantic aspect prompt:
 - the integration ref, resolved merge-base SHA, and delivery Result-SHA;
 - the changed-file list from `git diff --name-only <merge-base> <result-sha>`;
 - the unified delivery diff from
-  `git diff --find-renames --unified=3 <merge-base> <result-sha>`.
+  `git diff --find-renames --unified=3 --full-index <merge-base> <result-sha>`.
+
+Both diffs run with pinned settings (`MergeBaseDiffMaterial.PinnedConfiguration`:
+no prefix overrides, no colour, no textconv, full object names in `index`
+lines), so the bytes do not depend on the Git configuration or object count of
+the host that computes them.
+
+Since AGT-3318 the material is a diff object (AGT-3017 D1) keyed by repository,
+merge-base SHA, Result-SHA, options and renderer version. The fenced source
+facts producer on the coding runner host computes it at result handoff, with
+path history and blame for the touched files, and publishes it to the Task
+Server (`/api/v1/source-facts/{repositoryId}/diffs`). The review reads that
+object first. Only a missing object falls back to the local `git diff`, through
+the same `MergeBaseDiffMaterial.ComputeAsync` the producer runs, so one base and
+head render byte-identical material from either path. A fallback records a
+`review-material-miss` demand for the producer and a read report with source
+`fallback`; every read reports its time, and
+`GET /api/v1/source-facts/review-material/timings` returns the p50 and p95 per
+source.
 
 The semantic prompt must not rely on the review agent discovering this material
 with tools. The frozen template created by
