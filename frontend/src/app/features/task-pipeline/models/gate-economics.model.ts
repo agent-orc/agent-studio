@@ -12,6 +12,8 @@ export interface GateEconomicsRow {
   fullSuiteShare: number | null;
   sameShaRetestRate: number | null;
   lastNightlyGuard: string | null;
+  developState?: 'green' | 'running' | 'red' | null;
+  lastGreenSha?: string | null;
   deliveryLagP50Minutes: number | null;
   deliveryLagP95Minutes: number | null;
   oldestWaitingMinutes: number | null;

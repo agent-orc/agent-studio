@@ -112,6 +112,7 @@ public static class EndpointMapping
         app.MapTokenAnalysisEndpoints();
         app.MapPipelineHealthEndpoints();
         app.MapGateEconomicsEndpoints();
+        app.MapPostMergeRunEndpoints();
         app.MapOperatorSweepEndpoints();
         app.MapFailureInterventionEndpoints();
         app.MapCauseBreakerEndpoints();

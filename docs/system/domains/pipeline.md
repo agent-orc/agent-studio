@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-10-15
+Version: 2026-10-27
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -28,6 +28,41 @@ pipeline view.
   caps required before parallel work starts.
 
 ## Gate economics and integration lane
+
+### Post-merge develop checks (T3, AGT-3311)
+
+`agent-host post-merge-run --mode window|nightly` is a scheduled, project-scoped
+runner unit. The window timer polls each minute; the pure close rule runs after
+six first-parent integration commits or 30 minutes from the oldest pending
+commit, whichever comes first. The worker fetches develop once and pins
+`FETCH_HEAD` before selecting the union of changed-path test projects. Unknown
+paths run every routine suite. The nightly timer runs at 02:15 and 04:15 in
+the existing coverage slot window. It runs the routine full suite on the same
+exact-tip rule, using AGT-3232 class partitions across free local host slots.
+T3 treats a suite without `shards` as `auto`; a declared shard count still
+controls that suite. T1's opt-in sharding policy is unchanged.
+The timers use a dedicated checkout and a local exclusive claim file; the
+server fences the active run ID. A second claim waits, and an abandoned server
+claim expires after four hours for windows or fourteen hours for the nightly
+suite. The worker keeps its service token out of test
+process environments. `--dry-run` prints the fetch and command plan without
+claiming, fetching, or running tests.
+
+The Runner service posts start, terminal, and skip receipts to
+`/api/runner/post-merge/projects/{project}/runs`. `PostMergeRunStore` persists
+the exact tip, window range, command verdicts, timestamps, last green SHA,
+last completed window tip, and `developState` per project outside card folders.
+Only a matching active run can complete. Green advances last green; red keeps
+the previous green; an unchanged tip records a skip. The gate-economics row
+projects the state, last green SHA, nightly verdict, and red duration. The board
+header reads the smaller `/api/develop-states` projection. The state is evidence for the separate red
+develop repair and release-hold cards; this unit does not open a repair card or
+alter integration transitions.
+
+The Dossier's recorded working decisions are D1 T-B, D2 A, D3 A, D4 A,
+D5 L-B, D6 A, D7 A-B, D8 A, D9 A, and D10 A. This card implements T3 under
+D1 T-B and retains D3 A as the before-delivery policy for its later card.
+
 
 An operator override that accepts a published delivery writes an append-only
 `integrated-verified` record on the completed card. The record names the actor,
@@ -85,10 +120,10 @@ board read. A missing input is null (Unknown), never zero.
   run. Cache hits, exact review reuse and reused review results ran nothing.
   A card is unknown when a report lacks a command budget or has no gate
   evidence.
-- **Full-suite runs** count executed `testLevel=full` gate receipts plus
-  every batch gate run, per window and per day.
-- **Red develop time** stays null until the post-merge checks (Dossier P4)
-  record T3 verdicts.
+- **Full-suite runs** count executed `testLevel=full` gate receipts, batch
+  gate runs, and completed T3 nightly suites, per window and per day.
+- **Red develop time** reads T3 red-to-green intervals from post-merge receipts;
+  it stays null until one such interval is observed.
 - **Gate source** reads the `Source bundle N bytes transferred in Xs` reason
   suffix that remote gates write next to `remote_gate_bundle_transferred`.
 - **Board read** is a response-level list for the board, card list and board

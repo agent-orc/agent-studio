@@ -17,16 +17,18 @@ public sealed class GateEconomicsProjection
     private readonly ProjectRegistry _registry;
     private readonly BatchGateStore _batches;
     private readonly TimeProvider _time;
+    private readonly PostMergeRunStore _postMerge;
     private readonly object _sync = new();
     private readonly Dictionary<string, GateEconomicsResponse> _cache = new(StringComparer.Ordinal);
 
     public GateEconomicsProjection(TaskScannerService scanner, ProjectRegistry registry,
-        BatchGateStore batches, TimeProvider time)
+        BatchGateStore batches, TimeProvider time, PostMergeRunStore postMerge)
     {
         _scanner = scanner;
         _registry = registry;
         _batches = batches;
         _time = time;
+        _postMerge = postMerge;
     }
 
     /// <summary>
@@ -73,8 +75,30 @@ public sealed class GateEconomicsProjection
             .Select(fact => new BatchGateMetric(fact.Project, Members(fact), fact,
                 Published(fact.BatchId!, fact.BatchRunId!)))
             .ToArray();
-        var response = new GateEconomicsResponse(window, now,
-            GateEconomicsEndpoints.Rows(projects, batchSamples, since, now, allowed: null),
+        var rows = GateEconomicsEndpoints.Rows(projects, batchSamples, since, now, allowed: null).ToArray();
+        var states = registered.Where(project => names.Contains(project.DisplayName,
+                StringComparer.OrdinalIgnoreCase)).ToDictionary(project => project.DisplayName,
+            project => _postMerge.Read(project.Id), StringComparer.OrdinalIgnoreCase);
+        rows = rows.Select(row => states.TryGetValue(row.Project, out var state)
+            ? row with
+            {
+                DevelopState = state.Runs.Count == 0 && state.ActiveRun is null ? null : state.DevelopState,
+                LastGreenSha = state.LastGreenSha,
+                LastNightlyGuard = state.Runs.LastOrDefault(run => run.Kind == "nightly") is { } nightly
+                    ? $"{nightly.Status} · {nightly.TipSha[..12]}" : null,
+                Baseline = PostMergeMetrics.Decorate(row.Baseline ?? PipelineBaseline.Unknown,
+                    [state], since, now),
+            }
+            : row).ToArray();
+        rows[0] = rows[0] with
+        {
+            DevelopState = rows.Skip(1).Any(row => row.DevelopState == "red") ? "red"
+                : rows.Skip(1).Any(row => row.DevelopState == "running") ? "running"
+                : rows.Skip(1).Any(row => row.DevelopState == "green") ? "green" : null,
+            Baseline = PostMergeMetrics.Decorate(rows[0].Baseline ?? PipelineBaseline.Unknown,
+                states.Values.ToArray(), since, now),
+        };
+        var response = new GateEconomicsResponse(window, now, rows,
             BoardRead: PipelineBaselineMetrics.BoardRead(AgentStudio.Git.GitProcessTelemetry.GetStatsSnapshot(
                 AgentStudio.Git.GitTelemetryAdminEndpoints.StatsWindow, _time)),
             BoardReadWindowMinutes: AgentStudio.Git.GitTelemetryAdminEndpoints.StatsWindow.TotalMinutes);
