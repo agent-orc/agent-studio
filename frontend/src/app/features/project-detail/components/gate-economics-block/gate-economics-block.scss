@@ -11,8 +11,9 @@ button[aria-pressed='true'] { border-color: var(--studio-accent); background: va
 table { width: 100%; min-width: 82rem; table-layout: fixed; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: var(--studio-card-meta-size); }
 th, td { text-align: right; padding: var(--studio-spacing-2); border-bottom: 1px solid var(--studio-card-muted-border); overflow-wrap: anywhere; }
 th:first-child { width: 11rem; text-align: left; padding-left: var(--studio-card-compact-padding-inline); }
+table.ge__narrow { min-width: 40rem; max-width: 64rem; }
 .ge__project { display: inline-flex; align-items: center; gap: var(--studio-spacing-1); white-space: nowrap; }
 .ge__mark { display: inline-block; width: 0.55rem; height: 0.55rem; border-radius: 50%; outline: 1px solid var(--studio-card-muted-border); }
 .ge__code { color: var(--studio-fg-muted); font-weight: 700; }
-tbody tr:first-child { background: var(--studio-bg-selected); font-weight: 700; }
+table:not(.ge__narrow) tbody tr:first-child { background: var(--studio-bg-selected); font-weight: 700; }
 .ge__empty { padding: var(--studio-spacing-3); }
