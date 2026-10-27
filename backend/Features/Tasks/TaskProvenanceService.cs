@@ -43,7 +43,7 @@ public sealed class TaskProvenanceService
     private readonly ProjectSettingsService _settings;
     private readonly TaskMutationService _mutations;
     private readonly ILogger<TaskProvenanceService> _logger;
-    private readonly AgentStudio.Git.SourceFacts.ISourceFactsReader? _sourceFacts;
+    private readonly AgentStudio.Git.ISourceFactsReader? _sourceFacts;
 
     public const string ReleaseBranch = "main";
 
@@ -52,7 +52,7 @@ public sealed class TaskProvenanceService
         ProjectSettingsService settings,
         TaskMutationService mutations,
         ILogger<TaskProvenanceService> logger,
-        AgentStudio.Git.SourceFacts.ISourceFactsReader? sourceFacts = null)
+        AgentStudio.Git.ISourceFactsReader? sourceFacts = null)
     {
         _git = git;
         _settings = settings;
@@ -71,7 +71,7 @@ public sealed class TaskProvenanceService
     /// </summary>
     public async Task<TaskProvenanceView> BuildViewAsync(TaskInfo info, CancellationToken ct)
     {
-        if (_sourceFacts is not { Mode: AgentStudio.Git.SourceFacts.SourceFactsReadMode.Derived } facts)
+        if (_sourceFacts is not { Mode: AgentStudio.Git.SourceFactsReadMode.Derived } facts)
             return BuildView(info);
 
         using var _t = GitProcessTelemetry.BeginRequest("tasks/provenance", _logger);
@@ -79,7 +79,7 @@ public sealed class TaskProvenanceService
         var shas = AttributedChain(info).Select(commit => commit.Sha).ToArray();
         string[] targets = [integrationBranch, ReleaseBranch];
         var read = shas.Length == 0
-            ? AgentStudio.Git.SourceFacts.SourceFactRead<SourceReachabilityView>.Ready(
+            ? AgentStudio.Git.SourceFactRead<SourceReachabilityView>.Ready(
                 new SourceReachabilityView(info.ProjectName, [], [], []))
             : await facts.GetReachabilityAsync(info.ProjectName, shas, targets, ct);
         var view = BuildDerivedView(info, integrationBranch, read);
@@ -89,7 +89,7 @@ public sealed class TaskProvenanceService
                 "card-open-provenance",
                 Shas: missing.Missing.Select(pair => pair.Sha).Distinct(StringComparer.Ordinal).ToArray(),
                 TargetRefs: missing.Missing.Select(pair => pair.TargetRef).Distinct(StringComparer.Ordinal).ToArray()), ct);
-        else if (read.State == AgentStudio.Git.SourceFacts.SourceFactStates.Warming && shas.Length > 0)
+        else if (read.State == AgentStudio.Git.SourceFactStates.Warming && shas.Length > 0)
             await facts.RequestAsync(info.ProjectName, new SourceFactDemandRequest(
                 SourceFactKinds.Reachability, "card-open-provenance", Shas: shas, TargetRefs: targets), ct);
         return view;
@@ -105,7 +105,7 @@ public sealed class TaskProvenanceService
     public static TaskProvenanceView BuildDerivedView(
         TaskInfo info,
         string integrationBranch,
-        AgentStudio.Git.SourceFacts.SourceFactRead<SourceReachabilityView> read)
+        AgentStudio.Git.SourceFactRead<SourceReachabilityView> read)
     {
         var branch = WorktreeTaskLifecycle.BranchFor(info.Id);
         var prov = info.Provenance;
@@ -126,11 +126,11 @@ public sealed class TaskProvenanceService
         var mergedToIntegration = commits.Count > 0 && commits.All(commit => commit.AlsoOnIntegration);
         var releasedToRelease = commits.Count > 0 && commits.All(commit => commit.AlsoOnRelease);
         string? Head(string target) => reach?.Heads.FirstOrDefault(head => head.Ref == target)?.Sha;
-        var state = read.State != AgentStudio.Git.SourceFacts.SourceFactStates.Ready
+        var state = read.State != AgentStudio.Git.SourceFactStates.Ready
             ? read.State
             : reach is { Missing.Count: > 0 }
-                ? AgentStudio.Git.SourceFacts.SourceFactStates.Warming
-                : AgentStudio.Git.SourceFacts.SourceFactStates.Ready;
+                ? AgentStudio.Git.SourceFactStates.Warming
+                : AgentStudio.Git.SourceFactStates.Ready;
         return new TaskProvenanceView
         {
             Branch = prov?.Branch ?? branch,

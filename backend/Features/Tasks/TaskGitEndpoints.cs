@@ -308,7 +308,7 @@ public static class TaskGitEndpoints
             var info = scanner.FindJob(jobId, watchPath);
             if (info == null) return Results.NotFound(new { error = "Job not found" });
             return Results.Ok(await provenance.BuildViewAsync(info, ct));
-        }).AddEndpointFilter<AgentStudio.Git.SourceFacts.GitSpawnCountFilter>();
+        }).AddEndpointFilter<AgentStudio.Git.GitSpawnCountFilter>();
 
         // Per-job hygiene: project-level snapshot overlaid with whether the
         // job carries a platform-owned commit stamp and whether accepted task

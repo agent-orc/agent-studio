@@ -116,7 +116,7 @@ public static class TaskFilesEndpoints
 
             var content = files.ReadFile(jobId, watchPath, path, at, TaskFileSources.Code);
             return FileContentResult(content);
-        }).AddEndpointFilter<AgentStudio.Git.SourceFacts.GitSpawnCountFilter>();
+        }).AddEndpointFilter<AgentStudio.Git.GitSpawnCountFilter>();
 
         // Lists supported documents directly in the job root (status.md
         // excluded). Drives the detail view's Files tab (F48): prompt, aspect

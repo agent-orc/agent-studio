@@ -459,8 +459,8 @@ builder.Services.AddSingleton<TaskMutationService>();
 builder.Services.AddSingleton<ITaskHistoryGitRunner, ProcessTaskHistoryGitRunner>();
 // AGT-3318: card-open provenance and source file history read the derived
 // source facts on the Task Server; SourceFacts:ReadMode=legacy rolls back.
-builder.Services.AddSingleton<AgentStudio.Git.SourceFacts.ISourceFactsReader,
-    AgentStudio.Git.SourceFacts.TaskServerSourceFactsReader>();
+builder.Services.AddSingleton<AgentStudio.Git.ISourceFactsReader,
+    AgentStudio.Git.TaskServerSourceFactsReader>();
 builder.Services.AddSingleton<TaskFileHistoryService>();
 builder.Services.AddSingleton<ResultVersionStore>();
 builder.Services.AddSingleton<LegacyResultHistoryBackfill>();

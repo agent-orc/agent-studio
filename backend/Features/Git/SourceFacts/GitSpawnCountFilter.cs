@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace AgentStudio.Git.SourceFacts;
+namespace AgentStudio.Git;
 
 /// <summary>
 /// Reports the Git processes one request started in <c>X-Git-Spawns</c>

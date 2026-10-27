@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using AgentStudio.Host;
 using AgentStudio.TaskServer.Contracts;
 
-namespace AgentStudio.Git.SourceFacts;
+namespace AgentStudio.Git;
 
 /// <summary>
 /// Where card-open provenance and source file history come from (AGT-3318,

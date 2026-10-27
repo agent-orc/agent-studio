@@ -31,7 +31,7 @@ public sealed class TaskFileHistoryService
     /// at the policy default.
     /// </summary>
     private readonly TimeSpan _gitCallBudget;
-    private readonly AgentStudio.Git.SourceFacts.ISourceFactsReader? _sourceFacts;
+    private readonly AgentStudio.Git.ISourceFactsReader? _sourceFacts;
 
     public TaskFileHistoryService(
         TaskScannerService scanner,
@@ -39,7 +39,7 @@ public sealed class TaskFileHistoryService
         ILogger<TaskFileHistoryService> logger,
         TimeSpan? gitCallBudget = null,
         ITaskHistoryGitRunner? runner = null,
-        AgentStudio.Git.SourceFacts.ISourceFactsReader? sourceFacts = null)
+        AgentStudio.Git.ISourceFactsReader? sourceFacts = null)
     {
         _scanner = scanner;
         _git = git;
@@ -51,7 +51,7 @@ public sealed class TaskFileHistoryService
 
     /// <summary>True when source file history is served from derived facts (AGT-3318).</summary>
     public bool ReadsDerivedCodeHistory
-        => _sourceFacts?.Mode == AgentStudio.Git.SourceFacts.SourceFactsReadMode.Derived;
+        => _sourceFacts?.Mode == AgentStudio.Git.SourceFactsReadMode.Derived;
 
     /// <summary>
     /// Source file history of a card from the path history the runner-host
@@ -72,26 +72,26 @@ public sealed class TaskFileHistoryService
         var path = NormalizeFileIndexPath(requestPath.Trim());
         if (path.Length == 0 || path.Split('/').Any(segment => segment is ".." or "."))
             return (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Fail(
-                StatusCodes.Status400BadRequest, "Path must be repository-relative."), AgentStudio.Git.SourceFacts.SourceFactStates.Ready);
+                StatusCodes.Status400BadRequest, "Path must be repository-relative."), AgentStudio.Git.SourceFactStates.Ready);
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null)
             return (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Fail(
-                StatusCodes.Status404NotFound, "Task not found."), AgentStudio.Git.SourceFacts.SourceFactStates.Ready);
+                StatusCodes.Status404NotFound, "Task not found."), AgentStudio.Git.SourceFactStates.Ready);
         var head = ResultHead(info);
         if (head is null)
             return (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Ok([], TaskFileSources.Code),
-                AgentStudio.Git.SourceFacts.SourceFactStates.Unavailable);
+                AgentStudio.Git.SourceFactStates.Unavailable);
 
         var read = await facts.GetPathHistoryAsync(info.ProjectName, head, path, ct);
         if (read.Value is null)
         {
-            if (read.State == AgentStudio.Git.SourceFacts.SourceFactStates.Warming)
+            if (read.State == AgentStudio.Git.SourceFactStates.Warming)
                 await facts.RequestAsync(info.ProjectName, new SourceFactDemandRequest(
                     SourceFactKinds.PathHistory, "card-open-file-history", HeadSha: head, Path: path), ct);
             return (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Ok([], TaskFileSources.Code), read.State);
         }
         return (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Ok(
-            ProjectDerivedHistory(read.Value, path), TaskFileSources.Code), AgentStudio.Git.SourceFacts.SourceFactStates.Ready);
+            ProjectDerivedHistory(read.Value, path), TaskFileSources.Code), AgentStudio.Git.SourceFactStates.Ready);
     }
 
     /// <summary>The card's result head: its last attributed commit.</summary>
