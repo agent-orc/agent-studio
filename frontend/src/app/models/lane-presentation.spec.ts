@@ -63,7 +63,7 @@ describe('lane presentation', () => {
       expect(laneTone(TaskState.HumanReview)).toBe('human-review');
     });
 
-    it('does not share the Delivered tone — green stays reserved for Delivered', () => {
+    it('does not share the Accepted tone; green stays reserved for Accepted', () => {
       expect(laneTone(TaskState.HumanReview)).not.toBe(laneTone(TaskState.Completed));
     });
   });
