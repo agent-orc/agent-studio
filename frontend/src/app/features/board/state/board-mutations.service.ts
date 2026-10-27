@@ -1,6 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { switchMap, takeWhile, timer } from 'rxjs';
 import { BatchMoveJobResponse, TaskInfo, TaskState } from '../../../models/task.model';
+import { laneName } from '../../../models/lane-presentation';
 import { TaskService } from '../../../services/task.service';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
 import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
@@ -181,7 +182,7 @@ export class BoardMutationsService {
     });
     void persisted.catch(() => undefined);
     const actionLabel = targetState === TaskState.Completed
-        ? 'Accepted'
+        ? laneName(TaskState.Completed)
         : targetState === TaskState.Ready
           ? 'Requeued'
           : targetState === TaskState.Archive ? 'Archived' : 'Moved';

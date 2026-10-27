@@ -236,7 +236,7 @@ exactly what the board draws. `buildProjectSidebarRows` uses the grouped feed
 and keeps the total equal to the visible lane counters.
 
 Lane pigments come from the shared `--lane-*` palette. Human Review reads
-`--lane-human-review`; green is reserved for Delivered (`--lane-completed`).
+`--lane-human-review`; green is reserved for Accepted (`--lane-completed`).
 
 Locked by `studio-shell.project-rows.spec.ts` (dot count equals visible board
 lane count) and `e2e/workspace/explorer-lane-dots-match-board.spec.ts` (both

@@ -48,11 +48,11 @@ const PROMOTE_TO_READY_SKIP_PREP: TriageButton = { id: 'promote-ready-skip', lab
 const FORCE_TO_READY: TriageButton           = { id: 'force-to-ready',     label: 'Force to Ready',                   variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Ready } };
 const SEND_TO_BACKLOG: TriageButton          = { id: 'send-to-backlog',    label: 'Send to Backlog',                  variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Backlog } };
 const SEND_TO_PREP: TriageButton             = { id: 'send-to-prep',       label: 'Send to Preparation',              variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Preparation } };
-// "Move toward Delivered / Archive" mirror "Send to Backlog": plain move
+// "Move toward Accepted / Archive" mirror "Send to Backlog": plain move
 // actions surfaced in the overflow menu from (almost) every lane so the
 // operator can park a card in 6-completed / 7-archive without opening the
 // lane dropdown. overflowActionsFor() handles dedup + current-lane skip.
-export const MOVE_TO_COMPLETED: TriageButton = { id: 'move-to-completed',   label: 'Move to Delivered',                variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Completed } };
+export const MOVE_TO_COMPLETED: TriageButton = { id: 'move-to-completed',   label: `Move to ${laneName(TaskState.Completed)}`, variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Completed } };
 export const MOVE_TO_ARCHIVE: TriageButton   = { id: 'move-to-archive',     label: 'Move to Archive',                  variant: 'secondary', intent: { kind: 'move', targetState: TaskState.Archive } };
 export const EDIT_BUTTON: TriageButton       = { id: 'edit-prompt',        label: 'Edit prompt',                      variant: 'secondary', intent: { kind: 'editPrompt' } };
 export const DELETE_BUTTON: TriageButton     = { id: 'delete',             label: 'Delete task',                      variant: 'danger',    intent: { kind: 'delete' } };
@@ -301,7 +301,7 @@ export function mergeAcceptViewFor(
         ? 'Accept' : 'Await integration',
       statusLabel: null,
       statusTooltip: info.integration?.status === 'not-applicable'
-        ? 'This delivery needs no integration. Accept moves the card to Delivered.'
+        ? `This delivery needs no integration. Accept moves the card to ${laneName(TaskState.Completed)}.`
         : null,
     };
   }
@@ -326,7 +326,7 @@ export function mergeAcceptViewFor(
       acceptLabel: 'Accept',
       statusLabel: 'Released to main',
       statusTooltip:
-        "This task's work is already released to main. Accept moves the card to Delivered; no merge is triggered.",
+        `This task's work is already released to main. Accept moves the card to ${laneName(TaskState.Completed)}; no merge is triggered.`,
     };
   }
 
@@ -336,8 +336,8 @@ export function mergeAcceptViewFor(
     acceptLabel: 'Accept',
     statusLabel: mergeSha ? `Merged to develop @${mergeSha}` : 'Merged to develop',
     statusTooltip: mergeSha
-      ? `This task's work is already merged into develop at ${mergeSha}. Accept moves the card to Delivered; no merge is triggered.`
-      : "This task's work is already merged into develop. Accept moves the card to Delivered; no merge is triggered.",
+      ? `This task's work is already merged into develop at ${mergeSha}. Accept moves the card to ${laneName(TaskState.Completed)}; no merge is triggered.`
+      : `This task's work is already merged into develop. Accept moves the card to ${laneName(TaskState.Completed)}; no merge is triggered.`,
   };
 }
 

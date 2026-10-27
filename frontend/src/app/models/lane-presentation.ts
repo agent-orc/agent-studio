@@ -119,8 +119,10 @@ export const LANE_PRESENTATIONS: readonly LanePresentation[] = [
   lane(TaskState.HumanReview, 'Human review',
     'Waiting for a human decision.',
     'human-review', '👁️', 'lane-5-human-review'),
-  lane(TaskState.Completed, 'Delivered',
-    'Delivered and accepted.',
+  // AGT-3276 D10 A: "Delivered" read as "live"; the word Delivery is now
+  // reserved for the board's per-environment Delivery section.
+  lane(TaskState.Completed, 'Accepted',
+    'Integrated and accepted.',
     'completed', '🟢', 'lane-6-completed'),
   lane(TaskState.Archive, 'Archive',
     'Archived; out of the active workflow.',

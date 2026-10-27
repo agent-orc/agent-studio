@@ -797,3 +797,11 @@ select option:hover {
 @media (prefers-reduced-motion: reduce) {
   .app-pending-button--pending::before { animation-duration: 0s; }
 }
+
+/* Board Delivery group (AGT-3276 D5 L-B). The studio board is a three-track
+   grid of super-columns; while the Delivery group shows, it becomes the
+   fourth track. Global because the studio-shell stylesheet owns the grid and
+   sits at its size budget. */
+.studio .dashboard--studio:has(> app-delivery-section:not(.delivery--empty, .lane-group--hidden-by-focus)) {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}

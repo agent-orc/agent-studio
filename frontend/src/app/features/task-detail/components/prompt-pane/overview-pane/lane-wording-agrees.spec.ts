@@ -67,7 +67,7 @@ describe('lane wording agrees across the run-outcome chain', () => {
     expect(badge.tooltip.title).not.toContain('lane');
   });
 
-  it('names the Escalated and Delivered lane signals the same way', () => {
+  it('names the Escalated and Accepted lane signals the same way', () => {
     expect(deriveProtocolVerdict(inputs(TaskState.Escalated)).label)
       .toBe(laneName(TaskState.Escalated));
     expect(deriveProtocolVerdict(inputs(TaskState.Completed)).label)
