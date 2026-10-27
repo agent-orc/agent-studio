@@ -14,6 +14,8 @@ public static class HumanReviewEscalationCategories
     public const string AutoReviewEscalation = "auto-review-escalation";
     /// <summary>A failure boundary raised a deduplicated orchestrator follow-up task.</summary>
     public const string FailureIntervention = "failure-intervention";
+    /// <summary>A post-merge repair card needs operator intervention.</summary>
+    public const string PostMergeAttribution = "post-merge-attribution";
 
     /// <summary>A remote coding claim could not prepare its repository or
     /// execution environment after the durable per-task retry budget.</summary>
@@ -201,6 +203,8 @@ public sealed class HumanReviewEscalation
     private readonly ILogger _logger;
     private readonly TaskScannerService? _scanner;
     private readonly WorkspaceArtifactCommitService? _workspaceArtifactCommits;
+    private readonly AgentStudio.Pipeline.PostMergeRunStore? _postMergeRuns;
+    private readonly AgentStudio.Registry.ProjectRegistry? _projects;
 
     /// <summary>DI ctor: the workspace root is the same <c>TaskRepository</c> the
     /// verdict-read side (<c>TaskEndpointHelpers.BuildOrchestratorVerdictLookup</c>)
@@ -211,8 +215,11 @@ public sealed class HumanReviewEscalation
         IConfiguration configuration,
         ILogger<HumanReviewEscalation> logger,
         TaskScannerService? scanner = null,
-        WorkspaceArtifactCommitService? workspaceArtifactCommits = null)
-        : this(states, transitions, configuration["TaskRepository"], logger, scanner, workspaceArtifactCommits)
+        WorkspaceArtifactCommitService? workspaceArtifactCommits = null,
+        AgentStudio.Pipeline.PostMergeRunStore? postMergeRuns = null,
+        AgentStudio.Registry.ProjectRegistry? projects = null)
+        : this(states, transitions, configuration["TaskRepository"], logger, scanner,
+            workspaceArtifactCommits, postMergeRuns, projects)
     {
     }
 
@@ -224,13 +231,17 @@ public sealed class HumanReviewEscalation
         string? workspaceRoot,
         ILogger logger,
         TaskScannerService? scanner = null,
-        WorkspaceArtifactCommitService? workspaceArtifactCommits = null)
+        WorkspaceArtifactCommitService? workspaceArtifactCommits = null,
+        AgentStudio.Pipeline.PostMergeRunStore? postMergeRuns = null,
+        AgentStudio.Registry.ProjectRegistry? projects = null)
     {
         _transitions = transitions;
         _workspaceRoot = workspaceRoot;
         _logger = logger;
         _scanner = scanner;
         _workspaceArtifactCommits = workspaceArtifactCommits;
+        _postMergeRuns = postMergeRuns;
+        _projects = projects;
     }
 
     /// <summary>
@@ -272,6 +283,7 @@ public sealed class HumanReviewEscalation
             transitionDetail: category);
         if (outcome.Status == MoveJobStatus.Success)
         {
+            RecordPostMergeAttributionEscalation(project, jobId, category);
             RecordVerdictAndStatus(project, jobId, outcome.NewFolderPath, category, reason, statusDetail);
             if (CarriesNeedsInputArtifact(category) && outcome.NewFolderPath is not null)
                 NeedsInputArtifact.ReferenceFromParkedBlocker(outcome.NewFolderPath, _logger);
@@ -309,6 +321,7 @@ public sealed class HumanReviewEscalation
             .GetResult();
         if (outcome.Status == MoveJobStatus.Success)
         {
+            RecordPostMergeAttributionEscalation(project, jobId, category);
             RecordVerdictAndStatus(project, jobId, outcome.NewFolderPath, category, reason);
             if (CarriesNeedsInputArtifact(category) && outcome.NewFolderPath is not null)
                 NeedsInputArtifact.ReferenceFromParkedBlocker(outcome.NewFolderPath, _logger);
@@ -319,6 +332,27 @@ public sealed class HumanReviewEscalation
                 "HumanReviewEscalation: move of {Project}/{JobId} to 5e-escalated failed: {Status} {Message}",
                 project, jobId, outcome.Status, outcome.Message);
         return outcome;
+    }
+
+    private void RecordPostMergeAttributionEscalation(string project, string jobId, string category)
+    {
+        if (category != HumanReviewEscalationCategories.PostMergeAttribution
+            || _postMergeRuns is null || _projects is null) return;
+        var record = _projects.FindByIdOrDisplayName(project);
+        if (record is null)
+        {
+            _logger.LogWarning("Post-merge attribution escalation has no registered project: {Project}", project);
+            return;
+        }
+        try
+        {
+            _postMergeRuns.RecordAttributionEscalation(record.Id, jobId);
+        }
+        catch (IOException ex)
+        {
+            _logger.LogWarning(ex, "Post-merge attribution escalation could not be recorded for {Project}/{JobId}",
+                project, jobId);
+        }
     }
 
     private static bool CarriesNeedsInputArtifact(string category)

@@ -65,8 +65,8 @@ public sealed class PostMergeRunStore
                 state = state with
                 {
                     DevelopState = run.Status,
-                    AttributionEscalationActive = run.Status == "red"
-                        && state.AttributionEscalationActive,
+                    AttributionEscalatedTaskId = run.Status == "green"
+                        ? null : state.AttributionEscalatedTaskId,
                     LastGreenSha = run.Status == "green" ? run.TipSha : state.LastGreenSha,
                     LastWindowTipSha = run.Kind == "window" || run.Status == "green"
                         ? run.TipSha : state.LastWindowTipSha,
@@ -80,13 +80,15 @@ public sealed class PostMergeRunStore
         }
     }
 
-    /// <summary>Called by attribution when its repair card enters or leaves escalation.</summary>
-    public void SetAttributionEscalation(string projectId, bool active)
+    /// <summary>Records the repair card after its escalation move succeeds.</summary>
+    public void RecordAttributionEscalation(string projectId, string taskId)
     {
+        if (string.IsNullOrWhiteSpace(taskId))
+            throw new ArgumentException("An escalated repair card ID is required.", nameof(taskId));
         lock (_gate)
         {
             var state = ReadLocked(projectId);
-            WriteLocked(projectId, state with { AttributionEscalationActive = active });
+            WriteLocked(projectId, state with { AttributionEscalatedTaskId = taskId });
         }
     }
 

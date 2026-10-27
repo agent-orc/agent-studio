@@ -60,5 +60,9 @@ public sealed class PostMergeModeTests
         Assert.True(PostMergeModeService.EscalationActive(state, now));
         Assert.False(PostMergeModeService.EscalationActive(
             state with { DevelopState = "green" }, now));
+        Assert.True(PostMergeModeService.EscalationActive(
+            state with { DevelopState = "green" }, now, repairEscalated: true));
+        Assert.False(PostMergeModeService.EscalationActive(
+            state with { DevelopState = "green" }, now, repairEscalated: false));
     }
 }

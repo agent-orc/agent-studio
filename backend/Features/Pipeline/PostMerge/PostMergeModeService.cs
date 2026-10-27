@@ -4,18 +4,20 @@ namespace AgentStudio.Pipeline;
 
 /// <summary>Resolves the project switch and the active red-develop escalation fallback.</summary>
 public sealed class PostMergeModeService(ProjectRegistry projects, PostMergeRunStore runs,
-    TimeProvider clock)
+    TaskScannerService scanner, TimeProvider clock)
 {
     public string Resolve(string project, ProjectSettings? settings)
     {
         var configured = IntegrationTestModes.Resolve(settings);
         if (configured != IntegrationTestModes.PostMerge) return configured;
-        var id = projects.FindByIdOrDisplayName(project)?.Id;
-        if (id is null) return IntegrationTestModes.PreMerge;
+        var record = projects.FindByIdOrDisplayName(project);
+        if (record is null) return IntegrationTestModes.PreMerge;
         try
         {
-            var state = runs.Read(id);
-            return EscalationActive(state, clock.GetUtcNow())
+            var state = runs.Read(record.Id);
+            var repairEscalated = state.AttributionEscalatedTaskId is { } taskId
+                && scanner.FindJob(taskId, record.StorageLocation)?.State == TaskStates.Escalated;
+            return EscalationActive(state, clock.GetUtcNow(), repairEscalated)
                 ? IntegrationTestModes.PreMerge : configured;
         }
         catch (IOException)
@@ -25,9 +27,10 @@ public sealed class PostMergeModeService(ProjectRegistry projects, PostMergeRunS
     }
 
     internal static bool EscalationActive(
-        AgentStudio.TaskServer.Contracts.PostMergeProjectState state, DateTimeOffset now)
+        AgentStudio.TaskServer.Contracts.PostMergeProjectState state, DateTimeOffset now,
+        bool repairEscalated = false)
     {
-        if (state.AttributionEscalationActive) return true;
+        if (repairEscalated) return true;
         if (state.DevelopState is not ("red" or "running")) return false;
         var openIncident = state.Runs.Reverse().TakeWhile(run => run.Status != "green")
             .Where(run => run.Status == "red" && run.FinishedAtUtc is not null)
