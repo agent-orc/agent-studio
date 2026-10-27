@@ -53,6 +53,8 @@ public sealed class DeployService
     private readonly HashSet<string> _failureCardsHandled = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (string Signature, DeliveryLaneResponse Value)> _deliveryLaneCache =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (string Signature, DeliveryColumnsResponse Value)> _deliveryColumnCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public DeployService(ProjectEnvironmentService environments, DeployStore store, GitService git,
         TaskScannerService scanner, TimeProvider clock, ILogger<DeployService> logger,
@@ -67,11 +69,24 @@ public sealed class DeployService
         _mutations = mutations;
     }
 
+    /// <summary>
+    /// The lifecycle environments in lifecycle order (AGT-3276 D6); <c>Order</c>
+    /// is the position. A kind beyond stage and production, such as a Dev
+    /// environment, joins as <see cref="EnvironmentKinds.Other"/> only when its
+    /// declaration sets an explicit order, so an existing direct-deploy target
+    /// never starts receiving releases.
+    /// </summary>
     public static IReadOnlyList<DeployEnvironment> MapEnvironments(string project,
         IEnumerable<EnvironmentDeclaration> declarations)
-        => declarations.Where(item => item.Kind is "stage" or "production")
-            .Select((item, index) => new DeployEnvironment(item.Id, project, item.Name, index,
-                item.Kind == "stage" ? EnvironmentKinds.Staging : EnvironmentKinds.Production)
+        => declarations.Where(item => item.Kind is "stage" or "production"
+                || item.Kind != "preview" && item.Order is not null)
+            .OrderBy(item => item.LifecycleOrder()).ThenBy(item => item.Id, StringComparer.Ordinal)
+            .Select((item, index) => new DeployEnvironment(item.Id, project, item.Name, index, item.Kind switch
+            {
+                "stage" => EnvironmentKinds.Staging,
+                "production" => EnvironmentKinds.Production,
+                _ => EnvironmentKinds.Other,
+            })
             { Protected = item.Protected, Automatic = item.Automatic, Requires = item.Requires })
             .ToArray();
 
@@ -142,7 +157,8 @@ public sealed class DeployService
             return DeployOutcome<Release>.Conflict(
                 $"The environment declarations at commit {ShortSha(commit)} could not be read completely.");
         var environments = MapEnvironments(project, declarations);
-        var staging = environments.FirstOrDefault(StandardLifecyclePolicy.IsAutomatic);
+        var staging = environments.Where(item => item.Kind != EnvironmentKinds.Other)
+            .FirstOrDefault(StandardLifecyclePolicy.IsAutomatic);
         if (staging is null || !environments.Any(StandardLifecyclePolicy.RequiresApproval))
             return DeployOutcome<Release>.Invalid(
                 $"Staging and production declarations are required at commit {ShortSha(commit)}.");
@@ -168,9 +184,11 @@ public sealed class DeployService
             : (null, requestedChannel is not null && requestedChannel != knownRecord.Release.Channel
                 ? $"Release already belongs to channel '{knownRecord.Release.Channel}'." : null);
         if (channelError is not null) return DeployOutcome<Release>.Invalid(channelError);
-        var lifecycle = knownRecord is { Lifecycle.Count: > 0 }
-            ? knownRecord.Lifecycle : ReleaseChannelPolicy.Lifecycle(definition, channel);
-        var firstPhase = lifecycle.FirstOrDefault();
+        var lifecycle = knownRecord is { Lifecycle.Count: > 0 } ? knownRecord.Lifecycle
+            : channel is null or { Lifecycle: "standard" }
+                ? StandardLifecyclePolicy.WithDeclaredPhases(ReleaseChannelPolicy.Lifecycle(definition, channel), environments)
+                : ReleaseChannelPolicy.Lifecycle(definition, channel);
+        var firstPhase = StandardLifecyclePolicy.IntegrationPhase(lifecycle, environments);
         if (firstPhase is null || firstPhase.Phase != staging.Kind || !firstPhase.Automatic)
             return DeployOutcome<Release>.Invalid($"Channel '{channel?.Name ?? ReleaseSnapshot.DefaultChannel}' lifecycle must start with automatic staging.");
 
@@ -521,29 +539,68 @@ public sealed class DeployService
         {
             var snapshot = SyncLocked(project);
             if (snapshot is null) return null;
-            var tasks = _scanner.ScanAllJobsWithArchive()
-                .Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase))
-                .Select(task => (Task: task, Stamp: File.Exists(Path.Combine(task.FolderPath,
-                    IntegrationVerificationStore.FileName))
-                    ? File.GetLastWriteTimeUtc(Path.Combine(task.FolderPath, IntegrationVerificationStore.FileName)).Ticks : 0L))
-                .ToArray();
             var runs = snapshot.Deployments(project);
-            var signature = string.Join('|', snapshot.Environments.Select(item =>
-                    item.Id + ':' + item.Name + ':' + item.Order))
-                + "|" + string.Join('|', snapshot.Releases.Select(item => item.Id + ':' + item.CardKeys.Count))
-                + "|" + string.Join('|', runs.Select(item => item.Id + ':' + item.State + ':' + item.FinishedAtUtc?.Ticks))
-                + "|" + string.Join('|', tasks.Select(item => item.Task.Id + ':' + item.Task.Title + ':' + item.Stamp));
+            var (signature, integrated) = DeliveryInputs(project, snapshot, runs);
             if (_deliveryLaneCache.TryGetValue(project, out var cached) && cached.Signature == signature)
                 return cached.Value;
-            var integrated = tasks.Where(item => item.Stamp != 0)
-                .Select(item => (item.Task, Verification: IntegrationVerificationStore.Read(item.Task.FolderPath)))
-                .Where(item => item.Verification?.State == IntegrationVerificationStates.Verified)
-                .ToDictionary(item => string.IsNullOrWhiteSpace(item.Task.Key) ? item.Task.Id : item.Task.Key!,
-                    item => item.Task.Title, StringComparer.OrdinalIgnoreCase);
-            var value = DeliveryLaneProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, integrated);
+            var value = DeliveryLaneProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, integrated());
             _deliveryLaneCache[project] = (signature, value);
             return value;
         }
+    }
+
+    /// <summary>
+    /// The Delivery section read model (AGT-3276 D5, D6): the integrated
+    /// column and one column per declared environment in lifecycle order.
+    /// Cached like <see cref="DeliveryLanes"/>, plus host health and depth.
+    /// </summary>
+    public DeliveryColumnsResponse? DeliveryColumns(string project,
+        int releaseDepth = DeliveryColumnProjection.DefaultReleaseDepth)
+    {
+        lock (_gate)
+        {
+            var snapshot = SyncLocked(project);
+            if (snapshot is null) return null;
+            var runs = snapshot.Deployments(project).Where(item => item.Tenant is null).ToArray();
+            var health = snapshot.View.Environments.ToDictionary(item => item.Declaration.Id, item => item.Health,
+                StringComparer.Ordinal);
+            var (inputs, integrated) = DeliveryInputs(project, snapshot, runs);
+            var signature = inputs + "|" + releaseDepth + "|" + string.Join('|', health.Select(item => item.Key + ':' + item.Value));
+            if (_deliveryColumnCache.TryGetValue(project, out var cached) && cached.Signature == signature)
+                return cached.Value;
+            var value = DeliveryColumnProjection.Project(project, snapshot.Environments, snapshot.Releases, runs, health,
+                snapshot.Records.ToDictionary(item => item.Key, item => item.Value.Lifecycle, StringComparer.Ordinal),
+                integrated().Keys, releaseDepth);
+            _deliveryColumnCache[project] = (signature, value);
+            return value;
+        }
+    }
+
+    /// <summary>
+    /// The cache signature of a delivery read, and the archive-inclusive cards
+    /// with a verified integration by key and title. Only the stamps of the
+    /// verification files are read until the signature changes.
+    /// </summary>
+    private (string Signature, Func<Dictionary<string, string>> Integrated) DeliveryInputs(string project,
+        Snapshot snapshot, IReadOnlyList<Deployment> runs)
+    {
+        var tasks = _scanner.ScanAllJobsWithArchive()
+            .Where(task => string.Equals(task.ProjectName, project, StringComparison.OrdinalIgnoreCase))
+            .Select(task => (Task: task, Stamp: File.Exists(Path.Combine(task.FolderPath,
+                IntegrationVerificationStore.FileName))
+                ? File.GetLastWriteTimeUtc(Path.Combine(task.FolderPath, IntegrationVerificationStore.FileName)).Ticks : 0L))
+            .ToArray();
+        var signature = string.Join('|', snapshot.Environments.Select(item =>
+                item.Id + ':' + item.Name + ':' + item.Order))
+            + "|" + string.Join('|', snapshot.Releases.Select(item => item.Id + ':' + item.CardKeys.Count))
+            + "|" + string.Join('|', runs.Select(item => item.Id + ':' + item.State + ':' + item.FinishedAtUtc?.Ticks))
+            + "|" + string.Join('|', tasks.Select(item => item.Task.Id + ':' + item.Task.Title + ':' + item.Stamp));
+        return (signature, () => tasks.Where(item => item.Stamp != 0)
+            .Select(item => (item.Task, Verification: IntegrationVerificationStore.Read(item.Task.FolderPath)))
+            .Where(item => item.Verification?.State == IntegrationVerificationStates.Verified)
+            .GroupBy(item => string.IsNullOrWhiteSpace(item.Task.Key) ? item.Task.Id : item.Task.Key!,
+                StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Task.Title, StringComparer.OrdinalIgnoreCase));
     }
 
     public DeployMatrixResponse Matrix()
@@ -950,9 +1007,9 @@ public sealed class DeployService
         var previous = releaseEnvironments.Where(item => item.Order < environment.Order)
             .OrderBy(item => item.Order).LastOrDefault();
         var phases = snapshot.Records.TryGetValue(release.Id, out var lifecycleRecord) ? lifecycleRecord.Lifecycle : [];
-        var required = phases.FirstOrDefault(item => item.Phase == environment.Kind)?.Requires;
+        var required = StandardLifecyclePolicy.PhaseFor(phases, environment)?.Requires;
         var prerequisite = phases.Count == 0 ? previous
-            : required is null ? null : releaseEnvironments.FirstOrDefault(item => item.Kind == required);
+            : required is null ? null : releaseEnvironments.FirstOrDefault(item => StandardLifecyclePolicy.Names(required, item));
         return new(intent, environment, actor, approve,
             prerequisite is null || EnvironmentStatusProjection.SucceededIn(tenantDeployments, release.Id, prerequisite.Id),
             EnvironmentStatusProjection.Position(release, EnvironmentStatusProjection.CurrentRelease(here, snapshot.ReleaseById)),
@@ -1042,7 +1099,8 @@ public sealed class DeployService
     {
         var artifact = release.ArtifactDigests[0];
         var record = snapshot.Records[release.Id];
-        var environment = target.Kind == "stage" ? EnvironmentKinds.Staging : EnvironmentKinds.Production;
+        // The same environment name DeployJobReleaseBinding verifies the variables against.
+        var environment = target.Kind == "stage" ? EnvironmentKinds.Staging : target.Kind;
         var (values, secrets) = ResolveVariables(record, environment, tenant);
         if (tenant is null && trigger == DeploymentTriggers.Deploy && snapshot.View.Promotions.Any(item => item.Artifact == artifact
                 && item.ProductionId == target.Id && item.Status == "pending"))
@@ -1223,7 +1281,7 @@ public sealed class DeployService
             DeployStep = declaration?.SshSteps.FirstOrDefault()?.Step == "static-site"
                 ? DeployStepNames.PublishStatic : DeployStepNames.ForTemplate(template),
             NeedsApproval = phases is { Count: > 0 }
-                ? phases.FirstOrDefault(item => item.Phase == environment.Kind)?.Approval.Count > 0
+                ? StandardLifecyclePolicy.PhaseFor(phases, environment)?.Approval.Count > 0
                 : declaration?.Protected ?? StandardLifecyclePolicy.RequiresApproval(environment),
             RequestedBy = requestedBy, ApprovedBy = approvedBy, ApprovedAtUtc = approvedBy is null ? null : now,
             JobId = job?.Id, CreatedAtUtc = now,
@@ -1250,12 +1308,14 @@ public sealed class DeployService
                 _environments.RollbackFailedJob(project, run.JobId!, rollback: run.InterventionDecision != "skip");
         foreach (var record in records.Where(item => item.Lifecycle.Count > 1))
         {
-            foreach (var phase in record.Lifecycle.Skip(1).Where(item => item.Automatic && item.Approval.Count == 0))
+            var integrationPhase = StandardLifecyclePolicy.IntegrationPhase(record.Lifecycle, environments);
+            foreach (var phase in record.Lifecycle.Where(item => item != integrationPhase
+                         && item.Automatic && item.Approval.Count == 0))
             {
-                var environment = environments.FirstOrDefault(item => item.Kind == phase.Phase);
+                var environment = environments.FirstOrDefault(item => StandardLifecyclePolicy.Names(phase.Phase, item));
                 if (environment is null || result.Deployments.Any(item => item.ReleaseId == record.Release.Id
                         && item.EnvironmentId == environment.Id)) continue;
-                if (phase.Requires is { } required && !environments.Any(item => item.Kind == required
+                if (phase.Requires is { } required && !environments.Any(item => StandardLifecyclePolicy.Names(required, item)
                         && EnvironmentStatusProjection.SucceededIn(snapshot.Deployments(project), record.Release.Id, item.Id)))
                     continue;
                 if (Start(project, snapshot, record, environment, DeployIntent.Deploy, false,
