@@ -57,6 +57,7 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
     {
         var job = WriteJob("ASS-853");
         var review = Path.Combine(job, "code-review.md");
+        var beforeFile = RunGitCapture(_workspaceRoot, "rev-parse", "HEAD").Trim();
 
         File.WriteAllText(review, "run 1 review\n", Encoding.UTF8);
         WriteGenerationIndex(job, runIndex: 1);
@@ -75,7 +76,8 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         using var factory = CreateFactory();
         using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
-        using var historyResponse = await client.GetAsync($"/api/tasks/ASS-853/files/code-review.md/history?watchPath={watchPath}");
+        using var historyResponse = await GetReadyHistoryAsync(client,
+            $"/api/tasks/ASS-853/files/code-review.md/history?watchPath={watchPath}");
         historyResponse.EnsureSuccessStatusCode();
 
         using var historyDoc = JsonDocument.Parse(await historyResponse.Content.ReadAsStringAsync());
@@ -93,6 +95,15 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         contentResponse.EnsureSuccessStatusCode();
         Assert.Equal("text/markdown", contentResponse.Content.Headers.ContentType?.MediaType);
         Assert.Equal("run 1 review\n", await contentResponse.Content.ReadAsStringAsync());
+        for (var attempt = 0; attempt < 400; attempt++)
+        {
+            using var missing = await client.GetAsync(
+                $"/api/tasks/ASS-853/files/code-review.md?watchPath={watchPath}&scope=workspace&at={beforeFile}");
+            if (missing.StatusCode == HttpStatusCode.NotFound) return;
+            Assert.Equal(HttpStatusCode.Accepted, missing.StatusCode);
+            await Task.Delay(50);
+        }
+        throw new Xunit.Sdk.XunitException("The missing historical object was not indexed.");
     }
 
     [Fact]
@@ -185,11 +196,13 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         RunGit(_codeRoot, "add", "-A");
         RunGit(_codeRoot, "commit", "-q", "-m", "feat: update app");
         var secondSha = RunGitCapture(_codeRoot, "rev-parse", "HEAD").Trim();
+        RunGit(_codeRoot, "pack-refs", "--all");
 
         using var factory = CreateFactory();
         using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
-        using var historyResponse = await client.GetAsync($"/api/tasks/ASS-900/files/src/app.cs/history?watchPath={watchPath}&scope=code");
+        using var historyResponse = await GetReadyHistoryAsync(client,
+            $"/api/tasks/ASS-900/files/src/app.cs/history?watchPath={watchPath}&scope=code");
         historyResponse.EnsureSuccessStatusCode();
 
         using var historyDoc = JsonDocument.Parse(await historyResponse.Content.ReadAsStringAsync());
@@ -206,7 +219,7 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
     }
 
     [Fact]
-    public async Task CodeFileHistory_WhenTheGitBudgetIsSpent_ReportsItInsteadOfLettingTheClientAbort()
+    public async Task CodeFileHistory_WhenTheProducerBudgetIsSpent_ReportsWarming()
     {
         // The loaded-host case made deterministic: instead of waiting for a slow
         // host to push the lookup past the client's deadline, the server starts
@@ -223,19 +236,12 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
 
-        var started = Stopwatch.StartNew();
         using var response = await client.GetAsync(
             $"/api/tasks/ASS-901/files/src/app.cs/history?watchPath={watchPath}&scope=code");
-        started.Stop();
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Contains(
-            TaskFileHistoryService.GitBudgetExhausted,
-            await response.Content.ReadAsStringAsync(),
-            StringComparison.Ordinal);
-        Assert.True(
-            started.Elapsed < ClientTimeout,
-            $"The server answered in {started.Elapsed}, which must stay inside the client deadline {ClientTimeout}.");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(AgentStudio.Git.SourceFactStates.Warming,
+            Assert.Single(response.Headers.GetValues(TaskFilesEndpoints.SourceFactsStateHeader)));
     }
 
     [Fact]
@@ -255,6 +261,66 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         Assert.DoesNotContain("private content", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task CheckoutWorktree_HistoryAndRevisionReadUsePublishedObjects()
+    {
+        WriteJob("ASS-WORKTREE");
+        var worktree = Path.Combine(_tempDir, "code-worktree");
+        RunGit(_codeRoot, "worktree", "add", "-q", "-b", "feature", worktree);
+        WriteFile(worktree, "src/worktree.cs", "class Worktree { }\n");
+        RunGit(worktree, "add", "-A");
+        RunGit(worktree, "commit", "-q", "-m", "feat: worktree file");
+        var sha = RunGitCapture(worktree, "rev-parse", "HEAD").Trim();
+        RunGit(_codeRoot, "pack-refs", "--all");
+
+        using var factory = CreateFactory(repositoryPath: worktree);
+        using var client = CreateClient(factory);
+        var prefix = "/api/tasks/ASS-WORKTREE/checkout/src/worktree.cs";
+        var query = "?watchPath=" + Uri.EscapeDataString(_workspaceProjectRoot);
+        using var live = await client.GetAsync(prefix + query);
+        live.EnsureSuccessStatusCode();
+        Assert.Equal("class Worktree { }\n", await live.Content.ReadAsStringAsync());
+        using var history = await GetReadyHistoryAsync(client, prefix + "/history" + query);
+        history.EnsureSuccessStatusCode();
+        using var list = JsonDocument.Parse(await history.Content.ReadAsStringAsync());
+        Assert.Equal(sha, list.RootElement.EnumerateArray().First().GetProperty("sha").GetString());
+        using var at = await client.GetAsync(prefix + query + "&at=" + sha);
+        at.EnsureSuccessStatusCode();
+        Assert.Equal("class Worktree { }\n", await at.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task CardAndCheckoutLiveFiles_DoNotDiscoverGitRoots_EvenForMissingAndFallback()
+    {
+        var job = WriteJob("ASS-LIVE-FACTS");
+        WriteFile(job, "orchestrator-follow-up.md", "follow-up\n");
+        WriteFile(job, "results/decision.html", "<h1>Decision</h1>");
+        WriteFile(job, "results/decision.json", "{\"decision\":\"accept\"}");
+        WriteFile(_codeRoot, "src/pipeline-step.cs", "class PipelineStep {}\n");
+        var runner = new RecordingGitRunner();
+        using var factory = CreateFactory(runner: runner);
+        using var client = CreateClient(factory);
+        var prefix = $"/api/tasks/ASS-LIVE-FACTS";
+        var query = "?watchPath=" + Uri.EscapeDataString(_workspaceProjectRoot);
+        foreach (var (route, expected, status) in new[]
+        {
+            ($"{prefix}/files/orchestrator-follow-up.md{query}", "follow-up\n", HttpStatusCode.OK),
+            ($"{prefix}/files/results/decision.html{query}", "<h1>Decision</h1>", HttpStatusCode.OK),
+            ($"{prefix}/files/results/decision.json{query}", "{\"decision\":\"accept\"}", HttpStatusCode.OK),
+            ($"{prefix}/files/src/pipeline-step.cs{query}", "class PipelineStep {}\n", HttpStatusCode.OK),
+            ($"{prefix}/checkout/src/pipeline-step.cs{query}", "class PipelineStep {}\n", HttpStatusCode.OK),
+            ($"{prefix}/files/missing.md{query}", "", HttpStatusCode.NotFound),
+            ($"{prefix}/checkout/missing.md{query}", "", HttpStatusCode.NotFound),
+        })
+        {
+            using var response = await client.GetAsync(route);
+            Assert.Equal(status, response.StatusCode);
+            if (status == HttpStatusCode.OK)
+                Assert.Equal(expected, await response.Content.ReadAsStringAsync());
+        }
+        Assert.Empty(runner.Calls);
     }
 
     [Fact]
@@ -315,6 +381,14 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
 
         await factory.Services.GetRequiredService<LegacyResultHistoryBackfill>()
             .RunBackfillAsync(id, _workspaceProjectRoot);
+
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(id, _workspaceProjectRoot)!;
+        var indexed = Assert.Single(factory.Services.GetRequiredService<AgentStudio.Git.GitFactStore>()
+            .ReadResultVersions(task.TaskKey), row => row.VersionId == "git-" + previousSha);
+        Assert.Equal(1, indexed.RunIndex);
+        Assert.Equal("accept", indexed.Verdict);
+        Assert.Equal("review=pass", indexed.Steps);
+        Assert.Equal(previousSha, indexed.SourceCommit);
 
         using var listResponse = await client.GetAsync(
             $"/api/tasks/{id}/result-history?watchPath={watchPath}");
@@ -463,8 +537,8 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
             using var local = await client.GetAsync($"/api/tasks/{id}/result-history/local-0001?watchPath={watchPath}");
             local.EnsureSuccessStatusCode();
             using var legacy = await client.GetAsync($"/api/tasks/{id}/result-history/git-{previousSha}?watchPath={watchPath}");
-            Assert.Equal(HttpStatusCode.NotFound, legacy.StatusCode);
-            Assert.Contains("Legacy history not loaded yet.", await legacy.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+            Assert.Equal(HttpStatusCode.Accepted, legacy.StatusCode);
+            Assert.Contains("warming", await legacy.Content.ReadAsStringAsync(), StringComparison.Ordinal);
 
             // Only the held rev-parse of the one scheduled backfill ever ran.
             Assert.Equal(new[] { "rev-parse --show-toplevel" }, git.Calls.ToArray());
@@ -534,6 +608,12 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         using var factory = CreateFactory(runner: git);
         using var client = CreateClient(factory);
         var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+        var backfill = factory.Services.GetRequiredService<LegacyResultHistoryBackfill>();
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(id, _workspaceProjectRoot)!;
+        backfill.Observe(task, id, _workspaceProjectRoot);
+        for (var attempt = 0; attempt < 200 && !backfill.IsImportComplete(task); attempt++)
+            await Task.Delay(10);
+        Assert.True(backfill.IsImportComplete(task));
         using var listResponse = await client.GetAsync($"/api/tasks/{id}/result-history?watchPath={watchPath}");
         listResponse.EnsureSuccessStatusCode();
         Assert.Equal(LegacyResultHistoryStates.Complete, LegacyHeader(listResponse));
@@ -680,7 +760,8 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         var status = Path.Combine(job, "status.md");
         File.WriteAllText(status, "# Status\n\n- Result: Partial\n- Case: blocked\n", Encoding.UTF8);
         RunGit(_workspaceRoot, "add", "-A");
-        RunGit(_workspaceRoot, "commit", "-q", "-m", "chore(workspace): record run result");
+        RunGit(_workspaceRoot, "commit", "-q", "-m", "chore(workspace): record run result",
+            "-m", "Run-Index: 1\nVerdict: accept\nSteps: review=pass");
         var previousSha = RunGitCapture(_workspaceRoot, "rev-parse", "HEAD").Trim();
         var moved = Path.Combine(_workspaceProjectRoot, TaskStates.AutoReview, id);
         Directory.CreateDirectory(Path.GetDirectoryName(moved)!);
@@ -781,10 +862,25 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         return client;
     }
 
+    private static async Task<HttpResponseMessage> GetReadyHistoryAsync(HttpClient client, string url)
+    {
+        for (var attempt = 0; attempt < 400; attempt++)
+        {
+            var response = await client.GetAsync(url);
+            if (response.Headers.TryGetValues(TaskFilesEndpoints.SourceFactsStateHeader, out var values)
+                && values.Single() == AgentStudio.Git.SourceFactStates.Ready)
+                return response;
+            response.Dispose();
+            await Task.Delay(50);
+        }
+        throw new Xunit.Sdk.XunitException("The repository fact producer did not publish file history.");
+    }
+
     private WebApplicationFactory<Program> CreateFactory(
         TimeSpan? gitCallBudget = null,
         ITaskHistoryGitRunner? runner = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        string? repositoryPath = null)
     {
         return new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
@@ -801,7 +897,9 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
                             sp.GetRequiredService<GitService>(),
                             sp.GetRequiredService<ILogger<TaskFileHistoryService>>(),
                             budget,
-                            sp.GetRequiredService<ITaskHistoryGitRunner>()));
+                            sp.GetRequiredService<ITaskHistoryGitRunner>(),
+                            factReader: sp.GetRequiredService<AgentStudio.Git.GitCardFactReader>(),
+                            factStore: sp.GetRequiredService<AgentStudio.Git.GitFactStore>()));
                     }
                     if (gitCallBudget is not null || clock is not null)
                     {
@@ -812,7 +910,8 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
                             sp.GetRequiredService<TaskFileHistoryService>(),
                             clock ?? sp.GetRequiredService<TimeProvider>(),
                             sp.GetRequiredService<ILogger<LegacyResultHistoryBackfill>>(),
-                            gitCallBudget));
+                            gitCallBudget,
+                            sp.GetRequiredService<AgentStudio.Git.GitFactStore>()));
                     }
                 });
                 builder.ConfigureAppConfiguration((_, cfg) =>
@@ -822,8 +921,8 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
                         ["TaskRepository"] = _workspaceRoot,
                         ["WatchPaths:0:Name"] = "agent-taskboard",
                         ["WatchPaths:0:Path"] = _workspaceProjectRoot,
-                        ["WatchPaths:0:RootPath"] = _codeRoot,
-                        ["WatchPaths:0:RepositoryPath"] = _codeRoot,
+                        ["WatchPaths:0:RootPath"] = repositoryPath ?? _codeRoot,
+                        ["WatchPaths:0:RepositoryPath"] = repositoryPath ?? _codeRoot,
                         ["DeliveryChain:Guarded"] = "false",
                     });
                 });

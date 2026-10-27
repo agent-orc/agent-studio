@@ -113,7 +113,8 @@ public sealed class GitStateIndexService : BackgroundService
         GitReachabilityIndex reachability,
         TaskMutationService mutations,
         ILogger<GitStateIndexService> logger,
-        IConfiguration config)
+        IConfiguration config,
+        TaskFileHistoryService files)
         : this(
             scanner,
             watcher,
@@ -179,7 +180,8 @@ public sealed class GitStateIndexService : BackgroundService
                 task => CommitAttributionBackfill.Run(task, sessions, git, mutations),
                 GitCardFactOptions.FromConfiguration(config),
                 logger,
-                TimeProvider.System))
+                TimeProvider.System,
+                files))
     {
     }
 

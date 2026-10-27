@@ -31,9 +31,6 @@ public sealed record GitReadSpawnException(
 /// </summary>
 internal static class GitReadSpawnExceptionManifest
 {
-    private const string Cards = "Git facts";
-    private const string S4 = "S4 card files and result history";
-
     // Measured on the 3,000-card board with cold caches (GitReadSpawnCensusTests)
     // and in the census ledger run of the existing host tests; the ceiling is the
     // larger maximum. A route seen only in existing tests carries one spawn of
@@ -43,8 +40,7 @@ internal static class GitReadSpawnExceptionManifest
     // AGT-3323 (Git facts S3) removed the card Git facts it migrated to the
     // store: R4 provenance, the R5 commit and default-diff reads, the R7 run
     // views, R12 the project integration view and R14 the delivery claim. The
-    // commit-mode file preview (/commits/{sha}/file) reads a historical blob
-    // and moved to S4 with the other historical file reads (git_file_objects).
+    // S4 removed the remaining R11 file and historical-object entries.
     internal static readonly IReadOnlyList<GitReadSpawnException> Entries =
     [
         new("GET", "/api/admin/prompts/", 1, "Prompt administration", "Prompt revisions from the Git fact store", "Other reads"),
@@ -83,9 +79,6 @@ internal static class GitReadSpawnExceptionManifest
         new("GET", "/api/runner/project:{projectId}/orchestrator-chat", 3, "Orchestrator chat", "Context from published Git facts", "Other reads"),
         new("GET", "/api/runner/task:{projectId}/{taskKey}/orchestrator-chat", 3, "Orchestrator chat", "Context from published Git facts", "Other reads"),
         new("GET", "/api/runner/workbench:{projectId}/{workbenchKey}/orchestrator-chat", 3, "Orchestrator chat", "Context from published Git facts", "Other reads"),
-        new("GET", "/api/tasks/{jobId}/checkout/{**path}", 2, Cards, S4, "R11"),
-        new("GET", "/api/tasks/{jobId}/commits/{sha}/file", 1, Cards, S4, "R11"),
-        new("GET", "/api/tasks/{jobId}/files/{**path}", 5, Cards, S4, "R11"),
         new("GET", "/api/tasks/{jobId}/git/diff", 2, "AGT-3017 route ownership", "AGT-3017 D2/D4 dev-seat retirement", "R8"),
         new("GET", "/api/tasks/{jobId}/git/file", 1, "AGT-3017 route ownership", "AGT-3017 D2/D4 dev-seat retirement", "R8"),
         new("GET", "/api/tasks/{jobId}/git/hygiene", 5, "AGT-3017 route ownership", "AGT-3017 D2/D4 dev-seat retirement", "R8"),

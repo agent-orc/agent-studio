@@ -1,4 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
+using AgentStudio.Git;
+using AgentStudio.Shared;
 
 using Xunit;
 
@@ -69,6 +72,32 @@ public sealed class ResultVersionStoreTests : IDisposable
         var evt = Assert.Single(timeline.ReadAll(_folder), item => item.Kind == TimelineEventKinds.ResultReplaced);
         Assert.Equal("Result replaced by external completion (operator-chat), previous version kept as #1", evt.Summary);
         Assert.Equal(previous.StatusPath, evt.PayloadRef);
+    }
+
+    [Fact]
+    public void Replace_IndexesFlatLayoutByTaskJsonId()
+    {
+        var folder = Path.Combine(_folder, "tasks", "00", "stable-folder-key");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), "{\"id\":\"external-card-id\",\"state\":\"3-running\"}");
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _folder,
+            ["WatchPaths:0:Path"] = _folder,
+        }).Build();
+        var facts = new GitFactStore(configuration, NullLogger<GitFactStore>.Instance);
+        var store = new ResultVersionStore(NullLogger<ResultVersionStore>.Instance,
+            facts: facts, configuration: configuration);
+
+        store.Replace(folder, "# Status\n- Result: Success\n", ResultProducer.RunAttempt("1"),
+            TaskStates.Completed);
+        store.Replace(folder, "# Status\n- Result: Failure\n", ResultProducer.RunAttempt("2"),
+            TaskStates.Completed);
+
+        var row = Assert.Single(facts.ReadResultVersions(TaskIdentity.CreateKey(_folder, "external-card-id")));
+        Assert.Equal("local-0001", row.VersionId);
+        Assert.Equal(1, row.RunIndex);
+        Assert.Equal("Success", row.Verdict);
     }
 
     /// <summary>

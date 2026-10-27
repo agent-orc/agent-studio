@@ -7,6 +7,7 @@ using SourceFactDemandRequest = AgentStudio.TaskServer.Contracts.SourceFactDeman
 using SourceFactKinds = AgentStudio.TaskServer.Contracts.SourceFactKinds;
 using SourcePathHistoryDto = AgentStudio.TaskServer.Contracts.SourcePathHistoryDto;
 using Microsoft.AspNetCore.Http;
+using AgentStudio.Git;
 
 namespace AgentStudio.Tasks;
 
@@ -32,6 +33,8 @@ public sealed class TaskFileHistoryService
     /// </summary>
     private readonly TimeSpan _gitCallBudget;
     private readonly AgentStudio.Git.ISourceFactsReader? _sourceFacts;
+    private readonly GitCardFactReader? _factReader;
+    private readonly GitFactStore? _factStore;
 
     public TaskFileHistoryService(
         TaskScannerService scanner,
@@ -39,7 +42,9 @@ public sealed class TaskFileHistoryService
         ILogger<TaskFileHistoryService> logger,
         TimeSpan? gitCallBudget = null,
         ITaskHistoryGitRunner? runner = null,
-        AgentStudio.Git.ISourceFactsReader? sourceFacts = null)
+        AgentStudio.Git.ISourceFactsReader? sourceFacts = null,
+        GitCardFactReader? factReader = null,
+        GitFactStore? factStore = null)
     {
         _scanner = scanner;
         _git = git;
@@ -47,6 +52,123 @@ public sealed class TaskFileHistoryService
         _gitCallBudget = gitCallBudget ?? GitCallBudgetPolicy.DefaultTotalBudget;
         _runner = runner ?? new ProcessTaskHistoryGitRunner();
         _sourceFacts = sourceFacts;
+        _factReader = factReader;
+        _factStore = factStore;
+    }
+
+    /// <summary>Reads a published history and queues one producer pass on a miss.</summary>
+    public (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>> Result, string State) GetIndexedHistory(
+        string jobId, string? watchPath, string requestPath, string? scope)
+    {
+        var resolved = ResolveLiveCandidates(jobId, watchPath, requestPath, scope);
+        if (!resolved.Success)
+            return (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Fail(resolved.StatusCode, resolved.Error),
+                SourceFactStates.Ready);
+        var info = _scanner.FindJob(jobId, watchPath)!;
+        var warming = false;
+        foreach (var candidate in resolved.Candidates)
+        {
+            var fact = _factStore?.ReadPathHistory(info.ProjectName, candidate.Source,
+                candidate.RequestPath, candidate.RootPath);
+            if (fact is null)
+            {
+                Queue(info, candidate, null);
+                warming = true;
+                continue;
+            }
+            if (fact.Entries.Count > 0 || resolved.IsExplicitScope || File.Exists(candidate.LivePath))
+                return (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Ok(fact.Entries, candidate.Source),
+                    SourceFactStates.Ready);
+        }
+        return (TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>>.Ok([], TaskFileSources.Auto),
+            warming ? SourceFactStates.Warming : SourceFactStates.Ready);
+    }
+
+    /// <summary>Reads a bounded historical object. A missing fact queues producer work.</summary>
+    public (TaskFileLookupResult<TaskFileContent> Result, string State) ReadIndexedFile(
+        string jobId, string? watchPath, string requestPath, string at, string? scope)
+    {
+        if (!IsSha(at))
+            return (TaskFileLookupResult<TaskFileContent>.Fail(StatusCodes.Status400BadRequest, "Invalid commit SHA."),
+                SourceFactStates.Ready);
+        var resolved = ResolveLiveCandidates(jobId, watchPath, requestPath, scope);
+        if (!resolved.Success)
+            return (TaskFileLookupResult<TaskFileContent>.Fail(resolved.StatusCode, resolved.Error), SourceFactStates.Ready);
+        var info = _scanner.FindJob(jobId, watchPath)!;
+        foreach (var candidate in resolved.Candidates)
+        {
+            // Root identity and configuration generation are verified by the
+            // path row before its SHA/path object can be served.
+            var history = _factStore?.ReadPathHistory(info.ProjectName, candidate.Source,
+                candidate.RequestPath, candidate.RootPath);
+            if (history is null)
+            {
+                Queue(info, candidate, at);
+                return (TaskFileLookupResult<TaskFileContent>.Fail(202, "File history is warming."),
+                    SourceFactStates.Warming);
+            }
+            var obj = _factStore?.ReadFileObject(info.ProjectName, candidate.Source,
+                candidate.RootPath, at, candidate.RequestPath);
+            if (obj is null)
+            {
+                Queue(info, candidate, at);
+                return (TaskFileLookupResult<TaskFileContent>.Fail(202, "File content is warming."),
+                    SourceFactStates.Warming);
+            }
+            if (obj.ContentHash == "missing")
+            {
+                if (resolved.IsExplicitScope) break;
+                continue;
+            }
+            if (obj.Truncated)
+                return (TaskFileLookupResult<TaskFileContent>.Fail(413, "File content exceeds the history limit."),
+                    SourceFactStates.Ready);
+            return (TaskFileLookupResult<TaskFileContent>.Ok(
+                new TaskFileContent(obj.Content, ContentTypeFor(candidate.RequestPath), candidate.RequestPath),
+                candidate.Source), SourceFactStates.Ready);
+        }
+        return (TaskFileLookupResult<TaskFileContent>.Fail(404, "File was not found at the requested commit."),
+            SourceFactStates.Ready);
+    }
+
+    private void Queue(TaskInfo info, TaskFileCandidate candidate, string? at)
+        => _factReader?.Request(info.WatchPath,
+            [new GitFileHistoryWork(info.Id, info.WatchPath, candidate.Source, candidate.RequestPath, at)]);
+
+    /// <summary>Only the repository fact producer calls this Git-reading method.</summary>
+    internal GitPathHistoryFact? BuildIndexedHistory(GitFileHistoryWork work, string repoId)
+    {
+        var budget = new GitCallBudget(_gitCallBudget);
+        var resolved = ResolveCandidates(budget, work.JobId, work.WatchPath, work.Path, work.Source);
+        var candidate = resolved.Candidates.FirstOrDefault();
+        if (!resolved.Success || candidate?.GitRoot is null) return null;
+        var history = ReadHistory(budget, candidate, 128);
+        if (!history.Success) return null;
+        var objects = new List<GitFileObjectFact>();
+        foreach (var sha in history.Value.Take(32).Select(entry => entry.Sha)
+                     .Concat(work.At is null ? [] : [work.At]).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var spec = $"{sha}:{candidate.GitPath}";
+            var size = RunGit(budget, candidate.GitRoot, "cat-file", "-s", spec);
+            if (size.RunnerFailed) return null;
+            if (size.Code != 0)
+            {
+                objects.Add(new GitFileObjectFact(sha, candidate.RequestPath, "", "missing", true));
+                continue;
+            }
+            if (!long.TryParse(size.Out.Trim(), CultureInfo.InvariantCulture, out var length)) return null;
+            if (length > 256 * 1024)
+            {
+                objects.Add(new GitFileObjectFact(sha, candidate.RequestPath, "", "oversized", true));
+                continue;
+            }
+            var show = RunGit(budget, candidate.GitRoot, "show", spec);
+            if (show.Code != 0) return null;
+            objects.Add(new GitFileObjectFact(sha, candidate.RequestPath, show.Out,
+                ResultHistoryContent.Hash(show.Out), false));
+        }
+        return new GitPathHistoryFact(repoId, candidate.Source, candidate.RootPath,
+            candidate.RequestPath, history.Value, objects);
     }
 
     /// <summary>True when source file history is served from derived facts (AGT-3318).</summary>
@@ -177,7 +299,7 @@ public sealed class TaskFileHistoryService
         string? scope)
     {
         if (string.IsNullOrWhiteSpace(at))
-            return ReadLiveFile(new GitCallBudget(_gitCallBudget), jobId, watchPath, requestPath, scope);
+            return ReadLiveFile(jobId, watchPath, requestPath, scope);
 
         if (!IsSha(at))
             return TaskFileLookupResult<TaskFileContent>.Fail(StatusCodes.Status400BadRequest, "Invalid commit SHA.");
@@ -359,14 +481,13 @@ public sealed class TaskFileHistoryService
     private static string? NullIfEmpty(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private TaskFileLookupResult<TaskFileContent> ReadLiveFile(
-        GitCallBudget budget,
+    public TaskFileLookupResult<TaskFileContent> ReadLiveFile(
         string jobId,
         string? watchPath,
         string requestPath,
         string? scope)
     {
-        var resolved = ResolveCandidates(budget, jobId, watchPath, requestPath, scope);
+        var resolved = ResolveLiveCandidates(jobId, watchPath, requestPath, scope);
         if (!resolved.Success) return TaskFileLookupResult<TaskFileContent>.Fail(resolved.StatusCode, resolved.Error);
 
         foreach (var candidate in resolved.Candidates)
@@ -394,6 +515,56 @@ public sealed class TaskFileHistoryService
         }
 
         return TaskFileLookupResult<TaskFileContent>.Fail(StatusCodes.Status404NotFound, "File not found.");
+    }
+
+    private CandidateResolution ResolveLiveCandidates(string jobId, string? watchPath, string requestPath, string? scope)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info is null) return CandidateResolution.Fail(404, "Job not found.");
+        if (!TryNormalizeRelativePath(requestPath, out var normalized, out var error))
+            return CandidateResolution.Fail(400, error);
+        var selected = NormalizeScope(scope);
+        if (selected is null)
+            return CandidateResolution.Fail(400, "scope must be auto, workspace, or code.");
+        var candidates = new List<TaskFileCandidate>();
+        if (selected is TaskFileSources.Auto or TaskFileSources.Workspace)
+        {
+            var root = Path.GetFullPath(info.FolderPath);
+            var path = Path.GetFullPath(Path.Combine(root, normalized.Replace('/', Path.DirectorySeparatorChar)));
+            if (!IsWithin(root, path))
+            {
+                if (selected == TaskFileSources.Workspace)
+                    return CandidateResolution.Fail(400, "The requested workspace path is outside the task folder.");
+            }
+            else candidates.Add(new TaskFileCandidate(TaskFileSources.Workspace, normalized, path,
+                root, null, normalized, info.FolderPath));
+        }
+        if (selected is TaskFileSources.Auto or TaskFileSources.Code)
+        {
+            var published = _factReader?.ReadProject(info.ProjectName).Facts?.RepositoryRoot;
+            var configured = _git.ResolveConfiguredRepoPath(info.Id, watchPath);
+            var repository = !string.IsNullOrWhiteSpace(published) ? published : configured;
+            if (string.IsNullOrWhiteSpace(repository))
+            {
+                if (selected == TaskFileSources.Code)
+                    return CandidateResolution.Fail(400, "Could not resolve the code repository for this task.");
+            }
+            else
+            {
+                var root = Path.GetFullPath(repository);
+                var path = Path.GetFullPath(Path.Combine(root, normalized.Replace('/', Path.DirectorySeparatorChar)));
+                if (!IsWithin(root, path))
+                {
+                    if (selected == TaskFileSources.Code)
+                        return CandidateResolution.Fail(400, "Could not resolve the code repository for this task.");
+                }
+                else candidates.Add(new TaskFileCandidate(TaskFileSources.Code, normalized, path,
+                    root, null, normalized, info.FolderPath));
+            }
+        }
+        return candidates.Count == 0
+            ? CandidateResolution.Fail(404, "No file source is available for this task.")
+            : CandidateResolution.Ok(candidates, selected != TaskFileSources.Auto);
     }
 
     private CandidateResolution ResolveCandidates(GitCallBudget budget, string jobId, string? watchPath, string requestPath, string? scope)
@@ -488,16 +659,13 @@ public sealed class TaskFileHistoryService
             info.FolderPath);
     }
 
-    private GitValue<IReadOnlyList<TaskFileHistoryEntry>> ReadHistory(GitCallBudget budget, TaskFileCandidate candidate)
+    private GitValue<IReadOnlyList<TaskFileHistoryEntry>> ReadHistory(GitCallBudget budget, TaskFileCandidate candidate,
+        int maxCount = 0)
     {
-        var log = RunGit(
-            budget,
-            candidate.GitRoot!,
-            "log",
-            "--follow",
-            $"--format=%H%x1f%aI%x1f%an <%ae>%x1f%s%x1f%B%x1e",
-            "--",
-            candidate.GitPath);
+        var args = new List<string> { "log", "--follow" };
+        if (maxCount > 0) args.Add($"--max-count={maxCount}");
+        args.AddRange(["--format=%H%x1f%aI%x1f%an <%ae>%x1f%s%x1f%B%x1e", "--", candidate.GitPath]);
+        var log = RunGit(budget, candidate.GitRoot!, args.ToArray());
         if (log.Code != 0)
             return GitValue<IReadOnlyList<TaskFileHistoryEntry>>.Fail(log.Err);
 

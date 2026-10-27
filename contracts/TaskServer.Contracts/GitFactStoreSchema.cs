@@ -18,7 +18,7 @@ namespace AgentStudio.TaskServer.Contracts;
 public static class GitFactStoreSchema
 {
     /// <summary>Stored in <c>PRAGMA user_version</c>. A different value rebuilds the store.</summary>
-    public const int Version = 2;
+    public const int Version = 3;
 
     /// <summary>File name of placement B.</summary>
     public const string FileName = "git-facts.db";
@@ -37,12 +37,16 @@ public static class GitFactStoreSchema
     public const string DiffObjects = "git_diff_objects";
     public const string DiffObjectFiles = "git_diff_object_files";
     public const string ProjectViews = "git_project_views";
+    public const string ResultVersions = "result_versions";
+    public const string PathHistories = "git_path_histories";
+    public const string FileObjects = "git_file_objects";
 
     /// <summary>Every table of this schema version, for placement checks.</summary>
     public static IReadOnlyList<string> Tables { get; } =
     [
         Repositories, RefGenerations, CardFacts, ProducerHealth, CommitFacts, Reachability, ReachabilityTips,
         CommitRanges, RunCommits, IntegrationMerges, ProducerCursors, DiffObjects, DiffObjectFiles, ProjectViews,
+        ResultVersions, PathHistories, FileObjects,
     ];
 
     /// <summary>
@@ -255,6 +259,58 @@ public static class GitFactStoreSchema
           published_at INTEGER NOT NULL,
           PRIMARY KEY (repo_id, generation, task_generation)
         )
+        """,
+        // S4. Snapshot content remains in the task folder or the bounded
+        // legacy backfill file. This row is the immutable version index.
+        """
+        CREATE TABLE IF NOT EXISTS result_versions (
+          task_key TEXT NOT NULL,
+          version_id TEXT NOT NULL,
+          producer TEXT NOT NULL,
+          producer_kind TEXT NOT NULL,
+          lane TEXT NOT NULL,
+          run_index INTEGER,
+          verdict TEXT,
+          steps TEXT,
+          timestamp INTEGER NOT NULL,
+          content_hash TEXT NOT NULL,
+          source_commit TEXT,
+          source TEXT NOT NULL,
+          status_path TEXT,
+          result TEXT NOT NULL,
+          result_case TEXT NOT NULL,
+          version INTEGER,
+          PRIMARY KEY (task_key, version_id)
+        ) WITHOUT ROWID
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_result_versions_time ON result_versions (task_key, timestamp DESC)",
+        // S4. The repository producer fills these on demand. A history row
+        // names its ref/config generation; a relocated checkout invalidates it.
+        """
+        CREATE TABLE IF NOT EXISTS git_path_histories (
+          repo_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          repository_root TEXT NOT NULL,
+          config_generation INTEGER NOT NULL,
+          generation INTEGER NOT NULL,
+          path TEXT NOT NULL,
+          entries TEXT NOT NULL,
+          indexed_at INTEGER NOT NULL,
+          PRIMARY KEY (repo_id, source, repository_root, path)
+        ) WITHOUT ROWID
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS git_file_objects (
+          repo_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          identity_path TEXT NOT NULL,
+          sha TEXT NOT NULL,
+          path TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          content TEXT NOT NULL,
+          truncated INTEGER NOT NULL,
+          PRIMARY KEY (repo_id, source, identity_path, sha, path)
+        ) WITHOUT ROWID
         """,
     ];
 }
