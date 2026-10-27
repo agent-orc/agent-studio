@@ -74,19 +74,23 @@ internal static class GitCallBudgetPolicy
 /// </summary>
 internal sealed class GitCallBudget
 {
-    private readonly System.Diagnostics.Stopwatch _spent = System.Diagnostics.Stopwatch.StartNew();
+    private readonly TimeProvider _clock;
+    private readonly long _startedAt;
     private readonly TimeSpan _totalBudget;
     private readonly TimeSpan _perCallCap;
+    internal bool HasTimedOutCall { get; private set; }
 
-    internal GitCallBudget(TimeSpan? totalBudget = null, TimeSpan? perCallCap = null)
+    internal GitCallBudget(TimeSpan? totalBudget = null, TimeSpan? perCallCap = null, TimeProvider? clock = null)
     {
         _totalBudget = totalBudget ?? GitCallBudgetPolicy.DefaultTotalBudget;
         _perCallCap = perCallCap ?? GitCallBudgetPolicy.DefaultPerCallCap;
+        _clock = clock ?? TimeProvider.System;
+        _startedAt = _clock.GetTimestamp();
     }
 
     /// <summary>Timeout for the call about to be started; zero when spent.</summary>
     internal TimeSpan NextCallTimeout() =>
-        GitCallBudgetPolicy.NextCallTimeout(_spent.Elapsed, _totalBudget, _perCallCap);
+        GitCallBudgetPolicy.NextCallTimeout(_clock.GetElapsedTime(_startedAt), _totalBudget, _perCallCap);
 
     /// <summary>
     /// True once no further git call may start. Callers report this instead of
@@ -95,4 +99,6 @@ internal sealed class GitCallBudget
     /// reported as "not a git repository".
     /// </summary>
     internal bool IsExhausted => NextCallTimeout() <= TimeSpan.Zero;
+
+    internal void RecordTimeout() => HasTimedOutCall = true;
 }
