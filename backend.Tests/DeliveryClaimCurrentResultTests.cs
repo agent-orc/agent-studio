@@ -146,12 +146,17 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
         await using var factory = BuildFactory();
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var card = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(TaskId, _watchPath)!;
+        var integration = factory.Services.GetRequiredService<TaskIntegrationStatusService>()
+            .BuildForCompletion(card);
+        Assert.Equal(IntegrationStatuses.Integrated, integration.Status);
 
         // The read-mode sweep joins published card facts (Git facts S3).
         (await PublishedClaim(client)).Dispose();
         using var response = await client.GetAsync($"/api/projects/{Project}/delivery-claims");
 
-        response.EnsureSuccessStatusCode();
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var root = body.RootElement;
         Assert.False(root.GetProperty("repair").GetBoolean());
@@ -325,6 +330,7 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["TaskRepository"] = _root,
+                    ["ErrorHandling:IncludeExceptionDetails"] = "true",
                     ["WatchPaths:0:Name"] = Project,
                     ["WatchPaths:0:Path"] = _watchPath,
                     ["WatchPaths:0:RootPath"] = _repo,

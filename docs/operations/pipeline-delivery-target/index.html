@@ -932,6 +932,10 @@
   <strong>AGT-3316 · Delivery section on the board</strong>
   <span>Delivered on D5 L-B and D10 A: a Delivery group follows Done &amp; Decide (<code>buildDeliveryGroup</code> in <code>board-lane-layout.util.ts</code>, <code>&lt;app-delivery-section&gt;</code>), one column per read-model column of <code>GET deploy/lanes</code> with release version, last run state and time, health and an approval pill; landed cards, a Waiting divider, then waiting cards with a rolled-back flag, all as the standard task card. Columns collapse like lanes; the display option "Furthest environment only" shows each card once. Words and tones come from <code>models/delivery-presentation.ts</code>. Refresh follows task events and the 30-second deploy poll. In the studio board the group is a fourth super-column whose environment columns stack like lanes. Lane <code>6-completed</code> now reads "Accepted" ("Integrated and accepted."); the interim "Delivery lanes" board toggle is removed.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3314" data-delivered-at="2026-10-27" data-slice="post-merge-mode-switch">
+  <strong>AGT-3314 · Post-merge mode switch</strong>
+  <span>Implemented D1 T-B for the per-project post-merge switch: T1 affected verification, a merged-tree compile at T2 with affected tests on shared-path movement, and the pre-merge batch route disabled. The look-ahead settings size the T3 window. Merge and push locks are keyed by project and branch. Under D2 A, a repair card escalated through the post-merge attribution category returns its project to pre-merge while the card remains Escalated; a red develop also triggers fallback after two hours, and a green T3 receipt clears the recorded card. Agent Studio stays pre-merge pending a measured T1 replay median at or below ten minutes. The recorded D3 A, D4 A, D5 L-B, D6 A, D7 A-B, D8 A, D9 A, and D10 A remain choices for their delivery slices.</span>
+</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>

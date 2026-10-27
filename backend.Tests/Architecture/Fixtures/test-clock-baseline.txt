@@ -347,7 +347,6 @@ fixed-date backend.Tests/GlobalSearchDossierTests.cs
 fixed-date backend.Tests/GlobalSearchIndexTests.cs
 fixed-date backend.Tests/HardHealthChecksTests.cs
 fixed-date backend.Tests/HostReleaseDriftPolicyTests.cs
-fixed-date backend.Tests/HumanReviewEscalationTests.cs
 fixed-date backend.Tests/InMemoryStoreTests.cs
 fixed-date backend.Tests/IntegrationBranchGateHealthPolicyTests.cs
 fixed-date backend.Tests/JobsHubTests.cs

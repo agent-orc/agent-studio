@@ -73,17 +73,17 @@ public static class TaskFilesEndpoints
             {
                 var (history, state) = files.GetIndexedHistory(jobId, watchPath, historyPath, scope);
                 ctx.Response.Headers[SourceFactsStateHeader] = state;
-                return HistoryResult(history);
+                return HistoryResult(history, ctx);
             }
 
             if (!string.IsNullOrWhiteSpace(at))
             {
                 var (historical, state) = files.ReadIndexedFile(jobId, watchPath, path, at, scope);
                 ctx.Response.Headers[SourceFactsStateHeader] = state;
-                return FileContentResult(historical);
+                return FileContentResult(historical, ctx);
             }
             var content = files.ReadLiveFile(jobId, watchPath, path, scope);
-            return FileContentResult(content);
+            return FileContentResult(content, ctx);
         });
 
         // Dev-seat twin of `/{jobId}/files/{**path}` for the `scope=code`
@@ -114,21 +114,21 @@ public static class TaskFilesEndpoints
                     var (derived, derivedState) = await files.GetDerivedCodeHistoryAsync(
                         jobId, watchPath, historyPath, ct);
                     context.Response.Headers[SourceFactsStateHeader] = derivedState;
-                    return HistoryResult(derived);
+                    return HistoryResult(derived, context);
                 }
                 var (history, state) = files.GetIndexedHistory(jobId, watchPath, historyPath, TaskFileSources.Code);
                 context.Response.Headers[SourceFactsStateHeader] = state;
-                return HistoryResult(history);
+                return HistoryResult(history, context);
             }
 
             if (!string.IsNullOrWhiteSpace(at))
             {
                 var (historical, state) = files.ReadIndexedFile(jobId, watchPath, path, at, TaskFileSources.Code);
                 context.Response.Headers[SourceFactsStateHeader] = state;
-                return FileContentResult(historical);
+                return FileContentResult(historical, context);
             }
             var content = files.ReadLiveFile(jobId, watchPath, path, TaskFileSources.Code);
-            return FileContentResult(content);
+            return FileContentResult(content, context);
         }).AddEndpointFilter<AgentStudio.Git.GitSpawnCountFilter>();
 
         // Lists supported documents directly in the job root (status.md
@@ -312,21 +312,23 @@ public static class TaskFilesEndpoints
     /// <summary>Response header that names the derived source facts state: ready, warming or unavailable.</summary>
     public const string SourceFactsStateHeader = "X-Source-Facts-State";
 
-    private static IResult HistoryResult(TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>> result)
+    private static IResult HistoryResult(TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>> result, HttpContext context)
     {
-        if (!result.Success) return ErrorResult(result);
+        if (!result.Success) return ErrorResult(result, context);
         return Results.Ok(result.Value ?? []);
     }
 
-    private static IResult FileContentResult(TaskFileLookupResult<TaskFileContent> result)
+    private static IResult FileContentResult(TaskFileLookupResult<TaskFileContent> result, HttpContext context)
     {
-        if (!result.Success) return ErrorResult(result);
+        if (!result.Success) return ErrorResult(result, context);
         var content = result.Value!;
         return Results.Text(content.Content, content.ContentType, Encoding.UTF8);
     }
 
-    private static IResult ErrorResult<T>(TaskFileLookupResult<T> result)
+    private static IResult ErrorResult<T>(TaskFileLookupResult<T> result, HttpContext? context = null)
     {
+        if (result.StatusCode == StatusCodes.Status503ServiceUnavailable && context is not null)
+            context.Response.Headers["Retry-After"] = "1";
         var body = new { error = result.Error ?? "File lookup failed." };
         return result.StatusCode switch
         {
