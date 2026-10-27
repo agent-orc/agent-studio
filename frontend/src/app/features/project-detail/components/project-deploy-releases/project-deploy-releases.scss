@@ -43,6 +43,7 @@
 }
 
 .releases__detail h3 { margin: 0 0 var(--studio-spacing-3); color: var(--studio-fg-strong); font-size: 1rem; }
+.releases__verdict { margin: 0 0 var(--studio-spacing-3); color: var(--studio-fg-muted); overflow-wrap: anywhere; }
 .releases__facts { @include deploy.fact-list; }
 .releases__digests { margin: 0; padding: 0; list-style: none; }
 .releases__pages { display: flex; gap: var(--studio-spacing-2); margin-top: var(--studio-spacing-3); }

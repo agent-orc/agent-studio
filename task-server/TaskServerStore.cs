@@ -56,8 +56,9 @@ public sealed partial class TaskServerStore
     // and the continuation base reason of the standalone review loop (I11).
     // 36 adds one-time Studio invitations and per-project production approval.
     // 37 removes retired parent tables and their task metadata field.
+    // 38 stores release candidate full-suite verdicts by project, SHA, and command digest.
     // Older binaries must reject this store before reading task metadata.
-    public const int CurrentSchemaVersion = 37;
+    public const int CurrentSchemaVersion = 38;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -4560,6 +4561,7 @@ public sealed partial class TaskServerStore
         await ApplyGateMigrationAsync(connection, ct);
         await ApplyFailureFingerprintMigrationAsync(connection, ct);
         await ApplySourceFactsMigrationAsync(connection, ct);
+        await ApplyReleaseSuiteVerdictMigrationAsync(connection, ct);
         // Studio route-ownership P1 "task detail and hosts" bundle
         // (docs/studio-route-ownership/index.html): each group below owns a
         // disjoint set of new tables and touches no other group's schema.
