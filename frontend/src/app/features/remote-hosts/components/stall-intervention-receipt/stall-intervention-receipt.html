@@ -1,0 +1,22 @@
+@let receipt = row().receipt;
+<div class="receipt" [attr.data-status]="receipt.status" data-testid="stall-intervention-receipt">
+  <div class="receipt__head">
+    <span class="receipt__badge">AI Operator · {{ receipt.autonomy }}</span>
+    <span class="receipt__status">{{ statusLabel(receipt.status) }}</span>
+    <time [attr.datetime]="row().decidedAtUtc">{{ timeLabel(row().decidedAtUtc) }}</time>
+  </div>
+  <p><strong>Observed:</strong> {{ receipt.observed }}</p>
+  @if (receipt.done) { <p><strong>Done:</strong> {{ receipt.done }}</p> }
+  @if (receipt.why) { <p><strong>Why:</strong> {{ receipt.why }}</p> }
+  @if (receipt.before || receipt.after) {
+    <p><strong>Change:</strong> {{ receipt.before }} → {{ receipt.after }}</p>
+  }
+  @if (receipt.proposal && receipt.status !== 'proposed') { <p><strong>Proposal:</strong> {{ receipt.proposal }}</p> }
+  @if (receipt.outcome) { <p><strong>Outcome:</strong> {{ receipt.outcome }}</p> }
+  <div class="receipt__undo">
+    <span>{{ receipt.undo }}</span>
+    @if (receipt.undoable) {
+      <button type="button" data-testid="stall-intervention-undo" (click)="undo.emit(receipt.id)">Undo</button>
+    }
+  </div>
+</div>

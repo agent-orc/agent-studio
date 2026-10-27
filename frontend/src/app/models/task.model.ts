@@ -2260,6 +2260,8 @@ export interface ProjectSnapshot {
     maxReviewConcernRounds?: number;
     scopedReviewAfterFinding?: boolean;
     scopedReviewMaximumDeltaFiles?: number;
+    /** AGT-3310: effective per-card test placement (testing.perCard), read-only here. */
+    testingPerCard?: 'affected' | 'full';
     /** F35: every lane resolved to its effective sort strategy (defaults filled in). */
     laneSortStrategies?: Record<string, string>;
   };

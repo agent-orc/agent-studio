@@ -1,3 +1,5 @@
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Deploy;
 
 public enum DeployIntent { Deploy, Redeploy, Rollback }
@@ -22,7 +24,7 @@ public sealed record LifecycleRequest(
     bool OtherActiveRunForRelease,
     bool OtherRunOnHost)
 {
-    public IReadOnlyList<AgentStudio.TaskServer.Contracts.ProjectLifecyclePhase> Phases { get; init; } = [];
+    public IReadOnlyList<ProjectLifecyclePhase> Phases { get; init; } = [];
 }
 
 /// <param name="Forbidden">The rejection is about the actor's approval role, not the environment's state.</param>
@@ -43,11 +45,69 @@ public static class StandardLifecyclePolicy
 {
     public const string ApprovalRoles = "Owner or Maintainer";
 
+    /// <summary>A declared lifecycle environment without approval deploys automatically.</summary>
     public static bool IsAutomatic(DeployEnvironment environment)
-        => environment.Automatic ?? environment.Kind == EnvironmentKinds.Staging;
+        => environment.Automatic ?? (environment.Kind != EnvironmentKinds.Preview && !RequiresApproval(environment));
 
     public static bool RequiresApproval(DeployEnvironment environment)
         => environment.Protected ?? environment.Kind == EnvironmentKinds.Production;
+
+    /// <summary>
+    /// Whether a lifecycle phase name means the environment: Staging and
+    /// Production by kind, every other declared environment by its id.
+    /// </summary>
+    public static bool Names(string? phase, DeployEnvironment environment)
+        => phase is not null && (environment.Kind == EnvironmentKinds.Other
+            ? phase == environment.Id : phase == environment.Kind);
+
+    public static ProjectLifecyclePhase? PhaseFor(IEnumerable<ProjectLifecyclePhase> phases, DeployEnvironment environment)
+        => phases.FirstOrDefault(item => Names(item.Phase, environment));
+
+    /// <summary>
+    /// The phase that starts at integration: the first one that does not name
+    /// an <see cref="EnvironmentKinds.Other"/> environment. A Dev phase before
+    /// it starts on its own once its requirement holds.
+    /// </summary>
+    public static ProjectLifecyclePhase? IntegrationPhase(IEnumerable<ProjectLifecyclePhase> phases,
+        IReadOnlyList<DeployEnvironment> environments)
+        => phases.FirstOrDefault(phase =>
+            environments.FirstOrDefault(item => Names(phase.Phase, item))?.Kind != EnvironmentKinds.Other);
+
+    /// <summary>
+    /// The standard lifecycle with every declared <see cref="EnvironmentKinds.Other"/>
+    /// environment it does not name, inserted at its lifecycle position. The
+    /// phase is automatic without approval, needs Owner or Maintainer when the
+    /// environment is protected, and requires the phase before it, if any. A
+    /// named lifecycle such as hotfix keeps exactly the phases it declares.
+    /// </summary>
+    public static IReadOnlyList<ProjectLifecyclePhase> WithDeclaredPhases(IReadOnlyList<ProjectLifecyclePhase> phases,
+        IReadOnlyList<DeployEnvironment> environments)
+    {
+        var ordered = environments.Where(item => item.Kind != EnvironmentKinds.Preview)
+            .OrderBy(item => item.Order).ToArray();
+        if (!ordered.Any(environment => environment.Kind == EnvironmentKinds.Other && PhaseFor(phases, environment) is null))
+            return phases;
+        var result = new List<ProjectLifecyclePhase>();
+        var remaining = new Queue<ProjectLifecyclePhase>(phases);
+        foreach (var environment in ordered)
+        {
+            if (environment.Kind != EnvironmentKinds.Other || PhaseFor(phases, environment) is not null)
+            {
+                while (remaining.Count > 0)
+                {
+                    var next = remaining.Dequeue();
+                    result.Add(next);
+                    if (Names(next.Phase, environment)) break;
+                }
+                continue;
+            }
+            var approval = RequiresApproval(environment) ? (IReadOnlyList<string>)["Owner", "Maintainer"] : [];
+            result.Add(new(environment.Id, approval.Count == 0 && IsAutomatic(environment), approval,
+                result.LastOrDefault()?.Phase));
+        }
+        result.AddRange(remaining);
+        return result;
+    }
 
     public static DeployIntent IntentFor(string trigger) => trigger switch
     {
@@ -63,8 +123,7 @@ public static class StandardLifecyclePolicy
     public static LifecycleDecision Decide(LifecycleRequest request)
     {
         var environment = request.Environment;
-        var phase = request.Phases.Count == 0 ? null
-            : request.Phases.FirstOrDefault(item => item.Phase == environment.Kind);
+        var phase = request.Phases.Count == 0 ? null : PhaseFor(request.Phases, environment);
         if (request.Phases.Count > 0 && phase is null)
             return LifecycleDecision.Reject($"Channel lifecycle has no phase for {environment.Name}.");
         if (request.OtherActiveRunForRelease)

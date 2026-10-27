@@ -8,10 +8,11 @@ namespace AgentStudio.Git;
 /// answers from memory while every file Git said contributed to the
 /// configuration is byte-identical. A changed or vanished contributing file
 /// resolves through Git again. A config source created after a capture (an
-/// include target that did not exist yet) is not among those files; the Git
-/// state index publishes a fresh capture from every run and every safety sweep,
-/// so such a source becomes visible within one sweep interval for an indexed
-/// repository. A failed capture is never stored. There is no partial config
+/// include target that did not exist yet, a new global file) is recorded as an
+/// absent source and resolves through Git again once it appears
+/// (<see cref="GitConfigSignature.SourcesUnchanged"/>, AGT-3322). The Git
+/// state index publishes every capture it pays for. A failed capture is never
+/// stored. There is no partial config
 /// parser: Git alone interprets includes, conditional includes and worktree
 /// config.
 /// </summary>
@@ -47,7 +48,7 @@ public sealed class GitOriginStore
         if (string.IsNullOrWhiteSpace(root)) return null;
         if (GitConfigScope.TryReadOrigin(root, out var scoped)) return scoped;
         var key = GitConfigScope.NormalizeRoot(root);
-        if (_configs.TryGetValue(key, out var known) && GitConfigSignature.FilesUnchanged(known))
+        if (_configs.TryGetValue(key, out var known) && GitConfigSignature.SourcesUnchanged(known))
             return known.OriginUrl;
 
         GitEffectiveConfig fresh;

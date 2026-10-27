@@ -112,6 +112,34 @@ public sealed class LaneMutexRegistry
         return new Release(sem, this, held);
     }
 
+    /// <summary>Fail closed when a conditional write needs the lane state to remain stable.</summary>
+    public IDisposable? TryAcquireStrict(string? watchPath)
+    {
+        if (string.IsNullOrWhiteSpace(watchPath)) return null;
+        var key = Normalise(watchPath);
+        var held = _heldByFlow.Value;
+        if (held is not null && held.TryGetValue(key, out var depth))
+        {
+            _heldByFlow.Value = new Dictionary<string, int>(held, StringComparer.OrdinalIgnoreCase)
+            {
+                [key] = depth + 1,
+            };
+            return new NestedRelease(this, held);
+        }
+        var sem = _mutexes.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        if (!sem.Wait(_defaultTimeout))
+        {
+            _logger.LogWarning("LaneMutexRegistry: conditional write timed out on {WatchPath}; refusing mutation.", watchPath);
+            return null;
+        }
+        var next = held is null
+            ? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, int>(held, StringComparer.OrdinalIgnoreCase);
+        next[key] = 1;
+        _heldByFlow.Value = next;
+        return new Release(sem, this, held);
+    }
+
     private static string Normalise(string watchPath)
     {
         // Normalise separators and trim trailing slashes so two callers

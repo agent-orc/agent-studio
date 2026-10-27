@@ -16,7 +16,7 @@ public static class OperationPolicy
         if (!ValidText(command.IdempotencyKey) || !ValidText(command.Actor) || !ValidText(command.CorrelationId)
             || !ValidText(command.AgentId)) return "invalid-command";
         if (command.Deadline <= now || command.Deadline > now.AddMinutes(5)) return "invalid-deadline";
-        if (command.Input.ValueKind != JsonValueKind.Object || command.Input.EnumerateObject().Any()) return "invalid-input";
+        if (!ValidInput(definition, command.Input)) return "invalid-input";
         if (command.InputDigest != OperationsProtocol.Digest(command.Input)) return "input-digest-mismatch";
         if (command.Subject is not null && (!ValidText(command.Subject.TaskId) || !ValidText(command.Subject.RunOrReviewId)
             || command.Subject.Fence < 1 || !ValidText(command.Permit, 8192))) return "permit-required";
@@ -48,7 +48,13 @@ public static class OperationPolicy
             || result.StartedAt < attempt.Events[0].At) return "invalid-result-time";
         if (!ValidText(result.ExitClassification) || result.Artifacts is null || result.Artifacts.Length != 0) return "invalid-result";
         if (result.Output.ValueKind != JsonValueKind.Object) return "invalid-output";
-        if (result.Outcome == "succeeded")
+        var definition = OperationCatalogue.Find(attempt.Command.OperationId, attempt.Command.Version);
+        if (definition is null) return "unknown-operation";
+        if (definition == OperationCatalogue.ServiceRestart)
+        {
+            if (!ValidRestartOutput(attempt.Command.Input, result)) return "invalid-output";
+        }
+        else if (result.Outcome == "succeeded")
         {
             if (result.Output.EnumerateObject().Count() != 3
                 || !result.Output.TryGetProperty("os", out var os) || os.ValueKind != JsonValueKind.String || !ValidText(os.GetString())
@@ -57,10 +63,41 @@ public static class OperationPolicy
                 return "invalid-output";
         }
         else if (result.Output.EnumerateObject().Any()) return "invalid-output";
-        // host.inspect has no artifact channel. Never accept arbitrary paths or URLs.
-        if (Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(result, OperationsProtocol.Json)) > OperationCatalogue.HostInspect.MaxOutputBytes)
+        // No operation has an artifact channel. Never accept arbitrary paths or URLs.
+        if (Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(result, OperationsProtocol.Json)) > definition.MaxOutputBytes)
             return "output-limit";
         return null;
+    }
+
+    private static bool ValidInput(OperationDefinition definition, JsonElement input)
+    {
+        if (input.ValueKind != JsonValueKind.Object) return false;
+        var properties = input.EnumerateObject().ToArray();
+        if (definition == OperationCatalogue.ServiceRestart)
+            return properties.Length == 1 && properties[0].Name == "service"
+                && properties[0].Value.ValueKind == JsonValueKind.String
+                && OperationCatalogue.ValidServiceName(properties[0].Value.GetString());
+        return properties.Length == 0;
+    }
+
+    /// <summary>
+    /// A restart reports the service it was asked for, whether it restarted and
+    /// whether the configuration validated. Success means both are true; a
+    /// cancelled or refused attempt may report nothing.
+    /// </summary>
+    private static bool ValidRestartOutput(JsonElement input, OperationResult result)
+    {
+        var properties = result.Output.EnumerateObject().ToArray();
+        if (properties.Length == 0) return result.Outcome != "succeeded";
+        if (properties.Length != 3
+            || !result.Output.TryGetProperty("service", out var service) || service.ValueKind != JsonValueKind.String
+            || service.GetString() != input.GetProperty("service").GetString()
+            || !result.Output.TryGetProperty("restarted", out var restarted) || restarted.ValueKind is not (JsonValueKind.True or JsonValueKind.False)
+            || !result.Output.TryGetProperty("configurationValid", out var valid) || valid.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            return false;
+        return result.Outcome == "succeeded"
+            ? restarted.GetBoolean() && valid.GetBoolean()
+            : !restarted.GetBoolean();
     }
 
     public static bool ValidText(string? value, int max = 256) =>

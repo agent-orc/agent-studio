@@ -66,7 +66,7 @@ public static class OperationsServerHost
         app.MapGet("/api/operations/v1/catalogue", (HttpContext context) =>
         {
             var denial = OperationsAccessPolicy.Denial(Principal(context), "service", "operations.read");
-            return denial is null ? Results.Ok(new[] { OperationCatalogue.HostInspect }) : Results.Json(new OperationError(denial), statusCode: 403);
+            return denial is null ? Results.Ok(OperationCatalogue.All) : Results.Json(new OperationError(denial), statusCode: 403);
         });
         app.MapPost("/api/operations/v1/agents/register", (AgentCapability capability, HttpContext context, OperationsCoordinator operations) =>
             operations.RegisterAsync(Principal(context), capability));
@@ -76,6 +76,8 @@ public static class OperationsServerHost
             operations.SubmitAsync(Principal(context), command, ct));
         app.MapGet("/api/operations/v1/attempts/{id}", (string id, HttpContext context, OperationsCoordinator operations) =>
             operations.ReadAsync(Principal(context), id));
+        app.MapGet("/api/operations/v1/attempts/by-key/{key}", (string key, HttpContext context, OperationsCoordinator operations) =>
+            operations.ReadByKeyAsync(Principal(context), key));
         app.MapPost("/api/operations/v1/attempts/{id}/cancel", (string id, HttpContext context, OperationsCoordinator operations) =>
             operations.ReadAsync(Principal(context), id, cancel: true));
         app.MapPost("/api/operations/v1/attempts/{id}/renew", (string id, AttemptLeaseRequest request, HttpContext context, OperationsCoordinator operations, CancellationToken ct) =>

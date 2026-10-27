@@ -18,12 +18,13 @@ public static class GitTelemetryAdminEndpoints
 
     public static void MapGitTelemetryAdminEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/admin/git-telemetry", (GitStateIndexService indexer, TaskScannerService scanner) =>
-            Results.Ok(BuildSnapshot(indexer, TimeProvider.System, scanner)));
+        app.MapGet("/api/admin/git-telemetry", (GitStateIndexService indexer, TaskScannerService scanner,
+                GitFactStore factStore) =>
+            Results.Ok(BuildSnapshot(indexer, TimeProvider.System, scanner, factStore)));
     }
 
     internal static GitTelemetrySnapshot BuildSnapshot(GitStateIndexService indexer, TimeProvider timeProvider,
-        TaskScannerService? scanner = null)
+        TaskScannerService? scanner = null, GitFactStore? factStore = null)
     {
         var endpoints = GitProcessTelemetry.GetStatsSnapshot(StatsWindow, timeProvider);
         var repositories = indexer.GetRepositoryStatuses(timeProvider);
@@ -47,6 +48,8 @@ public static class GitTelemetryAdminEndpoints
             warnings.Add($"{route.Method} {route.RouteTemplate} started Git on {route.UnlistedRequests} read request(s) without a frozen exception.");
         foreach (var route in readGuard.Routes.Where(route => route.BreachedRequests > 0))
             warnings.Add($"{route.Method} {route.RouteTemplate} exceeded its ceiling of {route.SpawnCeiling} Git spawns on {route.BreachedRequests} read request(s).");
+        if (factStore?.LastHealthEvent is { } storeEvent)
+            warnings.Add($"The Git fact store was corrupt ({storeEvent.Reason}) and was rebuilt; the old file is {storeEvent.MovedTo}.");
 
         return new GitTelemetrySnapshot(
             timeProvider.GetUtcNow(),
@@ -56,7 +59,9 @@ public static class GitTelemetryAdminEndpoints
             totalSpawnsPerMinute,
             warnings,
             scanner is null ? [] : TaskProjectionCards.FindDuplicateIds(scanner.ScanAllJobsWithArchive()),
-            readGuard);
+            FactStore: factStore is null ? null : new GitFactStoreStatus(factStore.DatabasePath, factStore.IsAvailable,
+                factStore.LastHealthEvent),
+            ReadGuard: readGuard);
     }
 }
 
@@ -68,4 +73,8 @@ public sealed record GitTelemetrySnapshot(
     double TotalSpawnsPerMinute,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<DuplicateTaskId> DuplicateTaskIds,
+    GitFactStoreStatus? FactStore = null,
     GitReadGuardSnapshot? ReadGuard = null);
+
+/// <summary>Where the Git fact store lives, whether it is in use, and its last typed health event.</summary>
+public sealed record GitFactStoreStatus(string? Path, bool Available, GitFactStoreHealthEvent? LastHealthEvent);

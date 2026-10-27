@@ -18,6 +18,7 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
     private readonly V1ReviewExecutorRegistry _reviewHosts;
     private readonly ReviewClaimUnclaimableLog _unclaimable;
     private readonly GateSlotUsageTracker _gateSlots;
+    private readonly PullGateStore _pullGates;
     private readonly IConfiguration _configuration;
 
     public string Name => "operational-stalls";
@@ -25,7 +26,7 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
     public OperationalStallProbe(ClientIdentityStore clients, HostTelemetryStore telemetry,
         AttemptAuthorityService attempts, BatchGateStore gates, TaskScannerService tasks,
         HostReleaseDriftWatchdog releaseDrift, V1ReviewExecutorRegistry reviewHosts,
-        ReviewClaimUnclaimableLog unclaimable, GateSlotUsageTracker gateSlots,
+        ReviewClaimUnclaimableLog unclaimable, GateSlotUsageTracker gateSlots, PullGateStore pullGates,
         IConfiguration configuration)
     {
         _clients = clients;
@@ -37,6 +38,7 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
         _reviewHosts = reviewHosts;
         _unclaimable = unclaimable;
         _gateSlots = gateSlots;
+        _pullGates = pullGates;
         _configuration = configuration;
     }
 
@@ -79,13 +81,13 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
                     last.CpuCores > 0 ? last.Load1 / last.CpuCores : null, last.CpuPercent,
                     null, null, BlockedCards: last.ActiveSlots,
                     Evidence: $"load1={last.Load1:0.##}, cores={last.CpuCores}, activeSlots={last.ActiveSlots}",
-                    TargetPercent: target));
+                    TargetPercent: target, ClientId: client.Id));
             var memorySince = Since(x => MemoryPercent(x) > thresholds.MemoryUsedPercent
                 || (x.SwapInBytesPerSecond ?? 0) + (x.SwapOutBytesPerSecond ?? 0) > thresholds.SwapBytesPerSecond);
             if (memorySince is { } pressuredAt)
                 hostFacts.Add(new HostStallFact(client.Name, pressuredAt, null, null,
                     MemoryPercent(last), (last.SwapInBytesPerSecond ?? 0) + (last.SwapOutBytesPerSecond ?? 0),
-                    Evidence: $"memoryUsed={last.MemoryUsedBytes}, memoryTotal={last.MemoryTotalBytes}"));
+                    Evidence: $"memoryUsed={last.MemoryUsedBytes}, memoryTotal={last.MemoryTotalBytes}", ClientId: client.Id));
         }
 
         var jobs = _tasks.ScanAllJobs().Where(x => !x.Fixture).ToArray();
@@ -96,16 +98,11 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
                 Stopped: x.RunnerDaemonState != "running"))
             .Concat(allReviewHosts.Select(x => new HostHeartbeatFact(x.HostId, "review", x.LastSeenAt,
                 pendingReviews.Select(p => p.TaskKey).Distinct().ToArray())))
+            .Concat(_pullGates.Hosts().Select(host => new HostHeartbeatFact(host.Id, "gate",
+                host.LastHeartbeat.UtcDateTime, [])))
             .ToArray();
         bool CanClaim(Contract.RunnerCapabilitySnapshotDto host, ReviewAttemptDto attempt)
-        {
-            var capabilities = _reviewHosts.AdmittedReviewCapabilities(host.RunnerId, host.InstanceId);
-            if (!capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor)) return false;
-            var plan = attempt.Subject.Plan;
-            return plan is null || Contract.ReviewLibraryStepPolicy.MissingCapabilities(plan, capabilities).Count == 0
-                && Contract.ReviewRepositoryAccessPolicy.MissingCapabilities(
-                    plan, attempt.Subject.RepositoryUrl, capabilities).Count == 0;
-        }
+            => OperationalStallProbe.CanClaim(_reviewHosts, host, attempt);
         var capacity = reviewHosts.Where(x => x.RoleMaxParallelism > x.Telemetry?.ActiveSlots)
             .Select(x => (Host: x, Eligible: pendingReviews.Where(attempt => CanClaim(x, attempt)).ToArray()))
             .Select(x => new CapacityStallFact(QuotaProbeSignalProbe.WorkspaceProject, x.Host.HostId,
@@ -115,11 +112,20 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
         var slots = _gateSlots.Snapshot();
         var gateHost = _configuration["RemoteGate:SshHost"]?.Trim();
         if (pendingGate.Count > 0 && !string.IsNullOrWhiteSpace(gateHost)
+            && !_pullGates.Hosts().Any(host => host.Id == gateHost)
             && _gateSlots.Reachability == "reachable" && slots.Total > slots.Busy)
             capacity.Add(new CapacityStallFact(QuotaProbeSignalProbe.WorkspaceProject, gateHost,
                 "gate", slots.Total - slots.Busy, pendingGate.Count,
                 pendingGate.Min(y => y.EnqueuedAtUtc.UtcDateTime),
                 pendingGate.Select(y => y.Subject.TaskKey).Distinct().ToArray()));
+        foreach (var host in _pullGates.Hosts())
+        {
+            var workload = _pullGates.Workload(host.Id);
+            var oldest = _pullGates.OldestQueuedAtUtc();
+            if (workload is { Busy: 0, Queued: > 0 } && oldest is { } since)
+                capacity.Add(new CapacityStallFact(QuotaProbeSignalProbe.WorkspaceProject, host.Id,
+                    "gate", host.Slots, workload.Value.Queued, since, []));
+        }
 
         var cardClaims = jobs.Where(x => (x.State is TaskStates.Ready or TaskStates.Progress or TaskStates.AutoReview)
                 && x.RemoteClaimFailure is not null)
@@ -190,6 +196,18 @@ public sealed class OperationalStallProbe : IWatcherSignalProbe
 
         return OperationalStallDetector.Detect(new OperationalStallSnapshot(hostFacts, capacity,
             claims, providers, gateFacts, lanes, deployments, heartbeats), thresholds, nowUtc);
+    }
+
+    /// <summary>True when the review host's admitted capabilities satisfy the attempt's plan.</summary>
+    public static bool CanClaim(V1ReviewExecutorRegistry registry, Contract.RunnerCapabilitySnapshotDto host,
+        ReviewAttemptDto attempt)
+    {
+        var capabilities = registry.AdmittedReviewCapabilities(host.RunnerId, host.InstanceId);
+        if (!capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor)) return false;
+        var plan = attempt.Subject.Plan;
+        return plan is null || Contract.ReviewLibraryStepPolicy.MissingCapabilities(plan, capabilities).Count == 0
+            && Contract.ReviewRepositoryAccessPolicy.MissingCapabilities(
+                plan, attempt.Subject.RepositoryUrl, capabilities).Count == 0;
     }
 
     private static double? MemoryPercent(HostTelemetrySample sample) => sample.MemoryTotalBytes is > 0

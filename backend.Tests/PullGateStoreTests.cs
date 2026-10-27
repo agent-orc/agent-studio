@@ -76,6 +76,38 @@ public sealed class PullGateStoreTests : IDisposable
     }
 
     [Fact]
+    public void Restart_fence_blocks_queued_claims_and_survives_a_studio_restart()
+    {
+        var store = new PullGateStore(_root, _clock);
+        store.Register("gate-1", "KORI");
+        var runId = Enqueue(store);
+        Assert.Equal((0, 1), store.Workload("gate-1")!.Value);
+        var fence = Assert.IsAssignableFrom<AgentStudio.Runner.IRestartClaimFence>(store.TryFenceHostClaims("gate-1"));
+        fence.Retain(); // The Operations Server accepted the command but its status cannot be read.
+        Assert.Null(store.Claim("gate-1"));
+
+        var recovered = new PullGateStore(_root, _clock);
+        recovered.Register("gate-1", "KORI");
+        Assert.Null(recovered.Claim("gate-1"));
+        Assert.Null(recovered.TryFenceHostClaims("gate-1"));
+        fence.Dispose();
+        Assert.Null(recovered.Claim("gate-1"));
+        Assert.Equal((0, 1), recovered.Workload("gate-1")!.Value);
+        recovered.ReleaseRestartFence("gate-1"); // only after the remote attempt is terminal
+        Assert.Equal(runId, recovered.Claim("gate-1")!.RunId);
+    }
+
+    [Fact]
+    public void Busy_gate_worker_cannot_be_fenced_for_recreation()
+    {
+        var store = new PullGateStore(_root, _clock);
+        store.Register("gate-1", "KORI");
+        Enqueue(store);
+        Assert.NotNull(store.Claim("gate-1"));
+        Assert.Null(store.TryFenceHostClaims("gate-1"));
+    }
+
+    [Fact]
     public void Ssh_and_pull_accept_the_same_gate_result_for_the_same_bundle()
     {
         var runId = Guid.NewGuid().ToString("N");

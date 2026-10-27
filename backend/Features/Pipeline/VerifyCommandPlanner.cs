@@ -288,7 +288,7 @@ public static class VerifyCommandPlanner
     internal static IReadOnlyList<string> NodePackageDirs(string repoRoot)
         => NodePackageDirs(repoRoot, TrackedRepositoryFiles.Read(repoRoot));
 
-    private static IReadOnlyList<string> NodePackageDirs(
+    internal static IReadOnlyList<string> NodePackageDirs(
         string repoRoot,
         IReadOnlySet<string>? trackedFiles)
     {
@@ -329,7 +329,7 @@ public static class VerifyCommandPlanner
     }
 
     /// <summary>Reads the <c>scripts</c> map from a package.json (name -> command).</summary>
-    private static IReadOnlyDictionary<string, string> ReadNpmScripts(string packageJsonPath)
+    internal static IReadOnlyDictionary<string, string> ReadNpmScripts(string packageJsonPath)
     {
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         try
@@ -353,7 +353,7 @@ public static class VerifyCommandPlanner
         return map;
     }
 
-    private static bool HasScript(IReadOnlyDictionary<string, string> scripts, string name)
+    internal static bool HasScript(IReadOnlyDictionary<string, string> scripts, string name)
     {
         if (!scripts.TryGetValue(name, out var body) || string.IsNullOrWhiteSpace(body))
             return false;

@@ -1637,6 +1637,28 @@ public class ProjectSettingsService
     }
 
     /// <summary>
+    /// AGT-3310: stores <c>testing.perCard</c>. Null or <c>full</c> clears the
+    /// section, so the default plan stays byte-identical to a project that
+    /// never set it.
+    /// </summary>
+    public void SetTesting(string projectName, ProjectTestingSettings? testing)
+    {
+        EnsureLoaded();
+        var mode = PerCardTestModes.Normalize(testing?.PerCard);
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var settings) ? settings : new ProjectSettings();
+            _cache[key] = current with
+            {
+                Testing = mode == PerCardTestModes.Affected ? new ProjectTestingSettings { PerCard = mode } : null,
+            };
+            Persist();
+        }
+        _logger.LogInformation("Per-card test placement set to {Mode} for project {Project}", mode, projectName);
+    }
+
+    /// <summary>
     /// AGT-2749/AGT-2843: per-project override of the build/test gate-run
     /// budget (<see cref="ProjectSettings.BuildTestGateTimeoutSeconds"/>). Null
     /// clears the override so <see cref="AgentStudio.Pipeline.GateRunBudgetPolicy"/>

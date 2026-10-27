@@ -1,7 +1,7 @@
-import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, effect, inject, input, signal, untracked } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
-import { forkJoin, map, of, switchMap } from 'rxjs';
+import { forkJoin, map, of, Subscription, switchMap } from 'rxjs';
 
 interface Volume { name: string; mountPath: string }
 interface Backup { id: string; createdAt: string; bytes: number; sha256: string }
@@ -23,6 +23,10 @@ interface EnvironmentData extends HostedData { id: string; name: string }
 })
 export class HostedDataPanelComponent {
   private readonly http = inject(HttpClient);
+  private loadRequest?: Subscription;
+  private displayedProject: string | null = null;
+  /** Advances on every project switch so responses started for another project are dropped. */
+  private projectEpoch = 0;
   readonly projectName = input.required<string>();
   readonly environments = signal<EnvironmentData[]>([]);
   readonly loading = signal(true);
@@ -32,7 +36,13 @@ export class HostedDataPanelComponent {
   readonly pendingRestore = signal<string | null>(null);
   readonly hours = Array.from({ length: 24 }, (_, hour) => hour);
 
-  constructor() { effect(() => this.load(this.projectName())); }
+  constructor() {
+    effect(onCleanup => {
+      const project = this.projectName();
+      untracked(() => this.load(project));
+      onCleanup(() => this.loadRequest?.unsubscribe());
+    });
+  }
 
   schedule(environment: string, volume: string): Schedule | undefined {
     return this.environments().find(item => item.id === environment)?.schedules.find(item => item.volume === volume);
@@ -63,26 +73,56 @@ export class HostedDataPanelComponent {
   }
 
   load(project: string): void {
+    this.loadRequest?.unsubscribe();
+    if (project !== this.displayedProject) {
+      this.displayedProject = project;
+      this.projectEpoch++;
+      this.environments.set([]);
+      this.busy.set(false);
+      this.notice.set(null);
+      this.pendingRestore.set(null);
+    }
+    const epoch = this.projectEpoch;
     this.loading.set(true);
-    this.http.get<EnvironmentList>(`/api/projects/${encodeURIComponent(project)}/environments`).pipe(
+    this.error.set(null);
+    this.loadRequest = this.http.get<EnvironmentList>(`/api/projects/${encodeURIComponent(project)}/environments`).pipe(
       switchMap(list => list.environments.length
         ? forkJoin(list.environments.map(environment => this.http.get<HostedData>(
           `/api/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment.declaration.id)}/volumes`).pipe(
           map(data => ({ ...data, id: environment.declaration.id, name: environment.declaration.name })))))
         : of([] as EnvironmentData[])),
     ).subscribe({
-      next: items => { this.environments.set(items); this.loading.set(false); this.error.set(null); },
-      error: () => { this.loading.set(false); this.error.set('Hosted data could not be loaded.'); },
+      next: items => {
+        if (epoch !== this.projectEpoch) return;
+        this.environments.set(items);
+        this.loading.set(false);
+      },
+      error: () => {
+        if (epoch !== this.projectEpoch) return;
+        this.loading.set(false);
+        this.error.set('Hosted data could not be loaded.');
+      },
     });
   }
 
   private mutate(url: string, method: 'post' | 'put', body: object, message: string): void {
+    const project = this.projectName();
+    const epoch = this.projectEpoch;
     this.busy.set(true);
     this.error.set(null);
     const request = method === 'post' ? this.http.post(url, body) : this.http.put(url, body);
     request.subscribe({
-      next: () => { this.busy.set(false); this.notice.set(message); this.load(this.projectName()); },
-      error: () => { this.busy.set(false); this.error.set('The volume action failed. Check your access and the host backup adapter.'); },
+      next: () => {
+        if (epoch !== this.projectEpoch) return;
+        this.busy.set(false);
+        this.notice.set(message);
+        this.load(project);
+      },
+      error: () => {
+        if (epoch !== this.projectEpoch) return;
+        this.busy.set(false);
+        this.error.set('The volume action failed. Check your access and the host backup adapter.');
+      },
     });
   }
 

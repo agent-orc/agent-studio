@@ -3044,6 +3044,13 @@
           <td>The applier maps <code>DeferToBatch</code> to no target lane and returned in that branch before its only batch admission, which was unreachable. A completed occurrence is final, so nothing drove the cards on.</td>
           <td>The observed terminal was Auto Review without an owner. The applier now admits the settled review at its report time in that branch and runs the per-task emergency gate when the queue refuses it. As in the monolith, only a card in <span class="lane">4-auto-review</span> is admitted: a card the report found in another lane, a card that left Auto Review since, or a review that is no longer current completes with an operator-feed reason, and any other failed admission stays <code>applying</code> for retry. The recovery loop re-arms a completed newest decision whose card still waits in Auto Review without a pending record or ownership that records a batch, a passed per-task gate or a containment, at most four per pass; a bare marker or an interrupted per-task gate marker is admitted again, so the gate resumes within its start budget. It also clears wait markers that name a finished occurrence.</td>
         </tr>
+        <tr id="case-rate-limit-empty-salvage-requeue">
+          <td>2026-10-16</td>
+          <td><code>AGT-3176 / AGT-3177</code><br><span class="small">rate-limit-empty-salvage-requeue (AGT-3207)</span></td>
+          <td>A codex rate limit at 08:12Z ended both runs. They were requeued and started from empty salvage refs, lost their delivered work and escalated. Nobody saw it until the operator asked how the run was going.</td>
+          <td>The requeue had no continuation base, so the next round started from the base branch. No stall event led to an automatic, verified intervention.</td>
+          <td>The observed terminal was Escalated. The AI Operator now reacts to the <code>provider-rate-limited</code> stall (A1): each affected card that waits in Ready, whose last run ended on a rate limit and whose next run would start without a base or from an empty salvage (a base commit that is only the start of an earlier attempt), gets its last completed, reviewed delivery (immutable result ref and SHA) pinned as <code>continuation-base.json</code>. The card is read by its authority key and re-checked when the pin is written. The receipt names the ref and SHA; the pin is read back before the intervention counts, and Undo clears it.</td>
+        </tr>
         <tr id="case-gate-queue-overrun-escalation">
           <td>2026-10-18</td>
           <td><code>AGT-3219</code><br><span class="small">gate-queue-overrun-escalation</span></td>

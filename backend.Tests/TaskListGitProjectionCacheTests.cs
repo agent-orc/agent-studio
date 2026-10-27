@@ -73,11 +73,13 @@ public sealed class TaskListGitProjectionCacheTests
     }
 
     [Fact]
-    public async Task BuildProjectionAsync_RepositoryWideLookupFailure_FailsTheRunInsteadOfPublishingAnEmptyProjection()
+    public async Task BuildProjectionAsync_RepositoryWideLookupFailure_ReportsATypedRepositoryFailureInsteadOfThrowing()
     {
         var jobs = Enumerable.Range(0, 10).Select(i => Job($"card-{i}", "watch-a")).ToArray();
         var calls = 0;
-        await Assert.ThrowsAsync<IOException>(() => TaskListGitProjectionCache.BuildProjectionAsync(
+        // AGT-3322: the indexer turns this into a degraded repository health
+        // state and keeps the last good generation serving.
+        var projection = await TaskListGitProjectionCache.BuildProjectionAsync(
             jobs,
             _ => new Dictionary<string, TaskMergeSignal>(),
             _ => new Dictionary<string, TaskIntegrationStatus>(),
@@ -87,9 +89,53 @@ public sealed class TaskListGitProjectionCacheTests
                 Interlocked.Increment(ref calls);
                 throw new IOException("repository unavailable");
             },
-            _ => new Dictionary<string, AgentStudio.Review.ReviewProjectionView>()));
+            _ => new Dictionary<string, AgentStudio.Review.ReviewProjectionView>());
         // One batch call plus at most three per-card probes, not one per card.
         Assert.True(Volatile.Read(ref calls) <= 4, $"lookup was called {calls} times");
+        var failure = Assert.IsType<GitRepositoryLookupFailure>(projection.RepositoryFailure);
+        Assert.Equal("test-runs", failure.Lookup);
+        Assert.Equal("repository-lookup-failed", failure.ReasonCode);
+        Assert.Contains("repository unavailable", failure.Detail);
+        Assert.Empty(projection.UnavailableTasks);
+    }
+
+    [Fact]
+    public void RestoredGeneration_ServesAsRestoredUntilConfirmedAndNeverReplacesALiveOne()
+    {
+        var cache = new TaskListGitProjectionCache();
+        var task = Job("task-1", "watch-a");
+        var projection = ProjectionFor(task, "task/restored") with
+        {
+            Signatures = new Dictionary<string, string> { [task.TaskKey] = TaskGitSignature.For(task) },
+        };
+        Assert.True(cache.SetRestored(task.WatchPath, projection, SnapshotTime, "stored-input"));
+
+        var restored = cache.ReadTask(task);
+        Assert.Equal("restored", restored.State);
+        Assert.Equal(SnapshotTime, restored.ComputedAt);
+        Assert.Equal("task/restored", restored.Data!.Merge!.Branch);
+        Assert.Equal(new GitProjectionFreshness(SnapshotTime, true, true), cache.ReadFreshness([task]));
+        // A delta run in flight keeps the restored state; a failure turns it stale.
+        cache.MarkRefreshing(task.WatchPath);
+        Assert.Equal("restored", cache.ReadTask(task).State);
+        var generation = cache.Generation;
+        cache.ConfirmRestored(task.WatchPath, SnapshotTime.AddMinutes(1), "confirmed-input");
+        var ready = cache.ReadTask(task);
+        Assert.Equal("ready", ready.State);
+        Assert.Equal(SnapshotTime.AddMinutes(1), ready.ComputedAt);
+        Assert.Equal("confirmed-input", ready.ResourceVersion);
+        Assert.True(cache.Generation > generation);
+        Assert.False(cache.ReadFreshness([task]).Restored);
+
+        // Once this process published, a late restore is ignored.
+        Assert.False(cache.SetRestored(task.WatchPath, ProjectionFor(task, "task/older"), SnapshotTime, null));
+        Assert.Equal("task/restored", cache.ReadTask(task).Data!.Merge!.Branch);
+
+        var other = Job("task-2", "watch-b");
+        cache.SetRestored(other.WatchPath, ProjectionFor(other, "task/b"), SnapshotTime, null);
+        cache.MarkFailed(other.WatchPath, "repository-degraded");
+        Assert.Equal("stale", cache.ReadTask(other).State);
+        Assert.Equal("repository-degraded", cache.ReadTask(other).ReasonCode);
     }
 
     [Fact]

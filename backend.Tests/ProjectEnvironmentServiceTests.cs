@@ -890,6 +890,41 @@ public sealed class ProjectEnvironmentServiceTests : IDisposable
             .Claim("stage-host", requireVerifiedRelease: true)?.Project);
     }
 
+    [Theory]
+    [InlineData(0, new[] { "dev", "stage", "production" })]
+    [InlineData(150, new[] { "stage", "dev", "production" })]
+    [InlineData(null, new[] { "stage", "production", "dev" })]
+    public void DeclarationOrder_PlacesAnOtherEnvironmentInTheLifecycle(int? order, string[] expected)
+    {
+        var (service, repo, _) = Build();
+        File.WriteAllText(Path.Combine(repo, "docs", "deployments", "environments", "dev.json"), JsonSerializer.Serialize(new
+        {
+            id = "dev", name = "Dev", kind = "other", order, targetHostId = "dev-host",
+            address = "https://dev.example", template = "container", destination = "8083",
+        }));
+        var declarations = service.Declarations("demo")!;
+        Assert.Equal(expected, declarations.Select(item => item.Id));
+        Assert.Equal(order, declarations.Single(item => item.Id == "dev").Order);
+        // Only an explicit order puts an other kind into the release lifecycle.
+        Assert.Equal(expected.Where(id => id != "dev" || order is not null),
+            DeployService.MapEnvironments("demo", declarations).Select(item => item.Id));
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("1001")]
+    [InlineData("1.5")]
+    [InlineData("\"first\"")]
+    public void DeclarationOrder_MustBeAWholeNumberInRange(string order)
+    {
+        var (service, repo, _) = Build();
+        File.WriteAllText(Path.Combine(repo, "docs", "deployments", "environments", "dev.json"),
+            "{\"id\":\"dev\",\"name\":\"Dev\",\"kind\":\"other\",\"order\":" + order
+            + ",\"targetHostId\":\"dev-host\",\"address\":\"https://dev.example\",\"template\":\"container\","
+            + "\"destination\":\"8083\"}");
+        Assert.Contains("order must be", Assert.Throws<JsonException>(() => service.Declarations("demo")).Message);
+    }
+
     [Fact]
     public void StageDeclaration_RequiresHealthUrl()
     {

@@ -60,6 +60,12 @@ title of a fulfilled edge. The client restores them on the parsed grouped cards
 (`restoreBoardCardDefaults` in `task.service.ts`). The production-shaped Human
 Review fixture in `BoardCardSummaryTests` holds the card to 2 KB on average. ETag
 validation remains a separate HTTP optimization from the card contract.
+`Board:Source` selects who answers the grouped board read: the workspace task
+index (`workspace`, default), the workspace with a mirrored and compared Task
+Server read model (`task-server-shadow`), or the Task Server read model
+enriched from the workspace index (`task-server`). The read model, change
+feed, shadow differences card and 7-day cutover gate are described in
+[board-source-cutover.md](../../operations/board-source-cutover.md).
 
 ## Execution modes
 

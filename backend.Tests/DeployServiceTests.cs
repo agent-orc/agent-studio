@@ -705,6 +705,67 @@ public sealed class DeployServiceTests : IDisposable
     }
 
     [Fact]
+    public void DeclaredDevEnvironment_LeadsTheLifecycle_AndDeliveryColumnsFollowTheRuns()
+    {
+        var (deploy, environments, _) = Build();
+        File.WriteAllText(Path.Combine(_repo, "docs", "deployments", "environments", "dev.json"), JsonSerializer.Serialize(new
+        {
+            id = "dev", name = "Dev", kind = "other", order = 0, targetHostId = "dev-host",
+            address = "https://dev.example", template = "container", destination = "8083",
+            secretRefs = Array.Empty<string>(),
+        }));
+        var commit = Commit("dev");
+        Card("DEMO-1", commit, lane: "7-archive");
+        Card("DEMO-2", new string('1', 40));
+        var lanes0 = LaneStates();
+        Assert.Equal(["6-completed", "7-archive"], lanes0.Values.Order(StringComparer.Ordinal));
+
+        var declared = deploy.Environments("demo")!;
+        Assert.Equal(["dev", "stage", "production"], declared.Select(item => item.Id));
+        Assert.Equal([0, 1, 2], declared.Select(item => item.Order));
+        Assert.Equal(EnvironmentKinds.Other, declared[0].Kind);
+
+        var release = CreateRelease(deploy, Artifact('a'), commit);
+        Assert.Equal(["DEMO-1"], release.CardKeys);
+        // The declared Dev phase has no approval, so it starts on its own next to Staging.
+        Assert.Equal(DeploymentStates.Queued, Assert.Single(deploy.Deployments("demo", "dev")!).State);
+        Assert.Equal(DeploymentStates.Queued, Assert.Single(deploy.Deployments("demo", "stage")!).State);
+        var lanes = deploy.DeliveryColumns("demo")!;
+        Assert.Equal(lanes0, LaneStates());
+        Assert.Equal(["integrated", "dev", "stage", "production"], lanes.Columns.Select(item => item.Id));
+        Assert.Equal(["DEMO-2"], lanes.Columns[0].Landed.Select(item => item.Key));
+        Assert.Equal(["DEMO-1"], lanes.Columns[1].Waiting.Select(item => item.Key));
+        Assert.All(lanes.Columns.Skip(1), column => Assert.Empty(column.Landed));
+
+        Report(deploy, environments, "dev-host", healthy: true);
+        lanes = deploy.DeliveryColumns("demo")!;
+        Assert.Equal(["DEMO-1"], lanes.Columns[1].Landed.Select(item => item.Key));
+        Assert.Equal((release.Version, DeploymentStates.Succeeded),
+            (lanes.Columns[1].CurrentRelease!.Version, lanes.Columns[1].LastRun!.State));
+        Assert.Equal(["DEMO-1"], lanes.Columns[2].Waiting.Select(item => item.Key));
+
+        Report(deploy, environments, "stage-host", healthy: true);
+        lanes = deploy.DeliveryColumns("demo")!;
+        Assert.Equal(["DEMO-1"], lanes.Columns[2].Landed.Select(item => item.Key));
+        Assert.Equal(["DEMO-1"], lanes.Columns[3].Waiting.Select(item => item.Key));
+        var waiting = lanes.Columns[3].PendingApproval!;
+        Assert.Equal(release.Id, waiting.ReleaseId);
+
+        Assert.Equal(DeployOutcomeKind.Ok, deploy.Approve("demo", waiting.DeploymentId, Owner).Kind);
+        Report(deploy, environments, "prod-host", healthy: true);
+        lanes = deploy.DeliveryColumns("demo")!;
+        Assert.All(lanes.Columns.Skip(1), column => Assert.Equal(["DEMO-1"], column.Landed.Select(item => item.Key)));
+        Assert.Null(lanes.Columns[3].PendingApproval);
+        Assert.Equal(lanes0, LaneStates());
+    }
+
+    /// <summary>Folder lane and stored state of every card in the demo project.</summary>
+    private Dictionary<string, string> LaneStates()
+        => Directory.GetFiles(_watch, "task.json", SearchOption.AllDirectories).ToDictionary(
+            path => Path.GetRelativePath(_watch, path),
+            path => JsonNode.Parse(File.ReadAllText(path))!["state"]!.GetValue<string>());
+
+    [Fact]
     public void SameCommitAndArtifact_AfterFailedStaging_ReusesTheRelease()
     {
         var (deploy, environments, _) = Build();
@@ -2320,13 +2381,14 @@ public sealed class DeployServiceTests : IDisposable
         => new(_configuration!, _scanner!, _git!, _settings!, _clock,
             new ReleaseArtifactRegistry(_configuration!), new DeployStore(_configuration!));
 
-    private void Card(string key, string sha, IReadOnlyList<string>? deliveryShas = null, string? title = null)
+    private void Card(string key, string sha, IReadOnlyList<string>? deliveryShas = null, string? title = null,
+        string lane = "6-completed")
     {
-        var folder = Path.Combine(_watch, "6-completed", key.ToLowerInvariant());
+        var folder = Path.Combine(_watch, lane, key.ToLowerInvariant());
         Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
         {
-            id = key.ToLowerInvariant(), key, title = title ?? "Card " + key, state = "6-completed", agent = "claude",
+            id = key.ToLowerInvariant(), key, title = title ?? "Card " + key, state = lane, agent = "claude",
             createdAt = _clock.GetUtcNow(),
         }));
         File.WriteAllText(Path.Combine(folder, "prompt.md"), "fixture");

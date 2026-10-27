@@ -69,6 +69,35 @@ minutes or reuse rate. Published batch members use the batch publication
 record. Batch gate waiting and acquisition callbacks emit lane events for
 each gated member, including the holding project when one is known.
 
+Each row also carries the delivery-target `baseline` of the
+[pipeline Dossier](../../pipeline-delivery-target/index.html) section 07
+(AGT-3309). These metrics only read evidence. They change no gate, review or
+board read. A missing input is null (Unknown), never zero.
+
+- **Lead time to develop** runs from the review pass of a card's last round
+  to its integrated push. The review pass is the `deliveredAtUtc` of the
+  latest `enqueued` or `agent-round-re-entry` lane event. The push is the
+  `published` event. Median and p90 are taken per publication in the window.
+- **Gate minutes per card** add T1 and T2 minutes spent since the card's
+  previous publication, without queue wait. T1 is the executed `verify-N`
+  verification commands of its Remote Review reports. T2 is the receipt
+  `durationMs` of its pre-develop gates, or its share of the published batch
+  run. Cache hits, exact review reuse and reused review results ran nothing.
+  A card is unknown when a report lacks a command budget or has no gate
+  evidence.
+- **Full-suite runs** count executed `testLevel=full` gate receipts plus
+  every batch gate run, per window and per day.
+- **Red develop time** stays null until the post-merge checks (Dossier P4)
+  record T3 verdicts.
+- **Gate source** reads the `Source bundle N bytes transferred in Xs` reason
+  suffix that remote gates write next to `remote_gate_bundle_transferred`.
+- **Board read** is a response-level list for the board, card list and board
+  status handlers. It covers all projects over the git telemetry window and
+  reads `GitProcessTelemetry`, the source of `/api/admin/git-telemetry`.
+
+The all-projects row is computed over the same folders as the visible project
+rows, so its counts equal the sum of those rows.
+
 ## Gate cancellation ownership
 
 The per-task review gate, batch fallback gate, and merge gate recheck the current
@@ -1377,11 +1406,43 @@ comparison before Quality Studio's verdict contract can decide a review.
   uncovered source directory. The gate also runs the full suite and returns a
   red code verdict for a stale configured map. A missing map, an unmapped changed path, an
   unavailable mapped test project, or a change spanning mapped modules runs
-  the declared full suite. A newly added test file (`A` in the Git diff) runs
+  the declared full suite. A change spanning several mapped modules runs the
+  union of their mapped test commands (AGT-3310). A global input
+  (`Directory.Build.*`, `global.json`, `.agent-studio/**`, `testsupport/**`)
+  always runs the full suite. A newly added test file (`A` in the Git diff) runs
   with its whole mapped project. The gate audit records the diff, statuses,
   selected commands, fallback reasons, and SHA-256 `digest`; the verdict also
   carries `testSelectionAuditDigest` for the future gate subject.
   Model-based test selection is rejected by the Gates Dossier section 5.
+- `backend/Features/Pipeline/PerCardVerifyPlanner.cs`,
+  `GeneratedTestProjectMap.cs` and `FastCheckPlanner.cs`: tier T1 of the
+  [pipeline Dossier](../../pipeline-delivery-target/index.html) (decision D1,
+  option T-B; AGT-3310). The project setting `testing.perCard` is `full` by
+  default, which keeps the Remote Review plan byte-identical. With `affected`,
+  the plan builds `folderToTestProjects` at plan time from the `.csproj`
+  `ProjectReference` graph (every project directory maps to the test projects
+  whose transitive closure contains it, process-level references included) and
+  maps a Node package directory to the routine `testSuites` named after it
+  (`frontend/` to `frontend-unit`). The audit records the map's
+  `projectMapDigest`, and the digest joins the selection digest. A configured
+  `testExecution.folderToTestProjects` map takes the place of the generated
+  one. Inside a selected .NET test project the classes are narrowed by type
+  reference (`DotNetReferenceSelection`) when the change is the project's own
+  or in a directly referenced project; a change that reaches the project only
+  transitively keeps it whole. A project whose classes name none of the changed
+  types gets no per-card command. A diff that edits a `.csproj` makes the
+  generated map stale. A stale map, a global input, an unmapped path or a
+  missing diff keeps the full plan. Fast checks: the declared lint commands run
+  as before; a touched Node package adds its `typecheck` and `format:check`
+  scripts (through the package's declared `... run` invocation when there is
+  one); .NET code is type-checked by the build and has no declared format
+  check. A Remote Review with this per-card selection records `testLevel:
+  work-package` in `review-verification.json`, and the integration gate then
+  does not reuse it (`IntegrationGateReusePolicy`), so the integration gate
+  keeps its own test stage until the project switches to post-merge checks
+  (Dossier P7). Operators switch the setting with `PUT
+  /api/projects/{name}/testing` (`{"perCard":"affected"}`); the settings page
+  shows it read-only.
 - `backend/Features/Pipeline/PreMainTestGate.cs`: fail-closed release boundary
   that forces the full test level before a configured merge can advance
   `main`, irrespective of lane settings, diff input, or history.

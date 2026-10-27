@@ -9,6 +9,12 @@ public static class EnvironmentKinds
     public const string Preview = "preview";
     public const string Staging = "staging";
     public const string Production = "production";
+
+    /// <summary>
+    /// A declared lifecycle environment beyond Staging and Production, such as
+    /// Dev (AGT-3276 D6). Lifecycle phases name it by its environment id.
+    /// </summary>
+    public const string Other = "other";
 }
 
 public static class DeploymentStates
