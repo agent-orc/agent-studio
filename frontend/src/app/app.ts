@@ -13,7 +13,6 @@ import {
   OnDestroy,
 } from '@angular/core';
 import { forkJoin } from 'rxjs';
-import { DeliveryLanesComponent } from './features/deployments';
 import { FormsModule } from '@angular/forms';
 import {
   BoardFiltersService, ActiveBoardFiltersComponent,
@@ -28,6 +27,7 @@ import {
   BoardDragStateService,
   BoardMutationsService,
   CreateTaskFormService,
+  DeliverySectionComponent,
   buildFocusLanes,
   buildLaneGroups,
   buildProjectTokenChip,
@@ -168,7 +168,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
 @Component({
   selector: 'app-root',
   imports: [
-    DeliveryLanesComponent,
+    DeliverySectionComponent,
     TaskColumnComponent,
     ScrollMemoryDirective,
     TaskDetailComponent,
@@ -561,7 +561,6 @@ export class App implements OnInit, OnDestroy {
   readonly laneGroups = computed<BoardLaneGroup[]>(
     () => buildLaneGroups(this.displayGrouped(), this.boardDrag.active()),
   );
-  readonly deliveryMode = signal(false);
   // Copilot removed: no CLI exposes the inline path/token config card, so the
   // error-dialog "Open CLI config" affordance is permanently disabled.
   readonly selectedJobUsesCopilot = computed(() => false);
@@ -1152,11 +1151,6 @@ export class App implements OnInit, OnDestroy {
       this.studioTabState.open({ kind: 'task', taskKey: job.taskKey });
     }
     this.jobSelection.openDetailAfterPaint(job);
-  }
-  openDeliveryCard(key: string): void {
-    const card = this.jobService.jobs().find(job =>
-      (job.displayKey ?? job.taskKey).toLowerCase() === key.toLowerCase());
-    if (card) this.openDetail(card);
   }
   closeDetail() {
     this.jobSelection.closeDetail();

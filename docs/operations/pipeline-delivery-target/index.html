@@ -928,6 +928,10 @@
   <strong>AGT-3313 · Pre-delivery release candidate gate</strong>
   <span>Implemented D3 A: <code>delivery.fullSuite</code> has required, optional and off modes, with required as the default for declared Production; required releases need a green post-merge candidate and a Task Server verdict for that SHA and command digest. Implemented D4 A: the promotion train reuses an exact green verdict, runs the sharded suite on a digest miss and records reuse. The release detail shows the verdict and SHA.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3316" data-delivered-at="2026-10-27" data-slice="delivery-section-board">
+  <strong>AGT-3316 · Delivery section on the board</strong>
+  <span>Delivered on D5 L-B and D10 A: a Delivery group follows Done &amp; Decide (<code>buildDeliveryGroup</code> in <code>board-lane-layout.util.ts</code>, <code>&lt;app-delivery-section&gt;</code>), one column per read-model column of <code>GET deploy/lanes</code> with release version, last run state and time, health and an approval pill; landed cards, a Waiting divider, then waiting cards with a rolled-back flag, all as the standard task card. Columns collapse like lanes; the display option "Furthest environment only" shows each card once. Words and tones come from <code>models/delivery-presentation.ts</code>. Refresh follows task events and the 30-second deploy poll. In the studio board the group is a fourth super-column whose environment columns stack like lanes. Lane <code>6-completed</code> now reads "Accepted" ("Integrated and accepted."); the interim "Delivery lanes" board toggle is removed.</span>
+</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>
