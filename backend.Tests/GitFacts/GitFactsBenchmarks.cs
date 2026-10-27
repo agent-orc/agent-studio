@@ -43,9 +43,11 @@ public sealed class GitFactsBenchmarks(GitFactsBoardFixture board, ITestOutputHe
         await using var host = new GitReadCensusHost(board, keepGitStateIndex: true, runs);
         await GitFactsBudgetTests.IndexedAsync(host);
         var indexer = host.Services.GetRequiredService<GitStateIndexService>();
-        // The first publication; its trigger can be startup, a coalesced
-        // watcher event or the rerun of a superseded start-up run.
-        var firstBuild = runs.Completed.Last(run => run.Spawns > 1);
+        // The first complete run; its trigger can be startup, a coalesced
+        // watcher event or the rerun of a superseded start-up run. With the
+        // fact store warm from an earlier host on the shared board it is a
+        // confirmed restore rather than a cold build; the outcome says which.
+        var firstBuild = await runs.FirstAsync(run => run.Outcome is "published" or "confirmed");
 
         var measured = new List<IndexRunLog.IndexRun>();
         for (var index = 0; index < WarmUpRuns + Runs; index++)
@@ -61,9 +63,10 @@ public sealed class GitFactsBenchmarks(GitFactsBoardFixture board, ITestOutputHe
         indexer.RequestRefresh(GitFactsBoardFixture.ProjectName, "ref-moved");
         IndexRunLog.IndexRun changedRef;
         do changedRef = await runs.NextAsync(beforeMove++);
-        while (changedRef.Spawns <= 1);
+        while (changedRef.Outcome != "published");
 
         Assert.Empty(runs.Failures);
+        Assert.All(measured, run => Assert.Contains(run.Outcome, IndexRunLog.CompleteOutcomes));
         Assert.All(measured, run => Assert.True(run.ElapsedMs < RunDeadline.TotalMilliseconds));
         var status = indexer.GetRepositoryStatuses().Single(entry => entry.ProjectName == GitFactsBoardFixture.ProjectName);
         Assert.Null(status.ReasonCode);
@@ -81,6 +84,7 @@ public sealed class GitFactsBenchmarks(GitFactsBoardFixture board, ITestOutputHe
             ["spawnsPerRun"] = measured.Max(run => run.Spawns),
             ["firstBuildMs"] = firstBuild.ElapsedMs,
             ["firstBuildTrigger"] = firstBuild.Trigger,
+            ["firstBuildOutcome"] = firstBuild.Outcome,
             ["firstBuildSpawns"] = firstBuild.Spawns,
             ["changedRefMs"] = changedRef.ElapsedMs,
             ["changedRefSpawns"] = changedRef.Spawns,

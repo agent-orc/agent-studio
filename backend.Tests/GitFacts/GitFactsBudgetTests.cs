@@ -108,6 +108,7 @@ public sealed class GitFactsBudgetTests(GitFactsBoardFixture board)
         var run = await runs.NextAsync(before);
 
         Assert.Equal("task-event", run.Trigger);
+        Assert.Contains(run.Outcome, IndexRunLog.CompleteOutcomes);
         // S1 measured 1 spawn (the config capture); S2 (AGT-3322) moved the
         // configuration generation to the watcher, so the run starts none.
         Assert.Equal(0, run.Spawns);
@@ -212,7 +213,15 @@ public sealed class IndexRunLog : ILoggerProvider
     private readonly ConcurrentQueue<string> _failures = new();
     private int _scopeSpawns;
 
-    public sealed record IndexRun(string Trigger, int Spawns, long ElapsedMs);
+    public sealed record IndexRun(string Trigger, int Spawns, long ElapsedMs, string Outcome);
+
+    /// <summary>
+    /// Outcomes of a run that leaves complete per-card facts behind: a new
+    /// generation, an unchanged input, or a restored generation the start-up
+    /// run confirmed (the fact store of AGT-3322).
+    /// </summary>
+    public static readonly IReadOnlySet<string> CompleteOutcomes = new HashSet<string>(StringComparer.Ordinal)
+        { "published", "unchanged", "confirmed" };
 
     public IReadOnlyList<IndexRun> Completed => _completed.ToArray();
     public IReadOnlyList<string> Failures => _failures.ToArray();
@@ -221,6 +230,12 @@ public sealed class IndexRunLog : ILoggerProvider
     {
         await GitFactsBudgetTests.Until(() => _completed.Count > afterCount);
         return Completed[afterCount];
+    }
+
+    public async Task<IndexRun> FirstAsync(Func<IndexRun, bool> match)
+    {
+        await GitFactsBudgetTests.Until(() => _completed.Any(match));
+        return Completed.First(match);
     }
 
     public ILogger CreateLogger(string categoryName) => new Logger(this);
@@ -250,7 +265,8 @@ public sealed class IndexRunLog : ILoggerProvider
             else if (template.StartsWith("git-index-run repository=", StringComparison.Ordinal))
                 log._completed.Enqueue(new IndexRun(Field(fields, "Trigger")?.ToString() ?? "",
                     Math.Max(Convert.ToInt32(Field(fields, "Spawns")), Interlocked.Exchange(ref log._scopeSpawns, 0)),
-                    Convert.ToInt64(Field(fields, "ElapsedMs"))));
+                    Convert.ToInt64(Field(fields, "ElapsedMs")),
+                    Field(fields, "Outcome")?.ToString() ?? ""));
         }
 
         private static object? Field(IReadOnlyList<KeyValuePair<string, object?>> fields, string name)
