@@ -4581,6 +4581,8 @@ public sealed partial class TaskServerStore
             CREATE INDEX IF NOT EXISTS ix_studio_sessions_user ON studio_sessions(user_id, revoked_at);
             CREATE INDEX IF NOT EXISTS ix_studio_stream_events_project ON studio_stream_events(project_id, cursor);
             """, ct);
+        // Board change triggers name tasks.rank, so they follow its column.
+        await ApplyBoardReadModelMigrationAsync(connection, ct);
         await ApplyWorkbenchContextMigrationAsync(connection, ct);
         // Operator archive marker for orchestrator chat contexts. Added after
         // the workbench rebuild so a pre-workbench table is rebuilt first and

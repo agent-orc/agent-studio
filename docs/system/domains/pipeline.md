@@ -69,6 +69,35 @@ minutes or reuse rate. Published batch members use the batch publication
 record. Batch gate waiting and acquisition callbacks emit lane events for
 each gated member, including the holding project when one is known.
 
+Each row also carries the delivery-target `baseline` of the
+[pipeline Dossier](../../pipeline-delivery-target/index.html) section 07
+(AGT-3309). These metrics only read evidence. They change no gate, review or
+board read. A missing input is null (Unknown), never zero.
+
+- **Lead time to develop** runs from the review pass of a card's last round
+  to its integrated push. The review pass is the `deliveredAtUtc` of the
+  latest `enqueued` or `agent-round-re-entry` lane event. The push is the
+  `published` event. Median and p90 are taken per publication in the window.
+- **Gate minutes per card** add T1 and T2 minutes spent since the card's
+  previous publication, without queue wait. T1 is the executed `verify-N`
+  verification commands of its Remote Review reports. T2 is the receipt
+  `durationMs` of its pre-develop gates, or its share of the published batch
+  run. Cache hits, exact review reuse and reused review results ran nothing.
+  A card is unknown when a report lacks a command budget or has no gate
+  evidence.
+- **Full-suite runs** count executed `testLevel=full` gate receipts plus
+  every batch gate run, per window and per day.
+- **Red develop time** stays null until the post-merge checks (Dossier P4)
+  record T3 verdicts.
+- **Gate source** reads the `Source bundle N bytes transferred in Xs` reason
+  suffix that remote gates write next to `remote_gate_bundle_transferred`.
+- **Board read** is a response-level list for the board, card list and board
+  status handlers. It covers all projects over the git telemetry window and
+  reads `GitProcessTelemetry`, the source of `/api/admin/git-telemetry`.
+
+The all-projects row is computed over the same folders as the visible project
+rows, so its counts equal the sum of those rows.
+
 ## Gate cancellation ownership
 
 The per-task review gate, batch fallback gate, and merge gate recheck the current

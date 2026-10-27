@@ -188,7 +188,7 @@ public static class TaskCrudEndpoints
                 ?? BoardReadValidator.Bytes(ctx, body.ETag, body.Bytes);
         });
 
-        group.MapGet("/grouped", async (bool? includeFixtures, bool? includeLegacyReviewLane, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, ILoggerFactory loggerFactory) =>
+        group.MapGet("/grouped", async (bool? includeFixtures, bool? includeLegacyReviewLane, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, BoardSourceSettings boardSource, BoardShadowWorker boardShadow, TaskServerBoardSource taskServerBoard, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/grouped",
@@ -207,10 +207,36 @@ public static class TaskCrudEndpoints
                 publication = await scanner.AcquireBoardReadAsync(BoardReadClientId(context), context.RequestAborted);
             using var pin = scanner.PinBoardRead(publication);
 
+            // Board:Source (pipeline delivery target M1 and M2): the shadow
+            // answers from the workspace and only asks the mirror worker for a
+            // comparison; task-server takes lanes and card core from the Task
+            // Server and enriches them from this pinned generation.
+            var source = boardSource.Mode;
+            IEnumerable<TaskInfo> boardTasks;
+            var sourceVariant = "";
+            if (source == BoardSourceMode.TaskServer)
+            {
+                TaskServerBoardAnswer answer;
+                using (TaskSwitchTrace.Span("task-server"))
+                    answer = await taskServerBoard.ReadAsync(publication, context.RequestAborted);
+                boardTasks = answer.Tasks;
+                sourceVariant = "&source=task-server&board=" + Uri.EscapeDataString(answer.Version);
+                if (!answer.Synced || answer.Degraded.Count > 0)
+                    context.Response.Headers["X-Board-Source-Degraded"] = answer.Degraded.Count > 0
+                        ? string.Join(",", answer.Degraded)
+                        : "mirror-behind";
+            }
+            else
+            {
+                boardTasks = scanner.ScanAllJobs();
+                if (source == BoardSourceMode.TaskServerShadow) boardShadow.RequestComparison();
+            }
+            context.Response.Headers["X-Board-Source"] = BoardSourceSetting.Format(source);
+
             List<TaskInfo> raw;
             using (TaskSwitchTrace.Span("filter"))
             {
-                raw = ProjectAccessAuthorization.FilterTasks(context, scanner.ScanAllJobs(), projects).ToList();
+                raw = ProjectAccessAuthorization.FilterTasks(context, boardTasks, projects).ToList();
                 if (includeFixtures != true) raw = raw.Where(j => !j.Fixture).ToList();
             }
             GitProjectionFreshness gitFreshness;
@@ -226,7 +252,7 @@ public static class TaskCrudEndpoints
             // per signature, and a rebuilt body that matches the client's copy
             // still answers 304 because its tag is derived from its bytes.
             var legacyReviewLane = includeLegacyReviewLane != false;
-            var variant = $"fixtures={includeFixtures == true}&legacyReviewLane={legacyReviewLane}";
+            var variant = $"fixtures={includeFixtures == true}&legacyReviewLane={legacyReviewLane}{sourceVariant}";
             string signature;
             using (TaskSwitchTrace.Span("compose"))
                 signature = BoardReadValidator.FormatETag(boardSignature.Compose(
@@ -367,6 +393,10 @@ public static class TaskCrudEndpoints
                     using var buildPin = scanner.PinBoardRead(publication);
                     return BuildPayload();
                 }, context.RequestAborted);
+            // Git spawns of this read (acceptance of the board read model card:
+            // zero per request on the board, measured per response).
+            if (GitProcessTelemetry.CurrentTally() is { } tally)
+                context.Response.Headers["X-Board-Git-Spawns"] = tally.Spawns.ToString(System.Globalization.CultureInfo.InvariantCulture);
             return BoardReadValidator.NotModified(context, body.ETag)
                 ?? BoardReadValidator.Bytes(context, body.ETag, body.Bytes);
         });
