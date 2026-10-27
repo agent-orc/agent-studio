@@ -1,0 +1,102 @@
+<section class="board-source" data-testid="board-source-panel">
+  <header class="board-source__head">
+    <div>
+      <h3>Board source</h3>
+      <p>Which store answers the board (Board:Source), and how the Task Server read model compares with the workspace.</p>
+    </div>
+    <button type="button" class="board-source__button" data-testid="board-source-refresh" (click)="refresh()">Refresh</button>
+  </header>
+
+  @if (loadError()) {
+    <div class="board-source__banner board-source__banner--err" data-testid="board-source-error">{{ loadError() }}</div>
+  }
+
+  @if (status(); as s) {
+    @if (s.rejectedSetting) {
+      <div class="board-source__banner board-source__banner--warn" data-testid="board-source-rejected">
+        Board:Source "{{ s.rejectedSetting }}" is not a known value; the workspace answers.
+      </div>
+    }
+    @if (s.sync.missingProjects.length) {
+      <div class="board-source__banner board-source__banner--warn" data-testid="board-source-missing">
+        Not on the Task Server: {{ s.sync.missingProjects.join(', ') }}
+      </div>
+    }
+
+    <dl class="board-source__facts">
+      <div><dt>Source</dt><dd data-testid="board-source-mode"><code>{{ s.source }}</code></dd></div>
+      <div>
+        <dt>Mirror</dt>
+        <dd data-testid="board-source-sync">
+          @if (s.sync.syncedGeneration !== null) {
+            generation {{ s.sync.syncedGeneration }} at {{ s.sync.syncedAt | date:'HH:mm:ss' }}
+          } @else {
+            {{ s.mirroring ? 'not synced yet' : 'off' }}
+          }
+          @if (s.sync.lastError) {
+            <span class="board-source__muted" [title]="s.sync.lastError">· last error {{ s.sync.lastErrorAt | date:'HH:mm:ss' }}</span>
+          }
+        </dd>
+      </div>
+      <div>
+        <dt>Comparisons</dt>
+        <dd data-testid="board-source-comparisons">{{ s.comparisons | number }} of {{ s.comparisonRequests | number }} reads, {{ s.skippedComparisons | number }} skipped</dd>
+      </div>
+      <div>
+        <dt>Differences</dt>
+        <dd data-testid="board-source-differences-count">{{ s.unexplainedDifferences | number }} unexplained, {{ s.explainedDifferences | number }} explained</dd>
+      </div>
+      <div>
+        <dt>Cutover</dt>
+        <dd data-testid="board-source-readiness">
+          <span class="board-source__badge" [class.board-source__badge--ok]="s.readiness.ready">{{ readinessLabel(s.readiness.state) }}</span>
+          @if (s.readiness.cleanSince) {
+            {{ s.readiness.cleanDays | number:'1.1-1' }} of {{ s.readiness.requiredDays }} days clean
+          }
+        </dd>
+      </div>
+      @if (s.boardRead; as read) {
+        <div>
+          <dt>Board read</dt>
+          <dd data-testid="board-source-board-read">
+            p95 {{ read.p95Ms === null ? 'n/a' : (read.p95Ms | number:'1.0-0') + ' ms' }} (target under {{ read.targetP95Ms }} ms) ·
+            {{ read.spawnsPerRequest === null ? 'n/a' : (read.spawnsPerRequest | number:'1.0-2') }} Git spawns per read (target {{ read.targetSpawnsPerRequest }}) ·
+            {{ read.sampleCount | number }} reads
+          </dd>
+        </div>
+      }
+    </dl>
+
+    <table class="board-source__table" data-testid="board-source-differences">
+      <thead>
+        <tr><th>Card</th><th>Field</th><th>Workspace</th><th>Task Server</th><th>Last seen</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        @for (d of s.differences; track d.fingerprint) {
+          <tr [attr.data-fingerprint]="d.fingerprint">
+            <td><code>{{ d.project }} / {{ d.taskKey }}</code></td>
+            <td>{{ d.field }}</td>
+            <td>{{ d.workspaceValue ?? '-' }}</td>
+            <td>{{ d.taskServerValue ?? '-' }}</td>
+            <td>{{ d.lastSeenAt | date:'MMM d, HH:mm' }} · {{ d.occurrences | number }}x{{ d.present ? '' : ', gone' }}</td>
+            <td>
+              @if (d.explainedAt) {
+                <span class="board-source__muted" [title]="d.explanation ?? ''">explained by {{ d.explainedBy }}</span>
+              } @else if (explaining() === d.fingerprint) {
+                <form class="board-source__explain" (submit)="$event.preventDefault(); saveExplanation()">
+                  <input type="text" data-testid="board-source-explanation" aria-label="Explanation"
+                         [value]="explanation()" (input)="explanation.set($any($event.target).value)" />
+                  <button type="submit" class="board-source__button" data-testid="board-source-explain-save">Save</button>
+                </form>
+              } @else {
+                <button type="button" class="board-source__button" data-testid="board-source-explain" (click)="startExplain(d.fingerprint)">Explain</button>
+              }
+            </td>
+          </tr>
+        } @empty {
+          <tr><td colspan="6" class="board-source__muted">No difference recorded.</td></tr>
+        }
+      </tbody>
+    </table>
+  }
+</section>
