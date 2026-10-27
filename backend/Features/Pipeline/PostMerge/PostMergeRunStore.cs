@@ -65,6 +65,8 @@ public sealed class PostMergeRunStore
                 state = state with
                 {
                     DevelopState = run.Status,
+                    AttributionEscalationActive = run.Status == "red"
+                        && state.AttributionEscalationActive,
                     LastGreenSha = run.Status == "green" ? run.TipSha : state.LastGreenSha,
                     LastWindowTipSha = run.Kind == "window" || run.Status == "green"
                         ? run.TipSha : state.LastWindowTipSha,
@@ -75,6 +77,16 @@ public sealed class PostMergeRunStore
             else return null;
             WriteLocked(projectId, state);
             return state;
+        }
+    }
+
+    /// <summary>Called by attribution when its repair card enters or leaves escalation.</summary>
+    public void SetAttributionEscalation(string projectId, bool active)
+    {
+        lock (_gate)
+        {
+            var state = ReadLocked(projectId);
+            WriteLocked(projectId, state with { AttributionEscalationActive = active });
         }
     }
 

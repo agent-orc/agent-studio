@@ -156,7 +156,9 @@ public sealed class PostMergeRunCommand
                 .ToArray();
             var close = PostMergeRunPlan.Window(merges.Count,
                 merges.Count == 0 ? null : merges.Min(merge => merge.At), now,
-                _options.MaxMerges, _options.Window);
+                state.WindowMaxMerges ?? _options.MaxMerges,
+                state.WindowMinutes is { } minutes
+                    ? TimeSpan.FromMinutes(minutes) : _options.Window);
             if (!close.Close) { _output.WriteLine($"post-merge pending tip={tip}: {close.Reason}"); return 0; }
         }
 

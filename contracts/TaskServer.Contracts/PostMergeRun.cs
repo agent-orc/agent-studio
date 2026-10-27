@@ -14,5 +14,10 @@ public sealed record PostMergeProjectState(
     string Project, string DevelopState, string? LastGreenSha, string? LastWindowTipSha,
     PostMergeRunRecord? ActiveRun, IReadOnlyList<PostMergeRunRecord> Runs)
 {
+    /// <summary>Set while the attributed repair card is escalated.</summary>
+    public bool AttributionEscalationActive { get; init; }
+    /// <summary>Post-merge window sizing derived from the project's look-ahead settings.</summary>
+    public int? WindowMaxMerges { get; init; }
+    public int? WindowMinutes { get; init; }
     public static PostMergeProjectState Empty(string project) => new(project, "green", null, null, null, []);
 }

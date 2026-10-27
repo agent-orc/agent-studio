@@ -966,6 +966,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedBatchGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeRunStore>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.PostMergeModeService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchIntegrationReservationService(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(

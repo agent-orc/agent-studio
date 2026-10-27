@@ -1644,18 +1644,30 @@ public class ProjectSettingsService
     public void SetTesting(string projectName, ProjectTestingSettings? testing)
     {
         EnsureLoaded();
-        var mode = PerCardTestModes.Normalize(testing?.PerCard);
         lock (_lock)
         {
             var key = ResolveAliasLocked(projectName);
             var current = _cache.TryGetValue(key, out var settings) ? settings : new ProjectSettings();
+            var mode = IntegrationTestModes.Normalize(
+                testing is null ? null : testing.Mode ?? current.Testing?.Mode);
+            var perCard = mode == IntegrationTestModes.PostMerge
+                ? PerCardTestModes.Affected
+                : PerCardTestModes.Normalize(testing is null
+                    ? null : testing.PerCard ?? current.Testing?.PerCard);
             _cache[key] = current with
             {
-                Testing = mode == PerCardTestModes.Affected ? new ProjectTestingSettings { PerCard = mode } : null,
+                Testing = perCard == PerCardTestModes.Affected || mode == IntegrationTestModes.PostMerge
+                    ? new ProjectTestingSettings
+                    {
+                        PerCard = perCard == PerCardTestModes.Affected ? perCard : null,
+                        Mode = mode == IntegrationTestModes.PostMerge ? mode : null,
+                    }
+                    : null,
             };
             Persist();
+            _logger.LogInformation("Testing set to {PerCard} and {Mode} for project {Project}",
+                perCard, mode, projectName);
         }
-        _logger.LogInformation("Per-card test placement set to {Mode} for project {Project}", mode, projectName);
     }
 
     /// <summary>
