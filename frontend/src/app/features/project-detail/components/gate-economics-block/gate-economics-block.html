@@ -8,11 +8,12 @@
   </header>
   @if (data(); as projection) {
     <div class="ge__scroll"><table>
-      <thead><tr><th scope="col">Project</th><th scope="col">Gated merges</th><th scope="col">Gate median / p90</th><th scope="col">Queue p90</th><th scope="col">Reuse exact / disjoint</th><th scope="col">Full suite</th><th scope="col">Same SHA retest</th><th scope="col">Nightly guard</th><th scope="col">Lag p50 / p95 (24 h)</th><th scope="col">Oldest waiting (24 h)</th><th scope="col">Gate runs green / red / cancelled</th></tr></thead>
+      <thead><tr><th scope="col">Project</th><th scope="col">Develop</th><th scope="col">Gated merges</th><th scope="col">Gate median / p90</th><th scope="col">Queue p90</th><th scope="col">Reuse exact / disjoint</th><th scope="col">Full suite</th><th scope="col">Same SHA retest</th><th scope="col">Nightly guard</th><th scope="col">Lag p50 / p95 (24 h)</th><th scope="col">Oldest waiting (24 h)</th><th scope="col">Gate runs green / red / cancelled</th></tr></thead>
       <tbody>
         @for (row of projection.rows; track row.project) {
           <tr [attr.data-project]="row.project" [attr.data-testid]="row.project === 'All projects' ? 'gate-economics-all' : 'gate-economics-project'">
             <th scope="row"><span class="ge__project">@if (row.project !== 'All projects') { <i class="ge__mark" [style.background]="row.projectColor || color(row.project)" aria-hidden="true"></i><span class="ge__code">{{ row.projectShortCode || '?' }}</span> }<span>{{ row.project }}</span></span></th>
+            <td>{{ row.developState || 'Unknown' }} @if (row.lastGreenSha) { · {{ row.lastGreenSha.slice(0, 12) }} }</td>
             <td>{{ row.gatedMerges }}</td>
             <td>{{ format(row.gateMinutesMedian, ' min') }} / {{ format(row.gateMinutesP90, ' min') }}</td>
             <td>{{ minutes(row.queueWaitP90Ms) }}</td>

@@ -67,4 +67,7 @@ know the project. The board never falls back to the workspace in that mode.
    the card that board read p95 stays under 200 ms and Git spawns per read stay
    at 0.
 6. **M3** (separate card) moves the write authority. Until then writes go
-   through the monolith API and reach both stores through the mirror.
+   through the monolith API and reach both stores through the mirror. Task
+   files and results follow the same pattern with `TaskArtifacts:Source`; see
+   [workspace repository as export](workspace-repository-lifecycle.md#workspace-repository-as-export)
+   (AGT-3320).

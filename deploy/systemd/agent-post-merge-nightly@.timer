@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly develop full suite for %i within the coverage slot window
+
+[Timer]
+OnCalendar=*-*-* 02:15:00
+OnCalendar=*-*-* 04:15:00
+Persistent=true
+Unit=agent-post-merge-nightly@%i.service
+
+[Install]
+WantedBy=timers.target

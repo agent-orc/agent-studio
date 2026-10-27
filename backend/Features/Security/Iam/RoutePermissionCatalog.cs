@@ -208,7 +208,9 @@ public static class RoutePermissionCatalog
             "/api/runner/claim", "/api/runner/completion", "/api/runner/events", "/api/runner/logs",
             "/api/runner/orchestrator-decisions/**", "/api/runner/project-chat/claim", "/api/runner/project-chat/renew",
             "/api/runner/project-chat/complete", "/api/runner/replay/events",
+            "/api/runner/post-merge/projects/{}/runs",
             "/api/clients/{}/runner-git-capability", "/api/deploy/jobs/**", "/api/deploy/gate-releases");
+        Add("GET", IamPermissions.RunnerService, "/api/runner/post-merge/projects/{}");
         Add("GET", IamPermissions.RunnerService, "/api/deploy/jobs/{}/{}/artifact");
         // The proxy to a standalone Task Server declares its own split
         // (TaskServerPlaneProxy.MapTaskServerPlaneProxy).
@@ -342,7 +344,7 @@ public static class RoutePermissionCatalog
             "/api/workspaces/**", "/api/workspace/**", "/api/tags/**", "/api/search/**", "/api/usage/**",
             "/api/token-pricing/**", "/api/admin/**", "/api/agent-rules", "/api/adhoc-usage/**", "/api/diagnostics/**",
             "/api/devtools/**", "/api/orchestration/rollout/**", "/api/cause-breakers/**",
-            "/api/gate-economics", "/api/watcher/**", "/api/crash-recovery/**", "/api/git/branch-sweep/**",
+            "/api/gate-economics", "/api/develop-states", "/api/watcher/**", "/api/crash-recovery/**", "/api/git/branch-sweep/**",
             "/api/git/cleanup/**", "/api/auto-review/**", "/api/runner/status", "/api/runner/orchestrator-feed",
             "/api/runner/token-summary-aggregate/**", "/api/runner/queue-starvation", "/api/runner/auto-review-queue",
             "/api/runner/auto-review-parallelism-recommendation", "/api/runner/coding-yield-recommendation",

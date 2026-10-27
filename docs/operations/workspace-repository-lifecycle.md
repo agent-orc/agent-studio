@@ -4,6 +4,19 @@ The TaskRepository is a platform-owned Git repository. It stores durable task
 authority and evidence, while runtime streams remain local files outside Git.
 The backend owns committing, push retry, drift sweeps, and object maintenance.
 
+The repository has two roles, selected by `TaskArtifacts:Source` in the backend
+configuration (pipeline delivery target, section 05 "Task-folder artefacts",
+migration M3 and M6, decision D9 A, AGT-3320):
+
+- **Authority** (`workspace`, the default, and `task-server-shadow`): the
+  backend writes task folders and commits and pushes them as described in the
+  sections below.
+- **Export** (`task-server`): the Task Server holds task files and results;
+  its periodic export job writes the task folders into a clone of this
+  repository for audit and offline reading. The backend makes no commit and no
+  push into the TaskRepository, and nothing reads the export in a request
+  path. See [Workspace repository as export](#workspace-repository-as-export).
+
 ## Path classification
 
 | Path family | Class | Git behavior |
@@ -128,3 +141,144 @@ git maintenance run --task=loose-objects --task=incremental-repack
 
 Resume the service only after `git status --short` contains no unexpected
 durable tracked drift and `origin/main..HEAD` is empty.
+
+## Workspace repository as export
+
+### What moves where
+
+| Concern | `workspace` | `task-server-shadow` | `task-server` |
+|---|---|---|---|
+| Task files and results | Task folders, committed by the evidence batcher (15 s quiet window, 60 s maximum) and at run boundaries, pushed by `WorkspaceArtifactPushWorker` | As `workspace`; `TaskFileMirrorWorker` also copies them into the Task Server | Task Server `task_files` and `task_file_revisions` (mirrored until the write cutover, written directly after it) |
+| Release card attribution (`DeployService` release creation) | Archive-inclusive task index and each folder's `integration-verification.json` | Same | One Task Server query, `GET /api/v1/projects/{projectId}/integrated-cards`; no task folder is read and there is no fallback to the scan |
+| Workspace repository commits and pushes from the backend | Yes | Yes | None: run-boundary, evidence and sweep commits return `workspace-repository-export`; push requests for the TaskRepository are dropped |
+| Workspace repository content | Authority | Authority | Export written by the Task Server export job |
+
+Rollback is the setting. A value the backend does not know falls back to
+`workspace`. The setting is read per call, so a configuration reload switches
+without a restart; when it changes from `task-server` back to an authority
+mode, the evidence worker runs its catch-up commit once.
+
+### Task Server storage
+
+Every task file row and revision carries `sha256`, `size_bytes` and
+`object_stored`. Content of at most `TaskServer:ContentInlineLimitBytes`
+(default 1,048,576 bytes) stays inline in SQLite; larger content of task files
+and run artifacts is written once to the content object store,
+`TaskServer:ContentObjectStorePath` (default `<DataDirectory>/objects`), at
+`sha256/<aa>/<bb>/<sha256>`. Objects are immutable and verified by hash on
+every read. Full backup sets (`task-server backup full`) copy every object the
+snapshot references into `objects/` and restore them additively; the
+five-minute SQLite snapshot does not include them, exactly as it does not
+include cold payloads. An object written by a transaction that later rolled
+back is unreferenced and harmless.
+
+### Mirror before the write cutover
+
+Until migration M3 the backend is still the write authority, so
+`TaskFileMirrorWorker` copies task folders into the Task Server whenever
+`TaskArtifacts:Source` is `task-server-shadow` or `task-server`. It runs off
+the request path every `TaskArtifacts:Mirror:IntervalSeconds` (default 30),
+sends hashes first to `PUT /api/v1/projects/{projectId}/task-files/workspace-import`
+and content only for the paths the Task Server answers as needed, and spends
+at most `TaskArtifacts:Mirror:MaxBytesPerCycle` (default 64 MiB) per cycle in
+batches of `TaskArtifacts:Mirror:BatchBytes` (default 8 MiB). It mirrors task
+state, evidence and `results/`; runtime files, `logs/cli-output.log*`, review
+stdout logs, attachments (the Task Server keeps those in `task_attachments`)
+and files above `TaskArtifacts:Mirror:MaxFileBytes` (default and maximum
+16 MiB) stay out. A card the Task Server does not hold yet is answered
+`task-missing` and retried; the board mirror creates it, so `Board:Source`
+must be `task-server-shadow` or `task-server` as well
+([board source cutover](board-source-cutover.md)). Archived cards are
+re-checked only when their `task.json` changes.
+
+### Export job
+
+The Task Server export job is off unless `TaskServer:WorkspaceExportRoot`
+names a clone of the workspace repository. Every
+`TaskServer:WorkspaceExportIntervalMinutes` (default 15) it writes
+`projects/<project>/tasks/<bucket>/<KEY>/` for every card, archive included:
+`task.json` (the mirrored file, else the imported legacy payload, with id,
+key, title, lane, timestamps and order from the Task Server row), `prompt.md`
+from the card body when no task file holds it, every task file at its path,
+and the newest content of each run artifact under `results/`. Pointer-only
+legacy artifacts are counted in `workspace-export.json`, not copied. A file is
+rewritten only when its bytes changed and a file under `projects/*/tasks/`
+that no card holds any more is removed, so an unchanged store produces no
+commit. The job stages only `projects/*/tasks/**` and `workspace-export.json`
+(forced, so an ignore rule in the clone cannot drop exported folders), commits
+as `agent-studio-export`, and with `TaskServer:WorkspaceExportPush = true`
+pushes `HEAD` to `TaskServer:WorkspaceExportBranch` (default `main`) within
+`TaskServer:WorkspaceExportPushTimeoutSeconds` (default 600). A failed or
+hanging push leaves commits ahead; the next cycle's push publishes the whole
+backlog. `GET /api/v1/workspace-export/status` (scope `operations:inspect`)
+shows the last export, commit, push result and ahead count.
+
+`task-server export --target <dir> [--commit]` runs one full export offline,
+read-only on the store and without lease quarantine, so it may run beside a
+live server.
+
+Measured on agent-runner-01 on 27 October 2026 (AGT-3320,
+`WorkspaceExportTests.Push_backlog_of_the_export_does_not_change_board_latency`,
+300 cards, 400 board reads each): board read p50 2.46 ms and p95 4.31 ms with
+the export idle, p50 2.49 ms and p95 4.12 ms while the export push of a
+2,002-commit backlog hung on the remote until its timeout. The board reads
+SQLite and never waits for the export.
+
+### Cutover order
+
+1. Board source in shadow or cutover mode, so every card exists in the Task
+   Server ([board source cutover](board-source-cutover.md)).
+2. `TaskArtifacts:Source = task-server-shadow`. Wait until mirror cycles log
+   no deferred files and no `task-missing` rejection.
+3. Clone the workspace repository for the export and set
+   `TaskServer:WorkspaceExportRoot`; push to a separate branch such as
+   `workspace-export` first. Enable the export only after step 2 has caught
+   up: an export taken before the mirror holds a card's files removes them from
+   the export (the rehearsal's first cycle removed 54 files that the next
+   cycle restored).
+4. `TaskArtifacts:Source = task-server`. From now on the backend neither
+   commits nor pushes the TaskRepository; point the export at `main` when the
+   export branch has been reviewed.
+
+### Rollback
+
+Before the write cutover the task folders are still the write authority, so
+rollback loses nothing:
+
+1. Stop the export job: clear `TaskServer:WorkspaceExportRoot` (or set
+   `TaskServer:WorkspaceExportPush = false`) and restart the Task Server.
+2. Set `TaskArtifacts:Source = workspace` (or `task-server-shadow` to keep the
+   mirror). Release attribution reads the folders again, and the evidence
+   worker commits the drift accumulated while the repository was an export.
+3. If the export pushed to the branch the backend pushes, reconcile once in
+   the TaskRepository, keeping the authority tree and the export history:
+
+   ```bash
+   git fetch origin
+   git merge -s ours --no-edit origin/main
+   git push origin HEAD:refs/heads/main
+   ```
+
+   With a separate export branch there is nothing to reconcile.
+4. Verify `git status --short` is empty, `git rev-list --count origin/main..HEAD`
+   is 0, and the inventory (`task-server inventory --source <TaskRepository>`)
+   shows the same counts per project and lane as before.
+
+After the write cutover the Task Server is the authority and the folders are
+stale; roll back with the runbook's
+[rollback in less than 15 minutes](remote-task-server-local-studio.md#rollback-in-less-than-15-minutes),
+then write a fresh full export (`task-server export --target <empty clone> --commit`)
+before the folders serve as authority again.
+
+Rehearsed once on a copy on 27 October 2026 (AGT-3320): the ADR-0056 demo
+workspace seeded into a temporary repository with a bare origin, imported with
+`task-server inventory` and `import`, mirrored, exported by the export job of
+a real Task Server process, and read back with `task-server inventory`: equal
+counts per project and lane (22 cards) and 74 byte-identical task files; the
+two files the mirror excludes by policy (a CLI log and an attachment) were the
+only ones absent. Steps 1 to 3 took 108 ms on that copy; afterwards the
+authority tree equalled `origin/main`, nothing was ahead or behind, and both
+export commits stayed in history. Backend steps were run as the git commands
+the evidence and push workers issue. The script and log are in the AGT-3320
+task results.
+

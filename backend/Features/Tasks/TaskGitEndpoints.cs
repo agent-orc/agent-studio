@@ -359,19 +359,35 @@ public static class TaskGitEndpoints
         // membership from the reachability sets of the integration and release
         // refs - so it tracks develop / main per generation without a single
         // rev-parse or merge-base on the request.
-        group.MapGet("/{jobId}/provenance", (
+        group.MapGet("/{jobId}/provenance", async (
             string jobId, string? project, string? watchPath,
             TaskScannerService scanner, GitCardFactReader facts, ProjectSettingsService settings,
-            AgentStudio.Registry.ProjectRegistry projects) =>
+            TaskProvenanceService provenance, AgentStudio.Git.ISourceFactsReader sourceFacts,
+            AgentStudio.Registry.ProjectRegistry projects,
+            CancellationToken ct) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var info = scanner.FindJob(jobId, watchPath);
             if (info == null) return Results.NotFound(new { error = "Job not found" });
+            // AGT-3318 keeps the Task Server reachability read when selected.
+            // Its published-only method cannot reach the legacy Git graph walk.
+            if (sourceFacts.Mode == AgentStudio.Git.SourceFactsReadMode.Derived)
+                return Results.Ok(await provenance.BuildPublishedViewAsync(info, ct));
+
             var published = TaskGitFactReads.Facts(facts, info, settings);
-            return published is null
-                ? GitFactsResults.Warming(new { branch = WorktreeTaskLifecycle.BranchFor(info.Id) }, null)
-                : GitFactsResults.Ok(GitCardFactJoins.Provenance(info, published), published);
-        });
+            if (published is not null)
+            {
+                var view = GitCardFactJoins.Provenance(info, published) with
+                {
+                    SourceFacts = published.State == GitPublishedFacts.UnavailableState
+                        ? AgentStudio.Git.SourceFactStates.Unavailable
+                        : AgentStudio.Git.SourceFactStates.Ready,
+                };
+                return GitFactsResults.Ok(view, published);
+            }
+
+            return GitFactsResults.Warming(new { branch = WorktreeTaskLifecycle.BranchFor(info.Id) }, null);
+        }).AddEndpointFilter<AgentStudio.Git.GitSpawnCountFilter>();
 
         // Per-job hygiene: project-level snapshot overlaid with whether the
         // job carries a platform-owned commit stamp and whether accepted task

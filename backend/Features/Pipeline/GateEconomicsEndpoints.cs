@@ -19,7 +19,8 @@ public sealed record GateEconomicsRow(
     double? MergeLockWaitP95Ms, double? PublicationLockWaitP95Ms,
     int EjectedConflict, int EjectedAgentRound, int EjectedRed, int EjectedError,
     double ArrivalsPerHour, double MergesPerHour,
-    string? ProjectShortCode = null, string? ProjectColor = null, PipelineBaseline? Baseline = null);
+    string? ProjectShortCode = null, string? ProjectColor = null, PipelineBaseline? Baseline = null,
+    string? DevelopState = null, string? LastGreenSha = null);
 
 /// <param name="BoardRead">
 /// Installation-wide board handler latency and git spawns over the last
