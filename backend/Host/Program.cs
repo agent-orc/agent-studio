@@ -1048,6 +1048,8 @@ if (!publicDemoExecutionProfile)
 // periodic sweep as a safety net. Request paths (tasks/list, tasks/grouped,
 // git/inventory) only ever read this service's last snapshot through
 // TaskListGitProjectionCache and GitService.GetProjectInventory.
+// AGT-3322: the durable Git fact store (git-facts.db); the indexer is its only writer.
+builder.Services.AddSingleton<GitFactStore>();
 builder.Services.AddSingleton<GitStateIndexService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<GitStateIndexService>());

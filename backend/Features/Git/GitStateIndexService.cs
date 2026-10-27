@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Data.Common;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -36,6 +37,18 @@ namespace AgentStudio.Git;
 /// <c>GetProjectInventory</c>'s own signature-gated enqueue - this service
 /// only makes that enqueue change-driven instead of request-driven).
 /// </para>
+///
+/// <para>
+/// AGT-3322 (Git facts S2): this service is also the only writer of the Git
+/// fact store (<see cref="GitFactStore"/>). Each repository generation is
+/// committed in one transaction before the in-memory pointer is swapped. On
+/// start the last stored generation is served at once as <c>restored</c> and
+/// confirmed from files alone (ref fingerprint, configuration sources,
+/// settings, task inputs) before any Git runs; only a moved input starts a
+/// normal run. <c>git config</c> runs only after a configuration watcher event
+/// or a changed configuration file, so a task event that changes no card input
+/// starts no Git process.
+/// </para>
 /// </summary>
 public sealed class GitStateIndexService : BackgroundService
 {
@@ -51,13 +64,24 @@ public sealed class GitStateIndexService : BackgroundService
     private readonly SemaphoreSlim _repoSlots;
     private readonly GitOriginStore? _originStore;
     private readonly Func<string, string?> _originRoot;
+    private readonly GitFactStore? _factStore;
+    private readonly Func<string, IReadOnlyList<string>> _fingerprintBranches;
+    private readonly string _producerId;
+    private readonly TaskCompletionSource _restoration = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private const string SweepConfigUnavailable = "unavailable";
+    private const string SweepConfigSourcesChanged = "sources-changed";
 
     private readonly ConcurrentDictionary<string, RepoState> _repos =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Raised after a repository's index run completes with a fresh snapshot.</summary>
     public event Action<string, DateTimeOffset>? RepositoryIndexed;
+
+    /// <summary>Test/diagnostic hook: one report per finished index run.</summary>
+    internal event Action<GitIndexRunReport>? RunCompleted;
+
+    /// <summary>Completes once the stored generations were loaded on start.</summary>
+    internal Task Restoration => _restoration.Task;
 
     public GitStateIndexService(
         GitService git,
@@ -72,6 +96,7 @@ public sealed class GitStateIndexService : BackgroundService
         ProjectSettingsService settings,
         TaskListGitProjectionCache projectionCache,
         GitOriginStore originStore,
+        GitFactStore factStore,
         ILogger<GitStateIndexService> logger,
         IConfiguration config)
         : this(
@@ -126,7 +151,9 @@ public sealed class GitStateIndexService : BackgroundService
             },
             originStore,
             // Publish under the same root TaskIntegrationStatusService asks for.
-            git.ResolveRepoRootForWatchPath)
+            git.ResolveRepoRootForWatchPath,
+            factStore,
+            projectName => settings.Get(projectName).IntegrationBranch is { Length: > 0 } branch ? [branch] : [])
     {
     }
 
@@ -141,7 +168,10 @@ public sealed class GitStateIndexService : BackgroundService
         TimeProvider timeProvider,
         Func<string, string>? settingsVersion = null,
         GitOriginStore? originStore = null,
-        Func<string, string?>? originRoot = null)
+        Func<string, string?>? originRoot = null,
+        GitFactStore? factStore = null,
+        Func<string, IReadOnlyList<string>>? fingerprintBranches = null,
+        string? producerId = null)
     {
         _scanner = scanner;
         _watcher = watcher;
@@ -154,6 +184,9 @@ public sealed class GitStateIndexService : BackgroundService
         _settingsVersion = settingsVersion ?? (_ => "");
         _originStore = originStore;
         _originRoot = originRoot ?? (_ => null);
+        _factStore = factStore;
+        _fingerprintBranches = fingerprintBranches ?? (_ => []);
+        _producerId = producerId ?? $"backend:{Environment.MachineName}:{Environment.ProcessId}";
         _repoSlots = new SemaphoreSlim(options.MaxConcurrentRepos, options.MaxConcurrentRepos);
     }
 
@@ -188,7 +221,12 @@ public sealed class GitStateIndexService : BackgroundService
                         state.LastErrorReason,
                         state.Failures,
                         state.LastError,
-                        state.FailureSince);
+                        state.FailureSince,
+                        HealthState(state),
+                        state.StoreGeneration,
+                        state.ConfigGeneration,
+                        state.ProducerEpoch,
+                        SpawnsPerMinute(state, now));
                 }
             })
             .OrderBy(status => status.ProjectName, StringComparer.OrdinalIgnoreCase)
@@ -197,7 +235,12 @@ public sealed class GitStateIndexService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        DiscoverRepositories();
+        try
+        {
+            OpenFactStore();
+            DiscoverRepositories();
+        }
+        finally { _restoration.TrySetResult(); }
         _watcher.OnJobChanged += OnTaskChanged;
         _watcher.OnPathChanged += OnTaskSidecarChanged;
         try
@@ -234,6 +277,14 @@ public sealed class GitStateIndexService : BackgroundService
         if (_repos.TryGetValue(projectName, out var state)) RequestRefreshCore(state, trigger);
     }
 
+    private void OpenFactStore()
+    {
+        if (_factStore is null) return;
+        var outcome = _factStore.Open();
+        _logger.LogInformation("git-facts-store-open outcome={Outcome} path={Path}",
+            outcome, _factStore.DatabasePath ?? "none");
+    }
+
     private void DiscoverRepositories()
     {
         var configured = _scanner.GetWatchPaths();
@@ -262,8 +313,60 @@ public sealed class GitStateIndexService : BackgroundService
             };
             if (_repos.TryAdd(entry.Name, state))
             {
+                Restore(state);
                 SetupWatcher(state);
             }
+        }
+    }
+
+    /// <summary>
+    /// Cold start: takes the producer lease and serves the last stored
+    /// generation as <c>restored</c> before any Git runs. A relocated checkout
+    /// or workspace is not served. The first run then confirms it from files
+    /// (<see cref="TryConfirmRestored"/>) or recomputes.
+    /// </summary>
+    private void Restore(RepoState state)
+    {
+        if (_factStore is not { IsAvailable: true }) return;
+        try
+        {
+            var epoch = _factStore.AcquireProducerEpoch(state.ProjectName, _producerId);
+            lock (state.Gate) state.ProducerEpoch = epoch;
+            var snapshot = _factStore.LoadCurrent(state.ProjectName);
+            if (snapshot is null) return;
+            if (!GitFactRestorePolicy.CanServe(snapshot.Repository.CanonicalRoot, snapshot.Repository.WorkspaceRoot,
+                    state.RepositoryPath, state.WatchPath, WatchPathComparison.PathsEqual))
+            {
+                _logger.LogInformation("git-facts-restore-skipped repository={Repository} reason=relocated",
+                    state.ProjectName);
+                return;
+            }
+            var projection = CardGitFactsCodec.ToProjection(snapshot.Cards, out var unreadable);
+            var generation = snapshot.Generation;
+            if (!_projectionCache.SetRestored(state.WatchPath, projection, generation.PublishedAt,
+                    generation.InputVersion)) return;
+            lock (state.Gate)
+            {
+                state.Config = snapshot.Repository.Config;
+                state.ConfigGeneration = snapshot.Repository.ConfigGeneration;
+                state.StoreGeneration = generation.Generation;
+                state.LastIndexedAt = generation.PublishedAt;
+                state.RestoredServing = true;
+                state.PendingRestore = new PendingRestore(new GitFactGenerationInput(generation.RefFingerprint,
+                    generation.ConfigGeneration, generation.SettingsVersion, generation.TaskInputSignature),
+                    unreadable == 0);
+            }
+            if (snapshot.Repository.Config is { } config && GitConfigSignature.SourcesUnchanged(config))
+                PublishOrigin(state, config);
+            _logger.LogInformation(
+                "git-facts-restored repository={Repository} generation={Generation} cards={Cards} unreadable={Unreadable} ageSeconds={AgeSeconds}",
+                state.ProjectName, generation.Generation, snapshot.Cards.Count, unreadable,
+                (_timeProvider.GetUtcNow() - generation.PublishedAt).TotalSeconds);
+        }
+        catch (Exception ex) when (ex is DbException or IOException or UnauthorizedAccessException
+            or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            _logger.LogWarning(ex, "git-facts-restore-failed repository={Repository}", state.ProjectName);
         }
     }
 
@@ -332,6 +435,14 @@ public sealed class GitStateIndexService : BackgroundService
             || path.Contains($"{sep}worktrees{sep}", StringComparison.OrdinalIgnoreCase)
             || path.Contains($"{altSep}worktrees{altSep}", StringComparison.OrdinalIgnoreCase);
         if (!relevant) return;
+        // AGT-3322: only a configuration event (or HEAD under an onbranch
+        // include) makes the next run resolve Git's configuration again.
+        var configEvent = paths.Equals(name, "config") || paths.Equals(name, "config.worktree");
+        lock (state.Gate)
+        {
+            if (configEvent || paths.Equals(name, "HEAD") && state.Config?.DependsOnHead == true)
+                state.ConfigDirty = true;
+        }
         RequestRefreshCore(state, "fs-watch");
     }
 
@@ -386,9 +497,21 @@ public sealed class GitStateIndexService : BackgroundService
                 string config;
                 try
                 {
-                    var effectiveConfig = GitConfigSignature.Capture(state.RepositoryPath);
-                    PublishOrigin(state, effectiveConfig);
-                    config = effectiveConfig.Signature;
+                    // Files only (AGT-3322): a changed or newly created
+                    // configuration source queues a run that resolves Git's
+                    // configuration again; an unchanged one starts no Git.
+                    GitConfigSignature.EnsureRepository(state.RepositoryPath);
+                    GitEffectiveConfig? known;
+                    lock (state.Gate) known = state.Config;
+                    if (known is not null && GitConfigSignature.SourcesUnchanged(known))
+                    {
+                        config = known.Signature;
+                    }
+                    else
+                    {
+                        lock (state.Gate) state.ConfigDirty = true;
+                        config = SweepConfigSourcesChanged;
+                    }
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -428,8 +551,9 @@ public sealed class GitStateIndexService : BackgroundService
     /// <summary>
     /// AGT-3083: every capture the index pays for also refreshes the shared
     /// origin store, so integration lookups need no <c>git config</c> of their
-    /// own and see a config source created after an earlier capture within
-    /// one sweep interval.
+    /// own. A config source created after an earlier capture is one of the
+    /// capture's absent sources, so the store resolves it again once it
+    /// appears (AGT-3322).
     /// </summary>
     private void PublishOrigin(RepoState state, GitEffectiveConfig config)
     {
@@ -482,9 +606,11 @@ public sealed class GitStateIndexService : BackgroundService
                 state.RerunTrigger = trigger;
                 return;
             }
+            // A restored generation is confirmed or replaced by this run; it
+            // is not marked refreshing before the run knows which.
+            if (trigger is not ("task-event" or "fs-watch" or "sweep") && state.PendingRestore is null)
+                _projectionCache.MarkRefreshing(state.WatchPath);
         }
-        if (trigger is not ("task-event" or "fs-watch" or "sweep"))
-            _projectionCache.MarkRefreshing(state.WatchPath);
         _ = RunRepoIndexAsync(state, trigger);
     }
 
@@ -494,103 +620,30 @@ public sealed class GitStateIndexService : BackgroundService
         var stopwatch = Stopwatch.StartNew();
         var spawns = 0;
         (string Command, int Count, long Ms)? slowest = null;
-        RepoInput? attemptedInput = null;
+        var run = new RunContext();
         try
         {
             using (GitProcessTelemetry.BeginRequest("git-index-run", _logger, includeNested: true, _timeProvider))
             {
-                using var deadline = new CancellationTokenSource(_options.RunDeadline);
-                lock (state.Gate)
+                try
                 {
-                    if (state.Disposed) return;
-                    state.ActiveDeadline = deadline;
+                    run.Outcome = await IndexAsync(state, trigger, run).ConfigureAwait(false);
                 }
-                using var budget = GitProcessBudget.Begin(deadline.Token);
-                var tasksForRepo = TaskProjectionCards.Select(ReadTasks(state), _logger);
-                var effectiveConfig = GitConfigSignature.Capture(state.RepositoryPath);
-                PublishOrigin(state, effectiveConfig);
-                using var configScope = GitConfigScope.Begin(state.RepositoryPath, effectiveConfig.OriginUrl);
-                var input = CaptureInput(state, tasksForRepo, effectiveConfig.Signature);
-                attemptedInput = input;
-                if ((trigger is "task-event" or "fs-watch" or "sweep")
-                    && (Volatile.Read(ref state.LastErrorReason) is null && input == state.LastPublishedInput
-                        || trigger == "task-event" && input == state.LastFailedInput))
-                    return;
-                if (trigger is "task-event" or "fs-watch" or "sweep")
-                    _projectionCache.MarkRefreshing(state.WatchPath);
-                long invalidation;
-                lock (state.Gate) invalidation = state.InvalidationVersion;
-                var projection = await _buildProjection(tasksForRepo)
-                    .WaitAsync(deadline.Token).ConfigureAwait(false);
-                // Compare like with like: the input was captured from the
-                // de-duplicated cards, so a raw re-read would differ whenever a
-                // duplicate id exists and mark every run superseded forever.
-                var after = CaptureInput(state, TaskProjectionCards.Select(ReadTasks(state)), effectiveConfig.Signature);
-                bool superseded;
-                DateTimeOffset gitStateAt;
-                lock (state.Gate)
+                finally
                 {
-                    superseded = state.Disposed || after != input
-                        || !GitConfigSignature.FilesUnchanged(effectiveConfig)
-                        || invalidation != state.InvalidationVersion;
-                    gitStateAt = _timeProvider.GetUtcNow();
-                    if (!superseded)
-                    {
-                        _projectionCache.SetSnapshot(state.WatchPath, projection, gitStateAt, input.Version);
-                        state.LastIndexedAt = gitStateAt;
-                        state.LastPublishedInput = input;
-                        state.LastSweepSignature = input.Refs;
-                        state.LastSweepConfig = input.Config;
-                        state.LastSettingsVersion = input.SettingsVersion;
-                        state.Failures = 0;
-                        state.LastErrorReason = null;
-                        state.LastError = null;
-                        state.FailureSince = null;
-                        state.LastFailedInput = null;
-                    }
+                    spawns = GitProcessTelemetry.CurrentTally()?.Spawns ?? 0;
+                    slowest = GitProcessTelemetry.CurrentSlowestCommand();
                 }
-                if (superseded)
-                {
-                    lock (state.Gate)
-                    {
-                        if (state.Disposed) return;
-                        _projectionCache.MarkFailed(state.WatchPath, "superseded");
-                        state.RerunRequested = true;
-                        state.RerunTrigger = "superseded";
-                    }
-                    return;
-                }
-
-                // Re-uses GitService's own signature-gated cache/queue for
-                // inventory; this call only makes that enqueue change-driven
-                // instead of waiting for the next request to notice staleness.
-                _warmInventory(state.ProjectName);
-
-                var tally = GitProcessTelemetry.CurrentTally();
-                spawns = tally?.Spawns ?? 0;
-                slowest = GitProcessTelemetry.CurrentSlowestCommand();
-                RepositoryIndexed?.Invoke(state.ProjectName, gitStateAt);
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "git-index-run-failed repository={Repository} trigger={Trigger}", state.ProjectName, trigger);
-            int retry = 0;
-            lock (state.Gate)
-            {
-                if (!state.Disposed)
-                {
-                    var reason = ex is OperationCanceledException ? "timeout"
-                        : ex is DirectoryNotFoundException ? "repository-unavailable"
-                        : "refresh-failed";
-                    state.LastErrorReason = reason;
-                    state.LastError = ex.ToString();
-                    state.FailureSince ??= _timeProvider.GetUtcNow();
-                    state.LastFailedInput = attemptedInput;
-                    _projectionCache.MarkFailed(state.WatchPath, reason);
-                    if (++state.Failures <= _options.MaxRetries) retry = state.Failures;
-                }
-            }
+            run.Outcome = "failed";
+            var reason = ex is OperationCanceledException ? "timeout"
+                : ex is DirectoryNotFoundException ? "repository-unavailable"
+                : "refresh-failed";
+            var retry = RecordFailure(state, reason, ex.ToString(), run.Attempted);
             if (retry > 0) _ = RetryAfterBackoffAsync(state, retry);
         }
         finally
@@ -599,13 +652,23 @@ public sealed class GitStateIndexService : BackgroundService
             _repoSlots.Release();
             var elapsedMs = stopwatch.ElapsedMilliseconds;
             _logger.LogInformation(
-                "git-index-run repository={Repository} spawns={Spawns} ms={ElapsedMs} trigger={Trigger}",
-                state.ProjectName, spawns, elapsedMs, trigger);
+                "git-index-run repository={Repository} spawns={Spawns} ms={ElapsedMs} trigger={Trigger} outcome={Outcome}",
+                state.ProjectName, spawns, elapsedMs, trigger, run.Outcome);
             if (elapsedMs >= _options.SlowRunWarnMs.TotalMilliseconds)
             {
                 _logger.LogWarning(
                     "git-index-run-slow repository={Repository} ms={ElapsedMs} slowestCommand={Command} slowestCount={Count} slowestMs={SlowMs}",
                     state.ProjectName, elapsedMs, slowest?.Command ?? "n/a", slowest?.Count ?? 0, slowest?.Ms ?? 0);
+            }
+            RecordRunHealth(state, run.Outcome, spawns, slowest);
+            try
+            {
+                RunCompleted?.Invoke(new GitIndexRunReport(state.ProjectName, trigger, run.Outcome, spawns,
+                    elapsedMs, run.ConfigCaptured));
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                SilentCatch.Note(ex, "GitStateIndexService: run report handler failed");
             }
 
             bool rerun;
@@ -626,29 +689,349 @@ public sealed class GitStateIndexService : BackgroundService
         }
     }
 
+    /// <summary>
+    /// One index run: observe the inputs from files, confirm a restored
+    /// generation or skip an unchanged one, else compute, publish to the store
+    /// in one transaction and swap the in-memory pointer. Returns the outcome.
+    /// </summary>
+    private async Task<string> IndexAsync(RepoState state, string trigger, RunContext run)
+    {
+        using var deadline = new CancellationTokenSource(_options.RunDeadline);
+        lock (state.Gate)
+        {
+            if (state.Disposed) return "disposed";
+            state.ActiveDeadline = deadline;
+        }
+        using var budget = GitProcessBudget.Begin(deadline.Token);
+        var tasksForRepo = TaskProjectionCards.Select(ReadTasks(state), _logger);
+        var effectiveConfig = ResolveConfig(state, run);
+        PublishOrigin(state, effectiveConfig);
+        using var configScope = GitConfigScope.Begin(state.RepositoryPath, effectiveConfig.OriginUrl);
+        var input = CaptureInput(state, tasksForRepo, effectiveConfig.Signature);
+        run.Attempted = input;
+        var restoreChecked = TryConfirmRestored(state, input, out var confirmed);
+        if (confirmed) return "confirmed";
+        var changeDriven = trigger is "task-event" or "fs-watch" or "sweep";
+        if (changeDriven && !restoreChecked
+            && (Volatile.Read(ref state.LastErrorReason) is null && input == state.LastPublishedInput
+                || trigger == "task-event" && input == state.LastFailedInput))
+            return "unchanged";
+        if (changeDriven || restoreChecked)
+            _projectionCache.MarkRefreshing(state.WatchPath);
+        long invalidation;
+        lock (state.Gate) invalidation = state.InvalidationVersion;
+        var projection = await _buildProjection(tasksForRepo)
+            .WaitAsync(deadline.Token).ConfigureAwait(false);
+        // Compare like with like: the input was captured from the
+        // de-duplicated cards, so a raw re-read would differ whenever a
+        // duplicate id exists and mark every run superseded forever.
+        var after = CaptureInput(state, TaskProjectionCards.Select(ReadTasks(state)), effectiveConfig.Signature);
+        lock (state.Gate)
+        {
+            var superseded = state.Disposed || after != input
+                || !GitConfigSignature.SourcesUnchanged(effectiveConfig)
+                || invalidation != state.InvalidationVersion;
+            if (superseded)
+            {
+                if (state.Disposed) return "disposed";
+                _projectionCache.MarkFailed(state.WatchPath, "superseded");
+                state.RerunRequested = true;
+                state.RerunTrigger = "superseded";
+                return "superseded";
+            }
+        }
+        if (projection.RepositoryFailure is { } failure)
+        {
+            // AGT-3322: a lookup that fails for the whole repository is a
+            // repository health state. The last good generation keeps serving
+            // (memory and store), nothing is published, and retries stay bounded.
+            _logger.LogWarning(
+                "git-index-repository-degraded repository={Repository} lookup={Lookup} reason={Reason} detail={Detail}",
+                state.ProjectName, failure.Lookup, failure.ReasonCode, failure.Detail);
+            var retry = RecordFailure(state, "repository-degraded",
+                $"{failure.Lookup}: {failure.ReasonCode}: {failure.Detail}", input);
+            if (retry > 0) _ = RetryAfterBackoffAsync(state, retry);
+            return "degraded";
+        }
+
+        var gitStateAt = _timeProvider.GetUtcNow();
+        PublishToStore(state, input, effectiveConfig, projection, tasksForRepo, gitStateAt);
+        lock (state.Gate)
+        {
+            if (state.Disposed) return "disposed";
+            _projectionCache.SetSnapshot(state.WatchPath, projection, gitStateAt, input.Version);
+            state.LastIndexedAt = gitStateAt;
+            state.LastPublishedInput = input;
+            state.LastSweepSignature = input.Refs;
+            state.LastSweepConfig = input.Config;
+            state.LastSettingsVersion = input.SettingsVersion;
+            state.RestoredServing = false;
+            ClearFailure(state);
+        }
+
+        // Re-uses GitService's own signature-gated cache/queue for
+        // inventory; this call only makes that enqueue change-driven
+        // instead of waiting for the next request to notice staleness.
+        _warmInventory(state.ProjectName);
+        RepositoryIndexed?.Invoke(state.ProjectName, gitStateAt);
+        return "published";
+    }
+
+    /// <summary>
+    /// Resolves the configuration for a run. Git runs only when
+    /// <see cref="GitConfigCapturePolicy"/> asks for it; a changed resolved
+    /// signature advances <c>config_generation</c>.
+    /// </summary>
+    private GitEffectiveConfig ResolveConfig(RepoState state, RunContext run)
+    {
+        GitConfigSignature.EnsureRepository(state.RepositoryPath);
+        GitEffectiveConfig? known;
+        bool dirty;
+        lock (state.Gate)
+        {
+            known = state.Config;
+            dirty = state.ConfigDirty;
+        }
+        var reason = GitConfigCapturePolicy.Decide(known is not null, dirty,
+            known is not null && GitConfigSignature.SourcesUnchanged(known));
+        if (reason == GitConfigCaptureReason.None) return known!;
+
+        // Cleared before the capture, so an event during it marks the next run.
+        lock (state.Gate) state.ConfigDirty = false;
+        GitEffectiveConfig captured;
+        try
+        {
+            captured = GitConfigSignature.Capture(state.RepositoryPath);
+        }
+        catch
+        {
+            lock (state.Gate) state.ConfigDirty = true;
+            throw;
+        }
+        run.ConfigCaptured = true;
+        long generation;
+        lock (state.Gate)
+        {
+            generation = state.ConfigGeneration = GitConfigCapturePolicy.NextGeneration(
+                state.ConfigGeneration, state.Config?.Signature, captured.Signature);
+            state.Config = captured;
+        }
+        _logger.LogDebug("git-config-captured repository={Repository} reason={Reason} configGeneration={Generation}",
+            state.ProjectName, reason, generation);
+        return captured;
+    }
+
+    /// <summary>
+    /// Confirms a restored generation without Git when every input it was
+    /// computed from is unchanged. Returns whether a restored generation was
+    /// pending; <paramref name="confirmed"/> tells whether it became ready.
+    /// </summary>
+    private bool TryConfirmRestored(RepoState state, RepoInput input, out bool confirmed)
+    {
+        confirmed = false;
+        PendingRestore? restored;
+        long configGeneration;
+        lock (state.Gate)
+        {
+            restored = state.PendingRestore;
+            state.PendingRestore = null;
+            configGeneration = state.ConfigGeneration;
+        }
+        if (restored is null) return false;
+        var verdict = GitFactRestorePolicy.Confirm(restored.Input, new GitFactGenerationInput(
+            input.RefFingerprint, configGeneration, input.SettingsVersion, input.DurableTasks),
+            restored.CardsReadable);
+        if (verdict != GitFactRestoreVerdict.Ready)
+        {
+            _logger.LogInformation("git-facts-restore-delta repository={Repository} verdict={Verdict}",
+                state.ProjectName, verdict);
+            return true;
+        }
+        var now = _timeProvider.GetUtcNow();
+        lock (state.Gate)
+        {
+            if (state.Disposed) return true;
+            _projectionCache.ConfirmRestored(state.WatchPath, now, input.Version);
+            state.LastIndexedAt = now;
+            state.LastPublishedInput = input;
+            state.LastSweepSignature = input.Refs;
+            state.LastSweepConfig = input.Config;
+            state.LastSettingsVersion = input.SettingsVersion;
+            state.RestoredServing = false;
+            ClearFailure(state);
+        }
+        confirmed = true;
+        _logger.LogInformation("git-facts-restore-confirmed repository={Repository}", state.ProjectName);
+        _warmInventory(state.ProjectName);
+        RepositoryIndexed?.Invoke(state.ProjectName, now);
+        return true;
+    }
+
+    /// <summary>
+    /// Commits the generation before the in-memory swap. A store failure or a
+    /// fenced producer never withholds fresh facts from this process's readers;
+    /// it costs restart persistence only and is logged and recorded.
+    /// </summary>
+    private void PublishToStore(RepoState state, RepoInput input, GitEffectiveConfig config,
+        TaskListGitProjection projection, TaskInfo[] tasks, DateTimeOffset publishedAt)
+    {
+        if (_factStore is not { IsAvailable: true }) return;
+        long epoch;
+        long configGeneration;
+        lock (state.Gate)
+        {
+            if (state.Fenced) return;
+            epoch = state.ProducerEpoch;
+            configGeneration = state.ConfigGeneration;
+        }
+        try
+        {
+            if (epoch == 0)
+            {
+                epoch = _factStore.AcquireProducerEpoch(state.ProjectName, _producerId);
+                lock (state.Gate) state.ProducerEpoch = epoch;
+            }
+            var result = _factStore.Publish(new GitFactPublication(
+                new GitRepositoryFacts(state.ProjectName, state.RepositoryPath, state.WatchPath, config,
+                    configGeneration),
+                new GitRefGenerationDraft(GitRefObjectIds.Read(state.RepositoryPath), input.RefFingerprint,
+                    configGeneration, input.SettingsVersion, input.DurableTasks, input.Version, _producerId, epoch,
+                    publishedAt),
+                CardGitFactsCodec.ToRows(projection, tasks)));
+            if (result.Outcome == GitFactPublishOutcome.Published)
+            {
+                lock (state.Gate) state.StoreGeneration = result.Generation;
+            }
+            else if (result.Outcome == GitFactPublishOutcome.RejectedStaleEpoch)
+            {
+                lock (state.Gate) state.Fenced = true;
+                _logger.LogWarning(
+                    "git-facts-publish-rejected repository={Repository} epoch={Epoch} storedEpoch={StoredEpoch}",
+                    state.ProjectName, epoch, result.StoredEpoch);
+            }
+        }
+        catch (Exception ex) when (ex is DbException or IOException or UnauthorizedAccessException
+            or InvalidOperationException)
+        {
+            _logger.LogWarning(ex, "git-facts-publish-failed repository={Repository}", state.ProjectName);
+        }
+    }
+
+    /// <summary>Records a failed or degraded run; returns the retry ordinal, or 0 for no retry.</summary>
+    private int RecordFailure(RepoState state, string reason, string error, RepoInput? attemptedInput)
+    {
+        lock (state.Gate)
+        {
+            if (state.Disposed) return 0;
+            state.LastErrorReason = reason;
+            state.LastError = error;
+            state.FailureSince ??= _timeProvider.GetUtcNow();
+            state.LastFailedInput = attemptedInput;
+            _projectionCache.MarkFailed(state.WatchPath, reason);
+            return ++state.Failures <= _options.MaxRetries ? state.Failures : 0;
+        }
+    }
+
+    private static void ClearFailure(RepoState state)
+    {
+        state.Failures = 0;
+        state.LastErrorReason = null;
+        state.LastError = null;
+        state.FailureSince = null;
+        state.LastFailedInput = null;
+    }
+
+    private void RecordRunHealth(RepoState state, string outcome, int spawns, (string Command, int Count, long Ms)? slowest)
+    {
+        var now = _timeProvider.GetUtcNow();
+        GitProducerHealth health;
+        lock (state.Gate)
+        {
+            state.RecentSpawns.Enqueue((now, spawns));
+            // A fenced producer no longer writes the store, health included.
+            if (outcome is "unchanged" or "disposed" || state.Fenced || _factStore is not { IsAvailable: true }) return;
+            health = new GitProducerHealth(state.ProjectName, HealthState(state),
+                state.StoreGeneration == 0 ? null : state.StoreGeneration, state.LastIndexedAt, state.Failures,
+                state.LastErrorReason, state.RerunRequested ? 1 : 0, SpawnsPerMinute(state, now),
+                slowest?.Command, slowest?.Ms, now);
+        }
+        try { _factStore.RecordHealth(health); }
+        catch (Exception ex) when (ex is DbException or IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex, "git-facts-health-write-failed repository={Repository}", state.ProjectName);
+        }
+    }
+
+    private static string HealthState(RepoState state)
+        => GitRepositoryHealthPolicy.State(state.LastIndexedAt is not null, state.RestoredServing,
+            state.LastErrorReason, state.Fenced);
+
+    /// <summary>Spawns of this repository's runs in the last minute. Caller holds the gate.</summary>
+    private static double SpawnsPerMinute(RepoState state, DateTimeOffset now)
+    {
+        while (state.RecentSpawns.TryPeek(out var oldest) && now - oldest.At > TimeSpan.FromMinutes(1))
+            state.RecentSpawns.Dequeue();
+        return state.RecentSpawns.Sum(entry => entry.Spawns);
+    }
+
     private TaskInfo[] ReadTasks(RepoState state) => _scanner.ScanAllJobsRaw()
         .Where(task => WatchPathComparison.PathsEqual(task.WatchPath, state.WatchPath))
         .ToArray();
 
     private RepoInput CaptureInput(RepoState state, TaskInfo[] tasks, string configSignature)
     {
-        var taskSignature = CaptureTaskInputSignature(tasks, _projectionCache);
-        return new RepoInput(state.RepositoryPath, SafeCapture(state.RepositoryPath),
-            configSignature, _settingsVersion(state.ProjectName), taskSignature);
+        var (taskSignature, durableTasks) = CaptureTaskInputSignatures(tasks, _projectionCache);
+        var refs = SafeCapture(state.RepositoryPath);
+        return new RepoInput(state.RepositoryPath, refs, RefFingerprint(state, refs),
+            configSignature, _settingsVersion(state.ProjectName), taskSignature, durableTasks);
+    }
+
+    /// <summary>
+    /// The stored ref fingerprint: the watcher-facing <see cref="GitRefSignature"/>
+    /// plus <see cref="ReadOnlyGitRefFingerprint"/> over HEAD, origin/HEAD and
+    /// the integration branch. Both read files only, so a restart can compare
+    /// it without starting Git.
+    /// </summary>
+    private string RefFingerprint(RepoState state, GitRefSignature refs)
+    {
+        IReadOnlyList<string> branches;
+        try { branches = _fingerprintBranches(state.ProjectName); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+            or KeyNotFoundException)
+        {
+            SilentCatch.Note(ex, "GitStateIndexService: integration branch for the ref fingerprint unavailable");
+            branches = [];
+        }
+        var detailed = ReadOnlyGitRefFingerprint.CaptureDetailed(state.RepositoryPath, branches);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"refs=1\0{refs}\0{detailed.Value}\0{string.Join(",", branches)}")));
     }
 
     internal static string CaptureTaskInputSignature(TaskInfo[] tasks, TaskListGitProjectionCache cache)
+        => CaptureTaskInputSignatures(tasks, cache).Tasks;
+
+    /// <summary>
+    /// The task half of a run's input in one pass. <c>Tasks</c> also carries
+    /// this process's review-subject versions; <c>Durable</c> carries only
+    /// file facts, so it survives a restart and confirms a restored generation.
+    /// </summary>
+    internal static (string Tasks, string Durable) CaptureTaskInputSignatures(TaskInfo[] tasks,
+        TaskListGitProjectionCache cache)
     {
         var parts = new StringBuilder("schema=4;");
+        var durable = new StringBuilder("durable=1;");
         foreach (var task in tasks.OrderBy(task => task.TaskKey, StringComparer.Ordinal))
         {
+            var start = parts.Length;
             parts.Append(task.TaskKey).Append(':').Append(TaskGitSignature.For(task)).Append(':');
             var subject = ReviewSubjectStore.PathFor(task.FolderPath);
             cache.SeedTaskInput(subject);
             AppendFileFact(parts, subject);
+            durable.Append(parts, start, parts.Length - start);
             parts.Append(cache.SubjectVersion(task.FolderPath)).Append(';');
         }
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(parts.ToString())));
+        return (Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(parts.ToString()))),
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(durable.ToString()))));
     }
 
     private static void AppendFileFact(StringBuilder parts, string path)
@@ -708,10 +1091,29 @@ public sealed class GitStateIndexService : BackgroundService
         public DateTimeOffset? FailureSince;
         public RepoInput? LastFailedInput;
         public CancellationTokenSource? ActiveDeadline;
+        // AGT-3322: configuration generation and fact-store state.
+        public GitEffectiveConfig? Config;
+        public long ConfigGeneration;
+        public bool ConfigDirty;
+        public PendingRestore? PendingRestore;
+        public bool RestoredServing;
+        public long StoreGeneration;
+        public long ProducerEpoch;
+        public bool Fenced;
+        public readonly Queue<(DateTimeOffset At, int Spawns)> RecentSpawns = new();
     }
 
-    private sealed record RepoInput(string RepositoryPath, GitRefSignature Refs,
-        string Config, string SettingsVersion, string Tasks)
+    private sealed record PendingRestore(GitFactGenerationInput Input, bool CardsReadable);
+
+    private sealed class RunContext
+    {
+        public RepoInput? Attempted;
+        public bool ConfigCaptured;
+        public string Outcome = "failed";
+    }
+
+    private sealed record RepoInput(string RepositoryPath, GitRefSignature Refs, string RefFingerprint,
+        string Config, string SettingsVersion, string Tasks, string DurableTasks)
     {
         public string Version => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
             $"schema=3\0{RepositoryPath}\0{Refs}\0{Config}\0{SettingsVersion}\0{Tasks}")));
@@ -727,7 +1129,16 @@ public sealed record GitStateRepositoryStatus(
     string? ReasonCode = null,
     int ConsecutiveFailures = 0,
     string? LastError = null,
-    DateTimeOffset? FailureSince = null);
+    DateTimeOffset? FailureSince = null,
+    string State = GitRepositoryHealthPolicy.Warming,
+    long FactGeneration = 0,
+    long ConfigGeneration = 0,
+    long ProducerEpoch = 0,
+    double SpawnsPerMinute = 0);
+
+/// <summary>One finished index run, for tests and diagnostics.</summary>
+internal sealed record GitIndexRunReport(string ProjectName, string Trigger, string Outcome, int Spawns,
+    long ElapsedMs, bool ConfigCaptured);
 
 /// <summary>Tunable knobs for <see cref="GitStateIndexService"/>, all with safe defaults.</summary>
 public sealed record GitStateIndexOptions(

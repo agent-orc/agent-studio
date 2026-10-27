@@ -28,6 +28,14 @@ namespace AgentStudio.Tasks;
 /// work and starting no background work itself. Only the indexer calls
 /// <see cref="SetSnapshot"/> and <see cref="MarkRefreshing"/>.
 /// </para>
+///
+/// <para>
+/// AGT-3322: each entry is the in-memory pointer to a repository generation
+/// the indexer committed to the Git fact store. On start the indexer loads the
+/// last stored generation through <see cref="SetRestored"/>; readers serve it
+/// at once with state <c>restored</c> and its age, until the indexer confirms
+/// it from files (<see cref="ConfirmRestored"/>) or publishes a newer one.
+/// </para>
 /// </summary>
 public sealed class TaskListGitProjectionCache
 {
@@ -176,6 +184,7 @@ public sealed class TaskListGitProjectionCache
         DateTimeOffset? oldest = null;
         var stale = false;
         var any = false;
+        var restored = false;
         foreach (var key in tasks.Select(t => NormalizePath(t.WatchPath)).Distinct(_pathComparer))
         {
             any = true;
@@ -184,10 +193,11 @@ public sealed class TaskListGitProjectionCache
                 stale = true;
                 continue;
             }
-            if (entry.Refreshing || entry.Reason is not null) stale = true;
+            if (entry.Refreshing || entry.Reason is not null || entry.Restored) stale = true;
+            restored |= entry.Restored;
             if (oldest is null || entry.GitStateAt < oldest) oldest = entry.GitStateAt;
         }
-        return new GitProjectionFreshness(oldest, stale || !any);
+        return new GitProjectionFreshness(oldest, stale || !any, restored);
     }
 
     /// <summary>
@@ -203,6 +213,50 @@ public sealed class TaskListGitProjectionCache
             key,
             _ => new RepoEntry(frozen, gitStateAt, false, null, Interlocked.Increment(ref _generation), inputKey),
             (_, existing) => new RepoEntry(frozen, gitStateAt, false, null, Interlocked.Increment(ref _generation), inputKey));
+    }
+
+    /// <summary>
+    /// Serves a generation loaded from the Git fact store before the indexer
+    /// has confirmed it (AGT-3322). A generation already published by this
+    /// process is never replaced by a restored one.
+    /// </summary>
+    internal bool SetRestored(string watchPath, TaskListGitProjection projection,
+        DateTimeOffset publishedAt, string? inputKey)
+    {
+        var frozen = projection.Freeze();
+        var added = false;
+        _entries.AddOrUpdate(NormalizePath(watchPath),
+            _ =>
+            {
+                added = true;
+                return new RepoEntry(frozen, publishedAt, false, null, Interlocked.Increment(ref _generation),
+                    inputKey, Restored: true);
+            },
+            (_, existing) =>
+            {
+                if (existing.GitStateAt is not null) return existing;
+                added = true;
+                return new RepoEntry(frozen, publishedAt, existing.Refreshing, existing.Reason,
+                    Interlocked.Increment(ref _generation), inputKey, Restored: true);
+            });
+        return added;
+    }
+
+    /// <summary>
+    /// The indexer proved from files that the restored generation's inputs are
+    /// unchanged: it is ready as of <paramref name="confirmedAt"/>.
+    /// </summary>
+    internal void ConfirmRestored(string watchPath, DateTimeOffset confirmedAt, string? inputKey)
+    {
+        var key = NormalizePath(watchPath);
+        if (!_entries.TryGetValue(key, out var current) || !current.Restored) return;
+        _entries.AddOrUpdate(key,
+            _ => current,
+            (_, existing) => !existing.Restored ? existing : existing with
+            {
+                GitStateAt = confirmedAt, Refreshing = false, Reason = null, Restored = false,
+                Generation = Interlocked.Increment(ref _generation), InputKey = inputKey,
+            });
     }
 
     /// <summary>
@@ -291,9 +345,14 @@ public sealed class TaskListGitProjectionCache
             && (!projection.TaskSubjectVersions.TryGetValue(task.TaskKey, out var expected)
                 || expected == SubjectVersion(task.FolderPath));
         var unavailable = projection.UnavailableTasks.Contains(task.TaskKey);
+        // A restored generation keeps its own state while a delta run is in
+        // flight: readers keep it until the new generation is published.
         var state = entry.GitStateAt is null
             ? entry.Reason is null ? "warming" : "unavailable"
-            : unavailable ? "unavailable" : entry.Refreshing || entry.Reason is not null || !compatible ? "stale" : "ready";
+            : unavailable ? "unavailable"
+            : entry.Reason is not null || !compatible ? "stale"
+            : entry.Restored ? "restored"
+            : entry.Refreshing ? "stale" : "ready";
         return new TaskGitSnapshot(task.TaskKey, task.ProjectName, state, entry.GitStateAt, entry.Generation,
             TaskGitSignature.For(task),
             unavailable ? "card-facts-unavailable" : entry.Reason ?? (!compatible && entry.GitStateAt is not null ? "task-changed" : null),
@@ -347,11 +406,12 @@ public sealed class TaskListGitProjectionCache
     {
         tasks = TaskProjectionCards.Select(tasks);
         var unavailable = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
-        var mergeTask = SafeLookup(tasks, mergeLookup, unavailable, logger);
-        var integrationTask = SafeLookup(tasks, integrationLookup, unavailable, logger);
-        var publishTask = SafeLookup(tasks, publishLookup, unavailable, logger);
-        var testRunTask = SafeLookup(tasks, testRunLookup, unavailable, logger);
-        var reviewProjectionTask = SafeLookup(tasks, reviewProjectionLookup, unavailable, logger);
+        var failures = new ConcurrentDictionary<string, GitRepositoryLookupFailure>(StringComparer.Ordinal);
+        var mergeTask = SafeLookup("merge", tasks, mergeLookup, unavailable, failures, logger);
+        var integrationTask = SafeLookup("integration", tasks, integrationLookup, unavailable, failures, logger);
+        var publishTask = SafeLookup("publish", tasks, publishLookup, unavailable, failures, logger);
+        var testRunTask = SafeLookup("test-runs", tasks, testRunLookup, unavailable, failures, logger);
+        var reviewProjectionTask = SafeLookup("review", tasks, reviewProjectionLookup, unavailable, failures, logger);
 
         await Task.WhenAll(mergeTask, integrationTask, publishTask, testRunTask, reviewProjectionTask);
         return new TaskListGitProjection(
@@ -360,13 +420,17 @@ public sealed class TaskListGitProjectionCache
             await publishTask,
             await testRunTask,
             await reviewProjectionTask,
-            Unavailable: unavailable.Keys.ToHashSet(StringComparer.Ordinal));
+            Unavailable: unavailable.Keys.ToHashSet(StringComparer.Ordinal),
+            RepositoryFailure: failures.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => pair.Value).FirstOrDefault());
     }
 
     private static async Task<Dictionary<string, T>> SafeLookup<T>(
+        string name,
         IReadOnlyCollection<TaskInfo> tasks,
         Func<IReadOnlyCollection<TaskInfo>, Task<Dictionary<string, T>>> lookup,
         ConcurrentDictionary<string, byte> unavailable,
+        ConcurrentDictionary<string, GitRepositoryLookupFailure> failures,
         ILogger? logger)
     {
         try { return await lookup(tasks).ConfigureAwait(false); }
@@ -387,10 +451,16 @@ public sealed class TaskListGitProjectionCache
                     failed.Add(task.TaskKey);
                     logger?.LogWarning(cardEx, "git-index-card-unavailable taskKey={TaskKey}", task.TaskKey);
                     // A repository-wide failure fails every card the same way.
-                    // Stop after the first few instead of spawning Git per card,
-                    // and fail the run so the last good snapshot keeps serving.
+                    // Stop after the first few instead of spawning Git per card
+                    // and report a typed repository failure: the indexer keeps
+                    // the last good generation serving and records the
+                    // repository's health state (AGT-3322).
                     if (failed.Count == attempted && attempted >= Math.Min(3, tasks.Count))
-                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex).Throw();
+                    {
+                        failures.TryAdd(name, new GitRepositoryLookupFailure(name,
+                            "repository-lookup-failed", $"{ex.GetType().Name}: {ex.Message}"));
+                        return new Dictionary<string, T>(StringComparer.Ordinal);
+                    }
                 }
             }
             foreach (var taskKey in failed) unavailable.TryAdd(taskKey, 0);
@@ -399,15 +469,24 @@ public sealed class TaskListGitProjectionCache
     }
 
     private sealed record RepoEntry(TaskListGitProjection Snapshot, DateTimeOffset? GitStateAt,
-        bool Refreshing, string? Reason, long Generation, string? InputKey);
+        bool Refreshing, string? Reason, long Generation, string? InputKey, bool Restored = false);
 }
 
 /// <summary>
 /// Freshness stamp returned alongside a <see cref="TaskListGitProjection"/>
 /// read: the oldest <c>gitStateAt</c> among the touched repositories, and
 /// whether any of them is missing a snapshot or currently mid-refresh.
+/// <see cref="Restored"/> marks a generation loaded from the Git fact store on
+/// start that the indexer has not confirmed yet; it is also <see cref="Stale"/>.
 /// </summary>
-public sealed record GitProjectionFreshness(DateTimeOffset? GitStateAt, bool Stale);
+public sealed record GitProjectionFreshness(DateTimeOffset? GitStateAt, bool Stale, bool Restored = false);
+
+/// <summary>
+/// A lookup that failed for every probed card of a repository: a repository
+/// health state, not a per-card error. The indexer keeps the last good
+/// generation serving instead of publishing this projection.
+/// </summary>
+public sealed record GitRepositoryLookupFailure(string Lookup, string ReasonCode, string Detail);
 
 public sealed record TaskListGitProjection(
     IReadOnlyDictionary<string, TaskMergeSignal> Merge,
@@ -418,7 +497,8 @@ public sealed record TaskListGitProjection(
     IReadOnlyDictionary<string, IReadOnlyList<TaskCommitInfo>>? Commits = null,
     IReadOnlyDictionary<string, string>? Signatures = null,
     IReadOnlyDictionary<string, long>? SubjectVersions = null,
-    IReadOnlySet<string>? Unavailable = null)
+    IReadOnlySet<string>? Unavailable = null,
+    GitRepositoryLookupFailure? RepositoryFailure = null)
 {
     public IReadOnlyDictionary<string, IReadOnlyList<TaskCommitInfo>> ReconstructedCommits => Commits ?? ImmutableDictionary<string, IReadOnlyList<TaskCommitInfo>>.Empty;
     public IReadOnlyDictionary<string, string> TaskSignatures => Signatures ?? ImmutableDictionary<string, string>.Empty;

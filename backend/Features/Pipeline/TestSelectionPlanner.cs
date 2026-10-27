@@ -45,6 +45,12 @@ public sealed record TestSelectionAudit
     public IReadOnlyList<string> UnmappedSourceDirectories { get; init; } = [];
 
     /// <summary>
+    /// SHA-256 of the folder-to-test-project map generated at plan time
+    /// (<see cref="GeneratedTestProjectMap.Digest"/>). Null for a configured map.
+    /// </summary>
+    public string? ProjectMapDigest { get; init; }
+
+    /// <summary>
     /// The test classes the selected commands were filtered down to, so the
     /// gate log states which classes ran and the candidate reasons state why.
     /// </summary>
@@ -521,7 +527,7 @@ public static class TestSelectionPlanner
     /// that was already quoted stays a single shell argument) plus its bare
     /// expression for composition.
     /// </summary>
-    private static (string Raw, string Expression) DotNetFilterExpression(VerifyPlan verifyPlan)
+    internal static (string Raw, string Expression) DotNetFilterExpression(VerifyPlan verifyPlan)
     {
         foreach (var command in verifyPlan.Commands.Where(command => command.Kind == VerifyCommandKind.Test))
         {

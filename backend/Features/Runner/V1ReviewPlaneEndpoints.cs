@@ -2404,6 +2404,7 @@ public static class V1ReviewPlaneEndpoints
                 VerifiedRequirements = review.Subject.Plan is { } plan
                     ? Contract.ReviewLibraryStepPolicy.RequiredCapabilities(plan)
                     : [],
+                TestLevel = review.Subject.Plan?.TestLevel,
                 BuildTestGate = buildTestGate switch
                 {
                     RemoteBuildTestGateClass.Passed => ReviewBuildTestGateClasses.Passed,

@@ -327,6 +327,7 @@ public static class ProjectSettingsEndpoints
                     pipelineSteps = PipelineTypeSettings.ForType(kv.Value, PipelineTypes.Task)?.PipelineSteps
                         ?? new Dictionary<string, PipelineStepSetting>(),
                     testExecution = kv.Value.TestExecution,
+                    testingPerCard = PerCardTestModes.Resolve(kv.Value),
                     pipelineStepOrder = PipelineTypeSettings.ForType(kv.Value, PipelineTypes.Task)?.PipelineStepOrder
                         ?? Array.Empty<string>(),
                     pipelineStepsByType = kv.Value.PipelineStepsByType
@@ -1154,6 +1155,29 @@ public static class ProjectSettingsEndpoints
             settings.SetTestExecution(projectName, null);
             return Results.Ok(new { cleared = true });
         });
+
+        // AGT-3310: per-card test placement (testing.perCard). The settings page
+        // shows it read-only; the operator switches it here. Queued review
+        // plans are rebuilt so the next claim runs the chosen tier.
+        app.MapPut("/api/projects/{projectName}/testing", (
+            string projectName,
+            ProjectTestingSettings req,
+            ProjectSettingsService settings,
+            TaskScannerService scanner,
+            ProjectRegistry projects,
+            GitService git,
+            RemoteReviewPlanBuilder remoteReviewPlans,
+            ReviewAttemptTaskLifecycleService reviewLifecycle) =>
+        {
+            var known = scanner.GetWatchPaths().Any(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (req.PerCard is not null && !PerCardTestModes.IsKnown(req.PerCard))
+                return Results.BadRequest(new { error = "perCard must be 'affected' or 'full'." });
+            settings.SetTesting(projectName, req);
+            ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
+            return Results.Ok(new { perCard = PerCardTestModes.Resolve(settings.Get(projectName)) });
+        }).RequireStudioRole(StudioRoles.Owner);
 
         app.MapGet("/api/projects/{projectName}/batch-gate", (string projectName,
             ProjectSettingsService settings, TaskScannerService scanner) =>
