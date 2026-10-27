@@ -142,6 +142,11 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
         await using var factory = BuildFactory();
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var card = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(TaskId, _watchPath)!;
+        var integration = factory.Services.GetRequiredService<TaskIntegrationStatusService>()
+            .BuildForCompletion(card);
+        Assert.Equal(IntegrationStatuses.Integrated, integration.Status);
 
         using var response = await client.GetAsync($"/api/projects/{Project}/delivery-claims");
 

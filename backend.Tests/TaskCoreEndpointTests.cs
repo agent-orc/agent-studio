@@ -868,6 +868,6 @@ public sealed class TaskCoreEndpointTests : IDisposable
     public void Dispose()
     {
         try { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
-        catch (IOException) { /* Watcher disposal may complete after the test. */ }
+        catch (IOException ex) { SilentCatch.Note(ex, "Watcher disposal may complete after the test."); }
     }
 }

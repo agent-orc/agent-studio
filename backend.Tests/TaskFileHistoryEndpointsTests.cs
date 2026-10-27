@@ -45,11 +45,11 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         {
             foreach (var f in Directory.EnumerateFiles(_tempDir, "*", SearchOption.AllDirectories))
             {
-                try { File.SetAttributes(f, FileAttributes.Normal); } catch { }
+                try { File.SetAttributes(f, FileAttributes.Normal); } catch (Exception ex) { SilentCatch.Note(ex, "File attribute cleanup is best-effort."); }
             }
             Directory.Delete(_tempDir, recursive: true);
         }
-        catch { /* best-effort */ }
+        catch (Exception ex) { SilentCatch.Note(ex, "File history test cleanup is best-effort."); }
     }
 
     [Fact]
