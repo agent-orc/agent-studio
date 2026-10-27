@@ -561,6 +561,12 @@ export interface TaskProvenanceView {
   landedState: LandedState;
   ladder: TaskLandedLadder;
   commits: TaskCommitMembership[];
+  /**
+   * AGT-3318: absent or null for the legacy live-Git read. Under derived
+   * source facts, `warming` means a reachability fact is still being produced
+   * and the card does not read as landed yet.
+   */
+  sourceFacts?: 'ready' | 'warming' | 'unavailable' | null;
 }
 
 /**

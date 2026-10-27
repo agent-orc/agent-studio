@@ -25,6 +25,8 @@ public sealed class TaskServerOptions
     public long MaxRequestBodyBytes { get; set; } = 25L * 1024 * 1024;
     public long ResultArtifactMaxFileBytes { get; set; } = 8L * 1024 * 1024;
     public long ResultArtifactMaxTotalBytes { get; set; } = 100L * 1024 * 1024;
+    /// <summary>Size cap of the derived source data store (AGT-3318); least recently read objects are evicted above it.</summary>
+    public long SourceFactsMaxStoredBytes { get; set; } = 512L * 1024 * 1024;
     [Obsolete("Use AUTH=bearer and persisted Task Server principals. Removal planned after Phase B migration.")]
     public bool RequireAuthentication { get; set; }
     [Obsolete("Use STUDIO_AUTH_TOKEN_FILE for one-time bootstrap. Removal planned after Phase B migration.")]

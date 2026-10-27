@@ -649,6 +649,7 @@ public sealed class RemoteTaskRunner
                     stopRun.Token);
                 outbox.RecordHandoffAcknowledgement(handoffAcknowledgement);
                 await ReportOutboxSafeAsync(outbox, stopRun.Token);
+                await PublishSourceFactsSafeAsync(workspace, repositoryId, envelope, teardown, stopRun.Token);
                 await workspace.TeardownAfterHandoffAsync(
                     teardown,
                     outbox.HandoffAcknowledgement
@@ -2259,6 +2260,45 @@ public sealed class RemoteTaskRunner
             outbox.Acknowledge(item.Sequence);
         }
     }
+
+    /// <summary>
+    /// AGT-3318: the fenced producer publishes the diff object against the
+    /// merge base, path history and blame of the delivered result while the
+    /// worktree still holds both commits. The handoff is already acknowledged;
+    /// this step is bounded and never fails the run.
+    /// </summary>
+    private async Task PublishSourceFactsSafeAsync(
+        GitWorkspace workspace,
+        string repositoryId,
+        ImmutableResultEnvelope envelope,
+        WorktreeTeardownResult teardown,
+        CancellationToken ct)
+    {
+        if (!_options.SourceFactsProducerEnabled) return;
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        bounded.CancelAfter(SourceFactsHandoffBudget);
+        try
+        {
+            AgentRunner.SourceFacts.SourceFactsDemandSweep.WriteMarker(workspace.ProjectCachePath, repositoryId);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _log($"source-facts repository marker not written: {exception.Message}");
+        }
+        var repositoryPath = Directory.Exists(workspace.RepoPath) ? workspace.RepoPath : workspace.SharedRepoPath;
+        var producer = new AgentRunner.SourceFacts.SourceFactsProducer(
+            _client, $"{_options.RunnerId}:{_client.RunnerInstanceId}", _log);
+        await producer.PublishHandoffAsync(
+            repositoryId,
+            repositoryPath,
+            envelope.ResultSha,
+            envelope.BaseSha,
+            workspace.IntegrationBranchRef,
+            teardown.ImmutableResultRef,
+            bounded.Token);
+    }
+
+    private static readonly TimeSpan SourceFactsHandoffBudget = TimeSpan.FromSeconds(90);
 
     private async Task ReportOutboxSafeAsync(
         DurableRunOutbox outbox,

@@ -4555,6 +4555,7 @@ public sealed partial class TaskServerStore
         await ApplyReviewMigrationAsync(connection, ct);
         await ApplyGateMigrationAsync(connection, ct);
         await ApplyFailureFingerprintMigrationAsync(connection, ct);
+        await ApplySourceFactsMigrationAsync(connection, ct);
         // Studio route-ownership P1 "task detail and hosts" bundle
         // (docs/studio-route-ownership/index.html): each group below owns a
         // disjoint set of new tables and touches no other group's schema.

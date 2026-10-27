@@ -2337,6 +2337,26 @@ the endpoint answers `409` with the reason while the intent stays persisted.
 The preservation half is the detector, so a run that legitimately finishes in
 under a second is never reported as lost.
 
+## Source facts producer (AGT-3318)
+
+`runner/SourceFacts/SourceFactsProducer.cs` is the only Git client behind the
+derived source data that review and card open read (pipeline-delivery target
+P11, decision D7 A-B). After the durable result handoff is acknowledged and
+before the worktree is torn down, `RemoteTaskRunner` publishes, within a 90 s
+budget, the merge-base diff object of the result within the review budget of
+200 files and 12,000 lines, and path history and blame for up to 40 touched
+files. A failure is logged and never fails the run; the review falls back and
+records a demand instead.
+
+`SourceFactsDemandSweep` runs in the coding daemon every 30 s. It finds the
+shared checkouts of this host by the `source-facts-repository-id` marker beside
+`<workdir>/<project>/repo` and answers pending demands: diff objects, path
+history, blame and reachability of commits in a target branch, fetching the
+named result ref when a commit is missing. Every publish carries the
+repository's producer epoch from `POST /api/v1/source-facts/{repositoryId}/producer/lease`;
+another host takes the lease only after it expires and fences the previous
+holder. `RUNNER_SOURCE_FACTS_PRODUCER=0` turns the producer off on a host.
+
 ## Operational stall monitoring (AGT-3206)
 
 The Watcher runs an operational sweep every five minutes by default, including
