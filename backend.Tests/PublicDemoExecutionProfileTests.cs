@@ -213,7 +213,8 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
         // AGT-3274 added the authenticated deploy artifact route on Claim.
         // The local-only PTY _probe route is absent from the public-demo route set.
         // AGT-3247 added three Runbooks routes (one Start, two Continue).
-        Assert.Equal(149, routes.Count);
+        // AGT-3313 added the release suite verdict record on PostStep.
+        Assert.Equal(150, routes.Count);
         Assert.DoesNotContain(allRoutes, route => route.RoutePattern.RawText == "/api/cli/_probe/{cliType}");
         foreach (var (method, suffix) in new[]
         {
@@ -313,7 +314,7 @@ public sealed class PublicDemoExecutionProfileTests(PublicDemoHostFixture shared
                 [ExecutionAdmissionPath.Review] = 9,
                 [ExecutionAdmissionPath.Chat] = 9,
                 [ExecutionAdmissionPath.Preview] = 31,
-                [ExecutionAdmissionPath.PostStep] = 21,
+                [ExecutionAdmissionPath.PostStep] = 22,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));
