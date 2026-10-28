@@ -281,12 +281,14 @@ public sealed class QuotaFallbackCrossPathTests : IDisposable
             CancellationToken.None);
         var expectedKey = Contract.CapabilityProtocol.ModelAcceptance(expectedCli, expectedModel);
         Assert.Equal("empty", unverified.Status);
-        Assert.Equal(Contract.ReviewClaimEmptyReasons.UnclaimablePlanRequirements, unverified.Reason);
+        Assert.Equal(Contract.ReviewClaimEmptyReasons.HostCapabilityMissing, unverified.Reason);
         Assert.Contains(expectedKey, unverified.MissingCapabilities!);
-        Assert.Contains($"{expectedKey} unknown", unverified.Message, StringComparison.Ordinal);
+        Assert.Contains(expectedKey, unverified.Message, StringComparison.Ordinal);
+        Assert.Contains(reviewRunnerId, unverified.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("quota reset", unverified.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(attemptId, Assert.Single(unverified.UnclaimableAttempts!).AttemptId);
         var queue = factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>().Refresh();
-        Assert.Contains($"{expectedKey} unknown", queue.UnclaimableReason, StringComparison.Ordinal);
+        Assert.Contains(expectedKey, queue.UnclaimableReason, StringComparison.Ordinal);
 
         reviewCapabilities = await http.PutAsJsonAsync(
             $"/api/v1/runners/{reviewRunnerId}/capabilities",

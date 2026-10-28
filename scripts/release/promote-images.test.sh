@@ -11,7 +11,7 @@ old_digest="sha256:$(printf 'b%.0s' {1..64})"
 new_digest="sha256:$(printf 'a%.0s' {1..64})"
 sha="$(printf '1%.0s' {1..40})"
 names=(agent-studio-api agent-studio-web agent-task-server agent-orchestrator-engine
-  agent-studio-bff agent-host agent-operations-server agent-operations-agent)
+  agent-studio-bff agent-host agent-operations-server agent-operations-agent agent-work)
 
 cat > "$test_root/bin/regctl" <<'FAKE_REGCTL'
 #!/usr/bin/env bash

@@ -11,6 +11,53 @@ namespace AgentStudio.Tests;
 public sealed class HostModelCapabilityRecoveryTests
 {
     [Fact]
+    public void Legacy_host_can_claim_but_advertised_protocol_requires_a_verdict()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var registry = new V1ReviewExecutorRegistry(clock);
+        registry.Register("runner-a", new Contract.RegisterRunnerRequest(
+            "runner-a", "host-a", "instance-a", "0.9.4", Contract.TaskServerProtocol.Current,
+            [Contract.ReviewCapabilities.CodingExecutor]));
+        Assert.Equal(Contract.ModelAcceptanceAdmission.Legacy,
+            registry.ModelAdmission("runner-a", "instance-a", "codex", "gpt-6-sol"));
+        Assert.True(registry.AcceptsModel("runner-a", "instance-a", "codex", "gpt-6-sol"));
+
+        registry.AdvertiseCapabilities("runner-a", new Contract.CapabilityAdvertisementRequest(
+            "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, 1,
+            [new Contract.AdvertisedCapabilityDto(
+                Contract.CapabilityProtocol.ModelAcceptance("codex", "gpt-6-luna"),
+                "model-acceptance", "unknown")]));
+        Assert.Equal(Contract.ModelAcceptanceAdmission.Pending,
+            registry.ModelAdmission("runner-a", "instance-a", "codex", "gpt-6-sol"));
+        clock.Advance(TimeSpan.FromMinutes(3));
+        Assert.Equal(Contract.ModelAcceptanceAdmission.Refused,
+            registry.ModelAdmission("runner-a", "instance-a", "codex", "gpt-6-sol"));
+        registry.AdvertiseCapabilities("runner-a", new Contract.CapabilityAdvertisementRequest(
+            "runner-a", "instance-a", 2, clock.GetUtcNow().UtcDateTime, 180, 2,
+            [new Contract.AdvertisedCapabilityDto(
+                Contract.CapabilityProtocol.CodingExecutor, "executor", "ready")]));
+        Assert.Equal(Contract.ModelAcceptanceAdmission.Refused,
+            registry.ModelAdmission("runner-a", "instance-a", "codex", "gpt-6-sol"));
+        var key = Contract.CapabilityProtocol.ModelAcceptance("codex", "gpt-6-sol");
+        Assert.Contains("Host capability missing on host-a: " + key,
+            Contract.ModelAcceptanceAdmissionPolicy.Refusal("host-a", key,
+                Contract.ModelAcceptanceAdmission.Refused));
+    }
+
+    [Fact]
+    public void Advertised_unavailable_is_refused_during_startup_grace()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));
+        var now = clock.GetUtcNow().UtcDateTime;
+        Assert.Equal(Contract.ModelAcceptanceAdmission.Unavailable,
+            Contract.ModelAcceptanceAdmissionPolicy.Evaluate("gpt-6-sol", true,
+                "unavailable", now.AddMinutes(3), false, now, now));
+        Assert.Equal(Contract.ModelAcceptanceAdmission.Pending,
+            Contract.ModelAcceptanceAdmissionPolicy.Evaluate("gpt-6-sol", true,
+                "unknown", now.AddMinutes(3), false, now, now.AddMinutes(1)));
+    }
+
+    [Fact]
     public void Delayed_advertisement_with_runner_clock_ahead_cannot_clear_a_model_rejection()
     {
         var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddDays(1));

@@ -362,6 +362,44 @@ public sealed class QuotaAdmissionPlannerTests : IDisposable
         Assert.Contains("no accepted fallback", projectedHold.Reason);
     }
 
+    [Fact]
+    public void Missing_host_capability_is_not_a_quota_reset_wait()
+    {
+        Snapshot("codex", ("Weekly", 10, Now.AddDays(6)));
+        var plan = QuotaAdmissionPlanner.Plan("codex", "gpt-6-sol", "medium", null,
+            _caps, cli => cli is not null && _snapshots.TryGetValue(cli, out var snapshot)
+                ? snapshot : null, Now, 0,
+            modelAccepted: (_, _) => false, claimingHost: "agent-runner-01");
+        Assert.Equal(QuotaAdmissionOutcome.HostCapabilityMissing, plan.Outcome);
+        Assert.Null(plan.NextResetAt);
+        Assert.Contains("agent-runner-01", plan.Reason);
+        Assert.Contains("model-acceptance:codex:gpt-6-sol", plan.Reason);
+        Assert.DoesNotContain("reset", plan.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Legacy_host_uses_primary_without_an_unverified_fallback()
+    {
+        var fallback = Routing(new CliModelRouteProfile
+        {
+            CliType = "claude", PrimaryModel = "claude-opus-5-5",
+            FallbackCliType = "codex", FallbackModel = "gpt-6-sol",
+        });
+        Snapshot("claude", ("Weekly", 10, Now.AddDays(3)));
+        var primary = QuotaAdmissionPlanner.Plan("claude", "claude-opus-5-5", "medium",
+            fallback, _caps, cli => cli is not null && _snapshots.TryGetValue(cli, out var snapshot)
+                ? snapshot : null, Now, 0,
+            modelAccepted: (_, _) => true, fallbackModelAccepted: (_, _) => false);
+        Assert.Equal(QuotaAdmissionOutcome.LaunchPrimary, primary.Outcome);
+
+        Snapshot("claude", ("Weekly", 100, Now.AddDays(3)));
+        var capped = QuotaAdmissionPlanner.Plan("claude", "claude-opus-5-5", "medium",
+            fallback, _caps, cli => cli is not null && _snapshots.TryGetValue(cli, out var snapshot)
+                ? snapshot : null, Now, 0,
+            modelAccepted: (_, _) => true, fallbackModelAccepted: (_, _) => false);
+        Assert.NotEqual(QuotaAdmissionOutcome.LaunchFallback, capped.Outcome);
+    }
+
     private QuotaAdmissionPlan Plan(
         string cli,
         CliQuotaFallbackService? fallback,

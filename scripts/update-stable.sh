@@ -23,6 +23,8 @@
 #   ATP_STABLE_BACKEND_URL       Stable API origin used for proxy verification;
 #                                use the HTTPS edge in the networked profile
 #   ATP_TASK_SERVER_PROBE_SCRIPT config, readiness, and proxy probe
+#   ATP_FORCE_HOST_COMPATIBILITY=1  deploy despite an older registered agent-host
+#   ATP_RELEASE_RECORD_DIR       where preflight release records are written
 
 set -Eeuo pipefail
 
@@ -122,6 +124,22 @@ fi
 if ! git -C "$stable_checkout" merge-base --is-ancestor "$head_before" "$target"; then
   fail "Stable cannot fast-forward from $head_before to $target."
 fi
+
+# Check the candidate contract before stopping any service. A same-SHA health
+# recovery above does not introduce a new backend and must remain available.
+host_requirement_file=$(mktemp)
+trap 'rm -f -- "$host_requirement_file"' EXIT
+git -C "$stable_checkout" show "$target:contracts/TaskServer.Contracts/runner-release-requirements.json" \
+  > "$host_requirement_file" || fail "Candidate release has no agent-host requirement record."
+release_record_dir=${ATP_RELEASE_RECORD_DIR:-$devspace_dir/release-records}
+node "$script_dir/host-release-preflight.mjs" \
+  --manifest "$host_requirement_file" \
+  --config "$task_server_config" \
+  --url "$task_server_url" \
+  --repo "$stable_checkout" \
+  --target "$target" \
+  --record "$release_record_dir/$target.json" \
+  || fail "Agent-host release preflight refused the candidate."
 
 install_frontend=0
 if ! git -C "$stable_checkout" diff --quiet "$head_before" "$target" -- \

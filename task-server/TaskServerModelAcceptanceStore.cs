@@ -7,9 +7,8 @@ using Microsoft.Data.Sqlite;
 namespace AgentStudio.TaskServer;
 
 /// <summary>
-/// Host model acceptance for coding claims. A named model launches only on a
-/// runner whose fresh probe accepted it; a launch rejection holds that model
-/// until the same runner instance writes a causally newer successful probe.
+/// Host model acceptance for coding claims. Older daemons without this protocol
+/// remain claimable; an advertised protocol requires a fresh model verdict.
 /// </summary>
 public sealed partial class TaskServerStore
 {
@@ -83,12 +82,16 @@ public sealed partial class TaskServerStore
         SqliteConnection connection,
         SqliteTransaction transaction,
         string runnerId,
+        Action<string> onRefusal,
         [EnumeratorCancellation] CancellationToken ct)
     {
         await foreach (var task in tasks.WithCancellation(ct))
         {
-            if (await ModelAcceptanceRefusalAsync(connection, transaction, task.TaskId, runnerId, ct) is null)
+            var refusal = await ModelAcceptanceRefusalAsync(
+                connection, transaction, task.TaskId, runnerId, ct);
+            if (refusal is null)
                 yield return task;
+            else onRefusal(refusal);
         }
     }
 
@@ -104,19 +107,50 @@ public sealed partial class TaskServerStore
         string runnerId,
         CancellationToken ct)
     {
-        var (provider, model) = await ReadEffectiveModelRouteAsync(connection, transaction, taskId, ct);
+        var (provider, model, isPrimary) = await ReadEffectiveModelRouteAsync(
+            connection, transaction, taskId, ct);
         if (string.IsNullOrWhiteSpace(model)) return null;
         var key = CapabilityProtocol.ModelAcceptance(provider, model);
-        var accepted = Convert.ToInt64(await ScalarAsync(connection, """
-            SELECT count(*) FROM runner_capabilities capability
-             WHERE capability.runner_id = $runner AND capability.capability_key = $key
-               AND capability.advertised_status = 'ready' AND capability.fresh_until > $now
-               AND NOT EXISTS (
-                   SELECT 1 FROM runner_model_rejections rejection
-                    WHERE rejection.runner_id = $runner AND rejection.capability_key = $key);
-            """, ct, transaction, ("$runner", runnerId), ("$key", key), ("$now", Iso(UtcNow))),
-            CultureInfo.InvariantCulture) > 0;
-        return accepted ? null : $"model-acceptance-unverified: {provider}/{model}";
+        var now = UtcNow;
+        var protocolAdvertised = Convert.ToInt64(await ScalarAsync(connection, """
+            SELECT count(*) FROM runner_capabilities capability JOIN runners runner
+              ON runner.id = capability.runner_id
+             WHERE capability.runner_id = $runner
+               AND capability.advertised_instance_id = runner.instance_id
+               AND capability.capability_key LIKE 'model-acceptance:%';
+            """, ct, transaction, ("$runner", runnerId)), CultureInfo.InvariantCulture) > 0;
+        string? status = null;
+        DateTime? freshUntil = null;
+        DateTime startedAt = now;
+        string host = runnerId;
+        await using (var command = Command(connection, """
+            SELECT runner.host_id, COALESCE(runner.instance_started_at, runner.registered_at),
+                   capability.advertised_status, capability.fresh_until
+              FROM runners runner LEFT JOIN runner_capabilities capability
+                ON capability.runner_id = runner.id AND capability.capability_key = $key
+               AND capability.advertised_instance_id = runner.instance_id
+             WHERE runner.id = $runner;
+            """, transaction, ("$runner", runnerId), ("$key", key)))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            if (await reader.ReadAsync(ct))
+            {
+                host = reader.GetString(0);
+                startedAt = Parse(reader.GetString(1));
+                status = reader.IsDBNull(2) ? null : reader.GetString(2);
+                freshUntil = reader.IsDBNull(3) ? null : Parse(reader.GetString(3));
+            }
+        }
+        var rejected = Convert.ToInt64(await ScalarAsync(connection, """
+            SELECT count(*) FROM runner_model_rejections
+             WHERE runner_id = $runner AND capability_key = $key;
+            """, ct, transaction, ("$runner", runnerId), ("$key", key)), CultureInfo.InvariantCulture) > 0;
+        var decision = ModelAcceptanceAdmissionPolicy.Evaluate(model, protocolAdvertised,
+            status, freshUntil, rejected, startedAt, now);
+        if (decision == ModelAcceptanceAdmission.Legacy && !isPrimary)
+            decision = ModelAcceptanceAdmission.Refused;
+        return decision is ModelAcceptanceAdmission.Accepted or ModelAcceptanceAdmission.Legacy
+            ? null : ModelAcceptanceAdmissionPolicy.Refusal(host, key, decision);
     }
 
     /// <summary>
@@ -124,7 +158,7 @@ public sealed partial class TaskServerStore
     /// fresh route, an explicitly selected continuation, a provider-rejection
     /// fallback, then the card's primary fields.
     /// </summary>
-    private async Task<(string Provider, string? Model)> ReadEffectiveModelRouteAsync(
+    private async Task<(string Provider, string? Model, bool IsPrimary)> ReadEffectiveModelRouteAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         string taskId,
@@ -142,6 +176,10 @@ public sealed partial class TaskServerStore
             primaryCli = found ? reader.GetString(0) : "claude";
             primaryModel = found && !reader.IsDBNull(1) ? reader.GetString(1) : null;
         }
+        (string Provider, string? Model, bool IsPrimary) Route(string provider, string? model)
+            => (provider, model,
+                string.Equals(provider, primaryCli, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(model, primaryModel, StringComparison.OrdinalIgnoreCase));
 
         var delta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, taskId, ct);
         var previousJson = Convert.ToString(await ScalarAsync(connection, """
@@ -157,7 +195,7 @@ public sealed partial class TaskServerStore
         }
         if (await ReadMechanicalFreshRouteAsync(connection, transaction, taskId, delta, previous, ct)
             is { } mechanical)
-            return (mechanical.CliType, mechanical.Model);
+            return Route(mechanical.CliType, mechanical.Model);
 
         if (await ReadNextContinuationAsync(connection, transaction, taskId, ct)
             is { Receipt.ExplicitSelection: true } intent)
@@ -166,12 +204,12 @@ public sealed partial class TaskServerStore
             var cli = selection is null || selection.CliType || selection.Model || selection.ThinkingLevel
                 ? intent.CliType : null;
             var model = selection is null || selection.Model ? intent.Model : null;
-            return (string.IsNullOrWhiteSpace(cli) ? primaryCli : cli.Trim().ToLowerInvariant(), model);
+            return Route(string.IsNullOrWhiteSpace(cli) ? primaryCli : cli.Trim().ToLowerInvariant(), model);
         }
 
         if (await ReadProviderFallbackForClaimAsync(connection, transaction, taskId, ct) is { } continuation)
-            return (continuation.Fallback.CliType, continuation.Fallback.To);
-        return (primaryCli, primaryModel);
+            return Route(continuation.Fallback.CliType, continuation.Fallback.To);
+        return Route(primaryCli, primaryModel);
     }
 
     /// <summary>
