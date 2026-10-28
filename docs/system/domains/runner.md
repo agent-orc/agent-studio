@@ -61,6 +61,29 @@ account sharing remains closed until separate refresh-boundary probes pass.
 See the
 [canary runbook](../../operations/setup/linux-runner-host.md#work-container-executor-canary).
 
+## Optional Kubernetes Job executor, DP-S7
+
+Selected working decision: dynamic placement D6 option A. An installation with
+an approved, namespace-scoped cluster may run `agent-host work-container
+kubernetes-run` after the host has claimed a Task Server attempt and reserved
+its versioned AGT-3019 half-core grant. The switch
+`RUNNER_KUBERNETES_JOB_MODE` defaults to `off`; `shadow` does not launch Jobs,
+and only `canary` allows the command. Windows is rejected and keeps its process
+executor. The adapter makes one deterministic Job per attempt and fence, labels
+the Job, Pod template and projected Secret with the Task Server attempt, lease,
+fence and epoch, and derives CPU and memory requests and limits from the same
+grant as the local container executor. The finished Job TTL is a backstop;
+normal completion deletes the Job and its Pods and Secret immediately. The
+Secret has a Job owner reference so the finished-Job TTL also collects it if
+the host disappears. The
+Task Server continues to own lease renewal, results, publication and git.
+Pod replacement stays inside the same Job and never claims another attempt.
+The host stops a Job on lease cancellation and revokes the brokered credential;
+restart reconciliation removes unknown, terminal and superseded resources and
+retries saved issuance cleanup after a cluster outage. A failed cluster list
+blocks new admission before credential issuance or Job creation. See the
+[cluster canary runbook](../../operations/setup/linux-runner-host.md#optional-kubernetes-job-canary).
+
 ## Dynamic placement post adapter, DP-S8
 
 `RUNNER_ROLE=post` runs `PostWorkDaemon`, the host agent's post adapter
