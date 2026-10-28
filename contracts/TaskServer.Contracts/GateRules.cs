@@ -51,9 +51,10 @@ public static class GateRules
             || string.IsNullOrWhiteSpace(request.TestSelectionAuditDigest)
             || request.MaxAttempts is < 1 or > 5
             || !ValidDigest(request.ExpectedSha, 40, 64) || !ValidDigest(request.PlanHash, 64)
-            || (string.IsNullOrWhiteSpace(request.ResultRef) &&
+            || (string.IsNullOrWhiteSpace(request.ResultRef) && request.Bundle is null &&
                 (string.IsNullOrWhiteSpace(request.SourceBundleArtifactId) || !ValidDigest(request.SourceBundleSha256, 64))))
             throw new ArgumentException("Gate subject requires a bounded, exact source and all audit identities.");
+        ValidateKind(request);
         if (request.BatchId is not null)
         {
             var candidatePrefix = $"refs/agent-studio/batch-candidates/{request.BatchId}/{request.MembershipDigest}/";
@@ -96,6 +97,65 @@ public static class GateRules
             throw new ArgumentException("Gate plan hash does not match its frozen commands.");
     }
 
+    /// <summary>
+    /// A verification subject (merge, promotion, batch) binds either a fetchable
+    /// candidate ref or an uploaded immutable bundle; a run subject keeps its
+    /// run-artifact bundle. Kinds never mix their source shapes.
+    /// </summary>
+    private static void ValidateKind(CreateGateSubjectRequest request)
+    {
+        if (!GateSubjectKinds.IsKnown(request.Kind))
+            throw new ArgumentException("Gate subject kind is unknown.");
+        var kind = GateSubjectKinds.Normalize(request.Kind);
+        if (request.Bundle is { } bundle)
+        {
+            if (!GateSubjectKinds.IsVerification(kind)
+                || !ValidDigest(bundle.Sha256, 64)
+                || bundle.SizeBytes is < 1 or > GateBundleLimits.MaxBytes
+                || bundle.Locator != GateBundleLimits.Locator(bundle.Sha256)
+                || request.SourceBundleArtifactId is not null || request.SourceBundleSha256 is not null)
+                throw new ArgumentException("Gate bundle locator must be a bounded verification bundle served by the gate authority.");
+        }
+        if (GateSubjectKinds.IsVerification(kind) && request.Bundle is null
+            && string.IsNullOrWhiteSpace(request.ResultRef))
+            throw new ArgumentException("Verification gate subject requires a candidate ref or a gate bundle.");
+        if (kind is GateSubjectKinds.Merge or GateSubjectKinds.Promotion && request.BatchId is not null)
+            throw new ArgumentException("Merge and promotion gate subjects carry no batch identity.");
+        if (kind == GateSubjectKinds.Run && request.Kind is not null && request.BatchId is not null)
+            throw new ArgumentException("A batch gate subject must declare the batch kind.");
+    }
+
+    /// <summary>
+    /// Returns why a verification report does not prove its subject, or null.
+    /// A report that ran commands must name the exact plan, policy, HEAD and
+    /// bundle the host verified before the first command.
+    /// </summary>
+    public static string? ProofViolation(GateSubject subject, GateReport report)
+    {
+        if (!GateSubjectKinds.IsVerification(subject.Kind) || report.Commands.Count == 0) return null;
+        if (report.Proof is not { } proof)
+            return "Verification gate report lacks the host subject proof.";
+        if (!string.Equals(proof.PlanHash, subject.PlanHash, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(proof.PolicyHash, subject.PolicyHash, StringComparison.Ordinal)
+            || !string.Equals(proof.Head, subject.ExpectedSha, StringComparison.OrdinalIgnoreCase))
+            return "Verification gate proof differs from the frozen plan, policy or exact SHA.";
+        if (subject.Bundle is { } bundle
+            && (!string.Equals(proof.BundleSha256, bundle.Sha256, StringComparison.OrdinalIgnoreCase)
+                || proof.BundleBytes != bundle.SizeBytes))
+            return "Verification gate proof differs from the immutable bundle.";
+        return null;
+    }
+
+    /// <summary>
+    /// Pure host-side check before materialization: the frozen commands must
+    /// still hash to the subject plan digest. Null when the host may proceed.
+    /// </summary>
+    public static string? PlanDigestViolation(GateSubject subject)
+        => GateSubjectKinds.IsVerification(subject.Kind)
+           && !string.Equals(PlanHash(subject.Plan), subject.PlanHash, StringComparison.OrdinalIgnoreCase)
+            ? "Gate plan does not hash to the subject plan digest."
+            : null;
+
     public static bool SameSubject(GateSubject existing, CreateGateSubjectRequest request)
         => existing.TaskId == request.TaskId && existing.RepositoryId == request.RepositoryId
             && existing.RepositoryUrl == request.RepositoryUrl
@@ -111,7 +171,9 @@ public static class GateRules
             && existing.BatchId == request.BatchId
             && existing.MembershipDigest == request.MembershipDigest
             && existing.BaseSha == request.BaseSha
-            && (existing.MemberRunIds ?? []).SequenceEqual(request.MemberRunIds ?? [], StringComparer.Ordinal);
+            && (existing.MemberRunIds ?? []).SequenceEqual(request.MemberRunIds ?? [], StringComparer.Ordinal)
+            && GateSubjectKinds.Normalize(existing.Kind) == GateSubjectKinds.Normalize(request.Kind)
+            && existing.Bundle == request.Bundle;
 
     /// <summary>Returns why a report breaks its frozen plan, or null for an admissible report.</summary>
     public static string? ReportViolation(GatePlan plan, GateReport report)

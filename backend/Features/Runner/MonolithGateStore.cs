@@ -85,6 +85,9 @@ public sealed class MonolithGateStore
     public GateStatus Create(CreateGateSubjectRequest request)
     {
         GateRules.ValidateSubject(request);
+        if (request.Bundle is not null)
+            throw new GateConflictException("gate-bundle-unsupported",
+                "The monolith gate authority serves no bundle artifact endpoint.");
         lock (_gate)
         {
             var existing = _subjects.Values.FirstOrDefault(item =>
@@ -108,7 +111,7 @@ public sealed class MonolithGateStore
                 request.PlanHash.ToLowerInvariant(), request.PolicyHash, request.PipelineDefinitionVersion,
                 request.TestSelectionAuditDigest, request.Plan, now, request.DispatchDeadline.ToUniversalTime(),
                 request.MaxAttempts, request.BatchId, request.MembershipDigest, request.BaseSha,
-                request.MemberRunIds);
+                request.MemberRunIds, request.Kind);
             var record = new MonolithGateRecord(subject, 0, [Queued(subject.SubjectId, 1, now)]);
             Save(record);
             return Status(record);
@@ -302,6 +305,8 @@ public sealed class MonolithGateStore
                     "Tested SHA differs from the immutable subject.");
             if (GateRules.ReportViolation(record.Subject.Plan, request.Report) is { } violation)
                 throw new GateConflictException("gate-report-invalid", violation);
+            if (GateRules.ProofViolation(record.Subject, request.Report) is { } proofViolation)
+                throw new GateConflictException("gate-report-invalid", proofViolation);
             var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
                 JsonSerializer.Serialize(request.Report, Json)))).ToLowerInvariant();
             if (attempt.ReportDigest is not null)

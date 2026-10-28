@@ -30,20 +30,18 @@ public sealed class ClaimedBatchGateRunner(IBatchGateSubjectAuthority gates, Git
     public static bool Enabled(IConfiguration? configuration)
         => Mode(configuration) == ExecutionMode;
 
-    /// <summary>Configured execution mode; an unknown value fails closed at startup.</summary>
+    /// <summary>
+    /// Configured execution mode; an unknown value fails closed at startup.
+    /// DP-S4 resolves the remote Task Server identity boundary: the subject
+    /// declares the <see cref="GateSubjectKinds.Batch"/> kind, so its member
+    /// task and run IDs stay opaque monolith references. The monolith keeps
+    /// membership and publication; the Task Server owns only the attempt.
+    /// </summary>
     public static string Mode(IConfiguration? configuration)
     {
         var configured = configuration?[ExecutionKey]?.Trim();
         if (string.IsNullOrEmpty(configured)) return BridgeMode;
-        if (string.Equals(configured, ExecutionMode, StringComparison.OrdinalIgnoreCase))
-        {
-            if (!string.IsNullOrWhiteSpace(configuration?["TaskServer:BaseUrl"]))
-                throw new InvalidOperationException(
-                    $"{ExecutionKey}=claimed cannot run with TaskServer:BaseUrl: batch member task and run IDs "
-                    + "belong to the monolith and cannot be claimed by the Task Server. "
-                    + $"Unset TaskServer:BaseUrl or set {ExecutionKey}=bridge.");
-            return ExecutionMode;
-        }
+        if (string.Equals(configured, ExecutionMode, StringComparison.OrdinalIgnoreCase)) return ExecutionMode;
         if (string.Equals(configured, BridgeMode, StringComparison.OrdinalIgnoreCase)) return BridgeMode;
         throw new InvalidOperationException($"{ExecutionKey} must be '{ExecutionMode}' or '{BridgeMode}'.");
     }
@@ -109,42 +107,13 @@ public sealed class ClaimedBatchGateRunner(IBatchGateSubjectAuthority gates, Git
             manifest.Scope.GateProfileDigest, manifest.Scope.PlatformVersion,
             Digest(JsonSerializer.Serialize(new { run.BatchRunId, commands = verify.Select(item => item.Command) })),
             plan, now.Add(timeout), 2, manifest.BatchId, manifest.MembershipDigest, manifest.BaseSha,
-            members.Select(member => member.RunAttempt).ToArray());
+            members.Select(member => member.RunAttempt).ToArray(), GateSubjectKinds.Batch);
     }
 
     internal static BuildTestGateResult Result(BatchGateRunRecord run, GateStatus status,
         DateTimeOffset started, DateTimeOffset finished)
-    {
-        var report = status.Report;
-        var output = string.Join('\n', (report?.Commands ?? []).Select(command =>
-            $"[{command.StepId}] exit={command.ExitCode?.ToString() ?? "none"}{(command.TimedOut ? " timed-out" : "")}\n{command.OutputExcerpt}"));
-        var failed = report?.Commands.FirstOrDefault(command => command.ExitCode is not 0 || command.TimedOut);
-        var (verdict, kind, reason) = status.Phase switch
-        {
-            GateStates.Passed => (BuildTestGateVerdict.Ok, BuildTestGateFailureKind.None, "claimed batch gate passed"),
-            GateStates.ProductFailed => (BuildTestGateVerdict.Fail, BuildTestGateFailureKind.Code,
-                $"claimed batch gate failed in {failed?.StepId ?? "a verify command"}"),
-            GateStates.TimedOut => (BuildTestGateVerdict.Fail, BuildTestGateFailureKind.Timeout,
-                "claimed batch gate timed out"),
-            _ => (BuildTestGateVerdict.Fail, BuildTestGateFailureKind.Environment,
-                $"claimed batch gate ended {status.Phase}: {status.TerminalOutcome ?? "no outcome"}"),
-        };
-        var attempt = status.Attempts[^1];
-        return new BuildTestGateResult(verdict, failed?.ExitCode ?? (verdict == BuildTestGateVerdict.Ok ? 0 : null),
-            (long)(finished - started).TotalMilliseconds, output, reason, false, false)
-        {
-            GateId = "batch-gate",
-            GateRunId = status.Subject.SubjectId,
-            GateStartedAtUtc = started,
-            GateCompletedAtUtc = finished,
-            GateQueueWaitMs = (long)(status.QueueAgeSeconds * 1000),
-            ExpectedSha = run.CandidateSha,
-            TestedSha = report?.TestedSha,
-            ToolchainIdentity = report?.ToolchainIdentity,
-            Executor = $"gate:{attempt.HostId ?? "unclaimed"}/{attempt.AttemptId}#{attempt.Fence}",
-            FailureKind = kind,
-        };
-    }
+        => ClaimedGateEvidence.Result(status, "batch-gate", "claimed batch gate", run.CandidateSha,
+            started, finished);
 
     private BuildTestGateResult Infrastructure(BatchGateRunRecord run, DateTimeOffset started, string reason)
         => new(BuildTestGateVerdict.Fail, null, (long)(time.GetUtcNow() - started).TotalMilliseconds,

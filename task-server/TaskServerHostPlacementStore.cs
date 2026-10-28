@@ -134,7 +134,7 @@ public sealed partial class TaskServerStore
         foreach (var other in otherHosts)
         {
             if (!other.Host.WarmRepositoryIds.Contains(repositoryId, StringComparer.Ordinal)) continue;
-            var occupied = await CountOccupiedHostSlotsAsync(connection, transaction, other.Host.HostId, ct);
+            var occupied = await CountOccupiedHostGrantsAsync(connection, transaction, other.Host.HostId, ct);
             var verdict = HostPlacementPolicy.Decide(other.Host, "coding", repositoryId,
                 requirements, queuedAt, UtcNow, TimeSpan.Zero, false,
                 other.Acknowledged, occupied < other.Ceiling);

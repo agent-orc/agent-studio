@@ -207,10 +207,94 @@ public sealed class RemoteGateDaemonTests
         Assert.True(containment.WorkspaceRemoved);
     }
 
+    [Fact]
+    public async Task Bundle_subject_downloads_the_exact_bundle_and_reports_its_host_proof()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var fixture = new GateFixture();
+        var sha = fixture.CreateRepository();
+        var bundle = fixture.CreateBundle(sha);
+        var subject = fixture.BundleSubject(sha, bundle, "test -f proof.txt");
+        var server = new GateServer(subject, fixture.Attempt, fixture.Lease) { Bundle = bundle };
+        using var client = fixture.Client(server);
+
+        Assert.True(await new RemoteGateDaemon(fixture.Options, client, _ => { })
+            .ExecuteAsync(subject, fixture.Attempt, fixture.Lease, default));
+
+        var report = Assert.Single(server.Reports).Report;
+        Assert.Equal(GateStates.Passed, report.Outcome);
+        Assert.Equal(1, server.BundleReads);
+        Assert.Equal(new GateSubjectProof(subject.PlanHash, subject.PolicyHash, sha,
+            subject.Bundle!.Sha256, bundle.LongLength), report.Proof);
+        Assert.Null(GateRules.ProofViolation(subject, report));
+    }
+
+    public static TheoryData<string> PreCommandFailures => new()
+    {
+        "checksum", "size", "sha", "plan",
+    };
+
+    [Theory]
+    [MemberData(nameof(PreCommandFailures))]
+    public async Task Wrong_bundle_or_subject_identity_fails_before_any_verify_command(string defect)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var fixture = new GateFixture();
+        var sha = fixture.CreateRepository();
+        var bundle = fixture.CreateBundle(sha);
+        var marker = Path.Combine(fixture.Root, "command-ran");
+        var subject = fixture.BundleSubject(sha, bundle, $"touch '{marker}'");
+        var otherSha = new string('f', 64);
+        subject = defect switch
+        {
+            "checksum" => subject with { Bundle = new GateBundleLocator(otherSha, bundle.LongLength,
+                GateBundleLimits.Locator(otherSha)) },
+            "size" => subject with { Bundle = subject.Bundle! with { SizeBytes = bundle.LongLength + 1 } },
+            "sha" => subject with { ExpectedSha = new string('e', 40) },
+            _ => subject with { PlanHash = new string('d', 64) },
+        };
+        var server = new GateServer(subject, fixture.Attempt, fixture.Lease) { Bundle = bundle };
+        using var client = fixture.Client(server);
+
+        Assert.True(await new RemoteGateDaemon(fixture.Options, client, _ => { })
+            .ExecuteAsync(subject, fixture.Attempt, fixture.Lease, default));
+
+        var report = Assert.Single(server.Reports).Report;
+        Assert.Equal(GateFailureClasses.SnapshotUnavailable, report.FailureClassification);
+        Assert.Empty(report.Commands);
+        Assert.False(File.Exists(marker));
+        Assert.DoesNotContain(GateStates.Running, server.Phases);
+        Assert.Equal(defect == "plan" ? 0 : 1, server.BundleReads);
+    }
+
+    [Fact]
+    public async Task Lease_loss_stops_the_running_command_and_reports_lost_lease()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        using var fixture = new GateFixture();
+        var sha = fixture.CreateRepository();
+        var subject = fixture.Subject(sha, "refs/heads/main", "sleep 30",
+            commandTimeout: 60, overallTimeout: 90);
+        var server = new GateServer(subject, fixture.Attempt, fixture.Lease) { FenceRenewals = true };
+        using var client = fixture.Client(server);
+        var daemon = new RemoteGateDaemon(fixture.Options, client, _ => { })
+        {
+            RenewInterval = TimeSpan.FromMilliseconds(200),
+        };
+        var watch = Stopwatch.StartNew();
+
+        Assert.True(await daemon.ExecuteAsync(subject, fixture.Attempt, fixture.Lease, default)
+            .WaitAsync(TimeSpan.FromSeconds(20)));
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(20));
+        Assert.Equal(GateFailureClasses.LostLease, Assert.Single(server.Reports).Report.FailureClassification);
+    }
+
     private sealed class GateFixture : IDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "gate-daemon-test-" + Guid.NewGuid().ToString("N"));
         private string Repository => Path.Combine(_root, "source");
+        public string Root => _root;
 
         public RunnerOptions Options => new()
         {
@@ -243,7 +327,9 @@ public sealed class RemoteGateDaemonTests
             File.WriteAllText(Path.Combine(Repository, "proof.txt"), "exact subject\n");
             Directory.CreateDirectory(Path.Combine(Repository, "frontend"));
             File.WriteAllText(Path.Combine(Repository, "frontend", ".keep"), "");
-            Git("-C", Repository, "add", "proof.txt", "frontend/.keep");
+            // A unique commit keeps the host source cache from serving another test's bundle.
+            File.WriteAllText(Path.Combine(Repository, "nonce.txt"), Guid.NewGuid().ToString("N"));
+            Git("-C", Repository, "add", "proof.txt", "frontend/.keep", "nonce.txt");
             Git("-C", Repository, "commit", "-m", "fixture");
             return Git("-C", Repository, "rev-parse", "HEAD").Trim();
         }
@@ -261,6 +347,27 @@ public sealed class RemoteGateDaemonTests
                         commandTimeout, workingSubdir)],
                     "", overallTimeout, [], 1024, "remove"),
                 DateTime.UtcNow, DateTime.UtcNow.AddMinutes(5), 2);
+        }
+
+        private static readonly DateTime SubjectCreatedAt = new(2026, 10, 28, 9, 0, 0, DateTimeKind.Utc);
+
+        public byte[] CreateBundle(string sha)
+        {
+            var path = Path.Combine(_root, "subject.bundle");
+            Git("-C", Repository, "update-ref", "refs/heads/gate-subject", sha);
+            Git("-C", Repository, "bundle", "create", path, "refs/heads/gate-subject");
+            return File.ReadAllBytes(path);
+        }
+
+        public GateSubject BundleSubject(string sha, byte[] bundle, string command)
+        {
+            var plan = new GatePlan("post-build-test-gate", 1,
+                [new GateCommand("verify", "/bin/sh", ["-c", command], 10)], "", 30, [], 1024, "always");
+            var digest = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bundle));
+            return new GateSubject("subject-1", "job-1", "merge:1", "product", null, sha, null, null, null,
+                GateRules.PlanHash(plan), "policy-hash", "3", "selection", plan, SubjectCreatedAt,
+                SubjectCreatedAt.AddMinutes(5), 2, Kind: GateSubjectKinds.Merge,
+                Bundle: new GateBundleLocator(digest, bundle.LongLength, GateBundleLimits.Locator(digest)));
         }
 
         public TaskServerClient Client(GateServer server)
@@ -298,11 +405,25 @@ public sealed class RemoteGateDaemonTests
         public TaskCompletionSource RunningEntered { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
         public int StatusReads { get; private set; }
+        public byte[]? Bundle { get; init; }
+        public int BundleReads { get; private set; }
+        public bool FenceRenewals { get; init; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
             CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (path.StartsWith("/api/v1/gates/bundles/", StringComparison.Ordinal) && Bundle is not null)
+            {
+                BundleReads++;
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Bundle) };
+            }
+            if (FenceRenewals && path.EndsWith("/renew", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.Conflict)
+                {
+                    Content = new StringContent(JsonSerializer.Serialize(new ApiErrorBody("stale-gate-fence",
+                        "Gate lease is no longer active."), Json), Encoding.UTF8, "application/json"),
+                };
             if (path == "/api/v1/gates/subjects/subject-1")
             {
                 StatusReads++;
@@ -342,4 +463,6 @@ public sealed class RemoteGateDaemonTests
                 "application/json"),
         };
     }
+
+    private sealed record ApiErrorBody(string Code, string Message);
 }

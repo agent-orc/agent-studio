@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-10-22
+Version: 2026-10-28
 Status: System-of-record map for runner-side changes.
 
 ## Dynamic placement host agent, DP-S2
@@ -54,6 +54,36 @@ worker. `canary` enables `agent-host work-container run`. Detached coding and
 review workers keep the process executor until DP-S5 delivers file-based
 attempt credentials. See the
 [canary runbook](../../operations/setup/linux-runner-host.md#work-container-executor-canary).
+
+## Dynamic placement claimed gates, DP-S4
+
+Selected working decisions: dynamic placement D4 option A (claimable gates
+with pulled, checked bundles) and D5 option A (one versioned host allocation).
+Merge (`merge-into-develop-build-gate`), promotion (`merge-into-main`) and
+batch (`batch-gate`, `batch-base`) gates map to `GateSubjectKinds`. A
+verification subject carries opaque monolith task and run references, so the
+Task Server no longer needs them as its own rows; this resolves the earlier
+`BatchGate:Execution=claimed` rejection with `TaskServer:BaseUrl`. The monolith
+keeps membership, per-branch merge and rollback locks, and publication. The
+Task Server owns only the attempt, lease, fence and evidence.
+
+`ClaimedGateTransport` freezes the exact SHA into a git bundle and uploads it
+to `POST /api/v1/gates/bundles/{sha256}`. That endpoint is content addressed,
+bounded and immutable. The subject then binds SHA, plan digest, policy digest
+and bundle locator. The gate host checks the plan digest first. It then
+downloads the bundle (a runner may read only a bundle named by its live
+attempt), checks its size and SHA-256, and proves HEAD before the first
+command. Its report carries a `GateSubjectProof`; the authority rejects a
+verification report that ran commands without a matching proof. Lease loss
+cancels the running command through the renewal fence. A late report is
+rejected, so no passing status can reach publication. `GateTransportSelector`
+reads `RemoteGate:Transport` per gate (default `bridge`), so rollback is a
+configuration change. `ClaimedGateEvidence` fills the bridge evidence fields.
+Gate admission keeps the fixed slot unless `TaskServer:GateAdmissionMode`
+selects grant reservations. Cancel and containment make the attempt terminal
+or retryable and return its grant. The claimed plan runs the full verify plan
+of the frozen commit, without the bridge's changed-file selection or sharding.
+See the [claimed gate migration runbook](../../operations/setup/linux-runner-host.md#claimed-gate-migration-dp-s4).
 
 Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner

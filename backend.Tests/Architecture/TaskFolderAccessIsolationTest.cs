@@ -154,6 +154,8 @@ public class TaskFolderAccessIsolationTest
                 "Deletes only source.git, the private clone inside the transport-created GUID invocation directory, never task storage.",
             // AGT-3209 pull gate: the store, the Studio-side transport, and the
             // worker daemon each delete only their own run staging directories.
+            ["backend/Features/Pipeline/ClaimedGates/ClaimedGateTransport.cs"] =
+                "Deletes only its GUID-named bundle staging folder under the OS temp root, never task storage.",
             ["backend/Features/Pipeline/PullGateStore.cs"] =
                 "Deletes only a re-claimed run's stale artifacts folder under the pull-gate storage root, never task storage.",
             ["backend/Features/Pipeline/PullGateTransport.cs"] =

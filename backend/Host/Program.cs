@@ -1007,8 +1007,19 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.GateShardTimingStore>();
 // a subject that declares a sharded suite also spreads shards across
 // RemoteGate:ShardHosts (SSH) with a free slot.
 builder.Services.AddSingleton<AgentStudio.Pipeline.ShardedRemoteGateTransport>();
+// DP-S4: RemoteGate:Transport selects the SSH bridge (default), a claimed
+// canary, or claimed merge/promotion/batch gates at the Task Server. An unknown
+// mode, or a claimed mode without TaskServer:BaseUrl, fails closed here.
+AgentStudio.Pipeline.GateTransportSelectionPolicy.Mode(builder.Configuration,
+    TaskServerPlaneProxy.IsConfigured(builder.Configuration));
+builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.ClaimedGateCanaryLedger(
+    AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "claimed-gate-canary"),
+    sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton<AgentStudio.Pipeline.ClaimedGateTransport>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.GateTransportSelector>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport>(services =>
-    services.GetRequiredService<AgentStudio.Pipeline.ShardedRemoteGateTransport>());
+    services.GetRequiredService<AgentStudio.Pipeline.GateTransportSelector>());
 builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
     AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();

@@ -287,6 +287,8 @@ public sealed partial class TaskServerStore
         CancellationToken cancellationToken)
     {
         AuthorityReady = false;
+        // An unknown gate admission switch fails closed before the store opens.
+        _ = GateGrantAdmissionPolicy.Mode(_options.GateAdmissionMode);
         Directory.CreateDirectory(DataDirectory);
         Directory.CreateDirectory(BackupDirectory);
 
@@ -1577,7 +1579,8 @@ public sealed partial class TaskServerStore
                     PlacementReason: envelopeAdmission.Reason);
                 return;
             }
-            var occupiedHostSlots = await CountOccupiedHostSlotsAsync(
+            // Gate grants (DP-S4 grant switch) share this host allocation.
+            var occupiedHostSlots = await CountOccupiedHostGrantsAsync(
                 connection,
                 transaction,
                 capabilityRunner.HostId,
