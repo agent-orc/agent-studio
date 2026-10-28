@@ -2454,6 +2454,53 @@ was 50.266 MiB and maximum RSS was 50.992 MiB. This is process overhead only.
 It excludes adapter children, active attempts, systemd, and the five-minute
 production canary window, so it is a baseline rather than a rollout threshold.
 
+#### Optional Kubernetes Job canary
+
+DP-S7 implements Dossier D6 option A for an installation that already has an
+approved Kubernetes cluster. The operator supplies a kubeconfig restricted to
+one namespace and a digest-pinned Linux role image. The host-agent claim and
+AGT-3019 allocation happen first. No Kubernetes Job is an attempt or
+publication authority. The switch defaults to `off`; `shadow` keeps process
+execution, and `canary` enables the separate claimed-attempt command:
+
+```sh
+export RUNNER_KUBERNETES_JOB_MODE=canary
+export RUNNER_KUBERNETES_NAMESPACE=<approved-namespace>
+export RUNNER_KUBERNETES_KUBECONFIG=<namespace-scoped-kubeconfig>
+agent-host work-container kubernetes-run --attempt <claimed-attempt.json> \
+  --grant-half-cores <n> --allocation-version <v> --acknowledged-version <v> \
+  --broker-url <task-server-url> --broker-bearer-file <runner-bearer-file> \
+  --runner-id <runner-id> --instance-id <instance-id> --subject-id <subject-id>
+```
+
+Only a canonical GitHub HTTPS repository can use the brokered credential.
+The credential is mounted as a projected Secret file in the Pod. The Job and
+Secret are labeled with attempt, lease and fence; the Job requests and limits
+the exact half-core grant and its matching memory. It has a finished-Job TTL
+of five minutes, but normal teardown deletes it and its Pods and Secret at
+once. A Job owner reference lets Kubernetes collect the Secret when TTL
+deletes the Job after a host failure. Kubernetes ServiceAccount token automount is disabled. The cluster
+needs a namespace policy that denies other workloads access to the projected
+Secret and an encrypted Secret store. The host runner owns no cluster install
+or upgrade path.
+
+After host or cluster recovery, run reconciliation before new admissions:
+
+```sh
+agent-host work-container kubernetes-reconcile --host <host-id> \
+  --inventory <host-agent-attempt-inventory.json> \
+  --broker-url <task-server-url> --broker-bearer-file <runner-bearer-file> \
+  --runner-id <runner-id> --instance-id <instance-id> --subject-id <subject-id>
+```
+
+Reconciliation remains available when the canary switch is `off` or `shadow`,
+so disabling new Jobs never blocks cleanup of old ones.
+The local Kubernetes state directory retains issuance and cleanup receipts
+until reconciliation verifies deletion. A cluster list error prevents new
+admissions. A Pod retry or reschedule stays within the original Job and does
+not create another Task Server attempt. Windows remains on the process
+executor; enable a cluster profile for it only through a separate acceptance.
+
 #### Work container executor canary
 
 DP-S3 uses Dossier decision D3 option A: a fresh Linux work container per

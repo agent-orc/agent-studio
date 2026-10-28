@@ -21,6 +21,9 @@ public static class WorkContainerCommand
           run --attempt <attempt.json> --grant-half-cores <n> --allocation-version <v> [--acknowledged-version <v>] [--image <ref>]
               [--broker-url <url> --broker-bearer-file <file> --runner-id <id> --instance-id <id> --subject-id <id>]
           reconcile --host <host-id> --inventory <host-agent attempt-inventory.json>
+          kubernetes-run --attempt <attempt.json> --grant-half-cores <n> --allocation-version <v> --acknowledged-version <v>
+              --broker-url <url> --broker-bearer-file <file> --runner-id <id> --instance-id <id> --subject-id <id>
+          kubernetes-reconcile --host <host-id> --inventory <host-agent attempt-inventory.json>
           image-promote --manifest <path> --role <coding|review|gate|all> --image <ref@sha256:...> [--release <version>]
           image-rollback --manifest <path> --role <coding|review|gate|all>
           proof --host <host-id> --image <ref> --source <bare.git> --sha <sha> --report <dir>
@@ -47,6 +50,9 @@ public static class WorkContainerCommand
         {
             switch (args[0])
             {
+                case "kubernetes-run":
+                case "kubernetes-reconcile":
+                    return await KubernetesAsync(args[0], options, output, ct);
                 case "image-promote":
                 case "image-rollback":
                     return UpdateManifest(args[0], options, output);
@@ -160,6 +166,46 @@ public static class WorkContainerCommand
             error.WriteLine($"work-container {args[0]} failed: {ex.Message}");
             return 1;
         }
+    }
+
+    private static async Task<int> KubernetesAsync(string operation, Dictionary<string, string> options,
+        TextWriter output, CancellationToken ct)
+    {
+        var budget = Settings(options);
+        var cluster = KubernetesJobSettings.FromEnvironment(Environment.GetEnvironmentVariable,
+            Path.Combine(budget.StateDirectory, "kubernetes"));
+        cluster.Validate(requireCanary: operation == "kubernetes-run");
+        using var brokerHttp = new HttpClient
+        {
+            BaseAddress = new Uri(Required(options, "broker-url").TrimEnd('/') + "/"),
+            Timeout = TimeSpan.FromSeconds(30),
+        };
+        var credentials = new TaskServerWorkCredentialSource(brokerHttp, Required(options, "broker-bearer-file"),
+            Required(options, "runner-id"), Required(options, "instance-id"), Required(options, "subject-id"));
+        var executor = new KubernetesJobExecutor(new KubectlJobRuntime(cluster.Kubeconfig, cluster.Namespace),
+            cluster, budget, credentials);
+        if (operation == "kubernetes-reconcile")
+        {
+            var inventory = JsonSerializer.Deserialize<HostAttemptInventory>(
+                await File.ReadAllTextAsync(Required(options, "inventory"), ct), Json)
+                ?? throw new InvalidDataException("Attempt inventory is empty.");
+            var authority = inventory.Attempts.Select(item => new WorkAttemptAuthority(item.AttemptId, item.LeaseId, item.Fence, true)).ToArray();
+            var receipts = await executor.ReconcileAsync(Required(options, "host"), authority, ct);
+            output.WriteLine(JsonSerializer.Serialize(receipts, Json));
+            return receipts.All(item => item.CleanupVerified) ? 0 : 1;
+        }
+        var attempt = JsonSerializer.Deserialize<WorkContainerAttempt>(
+            await File.ReadAllTextAsync(Required(options, "attempt"), ct), Json)
+            ?? throw new InvalidDataException("Attempt file is empty.");
+        var image = options.GetValueOrDefault("image")
+            ?? RoleImageManifest.TryLoad(budget.ImageManifestPath)?.Resolve(attempt.Role)
+            ?? throw new InvalidOperationException($"No pinned image for role '{attempt.Role}'.");
+        var version = Number(options, "allocation-version");
+        var grant = new WorkContainerGrant(version, Number(options, "acknowledged-version"),
+            (int)Number(options, "grant-half-cores"));
+        var receipt = await executor.RunAsync(attempt, image, grant, ct);
+        output.WriteLine(JsonSerializer.Serialize(receipt, Json));
+        return receipt.Outcome == "succeeded" && receipt.CleanupVerified ? 0 : 1;
     }
 
     /// <summary>
