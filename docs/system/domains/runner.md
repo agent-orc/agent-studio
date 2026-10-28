@@ -25,6 +25,36 @@ for the canary, drain, and rollback sequence. Linux per-attempt containers are
 the subsequent DP-S3 executor slice; DP-S2 retains the current process and
 cgroup executor.
 
+## Dynamic placement work container executor, DP-S3
+
+Selected working decision: dynamic placement D3 option A, a fresh Linux work
+container per claimed attempt plus the Windows process executor, with option
+B (process and cgroup) kept as canary rollback. D5 option A still applies:
+the container's `--cpus`, `--memory` and `--pids-limit` are the attempt's
+AGT-3019 half-core grant, and the host profile ceiling bounds both one grant
+and the sum of live grants. The code lives in `runner/WorkContainers/`:
+pure admission, launch-plan, reconciliation, executor-selection and rollout
+threshold policies; a Docker or Podman CLI adapter; and an executor that
+admits under a host-wide grant lock, then creates the attempt volume and
+container, runs it, flushes the timestamped log, removes the container and
+attempt volume, and verifies that nothing remains. A launch that is over
+budget or on a stale allocation is refused before any runtime call.
+Containers run as uid 10001 with a read-only root, all capabilities dropped,
+`no-new-privileges`, `--restart no`, a tmpfs secret directory, and no runtime
+socket or provider home. Each mounts a writable attempt volume plus the
+versioned npm, NuGet and repository-mirror cache volumes. The entry script
+verifies the exact SHA before the work command runs. A mirror that cannot
+supply that SHA is quarantined and rebuilt. Restart reconciliation removes
+every resource without a live lease and fence, and never starts a container.
+Role images are digest-pinned in a manifest that keeps the previous digest
+for rollback; the release builds `agent-work` from
+`deploy/work-container/Dockerfile`. `RUNNER_WORK_CONTAINER_MODE` defaults to
+`off`. `shadow` records an `executor-shadow.json` beside each detached
+worker. `canary` enables `agent-host work-container run`. Detached coding and
+review workers keep the process executor until DP-S5 delivers file-based
+attempt credentials. See the
+[canary runbook](../../operations/setup/linux-runner-host.md#work-container-executor-canary).
+
 Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
