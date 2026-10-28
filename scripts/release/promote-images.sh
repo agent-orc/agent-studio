@@ -10,7 +10,7 @@ sha="${2:?commit SHA required}"
 }
 
 names=(agent-studio-api agent-studio-web agent-task-server agent-orchestrator-engine
-  agent-studio-bff agent-host agent-operations-server agent-operations-agent)
+  agent-studio-bff agent-host agent-operations-server agent-operations-agent agent-work)
 declare -A staged=() previous=()
 declare -a touched=()
 promoting=0

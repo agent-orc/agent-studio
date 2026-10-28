@@ -2426,6 +2426,77 @@ was 50.266 MiB and maximum RSS was 50.992 MiB. This is process overhead only.
 It excludes adapter children, active attempts, systemd, and the five-minute
 production canary window, so it is a baseline rather than a rollout threshold.
 
+#### Work container executor canary
+
+DP-S3 uses Dossier decision D3 option A: a fresh Linux work container per
+claimed attempt, with the process and cgroup executor retained as rollback
+(option B). Windows keeps the worktree process executor in a Job Object and
+never needs Docker. The switch is host-local and defaults to `off`:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RUNNER_WORK_CONTAINER_MODE` | `off` | `shadow` records `executor-shadow.json` beside each detached worker; `canary` enables `agent-host work-container run`. |
+| `RUNNER_WORK_CONTAINER_RUNTIME` | `docker` | `docker` or `podman`; the host agent calls the CLI, the work container never gets its socket. |
+| `RUNNER_WORK_CONTAINER_IMAGES` | `/etc/agent-host/work-container-images.json` | Digest-pinned role image manifest. |
+| `RUNNER_WORK_CONTAINER_MAX_CPUS` | host cores minus 2 | Host profile ceiling for one grant and for all live grants. |
+| `RUNNER_WORK_CONTAINER_MAX_MEMORY_MB` | RAM minus max(4 GiB, 15%) | Host profile memory ceiling. |
+| `RUNNER_WORK_CONTAINER_MEMORY_MB_PER_HALF_CORE` | `2048` | Memory limit granted per AGT-3019 half-core. |
+| `RUNNER_WORK_CONTAINER_CACHE_VERSION` | `1` | Generation of the npm, NuGet and repository-mirror cache volumes. |
+| `RUNNER_WORK_CONTAINER_NETWORK` | `bridge` | `host` and `container:*` are refused. |
+
+In this slice the detached coding and review workers stay on the process
+executor in every mode; provider credentials may enter a work container only
+as tmpfs files, which DP-S5 delivers. In canary mode, `agent-host
+work-container run --attempt <attempt.json> --grant-half-cores <n>
+--allocation-version <v>` executes one attempt that needs no provider
+credential. Routing claimed gate subjects to it belongs to DP-S4.
+
+Install a released role image manifest, or roll it back, with:
+
+```sh
+agent-host work-container image-promote --manifest /etc/agent-host/work-container-images.json \
+  --role all --image ghcr.io/agent-orc/agent-work@sha256:<digest> --release <version>
+agent-host work-container image-rollback --manifest /etc/agent-host/work-container-images.json --role all
+```
+
+Every release attaches `work-container-images.json`. Tags are rejected; the
+previous digest is kept as the rollback target. After a host or host-agent
+restart, and before new admissions, reconcile against the host-agent inventory:
+
+```sh
+agent-host work-container reconcile --host <host-id> \
+  --inventory /var/lib/agent-host/host-agent/attempt-inventory.json
+```
+
+Reconciliation flushes each orphan's log, then removes every container and
+attempt volume whose attempt is unknown, terminal, or on a different lease or
+fence. It removes an exited container too, and never starts one. Containers are
+created with `--restart no`, so a runtime restart cannot revive one either.
+To roll back to the process executor, set the mode to `off` or `shadow` and
+run `reconcile` once with an empty inventory after the last canary attempt.
+
+Before widening the canary, run `scripts/work-container-proof.sh <report-dir>`
+on the canary host and keep `proof.md`. The go/no-go thresholds are fixed in
+`WorkContainerRolloutThreshold`: every attempt cleaned up with zero residue;
+every over-budget launch denied before any runtime mutation; zero resurrected
+attempts; warm grant-to-first-command no more than 3 s (p50) and 5 s (p90)
+above the process executor; gate wall time within 1.10x (p50) and 1.20x (p90)
+of the process executor; cold repository materialization within 1.5x (p50);
+a cold image pull within 180 s; and a warm cache hit rate of at least 95%.
+
+The first proof ran on agent-runner-01 on 28 October 2026: 100 attempts per
+executor, parallelism 4, grant 3 half-cores, Docker 29 with the containerd
+snapshotter. All 100 container attempts succeeded with verified cleanup and no
+residue. Three over-budget launches were denied before any runtime call, the
+exact-SHA guard stopped before the work command, and reconciliation started
+nothing. Container p50/p90 were 2959/4382 ms from warm grant to first command,
+3134/3380 ms for cold materialization, and 870/993 ms of gate wall time. The
+process baseline ran inside the proving worker's own 1.41-core cgroup and was
+noisy; its gate p50 was 3500 ms in one run and 8397 ms in the next. Treat it
+as an upper bound, not as a container speedup. The verdict is no-go only
+because the role image layers were already local, so the cold pull is
+unproven. Record a cold pull on a fresh canary host before widening.
+
 **Drain the Review Executor; never restart it while slots are busy.** A review
 holds thirty to sixty minutes of gate work in a detached worker. Stopping the
 daemon on top of it can cost that work and put the card back in the queue.

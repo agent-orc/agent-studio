@@ -72,6 +72,17 @@ if (args is ["--detached-review-worker", var detachedReviewSpec])
 if (args is ["host-record", ..])
     return RunnerHostRecordCommand.Run(args[1..], Console.Out, Console.Error);
 
+// DP-S3: Linux work container executor operations for the host agent.
+if (args is ["work-container", ..])
+{
+    using var workContainerStop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; workContainerStop.Cancel(); };
+    using var workContainerSigterm = OperatingSystem.IsWindows() ? null
+        : PosixSignalRegistration.Create(PosixSignal.SIGTERM, context => { context.Cancel = true; workContainerStop.Cancel(); });
+    try { return await AgentRunner.WorkContainers.WorkContainerCommand.RunAsync(args[1..], Console.Out, Console.Error, workContainerStop.Token); }
+    catch (OperationCanceledException) when (workContainerStop.IsCancellationRequested) { return 130; }
+}
+
 // AGT-3231: render, apply and verify the zone network policy on this host.
 if (args is ["zone-policy", ..])
     return await ZonePolicyCommand.RunAsync(args[1..], Console.Out, Console.Error, CancellationToken.None);
