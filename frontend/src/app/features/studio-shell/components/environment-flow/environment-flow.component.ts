@@ -36,6 +36,7 @@ export class EnvironmentFlowComponent implements OnInit, OnDestroy {
   readonly updatedAt = signal<Date | null>(null);
   readonly hosts = computed(() => this.hostsService.hosts());
   private timer: ReturnType<typeof setInterval> | null = null;
+  private attemptRefreshSequence = 0;
 
   ngOnInit(): void {
     this.refresh();
@@ -50,9 +51,18 @@ export class EnvironmentFlowComponent implements OnInit, OnDestroy {
 
   refresh(): void {
     this.hostsService.refresh();
+    const attemptRefreshSequence = ++this.attemptRefreshSequence;
     this.http.get<AttemptVisibilitySnapshot>('/api/v1/management/attempt-visibility').subscribe({
-      next: data => { this.attempts.set(data.attempts ?? []); this.attemptState.set('ready'); },
-      error: () => { this.attempts.set([]); this.attemptState.set('unavailable'); },
+      next: data => {
+        if (attemptRefreshSequence !== this.attemptRefreshSequence) return;
+        this.attempts.set(data.attempts ?? []);
+        this.attemptState.set('ready');
+      },
+      error: () => {
+        if (attemptRefreshSequence !== this.attemptRefreshSequence) return;
+        this.attempts.set([]);
+        this.attemptState.set('unavailable');
+      },
     });
     this.http.get<EnvironmentFlowSnapshot>('/api/environment/flow').subscribe({
       next: data => { this.flow.set(data); this.updatedAt.set(new Date(data.capturedAt)); this.error.set(null); },

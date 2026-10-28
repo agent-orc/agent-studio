@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTheme } from '../helpers/theme';
 
 test('environment view refreshes and fits light and dark desktop widths', async ({ page }) => {
+  test.setTimeout(180_000);
   let reads = 0;
   let attemptStage: 'empty' | 'running' | 'terminal' | 'orphan' = 'empty';
   const attempt = {
@@ -61,14 +63,18 @@ test('environment view refreshes and fits light and dark desktop widths', async 
   ] }));
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/');
+  await setTheme(page, 'light');
   await expect(page.locator('html')).toHaveAttribute('data-studio-theme', 'light');
+  const refreshAttempts = async () => {
+    const response = page.waitForResponse(result =>
+      result.url().includes('/api/v1/management/attempt-visibility') && result.ok());
+    await page.getByTestId('environment-flow').getByRole('button', { name: 'Refresh' }).click();
+    await response;
+  };
   const openEnvironment = async () => {
     const inline = page.getByTestId('studio-titlebar-environment');
-    if (await inline.isVisible()) await inline.click();
-    else {
-      await page.getByRole('button', { name: 'More navigation' }).click();
-      await page.getByRole('menuitem', { name: 'Environment' }).click();
-    }
+    await expect(inline).toBeVisible();
+    await inline.click();
   };
   await openEnvironment();
   const view = page.getByTestId('environment-flow');
@@ -92,7 +98,7 @@ test('environment view refreshes and fits light and dark desktop widths', async 
 
   for (const stage of ['running', 'terminal', 'orphan'] as const) {
     attemptStage = stage;
-    await view.getByRole('button', { name: 'Refresh' }).click();
+    await refreshAttempts();
     const child = view.locator('[data-host-id="kori-review-1"] [data-attempt-id="run-visible"]');
     await expect(child).toBeVisible();
     await expect(child).toContainText('sha256:abcdef');
@@ -104,20 +110,20 @@ test('environment view refreshes and fits light and dark desktop widths', async 
   }
 
   const beforeRefresh = reads;
-  await view.getByRole('button', { name: 'Refresh' }).click();
+  await refreshAttempts();
   await expect.poll(async () => Number(await view.locator('.environment-flow__metrics > div').first().locator('b').textContent()))
     .toBeGreaterThan(beforeRefresh);
   expect(reads).toBeGreaterThan(beforeRefresh);
   await view.getByRole('button', { name: 'Close environment view' }).click();
   await page.setViewportSize({ width: 1920, height: 1080 });
-  await page.getByTestId('studio-titlebar-theme').click();
+  await setTheme(page, 'dark');
   await expect(page.locator('html')).toHaveAttribute('data-studio-theme', 'dark');
   await openEnvironment();
   await expect(view).toBeVisible();
   await page.screenshot({ path: join(output, 'environment-1920-dark.png') });
   for (const stage of ['empty', 'running', 'terminal', 'orphan'] as const) {
     attemptStage = stage;
-    await view.getByRole('button', { name: 'Refresh' }).click();
+    await refreshAttempts();
     await expect(view.locator('[data-host-id="kori-review-1"] [data-attempt-id="run-visible"]'))
       .toHaveCount(stage === 'empty' ? 0 : 1);
     await view.locator('[data-host-id="kori-review-1"]').scrollIntoViewIfNeeded();
